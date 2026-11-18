@@ -1,5 +1,5 @@
-//! The split's preparation passes on the pass manager (decision 0281's path, step 5), each the tree pass of
-//! `file_local` it replaces, one for one, reading the split from the version (`FileLocal`).
+//! The split's preparation passes on the pass manager (decision 0281's path, step 5), each reading the split from the
+//! version (`FileLocal`).
 
 use super::FileLocal;
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
@@ -30,11 +30,12 @@ pub(super) fn t_of<'a>(v: &'a Version, rule: RuleRef<'a>, t: TermRef<'a>) -> T<'
     }
 }
 
-/// `file_local::locate` on the version: every relation the chunks hand on (an export, or a file-local output) given
-/// a location column, so each of its rows names its document (decision 0052). A relation without one, `r(p, l)`, is
-/// derived by the chunks as `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its
-/// rules bind, and the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also
-/// read, a lattice, or one whose rule binds no location is left, and named in `blocked`.
+/// One round of `locate_all`: every relation the chunks hand on (an export, or a file-local output) given a location
+/// column, so each of its rows names its document (decision 0052). A relation without one, `r(p, l)`, is derived by
+/// the chunks as `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its rules bind
+/// (from `node`, `doc`, `tape_line`, …, a document column left unnamed included, or a node through `node(d, n, …)`),
+/// and the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
+/// one whose rule binds no location is left, and named in `blocked`: its rows are not attributable.
 #[derive(Default)]
 pub struct Locate {
     pub located: Vec<String>,
@@ -42,13 +43,39 @@ pub struct Locate {
 }
 
 impl Locate {
-    /// The tree pass's result: the relations located, or those left.
+    /// The round's result: the relations located, or those left.
     pub fn result(&self) -> Result<Vec<String>, Vec<String>> {
         if self.blocked.is_empty() { Ok(self.located.clone()) } else { Err(self.blocked.clone()) }
     }
 }
 
-/// `file_local::locate`'s move on the version: the relations a round of `Locate` left, their rows naming no document,
+/// Every relation the chunks hand on made to name its document per row, so a file's rows can be memoised (decision
+/// 0052): `Locate`, and a relation a round leaves (its rows name no document) moved to the cross-file part
+/// (`MoveCrossFile`, decision 0290), with every file-local relation that reads it, and the program located again,
+/// until every row handed on is located. The chunks then hand on only located rows, and the per-file memo holds for the
+/// rest of the program. The relations located; the `Err` names the moved relations where a round blocks one the moves
+/// cannot place, which none is.
+pub fn locate_all(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<Vec<String>, Vec<String>> {
+    let mut moved: Vec<String> = Vec::new();
+    let mut located: Vec<String> = Vec::new();
+    loop {
+        let mut locate = Locate::default();
+        p.program(&mut locate);
+        located.extend(locate.located);
+        if locate.blocked.is_empty() {
+            return Ok(located);
+        }
+        let fresh: Vec<String> = locate.blocked.into_iter().filter(|r| !moved.contains(r)).collect();
+        if fresh.is_empty() {
+            moved.sort();
+            return Err(moved);
+        }
+        moved.extend(fresh.iter().cloned());
+        p.program(&mut MoveCrossFile(fresh));
+    }
+}
+
+/// A round of `locate_all`'s move: the relations a round of `Locate` left, their rows naming no document,
 /// qualified `CROSS_FILE` (decision 0290). The split then holds them cross-file, with their file-local readers, and the
 /// program is located again (`preparation::run`).
 pub struct MoveCrossFile(pub Vec<String>);
@@ -99,7 +126,7 @@ impl ProgramPass for Locate {
         let targets: BTreeSet<String> = exports
             .iter()
             .map(String::as_str)
-            .chain(f.outputs().filter(|o| file_local.contains(*o)))
+            .chain(f.outputs().filter(|o| file_local.contains(*o) && !f.qualified(o, crate::code_rule_dsl::logic::plan::fields::PART_OUT)))
             .filter(|r| local.contains(r) && locations.get(*r).is_none_or(Vec::is_empty))
             .map(str::to_owned)
             .collect();
@@ -119,7 +146,7 @@ impl ProgramPass for Locate {
         let mut ats: Vec<(String, Vec<(String, String)>)> = Vec::new();
         let mut names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
         for rel in &targets {
-            let read_locally = readers.get(rel.as_str()).is_some_and(|&n| n > 0);
+            let read_locally = readers.get(rel.as_str()).is_some_and(|&n| n > 0) || f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::PART_LOCAL_READ);
             let Some(cols) = f.columns(rel).filter(|_| !read_locally && !f.lattice(rel)) else {
                 self.blocked.push(rel.clone());
                 continue;
@@ -274,7 +301,7 @@ pub(super) fn write(b: &mut Builder<'_>, input: &Version, round: &Round<'_>) -> 
 
 /// A round's program as an overlay of `input` holding only what the round changes (the rules it rewrites or drops
 /// removed, the ones it makes added), and its split, carried from `input`'s across that edit: a round costs its
-/// change, as the tree's rounds did through `split_memo`, where a derivation of the whole program split it whole.
+/// change, where a derivation of the whole program split it whole.
 pub(super) fn candidate(input: &std::sync::Arc<Version>, round: &Round<'_>) -> Result<(std::sync::Arc<Version>, std::sync::Arc<FileLocal>), String> {
     let mut b = Builder::on(input);
     write_onto(&mut b, input, round, true)?;
@@ -333,7 +360,8 @@ fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: boo
     Ok(())
 }
 
-/// A variable of `rule` by its name (the passes ported from the tree read variables as it does).
+/// A variable of `rule` by its name (the passes read variables by name, so their sets and searches run in a fixed
+/// order).
 pub(super) fn name(v: &Version, rule: RuleRef<'_>, s: crate::code_rule_dsl::logic::program_image::Slot) -> String {
     v.text(rule.var(s)).to_owned()
 }

@@ -292,6 +292,18 @@ impl Admitted {
         of(&self.data)
     }
 
+    /// Its rows' column types, where its rows were admitted: known without decoding them.
+    pub fn types(&self) -> Option<&[u8]> {
+        fn of(data: &Data) -> Option<&[u8]> {
+            match data {
+                Data::Encoded { types, .. } => Some(types),
+                Data::Chain { base, .. } => of(base),
+                Data::Metadata => None,
+            }
+        }
+        of(&self.data)
+    }
+
     /// Its rows' width (their columns), where its rows were admitted: known without decoding them.
     pub fn width(&self) -> Option<usize> {
         fn of(data: &Data) -> Option<usize> {
@@ -662,7 +674,7 @@ impl ContentStore {
 
     /// `frames`, from the store's file past the snapshot (queued writes first): asked before the first wave of a
     /// process whose snapshot an earlier run installed, which leaves every root's cross space out until
-    /// `preload_frames_live` reads the run's own (the kept route's check, Q99).
+    /// `preload_frames_live` reads the run's own (the kept route's check, Q151).
     pub fn frames_stored(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Stored>> {
         let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
         Ok(self.read_frame_parts_from(space, &keys, false, false)?.into_iter().map(|((r, _), f)| (r, f.stored.clone())).collect())
@@ -1560,10 +1572,21 @@ impl Put {
         let data = Data::Encoded { types, n, bytes: Bytes::Heap(Arc::new(Vec::new())), store: None };
         Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data }), place: Some(placed.at) }
     }
-    /// `encode_rows` of rows read a column at a time where they lie (`column(c, f)`: column `c` in row order, `f` per
-    /// batch), with no row-major copy of them.
-    pub fn encode_columns(width: usize, column: &(dyn Fn(usize, &mut dyn FnMut(&[i64])) + Sync)) -> Vec<u8> {
-        super::cross_rows::encode_columns(width, column)
+
+    /// `encode_rows`'s bytes, on the heap, of rows given a window at a time (`each`, called twice): for a frame no
+    /// segment took (`FramePlacer::place_rows` gave `None`).
+    pub fn encode_windows(width: usize, each: &dyn Fn(&mut dyn FnMut(&[i64]))) -> Vec<u8> {
+        let mut out = Vec::new();
+        // A relation of no columns has no bytes: its rows are its count.
+        if width == 0 {
+            return out;
+        }
+        let _ = super::cross_rows::encode_windows(width, each, &mut Vec::new(), |len, fill| {
+            out = vec![0u8; len];
+            fill(&mut out);
+            Ok::<(), std::convert::Infallible>(())
+        });
+        out
     }
     /// A frame of rows already encoded (`encode_rows`).
     pub fn encoded_as(rel: Rel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, bytes: Vec<u8>) -> Encoded {
@@ -1571,7 +1594,7 @@ impl Put {
     }
 }
 
-/// A write's frames encoded where they are stored (decision 0295 §1, Q93): its segments' writer, shared by the jobs
+/// A write's frames encoded where they are stored (decision 0295 §1, Q89): its segments' writer, shared by the jobs
 /// that make the frames, each frame's bytes written into its entry as its rows are read. Made whole on the heap
 /// first, every frame of a write was held at once until it was queued: the cross part's frames, the peak of a cold
 /// PostHog run.
@@ -1585,15 +1608,17 @@ pub struct Placed {
 }
 
 impl FramePlacer {
-    /// Encodes rows of `width` columns, given a window at a time (`each`, called twice), into the next entry, as
-    /// `encode_rows` encodes them: counted outside the lock, written under it. `None` where no segment takes it
+    /// Encodes rows of `width` columns, given a window at a time (`each`, called once), into the next entry, as
+    /// `encode_rows` encodes them: encoded outside the lock, copied into the entry under it. `None` where no segment takes it
     /// (the caller encodes it on the heap as before).
     pub fn place_rows(&self, width: usize, part: i64, each: &dyn Fn(&mut dyn FnMut(&[i64]))) -> Option<Placed> {
         if width == 0 {
             return None;
         }
         let mut at = None;
-        super::cross_rows::encode_windows(width, each, |len, fill| {
+        let mut cols = Vec::new();
+        // copy: not block data (a frame's encoded bytes, built once, then written into their entry)
+        super::cross_rows::encode_windows(width, each, &mut cols, |len, fill| {
             let mut w = self.w.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             w.put(len, part, &[0; 32], |out| fill(out))?;
             at = Some(w.len() - 1);
@@ -1810,7 +1835,7 @@ mod tests {
             "128 demands must use full-key probes, not scan 8192 stored frames: {} VM instructions", work.load(Ordering::Relaxed));
     }
 
-    /// A frame encoded straight into the write's segments as its rows come (Q93), a window at a time: its bytes are
+    /// A frame encoded straight into the write's segments as its rows come (Q89), a window at a time: its bytes are
     /// `encode`'s, and it reads back as a frame queued whole does, queued and stored, beside one queued as before.
     #[test]
     fn a_frame_placed_as_it_is_encoded_reads_back_as_one_queued_whole() {

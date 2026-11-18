@@ -1,6 +1,15 @@
-//! `file_local::requests_file_local` on the version (decision 0281's path, step 7b; work queue Q52): each request of
-//! decision 0174 (`rr_<a>_req(n)`) that the split finds cross-file narrowed to literals over the asked node's own
-//! document, one for one with the tree's `Narrower`. See there for what a narrowed request keeps and why.
+//! Each request of decision 0174 (`rr_<a>_req(n)`) that the split finds cross-file narrowed to literals over the
+//! asked node's own document (decision 0281's path, step 7b; work queue Q149). A node's attribute is its own
+//! document's, so a request over that document alone is answered in its chunk, while the batch holding its text is
+//! there, and kept per file; asked in the cross-file part, it found no batch (O-cross-file-answers; the hub's
+//! work-queue question 2, option a).
+//!
+//! A request keeps the positive atoms of base and file-local relations joined to `n` through their location columns
+//! (and `d = @doc(n)`-like equalities), and the comparisons over what those bind. When none of them places `n`, a
+//! cross-file atom that holds `n` is unfolded: each of its relation's rules, narrowed the same way to the column `n`
+//! is in, is a request rule of its own (`passes(f) :- uses(_, f), …` with `uses(n, f) :- imp(n, q), def(f, q)` asks
+//! `def(f, _)`). Past `UNFOLD` levels, or where a rule gives `n` no variable, the request asks for every node
+//! (`node`). Dropping literals widens a request, which is sound.
 //!
 //! A narrowed body is made of pieces: literals of the request's own rule, and of the rules of each cross-file
 //! relation it unfolds, each of those renamed apart (`rq<k>_<x>`, its column's variable the reader's). A piece is
@@ -9,7 +18,7 @@
 
 use super::super::{ALTERNATIVES, FileLocal, UNFOLD, close_under};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, T};
-use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{AtomId, CmpOp, Lit as L, LitRef, RuleId, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -17,7 +26,7 @@ use std::sync::Arc;
 /// `requests_file_local` of the version, for the requests `requests` names (those the program declares).
 pub struct RequestsFileLocal {
     pub requests: Vec<&'static str>,
-    /// Each narrowed request and how (the tree's return value, for the profile's decisions).
+    /// Each narrowed request and how, for the profile's decisions.
     pub narrowed: Vec<(String, String)>,
 }
 
@@ -232,6 +241,53 @@ impl ProgramPass for RequestsFileLocal {
     fn settings(&self) -> Vec<u8> {
         self.requests.join("\n").into_bytes()
     }
+    /// Over an edit (decision 0393): the edit as it is, onto the last output, where no rule of it is a request and
+    /// none defines what a request reads, down (so the file-local split places what a request is narrowed by as it
+    /// did). Otherwise it runs whole.
+    fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool, String> {
+        use crate::code_rule_dsl::logic::program_image::manager::{Reads, edit_as_is};
+        if last.delta.touched != Reads::RULES {
+            return Ok(false);
+        }
+        let v = cx.v();
+        let request = |of: &Version, r: RuleRef<'_>| self.requests.contains(&of.rel_name(r.head().rel()));
+        for id in last.delta.removed.iter() {
+            if last.input.rule(id).is_none_or(|r| request(&**last.input, r)) {
+                return Ok(false);
+            }
+        }
+        for &id in &last.delta.added {
+            if v.rule(id).is_none_or(|r| request(&**v, r)) {
+                return Ok(false);
+            }
+        }
+        // Nor does one define what a request's body unfolds (`Narrower::unfold`): what the requests read, down. The
+        // split places a relation from its rules and what they read, down (its maintain splits a changed head's
+        // readers, up), so where the edit defines none of these, the split places the requests and what they read as
+        // it did, and is not asked for (decision 0385).
+        let mut down: BTreeSet<String> = BTreeSet::new();
+        let mut todo: Vec<String> = Vec::new();
+        for req in &self.requests {
+            let Some(id) = v.rel(req) else { continue };
+            for r in v.heads(id) {
+                todo.extend(r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()));
+            }
+        }
+        while let Some(rel) = todo.pop() {
+            if !down.insert(rel.clone()) {
+                continue;
+            }
+            let Some(id) = v.rel(&rel) else { continue };
+            for r in v.heads(id) {
+                todo.extend(r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).filter(|x| !down.contains(x)));
+            }
+        }
+        let head_of = |of: &Version, r: RuleRef<'_>| of.rel_name(r.head().rel()).to_owned();
+        if last.delta.removed.iter().filter_map(|id| last.input.rule(id)).map(|r| head_of(&**last.input, r)).chain(last.delta.added.iter().filter_map(|&id| v.rule(id)).map(|r| head_of(&**v, r))).any(|h| down.contains(&h)) {
+            return Ok(false);
+        }
+        edit_as_is(cx, last, w)
+    }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
         let is_request = |r: &RuleRef<'_>| self.requests.contains(&v.rel_name(r.head().rel()));
@@ -239,8 +295,7 @@ impl ProgramPass for RequestsFileLocal {
             return Ok(());
         }
         let split = cx.get::<FileLocal>()?;
-        let header = v.header(&Default::default())?;
-        let node_arity = header.decls.get("node").map(|cols| cols.len());
+        let node_arity = v.columns_of("node").map(|cols| cols.len());
         let narrower = Narrower { v, same: &split.same_doc, local: &split.local, fresh: std::cell::Cell::new(0) };
         let own = |r: RuleRef<'_>| -> Vec<Piece> { r.body().map(|l| Piece { src: r.id(), node: l.node(), names: None }).collect() };
         let shown = |pieces: &[Piece]| pieces.iter().map(|p| p.show(v)).collect::<Vec<_>>().join(", ");
@@ -284,11 +339,18 @@ impl ProgramPass for RequestsFileLocal {
             changed |= !matches!(made, Made::Keep);
             plan.push((at, rule, made));
         }
+        // Said from the pass, so a run over an edit says it again with its step (decision 0385).
+        for (req, how) in &self.narrowed {
+            crate::code_rule_dsl::logic::profile::decision("on request: narrowed to the node's document", || format!("{req}: {how}"));
+        }
         if !changed {
             return Ok(());
         }
         let input = Arc::clone(w.input());
         let b = w.derive()?;
+        if every_node {
+            b.add_input("node");
+        }
         // Two rules narrowed to one body are one rule (a request's, the tree's `seen`), serving both rules' readers:
         // each rule written with its head and the input rules it came from, so the request record follows
         // (`front::carried_record`, as the tree's `set_rules_from`).
@@ -350,16 +412,12 @@ impl ProgramPass for RequestsFileLocal {
                 }
             }
         }
-        let mut with = header.clone();
-        if every_node && !header.inputs.iter().any(|i| i == "node") {
-            with.inputs.push("node".to_owned());
-        }
-        if !header.asked_by.is_empty() {
+        let asked = v.asked();
+        if !asked.is_empty() {
             let heads: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
-            let old = crate::code_rule_dsl::logic::front::readers_of_heads(&header.asked_by, &heads);
-            with.asked_by = crate::code_rule_dsl::logic::front::carried_record(&header.asked_by, &old, written.iter().map(|(h, from)| (h.as_str(), from.as_slice())));
+            let old = crate::code_rule_dsl::logic::front::readers_of_heads(&asked, &heads);
+            b.set_asked(&crate::code_rule_dsl::logic::front::carried_record(&asked, &old, written.iter().map(|(h, from)| (h.as_str(), from.as_slice()))));
         }
-        b.set_header(&header, &with);
         Ok(())
     }
 }

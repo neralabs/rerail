@@ -12,6 +12,12 @@ pub enum Error {
     Phase(usize),
     InvalidGreedyRegion(usize),
     WorkLimit,
+    /// A task stopped at its budget, below the ceiling (`WorkBudget::Replan`): unfinished, not failed. Its
+    /// evaluation is replanned and restarted (decision 0334).
+    OverBudget,
+    /// A task ran out of a state quota sized from its predicted steps, below the worst case's: unfinished, not
+    /// failed. Its evaluation restarts with twice the states (decision 0334 §9).
+    StatesOutgrown,
     UnsupportedPattern,
     UnsupportedFeature(&'static str),
     UnknownNodeKind(String),
@@ -37,7 +43,9 @@ pub enum Error {
 /// The executor's GPU lane reports its failures as messages; to the engine they are a backend failure, as the other
 /// device paths' (`metal_join`, `metal_rows`).
 impl From<String> for Error {
-    fn from(_: String) -> Error {
+    fn from(message: String) -> Error {
+        // Said where it happens: the error's kind is all its callers keep, and a device failure is never silent.
+        eprintln!("rerail: a device path failed: {message}");
         Error::BackendFailure
     }
 }

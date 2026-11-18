@@ -50,7 +50,7 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "substr" => (vec![Some(Name), Some(Int), Some(Int)], Some(Name)),
         // W's semantics, ahead of `strings::functions`' (`plan::sql_term`'s arms for them).
         "replace_all" | "rx_replace" => (vec![Some(Name); 3], Some(Name)),
-        "json_str" | "nfkc" | "py_repr" => (vec![Some(Name)], Some(Name)),
+        "json_str" | "nfkc" | "py_repr" | "shell_unquote" => (vec![Some(Name)], Some(Name)),
         "ed25519_ok" => (vec![Some(Name); 3], Some(Int)),
         "rx_group" => (vec![Some(Name); 3], Some(Name)),
         // `@place(path, line)` (`rr::lower`'s `PLACE`): a place where a node goes, taken apart again by
@@ -88,10 +88,12 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
     let domains = domains(prog)?;
     let cols = columns_of(&domains);
     let mut out = prog.clone();
-    out.rules.clear();
-    for rule in &prog.rules {
+    // Each rule with its source, so the request record (decision 0331) follows a split rule: each part serves its
+    // source's readers.
+    let mut rules = Vec::with_capacity(prog.rules.len());
+    for (k, rule) in prog.rules.iter().enumerate() {
         if !rule.body.iter().any(|l| membership(l).is_some()) {
-            out.rules.push(rule.clone());
+            rules.push((rule.clone(), vec![k]));
             continue;
         }
         let vars = rule_vars(rule, &mut |a: &Atom| cols.get(a.rel.as_str()).map(Vec::as_slice))?;
@@ -109,8 +111,9 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
                 _ => bodies.iter_mut().for_each(|b| b.push(l.clone())),
             }
         }
-        out.rules.extend(bodies.into_iter().map(|body| super::super::front::Rule { head: rule.head.clone(), body: body.into() }));
+        rules.extend(bodies.into_iter().map(|body| (super::super::front::Rule { head: rule.head.clone(), body: body.into() }, vec![k])));
     }
+    out.set_rules_from(rules);
     Ok(Some(out))
 }
 
@@ -821,7 +824,7 @@ fn transduce_nearest(prog: &mut Program, domains: &mut Domains) -> Vec<(String, 
 }
 
 mod on_version;
-pub use on_version::lower_version;
+pub use on_version::{lower_version, lowered};
 
 #[cfg(test)]
 pub mod tests;

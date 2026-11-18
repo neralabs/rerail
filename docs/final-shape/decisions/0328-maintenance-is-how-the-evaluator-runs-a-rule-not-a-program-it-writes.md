@@ -89,7 +89,7 @@ cross-file module relations, costs DRed 43% more. So the choice is per stratum a
 ### Typing-support's workloads (2026-11-17)
 
 These ran once this branch had Typing-support's branch merged, with three fixes:
-- Q21, theirs, which lets `calls.rr` read a node's text from the command line;
+- Q109, theirs, which lets `calls.rr` read a node's text from the command line;
 - the native join's lattice `top` and `@flat_bin`, which let `workload.rr` run under the strict mode;
 - the planner's heavy-key and walk samples (0209, 0233, 0245), which read a kept relation's own row ids through a
   source that numbers its live rows. From step 05 on, every maintained run of `calls.rr` panicked there.

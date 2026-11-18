@@ -14,6 +14,7 @@ pub fn hash(bytes: &[u8]) -> u64 {
     foldhash::quality::FixedState::with_seed(0x0173_5172).hash_one(bytes)
 }
 
+#[derive(Clone)]
 pub struct Table {
     pub buckets: Vec<[u64; 8]>,
     pub over: Vec<[u64; 8]>,
@@ -129,7 +130,7 @@ impl Table {
 }
 
 /// Texts, each once, with their ids: an image's string table as it is built.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Strings {
     bytes: Vec<u8>,
     ends: Vec<u32>,

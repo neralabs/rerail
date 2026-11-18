@@ -16,8 +16,10 @@ pub(crate) mod lowering_tail;
 mod demand;
 mod magic;
 mod prune;
-mod simplify;
+mod rank;
+pub mod simplify;
 mod nearest;
+pub mod parts;
 pub mod text;
 pub use merge::{DropRepeated, MergeIdentical};
 pub use nearest::Nearest;
@@ -116,9 +118,6 @@ pub struct Front {
     pub vocabulary: crate::code_rule_dsl::logic::strings::Vocabulary,
 }
 
-/// The stages of `front`, in order, at which a debug build checks the version against the tree's passes.
-pub const STAGES: [&str; 9] = ["inputs", "prune", "simplify", "prune again", "reach", "negated demand", "demand", "undo", "text"];
-
 /// `version` pruned to the rules its outputs read (`front::prune`): what the bridged programs' check reads
 /// (`bridge::wanted`), before the run prepares the program.
 pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
@@ -130,35 +129,32 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 /// The passes before lowering, on the version (decision 0281's path, steps 6c–6e): the functors only CPython gives
 /// and the base relations as inputs, a prune, `simplify` and a prune again, the reach form, the demand for negated
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after
-/// it, the reaches in cycles made rows again, then the text passes. Their decisions reach the run's profile, as the
-/// tree's passes made them. `check` is called after each of `STAGES` with the version so far.
-pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>, check: &mut dyn FnMut(&'static str, &Arc<Version>)) -> Result<(Arc<Version>, Front, Run), String> {
+/// it, the reaches in cycles made rows again, the counts below a bound made by rank, then the text passes. Their decisions reach the run's profile.
+pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>) -> Result<(Arc<Version>, Front, Run), String> {
+    front_of(version, dialect, last, true)
+}
+
+/// `front`, with the node products bounded by their readers (`product_demand`) where `whole`: a whole program's; a
+/// part's are bounded once the parts are linked (`parts::front`), where the products' readers are.
+pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>, whole: bool) -> Result<(Arc<Version>, Front, Run), String> {
     let mut p = kept(FRONT, version, last)?;
-    let mut at = |p: &mut Pipeline<'_>, stage: &'static str| -> Result<(), String> {
-        let v = p.current()?.clone();
-        check(stage, &v);
-        Ok(())
-    };
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
     // reads and does not derive are inputs, as an authored file's are.
     p.program(&mut simplify::CpythonFunctors);
     p.program(&mut simplify::BaseInputs);
-    at(&mut p, "inputs")?;
     // Only the rules an output reads, directly or through other rules (T's front prunes the same way).
     p.program(&mut prune::Prune::default());
-    at(&mut p, "prune")?;
     // Bodies simplified (decision 0038), then pruned again.
     let simplified = simplify::passes(&mut p)?;
     simplify::decide(&simplified);
-    at(&mut p, "simplify")?;
     p.program(&mut prune::Prune::default());
-    at(&mut p, "prune again")?;
+    if whole {
+        p.program(&mut super::product_demand::BoundProducts::Whole);
+    }
     let mut reach = demand::ReachForm::default();
     p.program(&mut reach);
-    at(&mut p, "reach")?;
     let mut negated = demand::NegatedDemand::default();
     p.program(&mut negated);
-    at(&mut p, "negated demand")?;
     let mut own = magic::ProgramDemand::default();
     if std::env::var("RERAIL_DEMAND").map_or(true, |x| x != "off") {
         p.program(&mut own);
@@ -172,12 +168,17 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
             }
         }
     }
-    at(&mut p, "demand")?;
     let mut undo = demand::UndoInCycles::default();
     p.program(&mut undo);
-    at(&mut p, "undo")?;
+    // Counts below a bound made without the pairs (decision 0361 step 7), once demand has placed its readers: a
+    // relation the form replaced is unread, and pruned.
+    let mut ranks = rank::RankForm::default();
+    p.program(&mut ranks);
+    if ranks.found > 0 {
+        p.program(&mut prune::Prune::default());
+        crate::code_rule_dsl::logic::profile::decision("counts below a bound (decision 0361 step 7)", || format!("{} counts made by rank over their asked and counted rows, not their pairs", ranks.found));
+    }
     let text::Found { matchers, vocabulary } = text::passes(&mut p, dialect)?;
-    at(&mut p, "text")?;
     for d in p.decisions() {
         crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
     }
@@ -209,27 +210,7 @@ pub fn run(version: Arc<Version>, factorize: bool, last: Option<Run>, bound: imp
     for line in &demand.lines {
         crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
     }
-    // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
-    // A relation a round leaves (its rows name no document) is moved to the cross-file part, its file-local readers
-    // following, and the program is located again until every row handed on is located (decision 0290, as
-    // `file_local::locate` does on the tree).
-    let mut moved: Vec<String> = Vec::new();
-    let mut located: Vec<String> = Vec::new();
-    let located = loop {
-        let mut locate = crate::code_rule_dsl::typing::file_local::Locate::default();
-        p.program(&mut locate);
-        located.extend(locate.located);
-        if locate.blocked.is_empty() {
-            break Ok(located);
-        }
-        let fresh: Vec<String> = locate.blocked.into_iter().filter(|r| !moved.contains(r)).collect();
-        if fresh.is_empty() {
-            moved.sort();
-            break Err(moved);
-        }
-        moved.extend(fresh.iter().cloned());
-        p.program(&mut crate::code_rule_dsl::typing::file_local::MoveCrossFile(fresh));
-    };
+    let located = crate::code_rule_dsl::typing::file_local::locate_all(&mut p);
     let mut merge = MergeIdentical::default();
     let mut repeats = DropRepeated::default();
     if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
@@ -277,7 +258,8 @@ pub fn runs_digest(front: &Run) -> [u8; 32] {
 /// A pipeline named `name` over `version`, kept to be stored: run `again` from `last` when `version` is an edit of
 /// its input (`rebase`), else from scratch.
 fn kept(name: &'static str, version: Arc<Version>, last: Option<Run>) -> Result<Pipeline<'static>, String> {
-    if let Some(last) = last
+    // Its versions a few edits deep made flat (decision 0385), so a ninth edit in a row runs again too.
+    if let Some(last) = last.map(crate::code_rule_dsl::logic::program_image::manager::Run::shallow)
         && let Some(v) = crate::code_rule_dsl::logic::program_image::manager::rebase(last.input(), &version)?
     {
         crate::code_rule_dsl::logic::profile::decision("the last run (decision 0333)", || format!("{name}: run again over an edit of the last run's input ({} rules)", crate::code_rule_dsl::logic::program_image::manager::Delta::of(last.input(), &v).size()));
@@ -309,5 +291,33 @@ mod tests {
         let (rev, _) = pl.finish().unwrap();
         let heads: Vec<&str> = rev.rules().map(|r| rev.rel_name(r.head().rel())).collect();
         assert_eq!(heads, ["q", "p"]);
+    }
+
+    /// The request record (decision 0331) follows the steps' rules, the derivations' too (by each rule's source), and
+    /// holds one entry a rule after the pipeline; readers merged are named by their class.
+    #[test]
+    fn the_request_record_follows_the_preparation_steps() {
+        let mut p = crate::code_rule_dsl::logic::rr::parse(
+            ".decl k(x: number)\n.input k\n.decl q(x: number)\n.decl a(x: number)\n.decl b(x: number)\n\
+             q(x) :- k(x), x < 3.\nq(x) :- k(x), x > 5.\na(x) :- q(x).\nb(x) :- q(x), x != 1.\n.output a, b\n",
+        )
+        .unwrap();
+        let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<std::collections::BTreeSet<String>>();
+        p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["b"])]);
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let (out, _, _) = run(v, true, None, |_| Ok(())).unwrap();
+        assert_eq!(out.asked_against_rules(), [("q".to_owned(), 2, 2)]);
+        assert_eq!(out.asked()["q"], [by(&["a"]), by(&["b"])]);
+        // Two equal readers merged: the record names the class (`simplify::merge_identical`'s rename, the tree's).
+        let mut p = crate::code_rule_dsl::logic::rr::parse(
+            ".decl k(x: number)\n.input k\n.decl q(x: number)\n.decl a(x: number)\n.decl a2(x: number)\n.decl o(x: number)\n\
+             q(x) :- k(x), x < 3.\nq(x) :- k(x), x > 5.\na(x) :- q(x).\na2(x) :- q(x).\no(x) :- a(x), a2(x).\n.output o\n",
+        )
+        .unwrap();
+        p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["a2"])]);
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let (out, _, _) = run(v, true, None, |_| Ok(())).unwrap();
+        assert!(out.rel("a2").is_none_or(|r| out.heads(r).next().is_none()), "a2 merged into a");
+        assert_eq!(out.asked()["q"], [by(&["a"]), by(&["a"])]);
     }
 }

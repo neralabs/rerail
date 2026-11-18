@@ -1284,7 +1284,12 @@ mod language {
         pub mod java;
         // Go's, C's and C++'s families: syntax only so far, their tapes from the lean parsers.
         pub mod c;
+        pub mod c_pp;
         pub mod go;
+        // Kotlin's, Swift's and Scala's families: syntax only so far, their tapes from the lean parsers.
+        pub mod kotlin;
+        pub mod scala;
+        pub mod swift;
         // HTML's, CSS's and Markdown's families: syntax only so far, read by tree-sitter.
         pub mod css;
         pub mod html;
@@ -3963,8 +3968,6 @@ mod typing {
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::facts::nearest::{Binding, NONE, Trees};
         #[allow(unused_imports)]
-        pub(crate) use crate::code_rule_dsl::typing::file_local::split_memo::forget as forget_splits;
-        #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::logic::front::document_column;
         #[allow(unused_imports)]
         use std::collections::BTreeMap;
@@ -4625,7 +4628,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, c::C, css::Css, csharp::Csharp, go::Go, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, c::C, css::Css, csharp::Csharp, go::Go, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue, kotlin::Kotlin, scala::Scala, swift::Swift};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4654,6 +4657,14 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Go, &Pack::<Go>::NEW);
     register(Family::C, &Pack::<C>::NEW);
     language::register_base(Family::C, &Pack::<C>::NEW);
+    register(Family::Kotlin, &Pack::<Kotlin>::NEW);
+    language::register_base(Family::Kotlin, &Pack::<Kotlin>::NEW);
+    register(Family::Swift, &Pack::<Swift>::NEW);
+    language::register_base(Family::Swift, &Pack::<Swift>::NEW);
+    register(Family::Scala, &Pack::<Scala>::NEW);
+    language::register_base(Family::Scala, &Pack::<Scala>::NEW);
+    // Answers inside the fixpoint (`answers`): C's directives by file (0327 mode (a)).
+    language::install_answerers(vec![&language::adapter::c_pp::Directives, &language::adapter::c_pp::Units, &language::adapter::c_pp::CompileCommands]);
     register(Family::Html, &Pack::<Html>::NEW);
     language::register_base(Family::Html, &Pack::<Html>::NEW);
     register(Family::Css, &Pack::<Css>::NEW);
@@ -4745,6 +4756,8 @@ pub(crate) fn install_languages() {
     compile::resolve::install_flow_resolves(compile::resolve::php::compile_php_resolves);
     // The containment relations' `nearest` solve (the file-local FIX's).
     facts::nearest::install_nearest(typing::file_local::nearest);
+    // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
+    facts::rows::install_block_device(logic::plan::placement::block_device);
     // `core.rr`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
     // What the evaluator keeps per connection, dropped with it.
@@ -4847,6 +4860,17 @@ pub(crate) fn install_languages() {
             // The lean C# parser (`tape::csharp_lean`, decision 0196); a file it refuses goes to
             // tree-sitter-c-sharp.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::CSharp, name: "lean C# parser", rank: 0, runs: true, parser: &tape::csharp_lean::Lean });
+        }
+        // The lean Kotlin, Swift and Scala parsers (`tape::kotlin_lean`, `swift_lean`, `scala_lean`,
+        // decisions 0305 and 0326); a file one refuses goes to its tree-sitter grammar.
+        if cfg!(feature = "lang-kotlin") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Kotlin, name: "lean Kotlin parser", rank: 0, runs: true, parser: &tape::kotlin_lean::Lean });
+        }
+        if cfg!(feature = "lang-swift") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Swift, name: "lean Swift parser", rank: 0, runs: true, parser: &tape::swift_lean::Lean });
+        }
+        if cfg!(feature = "lang-scala") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Scala, name: "lean Scala parser", rank: 0, runs: true, parser: &tape::scala_lean::Lean });
         }
         if cfg!(feature = "lang-php") {
             // The lean PHP parser (`tape::php_lean`, decision 0198); a file it refuses goes to

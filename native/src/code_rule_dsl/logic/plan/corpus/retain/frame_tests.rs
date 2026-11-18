@@ -112,7 +112,7 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let computed=Retained{key:KEY,rels:HashMap::from([("result".into(),Kept{
         rel:InRel::flat(&[vec![1]],vec![b'i']),width:1,output:None,
     })]),..Default::default()};
-    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&pl(&prog),&Default::default(),&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None).unwrap(),1);
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&pl(&prog),&Default::default(),&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None,&HashMap::new(),None).unwrap(),1);
     let restored=Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     assert_eq!(cut(Some(&restored),KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap().strata,(0,1));
     let changed=rr::parse(&text.replace("literal(1).","literal(2).")).unwrap();
@@ -121,7 +121,7 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let external=rr::parse(&format!("{text}\n.input literal\n")).unwrap();
     let empty=Retained::from_frames(&store,[52;32],KEY,KEY,&pl(&external),&st(&external),&HashMap::new()).unwrap();
     let initial=cut(Some(&empty),KEY,&pl(&external),&st(&external),&HashMap::new()).unwrap();
-    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&pl(&external),&Default::default(),&Locations::new(),&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None).unwrap(),0,
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&pl(&external),&Default::default(),&Locations::new(),&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None,&HashMap::new(),None).unwrap(),0,
         "a relation with literal rows AND external inputs still needs a runtime dependency digest");
 }
 
@@ -221,7 +221,7 @@ fn the_kept_inputs_are_known_before_the_waves_with_why_not() {
     kept_inputs_stored(&store, SPACE, KEY, &pl(&prog), &["input0".to_owned()]).unwrap().expect("the frames of its documents are stored");
 }
 
-/// Q99 (2026-11-16): the check runs before the run's own cross space is read (`preload_frames_live`), in a process
+/// Q151 (2026-11-16): the check runs before the run's own cross space is read (`preload_frames_live`), in a process
 /// whose snapshot an earlier run installed (phase 0's, the sources phase's), which leaves every root's cross space
 /// out. Through the snapshot no input had a frame, and every edit of a phased run decoded its memo hits whole.
 #[test]
@@ -250,12 +250,12 @@ fn a_kept_input_is_decoded_where_it_is_first_read() {
     store.keep_frames(&SPACE, &[bad], &[], None).unwrap();
     store.written().unwrap();
     let rels = ["input0".to_owned(), "input1".to_owned()];
-    let kept = kept_inputs(&store, SPACE, KEY, &pl(&prog), &Locations::new(), &rels).unwrap().expect("the inputs' tables and counts are as kept");
+    let kept = kept_inputs(&store, SPACE, KEY, &pl(&prog), &Locations::new(), &rels, &BTreeSet::new()).unwrap().expect("the inputs' tables and counts are as kept");
     let (good, read_bad) = (&kept["input0"].source, &kept["input1"].source);
     assert_eq!((good.len(), read_bad.len()), (3, 3), "each input's rows counted from its documents' table");
-    // Q100: a row read before the input is read whole decodes its granule alone, so input1's good granules read as
+    // Q70: a row read before the input is read whole decodes its granule alone, so input1's good granules read as
     // kept while its bad one is not decoded yet.
-    let one = kept["input1"].ranges[&3];
+    let one = kept["input1"].ranges().unwrap()[&3];
     assert_eq!(read_bad.value(one.0 as usize, 0), (3 << 32) | 1, "input1's row of document 3, from its granule alone");
     assert_eq!(good.failure(), None);
     let mut rows: Vec<i64> = (0..3).map(|r| good.value(r, 0)).collect();
@@ -280,7 +280,7 @@ fn a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go() {
     let mut next = after(None, KEY, now.clone(), &cut, derived, &BTreeMap::new(), &[], HashMap::new(), HashMap::new(), Default::default(), 0, false);
     assert_eq!(next.bytes(), 0, "nothing past the budget is held for the next run");
     assert_eq!(next.parts().1.len(), 2, "both are this run's to write");
-    let written = next.write_frames(&store, &was, &pl(&prog),&Default::default(), &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new(),HashMap::new(),None).unwrap();
+    let written = next.write_frames(&store, &was, &pl(&prog),&Default::default(), &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new(),HashMap::new(),None,&HashMap::new(),None).unwrap();
     assert_eq!(written, 8, "the rows past the budget are written to the frames");
     next.let_go_past();
     assert!(next.parts().1.is_empty(), "and then let go");

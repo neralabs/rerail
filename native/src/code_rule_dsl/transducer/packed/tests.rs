@@ -190,6 +190,31 @@
         assert_eq!(execution.into_outcome().unwrap().outputs, expected);
     }
 
+    /// Decision 0353 step 4b: the JIT reads a 16z tape where it is held, a block decoded into its evaluation's
+    /// reader where a read falls: over a document of several blocks, its outputs are format 15's.
+    #[test]
+    fn the_jit_reads_a_16z_tape_as_format_15() {
+        use crate::code_rule_dsl::tape::formats::{Format, as_run};
+        let source: String = (0..400).map(|i| format!("v{i} = call(argument, b=[{i}])\nif v{i}:\n  pass\n")).collect();
+        let native = StrDoc::new(&source, SupportLang::Python);
+        let held = |format: Format| {
+            as_run(format, || {
+                let grammar = Grammar::new(SupportLang::Python).unwrap();
+                let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap().primary.in_format(format, source.as_bytes());
+                TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
+            })
+        };
+        let (plain, z) = (held(Format::F15), held(Format::F16Z));
+        assert_eq!(z.doc_tape().image().format(), Format::F16Z);
+        assert!(z.transducer_len() > 3 * rerail_tape_format::f16::Z, "{} nodes", z.transducer_len());
+        let programs = ["call", "argument", "v7"].map(identifier_program).to_vec();
+        let anchors = vec![programs.iter().map(|_| (0..plain.transducer_len() as u32).collect::<Vec<_>>()).collect::<Vec<_>>()];
+        let expected = execute_batch(&programs, std::slice::from_ref(&plain), Some(&anchors)).unwrap();
+        let outputs: usize = expected.iter().flatten().map(Vec::len).sum();
+        assert!(outputs >= 800, "{outputs} outputs");
+        assert_eq!(execute_with_backend(ExecutionBackend::CpuJit, &programs, std::slice::from_ref(&z), &anchors).unwrap(), expected);
+    }
+
     fn assert_jit_parity(programs: &[Program], tapes: &[TapeDoc]) {
         let anchors = tapes
             .iter()
@@ -567,7 +592,6 @@
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "Q64: the packed Metal JIT refuses this batch (BackendCapacity); it ran on the grid until 0324")]
     fn scm_quantified_runs_preserve_each_distinct_middle_capture() {
         let middle = "(module (comment)+ (comment) @middle (comment)+)";
         let captured_run = "(module ((comment) @item)+)";
@@ -735,7 +759,6 @@
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "Q64: the packed Metal JIT refuses this batch (BackendCapacity); it ran on the grid until 0324")]
     fn cpu_jit_compiles_general_scm_control_flow() {
         let language = SupportLang::Python.get_ts_language();
         let source = "# 0\n# 1\n# 2\n# 3\nvalue = call(arg)\n";
@@ -762,7 +785,6 @@
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "Q64: the packed Metal JIT refuses this batch (BackendCapacity); it ran on the grid until 0324")]
     fn all_backends_execute_every_verified_instruction_and_mode() {
         let grammar = SupportLang::Python.get_ts_language();
         let identifier = grammar.id_for_node_kind("identifier", true);
@@ -1046,7 +1068,6 @@
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "Q64: the packed Metal JIT refuses this batch (BackendCapacity); it ran on the grid until 0324")]
     fn scm_host_predicates_filter_text_kinds_lines_and_relations() {
         let language = SupportLang::Python.get_ts_language();
         let source = "insert(foo)\nvalue = 1\na = (\n  b\n)\n";
@@ -2043,7 +2064,7 @@
             assert_eq!(matches, expected_matches);
             registry.remove_batch(batch);
         }
-        let anchor_scan = metal_backend::prepare_anchor_scan(&programs, &files).unwrap();
+        let mut anchor_scan = metal_backend::prepare_anchor_scan(&programs, &files).unwrap();
         // This thread's compilations: the cache is the process's, and other tests fill it at the same time.
         let anchor_pipeline_count = metal_backend::pipelines_compiled_here();
         let gpu_anchors = anchor_scan.run().unwrap();
@@ -2063,7 +2084,7 @@
             semantic(materialize_literal_anchors(&programs, &files, &gpu_anchors).unwrap()),
             semantic(expected)
         );
-        let filtered_scan = metal_backend::prepare_anchor_scan_with_eligibility(
+        let mut filtered_scan = metal_backend::prepare_anchor_scan_with_eligibility(
             &programs,
             &files,
             Some(&[vec![0b01], vec![0b10]]),
@@ -3084,7 +3105,7 @@
             let masks = eligibility_masks(eligibility, programs.len());
             let sql_and_masks = started.elapsed();
             let started = Instant::now();
-            let scan = metal_backend::prepare_anchor_scan_with_eligibility(
+            let mut scan = metal_backend::prepare_anchor_scan_with_eligibility(
                 &programs,
                 &tapes,
                 Some(&masks),
@@ -3192,7 +3213,7 @@
             .collect::<Vec<_>>();
         let cpu_compile = started.elapsed();
         let started = Instant::now();
-        let gpu_anchor_scan = metal_backend::prepare_anchor_scan(&programs, &tapes).unwrap();
+        let mut gpu_anchor_scan = metal_backend::prepare_anchor_scan(&programs, &tapes).unwrap();
         let gpu_anchor_prepare = started.elapsed();
         let gpu_anchors = gpu_anchor_scan.run().unwrap();
         assert_eq!(

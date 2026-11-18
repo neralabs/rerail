@@ -44,6 +44,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("git_tracked", &[Text], Number),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
+    // A shell word's value, its quoting undone (`shell_unquote`): a `compile_commands.json` entry's `command`, its
+    // words found by `match_all`.
+    ("shell_unquote", &[Text], Text),
     // JavaScript's `Number.prototype.toPrecision` of a decimal numeral's value (`value::ecma::to_precision`):
     // "Infinity" past the doubles, none for a non-number or digits outside 1-100 (JavaScript's RangeError).
     ("to_precision", &[Text, Number], Text),
@@ -124,6 +127,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_node_text_any", &[Number], Text),
     // A node's value as W reads it (`facts::vtab::syntax::LongTexts::value_any`): `value`'s answer (decision 0174).
     ("rr_node_value", &[Number], Text),
+    // A node's string literal's content (`facts::vtab::syntax::LongTexts::str_any`): `str`'s answer (decisions 0174,
+    // 0353 step 3).
+    ("rr_node_str", &[Number], Text),
     // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -332,7 +338,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_to_string" => Some(numbers[0].to_string()),
         "zero_pad" => Some(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
         // Read through the run's binding of its batch (`node_read`), never by value alone.
-        "rr_node_text" | "rr_node_text_any" | "rr_node_value" => None,
+        "rr_node_text" | "rr_node_text_any" | "rr_node_value" | "rr_node_str" => None,
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
         "semver_subset" => {
@@ -382,9 +388,81 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
             use unicode_normalization::UnicodeNormalization;
             Some(t(0).nfkc().collect())
         }
+        "shell_unquote" => Some(shell_unquote(t(0))),
         _ => None,
     };
     out.map_or(Value::Null, Value::Text)
+}
+
+/// A command line's words as a POSIX shell splits it (blanks outside quotes separate words), each unquoted
+/// (`shell_unquote`): `cc -DX="a b" -c f.c` is `cc`, `-DX=a b`, `-c`, `f.c`.
+pub fn shell_words(cmd: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let (mut quote, mut escaped, mut any) = (None, false, false);
+    for c in cmd.chars() {
+        if escaped {
+            word.push(c);
+            escaped = false;
+            continue;
+        }
+        match (quote, c) {
+            (None, ' ' | '\t' | '\n') => {
+                if any {
+                    words.push(shell_unquote(&std::mem::take(&mut word)));
+                    any = false;
+                }
+                continue;
+            }
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (None, '\'' | '"') => quote = Some(c),
+            (None | Some('"'), '\\') => escaped = true,
+            _ => {}
+        }
+        word.push(c);
+        any = true;
+    }
+    if any {
+        words.push(shell_unquote(&word));
+    }
+    words
+}
+
+/// A POSIX shell word's value: `'…'` as it stands, `"…"` with `\` escaping only `$`, `` ` ``, `"`, `\` and a newline, and
+/// a `\` outside quotes escaping the next character. `-DNAME="a b"` is `-DNAME=a b`. Expansions (`$x`) are left as
+/// they are written: a compile command's are none of a build's.
+pub fn shell_unquote(w: &str) -> String {
+    let mut out = String::with_capacity(w.len());
+    let mut chars = w.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => out.extend(chars.by_ref().take_while(|&c| c != '\'')),
+            '"' => {
+                while let Some(c) = chars.next() {
+                    match c {
+                        '"' => break,
+                        '\\' => match chars.next() {
+                            Some(e @ ('$' | '`' | '"' | '\\')) => out.push(e),
+                            Some('\n') => {}
+                            Some(e) => {
+                                out.push('\\');
+                                out.push(e);
+                            }
+                            None => out.push('\\'),
+                        },
+                        c => out.push(c),
+                    }
+                }
+            }
+            '\\' => match chars.next() {
+                Some('\n') => {}
+                Some(e) => out.push(e),
+                None => out.push('\\'),
+            },
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// SQLite's `substr(x, y, z)` over characters (`z` none for `substr(x, y)`): `y` from 1, or from the end where
@@ -689,6 +767,24 @@ pub fn json_str(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `@shell_unquote` undoes a POSIX shell word's quoting, as a compile command's words are read (decision 0327).
+    #[test]
+    fn a_shell_word_is_unquoted_as_a_shell_reads_it() {
+        for (w, v) in [
+            ("-DNAME=\"a b\"", "-DNAME=a b"),
+            ("'-DX=\"q\"'", "-DX=\"q\""),
+            ("-I\\ dir", "-I dir"),
+            ("\"a\\\"b\\$c\\x\"", "a\"b$c\\x"),
+            ("a'b'\"c\"d", "abcd"),
+            ("plain", "plain"),
+        ] {
+            assert_eq!(shell_unquote(w), v, "{w}");
+        }
+        assert!(native_call("shell_unquote").is_some(), "the native engine computes it");
+        assert_eq!(shell_words("  cc -DX=\"a b\" 'c d'\\ e -I\\ x  -c f.c "), ["cc", "-DX=a b", "c d e", "-I x", "-c", "f.c"]);
+        assert_eq!(shell_words("a \"\" b"), ["a", "", "b"]);
+    }
 
     /// Smoking gun 6 (t34, 2026-11-13): a maintained stratum has no SQL fallback, and `@place` in a head (`spot(d,
     /// @place(p, 7))`) had no native form, so the edit failed. `@place`, `@place_path` and `@place_line` are native

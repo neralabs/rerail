@@ -269,10 +269,14 @@ pub(super) fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code
 }
 
 /// Where the memo's space `space` names the whole file-local program whose entries it holds last (`set_last_program`).
+/// Under the space's plan (`plan_digest`: the engine build, the grammar, the node ids' scheme), as its entries are
+/// (`local_space`): another build's entries are not this build's hits, so its last program, and the statistics kept
+/// under it, are not this build's either (Q102). Before, a new build read the old build's keeper, whose counts
+/// trusted entries it could not read, and gave it up at the edited file.
 fn last_key(space: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local-last/v1\0");
-    hash.update(space);
+    hash.update(b"rerail.corpus-local-last/v2\0");
+    hash.update(plan_digest(space));
     hash.finalize().into()
 }
 
@@ -299,7 +303,7 @@ pub(super) fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Op
 }
 
 /// Records a run of `whole` under way in `space`, one that started from what an ended run of `whole` kept: if it
-/// stops, what is kept stays valid for the next (Q101). Its entries are of `whole` and of the contents it read, and the
+/// stops, what is kept stays valid for the next (Q71). Its entries are of `whole` and of the contents it read, and the
 /// contents the kept statistics count are still in the memo (its newest `MEMO_CONTENTS` of a path); a content whose
 /// entry went gives the keeper up, as an entry dropped otherwise does.
 pub(super) fn set_under_way(store: &ContentStore, space: &[u8; 32], whole: [u8; 32]) {
@@ -336,14 +340,7 @@ pub(in crate::code_rule_dsl) fn program_digest(v: &crate::code_rule_dsl::logic::
     // `RERAIL_MEMO_PROGRAM_DUMP=dir`: what the digest is of, a file a digest (to find what moved a memo's key).
     if let Some(dir) = std::env::var_os("RERAIL_MEMO_PROGRAM_DUMP") {
         let name: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
-        let text = match v.program(&crate::code_rule_dsl::logic::front::Lists::default()) {
-            Ok(p) => format!(
-                "rules {:#?}\ndecls {:#?}\nfacts {:#?}\ninputs {:#?}\noutputs {:#?}\nrx_spans {:#?}\nast_patterns {:#?}\n",
-                p.rules, p.decls, p.facts, p.inputs, p.outputs, p.rx_spans, p.ast_patterns
-            ),
-            Err(e) => format!("no program: {e}\n"),
-        };
-        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), text);
+        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), v.show());
     }
     digest
 }
@@ -615,9 +612,19 @@ impl Frame {
     }
 }
 
-/// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves.
-pub(super) fn hold(store: &ContentStore, blob: &crate::content_store::MemoBlob) -> StoreResult<()> {
-    image::hold(&blob.bytes, &store.atoms_handle())
+/// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves: none of an entry whose
+/// symbols this process holds already. The profile says how many it read.
+pub(super) fn hold<'a>(store: &ContentStore, blobs: impl IntoIterator<Item = &'a crate::content_store::MemoBlob>) -> StoreResult<()> {
+    let bytes: Vec<_> = blobs.into_iter().map(|b| &b.bytes).collect();
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let read = image::hold(&bytes, &store.atoms_handle())?;
+    crate::code_rule_dsl::prof::count("corpus.memo_entries_held_read", read);
+    crate::code_rule_dsl::logic::profile::decision("the memo's entries' atoms, before the first wave (decision 0397)", || {
+        format!("{read} of {} entries read; the others' symbols held already", bytes.len())
+    });
+    Ok(())
 }
 
 /// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
@@ -703,7 +710,10 @@ pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(Source
     let atoms = store.atoms_handle();
     let held: Vec<Option<Found>> = docs.iter().map(|(s, p)| pending(store, &queued(*s, p, program), &atoms)).collect();
     let asked: Vec<usize> = (0..docs.len()).filter(|i| held[*i].is_none()).collect();
-    let digests = store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?;
+    let digests = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the contents' digests".into());
+        store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?
+    };
     let wanted: Vec<(usize, [u8; 32])> = asked.iter().zip(&digests).filter_map(|(i, d)| d.map(|d| (*i, d))).collect();
     let paths: Vec<&str> = docs.iter().map(|(_, p)| *p).collect();
     let mut out: Vec<Option<Found>> = held;
@@ -723,11 +733,13 @@ fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Ve
     let space = crate::content_store::local_space(&plan_digest(program));
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
     let parts: Vec<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
-    let mut blobs = store.memo_entries(&space, &parts, stored)?;
+    let mut blobs = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the entries read".into());
+        store.memo_entries(&space, &parts, stored)?
+    };
     if stored {
-        for blob in blobs.values() {
-            hold(store, blob)?;
-        }
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the entries' atoms held".into());
+        hold(store, blobs.values().map(|b| &**b))?;
     }
     let atoms = store.atoms_handle();
     let mut out = Vec::new();
@@ -1163,6 +1175,22 @@ pub(super) fn document_of(value: i64) -> i64 {
 
 #[cfg(test)]
 pub mod tests {
+    /// A relation of facts with no rows (a constant folded empty, `constants::fold`) survives its facts: a stored
+    /// program read back is the program written, so its digests (the memo's key, the relations' identities) are the
+    /// same. Without it, the first run after a rebuild and the second keyed the memo apart.
+    #[test]
+    fn an_empty_relation_of_facts_reads_back_as_present() {
+        use crate::code_rule_dsl::logic::program_image::{Builder, Version, fields::ProgramFields};
+        let read = crate::code_rule_dsl::logic::rr::parse_version(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
+        let mut b = Builder::on(&read);
+        b.set_facts("a", &[]);
+        let (v, _) = b.finish().unwrap();
+        // Stored as an image, and opened again.
+        let back = Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
+        assert!(back.states_facts("a") && back.fact_rows("a").is_empty(), "a's empty facts read back:\n{}", back.show());
+        assert_eq!(super::program_digest(&back), super::program_digest(&v));
+    }
+
     use super::*;
     use crate::code_rule_dsl::logic::plan::output::{Cell, col};
 

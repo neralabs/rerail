@@ -444,12 +444,14 @@ fn a_session_derives_again_the_strata_its_deltas_outgrow() {
     assert_eq!(ran.mode, 0, "none maintained");
 }
 
-/// §4 at its θ with no floor: in one session a stratum is derived again where an edit reaches past θ of its kept
-/// rows and maintained where it reaches less, and the findings stay a full run's. (The forms' pricing that once
-/// chose between them is retired with the forms, 0364.)
+/// §4 at a θ with no floor: in one session a stratum is derived again where an edit's delta reaches past θ of the
+/// rows its changed reads hold and maintained where it reaches less, and the findings stay a full run's. (The forms'
+/// pricing that once chose between them is retired with the forms, 0364.) θ is 1 here, not the default 0.25: over
+/// four files every edit's delta is a quarter or more of its reads' rows (R4 measures θ over those, not the
+/// stratum's kept rows), so at 0.25 none is maintained; at 1, 27 strata are derived again and 29 maintained.
 #[test]
 fn a_session_derives_again_past_theta_and_maintains_below_it() {
-    let ran = derive_again_with(&[("RERAIL_AGAIN_MIN", "0")]);
+    let ran = derive_again_with(&[("RERAIL_AGAIN_MIN", "0"), ("RERAIL_AGAIN_THETA", "1")]);
     assert!(ran.past_theta > 0 && ran.mode > 0, "both: {} past θ, {} maintained", ran.past_theta, ran.mode);
 }
 

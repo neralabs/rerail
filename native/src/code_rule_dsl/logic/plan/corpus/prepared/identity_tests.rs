@@ -69,7 +69,7 @@ fn prepared_identity_child() {
             let identities: BTreeMap<_, _> = plan::identities(placed.fields().unwrap(), &plan::body::Versions::of_placed(placed.clone()), &sccs, &by).into_iter().collect();
             let label = key.iter().map(|b| format!("{b:02x}")).collect::<String>();
             assert!(!programs.contains_key(&label), "one store must have one prepared variant per key");
-            programs.insert(label, serde_json::json!({"outputs":p.head.outputs,"front":p.source.show(),
+            programs.insert(label, serde_json::json!({"outputs":p.source.output_names(),"front":p.source.show(),
                 "local":p.split.versions.local.show(), "cross":p.split.versions.cross.show(),
                 "identities":identities}));
         }

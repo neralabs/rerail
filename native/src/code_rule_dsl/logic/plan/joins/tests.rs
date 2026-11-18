@@ -274,7 +274,7 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     clear();
 }
 
-/// Q96: a slow line keeps what it measured. Its flag measures its rule's exact statistics, which no longer key its
+/// Q80: a slow line keeps what it measured. Its flag measures its rule's exact statistics, which no longer key its
 /// plans anew: the line's note, flag and measured order stay under its key. Its next choice prices the order it ran
 /// at what it measured, and takes another; a flag holds for the order it flagged.
 #[test]

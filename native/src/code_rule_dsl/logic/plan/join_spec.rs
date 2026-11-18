@@ -163,7 +163,8 @@ impl<'a> Run<'a, '_> {
         scc: &BTreeSet<String>,
         native_rels: &BTreeSet<String>,
     ) -> Option<Arc<JoinSpec>> {
-        let mut bound = VarSet::new();
+        let _span = super::super::profile::span(|| "a line's join spec".into());
+        let mut bound = b.bound_before();
         for s in steps {
             let mut add = |t: TermRef<'_>| {
                 if let TermRef::Var(v) = t {
@@ -301,6 +302,12 @@ impl<'a> Run<'a, '_> {
         let pf = self.fields();
         let atoms = self.model.inputs.atoms;
         let mut slots = Slots::default();
+        // What the body has bound before its first step (a recheck's head, `Body::with_head_bound`): slots before any
+        // item, which the engine fills from the candidate (`Line::Recheck`). A test of them can then come first, as
+        // the planner orders it (Q208); unregistered, such a test met an unbound variable and no spec was made.
+        for v in b.bound_before().iter() {
+            slots.slot(Key::Var(v));
+        }
         // A variable's type: its column's in a positive atom; a count's, a sum's or a number function's value is a
         // number. A variable equal to another (`$m = $a`, a capture's alias) has the other's type.
         let typ = |t: TermRef<'_>| -> Option<String> {

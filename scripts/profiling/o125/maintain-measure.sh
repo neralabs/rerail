@@ -12,14 +12,14 @@
 set -eu
 cd "${0:A:h}/../../.."; mkdir -p /tmp/ai-trash
 # On a farm host, keep $IN and $OUT outside the checkout (MM_ROOT): a later test-remote's sync of the checkout
-# removes its untracked files, a running step's work tree among them (work queue Q118).
+# removes its untracked files, a running step's work tree among them (work queue Q215).
 MODE=$1; LAST=${2:-08}; IN=${IN:-tmp/mm-in}; OUT=${OUT:-${MM_ROOT:-tmp/mm}/$MODE}; ENGINE=${ENGINE:?the engine binary}
 CAP_MB=${CAP_MB:-3000}; CAP_S=${CAP_S:-110}
 [ -e $OUT ] && mv $OUT /tmp/ai-trash/mm-$MODE-$$
 mkdir -p $OUT; OUTA=${OUT:A}; INA=${IN:A}; W=$OUT/work; [ -n "${ABS_WORK:-}" ] && W=$OUTA/work
 cp -R $IN/o125-replay/00 $W
 # RERAIL_JOURNAL=off: every consulted path is checked by its stat. With the journal, an edit made just before a run
-# was sometimes missing from its replay, and the whole-run cutoff answered the last run's findings (work queue Q117).
+# was sometimes missing from its replay, and the whole-run cutoff answered the last run's findings (work queue Q189).
 export RERAIL_JOURNAL=off RERAIL_SQL_STRICT=1 RERAIL_DEVICE=cpu RERAIL_RR_LIB=$PWD/docs/rule-syntax/lib RERAIL_KEPT_BYTES=1 RERAIL_MODE_TRACE=1
 export RERAIL_COSTS=$OUTA/costs.sqlite RERAIL_IMAGE_STORE=$OUTA/images
 POLICY=$INA/${POLICY_NAME:-calls-policy.rr}

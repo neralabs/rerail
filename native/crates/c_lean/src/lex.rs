@@ -110,6 +110,17 @@ pub struct Tok {
     pub nl: u32,
 }
 
+/// The token a refusal is read as where the parser comes to it: an `Eof` with word `u8::MAX`, at the
+/// refused byte (at 0 for a text too large).
+#[cold]
+pub fn refused(r: Refusal) -> Tok {
+    let at = match r {
+        Refusal::Lex(at) | Refusal::Parse(at) => at,
+        Refusal::TooLarge => 0,
+    };
+    Tok { kind: T::Eof, word: u8::MAX, start: at, end: at, nl: NO_NL }
+}
+
 /// A comment (the only extra).
 #[derive(Clone, Copy, Debug)]
 pub struct Extra {
@@ -189,14 +200,18 @@ rerail_simd8::keyword_switch!(
     static WORDS = w::TEXT, fold: false
 );
 
+// The run's name path is timed on the direct shape: one multiply, no displacement.
+const _: () = assert!(WORDS.is_direct(), "the keywords' switch has the direct shape");
+
 /// The word `src[i..end]`'s code (0: none), in its case: one probe of the keyword switch.
 #[inline(always)]
 pub fn word(src: &[u8], i: usize, end: usize) -> u8 {
     WORDS.find(src, i, end) as u8
 }
 
+
 /// The character at `at` (a UTF-8 lead byte at or past 0x80) and its length.
-fn decode(src: &[u8], at: usize) -> Option<(char, usize)> {
+pub(crate) fn decode(src: &[u8], at: usize) -> Option<(char, usize)> {
     let s = std::str::from_utf8(&src[at..(at + 4).min(src.len())]).or_else(|e| std::str::from_utf8(&src[at..at + e.valid_up_to()])).ok()?;
     let c = s.chars().next()?;
     Some((c, c.len_utf8()))
@@ -208,8 +223,12 @@ const GAP: u8 = 1;
 /// ...and what does not start an ASCII name with no literal's prefix (`L`, `u`, `U`, `R`), so
 /// that a 0 bit is such a name's first byte.
 const NAME: u8 = 2;
+/// ...a blank that may be a gap of one (`' '`, `'\t'`)...
+const BLANK1: u8 = 4;
+/// ...and a gap's byte that `token` reads (a comment's `/` or a `\\`).
+const SLASH: u8 = 8;
 
-/// A byte's `GAP` and `NAME` bits, by one load.
+/// A byte's `GAP`, `NAME`, `BLANK1` and `SLASH` bits, by one load.
 static FIRST: [u8; 256] = {
     let mut t = [NAME; 256];
     let mut c = 0;
@@ -221,14 +240,92 @@ static FIRST: [u8; 256] = {
         if (b.is_ascii_alphabetic() || b == b'_' || b == b'$') && !matches!(b, b'L' | b'u' | b'U' | b'R') {
             t[c] &= !NAME;
         }
+        if matches!(b, b' ' | b'\t') {
+            t[c] |= BLANK1;
+        }
+        if matches!(b, b'/' | b'\\') {
+            t[c] |= SLASH;
+        }
         c += 1;
     }
     t
 };
 
+/// The punctuators of one byte that start no longer one, by their byte (`T::Eof`: none).
+static ONE: [T; 256] = {
+    let mut t = [T::Eof; 256];
+    t[b'(' as usize] = T::LParen;
+    t[b')' as usize] = T::RParen;
+    t[b'[' as usize] = T::LBracket;
+    t[b']' as usize] = T::RBracket;
+    t[b'{' as usize] = T::LBrace;
+    t[b'}' as usize] = T::RBrace;
+    t[b';' as usize] = T::Semi;
+    t[b',' as usize] = T::Comma;
+    t[b'~' as usize] = T::Tilde;
+    t[b'?' as usize] = T::Question;
+    t
+};
+
+/// `LEAD`'s classes of a token's first byte in `run`: a one-byte punctuator (`ONE`; its kind in
+/// `one`)...
+const L_ONE: u8 = 0;
+/// ...an ASCII name with no literal's prefix (`FIRST`'s `NAME` clear)...
+const L_NAME: u8 = 1;
+/// ...a byte read from the gap's start by `token` (a comment's `/`, a `\\`, a NUL, or the text's end, read as a 0)...
+const L_TOKEN: u8 = 2;
+/// ...or the rest (`decimal`, then `token_at`)...
+const L_REST: u8 = 3;
+/// ...but a string's `"`, read by `string_end` at once.
+const L_STR: u8 = 4;
+
+#[derive(Clone, Copy)]
+struct Lead {
+    one: T,
+    class: u8,
+}
+
+/// A token's first byte's class and one-byte kind, by one load.
+static LEAD: [Lead; 256] = {
+    let mut t = [Lead { one: T::Eof, class: L_REST }; 256];
+    let mut c = 0;
+    while c < 256 {
+        if FIRST[c] & NAME == 0 {
+            t[c].class = L_NAME;
+        }
+        if ONE[c] as u8 != T::Eof as u8 {
+            t[c] = Lead { one: ONE[c], class: L_ONE };
+        }
+        c += 1;
+    }
+    t[0].class = L_TOKEN;
+    t[b'"' as usize].class = L_STR;
+    t[b'/' as usize].class = L_TOKEN;
+    t[b'\\' as usize].class = L_TOKEN;
+    t
+};
+
+/// `t` written at `p`, a field at a time: its padding is left unwritten (a write of the whole
+/// token copies it, from wherever the token was made).
+///
+/// # Safety
+/// `p` is valid for a write of a `Tok`.
+#[inline(always)]
+unsafe fn put(p: *mut std::mem::MaybeUninit<Tok>, t: Tok) {
+    let p = p.cast::<Tok>();
+    // SAFETY: as above; each field's place is in the token's room.
+    unsafe {
+        (&raw mut (*p).kind).write(t.kind);
+        (&raw mut (*p).word).write(t.word);
+        (&raw mut (*p).start).write(t.start);
+        (&raw mut (*p).end).write(t.end);
+        (&raw mut (*p).nl).write(t.nl);
+    }
+}
+
 pub struct Lexer<'s> {
     pub src: &'s [u8],
-    pub blocks: Blocks<'s>,
+    pub blocks: Blocks,
     /// C++'s lexer (raw strings, `::`, `.*`, `->*`, `<=>`).
     pub cpp: bool,
 }
@@ -267,7 +364,16 @@ impl<'s> Lexer<'s> {
         }
         let mut nl = NO_NL;
         loop {
-            at = self.blocks.blank_end(at);
+            match self.blocks.gap(at) {
+                // Blanks and line ends at once, where they end in their block.
+                Some((e, eols)) => {
+                    if nl == NO_NL && eols != 0 {
+                        nl = (at & !63) as u32 + eols.trailing_zeros();
+                    }
+                    at = e;
+                }
+                None => at = self.blocks.blank_end(at),
+            }
             match self.at(at) {
                 b'\n' if at < self.src.len() => {
                     if nl == NO_NL {
@@ -317,19 +423,11 @@ impl<'s> Lexer<'s> {
                 }
                 Ok(Some(Extra { start: at as u32, end: i as u32 }))
             }
-            b'*' => {
-                let mut i = at + 2;
-                loop {
-                    i = self.blocks.star(i);
-                    if i >= self.src.len() {
-                        return Err(Refusal::Lex(at as u32));
-                    }
-                    if self.src[i] == b'*' && self.at(i + 1) == b'/' {
-                        break Ok(Some(Extra { start: at as u32, end: i as u32 + 2 }));
-                    }
-                    i += 1;
-                }
-            }
+            // To the first `*/` from the comment's third byte (`/*/` is open), one micro-lexer scan.
+            b'*' => match rerail_simd8::micro::find_pair(self.src, at + 2, b'*', b'/') {
+                Some(i) => Ok(Some(Extra { start: at as u32, end: i as u32 + 2 })),
+                None => Err(Refusal::Lex(at as u32)),
+            },
             _ => Ok(None),
         }
     }
@@ -342,60 +440,115 @@ impl<'s> Lexer<'s> {
         Ok(Tok { kind, word, start: s as u32, end: end as u32, nl })
     }
 
-    /// The token at `s` (no white space before it): its kind, end and word code.
+    /// Up to `n` tokens from `at` pushed onto `out`, comments onto `extras`: where the next is
+    /// lexed. A run ends early after `Eof`, or after a refusal, written as `refused` writes it.
+    ///
+    /// simdjson's stage 2 in page 31's form. A gap is one run of its block's blank and line-end
+    /// masks (`Blocks::gap`: the next token's start and the gap's line ends), or the start cursor
+    /// where it runs past its block. The start byte's class is one load (`LEAD`): a one-byte
+    /// punctuator, an ASCII name (its end the word run), a string (`string_end` at once), a byte
+    /// for `token` (a comment in the gap, the text's end), or the rest (`decimal`, then
+    /// `token_at`).
+    #[inline(always)]
+    pub fn run(&self, mut at: usize, extras: &mut Vec<Extra>, out: &mut Vec<Tok>, n: usize) -> usize {
+        let mut cur = rerail_simd8::blocks::Cursor::default();
+        out.reserve(n);
+        let base = out.len();
+        // simdjson's tape writer: tokens written into the room reserved, the length set once.
+        let w = out.spare_capacity_mut().as_mut_ptr();
+        let mut k = 0;
+        while k < n {
+            let c0 = self.at(at);
+            let f0 = FIRST[usize::from(c0)];
+            let (s, c, nl) = if f0 & GAP == 0 {
+                // No gap: a token right here, though it need be no start (after a number like
+                // C++'s `0x`, a name goes on inside a word run).
+                (at, c0, NO_NL)
+            } else if f0 & SLASH != 0 {
+                // A comment or a `\\`-newline in the gap: `token` reads from the gap's start (a 0
+                // byte's class).
+                (at, 0, NO_NL)
+            } else if f0 & BLANK1 != 0 && FIRST[usize::from(self.at(at + 1))] & GAP == 0 {
+                // One blank, the most common gap: no walk and no line end to look for.
+                (at + 1, self.at(at + 1), NO_NL)
+            } else if let Some((s, eols)) = self.blocks.gap(at) {
+                // A gap that ends in its block: its end and its line ends by one run of the masks.
+                (s, self.at(s), if eols != 0 { (at & !63) as u32 + eols.trailing_zeros() } else { NO_NL })
+            } else {
+                // A gap on past its block: the next start ends it.
+                let s = self.blocks.next_start(&mut cur, at);
+                (s, self.at(s), self.blocks.eol_in(at, s).map_or(NO_NL, |e| e as u32))
+            };
+            // The start byte's class by one load (the text's end read as a 0, as a NUL).
+            let lead = LEAD[usize::from(c)];
+            let t = if lead.class == L_ONE {
+                Tok { kind: lead.one, word: 0, start: s as u32, end: s as u32 + 1, nl }
+            } else if lead.class == L_NAME {
+                let end = self.blocks.word_end(s + 1);
+                let d = self.at(end);
+                if d != b'\\' && d < 0x80 {
+                    Tok { kind: T::Name, word: word(self.src, s, end), start: s as u32, end: end as u32, nl }
+                } else {
+                    self.token(at, extras).unwrap_or_else(refused)
+                }
+            } else if lead.class == L_TOKEN {
+                self.token(at, extras).unwrap_or_else(refused)
+            } else if lead.class == L_STR {
+                match self.string_end(s + 1) {
+                    Some(end) => Tok { kind: T::Str, word: 0, start: s as u32, end: end as u32, nl },
+                    None => refused(Refusal::Lex(s as u32)),
+                }
+            } else if let Some(end) = self.decimal(s) {
+                Tok { kind: T::Number, word: 0, start: s as u32, end: end as u32, nl }
+            } else {
+                match self.token_at(s) {
+                    Ok((kind, end, word)) => Tok { kind, word, start: s as u32, end: end as u32, nl },
+                    Err(r) => refused(r),
+                }
+            };
+            // SAFETY: `k < n`, and `n` tokens' room is reserved past `base`.
+            unsafe { put(w.add(k), t) };
+            k += 1;
+            at = t.end as usize;
+            if t.kind == T::Eof {
+                break;
+            }
+        }
+        // SAFETY: the first `k` tokens past `base` are written.
+        unsafe { out.set_len(base + k) };
+        at
+    }
+
+    /// A decimal integer of up to 8 digits at `s` with no suffix, fraction, exponent or `'`, no
+    /// character past ASCII after it (C refuses one), and no leading `0` (C++'s `0x` and `0b` take
+    /// a suffix's place): its end, from its word run and one test of its 8 bytes. `number` reads every other number.
+    #[inline(always)]
+    fn decimal(&self, s: usize) -> Option<usize> {
+        let c = self.src[s];
+        if !(b'1'..=b'9').contains(&c) {
+            return None;
+        }
+        let end = self.blocks.word_end(s + 1);
+        let n = end - s;
+        let d = self.at(end);
+        if n > 8 || d == b'.' || d == b'\'' || d >= 0x80 || !rerail_simd8::swar::digits(rerail_simd8::swar::load8(self.src, s), n) {
+            return None;
+        }
+        Some(end)
+    }
+
+    /// The token at `s` (no white space before it): its kind, end and word code. Punctuation is
+    /// read here, inlined where the token is taken; the rest, `token_rare`'s, is called.
+    #[inline(always)]
     fn token_at(&self, s: usize) -> R<(T, usize, u8)> {
         use T::*;
         if s >= self.src.len() {
             return Ok((Eof, s, 0));
         }
         let c = self.src[s];
-        let refuse = Err(Refusal::Lex(s as u32));
         let next = self.at(s + 1);
-        // An ASCII name that is no literal's prefix (`L"…"`, `u8'…'`, `R"(…)"`): its end is where its
-        // word bytes stop, unless a `\u` escape or a character past ASCII goes on there.
-        if FIRST[usize::from(c)] & NAME == 0 {
-            let end = self.blocks.word_end(s + 1);
-            let d = self.at(end);
-            if d != b'\\' && d < 0x80 {
-                return Ok((Name, end, word(self.src, s, end)));
-            }
-            let end = self.name_end(s)?;
-            return Ok((Name, end, word(self.src, s, end)));
-        }
         let (kind, len) = match c {
-            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => {
-                // A literal's prefix: `L`, `u`, `U`, `u8`, and C++'s `R`, `LR`, `uR`, `UR`, `u8R`.
-                if matches!(c, b'L' | b'u' | b'U' | b'R') {
-                    if let Some(t) = self.prefixed(s) {
-                        return t;
-                    }
-                }
-                let end = self.name_end(s)?;
-                return Ok((Name, end, word(self.src, s, end)));
-            }
-            b'0'..=b'9' => return self.number(s),
-            b'.' if next.is_ascii_digit() => return self.number(s),
-            b'"' => {
-                return match self.string_end(s + 1) {
-                    Some(end) => Ok((Str, end, 0)),
-                    None => refuse,
-                };
-            }
-            b'\'' => match self.char_end(s + 1) {
-                Some(end) => return Ok((Char, end, 0)),
-                None => return refuse,
-            },
-            b'#' => {
-                let mut k = s + 1;
-                while matches!(self.at(k), b' ' | b'\t') {
-                    k += 1;
-                }
-                let e = self.blocks.word_end(k);
-                if e == k {
-                    return Ok((Directive, s + 1, 0));
-                }
-                return Ok((Directive, e, word(self.src, k, e)));
-            }
+            b'.' if next.is_ascii_digit() => return self.token_rare(s),
             b'(' => (LParen, 1),
             b')' => (RParen, 1),
             b'[' => (LBracket, 1),
@@ -478,16 +631,84 @@ impl<'s> Lexer<'s> {
                 (b'=', _) => (Ge, 2),
                 _ => (Gt, 1),
             },
+            _ => return self.token_rare(s),
+        };
+        Ok((kind, s + len, 0))
+    }
+
+    /// The punctuator at `s` (the preprocessor's reading): its kind and end, `None` where none
+    /// starts there. `#`, digraphs and a `.` before a digit are the caller's.
+    pub(crate) fn punct(&self, s: usize) -> Option<(T, usize)> {
+        if s >= self.src.len() || !b"()[]{};,~?:.=!+-*/%^&|<>".contains(&self.src[s]) {
+            return None;
+        }
+        match self.token_at(s) {
+            Ok((k, e, _)) if !matches!(k, T::Number | T::Eof) => Some((k, e)),
+            _ => None,
+        }
+    }
+
+    /// `token_at`'s tokens that are no punctuator: names, numbers, literals, directives (and a
+    /// refusal), outlined so that punctuation is read with no frame to save.
+    #[inline(never)]
+    fn token_rare(&self, s: usize) -> R<(T, usize, u8)> {
+        use T::*;
+        let c = self.src[s];
+        let refuse = Err(Refusal::Lex(s as u32));
+        // An ASCII name that is no literal's prefix (`L"…"`, `u8'…'`, `R"(…)"`): its end is where its
+        // word bytes stop, unless a `\u` escape or a character past ASCII goes on there.
+        if FIRST[usize::from(c)] & NAME == 0 {
+            let end = self.blocks.word_end(s + 1);
+            let d = self.at(end);
+            if d != b'\\' && d < 0x80 {
+                return Ok((Name, end, word(self.src, s, end)));
+            }
+            let end = self.name_end(s)?;
+            return Ok((Name, end, word(self.src, s, end)));
+        }
+        match c {
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => {
+                // A literal's prefix: `L`, `u`, `U`, `u8`, and C++'s `R`, `LR`, `uR`, `UR`, `u8R`.
+                if matches!(c, b'L' | b'u' | b'U' | b'R') {
+                    if let Some(t) = self.prefixed(s) {
+                        return t;
+                    }
+                }
+                let end = self.name_end(s)?;
+                return Ok((Name, end, word(self.src, s, end)));
+            }
+            b'0'..=b'9' => return self.number(s),
+            b'.' => self.number(s),
+            b'"' => {
+                return match self.string_end(s + 1) {
+                    Some(end) => Ok((Str, end, 0)),
+                    None => refuse,
+                };
+            }
+            b'\'' => match self.char_end(s + 1) {
+                Some(end) => return Ok((Char, end, 0)),
+                None => return refuse,
+            },
+            b'#' => {
+                let mut k = s + 1;
+                while matches!(self.at(k), b' ' | b'\t') {
+                    k += 1;
+                }
+                let e = self.blocks.word_end(k);
+                if e == k {
+                    return Ok((Directive, s + 1, 0));
+                }
+                return Ok((Directive, e, word(self.src, k, e)));
+            }
             c if c >= 0x80 => {
                 let end = self.name_end(s)?;
                 if end == s {
                     return refuse;
                 }
-                return Ok((Name, end, 0));
+                Ok((Name, end, 0))
             }
-            _ => return refuse,
-        };
-        Ok((kind, s + len, 0))
+            _ => refuse,
+        }
     }
 
     /// A string, character or raw string literal at `s` whose prefix is a name's start: its token,
@@ -518,7 +739,7 @@ impl<'s> Lexer<'s> {
     }
 
     /// The end of a raw string whose `"` ends at `i`: `d(` … `)d"`.
-    fn raw_end(&self, i: usize) -> Option<usize> {
+    pub(crate) fn raw_end(&self, i: usize) -> Option<usize> {
         let mut k = i;
         while k < self.src.len() && !matches!(self.src[k], b'(' | b')' | b'\\' | b' ' | b'\t' | b'\n' | b'"') && k - i <= 16 {
             k += 1;
@@ -529,7 +750,7 @@ impl<'s> Lexer<'s> {
         let delim = &self.src[i..k];
         let mut j = k + 1;
         loop {
-            let close = j + self.src.get(j..)?.iter().position(|&c| c == b')')?;
+            let close = rerail_simd8::micro::find(self.src, j, b')')?;
             let after = close + 1;
             if self.src.get(after..after + delim.len()) == Some(delim) && self.at(after + delim.len()) == b'"' {
                 return Some(after + delim.len() + 1);
@@ -564,62 +785,9 @@ impl<'s> Lexer<'s> {
         }
     }
 
-    /// `digit+ ('digit+)*` from `i`: its end, `None` where no digit starts it.
-    fn digits(&self, mut i: usize, digit: impl Fn(u8) -> bool) -> Option<usize> {
-        if !digit(self.at(i)) {
-            return None;
-        }
-        loop {
-            i += 1;
-            while digit(self.at(i)) {
-                i += 1;
-            }
-            if self.at(i) == b'\'' && digit(self.at(i + 1)) {
-                i += 1;
-                continue;
-            }
-            return Some(i);
-        }
-    }
-
-    /// A number at `s` (a digit, or a `.` before one): tree-sitter-c's `number_literal`, whose
-    /// mantissa after a `.` and whose exponent take hex digits, and whose suffix is any run of
-    /// `[uUlLwWfFbBdD]`. C++'s reads the same here; its suffixes are checked by the parser.
+    /// A number at `s` (`number_end`).
     fn number(&self, s: usize) -> R<(T, usize, u8)> {
-        let hexd = |c: u8| c.is_ascii_hexdigit();
-        let dec = |c: u8| c.is_ascii_digit();
-        let (c0, c1) = (self.at(s), self.at(s + 1));
-        // C++: `0x` with no digit after is `0` and a user-defined literal's suffix `x`
-        // (tree-sitter-cpp's longest match).
-        let mut i = if c0 == b'0' && matches!(c1, b'x' | b'X') {
-            self.digits(s + 2, hexd).unwrap_or(if self.cpp && self.at(s + 2) != b'.' { s + 1 } else { s + 2 })
-        } else if c0 == b'0' && matches!(c1, b'b' | b'B') {
-            self.digits(s + 2, dec).unwrap_or(if self.cpp { s + 1 } else { s + 2 })
-        } else if c0 == b'.' {
-            s
-        } else {
-            self.digits(s, dec).unwrap_or(s)
-        };
-        if self.at(i) == b'.' {
-            i = self.digits(i + 1, hexd).unwrap_or(i + 1);
-        }
-        // The longest match: a hex run's last `e`/`p` is the exponent's where a sign and a digit
-        // follow it (`1.5E-3`, `0x1e+5`).
-        if matches!(self.at(i), b'+' | b'-') && i > s && matches!(self.src[i - 1], b'e' | b'E' | b'p' | b'P') && hexd(self.at(i + 1)) {
-            i = self.digits(i + 1, hexd).unwrap_or(i + 1);
-        } else if matches!(self.at(i), b'e' | b'E' | b'p' | b'P') {
-            let k = if matches!(self.at(i + 1), b'+' | b'-') { i + 2 } else { i + 1 };
-            i = self.digits(k, hexd).unwrap_or(if k == i + 2 { i + 1 } else { k });
-        }
-        while matches!(self.at(i), b'u' | b'U' | b'l' | b'L' | b'w' | b'W' | b'f' | b'F' | b'b' | b'B' | b'd' | b'D') {
-            i += 1;
-        }
-        // A name's byte right after a number is no token tree-sitter reads apart (in C++, a
-        // user-defined literal's suffix, which the parser does not read yet).
-        if !self.cpp && (block::is_word(self.at(i)) || self.at(i) >= 0x80) {
-            return Err(Refusal::Lex(i as u32));
-        }
-        Ok((T::Number, i, 0))
+        number_end(self.src, s, self.cpp).map(|e| (T::Number, e, 0))
     }
 
     /// The end of a string's text from `i` (past its opening `"`): past its closer. `None` where a
@@ -627,7 +795,7 @@ impl<'s> Lexer<'s> {
     pub fn string_end(&self, mut i: usize) -> Option<usize> {
         loop {
             // The next `"`, `\` or `\n` (stage 1's mask): the text between is passed a block at a time.
-            i = self.blocks.string_stop(i);
+            i = rerail_simd8::micro::first_of(self.src, i, [b'"', b'\\', b'\n']);
             match self.src.get(i)? {
                 b'"' => return Some(i + 1),
                 b'\n' => return None,
@@ -725,7 +893,7 @@ impl<'s> Lexer<'s> {
         let s = at;
         let mut i = at + 1;
         loop {
-            i = self.blocks.arg_stop(i);
+            i = rerail_simd8::micro::first_of(self.src, i, [b'/', b'\\', b'\n']);
             if i >= self.src.len() {
                 return Ok(Some((s, self.src.len())));
             }
@@ -753,6 +921,129 @@ impl<'s> Lexer<'s> {
                 b'\n' => return None,
                 _ if i >= self.src.len() => return None,
                 _ => i += 1,
+            }
+        }
+    }
+}
+
+/// `digit+ ('digit+)*` from `i`: its end, `None` where no digit starts it.
+fn digits(src: &[u8], mut i: usize, digit: impl Fn(u8) -> bool) -> Option<usize> {
+    let at = |i: usize| src.get(i).copied().unwrap_or(0);
+    if !digit(at(i)) {
+        return None;
+    }
+    loop {
+        i += 1;
+        while digit(at(i)) {
+            i += 1;
+        }
+        if at(i) == b'\'' && digit(at(i + 1)) {
+            i += 1;
+            continue;
+        }
+        return Some(i);
+    }
+}
+
+/// The end of a number at `s` in `src` (a digit, or a `.` before one): tree-sitter-c's `number_literal`, whose
+/// mantissa after a `.` and whose exponent take hex digits, and whose suffix is any run of
+/// `[uUlLwWfFbBdD]`. C++'s reads the same here; its suffixes are checked by the parser.
+pub fn number_end(src: &[u8], s: usize, cpp: bool) -> R<usize> {
+    let at = |i: usize| src.get(i).copied().unwrap_or(0);
+    let hexd = |c: u8| c.is_ascii_hexdigit();
+    let dec = |c: u8| c.is_ascii_digit();
+    let (c0, c1) = (at(s), at(s + 1));
+    // C++: `0x` with no digit after is `0` and a user-defined literal's suffix `x`
+    // (tree-sitter-cpp's longest match).
+    let mut i = if c0 == b'0' && matches!(c1, b'x' | b'X') {
+        digits(src, s + 2, hexd).unwrap_or(if cpp && at(s + 2) != b'.' { s + 1 } else { s + 2 })
+    } else if c0 == b'0' && matches!(c1, b'b' | b'B') {
+        digits(src, s + 2, dec).unwrap_or(if cpp { s + 1 } else { s + 2 })
+    } else if c0 == b'.' {
+        s
+    } else {
+        digits(src, s, dec).unwrap_or(s)
+    };
+    if at(i) == b'.' {
+        i = digits(src, i + 1, hexd).unwrap_or(i + 1);
+    }
+    // The longest match: a hex run's last `e`/`p` is the exponent's where a sign and a digit
+    // follow it (`1.5E-3`, `0x1e+5`).
+    if matches!(at(i), b'+' | b'-') && i > s && matches!(src[i - 1], b'e' | b'E' | b'p' | b'P') && hexd(at(i + 1)) {
+        i = digits(src, i + 1, hexd).unwrap_or(i + 1);
+    } else if matches!(at(i), b'e' | b'E' | b'p' | b'P') {
+        let k = if matches!(at(i + 1), b'+' | b'-') { i + 2 } else { i + 1 };
+        i = digits(src, k, hexd).unwrap_or(if k == i + 2 { i + 1 } else { k });
+    }
+    while matches!(at(i), b'u' | b'U' | b'l' | b'L' | b'w' | b'W' | b'f' | b'F' | b'b' | b'B' | b'd' | b'D') {
+        i += 1;
+    }
+    // A name's byte right after a number is no token tree-sitter reads apart (in C++, a
+    // user-defined literal's suffix, which the parser does not read yet).
+    if !cpp && (block::is_word(at(i)) || at(i) >= 0x80) {
+        return Err(Refusal::Lex(i as u32));
+    }
+    Ok(i)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The tokens of `src` one `token` at a time (the scalar lexer), and the comments.
+    fn by_token(lx: &Lexer, mut at: usize) -> (Vec<(T, u8, u32, u32, u32)>, Vec<(u32, u32)>) {
+        let (mut out, mut extras) = (Vec::new(), Vec::new());
+        loop {
+            let t = lx.token(at, &mut extras).unwrap_or_else(refused);
+            out.push((t.kind, t.word, t.start, t.end, t.nl));
+            if t.kind == T::Eof {
+                break;
+            }
+            at = t.end as usize;
+        }
+        (out, extras.iter().map(|x| (x.start, x.end)).collect())
+    }
+
+    /// The same by `run`, in batches of `n`.
+    fn by_run(lx: &Lexer, mut at: usize, n: usize) -> (Vec<(T, u8, u32, u32, u32)>, Vec<(u32, u32)>) {
+        let (mut toks, mut extras) = (Vec::new(), Vec::new());
+        loop {
+            at = lx.run(at, &mut extras, &mut toks, n);
+            if toks.last().is_some_and(|t| t.kind == T::Eof) {
+                break;
+            }
+        }
+        (toks.iter().map(|t| (t.kind, t.word, t.start, t.end, t.nl)).collect(), extras.iter().map(|x| (x.start, x.end)).collect())
+    }
+
+    /// `run` reads what `token` reads: every token, comment and refusal, over random texts of
+    /// C's pieces (and from every position of a few, as a relex starts anywhere).
+    #[test]
+    fn run_reads_as_token_does() {
+        const PIECES: &[&str] = &[
+            "a", "int", "x1", "_y", "L", "u8", "R", "0x", "0", "7", "42", "12345678", "123456789", "1.5", "1e5", "3'4",
+            "10u", " ", "  ", "\t", "\n", "\r\n", "\\\n", "\\", "/", "//c\n", "/*c*/", "/*\n*/", "(", ")", "{", ";", ",",
+            "?", "~", ":", "::", ".", "...", "->", "->*", "<", "<<=", "<=>", ">>", "=", "==", "!", "&&", "|", "^=", "%",
+            "\"s\"", "\"a\\\"b\"", "'c'", "'\\n'", "L\"w\"", "R\"(r)\"", "#", "# include", "#define", "é", "\u{ff}",
+        ];
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        for cpp in [false, true] {
+            for round in 0..1500 {
+                let mut src = String::new();
+                for _ in 0..(round % 90) {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    src += PIECES[(x >> 20) as usize % PIECES.len()];
+                }
+                let lx = Lexer::new(src.as_bytes(), cpp);
+                let starts: Vec<usize> = if round % 50 == 0 { (0..=src.len()).collect() } else { vec![0] };
+                for at in starts {
+                    let want = by_token(&lx, at);
+                    for n in [1, 3, 16] {
+                        assert_eq!(by_run(&lx, at, n), want, "{src:?} from {at}, cpp {cpp}, batches of {n}");
+                    }
+                }
             }
         }
     }

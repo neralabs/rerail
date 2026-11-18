@@ -23,6 +23,7 @@ pub use connection::sqlite_on_jemalloc;
 mod cross_rows;
 mod derivation;
 mod frames;
+pub mod kept_facts;
 pub mod guest_keys;
 mod object_segments;
 mod segments;
@@ -73,7 +74,7 @@ pub mod hazards;
 pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
 pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
-pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape};
+pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape, TapeBytes, TapeHeld};
 pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, FramePlacer, Placed as PlacedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, MemoRow, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
@@ -711,7 +712,6 @@ impl ContentStore {
     pub fn forget(path: &Path) {
         // Its upkeep jobs first: one holds a read connection on the file.
         rerail_accel::upkeep::forget_file(path);
-        // And a check under way reads it no more (`upkeep::forget`).
         upkeep::forget(path);
         frames::forget_snapshot(&path.to_string_lossy());
         atoms::forget_identity(&path.to_string_lossy());

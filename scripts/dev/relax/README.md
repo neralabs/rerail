@@ -67,6 +67,7 @@ Don't set `RELAX_CACHE_DIR`: it turns sharing off.
 | `~/.local/share/rerail-relax/v/<version>/` | One patched source tree and its binary per version, never changed once built. |
 | `~/.local/share/rerail-relax/src` | A link to the installed version's tree (`RELAX_STD` points into it). |
 | `~/.local/share/rerail-relax/bin/relax` | The installed binary. |
+| `~/.local/share/rerail-relax/bin/relax-linux` | The same version for the farm's aarch64 Linux hosts, built here with `scripts/build/farm/cargo-linux` once its sysroot is copied (`linux-sysroot HOST`); `live-test-remote` sends it to a Linux host. |
 
 A version is the pinned upstream commit plus a hash of both patches, for example
 `5b2d68c26a51-8959825cbeab`. The script checks out the commit with `git worktree add`, applies
@@ -160,6 +161,65 @@ script still gets the full receipt; only the key narrows.
 
 Tests: `a_scripts_key_holds_the_receipts_identity_not_its_path` (unitgraph.rs) and
 `a_receipt_identity_is_of_the_reached_packages_as_sets` (native.rs).
+
+### 6. A cast is first a coercion when its source referent is open (E0283)
+
+Relax rejected `&[][..] as &[String]` (a test in `plan/corpus.rs`) with E0283, `[_; 0]:
+Index<RangeFull>`, which rustc accepts. So no `rerail-logic` test ran under Relax. The operand is
+`&[?T]`. Relax deferred a `&A as &B` cast only when `A` was a bare inference variable, and
+otherwise tried a deref coercion. Neither applied to `[?T]`, so nothing tied `?T` to `String`.
+rustc's cast check coerces the operand to the cast type first (`try_coercion_cast`). The fork now
+does that, in a snapshot, when the source referent holds an open variable. A failed coercion is
+rolled back, for the cast check to report.
+
+Relax's `compiler/tests/cast_open_slice_referent.rs` covers it. The 46 of Relax's test files that
+cast to a reference, pointer or smart pointer, and that rustc compiles, print the same `| ` lines
+as `rustc --test` (`t2.rs`, which spins on purpose, was left out).
+
+### 7. A registry crate's build script gets the mount (`RELAX_SHARE`)
+
+Under `RELAX_SHARE` every engine test that builds on the JIT failed before compiling the engine:
+`cranelift-assembler-x64`'s build script could not load `cranelift_assembler_x64_meta` ("No such
+file or directory", on a path that exists). The root `Cargo.toml` patches that meta crate in from
+`native/vendor`, so its source lies in the mount, at a virtual path. The assembler crate itself is
+the registry's, on disk, and Relax handed the mount table (`RELAX_VFS`) only to a script whose own
+package is virtual. The script's run then read the meta crate's virtual path with nothing serving
+it (Relax prints virtual paths in their disk spelling, so the error showed the real one). The
+fork gives every build script the mount table while one is active. A script on disk still gets no
+`RELAX_WORKSPACE` (that broke rustix's build script: its relative paths resolved against it), and
+the mount table is no part of a script's rerun key.
+
+### 8. The SHA-512 instructions in `asm!`
+
+`sha2` 0.10 with its `asm` feature (which `rerail-tape-format` turns on for aarch64) writes
+`sha512h`, `sha512h2`, `sha512su0` and `sha512su1` in `asm!`. Relax's assembler lacked them, so
+any test that hashes with SHA-512 (ed25519 signatures: `shared_signing_library_verifies_an_existing_empty_allowlist`)
+failed with "unsupported instruction `sha512h`". The fork encodes and decodes them;
+`backend/src/asm/tests_arm64.rs` checks the words against clang's.
+
+### 9. `std::os::linux::fs::MetadataExt`
+
+`gix-discover` reads it on Linux. A std item, but its own commit after the others rather than in
+`std.patch`: that patch is the fork's first commit, and changing it would rewrite the pushed
+branch.
+
+### 10. Relax runs on aarch64 Linux (the farm's DGX Sparks)
+
+Upstream's Linux support was x86_64 only. On an aarch64 Linux host:
+- the JIT reads its thread slot through `tpidr_el0`, as on Android;
+- the machine's cfg set and triple are `aarch64-unknown-linux-gnu` (a build script was handed
+  `TARGET=x86_64-unknown-linux-gnu`, and `cc` looked for `x86_64-linux-gnu-gcc`);
+- profiling, stack walks and thread pausing take Android arm64's path, where the x86_64 Linux
+  code reads x86 registers;
+- a versioned system library (`libstdc++.so.6`) is looked for in the machine's own multiarch
+  folders;
+- Relax restarts itself once with `GLIBC_TUNABLES=glibc.rtld.optional_static_tls=262144`. The
+  engine's native library bundles jemalloc and mimalloc, whose initial-exec TLS did not fit the
+  512 bytes glibc keeps for a library loaded late ("cannot allocate memory in static TLS block").
+
+Measured on a Spark (`cross_file_rows_are_memoised_per_import_component`): a second plain run, 6 s;
+`live-test-remote` in the farm's new Relax home there, first verdict 108 s after the start, then a
+body edit saved here patched in 0.36 s, its verdict 2.6 s after the save.
 
 ## Sharing between worktrees
 

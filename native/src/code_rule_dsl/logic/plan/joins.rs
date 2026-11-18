@@ -66,6 +66,11 @@ cached!(critical_share, "RERAIL_JOIN_CRITICAL", 0.05);
 // The chance a noted line tries an untried order, and how far over the best's price that order may be.
 cached!(explore_rate, "RERAIL_JOIN_EXPLORE", 0.1);
 cached!(margin, "RERAIL_JOIN_MARGIN", 2.0);
+// Decision 0354: the learned model's choices explore only on lines it prices under this many rows of work (a
+// wrong order there costs little; on hogql an explored 59 M-row line ran 230 M), and price only the candidates
+// the statistics price within this many times the best's.
+cached!(explore_rows, "RERAIL_JOIN_EXPLORE_ROWS", 1_000_000.0);
+cached!(feature_span, "RERAIL_JOIN_FEATURE_SPAN", 16.0);
 // Decision 0207's trials: the rows of a sample, an order's cutoff as a multiple of the best measured so far, the
 // share of the line's work so far each may spend, and by how much a trialled order must beat the one running.
 cached!(trial_rows, "RERAIL_JOIN_TRIAL_ROWS", 256.0);
@@ -180,7 +185,7 @@ pub(super) fn logging() -> bool {
     *ON
 }
 
-pub(super) fn log(what: impl FnOnce() -> String) {
+pub(in crate::code_rule_dsl) fn log(what: impl FnOnce() -> String) {
     if logging() {
         eprintln!("joins: {}", what());
     }
@@ -452,7 +457,7 @@ pub(super) fn count_handoff(back: bool) {
 /// A line ran slow: `ran` rows of work where its order `order` was priced at `est`. Its next replan skips the
 /// budget.
 ///
-/// Q96: what the order measured is kept as an order tried, so that the line's next choice (`choose`) prices the
+/// Q80: what the order measured is kept as an order tried, so that the line's next choice (`choose`) prices the
 /// order at it. Its work over its price is a floor, as a cut trial's is (decision 0267): it was cut while it ran, and
 /// it raises the order's kept ratio, never lowers it. Not kept, the next chunk's plan took the same order at the same
 /// price (`pre_546` on hogql: priced 360 to 513 for 102 K rows of work, at each of its trips).
@@ -477,7 +482,7 @@ pub(super) fn flag_slow(key: PlanKey, rule: u64, order: &[Step], est: f64, ran: 
     }
 }
 
-/// Q96: the order to put in place of a slow line's running order, where planning it again with the exact statistics
+/// Q80: the order to put in place of a slow line's running order, where planning it again with the exact statistics
 /// found the order it runs. Of the search's runners-up `others` (each priced for the rows left), the least priced,
 /// where its price is under what the running order measured: `ran` rows of work over its first `done` lead rows, at
 /// that rate over the `left` rows left (an order that finished no row costs at least its work again). A replacement
@@ -535,6 +540,9 @@ pub(super) fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>, wal
 pub(in crate::code_rule_dsl) struct SearchCx {
     pub wide: bool,
     pub runners_up: Vec<(Vec<Step>, f64)>,
+    /// With a batch pricer (decision 0354): the best's and the runners-up's steps as the search priced them, each
+    /// step's rows, basis, access and source from the search's own cells (no plan record made for them).
+    pub steps_of: Vec<(Vec<Step>, Vec<super::super::profile::StepPlan>)>,
     /// An order to try first (decision 0258): taken where it runs, is led by the delta and prices under a search's
     /// cost, before greedy-first and the search.
     pub start: Option<Vec<Step>>,
@@ -617,7 +625,12 @@ impl Rng {
 /// - A noted line that matters (on the critical path, or slow) tries, at `explore_rate`, an order not tried yet
 ///   whose corrected price is within `margin` of the best's.
 pub fn choose(round: &mut [Choice]) {
-    let predicted = PRICER.read().clone().and_then(|p| p.price(round));
+    // Nothing to choose between: the pricer is not asked (decision 0354: rounds of no choice were three in four).
+    let choosing = round.iter().any(|c| c.candidates.len() >= 2);
+    let predicted = PRICER.read().clone().filter(|_| choosing).and_then(|p| {
+        let _span = super::super::profile::span(|| "join model: prediction".into());
+        p.price(round)
+    });
     let memo = if NOTED.load(Relaxed) { Some(MEMO.read()) } else { None };
     for (k, c) in round.iter_mut().enumerate() {
         c.chosen = 0;
@@ -662,7 +675,7 @@ pub fn choose(round: &mut [Choice]) {
         if note.is_none() && predicted.is_some() {
             let near: Vec<usize> = (0..costs.len()).filter(|&i| i != best && costs[i] <= margin() * costs[best].max(1.0)).collect();
             let mut rng = Rng::new(c.key as u64 ^ 0x6a6f_696e);
-            if !near.is_empty() && rng.unit() < explore_rate() {
+            if !near.is_empty() && costs[best] <= explore_rows() && rng.unit() < explore_rate() {
                 c.chosen = near[rng.below(near.len())];
                 c.why = "explored: a candidate within the margin of the model's least";
                 COUNTS[EXPLORED].fetch_add(1, Relaxed);

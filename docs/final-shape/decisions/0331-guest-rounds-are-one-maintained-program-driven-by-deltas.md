@@ -174,3 +174,99 @@ an edit (one line added to one file). Medians, CPU:
 
 Outputs identical, cold and edit (660 relations, 30,449 rows). Four runs' wall stalled 46 to 147 s at their usual
 CPU, across engines, while the host's connection was dropping: the host's, not an engine's.
+
+### The record kept through every pass (Q119, 2026-11-17)
+
+Working Q119 (the red `dropping_unreached` family) found that the record still broke in four places, each now
+fixed: `plan::lower`'s `expand_memberships` split a rule per set member without its source; `prune` kept readers
+it had dropped, so a later gate took them for readers gone by a rename; the pass manager's steps did not carry the
+record (60 entries against 56 rules after `drop repeated rules`, 12 against 13 after the pushed joins); and the
+version's merge did not rename readers as the tree's does. The pipeline now carries it by rule id
+(`AskedByRule`: a rule kept, made from a source, or equal to a rule the step removed keeps its readers; any other
+serves its own relation) and restates it at its end; a part keeps the record of the relations whose rules it
+holds; a debug build asserts an entry per request rule where the image is made. The narrowing (0291) is per
+reader site now: a narrowed request serves its askers, and only the sites that cannot narrow get a wide request.
+
+On the M3, three samples each, interleaved (load 8 to 69, sample 1 of the new engine under the highest). Medians,
+CPU:
+
+| | t9 (before the hub) | the record carried (19ecd0b18) | kept through every pass |
+|---|---|---|---|
+| cold, s | 59.7 | 54.1 | 51.2 (50.6–63.6) |
+| edit, s | 5.56 | 4.04 | 4.03 |
+| warm, s | 0.23 | 0.11 | 0.12 |
+
+Outputs identical, cold and edit (660 relations, 30,449 rows); the embed slice 491 rules, 285 relations.
+
+### The record on the version's front passes (at the hub's merge, 2026-11-18)
+
+The hub runs the passes before lowering on the version too (0281), and a debug build checks each stage against the
+tree's. Two of the tree's record changes above are made there as well. An inlined relation that the record names among
+a request rule's readers is replaced by the relations that read it (`InlineNodeTests`, `InlineFilters`). A relation
+that `DecidedFactTests` empties decides its readers' reads of it, to a fixpoint. The pass manager's carry takes a
+record the step's output states whole as its word for a rule it knows nothing of (`hide` rebuilds rules with no
+source and leaves the record as it was); before, such a rule fell back to the request's own name.
+
+## The request narrowing merged (2026-11-17, benchmarks-on-integration into django-bugs)
+
+Two lines fixed the dropping family's narrowing independently: benchmarks-on-integration in 4dbc395b2 (Q119, its
+Q50), django-bugs in 9be5e5356 (0291 item 4, Q3). Both gate each ask by its reader, keep a wide request for the
+reading sites that cannot narrow, and let a request merge only with its own widened copies. The merge keeps
+django-bugs' `rr::lower` form (`demand_of`'s `whole` readers, the asks deduplicated where they are made,
+`front::subsume_requests`), whose ask variables are named from the reading rule alone (`<v>_rr_d`): named by the
+reader's index, a request's text, and every key made from it, changed with any rule added elsewhere. It keeps
+benchmarks-on-integration's split of a request's class in `simplify` (a request and its copies first, apart from the
+rest) and the request record carried through every pass after lowering.
+
+## The record on the version's passes (2026-11-17, final-rerail-shape-rr-align into django-bugs)
+
+final-rerail-shape-rr-align runs combine and preparation on the version (0281 step 7b) and checks each pipeline
+against the tree in a debug build, by size and digest. The record is by place among a relation's rules, so the
+version has to state the same readers in the same order. What it takes:
+
+- The version's request lowering (`preparation::on_request`) is 0291 item 4's: a request kept whole for readers
+  that ask for all, asks deduplicated with their readers joined, ask variables named `<v>_rr_d`. `rr::lower`'s
+  `on_request_rule` counts the `<req>_by_<reader>` demands as a request's rules.
+- A pipeline's carry (`manager::AskedByRule`) takes a rule's readers from its source. A rule made again without a
+  source takes the readers of a removed rule alike, one each in order when the counts match. A rule whose source
+  serves readers keeps them. Where the carry knows nothing of a rule, it takes the step's own record.
+- Hiding states the record by the rules it writes, each from its source, and a copy under another name joins its
+  source's readers. Folding a part's own relations renames readers. Inlining replaces an inlined reader by the
+  relations that read it.
+- The version's `prune` drops a pruned reader from an entry another reader holds. It makes an attribute whose
+  requests are all gone an input again, as `front::prune` does.
+- The memberships expansion is a derivation, so each rule's expansion stays where the rule was, as
+  `expand_memberships` keeps it on the tree. As an edit it put them after the rest, and the record moved with them.
+- The version after lowering is checked to hold one entry for each request rule, as the tree was before.
+- A request relation inlined away loses its entry, as `set_rules_from` keeps none for a relation without rules.
+- (At the merge of Typing-support-final-shape, 2026-11-17.) The debug checks compare a version with the tree's image
+  by `program_image::same_program`: the same size, the same digest apart from the `asked` rows, and the record the
+  same by rule content. A rule pass run as an edit writes its rules after the rest (the transducer's nearest sets
+  did), so the version's order is not the tree's, and the record by place differs while the program is one. And the
+  digest alone took a record whose readers sat on the wrong rules for the right one: the rows are the same by place
+  and the digest is a sum (`a_record_by_place_is_compared_by_rule`).
+
+### On the version's passes (the merge into Typing-support-final-shape, 2026-11-17)
+
+Merged with the passes that run on the version (0281 step 6, 0276), the record held at the tree's checks but not on
+the version's own passes, nor where a pipeline stores or folds. Each is fixed where it breaks:
+
+- The version's `hide` writes its rules with their sources and states the record as the tree's `push_rule_from`
+  leaves it: a copy of a request rule serves its source's readers, and a reader's copy is a reader wherever its
+  source is. `FoldOwn` renames folded readers (`rename_readers`). The version's `prune` keeps a request whose
+  reader is gone and drops the readers it prunes, as the tree's does.
+- A record whose length is not its relation's rule count gates nothing: every reader of it checks the length
+  (`prune`, the embed slice, lowering). `AskedByRule` carries such an entry as no record, and the tree-against-
+  version checks compare it so (`program_image::record_as`).
+- A rule made again alike keeps its readers by its source first and its content second. Readers are unioned by
+  content only for a repeat the step dropped (before, every rule of a content took every reader of it). An
+  edit folded in `Builder::finish` (`folding_edit`) names the step's input in its rules' sources. The base fold
+  (`Builder::folding`) keeps the older ones, which name no rule of the input.
+- A pipeline that begins without a record (the lowering's tail) carries the first one a step states. A request a
+  later step states first (a second round on request) joins the carried record.
+- The record is stated again at a pipeline's end and at each step a keyed pipeline stores (0281 §6). It is not
+  stated at every step: a part (Retain, then PartOf) stays a view with one overlay of fields.
+- The record is by place, and a version's digest does not read its rules' order. So two equal programs whose
+  passes placed a rule apart differ in their records alone (the tree's merge renames a rule in place, the
+  version's writes it after the rest). The checks restate the tree's record in the version's order, matched by
+  content (`record_as`). The record by place goes with front::Program (0276).

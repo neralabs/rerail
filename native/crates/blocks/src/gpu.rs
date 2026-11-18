@@ -153,12 +153,14 @@ impl Gpu {
     /// The join kernels on `device`, dispatched on `queue`: the process's one device and queue (decision 0100 §2,
     /// `rerail_metal::device()`/`queue()`), which this crate, below their owner, does not make.
     pub fn on(device: Device, queue: CommandQueue) -> Result<Gpu, String> {
-        let lib = device.new_library_with_source(&source(), &CompileOptions::new())?;
-        let pipe = |name: &str| -> Result<ComputePipelineState, String> {
-            let f = lib.get_function(name, None)?;
-            device.new_compute_pipeline_state_with_function(&f)
+        // A kernel that does not compile is fatal (decision 0382).
+        let fatal = |name: &str, what: &str, error: String| -> ! { panic!("Metal: the {what} of `{name}` does not compile (decision 0382: fatal): {error}") };
+        let lib = device.new_library_with_source(&source(), &CompileOptions::new()).unwrap_or_else(|e| fatal("join", "library", e));
+        let pipe = |name: &str| -> ComputePipelineState {
+            let f = lib.get_function(name, None).unwrap_or_else(|e| fatal(name, "function", e));
+            device.new_compute_pipeline_state_with_function(&f).unwrap_or_else(|e| fatal(name, "pipeline", e))
         };
-        let (count, write) = (pipe("join_count")?, pipe("join_write")?);
+        let (count, write) = (pipe("join_count"), pipe("join_write"));
         Ok(Gpu { device, queue, count, write })
     }
 

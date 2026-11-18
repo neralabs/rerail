@@ -52,6 +52,13 @@ pub struct Bytewise<'a> {
     /// of the token is made: a test of byte `s + j` (`1 <= j <= 16`) of exactly the term's set
     /// is the mask's lane `j - 1`, no byte read, as lean's number arm knows its digits.
     run_lanes: std::cell::Cell<Option<RunLanes>>,
+    /// The refill's words the body stores in its rows (decision 0361, `native_cpu_block::
+    /// refill_rows`): the outputs, and the row slot of the block's rare starts' word. The
+    /// refill loads them where its block is made, as simdjson's stage 2 reads stage 1's index.
+    pub rows: Option<(Vec<u16>, Option<i32>)>,
+    /// Whether the body stores those words in its rows. Not where it hands every block's to the
+    /// token loop (0374): the refill's cold way classifies the block's bytes again.
+    pub rows_stored: bool,
 }
 
 /// A split run's byte term's mask (`Bytewise::run_split`): its lanes from `s + 1`, `stride`
@@ -100,13 +107,13 @@ impl<'a> Bytewise<'a> {
             let o = |a: u16| can[usize::from(a)];
             can[x] = plan.lanes[x]
                 || match *inst {
-                    BlockInst::Const(_) => true,
-                    BlockInst::Escaped(a) | BlockInst::Not(a) | BlockInst::Prev(a, _) => o(a),
+                    BlockInst::Const(_) | BlockInst::Prefix(..) => true,
+                    BlockInst::Escaped(a) | BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) => o(a),
                     BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => o(a) && o(b),
                     _ => false,
                 };
         }
-        Bytewise { native, plan, can, carries: Vec::new(), bail: None, packs: Default::default(), before_start: None, run_lanes: Default::default() }
+        Bytewise { native, plan, can, carries: Vec::new(), bail: None, packs: Default::default(), before_start: None, run_lanes: Default::default(), rows: None, rows_stored: true }
     }
 
     /// The runs whose `escaped` the bytes make: each `a`, once.
@@ -325,7 +332,7 @@ impl<'a> Bytewise<'a> {
             d[x] = gate.contains(&x)
                 || match *inst {
                     BlockInst::Escaped(a) => given.contains(&usize::from(a)) || o(a),
-                    BlockInst::Not(a) | BlockInst::Prev(a, _) => o(a),
+                    BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) => o(a),
                     BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => o(a) || o(b),
                     _ => false,
                 };
@@ -510,9 +517,23 @@ impl<'a> Bytewise<'a> {
     /// read at stream position `p + i + d`, as an output of delay `d` is. A run's split
     /// (`run_split`) so reads its byte term in the window its tests share.
     pub fn short_terms(&self, f: &mut FunctionBuilder<'_>, at: &File, terms: &[(usize, i64)], p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
+        self.short_terms_carried(f, at, terms, p, &[], heads)
+    }
+
+    /// `short_words` with the escapes' carries in given (`cins`, as `words_carried`'s): a
+    /// reader's closer after an opener apart from its escapes (0358), and the bits a lane
+    /// (`short_stride`).
+    pub fn short_words_carried(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, cins: &[(usize, Value)], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, u32) {
+        let terms: Vec<(usize, i64)> = os.iter().map(|&o| (usize::from(self.native.outputs[usize::from(o)]), i64::from(self.native.output_delays[usize::from(o)]))).collect();
+        let xs: Vec<usize> = terms.iter().map(|t| t.0).collect();
+        (self.short_terms_carried(f, at, &terms, p, cins, heads), self.short_stride_x(&xs))
+    }
+
+    /// `short_terms` with the escapes' carries in given.
+    fn short_terms_carried(&self, f: &mut FunctionBuilder<'_>, at: &File, terms: &[(usize, i64)], p: Value, cins: &[(usize, Value)], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
         let xs: Vec<usize> = terms.iter().map(|t| t.0).collect();
         let stride = self.short_stride_x(&xs);
-        let mut carry = Carry { short: true, stride, pack: Some(self.pack_for(&xs, &[])), ..Carry::default() };
+        let mut carry = Carry { short: true, stride, ins: cins.to_vec(), pack: Some(self.pack_for(&xs, &[])), ..Carry::default() };
         let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
         let mut memo = HashMap::new();
         let Some((&(x0, d0), rest)) = terms.split_first() else { return Vec::new() };
@@ -554,7 +575,7 @@ impl<'a> Bytewise<'a> {
                 return true;
             }
             match b.native.insts[x] {
-                BlockInst::Not(a) | BlockInst::Prev(a, _) => lanewise(b, usize::from(a), seen),
+                BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) => lanewise(b, usize::from(a), seen),
                 BlockInst::And(a, c) | BlockInst::Or(a, c) | BlockInst::Xor(a, c) | BlockInst::AndNot(a, c) => lanewise(b, usize::from(a), seen) && lanewise(b, usize::from(c), seen),
                 _ => false,
             }
@@ -602,6 +623,7 @@ impl<'a> Bytewise<'a> {
                     walk(b, usize::from(c), back, seen, runs);
                 }
                 BlockInst::Prev(a, k) => walk(b, usize::from(a), back + i64::from(k), seen, runs),
+                BlockInst::Early(a, k) => walk(b, usize::from(a), back - i64::from(k), seen, runs),
                 BlockInst::Escaped(a) => {
                     if back == 0 && !runs.contains(&usize::from(a)) {
                         runs.push(usize::from(a));
@@ -709,9 +731,11 @@ impl<'a> Bytewise<'a> {
             let j = d - back;
             match b.native.insts[x] {
                 BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) => j == 0 || ((1..=known).contains(&j) && exact_at(b.native, x).is_some_and(|n| n.set == set)),
-                BlockInst::Within(_) | BlockInst::Const(_) => true,
+                // The prefix's bytes lie before the stream, so before any token's.
+                BlockInst::Within(_) | BlockInst::Const(_) | BlockInst::Prefix(..) => true,
                 BlockInst::Not(a) => go(b, usize::from(a), back, d, set, known),
                 BlockInst::Prev(a, k) => go(b, usize::from(a), back + i64::from(k), d, set, known),
+                BlockInst::Early(a, k) => go(b, usize::from(a), back - i64::from(k), d, set, known),
                 BlockInst::And(a, c) | BlockInst::Or(a, c) | BlockInst::Xor(a, c) | BlockInst::AndNot(a, c) => go(b, usize::from(a), back, d, set, known) && go(b, usize::from(c), back, d, set, known),
                 _ => false,
             }
@@ -837,6 +861,58 @@ impl<'a> Bytewise<'a> {
                         BlockInst::Xor(..) => f.ins().bxor(p, q),
                         _ => f.ins().band_not(p, q),
                     }
+                }
+                // `a` `k` bytes later (`BlockOp::Early`): its bits all lie in the file's first
+                // `EARLY_BITS` positions, so no window cuts them, and a window from there on
+                // has none. Made only in a window that holds them, behind a branch, its values
+                // its own: the others' windows never see it.
+                BlockInst::Early(a, k) => {
+                    let pos = here(f);
+                    let near = f.ins().icmp_imm(IntCC::SignedLessThan, pos, i64::from(crate::block::EARLY_BITS));
+                    let (cold, join) = (f.create_block(), f.create_block());
+                    f.append_block_param(join, types::I64);
+                    let zero = f.ins().iconst(types::I64, 0);
+                    f.ins().brif(near, cold, &[], join, &[zero.into()]);
+                    f.switch_to_block(cold);
+                    f.set_cold_block(cold);
+                    let (mut w, mut m) = (HashMap::new(), HashMap::new());
+                    let v = self.mask_at(f, at, usize::from(a), start, back - i64::from(k), &mut w, &mut m, carry, heads);
+                    f.ins().jump(join, &[v.into()]);
+                    f.switch_to_block(join);
+                    f.block_params(join)[0]
+                }
+                // The prefix's positions (`BlockOp::Prefix`): the file's first `n`, where it
+                // starts with the prefix's bytes, compared once (`prefix_start`). Only a window
+                // that holds them has any, behind a branch, as an `early`'s.
+                BlockInst::Prefix(n, w) => {
+                    let pos = here(f);
+                    let near = f.ins().icmp_imm(IntCC::SignedLessThan, pos, i64::from(n));
+                    let (cold, join) = (f.create_block(), f.create_block());
+                    f.append_block_param(join, types::I64);
+                    let zero = f.ins().iconst(types::I64, 0);
+                    f.ins().brif(near, cold, &[], join, &[zero.into()]);
+                    f.switch_to_block(cold);
+                    f.set_cold_block(cold);
+                    let k = crate::native_cpu_block::prefix_start(f, n, w, at.bytes, at.len);
+                    let one = f.ins().iconst(types::I64, 1);
+                    let stride = i64::from(carry.stride.max(1));
+                    let mut v = f.ins().iconst(types::I64, 0);
+                    // Position `j`'s bit, `j - pos` lanes into the window.
+                    for j in 0..i64::from(n) {
+                        let d = f.ins().irsub_imm(pos, j);
+                        let ge = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, d, 0);
+                        let lt = f.ins().icmp_imm(IntCC::SignedLessThan, d, 64 / stride);
+                        let set = f.ins().icmp_imm(IntCC::SignedGreaterThan, k, j);
+                        let ok = f.ins().band(ge, lt);
+                        let ok = f.ins().band(ok, set);
+                        let sh = if stride == 1 { d } else { f.ins().imul_imm(d, stride) };
+                        let bit = f.ins().ishl(one, sh);
+                        let bit = f.ins().select(ok, bit, zero);
+                        v = f.ins().bor(v, bit);
+                    }
+                    f.ins().jump(join, &[v.into()]);
+                    f.switch_to_block(join);
+                    f.block_params(join)[0]
                 }
                 BlockInst::Prev(a, k) => {
                     // `a` `k` further back; no bits before the stream.
@@ -1110,6 +1186,21 @@ impl<'a> Bytewise<'a> {
                     }
                 }
             }
+            // The prefix's positions: below the stream's start (`prefix_start`).
+            BlockInst::Prefix(n, w) => {
+                let k = crate::native_cpu_block::prefix_start(f, n, w, at.bytes, at.len);
+                let ge = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, i, 0);
+                let lt = f.ins().icmp(IntCC::SignedLessThan, i, k);
+                let both = f.ins().band(ge, lt);
+                f.ins().uextend(types::I64, both)
+            }
+            // As `mask_at`'s: none from `EARLY_BITS` on.
+            BlockInst::Early(a, k) => {
+                let v = self.scalar(f, at, usize::from(a), pos, back - i64::from(k), anchor, first, memo, heads);
+                let near = f.ins().icmp_imm(IntCC::SignedLessThan, i, i64::from(crate::block::EARLY_BITS));
+                let near = f.ins().uextend(types::I64, near);
+                f.ins().band(v, near)
+            }
             BlockInst::Prev(a, k) => {
                 let v = self.scalar(f, at, usize::from(a), pos, back + i64::from(k), anchor, first, memo, heads);
                 // Its operand read at most `FRONT` bytes before `p`, false on a zero byte: the
@@ -1206,6 +1297,7 @@ impl Bytewise<'_> {
             },
             // A `prev`'s bound may make it false: only its false is known, but where the zeros
             // before the file say the bound (`scalar`'s, `zeros_bound`).
+            BlockInst::Early(a, k) => self.fold(usize::from(a), back - i64::from(k), anchor, fi),
             BlockInst::Prev(a, k) => {
                 let reach = back + i64::from(k);
                 let bounded = anchor.is_some_and(|d| zeros_bound(self.native, usize::from(a), reach - d));
@@ -1440,6 +1532,7 @@ fn inst_bytes_at(native: &BlockNative, x: usize, at: i32) -> [u64; 4] {
             BlockInst::AndNot(a, _) => go(native, usize::from(a), d, depth + 1),
             // `a` `k` back: the byte at `d` is `d + k` from where `a` holds.
             BlockInst::Prev(a, k) => go(native, usize::from(a), d + i32::from(k), depth + 1),
+            BlockInst::Early(a, k) => go(native, usize::from(a), d - i32::from(k), depth + 1),
             // A bit only after a byte of `a`'s run: `a` held one byte back.
             BlockInst::Escaped(a) if d == -1 => go(native, usize::from(a), 0, depth + 1),
             BlockInst::Const(0) => [0; 4],
@@ -1494,6 +1587,8 @@ fn needs_at(native: &BlockNative, x: usize, memo: &mut HashMap<usize, Option<Nee
             _ => None,
         },
         BlockInst::Prev(a, k) => needs_at(native, usize::from(a), memo).map(|n| n.shift(-i32::from(k))),
+        // A bit at `p` is the operand's at `p + k` (`BlockOp::Early`).
+        BlockInst::Early(a, k) => needs_at(native, usize::from(a), memo).map(|n| n.shift(i32::from(k))),
         BlockInst::Escaped(a) => needs_at(native, usize::from(a), memo).map(|n| n.shift(-1)),
         _ => None,
     };
@@ -1663,6 +1758,7 @@ fn inst_byte_at(native: &BlockNative, x: usize, off: i32, depth: u32) -> Option<
         // A bit at `p` is the operand's at `p - k`: its byte at `p + off` is the operand's at
         // `off + k`.
         BlockInst::Prev(a, k) => inst_byte_at(native, usize::from(a), off + i32::from(k), depth + 1),
+        BlockInst::Early(a, k) => inst_byte_at(native, usize::from(a), off - i32::from(k), depth + 1),
         BlockInst::Escaped(a) => inst_byte_at(native, usize::from(a), off + 1, depth + 1),
         _ => None,
     }
@@ -1708,6 +1804,7 @@ fn by_offset(native: &BlockNative, x: usize, memo: &mut HashMap<usize, Option<Of
             _ => None,
         },
         BlockInst::Prev(a, k) => by_offset(native, usize::from(a), memo).map(|m| shift(m, -i32::from(k))),
+        BlockInst::Early(a, k) => by_offset(native, usize::from(a), memo).map(|m| shift(m, i32::from(k))),
         BlockInst::Escaped(a) => by_offset(native, usize::from(a), memo).map(|m| shift(m, -1)),
         _ => None,
     };
@@ -1720,7 +1817,9 @@ fn by_offset(native: &BlockNative, x: usize, memo: &mut HashMap<usize, Option<Of
 /// bytes, an output's delay, and a 16-byte load's over-read. A program's padding (`pad`) of
 /// this many lets a window go uncut (`Bytewise::padded`).
 pub fn pad_reach(native: &BlockNative) -> usize {
-    63 + 2 * usize::from(native.delay) + 64 + 16
+    // An `early` reads its operand's bytes as much later, as a delay does.
+    let early = native.insts.iter().map(|i| if let BlockInst::Early(_, k) = *i { usize::from(k) } else { 0 }).max().unwrap_or(0);
+    63 + 2 * usize::from(native.delay) + early + 64 + 16
 }
 
 /// Whether a set a body tests (`class_pack::Need`) is false on the zero byte, its answer there

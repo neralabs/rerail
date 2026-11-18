@@ -23,9 +23,10 @@ pub mod caches;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
 pub use name::{List, Lists, Name, Stacks};
 pub mod cycles;
+pub mod graph;
 pub mod template;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-pub use ast::{AXIS, AggOp, Atom, Branded, Class, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, carried_record, readers_of_heads, record_copy, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+pub use ast::{AXIS, AggOp, Atom, Branded, Class, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, carried_record, readers_of_heads, record_copy, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, Algo, FEW, Fan, Values as LayoutValues, LayoutFact, Size as LayoutSize, add_layout, layout_facts, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
 
 /// A token and the byte offset where it starts.
 #[derive(Clone, Debug, PartialEq)]
@@ -38,7 +39,7 @@ enum Tok {
     Eof,
 }
 
-const PUNCT: [&str; 22] = [":-", "!=", "<=", ">=", "(", ")", ",", ".", ";", ":", "=", "<", ">", "!", "{", "}", "|", "@", "*", "[", "]", "-"];
+use ast::PUNCT;
 
 /// T's `TOKEN` regex: whitespace and `//` comments skipped, then `$var`, `"string"`, `-?digits`, punctuation or an
 /// identifier. T had no `*`, so its `.demand *` could not be written; it is a token here (and `[`, `]`, `-` for
@@ -98,10 +99,7 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize)>, Error> {
     }
 }
 
-/// The parser's own spelling of the operator `op`, if it is one (a comparison read back from facts or the store).
-pub fn operator(op: &str) -> Option<&'static str> {
-    PUNCT.iter().copied().find(|p| *p == op)
-}
+pub use ast::operator;
 
 fn near(src: &str, pos: usize) -> &str {
     let end = (pos..=src.len().min(pos + 40)).rev().find(|&i| src.is_char_boundary(i)).unwrap_or(pos);
@@ -696,33 +694,41 @@ pub fn declare_axes(prog: &mut Program) {
     }
 }
 
-/// `finish`'s checks, of the program its rewrites made: no computed term in a body atom, bounded lattices, every
-/// input declared, bounded value cycles, the caches' form.
+/// `finish`'s checks of a tree, on its version (`finish_checks_on`): the tree is encoded for them, until the tree's
+/// lowering goes (decision 0276 step 5).
 pub fn finish_checks(prog: &Program) -> Result<(), Error> {
-    for rule in &prog.rules {
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(prog).and_then(|b| b.finish()).map_err(Error::Syntax)?;
+    finish_checks_on(&v)
+}
+
+/// `finish`'s checks, of the program its rewrites made, read on its version: no computed term in a body atom, bounded
+/// lattices, every input declared, bounded value cycles, the caches' form.
+pub fn finish_checks_on(v: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), Error> {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+    use crate::code_rule_dsl::logic::program_image::handles::{Lit, TermRef};
+    for rule in v.rules() {
         // A computed term is a value, not a pattern: an atom never matches on one (the backends would drop it).
-        if let Some(a) = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None })
-            .find(|a| a.args.iter().any(|t| matches!(t, Term::Call(..))))
-        {
+        if let Some(a) = rule.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).find(|a| a.args().any(|t| matches!(t, TermRef::Call(..)))) {
             return Err(Error::Syntax(format!(
                 "computed term in body atom {} of the rule for {}: bind it with `v = @f(...)`",
-                a.rel, rule.head.rel
+                v.rel_name(a.rel()),
+                v.rel_name(rule.head().rel())
             )));
         }
     }
-    for (relation, decl) in &prog.lattice {
+    for (relation, decl) in ProgramFields::lattice(v) {
         if !decl.bounded() {
-            return Err(Error::UnboundedLattice { relation: relation.clone() });
+            return Err(Error::UnboundedLattice { relation });
         }
     }
     // An input's columns are its declaration's: the planner reads them.
-    if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(rel.as_str())) {
-        return Err(Error::UndeclaredInput { relation: relation.clone() });
+    if let Some(relation) = v.input_names().into_iter().find(|rel| !v.declares(rel)) {
+        return Err(Error::UndeclaredInput { relation });
     }
     let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
-    cycles::check(prog)?;
+    cycles::check(v)?;
     // A cache is two rules (decision 0103): a broken form refuses the program.
-    caches::caches(prog)?;
+    caches::caches(v)?;
     drop(checking);
     Ok(())
 }
@@ -732,6 +738,27 @@ pub fn finish_checks(prog: &Program) -> Result<(), Error> {
 /// `match_group` over a span are built-ins: the text columns make each regex's relation (`strings`).
 pub fn declared(prog: &Program) -> Result<(), Error> {
     prog.rules.iter().try_for_each(|rule| rule_declared(prog, rule))
+}
+
+/// `declared`, of a version: each rule's reads declared, and each atom with its relation's columns.
+pub fn declared_on(v: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), Error> {
+    use crate::code_rule_dsl::logic::program_image::handles::Lit;
+    for rule in v.rules() {
+        let head = v.rel_name(rule.head().rel());
+        let atoms = || {
+            rule.body().filter_map(|l| match l.view() {
+                Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(a),
+                _ => None,
+            })
+        };
+        for a in atoms() {
+            read_declared(v, v.rel_name(a.rel()), head)?;
+        }
+        for a in std::iter::once(rule.head()).chain(atoms()) {
+            columns_declared(v, v.rel_name(a.rel()), a.arity(), head)?;
+        }
+    }
+    Ok(())
 }
 
 /// `declared` for one rule: every relation it reads is declared in `prog` (`read_declared`), and each atom of it has
@@ -754,8 +781,8 @@ pub fn rule_declared(prog: &Program, rule: &Rule) -> Result<(), Error> {
 
 /// A read of `rel` in a rule for `head` names a declared relation. The import components' relations (`rr_cx_reach`,
 /// decision 0076) are added by the run to a program that reads them: declared there.
-pub fn read_declared(prog: &Program, rel: &str, head: &str) -> Result<(), Error> {
-    if !prog.decls.contains_key(rel) && !is_transduced(rel) && !rel.starts_with("rr_cx_") && !matches!(rel, "match_all" | "match_group") {
+pub fn read_declared(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str, head: &str) -> Result<(), Error> {
+    if !prog.declares(rel) && !is_transduced(rel) && !rel.starts_with("rr_cx_") && !matches!(rel, "match_all" | "match_group") {
         return Err(Error::Syntax(format!("relation {rel} is read by the rule for {head} and not declared: declare it with `.decl`")));
     }
     Ok(())
@@ -763,8 +790,8 @@ pub fn read_declared(prog: &Program, rel: &str, head: &str) -> Result<(), Error>
 
 /// An atom of `rel` with `arity` columns, in a rule for `head`, has the columns `rel` declares: a read of another
 /// arity names some other relation (a rule's own `field(n)` beside the core `field(p, f, c)`), which no plan can join.
-pub fn columns_declared(prog: &Program, rel: &str, arity: usize, head: &str) -> Result<(), Error> {
-    if let Some(cols) = prog.decls.get(rel)
+pub fn columns_declared(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str, arity: usize, head: &str) -> Result<(), Error> {
+    if let Some(cols) = prog.columns_of(rel)
         && cols.len() != arity
     {
         return Err(Error::Syntax(format!("relation {rel} is declared with {} columns and read with {arity} in the rule for {head}", cols.len())));
@@ -1102,13 +1129,22 @@ pub fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
 /// unreached clauses (`dropping_unreached_clauses_prunes_to_the_same_program`).
 fn reach(prog: &Program, roots: Vec<String>, gated: bool) -> (BTreeSet<String>, Vec<bool>) {
     // Each request rule's readers, by its place among its relation's rules; a relation whose rules no longer match
-    // the record (rules added or dropped since lowering) keeps them ungated.
+    // the record (rules added or dropped since lowering) keeps them ungated. So does a rule one of whose readers the
+    // program no longer has: inlined into its own readers or merged into another relation since (`simplify`), it is
+    // read under their names, which the record does not hold. Gated by it, `tables :- q(s, x0), …` with `q` inlined
+    // lost `q`'s request for `str`, and read no string.
+    let present: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str())
+        .chain(prog.inputs.iter().chain(&prog.outputs).map(String::as_str))
+        .chain(prog.facts.keys().map(|r| r.as_ref()))
+        .collect();
     let mut gate: Vec<Option<&BTreeSet<String>>> = vec![None; prog.rules.len()];
     for (req, readers) in prog.asked_by.iter().filter(|(req, _)| gated && !roots.contains(req)) {
         let at: Vec<usize> = prog.rules.iter().enumerate().filter(|(_, r)| r.head.rel == req.as_str()).map(|(i, _)| i).collect();
         if at.len() == readers.len() {
             for (i, by) in at.into_iter().zip(readers) {
-                gate[i] = Some(by);
+                if by.iter().all(|b| present.contains(b.as_str())) {
+                    gate[i] = Some(by);
+                }
             }
         }
     }
@@ -1168,6 +1204,14 @@ pub fn prune(mut prog: Program) -> Program {
         if let Some(mine) = gated.get(req) && mine.len() == readers.len() {
             let mut it = mine.iter();
             readers.retain(|_| *it.next().unwrap());
+        }
+    }
+    // A reader `prune` drops is not needed: it leaves the record, so a later gate (the embed slice's) does not take
+    // it for one gone by a rename, whose requests stay.
+    let dropped: BTreeSet<String> = prog.rules.iter().zip(&kept).filter(|(r, k)| !**k && !need.contains(r.head.rel.as_str())).map(|(r, _)| r.head.rel.to_string()).collect();
+    for readers in prog.asked_by.values_mut().flatten() {
+        if readers.iter().any(|b| dropped.contains(b)) && readers.iter().any(|b| !dropped.contains(b)) {
+            readers.retain(|b| !dropped.contains(b));
         }
     }
     let mut keep = kept.into_iter();

@@ -35,34 +35,31 @@
 //! The image is read through handles (`handles`: rules, atoms, literals, terms), versions (`version`: lookups by
 //! id and by name, rules by head and by reader) and written through `build::Builder`, never by indexing regions:
 //! the regions and their layout are this module's.
-use super::front::{Lists, Name, Program, Value};
+use super::front::{ast::{Program, Value}, name::{Lists, Name}};
 use super::program_facts::{self, Facts};
 use std::collections::BTreeMap;
 
 pub mod about;
-pub mod analyses;
 pub mod build;
 pub mod csr;
-mod encoder;
+pub mod encoder;
 pub mod extents;
+pub mod fields;
 pub mod grouped;
 pub mod handles;
-pub mod manager;
-pub mod passes;
-mod show;
+pub mod show;
 pub mod strings;
-mod tree;
+pub mod tree;
 pub mod version;
 
 pub use about::{About, GateRef, LatticeRef, NativeKind, NativeRef, NativeSpec, ShapeRef, ShapeWaitRef};
-pub use analyses::{Edges, Strata};
 pub use build::{Builder, PartFields, Rel, Rewrite, RuleBuilder, Site, T, t_of};
 pub use extents::Extents;
 pub use grouped::Grouped;
 pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 pub use strings::Strings;
 pub use tree::Tree;
-pub use version::{DeclRef, FactsRef, Layer, Made, Version, differences, forget_trees_decoded, trees_decoded};
+pub use version::{DeclRef, FactsRef, Layer, Made, Version, differences, forget_trees_decoded, same_program, trees_decoded};
 
 pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x05";
 /// 3: every relation the program names has an id, those its declarations, facts, inputs, outputs and about rows
@@ -71,7 +68,7 @@ pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x05";
 /// 5: a lowered program's atoms are branded leaves and cells, with what they name (decision 0270).
 pub const FORMAT: u32 = 5;
 /// The program the `.about` rows are written as (`program_facts`), as the text has them.
-pub(crate) const ABOUT: &str = "a";
+pub const ABOUT: &str = "a";
 
 // ---- ids ----
 
@@ -156,15 +153,15 @@ pub enum R {
     /// The same, by source: (source << 32 | rule), sorted.
     FromIndex,
 }
-pub(crate) const REGIONS: usize = 40;
+pub const REGIONS: usize = 40;
 /// A rule that came from no rule (`R::From`).
-pub(crate) const NO_RULE: u32 = u32::MAX;
+pub const NO_RULE: u32 = u32::MAX;
 /// Each region's item width in bytes. Buckets are 64-byte records.
 const WIDTH: [u32; REGIONS] = [8, 1, 4, 64, 64, 4, 4, 1, 4, 4, 8, 4, 4, 8, 4, 4, 4, 4, 8, 4, 4, 4, 1, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 4, 8];
 const HEADER: usize = 16 + 24 * REGIONS;
 
 /// `Meta`'s words.
-pub(crate) mod meta {
+pub mod meta {
     /// 0: a base; 1: an overlay's delta.
     pub const KIND: usize = 0;
     /// Where this image's rules, atoms and relations are numbered from: its parent's id spaces.
@@ -185,7 +182,7 @@ pub(crate) mod meta {
 }
 
 /// Node kinds (the low five bits of `Kind`; the high three are the kind's flags).
-pub(crate) mod kind {
+pub mod kind {
     pub const RULE: u8 = 1;
     pub const ATOM: u8 = 2;
     pub const CMP: u8 = 3;
@@ -212,14 +209,14 @@ pub(crate) mod kind {
     }
 }
 /// A fact relation's flag in `FactRel`: one of the `.about` rows.
-pub(crate) const ABOUT_BIT: u32 = 1 << 31;
+pub const ABOUT_BIT: u32 = 1 << 31;
 
 pub fn hash<T: std::hash::Hash + ?Sized>(x: &T) -> u64 {
     use std::hash::BuildHasher;
     foldhash::quality::FixedState::with_seed(0x0173).hash_one(x)
 }
 
-pub(crate) fn bad(what: impl std::fmt::Display) -> String {
+pub fn bad(what: impl std::fmt::Display) -> String {
     format!("program image: {what}")
 }
 
@@ -227,9 +224,19 @@ pub(crate) fn bad(what: impl std::fmt::Display) -> String {
 
 /// An image's bytes, held at 16-byte alignment, viewed by region.
 pub struct Image {
-    buf: Vec<u128>,
+    buf: Buf,
     len: usize,
     regions: [(usize, usize); REGIONS],
+}
+
+/// Bytes an image is read in place from, at a stable address for as long as they are held: a store's segment,
+/// mapped (decision 0394).
+pub type SharedBytes = std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>;
+
+/// Where an image's bytes are: a buffer of its own, or bytes it shares, read where they are.
+enum Buf {
+    Owned(Vec<u128>),
+    Shared(SharedBytes),
 }
 
 impl Image {
@@ -239,7 +246,28 @@ impl Image {
         let mut buf = vec![0u128; bytes.len().div_ceil(16)];
         // SAFETY: `buf` holds at least `bytes.len()` bytes.
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.as_mut_ptr().cast::<u8>(), bytes.len()) };
-        let mut image = Image { buf, len: bytes.len(), regions: [(0, 0); REGIONS] };
+        Image::checked(Image { buf: Buf::Owned(buf), len: bytes.len(), regions: [(0, 0); REGIONS] })
+    }
+
+    /// The image of `bytes`, read where they are, not copied (decision 0394), and checked as `open` checks it. Bytes
+    /// not at 16 bytes are refused: an image's regions are read at 16.
+    pub fn open_shared(bytes: SharedBytes) -> Result<Image, String> {
+        let (at, len) = {
+            let b = (*bytes).as_ref();
+            (b.as_ptr() as usize, b.len())
+        };
+        if at % 16 != 0 {
+            return Err(bad("shared bytes not at 16 bytes"));
+        }
+        Image::checked(Image { buf: Buf::Shared(bytes), len, regions: [(0, 0); REGIONS] })
+    }
+
+    /// Whether its bytes are shared, read where they are (`open_shared`), not a copy of its own.
+    pub fn is_shared(&self) -> bool {
+        matches!(self.buf, Buf::Shared(_))
+    }
+
+    fn checked(mut image: Image) -> Result<Image, String> {
         let b = image.bytes();
         if b.len() < HEADER || b[..8] != MAGIC {
             return Err(bad("no image"));
@@ -274,8 +302,11 @@ impl Image {
     }
 
     pub fn bytes(&self) -> &[u8] {
-        // SAFETY: `buf` holds `len` initialized bytes.
-        unsafe { std::slice::from_raw_parts(self.buf.as_ptr().cast::<u8>(), self.len) }
+        match &self.buf {
+            // SAFETY: `buf` holds `len` initialized bytes.
+            Buf::Owned(buf) => unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), self.len) },
+            Buf::Shared(b) => (**b).as_ref(),
+        }
     }
 
     fn slice<T>(&self, r: R) -> &[T] {
@@ -284,13 +315,13 @@ impl Image {
         // buffer; every T here is a plain integer (or an array of them) with no invalid bit patterns.
         unsafe { std::slice::from_raw_parts(self.bytes().as_ptr().add(offset).cast::<T>(), count) }
     }
-    pub(crate) fn u8s(&self, r: R) -> &[u8] {
+    pub fn u8s(&self, r: R) -> &[u8] {
         self.slice(r)
     }
-    pub(crate) fn u32s(&self, r: R) -> &[u32] {
+    pub fn u32s(&self, r: R) -> &[u32] {
         self.slice(r)
     }
-    pub(crate) fn u64s(&self, r: R) -> &[u64] {
+    pub fn u64s(&self, r: R) -> &[u64] {
         self.slice(r)
     }
     fn buckets(&self, r: R) -> &[[u64; 8]] {
@@ -320,11 +351,11 @@ impl Image {
         self.u32s(R::RuleNode).len()
     }
     /// The source of local rule `k` (`R::From`).
-    pub(crate) fn source(&self, k: u32) -> Option<RuleId> {
+    pub fn source(&self, k: u32) -> Option<RuleId> {
         self.u32s(R::From).get(k as usize).copied().filter(|&f| f != NO_RULE).map(RuleId)
     }
     /// The local rules whose source is `src`.
-    pub(crate) fn derived(&self, src: RuleId) -> impl Iterator<Item = u32> + '_ {
+    pub fn derived(&self, src: RuleId) -> impl Iterator<Item = u32> + '_ {
         let index = self.u64s(R::FromIndex);
         let s = index.partition_point(|&e| ((e >> 32) as u32) < src.0);
         index[s..].iter().take_while(move |&&e| (e >> 32) as u32 == src.0).map(|&e| e as u32)
@@ -346,16 +377,16 @@ impl Image {
     pub fn rule_end(&self) -> u32 {
         self.rule_base() + self.rules() as u32
     }
-    pub(crate) fn own_sum(&self) -> u64 {
+    pub fn own_sum(&self) -> u64 {
         self.meta(meta::OWN_SUM)
     }
-    pub(crate) fn owns(&self) -> u64 {
+    pub fn owns(&self) -> u64 {
         self.meta(meta::OWNS)
     }
-    pub(crate) fn inputs_hash(&self) -> u64 {
+    pub fn inputs_hash(&self) -> u64 {
         self.meta(meta::INPUTS_HASH)
     }
-    pub(crate) fn outputs_hash(&self) -> u64 {
+    pub fn outputs_hash(&self) -> u64 {
         self.meta(meta::OUTPUTS_HASH)
     }
 
@@ -367,12 +398,12 @@ impl Image {
         &self.u8s(R::StrBytes)[start..ends[local] as usize]
     }
     /// The text of atom `a`, one of this image's own.
-    pub(crate) fn text(&self, a: AtomId) -> &str {
+    pub fn text(&self, a: AtomId) -> &str {
         // SAFETY: `check` found every string UTF-8.
         unsafe { std::str::from_utf8_unchecked(self.atom_bytes((a.0 - self.atom_base()) as usize)) }
     }
     /// The atom of `text`, if this image holds it.
-    pub(crate) fn find(&self, text: &str) -> Option<AtomId> {
+    pub fn find(&self, text: &str) -> Option<AtomId> {
         let h = strings::hash(text.as_bytes());
         strings::find_in(self.buckets(R::StrBuckets), self.buckets(R::StrOver), self.meta(meta::HASH_LEVEL) as u32, self.meta(meta::HASH_SPLIT) as u32, h, |a| {
             self.atom_bytes(a as usize) == text.as_bytes()
@@ -381,7 +412,7 @@ impl Image {
     }
     /// What this image says of atom `a`'s relation: `Some(Some(r))` or `Some(None)` when it knows (it holds the atom,
     /// or makes it a relation); `None` when the answer is its parent's.
-    pub(crate) fn rel_of(&self, a: AtomId) -> Option<Option<RelId>> {
+    pub fn rel_of(&self, a: AtomId) -> Option<Option<RelId>> {
         if a.0 >= self.atom_base() {
             return Some(self.u32s(R::AtomRel)[(a.0 - self.atom_base()) as usize].checked_sub(1).map(RelId));
         }
@@ -389,32 +420,32 @@ impl Image {
         p.binary_search_by_key(&a.0, |&x| (x >> 32) as u32).ok().map(|k| Some(RelId(p[k] as u32)))
     }
     /// The atom naming relation `r`, one of this image's own.
-    pub(crate) fn rel_atom(&self, r: RelId) -> AtomId {
+    pub fn rel_atom(&self, r: RelId) -> AtomId {
         AtomId(self.u32s(R::Rels)[(r.0 - self.rel_base()) as usize])
     }
 
     // -- rules --
 
-    pub(crate) fn rule_node(&self, k: u32) -> u32 {
+    pub fn rule_node(&self, k: u32) -> u32 {
         self.u32s(R::RuleNode)[k as usize]
     }
-    pub(crate) fn rule_vars(&self, k: u32) -> &[u32] {
+    pub fn rule_vars(&self, k: u32) -> &[u32] {
         let v = self.u32s(R::RuleVars);
         &self.u32s(R::Vars)[v[k as usize] as usize..v[k as usize + 1] as usize]
     }
-    pub(crate) fn rule_hash(&self, k: u32) -> u64 {
+    pub fn rule_hash(&self, k: u32) -> u64 {
         self.u64s(R::RuleHash)[k as usize]
     }
-    pub(crate) fn node(&self, at: u32) -> (u8, u32, u32) {
+    pub fn node(&self, at: u32) -> (u8, u32, u32) {
         let at = at as usize;
         (self.u8s(R::Kind)[at], self.u32s(R::Size)[at], self.u32s(R::Val)[at])
     }
-    pub(crate) fn big(&self, k: u32) -> i64 {
+    pub fn big(&self, k: u32) -> i64 {
         self.u64s(R::Ints)[k as usize] as i64
     }
     /// Whether the subtrees at nodes `a` and `b` are equal: node by node, a big int by its value (each is written to
     /// the image's table of its own, so two equal ones have two entries).
-    pub(crate) fn same_nodes(&self, a: u32, b: u32) -> bool {
+    pub fn same_nodes(&self, a: u32, b: u32) -> bool {
         let n = self.node(a).1;
         n == self.node(b).1
             && (0..n).all(|k| {
@@ -426,62 +457,62 @@ impl Image {
             })
     }
     /// The rules (local indexes) whose head is relation `rel`.
-    pub(crate) fn heads(&self, rel: RelId) -> &[u32] {
+    pub fn heads(&self, rel: RelId) -> &[u32] {
         let r = csr::Csr::new(self.u32s(R::HeadKeys), self.u32s(R::HeadStart)).range(rel.0);
         &self.u32s(R::HeadRules)[r]
     }
     /// The (local rule, literal node) pairs that read relation `rel` in their bodies.
-    pub(crate) fn reads(&self, rel: RelId) -> impl Iterator<Item = (u32, u32)> + '_ {
+    pub fn reads(&self, rel: RelId) -> impl Iterator<Item = (u32, u32)> + '_ {
         let r = csr::Csr::new(self.u32s(R::ReadKeys), self.u32s(R::ReadStart)).range(rel.0);
         self.u32s(R::ReadRule)[r.clone()].iter().copied().zip(self.u32s(R::ReadNode)[r].iter().copied())
     }
     /// The parent's rules this delta removes (global ids, sorted).
-    pub(crate) fn removed(&self) -> &[u32] {
+    pub fn removed(&self) -> &[u32] {
         self.u32s(R::Removed)
     }
 
     // -- parts --
 
     /// This image's declaration of the relation named `a`, by its index here.
-    pub(crate) fn decl(&self, a: AtomId) -> Option<usize> {
+    pub fn decl(&self, a: AtomId) -> Option<usize> {
         self.u32s(R::DeclName).binary_search(&a.0).ok()
     }
-    pub(crate) fn decl_gone(&self, a: AtomId) -> bool {
+    pub fn decl_gone(&self, a: AtomId) -> bool {
         self.u32s(R::DeclGone).binary_search(&a.0).is_ok()
     }
-    pub(crate) fn decl_count(&self) -> usize {
+    pub fn decl_count(&self) -> usize {
         self.u32s(R::DeclName).len()
     }
-    pub(crate) fn decl_name(&self, k: usize) -> AtomId {
+    pub fn decl_name(&self, k: usize) -> AtomId {
         AtomId(self.u32s(R::DeclName)[k])
     }
-    pub(crate) fn decl_cols(&self, k: usize) -> impl ExactSizeIterator<Item = (AtomId, AtomId)> + '_ {
+    pub fn decl_cols(&self, k: usize) -> impl ExactSizeIterator<Item = (AtomId, AtomId)> + '_ {
         let e = self.u32s(R::DeclCols);
         let c = self.u32s(R::Cols);
         (e[k]..e[k + 1]).map(move |i| (AtomId(c[2 * i as usize]), AtomId(c[2 * i as usize + 1])))
     }
-    pub(crate) fn decl_hash(&self, k: usize) -> u64 {
+    pub fn decl_hash(&self, k: usize) -> u64 {
         self.u64s(R::DeclHash)[k]
     }
-    pub(crate) fn fact(&self, a: AtomId, about: bool) -> Option<usize> {
+    pub fn fact(&self, a: AtomId, about: bool) -> Option<usize> {
         self.u32s(R::FactRel).binary_search(&(a.0 | if about { ABOUT_BIT } else { 0 })).ok()
     }
-    pub(crate) fn fact_gone(&self, a: AtomId, about: bool) -> bool {
+    pub fn fact_gone(&self, a: AtomId, about: bool) -> bool {
         self.u32s(R::FactGone).binary_search(&(a.0 | if about { ABOUT_BIT } else { 0 })).is_ok()
     }
-    pub(crate) fn fact_count(&self) -> usize {
+    pub fn fact_count(&self) -> usize {
         self.u32s(R::FactRel).len()
     }
     /// Fact relation `k`'s name and whether it is one of the `.about` rows.
-    pub(crate) fn fact_key(&self, k: usize) -> (AtomId, bool) {
+    pub fn fact_key(&self, k: usize) -> (AtomId, bool) {
         let a = self.u32s(R::FactRel)[k];
         (AtomId(a & !ABOUT_BIT), a & ABOUT_BIT != 0)
     }
-    pub(crate) fn fact_hash(&self, k: usize) -> u64 {
+    pub fn fact_hash(&self, k: usize) -> u64 {
         self.u64s(R::FactHash)[k]
     }
     /// Fact relation `k`'s rows, each its cells: an int, or a string's atom.
-    pub(crate) fn fact_rows(&self, k: usize) -> impl ExactSizeIterator<Item = impl ExactSizeIterator<Item = Cell> + '_> + '_ {
+    pub fn fact_rows(&self, k: usize) -> impl ExactSizeIterator<Item = impl ExactSizeIterator<Item = Cell> + '_> + '_ {
         let (rows, cells, kinds, vals) = (self.u32s(R::FactRows), self.u32s(R::RowCells), self.u8s(R::CellKind), self.u64s(R::CellVal));
         (rows[k]..rows[k + 1]).map(move |row| {
             (cells[row as usize]..cells[row as usize + 1]).map(move |c| match kinds[c as usize] {
@@ -491,10 +522,10 @@ impl Image {
             })
         })
     }
-    pub(crate) fn inputs(&self) -> &[u32] {
+    pub fn inputs(&self) -> &[u32] {
         self.u32s(R::Inputs)
     }
-    pub(crate) fn outputs(&self) -> &[u32] {
+    pub fn outputs(&self) -> &[u32] {
         self.u32s(R::Outputs)
     }
 
@@ -647,20 +678,20 @@ pub enum Cell {
     Int(i64),
     Str(AtomId),
     /// A branded atom (decision 0270).
-    Branded(crate::code_rule_dsl::logic::front::Branded),
+    Branded(crate::code_rule_dsl::logic::front::ast::Branded),
 }
 
 /// A branded atom's class as a node's flags (`kind::BRANDED`) and a cell's kind (2 and up), and back.
-pub(crate) fn brand_code(class: crate::code_rule_dsl::logic::front::Class) -> u8 {
-    use crate::code_rule_dsl::logic::front::Class;
+pub fn brand_code(class: crate::code_rule_dsl::logic::front::ast::Class) -> u8 {
+    use crate::code_rule_dsl::logic::front::ast::Class;
     match class {
         Class::Name => 0,
         Class::Kind => 1,
         Class::Field => 2,
     }
 }
-pub(crate) fn brand_of(code: u8, atom: u32) -> crate::code_rule_dsl::logic::front::Branded {
-    use crate::code_rule_dsl::logic::front::{Branded, Class};
+pub fn brand_of(code: u8, atom: u32) -> crate::code_rule_dsl::logic::front::ast::Branded {
+    use crate::code_rule_dsl::logic::front::ast::{Branded, Class};
     let class = match code {
         0 => Class::Name,
         1 => Class::Kind,
@@ -780,7 +811,7 @@ impl Check<'_> {
 // ---- writing an image's regions ----
 
 /// The regions of an image being written, each appended to, then laid out once.
-pub(crate) struct Writer {
+pub struct Writer {
     regions: Vec<Vec<u8>>,
 }
 
@@ -854,7 +885,7 @@ pub fn decode(bytes: &[u8], lists: &Lists) -> Result<Program, String> {
 
 /// The program of a version's parts and rules, assembled as the text's reader assembles it: the `.about` rows give
 /// the program's other fields; its facts are the facts' own (the rows' `fact_rel` restates their names).
-pub(crate) fn assemble(rules: Vec<super::front::Rule>, decls: BTreeMap<Name, super::front::List<(Name, Name)>>, facts: BTreeMap<String, Vec<super::front::List<Value>>>, about: Facts, inputs: Vec<String>, outputs: Vec<String>) -> Result<Program, String> {
+pub fn assemble(rules: Vec<super::front::ast::Rule>, decls: BTreeMap<Name, super::front::name::List<(Name, Name)>>, facts: BTreeMap<String, Vec<super::front::name::List<Value>>>, about: Facts, inputs: Vec<String>, outputs: Vec<String>) -> Result<Program, String> {
     let mut prog = program_facts::program(&about, ABOUT)?;
     prog.facts = facts;
     prog.decls = decls;

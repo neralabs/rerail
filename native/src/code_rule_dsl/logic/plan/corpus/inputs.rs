@@ -1,6 +1,7 @@
 //! Repository policy files become typed facts once, before document partitioning.
 //! Readers cache bytes and decoded documents across selectors; a failed selector publishes no prefix.
 use super::{Error, Result, front};
+use crate::code_rule_dsl::logic::program_image::fields::{Edit, ProgramFields};
 use front::Value;
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
@@ -425,9 +426,10 @@ fn artifact_entry(text: &ReadResult<String>, digest: &ReadResult<String>) -> Str
     format!("{}:{}", of_result(text), digest.as_ref().map_or_else(|f| f.kind.to_owned(), Clone::clone))
 }
 
-/// `program` is the program's header (`Version::header`): what it reads of the rules is `shape`'s.
-pub(super) fn populate(program: &mut front::Program, shape: &super::shape::Shape, root: &Path) -> Result<()> {
-    let declared = artifacts(&program.settings)?;
+/// `program` is the program's edit: its inputs read as facts, the inputs read dropped, and the rules an incomplete
+/// input withholds removed. What it reads of the rules is `shape`'s.
+pub(super) fn populate(program: &mut Edit<'_>, shape: &super::shape::Shape, root: &Path) -> Result<()> {
+    let declared = artifacts(&program.settings())?;
     let base = BASE.get().map(String::as_str);
     let mut consulted = Vec::new();
     let mut base_read = base_reader(root, base);
@@ -464,24 +466,24 @@ pub(super) fn populate(program: &mut front::Program, shape: &super::shape::Shape
 /// `git_rev`'s rows, for a program with a rule that reads it: HEAD, and the merge base with `--base`. Without a
 /// repository, or a base that does not resolve, an `input_error("git_rev", …)` row, and the readers under `!` are
 /// withheld.
-fn git_revisions(program: &mut front::Program, shape: &super::shape::Shape, root: &Path, base: Option<&str>, consulted: &mut Vec<(String, String, String)>) {
+fn git_revisions(program: &mut Edit<'_>, shape: &super::shape::Shape, root: &Path, base: Option<&str>, consulted: &mut Vec<(String, String, String)>) {
     if !shape.read.contains("git_rev") {
         return;
     }
-    program.inputs.retain(|n| n != "git_rev");
+    program.b.retain_inputs(|n| n != "git_rev");
     let key = format!("{}\t{}", root.display(), base.unwrap_or(""));
     match crate::code_rule_dsl::logic::strings::git::revisions(root, base) {
         Ok((rows, _)) => {
             consulted.push(("git_rev".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
-            program.facts.entry("git_rev".to_owned()).or_default().extend(rows.into_iter().map(|(n, id)| [Value::Str(n.into()), Value::Str(id.into())].into()));
+            program.b.add_facts("git_rev", &rows.into_iter().map(|(n, id)| [Value::Str(n.into()), Value::Str(id.into())].into()).collect::<Vec<_>>());
             if base.is_none() {
                 return;
             }
         }
         Err(detail) => {
             consulted.push(("git_rev".to_owned(), key, String::new()));
-            program.inputs.retain(|n| n != "input_error");
-            program.facts.entry("input_error".to_owned()).or_default().push([Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone().into())].into());
+            program.b.retain_inputs(|n| n != "input_error");
+            program.b.add_facts("input_error", &[[Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone().into())].into()]);
             let withheld = withhold(program, &BTreeMap::from([("git_rev".to_owned(), "git_rev unreadable".to_owned())]));
             for (output, why) in withheld.unknown {
                 eprintln!("unknown: {} ({why}): rows may be missing", output.strip_prefix("rr_place_").unwrap_or(&output));
@@ -492,8 +494,8 @@ fn git_revisions(program: &mut front::Program, shape: &super::shape::Shape, root
 
 /// Whether the reads `populate` recorded (`take_consulted`) would read the same now, for `program`'s artifact
 /// declarations. A base read names its revision as it was given (a reference may move), and is read again.
-pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String, String, String)]) -> bool {
-    let Ok(declared) = artifacts(&program.settings) else { return false };
+pub(super) fn still(program: &dyn ProgramFields, root: &Path, consulted: &[(String, String, String)]) -> bool {
+    let Ok(declared) = artifacts(&program.settings()) else { return false };
     consulted.iter().all(|(what, path, digest)| {
         let now = match what.as_str() {
             "input" => of_result(&read_repository_file(root, path)),
@@ -524,14 +526,14 @@ fn listing(root: &Path, dir: &str) -> String {
 /// `--require-facts`: the artifact errors that fail a CI run. A `failed` artifact is the policy's to report when one
 /// of its rules reads `input_error` (RUN-FACTS.md section 5); the other kinds always fail.
 #[cfg(test)]
-fn required(program: &front::Program) -> Result<()> {
-    required_by(program, &super::shape::Shape::of_tree(program))
+fn required(program: &Edit<'_>) -> Result<()> {
+    required_by(program, &super::shape::Shape::of(program.v))
 }
 
-/// `required` of a program by its header and its rules' shape.
-fn required_by(program: &front::Program, shape: &super::shape::Shape) -> Result<()> {
+/// `required` of a program's edit and its rules' shape.
+fn required_by(program: &Edit<'_>, shape: &super::shape::Shape) -> Result<()> {
     let reports = shape.positive.contains("input_error");
-    let failing: Vec<String> = program.facts.get("input_error").into_iter().flatten()
+    let failing: Vec<String> = program.fact_rows("input_error").iter()
         .filter_map(|row| match row.as_slice() {
             [Value::Str(path), Value::Str(kind), Value::Str(detail)] if path.starts_with("artifact:") && !(reports && kind == "failed") =>
                 Some(format!("{path}: {kind}: {detail}")),
@@ -542,14 +544,14 @@ fn required_by(program: &front::Program, shape: &super::shape::Shape) -> Result<
 }
 
 fn populate_with(
-    program: &mut front::Program,
+    program: &mut Edit<'_>,
     root: &Path,
     read: &mut impl FnMut(&str) -> ReadResult<String>,
     artifact: &mut impl FnMut(&str) -> ReadResult<Json>,
     base: &mut impl FnMut(&str) -> ReadResult<String>,
     consulted: &mut Vec<(String, String, String)>,
 ) -> Result<()> {
-    let settings: Vec<_> = program.settings.iter().filter(|(k, _)| k == "input").map(|(_, s)| s.clone()).collect();
+    let settings: Vec<_> = program.settings().into_iter().filter(|(k, _)| k == "input").map(|(_, s)| s).collect();
     let mut readers = Readers::default();
     let mut base_readers = Readers::default();
     let mut artifacts: BTreeMap<String, ReadResult<Json>> = BTreeMap::new();
@@ -577,7 +579,8 @@ fn populate_with(
             _ => return Err(Error::Plan(format!("{rel}: records must be true or false"))),
         };
         let pointer = params.get("path").map_or("", String::as_str);
-        let columns = program.decls.get(rel).ok_or_else(|| Error::Plan(format!("{rel}: input has no declaration")))?;
+        let columns: Vec<(front::Name, front::Name)> = program.columns_of(rel).ok_or_else(|| Error::Plan(format!("{rel}: input has no declaration")))?.into_iter().map(|(n, t)| (n.into(), t.into())).collect();
+        let columns = columns.as_slice();
         // `artifact="name"`: a stamped file of the facts directory, read as IO=json reads its `data`.
         if let Some(name) = params.get("artifact") {
             if params.contains_key("filename") || params.contains_key("dir") {
@@ -588,9 +591,9 @@ fn populate_with(
             }
             let data = artifacts.entry(name.clone()).or_insert_with(|| artifact(name));
             let result = data.as_ref().map_err(Clone::clone).and_then(|data| json_rows(data, pointer, records, Vec::new(), columns));
-            program.inputs.retain(|n| n != rel);
+            program.b.retain_inputs(|n| n != rel);
             match result {
-                Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from)),
+                Ok(rows) => program.b.add_facts(rel, &rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>()),
                 Err(error) => {
                     let row = vec![Value::Str(format!("artifact:{name}").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                     if !errors.contains(&row) {
@@ -632,9 +635,9 @@ fn populate_with(
         } else if at_base {
             base_readers.rows(path, io, pointer, records, Vec::new(), columns, base)
         } else { readers.rows(path, io, pointer, records, Vec::new(), columns, read) };
-        program.inputs.retain(|name| name != rel);
+        program.b.retain_inputs(|name| name != rel);
         match result {
-            Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from)),
+            Ok(rows) => program.b.add_facts(rel, &rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>()),
             Err(error) if at_base => {
                 let row = vec![Value::Str(format!("{path}@base").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                 if !errors.contains(&row) {
@@ -646,8 +649,8 @@ fn populate_with(
         }
     }
     if !errors.is_empty() {
-        program.inputs.retain(|name| name != "input_error");
-        program.facts.entry("input_error".to_owned()).or_default().extend(errors.into_iter().map(crate::code_rule_dsl::logic::front::List::from));
+        program.b.retain_inputs(|name| name != "input_error");
+        program.b.add_facts("input_error", &errors.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>());
     }
     if !incomplete.is_empty() {
         let withheld = withhold(program, &incomplete);
@@ -673,41 +676,43 @@ struct Withheld {
 /// itself. A rule that reads an incomplete relation through `!` or an aggregate is withheld: with fewer rows its
 /// rows could be wrong. A rule that reads it positively only is kept: it derives fewer rows, never a wrong one.
 /// Withholding a rule makes its head incomplete, so this runs to a fixpoint.
-fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>) -> Withheld {
-    use front::Literal;
+fn withhold(program: &mut Edit<'_>, incomplete: &BTreeMap<String, String>) -> Withheld {
+    use crate::code_rule_dsl::logic::program_image::{Lit, RuleId};
+    let v = std::sync::Arc::clone(program.v);
+    let name = |r: crate::code_rule_dsl::logic::program_image::RelId| v.rel_name(r);
     let mut why = incomplete.clone();
     let mut removed: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    let mut gone: std::collections::BTreeSet<RuleId> = std::collections::BTreeSet::new();
     loop {
         let mut grew = false;
-        for rule in &program.rules {
-            if why.contains_key(rule.head.rel.as_str()) {
+        for rule in v.rules().filter(|r| !gone.contains(&r.id())) {
+            let head = name(rule.head().rel());
+            if why.contains_key(head) {
                 continue;
             }
-            if let Some(w) = rule.body.iter().filter_map(Literal::atom).find_map(|a| why.get(a.rel.as_str())) {
+            if let Some(w) = rule.reads().find_map(|a| why.get(name(a.rel()))) {
                 let w = w.clone();
-                why.insert(rule.head.rel.to_string(), w);
+                why.insert(head.to_owned(), w);
                 grew = true;
             }
         }
         let mut dropped = Vec::new();
-        program.rules.retain(|rule| {
-            let reason = rule.body.iter().find_map(|l| match l {
-                Literal::Atom(a) if a.neg => why.get(a.rel.as_str()),
-                Literal::Agg { atom, .. } => why.get(atom.rel.as_str()),
+        for rule in v.rules().filter(|r| !gone.contains(&r.id())) {
+            let reason = rule.body().find_map(|l| match l.view() {
+                Lit::Atom(a) if a.neg() => why.get(name(a.rel())),
+                Lit::Agg { atom, .. } => why.get(name(atom.rel())),
                 _ => None,
             });
-            match reason {
-                Some(w) => {
-                    dropped.push((rule.head.rel.clone(), w.clone()));
-                    false
-                }
-                None => true,
+            if let Some(w) = reason {
+                dropped.push((rule.id(), name(rule.head().rel()).to_owned(), w.clone()));
             }
-        });
-        for (head, w) in dropped {
-            let entry = removed.entry(head.to_string()).or_insert((0, w.clone()));
+        }
+        for (id, head, w) in dropped {
+            gone.insert(id);
+            program.b.remove(id);
+            let entry = removed.entry(head.clone()).or_insert((0, w.clone()));
             entry.0 += 1;
-            why.entry(head.to_string()).or_insert(w);
+            why.entry(head).or_insert(w);
             grew = true;
         }
         if !grew {
@@ -716,9 +721,10 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
     }
     // The relations findings come from: the outputs, and what the finding relations (lowering's findings) read. Each
     // incomplete one is named with how many of its rules read an incomplete relation (the granularity is the rule).
-    let mut reported: Vec<String> = program.outputs.clone();
-    for rule in program.rules.iter().filter(|r| crate::code_rule_dsl::logic::rr::is_diagnostic(&r.head.rel)) {
-        reported.extend(rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).map(|a| a.rel.to_string()));
+    let kept = || v.rules().filter(|r| !gone.contains(&r.id()));
+    let mut reported: Vec<String> = program.output_names();
+    for rule in kept().filter(|r| crate::code_rule_dsl::logic::rr::is_diagnostic(name(r.head().rel()))) {
+        reported.extend(rule.reads().filter(|a| !a.neg()).map(|a| name(a.rel()).to_owned()));
     }
     let mut seen = std::collections::BTreeSet::new();
     reported.retain(|r| seen.insert(r.clone()));
@@ -726,8 +732,8 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
         .into_iter()
         .filter_map(|rel| {
             let w = why.get(&rel)?;
-            let rules: Vec<&front::Rule> = program.rules.iter().filter(|r| r.head.rel == rel).collect();
-            let reading = rules.iter().filter(|r| r.body.iter().filter_map(Literal::atom).any(|a| why.contains_key(a.rel.as_str()))).count();
+            let rules: Vec<_> = kept().filter(|r| name(r.head().rel()) == rel).collect();
+            let reading = rules.iter().filter(|r| r.reads().any(|a| why.contains_key(name(a.rel())))).count();
             let gone = removed.get(&rel).map_or(0, |(n, _)| *n);
             Some((rel, format!("{w}; {} of its {} rules", reading + gone, rules.len() + gone)))
         })
@@ -790,10 +796,34 @@ grew(e) :- now_entry(e), !was(_, e).
 .output grew
 "#;
 
-    fn burn_down(base: &mut impl FnMut(&str) -> ReadResult<String>) -> front::Program {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(BURN_DOWN).unwrap();
-        populate_with(&mut program, Path::new("."), &mut |_| Ok("a\nb\nc\n".to_owned()), &mut none, base, &mut Vec::new()).unwrap();
-        program
+    type V = std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>;
+
+    /// The version of program `text`.
+    fn version(text: &str) -> V {
+        image(&crate::code_rule_dsl::logic::rr::parse(text).unwrap())
+    }
+
+    fn image(p: &front::Program) -> V {
+        crate::code_rule_dsl::logic::program_image::Builder::of_program(p).unwrap().finish().unwrap().0
+    }
+
+    /// `v` with its inputs read (`populate_with`).
+    fn populated(v: &V, read: &mut impl FnMut(&str) -> ReadResult<String>, artifact: &mut impl FnMut(&str) -> ReadResult<Json>, base: &mut impl FnMut(&str) -> ReadResult<String>) -> Result<V> {
+        let mut edit = Edit::on(v);
+        populate_with(&mut edit, Path::new("."), read, artifact, base, &mut Vec::new())?;
+        edit.finish().map_err(Error::Plan)
+    }
+
+    fn facts(v: &V, rel: &str) -> Option<Vec<front::List<Value>>> {
+        v.fact_values(rel, &Default::default())
+    }
+
+    fn heads(v: &V) -> Vec<String> {
+        v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect()
+    }
+
+    fn burn_down(base: &mut impl FnMut(&str) -> ReadResult<String>) -> V {
+        populated(&version(BURN_DOWN), &mut |_| Ok("a\nb\nc\n".to_owned()), &mut none, base).unwrap()
     }
 
     #[test]
@@ -801,9 +831,9 @@ grew(e) :- now_entry(e), !was(_, e).
         let mut reads = Vec::new();
         let program = burn_down(&mut |path| { reads.push(path.to_owned()); Ok("a\nb\n".to_owned()) });
         assert_eq!(reads, ["allow.txt"]);
-        assert_eq!(program.facts["was"], vec![vec![Value::Int(1), Value::Str("a".into())], vec![Value::Int(2), Value::Str("b".into())]]);
-        assert_eq!(program.facts["now"].len(), 3, "the tree's reading is its own");
-        assert!(program.rules.iter().any(|r| r.head.rel == "grew"));
+        assert_eq!(facts(&program, "was").unwrap(), vec![vec![Value::Int(1), Value::Str("a".into())], vec![Value::Int(2), Value::Str("b".into())]]);
+        assert_eq!(facts(&program, "now").unwrap().len(), 3, "the tree's reading is its own");
+        assert!(heads(&program).iter().any(|h| h == "grew"));
     }
 
     /// Without a base, the comparison is withheld rather than reporting every entry as new.
@@ -811,15 +841,15 @@ grew(e) :- now_entry(e), !was(_, e).
     fn an_unreadable_base_gives_an_input_error_and_withholds_the_comparison() {
         let program = burn_down(&mut |_| Err(Failure { kind: "missing", detail: "no base revision".into() }));
         assert_eq!(error_kinds(&program), [r#"Str("allow.txt@base") Str("missing")"#]);
-        assert!(!program.rules.iter().any(|r| r.head.rel == "grew"), "a rule reading the base through ! is withheld");
-        assert!(program.rules.iter().any(|r| r.head.rel == "now_entry"));
+        assert!(!heads(&program).iter().any(|h| h == "grew"), "a rule reading the base through ! is withheld");
+        assert!(heads(&program).iter().any(|h| h == "now_entry"));
     }
 
     #[test]
     fn only_the_base_revision_is_read_and_only_from_a_file() {
         for input in [r#"at="head", filename="a.json""#, r#"at="base", dir="allow/""#, r#"at="base", artifact="x""#] {
-            let mut program = crate::code_rule_dsl::logic::rr::parse(&format!(".decl a(n: number)\n.input a(IO=json, {input})\n")).unwrap();
-            assert!(populate_with(&mut program, Path::new("."), &mut |_| panic!("not read"), &mut none, &mut no_base, &mut Vec::new()).is_err(), "{input}");
+            let program = version(&format!(".decl a(n: number)\n.input a(IO=json, {input})\n"));
+            assert!(populated(&program, &mut |_| panic!("not read"), &mut none, &mut no_base).is_err(), "{input}");
         }
     }
 
@@ -850,12 +880,12 @@ grew(e) :- now_entry(e), !was(_, e).
     /// `--require-facts`: a missing artifact fails; a failed one fails unless a rule reads `input_error`.
     #[test]
     fn required_facts_fail_the_run_unless_the_policy_reports_a_failure() {
-        assert!(required(&budget_with(None)).is_err());
-        assert!(required(&budget_with(Some(stamped("ok", "sha256:now", r#"{"total": 12}"#)))).is_ok());
-        assert!(required(&budget_with(Some(stamped("failed", "sha256:now", "null")))).is_err());
-        let mut reporting = budget_with(Some(stamped("failed", "sha256:now", "null")));
-        reporting.rules.extend(crate::code_rule_dsl::logic::rr::parse(".decl input_error(p: symbol, k: symbol, d: symbol)\n.decl e(p: symbol)\ne(p) :- input_error(p, _, _).\n").unwrap().rules);
-        assert!(required(&reporting).is_ok());
+        let required_of = |v: &V| required(&Edit::on(v));
+        assert!(required_of(&budget_with(None)).is_err());
+        assert!(required_of(&budget_with(Some(stamped("ok", "sha256:now", r#"{"total": 12}"#)))).is_ok());
+        assert!(required_of(&budget_with(Some(stamped("failed", "sha256:now", "null")))).is_err());
+        let reporting = budget_of(&format!("{BUDGET}.decl input_error(p: symbol, k: symbol, d: symbol)\n.decl e(p: symbol)\ne(p) :- input_error(p, _, _).\n"), Some(stamped("failed", "sha256:now", "null")));
+        assert!(required_of(&reporting).is_ok());
     }
 
     /// The blob id is git's: `printf 'hello\n' | git hash-object --stdin`.
@@ -918,31 +948,33 @@ quiet() :- ceiling(_), !over(_).
         format!(r#"{{"format": "{FORMAT}", "artifact": "collection", "inputs": "{inputs}", "status": "{status}", "error": "exit 1", "data": {data}}}"#)
     }
 
-    fn budget_with(text: Option<String>) -> front::Program {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(BUDGET).unwrap();
-        populate_with(&mut program, Path::new("."), &mut |_| panic!("no repository file is read"), &mut |name| {
+    fn budget_with(text: Option<String>) -> V {
+        budget_of(BUDGET, text)
+    }
+
+    fn budget_of(program: &str, text: Option<String>) -> V {
+        populated(&version(program), &mut |_| panic!("no repository file is read"), &mut |name| {
             assert_eq!(name, "collection");
             match &text {
                 None => Err(Failure { kind: "missing", detail: "collection.json".into() }),
                 Some(t) => artifact_data(name, t, "sha256:now"),
             }
-        }, &mut no_base, &mut Vec::new())
-        .unwrap();
-        program
+        }, &mut no_base)
+        .unwrap()
     }
 
-    fn error_kinds(program: &front::Program) -> Vec<String> {
-        program.facts.get("input_error").into_iter().flatten().map(|row| format!("{:?} {:?}", row[0], row[1])).collect()
+    fn error_kinds(program: &V) -> Vec<String> {
+        facts(program, "input_error").into_iter().flatten().map(|row| format!("{:?} {:?}", row[0], row[1])).collect()
     }
 
     #[test]
     fn a_fresh_artifact_gives_its_rows() {
         let program = budget_with(Some(stamped("ok", "sha256:now", r#"{"total": 12}"#)));
-        assert_eq!(program.facts["collected"], vec![vec![Value::Int(12)]]);
+        assert_eq!(facts(&program, "collected").unwrap(), vec![vec![Value::Int(12)]]);
         assert!(error_kinds(&program).is_empty());
-        let heads: Vec<&str> = program.rules.iter().map(|r| r.head.rel.as_str()).collect();
+        let heads = heads(&program);
         for kept in ["over", "none_collected", "quiet"] {
-            assert!(heads.contains(&kept), "{kept} is withheld: {heads:?}");
+            assert!(heads.iter().any(|h| h == kept), "{kept} is withheld: {heads:?}");
         }
     }
 
@@ -958,27 +990,28 @@ quiet() :- ceiling(_), !over(_).
             (Some("{".to_owned()), "malformed"),
         ] {
             let program = budget_with(text);
-            assert!(!program.facts.contains_key("collected"), "{kind}");
+            assert!(facts(&program, "collected").is_none(), "{kind}");
             assert_eq!(error_kinds(&program), vec![format!("Str(\"artifact:collection\") Str(\"{kind}\")")]);
-            let heads: Vec<&str> = program.rules.iter().map(|r| r.head.rel.as_str()).collect();
-            assert!(heads.contains(&"over"), "{kind}: {heads:?}");
-            assert!(!heads.contains(&"none_collected") && !heads.contains(&"quiet"), "{kind}: {heads:?}");
+            let heads = heads(&program);
+            let has = |h: &str| heads.iter().any(|x| x == h);
+            assert!(has("over"), "{kind}: {heads:?}");
+            assert!(!has("none_collected") && !has("quiet"), "{kind}: {heads:?}");
         }
     }
 
     #[test]
     fn multiple_selectors_read_and_decode_one_document_once() {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
+        let program = version(r#"
 .decl a(n: number)
 .input a(IO=json, filename="shared.json", path="/a")
 .decl b(s: symbol)
 .input b(IO=json, filename="shared.json", path="/b")
-"#).unwrap();
+"#);
         let mut reads = 0;
-        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(r#"{"a":7,"b":"kept"}"#.to_owned()) }, &mut none, &mut no_base, &mut Vec::new()).unwrap();
+        let program = populated(&program, &mut |_| { reads += 1; Ok(r#"{"a":7,"b":"kept"}"#.to_owned()) }, &mut none, &mut no_base).unwrap();
         assert_eq!(reads, 1);
-        assert_eq!(program.facts["a"], vec![vec![Value::Int(7)]]);
-        assert_eq!(program.facts["b"], vec![vec![Value::Str("kept".into())]]);
+        assert_eq!(facts(&program, "a").unwrap(), vec![vec![Value::Int(7)]]);
+        assert_eq!(facts(&program, "b").unwrap(), vec![vec![Value::Str("kept".into())]]);
     }
 
     /// Both noqa-sec-ratchet and test-budget name their different baseline signature input `base_sig`.
@@ -986,11 +1019,11 @@ quiet() :- ceiling(_), !over(_).
     fn combined_policies_keep_distinct_named_file_inputs_private() {
         let first = ".decl base_sig(s: symbol)\n.input base_sig(IO=json, filename=\"noqa.json\", path=\"/signature\")\n.decl result(s: symbol)\nresult(s) :- base_sig(s).\n.output result\n";
         let second = first.replace("noqa.json", "budget.json");
-        let mut program = super::super::combine(&[first, &second]).unwrap();
-        populate_with(&mut program, Path::new("."), &mut |name| Ok(format!("{{\"signature\":\"{name}\"}}")), &mut none, &mut no_base, &mut Vec::new()).unwrap();
-        assert_eq!(program.facts.get("p0_base_sig"), Some(&vec![[Value::Str("noqa.json".into())].into()]));
-        assert_eq!(program.facts.get("p1_base_sig"), Some(&vec![[Value::Str("budget.json".into())].into()]));
-        assert!(!program.facts.contains_key("base_sig"));
+        let program = super::super::combine(&[first, &second]).unwrap();
+        let program = populated(&program, &mut |name| Ok(format!("{{\"signature\":\"{name}\"}}")), &mut none, &mut no_base).unwrap();
+        assert_eq!(facts(&program, "p0_base_sig"), Some(vec![[Value::Str("noqa.json".into())].into()]));
+        assert_eq!(facts(&program, "p1_base_sig"), Some(vec![[Value::Str("budget.json".into())].into()]));
+        assert!(facts(&program, "base_sig").is_none());
     }
 
     /// A stamped artifact reads back fresh, goes stale when an input changes, and a failed producer is recorded.

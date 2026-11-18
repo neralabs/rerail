@@ -11,13 +11,13 @@ struct Walker<'a> {
 }
 impl Walker<'_> {
     fn kind(&self, n: u32) -> &str {
-        self.dialect.name(&self.p.facts, self.p.core[n as usize])
+        self.dialect.name(&self.p.facts, self.p.node(n as u32))
     }
     fn field(&self, n: u32, name: &str) -> Option<u32> {
         let core = self
             .dialect
-            .field_child(&self.p.facts, self.p.core[n as usize], name)?;
-        let local = self.p.local[core as usize];
+            .field_child(&self.p.facts, self.p.node(n as u32), name)?;
+        let local = self.p.local_of_node(core as u32);
         (local != NONE).then_some(local)
     }
     fn children(&self, n: u32) -> Vec<u32> {
@@ -199,8 +199,8 @@ pub(super) fn ranks(p: &Projected, dialect: &Dialect) -> Vec<u32> {
             stack.extend(children.into_iter().rev());
         } else {
             // Most nodes need no temporary vector or hash lookup insertion.
-            for &core in p.facts.children(p.core[n as usize]).iter().rev() {
-                let local = p.local[core as usize];
+            for &core in p.facts.children(p.node(n as u32)).iter().rev() {
+                let local = p.local_of_node(core as u32);
                 if local != NONE {
                     stack.push(local);
                 }

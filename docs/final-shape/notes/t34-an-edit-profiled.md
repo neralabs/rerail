@@ -264,17 +264,17 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
     sampled peak). Live at the peak, by allocating span: the memo replay of the 299 unchanged files 454 MB (exports
     appended 238, base rows held 216; the replay split into spans for this), the kept part's rows from the frames
     358 MB, the export held 80 MB, the atoms' lease 75 MB. Step (a) was built (decision 0117 step 1) but never
-    taken: its check found no input's frame, "0 of 989 inputs have one", on every edit (Q99). Fixed: the replay
+    taken: its check found no input's frame, "0 of 989 inputs have one", on every edit (Q151). Fixed: the replay
     reads 8.5 MB of values (was 348.5 MB), and the peak is 1.38 GB (live heap 1.28 GB). Live at that peak: a kept
     input decoded where read 312 MB (the next lead), the kept inputs from the frames 59 MB, the atoms' lease 75 MB,
     the kept part's changes to the frames 55 MB.
-    Then (Q100): the patch of the evaluated owners read 8,987 kept rows of 13 inputs, and each first read decoded its
+    Then (Q70): the patch of the evaluated owners read 8,987 kept rows of 13 inputs, and each first read decoded its
     input whole (`within` 3.26 M rows). A row read before the input is read whole now decodes its granule alone
     (1 of 64). Peak 1.24 GB profiled (live heap 1.09 GB), 1.28–1.30 GB unprofiled (was 1.37). Live at the peak: the
     atoms' lease 75 MB, the kept inputs' frames 59 MB, one stratum's run 50 MB, then many below 32 MB: no one holder
     left above 100 MB. A new build's first two edits still replay every hit whole (its memo space is new: the keeper
     fails on the edited file's old entry, then counts every file in), unprofiled 2.12 and 1.79 GB.
-    Then (Q101, 2026-11-17): the keeper is kept under the build too, so a new build's first edit counts every file
+    Then (Q71, 2026-11-17): the keeper is kept under the build too, so a new build's first edit counts every file
     in (2.05 GB, every file evaluated) and its second is steady: 1.23 GB unprofiled (was 1.79).
 11. **A cold run's frames write waits on the writer** (found 2026-11-12, run n48s169, load 26): the cross part's
     frames are one job of 289.6 MB, above the writer queue's cap (192 MB) alone, so it waits while the memo's

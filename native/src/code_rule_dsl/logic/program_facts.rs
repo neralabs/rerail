@@ -25,9 +25,9 @@
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
 
-use super::front::Name;
-use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
-use super::magic::{Gate, Report};
+use super::front::name::Name;
+use super::front::ast::{AggOp, Atom, LatticeDecl, LayoutFact, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
+use super::front::ast::{Gate, Report};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Rows by relation, as a program's `facts` holds them.
@@ -40,7 +40,7 @@ pub trait Cell {
 }
 
 /// A branded atom's class as the program's facts write it (`term`, `fact` rows of kind `atom`, decision 0270).
-fn brand_tag(b: crate::code_rule_dsl::logic::front::Branded) -> &'static str {
+fn brand_tag(b: crate::code_rule_dsl::logic::front::ast::Branded) -> &'static str {
     match b.tag() {
         'n' => "n",
         'k' => "k",
@@ -48,9 +48,9 @@ fn brand_tag(b: crate::code_rule_dsl::logic::front::Branded) -> &'static str {
     }
 }
 
-fn branded(tag: &str, atom: i64) -> Result<crate::code_rule_dsl::logic::front::Branded, String> {
+fn branded(tag: &str, atom: i64) -> Result<crate::code_rule_dsl::logic::front::ast::Branded, String> {
     let atom = u32::try_from(atom).map_err(|e| bad(e))?;
-    tag.chars().next().and_then(|c| crate::code_rule_dsl::logic::front::Branded::of_tag(c, atom)).ok_or_else(|| bad(format!("no atom class {tag:?}")))
+    tag.chars().next().and_then(|c| crate::code_rule_dsl::logic::front::ast::Branded::of_tag(c, atom)).ok_or_else(|| bad(format!("no atom class {tag:?}")))
 }
 
 impl Cell for Value {
@@ -71,7 +71,7 @@ impl Cell for Value {
 }
 
 /// Each relation of the schema and its columns (`int` or `sym`).
-pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>> {
+pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::name::List<(Name, Name)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
         ("program", &["p:sym"]),
         ("rule", &["p:sym", "r:int", "head:int"]),
@@ -123,6 +123,7 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
         ("native_reach", &["p:sym", "rel:sym", "seed:sym", "edge:sym"]),
         ("native_reach_through", &["p:sym", "rel:sym", "reach:sym", "map:sym"]),
+        ("native_rank", &["p:sym", "rel:sym", "query:sym", "counted:sym", "group:int", "op:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
         // `ast_patterns`: the AST patterns the program matches (`n ~ `…``), each by its text.
         ("ast_pattern", &["p:sym", "s:sym"]),
@@ -149,6 +150,8 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name
         ("shape", &["p:sym", "k:int", "head:sym", "lit:sym", "text:sym"]),
         ("shape_after", &["p:sym", "k:int", "rel:sym"]),
         ("shape_bound", &["p:sym", "k:int", "i:int", "var:sym"]),
+        // `layouts`: each relation's facts (`.layout`, decision 0361), in order, each with its columns by place.
+        ("layout", &["p:sym", "rel:sym", "k:int", "fact:sym"]),
     ];
     SCHEMA
         .iter()
@@ -317,152 +320,307 @@ impl Writer<'_> {
 
     /// The rest: what `.rr` syntax has no form for, and each relation of facts by name (one may have no rows).
     fn rest(&mut self, prog: &Program) {
-        for rel in &prog.nullary {
-            self.row("nullary", vec![s(rel)]);
-        }
-        for (rel, words) in &prog.qualifiers {
-            for w in words {
-                self.row("qualifier", vec![s(rel), s(w)]);
-            }
-        }
-        for (rel, cols) in &prog.tapes {
-            for i in cols {
-                self.row("tape_column", vec![s(rel), n(*i)]);
-            }
-        }
-        for (k, shape) in prog.shapes.iter().enumerate() {
-            self.row("shape", vec![n(k), s(&shape.head), s(&shape.lit), s(&shape.text)]);
-            match &shape.wait {
-                ShapeWait::After(a) => self.row("shape_after", vec![n(k), s(a)]),
-                ShapeWait::Bound(vars) => {
-                    for (i, x) in vars.iter().enumerate() {
-                        self.row("shape_bound", vec![n(k), n(i), s(x)]);
-                    }
-                }
-            }
-        }
-        for (rel, l) in &prog.lattice {
-            self.row("lattice", vec![s(rel), n(l.keys), s(&l.ty)]);
-            if let Some(f) = &l.merge {
-                self.row("lattice_merge", vec![s(rel), s(f)]);
-            }
-            if let Some(k) = l.widen {
-                self.row("lattice_widen", vec![s(rel), n(k)]);
-            }
+        for f in Field::all_of(prog) {
+            self.field(&f);
         }
         for rel in prog.facts.keys() {
             self.row("fact_rel", vec![s(rel)]);
         }
-        for (set, kinds) in &prog.kindsets {
-            self.row("kindset", vec![s(set)]);
-            for (k, kind) in kinds.iter().enumerate() {
-                self.row("kindset_kind", vec![s(set), n(k), s(kind)]);
-            }
-        }
-        for (k, rel) in prog.demand.iter().enumerate() {
-            self.row("demand", vec![n(k), s(rel)]);
-        }
-        for (k, (a, b)) in prog.demand_dropped.iter().enumerate() {
-            self.row("demand_dropped", vec![n(k), s(a), s(b)]);
-        }
-        if let Some(extras) = prog.magic_extras {
-            self.row("magic_extras", vec![n(extras)]);
-        }
-        if let Some(report) = &prog.magic_report {
-            self.row("magic_report", vec![n(report.magic_rules), n(report.extras_kept), n(report.gates)]);
-            for (list, items) in [("adornments", &report.adornments), ("full", &report.full), ("full_for_negation", &report.full_for_negation)] {
-                for (k, item) in items.iter().enumerate() {
-                    self.row("report_list", vec![s(list), n(k), s(item)]);
+    }
+
+    /// One field's rows (`Field::relations` names the relations they are rows of).
+    fn field(&mut self, f: &Field<'_>) {
+        match *f {
+            Field::Nullary(set) => {
+                for rel in set {
+                    self.row("nullary", vec![s(rel)]);
                 }
             }
-        }
-        for (k, (key, gate)) in prog.gates.iter().enumerate() {
-            self.row("gate", vec![n(k), s(key), s(&gate.rel), n(gate.level)]);
-            if let Some(src) = &gate.src {
-                self.row("gate_src", vec![n(k), s(src)]);
-            }
-            for (i, rel) in gate.quiet.iter().enumerate() {
-                self.row("gate_quiet", vec![n(k), n(i), s(rel)]);
-            }
-            for (i, rel) in gate.deps.iter().enumerate() {
-                self.row("gate_dep", vec![n(k), n(i), s(rel)]);
-            }
-        }
-        for (k, policy) in prog.policies.iter().enumerate() {
-            self.row("policy", vec![n(k), s(&policy.to_string())]);
-        }
-        for (k, (key, text)) in prog.settings.iter().enumerate() {
-            self.row("setting", vec![n(k), s(key), s(text)]);
-        }
-        for (rel, native) in &prog.natives {
-            match native {
-                Native::DfsFirst { edge, target, roots } => {
-                    self.row("native_dfs", vec![s(rel), s(edge), s(target)]);
-                    if let Some(roots) = roots {
-                        self.row("native_roots", vec![s(rel), s(roots)]);
-                    }
-                }
-                Native::MatchAll { input, pattern, groups, positions } => {
-                    self.row("native_match", vec![s(rel), s(input), s(pattern), n(*positions as i64)]);
-                    for (i, group) in groups.iter().enumerate() {
-                        self.row("native_group", vec![s(rel), n(i), s(group)]);
-                    }
-                }
-                Native::TextTest { input, column, op, patterns } => {
-                    self.row("native_text_test", vec![s(rel), s(input), n(*column), s(op)]);
-                    for (i, pattern) in patterns.iter().enumerate() {
-                        self.row("native_text_pattern", vec![s(rel), n(i), s(pattern)]);
-                    }
-                }
-                Native::PythonCandidates {input,targets,context,member} => self.row("native_python_candidates",vec![s(rel),s(input),s(targets),s(context),s(member)]),
-                Native::Python {kind,input,targets} => self.row("native_python",vec![s(rel),s(kind),s(input),s(targets.as_deref().unwrap_or(""))]),
-                Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
-                Native::Reach { seed, edge } => self.row("native_reach", vec![s(rel), s(seed), s(edge)]),
-                Native::ReachThrough { reach, map } => self.row("native_reach_through", vec![s(rel), s(reach), s(map)]),
-            }
-        }
-        if let Some(scopes) = &prog.doc_scopes {
-            self.row("doc_scoped", vec![]);
-            for (k, (within, out)) in scopes.iter().enumerate() {
-                self.row("doc_scope", vec![n(k)]);
-                for (side, globs) in [within, out].into_iter().enumerate() {
-                    for (i, g) in globs.iter().enumerate() {
-                        self.row("doc_scope_glob", vec![n(k), n(side), n(i), s(g)]);
+            Field::Qualifiers(map) => {
+                for (rel, words) in map {
+                    for w in words {
+                        self.row("qualifier", vec![s(rel), s(w)]);
                     }
                 }
             }
-        }
-        for (i, g) in prog.text_globs.iter().enumerate() {
-            self.row("text_glob", vec![n(i), s(g)]);
-        }
-        for pattern in &prog.ast_patterns {
-            self.row("ast_pattern", vec![s(pattern)]);
-        }
-        for (req, by) in &prog.answers {
-            for (i, b) in by.iter().enumerate() {
-                self.row("answer", vec![s(req), n(i), s(b)]);
-            }
-        }
-        for (req, rules) in &prog.asked_by {
-            for (k, readers) in rules.iter().enumerate() {
-                for b in readers {
-                    self.row("asked", vec![s(req), n(k), s(b)]);
+            Field::Tapes(map) => {
+                for (rel, cols) in map {
+                    for i in cols {
+                        self.row("tape_column", vec![s(rel), n(*i)]);
+                    }
                 }
             }
-        }
-        for (span, text) in &prog.rx_spans {
-            // Kinds and captures carry their names after a unit separator.
-            let span = match span {
-                SpanIn::Source => "source".to_owned(),
-                SpanIn::Line => "line".to_owned(),
-                SpanIn::Comment => "comment".to_owned(),
-                SpanIn::Kind(k) => format!("kind:{k}"),
-                SpanIn::ChildOf(k) => format!("child_of:{k}"),
-                SpanIn::Capture(p, g) => format!("capture:{g}:{p}"),
-            };
-            self.row("rx_span", vec![s(&span), s(text)]);
+            Field::Layouts(map) => {
+                for (rel, facts) in map {
+                    for (k, f) in facts.iter().enumerate() {
+                        self.row("layout", vec![s(rel), n(k), s(&f.placed())]);
+                    }
+                }
+            }
+            Field::Shapes(shapes) => {
+                for (k, shape) in shapes.iter().enumerate() {
+                    self.row("shape", vec![n(k), s(&shape.head), s(&shape.lit), s(&shape.text)]);
+                    match &shape.wait {
+                        ShapeWait::After(a) => self.row("shape_after", vec![n(k), s(a)]),
+                        ShapeWait::Bound(vars) => {
+                            for (i, x) in vars.iter().enumerate() {
+                                self.row("shape_bound", vec![n(k), n(i), s(x)]);
+                            }
+                        }
+                    }
+                }
+            }
+            Field::Lattice(map) => {
+                for (rel, l) in map {
+                    self.row("lattice", vec![s(rel), n(l.keys), s(&l.ty)]);
+                    if let Some(f) = &l.merge {
+                        self.row("lattice_merge", vec![s(rel), s(f)]);
+                    }
+                    if let Some(k) = l.widen {
+                        self.row("lattice_widen", vec![s(rel), n(k)]);
+                    }
+                }
+            }
+            Field::Kindsets(map) => {
+                for (set, kinds) in map {
+                    self.row("kindset", vec![s(set)]);
+                    for (k, kind) in kinds.iter().enumerate() {
+                        self.row("kindset_kind", vec![s(set), n(k), s(kind)]);
+                    }
+                }
+            }
+            Field::Demand(list) => {
+                for (k, rel) in list.iter().enumerate() {
+                    self.row("demand", vec![n(k), s(rel)]);
+                }
+            }
+            Field::DemandDropped(list) => {
+                for (k, (a, b)) in list.iter().enumerate() {
+                    self.row("demand_dropped", vec![n(k), s(a), s(b)]);
+                }
+            }
+            Field::MagicExtras(extras) => {
+                if let Some(extras) = extras {
+                    self.row("magic_extras", vec![n(extras)]);
+                }
+            }
+            Field::MagicReport(report) => {
+                if let Some(report) = report {
+                    self.row("magic_report", vec![n(report.magic_rules), n(report.extras_kept), n(report.gates)]);
+                    for (list, items) in [("adornments", &report.adornments), ("full", &report.full), ("full_for_negation", &report.full_for_negation)] {
+                        for (k, item) in items.iter().enumerate() {
+                            self.row("report_list", vec![s(list), n(k), s(item)]);
+                        }
+                    }
+                }
+            }
+            Field::Gates(gates) => {
+                for (k, (key, gate)) in gates.iter().enumerate() {
+                    self.row("gate", vec![n(k), s(key), s(&gate.rel), n(gate.level)]);
+                    if let Some(src) = &gate.src {
+                        self.row("gate_src", vec![n(k), s(src)]);
+                    }
+                    for (i, rel) in gate.quiet.iter().enumerate() {
+                        self.row("gate_quiet", vec![n(k), n(i), s(rel)]);
+                    }
+                    for (i, rel) in gate.deps.iter().enumerate() {
+                        self.row("gate_dep", vec![n(k), n(i), s(rel)]);
+                    }
+                }
+            }
+            Field::Policies(policies) => {
+                for (k, policy) in policies.iter().enumerate() {
+                    self.row("policy", vec![n(k), s(&policy.to_string())]);
+                }
+            }
+            Field::Settings(settings) => {
+                for (k, (key, text)) in settings.iter().enumerate() {
+                    self.row("setting", vec![n(k), s(key), s(text)]);
+                }
+            }
+            Field::Natives(natives) => {
+                for (rel, native) in natives {
+                    self.native(rel, native);
+                }
+            }
+            Field::DocScopes(scopes) => {
+                if let Some(scopes) = scopes {
+                    self.row("doc_scoped", vec![]);
+                    for (k, (within, out)) in scopes.iter().enumerate() {
+                        self.row("doc_scope", vec![n(k)]);
+                        for (side, globs) in [within, out].into_iter().enumerate() {
+                            for (i, g) in globs.iter().enumerate() {
+                                self.row("doc_scope_glob", vec![n(k), n(side), n(i), s(g)]);
+                            }
+                        }
+                    }
+                }
+            }
+            Field::TextGlobs(globs) => {
+                for (i, g) in globs.iter().enumerate() {
+                    self.row("text_glob", vec![n(i), s(g)]);
+                }
+            }
+            Field::AstPatterns(patterns) => {
+                for pattern in patterns {
+                    self.row("ast_pattern", vec![s(pattern)]);
+                }
+            }
+            Field::Answers(answers) => {
+                for (req, by) in answers {
+                    for (i, b) in by.iter().enumerate() {
+                        self.row("answer", vec![s(req), n(i), s(b)]);
+                    }
+                }
+            }
+            Field::Asked(asked) => {
+                for (req, rules) in asked {
+                    for (k, readers) in rules.iter().enumerate() {
+                        for b in readers {
+                            self.row("asked", vec![s(req), n(k), s(b)]);
+                        }
+                    }
+                }
+            }
+            Field::RxSpans(spans) => {
+                for (span, text) in spans {
+                    // Kinds and captures carry their names after a unit separator.
+                    let span = match span {
+                        SpanIn::Source => "source".to_owned(),
+                        SpanIn::Line => "line".to_owned(),
+                        SpanIn::Comment => "comment".to_owned(),
+                        SpanIn::Kind(k) => format!("kind:{k}"),
+                        SpanIn::ChildOf(k) => format!("child_of:{k}"),
+                        SpanIn::Capture(p, g) => format!("capture:{g}:{p}"),
+                    };
+                    self.row("rx_span", vec![s(&span), s(text)]);
+                }
+            }
         }
     }
+
+    /// A native relation's rows.
+    fn native(&mut self, rel: &str, native: &Native) {
+        match native {
+            Native::DfsFirst { edge, target, roots } => {
+                self.row("native_dfs", vec![s(rel), s(edge), s(target)]);
+                if let Some(roots) = roots {
+                    self.row("native_roots", vec![s(rel), s(roots)]);
+                }
+            }
+            Native::MatchAll { input, pattern, groups, positions } => {
+                self.row("native_match", vec![s(rel), s(input), s(pattern), n(*positions as i64)]);
+                for (i, group) in groups.iter().enumerate() {
+                    self.row("native_group", vec![s(rel), n(i), s(group)]);
+                }
+            }
+            Native::TextTest { input, column, op, patterns } => {
+                self.row("native_text_test", vec![s(rel), s(input), n(*column), s(op)]);
+                for (i, pattern) in patterns.iter().enumerate() {
+                    self.row("native_text_pattern", vec![s(rel), n(i), s(pattern)]);
+                }
+            }
+            Native::PythonCandidates { input, targets, context, member } => self.row("native_python_candidates", vec![s(rel), s(input), s(targets), s(context), s(member)]),
+            Native::Python { kind, input, targets } => self.row("native_python", vec![s(rel), s(kind), s(input), s(targets.as_deref().unwrap_or(""))]),
+            Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
+            Native::Reach { seed, edge } => self.row("native_reach", vec![s(rel), s(seed), s(edge)]),
+            Native::ReachThrough { reach, map } => self.row("native_reach_through", vec![s(rel), s(reach), s(map)]),
+            Native::Rank { query, counted, group, op } => self.row("native_rank", vec![s(rel), s(query), s(counted), n(*group), s(op)]),
+        }
+    }
+}
+
+/// One of a program's fields besides its rules, declarations, facts, inputs and outputs: what `write_about` writes,
+/// a field at a time, so a version's field is stated where it is (`Builder::set_field`, decision 0276 §3) and read
+/// where it is (`Version`'s readers in `program_image::fields`), with no program decoded.
+#[derive(Clone, Copy)]
+pub enum Field<'a> {
+    Nullary(&'a BTreeSet<String>),
+    Qualifiers(&'a BTreeMap<String, BTreeSet<String>>),
+    Tapes(&'a BTreeMap<String, BTreeSet<usize>>),
+    /// Each relation's layout facts (`.layout`, decision 0361).
+    Layouts(&'a BTreeMap<String, Vec<LayoutFact>>),
+    Shapes(&'a [Shape]),
+    Lattice(&'a BTreeMap<String, LatticeDecl>),
+    Kindsets(&'a BTreeMap<String, Vec<String>>),
+    Demand(&'a [String]),
+    DemandDropped(&'a [(String, String)]),
+    MagicExtras(Option<usize>),
+    MagicReport(Option<&'a Report>),
+    Gates(&'a [(String, Gate)]),
+    Policies(&'a [serde_json::Value]),
+    Settings(&'a [(String, String)]),
+    Natives(&'a BTreeMap<String, Native>),
+    DocScopes(Option<&'a [(Vec<String>, Vec<String>)]>),
+    TextGlobs(&'a [String]),
+    AstPatterns(&'a BTreeSet<String>),
+    Answers(&'a BTreeMap<String, Vec<String>>),
+    Asked(&'a BTreeMap<String, Vec<BTreeSet<String>>>),
+    RxSpans(&'a BTreeSet<(SpanIn, String)>),
+}
+
+/// The native relations' about relations: each names its relation in its first column after the program's.
+pub const NATIVE_RELATIONS: &[&str] = &["native_dfs", "native_roots", "native_match", "native_group", "native_text_test", "native_text_pattern", "native_python_candidates", "native_python", "native_components", "native_reach", "native_reach_through", "native_rank"];
+
+impl<'a> Field<'a> {
+    /// The relations this field's rows are rows of: stating the field replaces all of theirs.
+    pub fn relations(&self) -> &'static [&'static str] {
+        match self {
+            Field::Nullary(_) => &["nullary"],
+            Field::Qualifiers(_) => &["qualifier"],
+            Field::Tapes(_) => &["tape_column"],
+            Field::Layouts(_) => &["layout"],
+            Field::Shapes(_) => &["shape", "shape_after", "shape_bound"],
+            Field::Lattice(_) => &["lattice", "lattice_merge", "lattice_widen"],
+            Field::Kindsets(_) => &["kindset", "kindset_kind"],
+            Field::Demand(_) => &["demand"],
+            Field::DemandDropped(_) => &["demand_dropped"],
+            Field::MagicExtras(_) => &["magic_extras"],
+            Field::MagicReport(_) => &["magic_report", "report_list"],
+            Field::Gates(_) => &["gate", "gate_src", "gate_quiet", "gate_dep"],
+            Field::Policies(_) => &["policy"],
+            Field::Settings(_) => &["setting"],
+            Field::Natives(_) => NATIVE_RELATIONS,
+            Field::DocScopes(_) => &["doc_scoped", "doc_scope", "doc_scope_glob"],
+            Field::TextGlobs(_) => &["text_glob"],
+            Field::AstPatterns(_) => &["ast_pattern"],
+            Field::Answers(_) => &["answer"],
+            Field::Asked(_) => &["asked"],
+            Field::RxSpans(_) => &["rx_span"],
+        }
+    }
+
+    /// Every field of `prog`, in the order `write_about` writes them.
+    pub fn all_of(prog: &'a Program) -> [Field<'a>; 21] {
+        [
+            Field::Nullary(&prog.nullary),
+            Field::Qualifiers(&prog.qualifiers),
+            Field::Tapes(&prog.tapes),
+            Field::Layouts(&prog.layouts),
+            Field::Shapes(&prog.shapes),
+            Field::Lattice(&prog.lattice),
+            Field::Kindsets(&prog.kindsets),
+            Field::Demand(&prog.demand),
+            Field::DemandDropped(&prog.demand_dropped),
+            Field::MagicExtras(prog.magic_extras),
+            Field::MagicReport(prog.magic_report.as_ref()),
+            Field::Gates(&prog.gates),
+            Field::Policies(&prog.policies),
+            Field::Settings(&prog.settings),
+            Field::Natives(&prog.natives),
+            Field::DocScopes(prog.doc_scopes.as_deref()),
+            Field::TextGlobs(&prog.text_globs),
+            Field::AstPatterns(&prog.ast_patterns),
+            Field::Answers(&prog.answers),
+            Field::Asked(&prog.asked_by),
+            Field::RxSpans(&prog.rx_spans),
+        ]
+    }
+}
+
+/// Field `f`'s rows, as facts of program `p` (each of `f.relations()` that has rows).
+pub fn write_field(facts: &mut Facts, p: &str, f: &Field<'_>) {
+    Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: false }.field(f);
 }
 
 /// `prog` as facts of program `p`, added to `facts`.
@@ -645,7 +803,7 @@ impl<'a, C: Cell> Reader<'a, C> {
         }
         for row in self.get("lit_cmp") {
             let op = text(&row[2])?;
-            let op = super::front::operator(&op).ok_or_else(|| bad(format!("no operator {op:?}")))?;
+            let op = super::front::ast::operator(&op).ok_or_else(|| bad(format!("no operator {op:?}")))?;
             out.push((int(&row[0])?, Literal::Cmp { l: self.term(int(&row[1])?)?, op, r: self.term(int(&row[3])?)? }));
         }
         let over = self.by_id("agg_over")?;
@@ -700,21 +858,10 @@ impl<'a, C: Cell> Reader<'a, C> {
             }
             prog.decls.insert(rel.into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         }
-        prog.nullary = self.get("nullary").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
-        for row in self.get("qualifier") {
-            prog.qualifiers.entry(text(&row[0])?).or_default().insert(text(&row[1])?);
-        }
-        for row in self.get("tape_column") {
-            prog.tapes.entry(text(&row[0])?).or_default().insert(int(&row[1])? as usize);
-        }
-        let merges = self.by_id_text("lattice_merge")?;
-        let widens = self.by_id_text("lattice_widen")?;
-        for row in self.get("lattice") {
-            let rel = text(&row[0])?;
-            let merge = merges.get(&rel).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
-            let widen = widens.get(&rel).and_then(|r| r.first()).map(|r| int(&r[0]).map(|k| k as u32)).transpose()?;
-            prog.lattice.insert(rel, LatticeDecl { keys: int(&row[1])? as usize, ty: text(&row[2])?, merge, widen });
-        }
+        prog.nullary = self.nullary()?;
+        prog.qualifiers = self.qualifiers()?;
+        prog.tapes = self.tapes()?;
+        prog.lattice = self.lattice()?;
         // Keyed by the relation's name as the rows hold it, borrowed.
         let mut values: rustc_hash::FxHashMap<(&str, i64), Vec<(i64, Value)>> = Default::default();
         for row in self.get("fact") {
@@ -737,45 +884,119 @@ impl<'a, C: Cell> Reader<'a, C> {
             }
             facts.entry(rel).or_default().push((k, row_values));
         }
-        prog.facts = facts.into_iter().map(|(rel, rows)| (rel, ordered(rows).into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect())).collect();
+        prog.facts = facts.into_iter().map(|(rel, rows)| (rel, ordered(rows).into_iter().map(crate::code_rule_dsl::logic::front::name::List::from).collect())).collect();
         let list = |rel: &str| -> Result<Vec<String>, String> { Ok(ordered(self.get(rel).iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?)) };
         prog.inputs = list("input")?;
         prog.outputs = list("output")?;
-        prog.demand = list("demand")?;
+        prog.demand = self.demand()?;
+        prog.kindsets = self.kindsets()?;
+        prog.demand_dropped = self.demand_dropped()?;
+        prog.magic_extras = self.magic_extras()?;
+        prog.magic_report = self.magic_report()?;
+        prog.gates = self.gates()?;
+        prog.shapes = self.shapes()?;
+        prog.layouts = self.layouts()?;
+        prog.policies = self.policies()?;
+        prog.settings = self.settings()?;
+        prog.natives = self.natives()?;
+        prog.rx_spans = self.rx_spans()?;
+        prog.ast_patterns = self.ast_patterns()?;
+        prog.doc_scopes = self.doc_scopes()?;
+        prog.text_globs = self.text_globs()?;
+        prog.answers = self.answers()?;
+        prog.asked_by = self.asked()?;
+        Ok(prog)
+    }
+
+    // -- the fields besides rules, declarations, facts, inputs and outputs, each read alone (`Field`) --
+
+    fn nullary(&self) -> Result<BTreeSet<String>, String> {
+        self.get("nullary").iter().map(|r| text(&r[0])).collect()
+    }
+    fn qualifiers(&self) -> Result<BTreeMap<String, BTreeSet<String>>, String> {
+        let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for row in self.get("qualifier") {
+            out.entry(text(&row[0])?).or_default().insert(text(&row[1])?);
+        }
+        Ok(out)
+    }
+    fn tapes(&self) -> Result<BTreeMap<String, BTreeSet<usize>>, String> {
+        let mut out: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+        for row in self.get("tape_column") {
+            out.entry(text(&row[0])?).or_default().insert(int(&row[1])? as usize);
+        }
+        Ok(out)
+    }
+    fn layouts(&self) -> Result<BTreeMap<String, Vec<LayoutFact>>, String> {
+        let mut layouts: BTreeMap<String, Vec<(i64, LayoutFact)>> = BTreeMap::new();
+        for row in self.get("layout") {
+            layouts.entry(text(&row[0])?).or_default().push((int(&row[1])?, LayoutFact::of_placed(&text(&row[2])?)?));
+        }
+        Ok(layouts.into_iter().map(|(rel, facts)| (rel, ordered(facts))).collect())
+    }
+    fn lattice(&self) -> Result<BTreeMap<String, LatticeDecl>, String> {
+        let merges = self.by_id_text("lattice_merge")?;
+        let widens = self.by_id_text("lattice_widen")?;
+        let mut out = BTreeMap::new();
+        for row in self.get("lattice") {
+            let rel = text(&row[0])?;
+            let merge = merges.get(&rel).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
+            let widen = widens.get(&rel).and_then(|r| r.first()).map(|r| int(&r[0]).map(|k| k as u32)).transpose()?;
+            out.insert(rel, LatticeDecl { keys: int(&row[1])? as usize, ty: text(&row[2])?, merge, widen });
+        }
+        Ok(out)
+    }
+    fn demand(&self) -> Result<Vec<String>, String> {
+        Ok(ordered(self.get("demand").iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?))
+    }
+    fn kindsets(&self) -> Result<BTreeMap<String, Vec<String>>, String> {
         let kinds = self.by_id_text("kindset_kind")?;
+        let mut out = BTreeMap::new();
         for row in self.get("kindset") {
             let set = text(&row[0])?;
             let members = ordered(kinds.get(&set).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
-            prog.kindsets.insert(set, members);
+            out.insert(set, members);
         }
-        prog.demand_dropped = ordered(self.get("demand_dropped").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
-        prog.magic_extras = self.get("magic_extras").first().map(|r| int(&r[0]).map(|x| x as usize)).transpose()?;
-        if let Some(row) = self.get("magic_report").first() {
-            let mut lists: BTreeMap<String, Vec<(i64, String)>> = BTreeMap::new();
-            for r in self.get("report_list") {
-                lists.entry(text(&r[0])?).or_default().push((int(&r[1])?, text(&r[2])?));
-            }
-            let mut take = |name: &str| ordered(lists.remove(name).unwrap_or_default());
-            prog.magic_report = Some(Report {
-                adornments: take("adornments"),
-                magic_rules: int(&row[0])? as usize,
-                full: take("full"),
-                extras_kept: int(&row[1])? as usize,
-                gates: int(&row[2])? as usize,
-                full_for_negation: take("full_for_negation"),
-            });
+        Ok(out)
+    }
+    fn demand_dropped(&self) -> Result<Vec<(String, String)>, String> {
+        Ok(ordered(self.get("demand_dropped").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?))
+    }
+    fn magic_extras(&self) -> Result<Option<usize>, String> {
+        self.get("magic_extras").first().map(|r| int(&r[0]).map(|x| x as usize)).transpose()
+    }
+    fn magic_report(&self) -> Result<Option<Report>, String> {
+        let Some(row) = self.get("magic_report").first() else { return Ok(None) };
+        let mut lists: BTreeMap<String, Vec<(i64, String)>> = BTreeMap::new();
+        for r in self.get("report_list") {
+            lists.entry(text(&r[0])?).or_default().push((int(&r[1])?, text(&r[2])?));
         }
+        let mut take = |name: &str| ordered(lists.remove(name).unwrap_or_default());
+        Ok(Some(Report {
+            adornments: take("adornments"),
+            magic_rules: int(&row[0])? as usize,
+            full: take("full"),
+            extras_kept: int(&row[1])? as usize,
+            gates: int(&row[2])? as usize,
+            full_for_negation: take("full_for_negation"),
+        }))
+    }
+    fn indexed(rows: Option<&Vec<&[C]>>) -> Result<Vec<String>, String> {
+        Ok(ordered(rows.into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?))
+    }
+    fn gates(&self) -> Result<Vec<(String, Gate)>, String> {
         let srcs = self.by_id("gate_src")?;
         let quiet = self.by_id("gate_quiet")?;
         let deps = self.by_id("gate_dep")?;
-        let indexed = |rows: Option<&Vec<&[C]>>| -> Result<Vec<String>, String> { Ok(ordered(rows.into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?)) };
         let mut gates = Vec::new();
         for row in self.get("gate") {
             let k = int(&row[0])?;
             let src = srcs.get(&k).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
-            gates.push((k, (text(&row[1])?, Gate { src, rel: text(&row[2])?, level: int(&row[3])? as usize, quiet: indexed(quiet.get(&k))?, deps: indexed(deps.get(&k))? })));
+            gates.push((k, (text(&row[1])?, Gate { src, rel: text(&row[2])?, level: int(&row[3])? as usize, quiet: Self::indexed(quiet.get(&k))?, deps: Self::indexed(deps.get(&k))? })));
         }
-        prog.gates = ordered(gates);
+        Ok(ordered(gates))
+    }
+    fn shapes(&self) -> Result<Vec<Shape>, String> {
         let after = self.by_id("shape_after")?;
         let bound = self.by_id("shape_bound")?;
         let mut shapes = Vec::new();
@@ -783,47 +1004,61 @@ impl<'a, C: Cell> Reader<'a, C> {
             let k = int(&row[0])?;
             let wait = match after.get(&k).and_then(|r| r.first()) {
                 Some(r) => ShapeWait::After(text(&r[0])?),
-                None => ShapeWait::Bound(indexed(bound.get(&k))?),
+                None => ShapeWait::Bound(Self::indexed(bound.get(&k))?),
             };
             shapes.push((k, Shape { head: text(&row[1])?, lit: text(&row[2])?, wait, text: text(&row[3])? }));
         }
-        prog.shapes = ordered(shapes);
-        prog.policies = ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(|e| bad(e))?))).collect::<Result<Vec<_>, String>>()?);
-        prog.settings = ordered(self.get("setting").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
+        Ok(ordered(shapes))
+    }
+    fn policies(&self) -> Result<Vec<serde_json::Value>, String> {
+        Ok(ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(|e| bad(e))?))).collect::<Result<Vec<_>, String>>()?))
+    }
+    fn settings(&self) -> Result<Vec<(String, String)>, String> {
+        Ok(ordered(self.get("setting").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?))
+    }
+    fn natives(&self) -> Result<BTreeMap<String, Native>, String> {
+        let mut out = BTreeMap::new();
         let roots = self.by_id_text("native_roots")?;
         for row in self.get("native_dfs") {
             let rel = text(&row[0])?;
             let roots = roots.get(&rel).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
-            prog.natives.insert(rel, Native::DfsFirst { edge: text(&row[1])?, target: text(&row[2])?, roots });
+            out.insert(rel, Native::DfsFirst { edge: text(&row[1])?, target: text(&row[2])?, roots });
         }
         let groups = self.by_id_text("native_group")?;
         for row in self.get("native_match") {
             let rel = text(&row[0])?;
             let groups = ordered(groups.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
-            prog.natives.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
+            out.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
         }
         let patterns = self.by_id_text("native_text_pattern")?;
         for row in self.get("native_text_test") {
             let rel = text(&row[0])?;
             let patterns = ordered(patterns.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
-            prog.natives.insert(rel, Native::TextTest { input: text(&row[1])?, column: int(&row[2])? as usize, op: text(&row[3])?, patterns });
+            out.insert(rel, Native::TextTest { input: text(&row[1])?, column: int(&row[2])? as usize, op: text(&row[3])?, patterns });
         }
         for row in self.get("native_python_candidates") {
-            prog.natives.insert(text(&row[0])?,Native::PythonCandidates{input:text(&row[1])?,targets:text(&row[2])?,context:text(&row[3])?,member:text(&row[4])?});
+            out.insert(text(&row[0])?, Native::PythonCandidates { input: text(&row[1])?, targets: text(&row[2])?, context: text(&row[3])?, member: text(&row[4])? });
         }
         for row in self.get("native_python") {
-            let targets=text(&row[3])?;
-            prog.natives.insert(text(&row[0])?,Native::Python{kind:text(&row[1])?,input:text(&row[2])?,targets:(!targets.is_empty()).then_some(targets)});
+            let targets = text(&row[3])?;
+            out.insert(text(&row[0])?, Native::Python { kind: text(&row[1])?, input: text(&row[2])?, targets: (!targets.is_empty()).then_some(targets) });
         }
         for row in self.get("native_components") {
-            prog.natives.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });
+            out.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });
         }
         for row in self.get("native_reach") {
-            prog.natives.insert(text(&row[0])?, Native::Reach { seed: text(&row[1])?, edge: text(&row[2])? });
+            out.insert(text(&row[0])?, Native::Reach { seed: text(&row[1])?, edge: text(&row[2])? });
         }
         for row in self.get("native_reach_through") {
-            prog.natives.insert(text(&row[0])?, Native::ReachThrough { reach: text(&row[1])?, map: text(&row[2])? });
+            out.insert(text(&row[0])?, Native::ReachThrough { reach: text(&row[1])?, map: text(&row[2])? });
         }
+        for row in self.get("native_rank") {
+            out.insert(text(&row[0])?, Native::Rank { query: text(&row[1])?, counted: text(&row[2])?, group: int(&row[3])? as usize, op: text(&row[4])? });
+        }
+        Ok(out)
+    }
+    fn rx_spans(&self) -> Result<BTreeSet<(SpanIn, String)>, String> {
+        let mut out = BTreeSet::new();
         for row in self.get("rx_span") {
             // `kind:K`, and `capture:G:P` (a group is a name, so the pattern is what follows its colon).
             let named = text(&row[0])?;
@@ -839,42 +1074,53 @@ impl<'a, C: Cell> Reader<'a, C> {
                 },
                 _ => return Err(bad(format!("no span {named:?}"))),
             };
-            prog.rx_spans.insert((span, text(&row[1])?));
+            out.insert((span, text(&row[1])?));
         }
-        for row in self.get("ast_pattern") {
-            prog.ast_patterns.insert(text(&row[0])?);
+        Ok(out)
+    }
+    fn ast_patterns(&self) -> Result<BTreeSet<String>, String> {
+        self.get("ast_pattern").iter().map(|r| text(&r[0])).collect()
+    }
+    fn doc_scopes(&self) -> Result<Option<Vec<(Vec<String>, Vec<String>)>>, String> {
+        if self.get("doc_scoped").is_empty() {
+            return Ok(None);
         }
-        if !self.get("doc_scoped").is_empty() {
-            let mut scopes: BTreeMap<i64, (Vec<(i64, String)>, Vec<(i64, String)>)> = self.get("doc_scope").iter().map(|r| Ok((int(&r[0])?, Default::default()))).collect::<Result<_, String>>()?;
-            for row in self.get("doc_scope_glob") {
-                let entry = scopes.get_mut(&int(&row[0])?).ok_or_else(|| bad("a scope glob of no entry"))?;
-                let side = if int(&row[1])? == 0 { &mut entry.0 } else { &mut entry.1 };
-                side.push((int(&row[2])?, text(&row[3])?));
-            }
-            let ordered_globs = |mut g: Vec<(i64, String)>| -> Vec<String> {
-                g.sort();
-                g.into_iter().map(|(_, s)| s).collect()
-            };
-            prog.doc_scopes = Some(scopes.into_values().map(|(w, o)| (ordered_globs(w), ordered_globs(o))).collect());
+        let mut scopes: BTreeMap<i64, (Vec<(i64, String)>, Vec<(i64, String)>)> = self.get("doc_scope").iter().map(|r| Ok((int(&r[0])?, Default::default()))).collect::<Result<_, String>>()?;
+        for row in self.get("doc_scope_glob") {
+            let entry = scopes.get_mut(&int(&row[0])?).ok_or_else(|| bad("a scope glob of no entry"))?;
+            let side = if int(&row[1])? == 0 { &mut entry.0 } else { &mut entry.1 };
+            side.push((int(&row[2])?, text(&row[3])?));
         }
+        let ordered_globs = |mut g: Vec<(i64, String)>| -> Vec<String> {
+            g.sort();
+            g.into_iter().map(|(_, s)| s).collect()
+        };
+        Ok(Some(scopes.into_values().map(|(w, o)| (ordered_globs(w), ordered_globs(o))).collect()))
+    }
+    fn text_globs(&self) -> Result<Vec<String>, String> {
         let mut text_globs = self.get("text_glob").iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?;
         text_globs.sort();
-        prog.text_globs = text_globs.into_iter().map(|(_, g)| g).collect();
+        Ok(text_globs.into_iter().map(|(_, g)| g).collect())
+    }
+    fn answers(&self) -> Result<BTreeMap<String, Vec<String>>, String> {
         let mut answers: BTreeMap<String, Vec<(i64, String)>> = BTreeMap::new();
         for row in self.get("answer") {
             answers.entry(text(&row[0])?).or_default().push((int(&row[1])?, text(&row[2])?));
         }
-        prog.answers = answers.into_iter().map(|(req, by)| (req, ordered(by))).collect();
+        Ok(answers.into_iter().map(|(req, by)| (req, ordered(by))).collect())
+    }
+    fn asked(&self) -> Result<BTreeMap<String, Vec<BTreeSet<String>>>, String> {
+        let mut out: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
         for row in self.get("asked") {
             let (req, k, by) = (text(&row[0])?, int(&row[1])?, text(&row[2])?);
             let k = usize::try_from(k).map_err(|_| format!("asked: rule {k}"))?;
-            let rules = prog.asked_by.entry(req).or_default();
+            let rules = out.entry(req).or_default();
             if rules.len() <= k {
                 rules.resize_with(k + 1, BTreeSet::new);
             }
             rules[k].insert(by);
         }
-        Ok(prog)
+        Ok(out)
     }
 
     /// Rows of `rel` keyed by their first column (a name), each row less that column.
@@ -887,18 +1133,42 @@ impl<'a, C: Cell> Reader<'a, C> {
     }
 }
 
+/// The fields of program `p` of `facts` besides its rules, each read alone (`Field`'s rows): what a version's readers
+/// read (`program_image::fields`), no program assembled. `facts` need hold only the relations of the fields read.
+pub struct Fields<'a>(Reader<'a, Value>);
+
+/// `p`'s fields in `facts` (`Fields`).
+pub fn fields<'a>(facts: &'a Facts, p: &str) -> Result<Fields<'a>, String> {
+    Reader::of(facts, p).map(Fields)
+}
+
+impl Fields<'_> {
+    pub fn nullary(&self) -> Result<BTreeSet<String>, String> { self.0.nullary() }
+    pub fn qualifiers(&self) -> Result<BTreeMap<String, BTreeSet<String>>, String> { self.0.qualifiers() }
+    pub fn tapes(&self) -> Result<BTreeMap<String, BTreeSet<usize>>, String> { self.0.tapes() }
+    pub fn lattice(&self) -> Result<BTreeMap<String, LatticeDecl>, String> { self.0.lattice() }
+    pub fn demand(&self) -> Result<Vec<String>, String> { self.0.demand() }
+    pub fn kindsets(&self) -> Result<BTreeMap<String, Vec<String>>, String> { self.0.kindsets() }
+    pub fn demand_dropped(&self) -> Result<Vec<(String, String)>, String> { self.0.demand_dropped() }
+    pub fn magic_extras(&self) -> Result<Option<usize>, String> { self.0.magic_extras() }
+    pub fn magic_report(&self) -> Result<Option<Report>, String> { self.0.magic_report() }
+    pub fn gates(&self) -> Result<Vec<(String, Gate)>, String> { self.0.gates() }
+    pub fn shapes(&self) -> Result<Vec<Shape>, String> { self.0.shapes() }
+    pub fn layouts(&self) -> Result<BTreeMap<String, Vec<LayoutFact>>, String> { self.0.layouts() }
+    pub fn policies(&self) -> Result<Vec<serde_json::Value>, String> { self.0.policies() }
+    pub fn settings(&self) -> Result<Vec<(String, String)>, String> { self.0.settings() }
+    pub fn natives(&self) -> Result<BTreeMap<String, Native>, String> { self.0.natives() }
+    pub fn rx_spans(&self) -> Result<BTreeSet<(SpanIn, String)>, String> { self.0.rx_spans() }
+    pub fn ast_patterns(&self) -> Result<BTreeSet<String>, String> { self.0.ast_patterns() }
+    pub fn doc_scopes(&self) -> Result<Option<Vec<(Vec<String>, Vec<String>)>>, String> { self.0.doc_scopes() }
+    pub fn text_globs(&self) -> Result<Vec<String>, String> { self.0.text_globs() }
+    pub fn answers(&self) -> Result<BTreeMap<String, Vec<String>>, String> { self.0.answers() }
+    pub fn asked(&self) -> Result<BTreeMap<String, Vec<BTreeSet<String>>>, String> { self.0.asked() }
+}
+
 /// Program `p` of `facts`, as it was written.
 pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
     Reader::of(facts, p)?.program()
-}
-
-/// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
-/// same rows.
-pub fn document(facts: &Facts, extra: &BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>>) -> Result<String, String> {
-    let mut decls = schema();
-    decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
-    let prog = Program { decls, facts: facts.clone(), ..Program::default() };
-    super::rr::print(&prog).map_err(|e| bad(format!("{e:?}")))
 }
 
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).
@@ -989,8 +1259,8 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
                 row.push(match at.take(1)?[0] {
                     0 => Value::Int(i64::from_le_bytes(at.take(8)?.try_into().expect("eight bytes"))),
                     1 => Value::Str(string(at.u64()?)?.into()),
-                    tag @ 2..=4 => Value::Branded(crate::code_rule_dsl::logic::front::Branded {
-                        class: [crate::code_rule_dsl::logic::front::Class::Name, crate::code_rule_dsl::logic::front::Class::Kind, crate::code_rule_dsl::logic::front::Class::Field][usize::from(tag - 2)],
+                    tag @ 2..=4 => Value::Branded(crate::code_rule_dsl::logic::front::ast::Branded {
+                        class: [crate::code_rule_dsl::logic::front::ast::Class::Name, crate::code_rule_dsl::logic::front::ast::Class::Kind, crate::code_rule_dsl::logic::front::ast::Class::Field][usize::from(tag - 2)],
                         atom: u32::try_from(at.u64()?).map_err(|e| bad(e))?,
                     }),
                     tag => return Err(bad(format!("no value tag {tag}"))),
@@ -1006,150 +1276,9 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
     Ok(facts)
 }
 
-#[cfg(test)]
-pub mod tests {
-    /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
-    /// (strings counted, then the rows written), and they decode to the facts.
-    #[test]
-    fn facts_encode_as_two_passes_did_and_decode_back() {
-        use super::{Facts, Value};
-        let mut facts = Facts::new();
-        facts.insert("b".into(), vec![vec![Value::Str("x".into()), Value::Int(-3)].into(), vec![Value::Str("b".into()), Value::Str("y".into())].into()]);
-        facts.insert("a".into(), vec![vec![Value::Str("y".into()), Value::Str("z".into()), Value::Int(7)].into()]);
-        let mut want = Vec::new();
-        let u = |out: &mut Vec<u8>, x: u64| out.extend_from_slice(&x.to_le_bytes());
-        // Strings by first use: a, y, z, b, x.
-        let table = ["a", "y", "z", "b", "x"];
-        u(&mut want, 5);
-        for x in table {
-            u(&mut want, x.len() as u64);
-            want.extend_from_slice(x.as_bytes());
-        }
-        u(&mut want, 2);
-        let id = |x: &str| table.iter().position(|t| *t == x).unwrap() as u64;
-        for (rel, rows) in &facts {
-            u(&mut want, id(rel));
-            u(&mut want, rows.len() as u64);
-            for row in rows {
-                u(&mut want, row.len() as u64);
-                for v in row {
-                    match v {
-                        Value::Int(i) => {
-                            want.push(0);
-                            want.extend_from_slice(&i.to_le_bytes());
-                        }
-                        Value::Branded(b) => {
-                            want.push(2 + b.class as u8);
-                            want.extend_from_slice(&u64::from(b.atom).to_le_bytes());
-                        }
-                        Value::Str(x) => {
-                            want.push(1);
-                            u(&mut want, id(x));
-                        }
-                    }
-                }
-            }
-        }
-        let got = super::encode(&facts);
-        assert_eq!(got, want);
-        assert_eq!(super::decode(&got).unwrap(), facts);
-    }
-
-    /// A program reads back the same off its facts decoded: in any order of rows, and with ids that are not dense (a
-    /// map, not a vector, indexes them).
-    #[test]
-    fn a_program_reads_back_the_same_in_any_order() {
-        use super::{Facts, Value};
-        let prog = crate::code_rule_dsl::logic::rr::parse(
-            ".decl e(a:number, b:number)\n.input e\n.decl p(a:number, b:number)\n.output p\n\
-             p(x, y) :- e(x, y).\np(x, z) :- p(x, y), e(y, z), !e(z, x), z != @add(x, 1).\n.decl c(n:number)\nc(n) :- n = count : { e(_, _) }.\n",
-        )
-        .unwrap();
-        let mut facts = Facts::new();
-        super::write(&mut facts, "q", &prog);
-        let owned = super::program(&facts, "q").unwrap();
-        let bytes = super::encode(&facts);
-        assert_eq!(format!("{owned:?}"), format!("{:?}", super::program(&super::decode(&bytes).unwrap(), "q").unwrap()));
-        // Ids spread out (each times 1000) and rows reversed: read back the same.
-        let spread = |v: &Value| match v { Value::Int(i) => Value::Int(i * 1000), v => v.clone() };
-        let mut far = Facts::new();
-        for (rel, rows) in &facts {
-            // The columns that are ids (a term's, atom's, literal's or rule's), not values.
-            let ids: &[usize] = match rel.as_str() {
-                "term" | "atom" => &[1],
-                "arg" | "call_arg" | "body" => &[1, 3],
-                "rule" | "lit_atom" => &[1, 2],
-                "lit_cmp" => &[1, 2, 4],
-                "lit_agg" => &[1, 4],
-                _ => &[],
-            };
-            let mut rows: Vec<Vec<Value>> = rows.iter().map(|r| r.iter().enumerate().map(|(c, v)| if ids.contains(&c) { spread(v) } else { v.clone() }).collect()).collect();
-            rows.reverse();
-            far.insert(rel.clone(), rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
-        }
-        let bytes = super::encode(&far);
-        assert_eq!(format!("{:?}", super::program(&super::decode(&bytes).unwrap(), "q").unwrap()), format!("{owned:?}"));
-    }
-
-    /// The documents a program reads (`doc_scopes`) survive its facts: a stored program read back reads the same
-    /// documents, not all of them.
-    #[test]
-    fn document_scopes_read_back_as_written() {
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
-        for scopes in [None, Some(vec![(vec!["impl/**".to_owned(), "api/**".to_owned()], vec!["**/tests/**".to_owned()]), (vec![], vec![])])] {
-            prog.doc_scopes = scopes.clone();
-            prog.text_globs = if scopes.is_some() { vec!["**/*.md".to_owned(), "docs/*.rst".to_owned()] } else { Vec::new() };
-            let mut facts = super::Facts::new();
-            super::write(&mut facts, "p", &prog);
-            let back = super::program(&facts, "p").unwrap();
-            assert_eq!(back.doc_scopes, scopes);
-            assert_eq!(back.text_globs, prog.text_globs);
-        }
-    }
-
-    /// A relation of facts with no rows (a constant folded empty, `constants::fold`) survives its facts: a stored
-    /// program read back is the program written, so its digests (the memo's key, the relations' identities) are the
-    /// same. Without it, the first run after a rebuild and the second keyed the memo apart.
-    #[test]
-    fn an_empty_relation_of_facts_reads_back_as_present() {
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
-        prog.facts.insert("a".to_owned(), Vec::new());
-        let mut facts = super::Facts::new();
-        super::write(&mut facts, "p", &prog);
-        let back = super::program(&facts, "p").unwrap();
-        assert_eq!(back.facts, prog.facts);
-        let key = |p: &crate::code_rule_dsl::logic::front::Program| super::super::plan::corpus::memo::program_digest(&super::super::plan::body::Placed::of_program(p).unwrap().v);
-        assert_eq!(key(&back), key(&prog));
-    }
-
-    /// A relation the program has facts of but no rows (a constant folded to nothing) reads back as one: a stored
-    /// program is the program prepared, and its file-local part has the same memo key (`memo::program_digest`).
-    #[test]
-    fn a_relation_of_no_facts_reads_back_as_one() {
-        let mut prog = crate::code_rule_dsl::logic::front::Program::default();
-        prog.facts.insert("none".into(), Vec::new());
-        prog.facts.insert("one".into(), vec![vec![crate::code_rule_dsl::logic::front::Value::Int(1)].into()]);
-        let mut facts = super::Facts::new();
-        super::write(&mut facts, "p", &prog);
-        assert_eq!(super::program(&facts, "p").unwrap().facts, prog.facts);
-    }
-
-    /// The AST patterns a program matches survive its facts: a stored program read back (a prepared program,
-    /// O-stored-patterns) still asks the batch for `ast_match` rows. Without them, a run that reuses it finds no
-    /// pattern matches.
-    #[test]
-    fn ast_patterns_read_back_as_written() {
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
-        prog.ast_patterns = ["$O[:-$K]".to_owned(), "print($$$A)".to_owned()].into();
-        let mut facts = super::Facts::new();
-        super::write(&mut facts, "p", &prog);
-        assert_eq!(super::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
-    }
-}
-
 /// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
 /// memory (a 16 k-rule program's is tens of megabytes).
-pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
+pub fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
     use sha2::Digest as _;
     struct Hashing(sha2::Sha256);
     impl std::fmt::Write for Hashing {

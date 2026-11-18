@@ -94,8 +94,8 @@ A session's relations stay in their blocks between runs; nothing moves to frames
   - Its removal, add and probe lines take the kept plans (`plan_rule_reused`), as the semi-naive probes do: searched
     at first sight, then taken or priced again as their sizes move.
   - A quiet recursive stratum plans no probes.
-  - The recheck keeps the greedy bound-head order: no planner prices a bound head yet (Q116), and the lines report no
-    work to the 0122 budget (Q116).
+  - The recheck keeps the greedy bound-head order: no planner prices a bound head yet (Q208), and the lines report no
+    work to the 0122 budget (Q208).
 - e1861f68b, stage 4.
 - Stage 5: relations kept in place between runs, surveyed; the mode widened.
   - A session already keeps its part's relations in memory between runs (`Retained`, the session's cell). The mode
@@ -147,7 +147,7 @@ A session's relations stay in their blocks between runs; nothing moves to frames
       Also gone: the form strands (`strand_forms`, `run_forms`, `absorb_forms`), `add_form`, `add_again` and
       `spike_delta`. A maintained run (`maintaining`) still keeps its seed joins out of the level batch, as its
       groups did.
-  - Red throughout, as before this work: Q80, Q114 and Q115. Q115 also covers two rr tests first run here.
+  - Red throughout, as before this work: Q80, Q206 and Q207. Q207 also covers two rr tests first run here.
 
 ## Review against the design (2026-11-18)
 
@@ -177,7 +177,7 @@ Each step lands with its requirement's test un-ignored.
 3. R1, R2: a relation's change read off its version in place, for inputs, mode strata and strata derived again.
 4. R3: count the strata derived again by reason, then bring the most common kinds into the mode.
 5. R9: the driver down to skip, mode, or derive again.
-6. R6 (the static check in the engine), R7 (Q116), R1's leftovers; the data-layer scale run last.
+6. R6 (the static check in the engine), R7 (Q208), R1's leftovers; the data-layer scale run last.
 
 ## Measurements (step 1, 2026-11-18)
 
@@ -230,7 +230,7 @@ maintenance relations and copies 15,000–110,000 rows to state its changes. 430
 - After that: the changed inputs' deltas from the documents' entries (1.2 s, `input delta by document`), and the kept
   rows from the frames (0.9 s).
 
-**After the index fix, the threshold and its readers' fix** (79196a432, M3 Max, `RERAIL_JOURNAL=off`: Q117). Every
+**After the index fix, the threshold and its readers' fix** (79196a432, M3 Max, `RERAIL_JOURNAL=off`: Q189). Every
 step's findings equal cold, kept and session alike:
 
 | Step | Cold (G instr.) | Kept (G instr.) | Kept / cold | qd (forms) | Session CPU s |
@@ -247,7 +247,7 @@ step's findings equal cold, kept and session alike:
 
 Every kept step but 05 is below the forms'. A session edit costs 0.36–0.73 of the session's own cold run. The
 session's shape counters over the nine runs: 2.29 M rows copied, 7,350 maintenance relations held, 2,015 recheck
-lines unpriced. Those are step 3's and Q116's to remove.
+lines unpriced. Those are step 3's and Q208's to remove.
 
 Two bugs turned up in the course of this:
 - The threshold derives again strata whose aggregate readers are maintained (`type_of`, then `type_first`, a
@@ -255,7 +255,7 @@ Two bugs turned up in the course of this:
   relation derived again does not have. Fixed: the aggregate's atom reads the version it is given, as the aggregate
   joins already did.
 - On the M3, the journal's replay sometimes missed the edit made just before a run, and the whole-run cutoff
-  answered the last step's findings. That is Q117, and the measurement runs without the journal until it is fixed.
+  answered the last step's findings. That is Q189, and the measurement runs without the journal until it is fixed.
 
 So the recheck was where the cost was, from a missing index rather than from the design. With that fixed, the rest of
 the plan's order stands: the copies (step 3), then the derive-again kinds (step 4).

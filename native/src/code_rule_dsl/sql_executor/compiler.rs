@@ -168,7 +168,7 @@ impl CodeRuleSqlExecutor {
             batch.insert(name.clone(), (source, rows));
         }
         let mut emitted =
-            plan::emit::emit(&lowered, &self.db, "main", "sql-extension", None, &batch)
+            plan::emit::emit(&lowered.image().map_err(error)?, &self.db, "main", "sql-extension", None, &batch)
                 .map_err(error)?;
         use sha2::Digest;
         let key = crate::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(format!("{program:?}:{dialect:?}")));

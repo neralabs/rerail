@@ -12,7 +12,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 /// A corpus of Python files, one program over it, and a session that keeps its runs' rows.
+/// The shape counters (`maintain::shape`) and `strata_by_levels` are the process's: a test reads what its runs added
+/// between two reads of them. Tests run in one process (Relax runs them on threads of one), so each session holds this
+/// for its life, and no other test's run counts into its window (R8 read another test's 10 kept frames).
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Session {
+    _one: std::sync::MutexGuard<'static, ()>,
     dir: PathBuf,
     marker: String,
     program: String,
@@ -31,6 +37,8 @@ struct Ran {
 
 impl Session {
     fn new(name: &str, program: &str, outputs: &[&'static str], files: &[(&str, &str)]) -> Session {
+        // A test that failed while holding it leaves it poisoned; the counters it guards are still sound.
+        let one = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension(format!("maintain-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -39,7 +47,7 @@ impl Session {
         std::fs::write(&rule, program).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
         let handle = super::session::Handle::open(&dir.join("session")).unwrap();
-        let s = Session { dir, marker, program, outputs: outputs.to_vec(), handle, fresh: 0 };
+        let s = Session { _one: one, dir, marker, program, outputs: outputs.to_vec(), handle, fresh: 0 };
         for (file, body) in files {
             s.write(file, body);
         }
@@ -352,7 +360,7 @@ depth(a, n) :- used(a), n = count : { below(a, _) }.
 }
 
 /// R7: the mode's lines are the program's plans, priced (0328 §4, 0122): the recheck's order with its head bound is
-/// priced as the other lines are, not taken from one greedy pass (Q116).
+/// priced as the other lines are, not taken from one greedy pass (Q208).
 #[test]
 fn r7_the_recheck_order_is_priced() {
     let mut s = kinds("r7");
