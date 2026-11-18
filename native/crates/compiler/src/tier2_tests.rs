@@ -123,7 +123,8 @@ fn a_tape_past_two_byte_columns_is_read_at_four() {
             wide += usize::from(image[rerail_tape_format::header::WIDTHS + 1] == 4);
         }
     }
-    assert!(wide >= 10, "{wide} documents written at 4-byte offsets");
+    // 5 with the three steps (decision 0422).
+    assert!(wide >= 5, "{wide} documents written at 4-byte offsets");
 }
 
 /// The crate's assembler takes a parser's program only: a matcher's rows are the engine's.
