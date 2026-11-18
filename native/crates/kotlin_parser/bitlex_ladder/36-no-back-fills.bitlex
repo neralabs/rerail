@@ -370,14 +370,14 @@ token real_literal = start dot_at last n_last
 token hex_literal = start hex_at last h_last
 token bin_literal = start bin_at last b_last
 # A raw string's content runs through a run of quotes (the lean lexer's scanner ends its token
-# after the run it read, looking for `"""`), or to a template: a run that reaches quotes first is
-# a part of its own (`q_start` to the run's last quote).
+# after the run it read, looking for `"""`), or to a template: each run is a part of its own, to
+# the first of a run of quotes' last quote and its own last byte (`r_end`).
 mask r_q        = rbody & dq & ~next(dq)
 mask r_id       = fill(prev(id_dollar), prev(id_last))
 mask r_stop     = ~rbody | r_q | id_dollar | lone | r_id
 mask r_x        = rbody & ~id_dollar & ~lone & ~r_id
 mask r_start    = r_x & (~prev(r_x) | prev(r_q))
-mask q_start    = r_start & back_fill(r_q, r_stop)
+mask r_end      = r_x & ~next(r_x)
 # A string: its opener, its parts, and its closer, a `"` or a template's `${`. After the
 # template, the tail: its `}`, its parts, and the same closers.
 # A string and a raw string: one reader at `"` (`read str | rstr`), each region's closer its
@@ -385,7 +385,7 @@ mask q_start    = r_start & back_fill(r_q, r_stop)
 # closer is three bytes, of the reader's kind.
 token '"'       = start o_str | o_rstr read str | rstr parts {
                     '""' = prev(o_rstr) bytes 2
-                    string_content = q_start last r_q
+                    string_content = r_start last r_q | r_end
                     interpolation_identifier_start = id_dollar bytes 1
                     interpolated_identifier = prev(id_dollar) last id_last
                     string_content = lone bytes 1
@@ -393,7 +393,7 @@ token '"'       = start o_str | o_rstr read str | rstr parts {
                     interpolation_expression_start = t_dollar bytes 2
                   }
 token interpolation_expression_end = start o_tail | o_rtail read tail | rtail parts {
-                    string_content = q_start last r_q
+                    string_content = r_start last r_q | r_end
                     interpolation_identifier_start = id_dollar bytes 1
                     interpolated_identifier = prev(id_dollar) last id_last
                     string_content = lone bytes 1
