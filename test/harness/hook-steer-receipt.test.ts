@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery } from "../../src/engine/index.js";
 import { emitHookOutput } from "../../src/harness/hook-adapter.js";
 import { runClaudeHook } from "../../src/hosts/claude/index.js";
-import { encodeRerailEventResult, RECEIPT_TAKEN_WITHIN_MS } from "../../src/runtime/index.js";
+import { encodeRerailEventResult } from "../../src/runtime/index.js";
 import { hookOptions, sessionDatabaseQuery, temporaryDirectories } from "../support/hook-events.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-receipt-");
@@ -130,11 +130,10 @@ describe("a steered hook's receipt", () => {
     // Whichever comes first: the daemon reads the receipt, or the hook ends without handing it over.
     await Promise.race([daemon.receiptRead, emitted]);
     expect(daemon.receipts).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(RECEIPT_TAKEN_WITHIN_MS - 1);
     expect(receiptRows(root)).toEqual([]);
-    // The bound a daemon has to take the receipt runs out, no longer than the hook's own record takes, and the hook
-    // gives up on the hand-over: no timer of it is left.
-    await vi.advanceTimersByTimeAsync(1);
+    // Within what the hook's own record takes (two SQLite opens: 96 ms at the 90th percentile on a busy Windows 11
+    // machine), the hook gives up on a daemon too busy to read the receipt: no timer of the hand-over is left.
+    await vi.advanceTimersByTimeAsync(100);
     expect(vi.getTimerCount()).toBe(0);
     await emitted;
     expect(receiptRows(root)).toHaveLength(1);

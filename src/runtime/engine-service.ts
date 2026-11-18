@@ -1294,7 +1294,7 @@ export async function ingestEngineEvent(
  * sooner than more waiting would. So a daemon too busy to read the receipt costs a steered hook at most this bound
  * more than its own record did before receipts were handed over.
  */
-export const RECEIPT_TAKEN_WITHIN_MS = 100;
+const RECEIPT_TAKEN_WITHIN_MS = 100;
 
 /**
  * Hands `receipt` to the engine service, which records it; false when it did not take it, so the caller records it
