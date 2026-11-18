@@ -428,9 +428,9 @@ describe("Rerail MCP bridge beside a busy daemon", () => {
   const pong = JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} });
   const notAnswering = JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: NOT_ANSWERING } });
 
-  // The call's bound runs on a fake clock: a test moves it, and none waits on the real one.
+  // The call's bound runs on a fake clock, the monotonic one included: a test moves it, and none waits on the real one.
   beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] });
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -565,19 +565,43 @@ describe("Rerail MCP bridge beside a busy daemon", () => {
     expect(run.stdout).toEqual([notAnswering]);
   });
 
+  const fetchFailed = JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "fetch failed" } });
+
   it("never gives the engine's proof 0 ms, which a socket's timeout reads as no limit", async () => {
     const proofs: number[] = [];
     const machine = windows(async (_socketPath, _accessToken, timeoutMs) => {
       proofs.push(timeoutMs);
       return "proved";
     });
-    // The relay fails to connect at the very end of the bound, before its timer has run: the home is checked again.
-    const lateRefusal = async (): Promise<Response> => {
-      vi.setSystemTime(Date.now() + 30_000);
+    // The relay fails to connect at the very end of the bound, on a timer made before the call's own, so the bound's
+    // timer has not run yet when the home is checked again.
+    const asked = Promise.withResolvers<void>();
+    const refusal = Promise.withResolvers<Response>();
+    setTimeout(() => refusal.reject(new TypeError("fetch failed")), 30_000);
+    const pending = runBridge([ping], [async () => {
+      asked.resolve();
+      return await refusal.promise;
+    }], { daemon: windowsDaemon, machine });
+    await asked.promise;
+    await vi.advanceTimersByTimeAsync(30_000);
+    const run = await pending;
+    expect(run.stdout).toEqual([fetchFailed]);
+    expect(proofs).toEqual([30_000, 1]);
+  });
+
+  it("keeps every wait of a call when the wall clock steps forward, as after a time sync", async () => {
+    const proofs: number[] = [];
+    const machine = windows(async (_socketPath, _accessToken, timeoutMs) => {
+      proofs.push(timeoutMs);
+      return "proved";
+    });
+    // The wall clock jumps a minute while the relay fails to connect: the home's check after it still has its whole time.
+    const steppedRefusal = async (): Promise<Response> => {
+      vi.setSystemTime(Date.now() + 60_000);
       throw new TypeError("fetch failed");
     };
-    const run = await runBridge([ping], [lateRefusal], { daemon: windowsDaemon, machine });
-    expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "fetch failed" } })]);
-    expect(proofs).toEqual([30_000, 1]);
+    const run = await runBridge([ping], [steppedRefusal], { daemon: windowsDaemon, machine });
+    expect(run.stdout).toEqual([fetchFailed]);
+    expect(proofs).toEqual([30_000, 30_000]);
   });
 });

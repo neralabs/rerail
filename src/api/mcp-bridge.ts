@@ -104,8 +104,9 @@ const DAEMON_NOT_ANSWERING = `Rerail daemon is running but did not answer within
 /**
  * One relayed call's bound, {@link CALL_TIMEOUT_MS}: the checks have it from the moment the bridge takes the call, and from
  * {@link CallBound.sent} the daemon's answer has it whole, so a check that waited for a busy daemon never shortens the
- * time a tool has to answer. Each wait ends on its answer or at the bound, whichever comes first. Its one timer ends
- * with the call, so an idle bridge holds none.
+ * time a tool has to answer. Each wait ends on its answer or at the bound, whichever comes first. The bound reads the
+ * monotonic clock its timer runs on, so a step of the wall clock moves neither, and its one timer ends with the call, so
+ * an idle bridge holds none.
  */
 class CallBound {
   readonly #abort = new AbortController();
@@ -131,7 +132,7 @@ class CallBound {
    * idle timeout reads as no limit at all.
    */
   left(): number {
-    return Math.max(1, this.#ends - Date.now());
+    return Math.max(1, this.#ends - performance.now());
   }
 
   /** The call goes to the daemon now: its answer has the whole bound from here, whatever the checks took. */
@@ -146,7 +147,7 @@ class CallBound {
 
   #start(): void {
     clearTimeout(this.#timer);
-    this.#ends = Date.now() + CALL_TIMEOUT_MS;
+    this.#ends = performance.now() + CALL_TIMEOUT_MS;
     this.#timer = setTimeout(() => this.#abort.abort(new Error(DAEMON_NOT_ANSWERING)), CALL_TIMEOUT_MS);
   }
 }
