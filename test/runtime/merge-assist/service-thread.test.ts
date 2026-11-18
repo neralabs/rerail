@@ -7,6 +7,17 @@ import { mergeAssistWorkspaces } from "../../support/merge-assist/workspace.js";
 // exits, and a daemon answers no hook meanwhile.
 vi.mock("node:child_process", { spy: true });
 
+/** Set while a case runs as on a machine with no Git installed: every Git read off the thread finds none. */
+const git = vi.hoisted(() => ({ missing: false }));
+vi.mock("../../../src/engine/git.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/engine/git.js")>("../../../src/engine/git.js");
+  const runGitAsync: typeof actual.runGitAsync = async (...args) => {
+    if (git.missing) throw new actual.GitUnavailableError([]);
+    return await actual.runGitAsync(...args);
+  };
+  return { ...actual, runGitAsync };
+});
+
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
 withExperiments("MERGE_ASSIST");
 
@@ -37,5 +48,21 @@ describe("Merge Assist reads a checkout without holding the thread", { timeout: 
 
     expect(await heldWhile(() => service.openSession(ws.repo, "claude-code", "session-1"))).toEqual([]);
     expect(await heldWhile(() => service.detectAfterEdit(ws.repo, "session-1", "claude-code"))).toEqual([]);
+  });
+
+  it("scans nothing at a session's start where Git is not installed, as before", async () => {
+    const ws = await workspace();
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+
+    git.missing = true;
+    try {
+      await service.openSession(ws.repo, "claude-code", "session-1");
+    } finally {
+      git.missing = false;
+    }
+
+    const status = await service.status(ws.repo);
+    expect({ lastScan: status.lastScan, scanning: status.scanning }).toEqual({ lastScan: null, scanning: false });
   });
 });
