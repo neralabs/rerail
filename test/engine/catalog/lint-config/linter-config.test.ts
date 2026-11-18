@@ -3,7 +3,7 @@
  * how one linter's decisions for a port's several names combine, how verdicts across linters settle into settings, and
  * how a config file at the root is read. Ports, decisions and verdicts are built by hand.
  */
-import { chmodSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -176,12 +176,28 @@ describe("settleVerdicts", () => {
       expect(settled).toEqual(notes);
     });
 
+    /**
+     * A copy in `folder` of the Python pack holding only the rules `ruleIds`, with their entries in its `pack.json` and
+     * their documents as the pack has them. Reading all of the pack's several hundred rule documents takes seconds on a
+     * loaded machine, past a test's 5 s, and no other rule of the pack bears on how these settle.
+     */
+    function pythonPackOf(folder: string, ruleIds: readonly string[]): string {
+      const python = fileURLToPath(new URL("../../../../packs/python", import.meta.url));
+      mkdirSync(join(folder, "rules"), { recursive: true });
+      const pack = JSON.parse(readFileSync(join(python, "pack.json"), "utf8")) as { rules: { id: string }[] };
+      writeFileSync(join(folder, "pack.json"), JSON.stringify({ ...pack, rules: pack.rules.filter(rule => ruleIds.includes(rule.id)) }));
+      for (const file of ["package.json", ...ruleIds.map(ruleId => join("rules", `${ruleId}.json`))]) copyFileSync(join(python, file), join(folder, file));
+      return folder;
+    }
+
     it("keeps Python's B009 and B010 off under a Ruff config, noting it only where the config selects them by name or prefix", async () => {
-      const root = await mkdtemp(join(tmpdir(), "rerail-held-off-"));
+      const temporary = await mkdtemp(join(tmpdir(), "rerail-held-off-"));
       try {
-        const python = readRuleCatalog([fileURLToPath(new URL("../../../../packs/python", import.meta.url))]);
         const held = ["ruff-b009-get-attr-with-constant", "ruff-b010-set-attr-with-constant"];
-        expect(portsOf(python, ["python"]).filter(found => held.includes(found.ruleId)).map(found => [found.startsOn, found.heldOff !== undefined])).toEqual([[false, true], [false, true]]);
+        const python = readRuleCatalog([pythonPackOf(join(temporary, "python"), held)]);
+        expect(portsOf(python, ["python"]).map(found => [found.ruleId, found.startsOn, found.heldOff !== undefined])).toEqual(held.map(ruleId => [ruleId, false, true]));
+        const root = join(temporary, "repository");
+        mkdirSync(root);
         // Ruff's default selection turns both on, unremarked; `select = ["B"]` names them.
         for (const [ruffToml, noted] of [["line-length = 100\n", false], ["[lint]\nselect = [\"B\"]\n", true]] as const) {
           writeFileSync(join(root, "ruff.toml"), ruffToml);
@@ -190,7 +206,7 @@ describe("settleVerdicts", () => {
           expect(held.map(ruleId => config.notes.some(note => note.startsWith(`${ruleId}: ruff.toml`) && note.includes("its pack holds it off")))).toEqual([noted, noted]);
         }
       } finally {
-        await removeFolder(root);
+        await removeFolder(temporary);
       }
     });
   });
