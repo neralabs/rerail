@@ -186,15 +186,16 @@ function recordHolder(home: string): void {
 }
 
 /**
- * Whether a daemon holds `home`. False where there is no lock file, which is left unmade; undefined when the lock cannot
- * be asked (the native binding does not load, or the lock file does not open), for the caller to go on as if none did.
- * On Windows the lock file is read ({@link lockedAgainstReading}), which loads no engine: a hook, and the uninstall's
- * stop before it removes `versions/`, ask it, and Windows keeps a loaded DLL from being deleted. Elsewhere the lock is
- * taken and given straight back.
+ * Whether a daemon holds `home`; undefined when the lock cannot be asked (the native binding does not load, or the lock
+ * file does not open) or there is no lock file, for the caller to go on as if none did. A missing lock file is left
+ * unmade, and it proves nothing: a file deleted under the daemon that locked it leaves that daemon holding its lock, on
+ * a file no path reaches. On Windows the lock file is read ({@link lockedAgainstReading}), which loads no engine: a hook,
+ * and the uninstall's stop before it removes `versions/`, ask it, and Windows keeps a loaded DLL from being deleted.
+ * Elsewhere the lock is taken and given straight back.
  */
 export function homeDaemonLockHeld(home: string): boolean | undefined {
   const path = join(home, LOCKS_DIR, LOCK_FILE);
-  if (!existsSync(path)) return false;
+  if (!existsSync(path)) return undefined;
   return process.platform === "win32" ? lockedAgainstReading(path) : lockTaken(path);
 }
 
