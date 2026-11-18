@@ -144,44 +144,39 @@ impl Lowerer {
         if !self.prog.decls.contains_key(name.as_str()) {
             let (params, body) = definition(rel);
             self.prog.decls.insert(name.clone().into(), DECLS[rel].iter().map(|(c, t)| (c.into(), t.into())).collect());
-            self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body: body.into() });
+            self.write(Rule { head: Atom { rel: name.clone().into(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body: body.into() });
         }
         name
     }
+}
 
-    /// core.rr's declaration of each relation the program reads and does not declare, as an input.
-    pub(super) fn declare_core(&mut self) -> Result<(), Error> {
-        let read: BTreeSet<(String, usize)> = self
-            .prog
-            .rules
-            .iter()
-            .flat_map(|r| r.body.iter().filter_map(Literal::atom))
-            .map(|a| (a.rel.to_string(), a.args.len()))
-            .collect();
-        for (rel, arity) in read {
-            if self.prog.decls.contains_key(rel.as_str()) || is_axis(&rel) {
-                continue;
-            }
-            let Some(cols) = DECLS.get(&rel) else { continue };
-            if cols.len() != arity {
-                return Err(Error::Syntax(format!("{rel} is read with {arity} columns and core.rr declares {}", cols.len())));
-            }
-            if rel == "docof" {
-                // core.rr's `docof(x: loc, d)`: an input that spans have rows in, not `node`'s projection.
-                self.docof_of_locs = true;
-            }
-            self.prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
-            // Its tape columns stay tapes (the engine's `sym`): a printed program declares them `tape` again.
-            let tapes = super::super::tape_type::tape_columns(&rel);
-            if !tapes.is_empty() {
-                self.prog.tapes.entry(rel.clone()).or_default().extend(tapes);
-            }
-            if !self.prog.inputs.contains(&rel) {
-                self.prog.inputs.push(rel);
-            }
+/// core.rr's declaration of each relation `read` names (with the arity it is read with: what the rules read, `reads`)
+/// that `prog` does not declare, as an input; `docof_of_locs` set where it is core.rr's `docof` (over spans). `prog`
+/// may be a header alone (a version's), since it reads no rules.
+pub fn declare_core(prog: &mut crate::code_rule_dsl::logic::front::Program, read: &BTreeSet<(String, usize)>, docof_of_locs: &mut bool) -> Result<(), Error> {
+    for (rel, arity) in read {
+        if prog.decls.contains_key(rel.as_str()) || is_axis(rel) {
+            continue;
         }
-        Ok(())
+        let Some(cols) = DECLS.get(rel) else { continue };
+        if cols.len() != *arity {
+            return Err(Error::Syntax(format!("{rel} is read with {arity} columns and core.rr declares {}", cols.len())));
+        }
+        if rel == "docof" {
+            // core.rr's `docof(x: loc, d)`: an input that spans have rows in, not `node`'s projection.
+            *docof_of_locs = true;
+        }
+        prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
+        // Its tape columns stay tapes (the engine's `sym`): a printed program declares them `tape` again.
+        let tapes = super::super::tape_type::tape_columns(rel);
+        if !tapes.is_empty() {
+            prog.tapes.entry(rel.clone()).or_default().extend(tapes);
+        }
+        if !prog.inputs.contains(rel) {
+            prog.inputs.push(rel.clone());
+        }
     }
+    Ok(())
 }
 
 /// Takes out core.rr's relations `prog` neither reads, derives nor outputs, declared as core.rr declares them: the

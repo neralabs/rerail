@@ -55,6 +55,12 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
         return Ok(Err("tree-sitter-json lacks a kind or field simdjson's tape names".into()));
     };
     let src = source.as_bytes();
+    // A run that stores format 16 or 16z: the kernel's walk gives its nodes to format 16's ops (decision 0399).
+    if let Some(kernel) = route
+        && let Some(image) = encode_16(kernel, kinds, *value, source, budget)?
+    {
+        return Ok(image);
+    }
     let t = match route {
         Some(kernel) => match rerail_simdjson::tape_with(kernel, src, kinds) {
             // Read again as JSONC (comments, trailing commas): a second read only of files the strict
@@ -81,6 +87,81 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
         })
         .collect();
     Ok(codes.and_then(|codes| TapeImage::written(t.code, t.size, t.base, t.off, t.tail, t.widths, codes, t.digest, grammar, source, budget)))
+}
+
+/// The code of a node of kind `kind` and field `field` (`in_value`: a member of `_value`), as format 15's code table
+/// holds it (`encode_with`): a comment is an extra.
+fn code(kinds: &rerail_simdjson::Kinds, value: u16, kind: u16, field: u16, in_value: bool) -> Result<Code, String> {
+    let mut code = Code::plain(kind, field, if in_value { std::slice::from_ref(&value) } else { &[] })?;
+    if kind == kinds.comment {
+        code.flags |= crate::code_rule_dsl::tape::CODE_EXTRA;
+    }
+    Ok(code)
+}
+
+/// `source`'s tape in format 16 or 16z, where the run stores one (`None`: format 15's): the kernel's walk writes no
+/// column, and its events, a window at a time, go to format 16's ops, each code numbered in JSON's table once. The
+/// walk never edits a node it wrote, so each window is committed and 16z's blocks are compressed as they close. A
+/// file the strict read refuses is read again as JSONC, as `encode_with` reads it.
+fn encode_16(kernel: rerail_simdjson::Kernel, kinds: &rerail_simdjson::Kinds, value: u16, source: &str, budget: &dyn Fn() -> bool) -> Result<Option<Result<TapeImage, String>>, Refusal> {
+    use crate::code_rule_dsl::language::GrammarDialect;
+    use crate::code_rule_dsl::tape::formats;
+    use crate::code_rule_dsl::tape::f16;
+    let Some((lang, tag, z)) = formats::run_16(GrammarDialect::Json) else { return Ok(None) };
+    let src = source.as_bytes();
+    let walk = |jsonc: bool| -> Result<(f16::Writer<'static>, [u8; 32], Option<String>), Refusal> {
+        // About a node for every 8 bytes: the writer grows past it.
+        let mut w = f16::Writer::new(lang, src, tag, z, false, src.len() / 8 + 16);
+        let mut numbers: Vec<u32> = Vec::new();
+        let mut bad: Option<String> = None;
+        let digest = rerail_simdjson::events_with(kernel, src, kinds, jsonc, |codes, words| {
+            if bad.is_some() {
+                return;
+            }
+            while numbers.len() < codes.len() {
+                let (kind, field, in_value) = codes.get(numbers.len());
+                match code(kinds, value, kind, field, in_value).and_then(|c| lang.number(&c.entry()).ok_or_else(|| format!("code {:?} is not in JSON's table", c.entry()))) {
+                    Ok(n) => numbers.push(n),
+                    Err(why) => {
+                        bad = Some(why);
+                        return;
+                    }
+                }
+            }
+            for e in words.as_chunks::<3>().0 {
+                let number = numbers[(e[0] >> 8) as usize];
+                match e[0] & 0xff {
+                    rerail_simdjson::EV_OPEN => {
+                        w.open(number, u64::from(e[1]));
+                    }
+                    rerail_simdjson::EV_LEAF => {
+                        w.leaf(number, u64::from(e[1]), u64::from(e[2]));
+                    }
+                    _ => w.close(u64::from(e[1])),
+                }
+            }
+            w.commit();
+        })?;
+        Ok((w, digest, bad))
+    };
+    let (w, digest, bad) = match walk(false) {
+        // Read again as JSONC (comments, trailing commas), as `encode_with` does.
+        Err(rerail_simdjson::Refusal::Simdjson(why)) => {
+            let t = walk(true).map_err(|_| rerail_simdjson::Refusal::Simdjson(why))?;
+            crate::code_rule_dsl::logic::profile::decision("JSON parse", || format!("refused as JSON ({why}): read as JSONC"));
+            t
+        }
+        t => t?,
+    };
+    let why = match bad {
+        Some(why) => why,
+        None => match w.finish() {
+            Ok(f) => return Ok(Some(TapeImage::written_16(f.tape, GrammarDialect::Json, source, Some(digest), budget))),
+            Err(why) => why,
+        },
+    };
+    formats::keeps_15(GrammarDialect::Json, tag, &why);
+    Ok(None)
 }
 
 /// `source`'s tape by the fastest route this CPU runs (`encode_with`).
@@ -134,7 +215,7 @@ impl TreeParser for Simdjson {
             Ok(image) => {
                 drop(span);
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
-                Some(image.map(FileImage::single).map_err(TemplateError::Encode))
+                Some(image.map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
             }
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("JSON parse", || format!("a file simdjson refused ({why}): tree-sitter-json"));

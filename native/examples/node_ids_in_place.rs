@@ -76,7 +76,7 @@ fn main() {
             .zip(&images)
             .map(|(s, image)| {
                 let lines = Arc::new(LineTable::new(s, Terminators::of(lang)));
-                Arc::new(core::from_image(Arc::clone(s), &grammar, image.clone().in_format(format), lines).unwrap())
+                Arc::new(core::from_image(Arc::clone(s), &grammar, image.clone().in_format(format, s.as_bytes()), lines).unwrap())
             })
             .collect();
         let dialect = Dialect::new(core::facts_tag(&facts[0])).unwrap();

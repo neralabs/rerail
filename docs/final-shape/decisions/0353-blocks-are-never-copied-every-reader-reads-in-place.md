@@ -30,7 +30,7 @@ Measured on PostHog's `posthog/hogql` (437 files, 1.3 M nodes, 2026-11-17, the l
 
 These copies are also why step 6 of 0325 measured slower. The device's memory budget filled with view and index
 copies. Strata were then refused at run time and redone on the CPU, and strata ran apart from their wave 103–181
-times a run against 36–55 (0325's Built entry, Q68).
+times a run against 36–55 (0325's Built entry, Q86).
 
 **What changes.** One rule, with no exceptions for convenience: **data lives in one place, in one layout, and every
 reader reads it there.** That means the CPU executor, the JIT's code, the Metal kernels and SQLite's virtual tables.
@@ -294,7 +294,7 @@ findings 1,629 in each; 73.5 B instructions (median) against 80.2 B.
 Where spans are made, the nodes' and tokens' place rows are still made beside the spans' (the spans' are derived
 facts; the nodes' are copies of tape answers), and bound in place of the view. The view already covers the whole
 source and its lines (`Locs::positions`, the `ExtraSpan::Line` ids); the other spans (`src_line_lf`, `tape_line`,
-matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q123: those ranges written once into the
+matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q184: those ranges written once into the
 batch's block, and the view reading them past its own positions, so nothing makes a node's place.
 
 **Step 3's other relations of row 7** (2026-11-17), each checked against "Not copies":
@@ -304,7 +304,7 @@ batch's block, and the view reading them past its own positions, so nothing make
 - `intval` and `op_t` are read by no core.rr library rule; in core.rr's shape `NodeRows` runs only where a program
   reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
 - What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
-  rows), deferred (Q121), and the nodes' place rows beside spans (Q123).
+  rows), deferred (Q121), and the nodes' place rows beside spans (Q184).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by
@@ -375,7 +375,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 6 | Gone (step 5, 2026-11-18): an axis's pairs copied into the chunk, then expanded to ids. The solve writes ids once into a relation of its own, which every reader reads where it lies; `put_pairs` and `VIEW_AXIS` are deleted. `has` is still made per looked-up node and uploaded (row 5) until its probe climbs the tape | — | — | Done |
 | 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`) | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.45–0.49 s of CPU a run | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | Every row a CPU stratum derives | Step 6 |
-| 9 | A second key's index copies the relation (`DevIndex::moved`); a relation over several blocks merged for the device (`in_block`) | `metal_join.rs`; `facts/rows.rs` | Q67 counts them | Step 6 |
+| 9 | A second key's index copies the relation (`DevIndex::moved`); a relation over several blocks merged for the device (`in_block`) | `metal_join.rs`; `facts/rows.rs` | Q85 counts them | Step 6 |
 | 10 | A device fixpoint's total copied into a run's block at its end | `device.rs` (0325 step 4) | Each recursive stratum's rows | Step 6 |
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
@@ -561,7 +561,7 @@ Each step ends with:
            its poll advanced the builder, which rang the bell it waited on whether or not anything moved. It
            rings only when a step moved (`corpus::Builder::advance`).
          - hogql cold, the Metal binding, profiling builds, load 8–55: 16z, findings 1,629 in 72 runs (one more
-           run panicked, Q125), 99–117 B instructions, median 105 B; format 15, 1,629 in 32 runs, 65–75 B,
+           run panicked, Q186), 99–117 B instructions, median 105 B; format 15, 1,629 in 32 runs, 65–75 B,
            median 73 B (the runs that compiled the kernels apart: 135 B and 93 B). Statistics on: 2,187 decodes
            for 2,820 blocks, 18.7 M hits, no failure, no duplicate.
        - The kernels' part, decided (user, 2026-11-18): "a generic rolling GPU cache to amortize the cost": an LRU
@@ -658,7 +658,7 @@ Each step ends with:
    - A scan is a dispatch over 64-node groups.
    - `expand_view`, `VIEW_EXPAND`, the chunk block's node columns and the residency cache's view entries go.
    - Check: the device's rows equal the CPU's (`device::parity`), for every view.
-   - Measure: the 660.8 MB is 0, and the device budget's refusals and strata run apart, against Q68's.
+   - Measure: the 660.8 MB is 0, and the device budget's refusals and strata run apart, against Q86's.
 5. **Axes are derived relations written once.**
    - The solve, on the CPU or the GPU, writes its answers as ids into a relation in the chunk block, which both read.
    - `put_pairs` and `VIEW_AXIS` go.
@@ -693,11 +693,34 @@ Each step ends with:
    JIT's roots, the grid and the register machines read the tape. This is the transducer's owners' work. It is
    listed so that the rule holds everywhere.
 8. **The output, frames and memo** are relations in blocks, read where they lie (0325 step 7).
-9. **Placement is priced again** on what is left: no upload, view or copy term (0325 step 6, Q68).
+9. **Placement is priced again** on what is left: no upload, view or copy term (0325 step 6, Q86).
 
 The order removes the measured cost first: step 4 is the 660 MB. Steps 2 and 3 come before it because the GPU's
 reads need the ids, and the CPU's reads are their check.
 
+
+### Step 2's reads in joins (2026-11-17)
+
+With the per-node arrays gone, a join step read each candidate's row a column at a time from the tape: its tape node
+by a select of the rank index, its id by a search of the granule table, its parent (format 15) by a search on the
+tape. On 50 Python files of B-now, format 15 cold, that was 340 G instructions against 315 G before step 2, with
+the same findings. Three changes keep the reads where the work already is:
+
+- A step reads only the columns it binds, tests or checks, and not a key column the probe matched exactly
+  (`RowRef::read_need`).
+- A probe reads its rows' values as it finds them (`Source::lookup_read`). A lookup by a node's id knows the row's
+  id. A lookup by a parent knows the parent's id and each child's tape node. A lookup by kind or by tape node knows
+  the tape node. None of these is searched again.
+- The id and number conversions search less: `number_of` finds a slot from an interpolated guess (the slots are
+  hashes), and `low_of` searches between two jumps, one every 64 numbers (4 bytes for each 64 nodes).
+  Both searches are the CLIF reads' (`num_number_of`, `num_granule`): the jumps are a run of the descriptor
+  (`Numbering::jumps`), so the host and the kernels search the same way.
+
+A scan of a whole view reads its rows in one walk (`Source::for_rows_in`), as `for_rows` does.
+
+After: 322 G against 314 G on format 15 (+2.6%), 319 against 315 on format 16 (+1.1%), 397 against 391 on 16z
+(+1.4%), and the same findings on all three. What remains is in-place reading the arrays never paid for: on format
+15 the parent search, and the select that finds the tape node of a node probed by its id.
 ## What it replaces
 
 - **0289 §1–2.** The chunk block holds the placed tapes, the line starts and the granule tables. It holds no node

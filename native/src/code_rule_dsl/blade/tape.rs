@@ -9,7 +9,7 @@ use crate::code_rule_dsl::blade::forte::tree::{BladeNode, BladeTree, parse_tree}
 use crate::code_rule_dsl::blade::view::{ReadError, View};
 use crate::code_rule_dsl::language::Via;
 use crate::code_rule_dsl::tape::{
-    DerivedImage, ERROR_CODE, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, Pending, TapeImage, TemplateError, TreeParser,
+    DerivedImage, ERROR_CODE, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, TapeImage, TemplateError, TreeOut, TreeParser, Visit,
     checked,
 };
 
@@ -68,11 +68,11 @@ pub fn error_place(root: BladeNode<'_>, error: &Range<usize>) -> (usize, usize) 
     (node.node_id(), before)
 }
 
-/// Appends a Blade template's tree (`blade::forte::tree`) to `nodes` in preorder, its kinds and
+/// A Blade template's tree (`blade::forte::tree`) written to `out` in preorder, its kinds and
 /// fields the tree's, and its syntax errors `errors` (as Blade reads them, `View::read`) as ERROR
 /// leaves (`error_place`).
 fn encode_blade_tree(
-    nodes: &mut Vec<Pending>,
+    out: &mut dyn TreeOut,
     tree: &BladeTree,
     errors: &[Range<usize>],
     budget: &impl Fn() -> bool,
@@ -80,6 +80,8 @@ fn encode_blade_tree(
     enum Item<'t> {
         Node(BladeNode<'t>),
         Error(Range<usize>),
+        /// The end of the subtree of the node opened before its children.
+        Close,
     }
     let mut errors = errors
         .iter()
@@ -96,22 +98,17 @@ fn encode_blade_tree(
             checked(budget)?;
         }
         visited += 1;
-        let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
         let node = match item {
             Item::Error(range) => {
                 let start = u32::try_from(range.start).map_err(|_| "node span overflow")?;
                 let end = u32::try_from(range.end).map_err(|_| "node span overflow")?;
-                nodes.push(Pending {
-                    kf: ERROR_CODE,
-                    parent,
-                    start,
-                    length: end.checked_sub(start).ok_or("inverted node span")?,
-                    size: 1,
-                    extra: false,
-                    error: true,
-                    missing: false,
-                    kind_alias: None,
-                });
+                end.checked_sub(start).ok_or("inverted node span")?;
+                out.open(Visit { kf: ERROR_CODE, start, end, extra: false, error: true, missing: false, kind_alias: None }, parent, &[])?;
+                out.close();
+                continue;
+            }
+            Item::Close => {
+                out.close();
                 continue;
             }
             Item::Node(node) => node,
@@ -129,17 +126,8 @@ fn encode_blade_tree(
         let range = node.range();
         let start = u32::try_from(range.start).map_err(|_| "node span overflow")?;
         let end = u32::try_from(range.end).map_err(|_| "node span overflow")?;
-        nodes.push(Pending {
-            kf: code | (field << 10),
-            parent,
-            start,
-            length: end.checked_sub(start).ok_or("inverted node span")?,
-            size: 1,
-            extra: false,
-            error: false,
-            missing: false,
-            kind_alias: None,
-        });
+        end.checked_sub(start).ok_or("inverted node span")?;
+        let index = out.open(Visit { kf: code | (field << 10), start, end, extra: false, error: false, missing: false, kind_alias: None }, parent, &[])?;
         let id = node.node_id();
         let here = errors.partition_point(|(node, ..)| *node < id)
             ..errors.partition_point(|(node, ..)| *node <= id);
@@ -152,6 +140,7 @@ fn encode_blade_tree(
             items.push(Item::Node(child));
         }
         items.extend(placed.map(|(_, _, error)| Item::Error(error.clone())));
+        stack.push((Item::Close, None));
         stack.extend(items.into_iter().rev().map(|item| (item, Some(index))));
     }
     Ok(())
@@ -183,9 +172,8 @@ pub(in crate::code_rule_dsl) fn encode_blade(
         ReadError::Parser(error) => TemplateError::Parser(error.message()),
         ReadError::Interrupted => TemplateError::Encode("tape operation interrupted".into()),
     })?;
-    let mut nodes = Vec::<Pending>::new();
-    encode_blade_tree(&mut nodes, tree, &read.syntax_errors, budget)?;
-    let image = FileImage::single(TapeImage::finish(nodes, Vec::new(), grammar, source, budget)?);
+    let image = TapeImage::walked(grammar, source, source.len() / 8 + 16, budget, |out| encode_blade_tree(out, tree, &read.syntax_errors, budget))?;
+    let image = FileImage::single(image, source);
     with_compiled_view(image, read.view, grammar, source, budget)
 }
 

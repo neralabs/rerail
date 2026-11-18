@@ -99,6 +99,14 @@ struct rerail_v9np_sink {
   uint8_t code_value[36];
   // The source's SHA-256.
   uint8_t digest[32];
+  // Format 16 (decision 0399): where `ev` is set, the walk writes no column. Each node is an event of three
+  // words appended to `ev` (`EV_OPEN | id << 8, start, 0`; `EV_LEAF | id << 8, start, end`; `EV_CLOSE, end, 0`,
+  // `id` the node's code), and `flush` is called with `ev_len` words when `ev_cap` are full and at the end: the
+  // caller gives them to format 16's ops. A walk never edits a node it wrote.
+  uint32_t* ev;
+  uint32_t ev_len;
+  uint32_t ev_cap;
+  void (*flush)(rerail_v9np_sink* sink);
 };
 
 // --- SHA-256 ------------------------------------------------------------------------------------------
@@ -125,6 +133,12 @@ struct no_values {
   simdjson_inline void append_double(double) noexcept {}
 };
 
+// No hash: a measurement's (`rerail_simdjson_v9np_unhashed`), to read the kernel's stage 1 and walk
+// against a translation that does not hash.
+struct sha256_none {
+  simdjson_inline void block(const uint8_t*) {}
+  void words(uint32_t* out) const { std::memset(out, 0, 32); }
+};
 // Portable: FIPS 180-4's rounds, unrolled, the schedule a ring of 16 words, the eight working variables
 // renamed from round to round instead of moved.
 struct sha256_portable {
@@ -348,6 +362,7 @@ struct Kernel {
   bool sha;
   int (*tape)(const char*, size_t, rerail_v9np_sink*);
   int (*tape_jsonc)(const char*, size_t, rerail_v9np_sink*);
+  int (*tape_unhashed)(const char*, size_t, rerail_v9np_sink*);
   int64_t (*stage1)(const char*, size_t, int);
   void (*release_above)(size_t);
   uint64_t (*rewalks)();
@@ -355,7 +370,7 @@ struct Kernel {
 constexpr uint32_t KERNELS = 8;
 
 #define RERAIL_KERNEL(ns, H, with_sha) \
-  Kernel { #ns, with_sha, &simdjson::ns::rerail_v9np::tape<H, false>, &simdjson::ns::rerail_v9np::tape<H, true>, &simdjson::ns::rerail_v9np::stage1_only<H>, &simdjson::ns::rerail_v9np::release_above, &simdjson::ns::rerail_v9np::walked_again }
+  Kernel { #ns, with_sha, &simdjson::ns::rerail_v9np::tape<H, false>, &simdjson::ns::rerail_v9np::tape<H, true>, &simdjson::ns::rerail_v9np::tape<sha256_none, false>, &simdjson::ns::rerail_v9np::stage1_only<H>, &simdjson::ns::rerail_v9np::release_above, &simdjson::ns::rerail_v9np::walked_again }
 const Kernel* kernel(uint32_t k) {
   static const Kernel table[KERNELS] = {
 #if SIMDJSON_IMPLEMENTATION_ARM64
@@ -434,6 +449,11 @@ int rerail_simdjson_v9np_jsonc(uint32_t k, const char* src, size_t len, rerail_v
   return kernel(k)->tape_jsonc(src, len, sink);
 }
 
+// As `rerail_simdjson_v9np`, the source not hashed (the digest zeros): a measurement's.
+int rerail_simdjson_v9np_unhashed(uint32_t k, const char* src, size_t len, rerail_v9np_sink* sink) {
+  if (!runs(k) || len >= 0xffffffffu / 2) { return -1; }
+  return kernel(k)->tape_unhashed(src, len, sink);
+}
 // Kernel `k`'s walks made again at other widths, on this thread.
 uint64_t rerail_simdjson_v9np_rewalks(uint32_t k) { return runs(k) ? kernel(k)->rewalks() : 0; }
 

@@ -25,7 +25,9 @@ inline device const uchar* tape_doc(device const uchar* chunk,DocView d){return 
 inline uint tape_size(device const uchar* s,DocView d,uint i){return clif_tape_size(TAPE_READ(s,d),i);}
 // The node's code's number in its document's (format 16: its language's) table.
 inline uint tape_number(device const uchar* doc,DocView d,uint i){return clif_tape_number(doc,(thread const uint*)&d,i);}
-inline device const DeviceCode& tape_code(device const uchar* s,DocView d,uint i){device const uchar* doc=tape_doc(s,d);return ((device const DeviceCode*)(doc+d.codes))[tape_number(doc,d,i)];}
+// The node's code: its document's table (format 15), or its language's, its block's (format 16): `at + codes`
+// modulo 2^32, so a table before the document is reached too (decision 0336 §7).
+inline device const DeviceCode& tape_code(device const uchar* s,DocView d,uint i){return ((device const DeviceCode*)(s+(d.at+d.codes)))[tape_number(tape_doc(s,d),d,i)];}
 inline uint tape_kind(device const uchar* s,DocView d,uint i){return tape_code(s,d,i).kind;}
 inline uint tape_field(device const uchar* s,DocView d,uint i){return tape_code(s,d,i).field;}
 inline uint tape_flags(device const uchar* s,DocView d,uint i){return tape_code(s,d,i).flags;}
@@ -47,7 +49,10 @@ inline uint tape_child_count(device const uchar* s,DocView d,uint i){return clif
 inline uint tape_child(device const uchar* s,DocView d,uint i,uint k){return clif_tape_child(TAPE_READ(s,d),i,k);}
 inline uchar tape_byte(device const uchar* s,DocView d,uint at){return (tape_doc(s,d)+d.source)[at];}
 inline device const uchar* tape_source(device const uchar* s,DocView d){return tape_doc(s,d)+d.source;}
-inline uint tape_line_start(device const uchar* s,DocView d,uint line){return ((device const uint*)(tape_doc(s,d)+d.lines))[line];}
+// Lines (decision 0336 §6): format 16's newline index, format 15's line starts. A byte's line (from 0), and a
+// line's first byte, document-local.
+inline uint tape_line(device const uchar* s,DocView d,uint at){return clif_tape_line(TAPE_READ(s,d),at);}
+inline uint tape_line_start(device const uchar* s,DocView d,uint line){return clif_tape_line_start(TAPE_READ(s,d),line);}
 // A pass's roots (`label_passes::Roots`; decisions 0033, 0293 §10), with no list of them. In
 // `roots`: word 0 the batch's file count F, words 1..=F+1 each file's first group of 64 nodes
 // (groups start at each document's first node) and the total. A rule at word `at`: its kind (0
@@ -71,31 +76,51 @@ inline bool code_admits(device const uint* rule,device const DeviceCode& code){
  }
  return true;
 }
-// The roots of the rule at `at` among document `d`'s nodes 64*group.. (file `file` of the batch), as bits.
-inline ulong root_mask(device const uchar* s,DocView d,device const uint* roots,uint at,uint file,uint group){
+// A row of bits over the batch's nodes, the 64 from batch node `b`.
+inline ulong root_row(device const uint* row,uint b){
+ uint w=b/32u,sh=b%32u;ulong mask=ulong(row[w])|(ulong(row[w+1u])<<32u);
+ return sh!=0u?(mask>>sh)|(ulong(row[w+2u])<<(64u-sh)):mask;
+}
+// The roots of the rule at `at` among document `d`'s nodes 64*group + lo .. 64*group + hi (file `file` of the batch),
+// as bits of the group's 64. A rule over codes with an anchor (kind 2, decision 0365): its row (set by
+// `label_formula`) and the rule without it.
+inline ulong root_mask_in(device const uchar* s,DocView d,device const uint* roots,uint at,uint file,uint group,uint lo,uint hi){
  uint from=group*ROOT_GROUP;if(from>=d.nodes)return 0ul;
- uint count=min(ROOT_GROUP,d.nodes-from);
- ulong mask=0ul;
+ uint count=min(ROOT_GROUP,d.nodes-from);hi=min(hi,count);if(lo>=hi)return 0ul;
+ ulong keep=hi-lo==64u?~0ul:(((1ul<<(hi-lo))-1ul)<<lo);
+ ulong mask=0ul,anchor=~0ul;
+ if(roots[at]==2u){anchor=root_row(roots+at+2u,d.node_base+from)&keep;if(anchor==0ul)return 0ul;at+=roots[at+1u];}
  if(roots[at]!=0u){
-  device const uint* row=roots+at+1u;uint b=d.node_base+from,w=b/32u,sh=b%32u;
-  mask=ulong(row[w])|(ulong(row[w+1u])<<32u);
-  if(sh!=0u)mask=(mask>>sh)|(ulong(row[w+2u])<<(64u-sh));
+  mask=root_row(roots+at+1u,d.node_base+from);
  }else{
   uint files=roots[0];
   if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return 0ul;
   device const uint* rule=roots+at+1u+(files+31u)/32u;
-  for(uint k=0u;k<count;k++)if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;
+  for(uint k=lo;k<hi;k++)if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;
  }
- return count==ROOT_GROUP?mask:(mask&((1ul<<count)-1ul));
+ mask&=anchor;
+ return mask&keep;
 }
+// Whether document `d`'s node `local` (file `file` of the batch) is a root of the rule at `at`: one node of
+// `root_mask_in`'s test, an anchored rule's (kind 2, decision 0365) within its anchor's row.
+inline bool root_admits(device const uchar* s,DocView d,device const uint* roots,uint at,uint file,uint local){
+ if(roots[at]==2u){device const uint* row=roots+at+2u;uint b=d.node_base+local;if(((row[b/32u]>>(b%32u))&1u)==0u)return false;at+=roots[at+1u];}
+ if(roots[at]!=0u){device const uint* row=roots+at+1u;uint b=d.node_base+local;return ((row[b/32u]>>(b%32u))&1u)!=0u;}
+ uint files=roots[0];
+ if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return false;
+ return code_admits(roots+at+1u+(files+31u)/32u,tape_code(s,d,local));
+}
+// The roots among all the group's nodes.
+inline ulong root_mask(device const uchar* s,DocView d,device const uint* roots,uint at,uint file,uint group){return root_mask_in(s,d,roots,at,file,group,0u,ROOT_GROUP);}
 // The lowest set bit of a mask.
 inline uint root_ctz(ulong m){uint low=uint(m);return low!=0u?ctz(low):32u+ctz(uint(m>>32u));}
 // Each root of a mask, document-local: `ROOTS_EACH(mask, group, local) { ... }`. One loop over the
 // mask (a fixed two-trip loop over its halves was unrolled, the body compiled twice).
 #define ROOTS_EACH(MASK,GROUP,LOCAL) for(ulong rootBits=(MASK);rootBits!=0ul;rootBits&=rootBits-1ul)for(uint LOCAL=(GROUP)*ROOT_GROUP+root_ctz(rootBits),rootOnce=0u;rootOnce==0u;rootOnce=1u)
-// A SIMD group's roots, spread over its lanes (decision 0293 §10, work queue Q53). Each lane makes its own group's
-// mask, as above; the SIMD group then numbers all its lanes' roots (lane order, then bit order), and round `r`
-// gives lane `l` root `32r + l`. The roots are as dense over the lanes as a list of them would be, and nothing lists
+// A SIMD group's roots, spread over its lanes (decision 0293 §10, work queue Q60). Each lane makes its own mask (a
+// micro walk's lane its share of its group's nodes, `root_mask_in`; a pattern's lane its own group's);
+// the SIMD group then numbers all its lanes' roots (lane order, then bit order), and round `r` gives lane `l` root
+// `32r + l`. The roots are as dense over the lanes as a list of them would be, and nothing lists
 // them: a thread looping over its group's roots ran up to 64 walks one after another, and a SIMD group lasted as long
 // as its longest lane's sum. Every lane of the SIMD group calls these together (they shuffle); a lane past the
 // items holds an empty mask, and only lanes past the grid's end are missing (`active` counts the others).

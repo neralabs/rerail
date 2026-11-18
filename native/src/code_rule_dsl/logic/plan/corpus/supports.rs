@@ -16,6 +16,7 @@
 //! needs a witness of each row's level (decision 0090's levels spike), not built yet. A rule with an aggregate,
 //! `nearest`, a matcher, or a variable no positive atom binds keeps its form; its stratum is maintained as before.
 
+use crate::code_rule_dsl::logic::program_image::t_of;
 use super::lower;
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::analyses;
@@ -219,18 +220,6 @@ fn support(f: &Fields<'_>, v: &Version, rule: RuleRef<'_>, domains: &lower::Doma
     Some(Support { decl, wild, extra, vars, domain_of })
 }
 
-/// A term of `v`'s rule `r`, to write into a builder under `v`'s ids.
-fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
-    match t {
-        TermRef::Var(s) => T::VarAtom(r.var(s)),
-        TermRef::Wild => T::Wild,
-        TermRef::Top => T::Top,
-        TermRef::Int(i) => T::Int(i),
-        TermRef::Branded(b) => T::Branded(b),
-        TermRef::Str(a) => T::StrAtom(a),
-        TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| t_of(v, r, a)).collect()),
-    }
-}
 
 impl Support {
     /// Writes `rule` through support relation `name` (`rule`'s replacement, in a derivation of `v`):

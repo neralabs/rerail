@@ -2432,7 +2432,7 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
         };
         let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, cap);
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        let dst = mj::DevRel::in_block(&crate::code_rule_dsl::facts::rows::InBlock { facts: part.facts().clone(), at: part.rel_at(), rows: cap as u32, dead: 0 }, k).map_err(|e| format!("{e:?}"))?;
+        let dst = mj::DevRel::in_block(&part.in_block(cap as u32), k).map_err(|e| format!("{e:?}"))?;
         b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, dst).map_err(|e| format!("{e:?}"))?;
         hold.push(rows);
         pending.push((h, part, slot, cap, words));
@@ -2829,7 +2829,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         TOTAL.copied(8 * k * total.rows);
         let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, total.rows);
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        let dst = mj::DevRel::in_block(&crate::code_rule_dsl::facts::rows::InBlock { facts: part.facts().clone(), at: part.rel_at(), rows: total.rows as u32, dead: 0 }, k).map_err(|e| format!("{e:?}"))?;
+        let dst = mj::DevRel::in_block(&part.in_block(total.rows as u32), k).map_err(|e| format!("{e:?}"))?;
         b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst).map_err(|e| format!("{e:?}"))?;
         parts.push((h, part, total.rows));
     }

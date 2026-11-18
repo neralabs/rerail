@@ -333,20 +333,7 @@ impl<'a> P<'a> {
             self.toks.push(t);
             return;
         }
-        self.toks.reserve(BATCH);
-        for _ in 0..BATCH {
-            let t = match self.lx.token(self.next, &mut self.extras) {
-                Ok(t) => t,
-                // A token the lexer refuses is refused where the parser reads it.
-                Err(Refusal::Lex(at)) | Err(Refusal::Parse(at)) => Tok { kind: T::Eof, word: u8::MAX, start: at, end: at, nl: NO_NL, nl_last: NO_NL },
-                Err(Refusal::TooLarge) => Tok { kind: T::Eof, word: u8::MAX, start: 0, end: 0, nl: NO_NL, nl_last: NO_NL },
-            };
-            self.next = t.end as usize;
-            self.toks.push(t);
-            if t.kind == T::Eof {
-                return;
-            }
-        }
+        self.next = self.lx.run(self.next, &mut self.extras, &mut self.toks, BATCH);
     }
 
     /// The buffer holds the next token and `AHEAD` more, from the moment the parse moves

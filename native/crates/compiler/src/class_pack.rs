@@ -15,6 +15,8 @@
 //!   of it, whichever lets rows merge into fewer products.
 //! - **Ranges.** A run of bytes, wrapping past 0xff, is a subtract and a compare
 //!   (`b - lo <= span`): the control bytes and every byte past 0x7f in one test, no product.
+//!   A range costs instructions a vector, a product none while its table has room, so a
+//!   range is taken where it saves a table, not a bit.
 //! - **Complements.** A set whose complement takes fewer products is tested by it: the lane's
 //!   polarity is free.
 //!
@@ -240,10 +242,11 @@ fn serves(p: Product, later: &[&Need]) -> usize {
         .count()
 }
 
-/// The forms of the needs in `order`, each the one adding the fewest products to the pool;
-/// of forms adding as few, the one whose new products the needs after it can share most (a
-/// word's digits as a product, not a range, where a number's first byte is a digit too).
-fn plan(needs: &[Need], order: &[usize]) -> (Vec<Product>, Vec<Form>) {
+/// The forms of the needs in `order`, each the one adding the fewest products to the pool (a
+/// range only for the needs in `ranged_ok`, bit `i` for need `i`); of forms adding as few, the
+/// one whose new products the needs after it can share most (a word's digits as a product,
+/// not a range, where a number's first byte is a digit too).
+fn plan(needs: &[Need], order: &[usize], ranged_ok: u64) -> (Vec<Product>, Vec<Form>) {
     let mut pool: Vec<Product> = Vec::new();
     let mut forms: Vec<Option<Form>> = vec![None; needs.len()];
     for (at, &i) in order.iter().enumerate() {
@@ -255,7 +258,8 @@ fn plan(needs: &[Need], order: &[usize]) -> (Vec<Product>, Vec<Form>) {
         for negated in [false, true] {
             let req = if negated { and_not(&n.care, &n.set) } else { and(&n.set, &n.care) };
             let allow = or(&req, &dont);
-            for range in std::iter::once(None).chain(ranges(&req, &allow).into_iter().map(Some)) {
+            let may = ranged_ok >> i.min(63) & 1 == 1;
+            for range in std::iter::once(None).chain(ranges(&req, &allow).into_iter().filter(|_| may).map(Some)) {
                 let ranged = range.is_some();
                 let left = match range {
                     Some((lo, span)) => and_not(&req, &range_bytes(lo, span)),
@@ -278,20 +282,43 @@ fn plan(needs: &[Need], order: &[usize]) -> (Vec<Product>, Vec<Form>) {
     (pool, forms.into_iter().map(|f| f.expect("each need planned")).collect())
 }
 
-/// The needs' tests and their tables, as few lookups as the means above give.
+/// The needs' tests and their tables, as few lookups as the means above give, then as few
+/// ranges: a product is free while its table has room (a set is one `vtst` however many bits
+/// it takes), a range is three instructions a vector (`sub`, `cmls`, the `orr` into its set),
+/// as lean's tables, whose digits are a bit, not a compare. A range saves products, so a plan
+/// free to take one always does: each order is planned with ranges open to every need, then
+/// closed to one need at a time while that adds no table; the fewest ranges in the fewest
+/// tables kept.
 pub fn pack(needs: &[Need]) -> Packing {
     let n = needs.len();
     let size = |i: usize| count(&and(&needs[i].set, &needs[i].care));
     let mut by_size: Vec<usize> = (0..n).collect();
     by_size.sort_by_key(|&i| std::cmp::Reverse(size(i)));
     let orders = [by_size.clone(), (0..n).collect(), (0..n).rev().collect(), by_size.into_iter().rev().collect()];
-    let mut best: Option<((usize, usize, usize), Packing)> = None;
-    for order in orders {
-        let (pool, forms) = plan(needs, &order);
-        let packing = place(&pool, forms);
-        let key = (packing.tables.len(), packing.products(), packing.tests.iter().filter(|t| t.range.is_some()).count());
-        if best.as_ref().is_none_or(|b| key < b.0) {
-            best = Some((key, packing));
+    type Key = (usize, usize, usize);
+    // A range's instructions a vector before its `orr`: one byte is a compare (`cmeq`), a run
+    // a subtract and a compare.
+    let key = |p: &Packing| -> Key { (p.tables.len(), p.tests.iter().filter_map(|t| t.range).map(|(_, span)| if span == 0 { 1 } else { 2 }).sum(), p.products()) };
+    let packed = |order: &[usize], ok: u64| {
+        let (pool, forms) = plan(needs, order, ok);
+        place(&pool, forms)
+    };
+    let mut best: Option<(Key, Packing)> = None;
+    for order in &orders {
+        // Ranges open to every need, then closed one need at a time where that adds no table.
+        let (mut ok, mut here) = (u64::MAX, packed(order, u64::MAX));
+        while let Some((k, p)) = (0..n.min(64))
+            .filter(|&i| here.tests[i].range.is_some())
+            .map(|i| ok & !(1 << i))
+            .map(|o| (o, packed(order, o)))
+            .filter(|(_, p)| p.tables.len() <= here.tables.len())
+            .min_by_key(|(_, p)| key(p))
+            .filter(|(_, p)| key(p) < key(&here))
+        {
+            (ok, here) = (k, p);
+        }
+        if best.as_ref().is_none_or(|b| key(&here) < b.0) {
+            best = Some((key(&here), here));
         }
     }
     let packing = best.map(|b| b.1).unwrap_or_default();
@@ -384,7 +411,8 @@ mod tests {
 
     /// A hand-written lexer's classes (whitespace, a word's bytes, the bytes that start a rare
     /// token: quotes, `#`, `/`, a backtick, digits, a lead byte past 0xbf) are one lookup:
-    /// eight products, the digits shared by two sets, the lead bytes a compare.
+    /// eight products, the digits shared by two sets, the lead bytes a bit where the table has
+    /// room (a compare is three instructions a vector, a bit none).
     #[test]
     fn a_lexers_classes_are_one_lookup() {
         let space = set([b' ', b'\t', b'\n', 0x0c, b'\r']);
@@ -395,7 +423,7 @@ mod tests {
         exact(&needs, &p);
         assert_eq!(p.tables.len(), 1, "one table: {p:?}");
         assert!(p.products() <= 8);
-        assert!(p.tests[2].range.is_some(), "the lead bytes by a compare");
+        assert!(p.tests.iter().filter(|t| t.range.is_some()).count() <= 1, "a compare at most: {p:?}");
     }
 
     /// A product inside two sets is one bit of both.
@@ -426,6 +454,10 @@ mod tests {
         exact(&needs, &p);
         assert_eq!(p.tables.len(), 1, "{p:?}");
         assert!(p.products() <= 8, "{} products: {p:?}", p.products());
+        // Bits where the table has room, not ranges: lean's one compare (the bytes past 0x7f)
+        // at most, the word's digits and letters bits.
+        assert!(p.tests.iter().filter(|t| t.range.is_some()).count() <= 1, "{p:?}");
+        assert_eq!(p.tests[1].range, None, "the word's bytes as bits: {p:?}");
     }
 
     /// A run of bytes wrapping past 0xff (the control bytes, DEL, everything past 0x7f) is

@@ -149,8 +149,7 @@ The sibling branches are rebuilding the engine's structures to be the same bytes
 device half (0293 §9, §10) and 0310, not yet in the hub. Its merge here conflicts in 17 files, in one place: the
 document view, `ChunkTape` (0289 §4: a block's offsets from the document's start, from `structure!`) against
 `rerail_clif::view::TapeView` (0310: the one view the generated reads take, with nothing per node derived). The
-merge keeps oscar's contents in 0289's form: one view (`TapeView`, `at` its first word), its parts offsets from
-`at`, one block bound. Merged here (2026-11-16, below).
+merge keeps oscar's contents in 0289's form. That is the hub's roll-up to make, so it was not made here.
 
 **On the hub's shape, nothing above changes** (internal_dead_code, whole corpus, at load 25–31: the reference
 graph 35.2 s, 393 of 443 chunk sizings cut by the memory line, 858 M walk steps, the longest 6,607).
@@ -192,11 +191,11 @@ Oscar's f51cab698 is merged into this branch. Each side's invariants are kept:
 - 0310: one view definition, and the reads through CLIF.
 
 At s100 with `--metal`, warm, the findings are the hub's (none). The label passes' GPU time is 53.6 ms on the hub's
-tree and 239.7 ms on the merged tree, the Q53 shape. The CPU is 1.6 s against 1.9 s, and the instructions 22.8 G
+tree and 239.7 ms on the merged tree, the Q60 shape. The CPU is 1.6 s against 1.9 s, and the instructions 22.8 G
 against 27.6 G.
 
 The first run of a new engine compiles its shaders (22.8 s of CPU here), so the first run after a kernel change is
-never a measurement. Q53 is now this branch's to fix.
+never a measurement. Q60 is now this branch's to fix.
 
 ## Fixing the merged device (2026-11-16, later)
 
@@ -235,7 +234,7 @@ What is left, by kernel:
 
 - **`label_micro`: the generated reads are still 1.5× the hand-written ones** (322 against 211 ms). They still
   load the widths from the view and branch on them, and decode a column of any width. The widths are a document's,
-  so a constant per batch does not reach them. Q57.
+  so a constant per batch does not reach them. Q62.
 - **`label_micro_8` is parent climbs**, and the hand-written reads did not change it (434). Format 15's parent is a
   search; format 16's is cheaper, at 272. The hub's tree had a parent column (91). Making the device's parent cheap
   is format 16 as the default (0156, the user's), or a parent the walk carries further, or a column, against 0293 §9.
@@ -244,4 +243,69 @@ What is left, by kernel:
 - The device's label tests passed with MSL that did not compile, and with a walk that lost its parent at a cursor
   restore. The conformance tests and these runs caught both. `the_label_kernels_compile_for_every_format` (slow
   tier, 84 s on an M1 Max) now compiles every label kernel and the pattern kernel for formats 0, 15 and 16. A test
-  for a walk whose steps change is still Q57's.
+  for a walk whose steps change is still Q62's.
+
+### The generated code as structured control flow (2026-11-17)
+
+`rerail_clif::msl` emitted every function with more than one block as a dispatch loop: `switch (b)` inside a
+`while`, each jump a store to `b`. Metal's compiler keeps the loop's state live across the switch and does not merge
+the blocks, so every read cost a branch through the dispatch. The emitter now writes the CFG as structured code:
+
+- an `if`/`else` that rejoins at the branch's immediate post-dominator;
+- a natural loop as `while (true)` with `continue` and `break`, or a selector `e<h>` where a loop has several exits;
+- a block reached on two paths duplicated, up to a size cap (`STRUCTURED_MAX`) and a depth of 64;
+- the switch form kept only as the fallback, for a CFG that is not reducible. No kernel in the tree needs it;
+  `metal_tape_reads.metal` has no `switch (b)` left.
+
+Same run as above (s1000, the GPU pinned, 97,241,194 steps in both), format 16, load 33–41:
+
+| Engine | Label passes | `label_micro` | `label_micro_8` |
+|---|---|---|---|
+| merged, the dispatch loop | 710 ms | 355 | 315 |
+| + structured control flow | 349 ms | 159 | 171 |
+| hand-written format 15 reads (the diagnostic build) | | 211 | |
+| hub (61e9f383c), with its parent column | 292 ms | 169 | 91 |
+
+The generated reads now beat the hand-written ones (159 against 211 ms). The width branches were not the cost.
+What is left against the hub's tree is `label_micro_8`, the parent climbs (171 against 91). The format 16 parent is
+still a search where the hub's tree had a column.
+
+### The parent climb spike (2026-11-17)
+
+Q62 put `label_micro_8`'s gap to the hub engine (171 ms against 91 ms) on format 16's parent climb. A spike tested
+that before building a window parent pass. Every variant was switched at compile time, with the same run as above,
+alternated at load 45–96:
+
+- **An oracle parent column**, made by a kernel before the walks, which the walks read in place of the climb:
+  220 ms. No gain. It was a bound for the measurement only: nothing is precomputed, since a precomputed structure
+  costs a kernel of its own and its memory (the user).
+- **The window's parents from one forward pass** over its 64 slots, read where the node is in the start's window:
+  170 ms. No gain.
+- **Counted**: 4.0 M parent climbs in 97 M steps, 1.8 hops each. 92% of them land inside the start's window, and
+  0.09 M steps escape to the side list.
+- **The root mask made twice**: +8–16 ms, so making it is about 10 ms.
+- **A group's nodes split over S threads**, at the same walks:
+
+| Threads a group | `label_micro_8` | Label passes |
+|---|---|---|
+| 1 (before) | 179–180 ms | 376–378 ms |
+| 8 | 110–112 | 272–274 |
+| 16 | 94–110 | 250–301 |
+| 32 | 94–97 | 240–243 |
+| the hub engine | 76–96 | 247–258 |
+
+The cost was the dispatch's shape. A thread a 64-node group gave a launch about 8,800 threads, and a SIMD group walked
+its 32 groups' roots (about 560) in rounds, one after another. Decision 0359 makes a short walk's group a SIMD
+group's. The loop tier keeps a thread an item: its pool is fixed at 4,096, and 1, 4 and 32 lanes measured the same
+there.
+
+The spike's split had a bug: it did not scale the loop tier's dispatch, so it skipped some of that tier's walks.
+Its `label_micro` times are not valid; its `label_micro_8` times are, because that tier's walks matched exactly. The
+profile now prints each tier's walks and steps over all passes, so a run whose walks differ is seen at once.
+
+**The pattern kernel** (`clause_patterns`, 6.8 ms against the hub engine's 3 ms) had the same shape, a thread a
+64-node group, but its fact items hold one root each, so a SIMD group an item would idle 31 lanes a fact. Its items'
+threads are contiguous (`threadStart`), so a pass item now takes 4 threads a group and a fact item keeps one. A SIMD
+group packs its lanes' roots whatever items they belong to. At load 25–37, 1, 4, 8 and 32 lanes a group took
+3.6–6.8, 2.1–2.5, 2.8–2.9 and 2.7–2.8 ms. The hub engine took 3.0–3.2 ms, with 25.8 M threads against 4 lanes' 1.7 M.
+

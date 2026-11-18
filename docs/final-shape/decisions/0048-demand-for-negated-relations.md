@@ -146,3 +146,29 @@ There were 252 findings each time. The replay is unchanged (3988 273 266 0).
 
 Open: a relation keyed by a document (`exists_10`'s readers bind a document) still reads every node of each
 demanded document. Its demand saves only the documents not asked about.
+
+## The demand drives its rule, enforced (2026-11-17, Q59)
+
+A demanded relation's rule, `x :- demand_x, …`, is planned with `demand_x` as its driver (`Body::demand_first`,
+as a demand-restricted aggregate's already was): the search starts from it, and a kept plan that does not is
+searched again (`valid_live_driver`). A recursive delta, when given, still drives. Before this the order was the
+search's, and a first chunk that priced the demand large kept a plan led by a scan for the whole run: on PostHog
+cold, in 2 of 7 runs, 19 of 24 demanded plans led by another atom, three strata 0.1–1.3 s → 15–19 s, +600 G
+instructions. After, in two runs: every demanded plan (33, 21) led by its demand; 2,531 and 2,509 G; findings the
+same (29,747).
+
+### Narrowed: the demand bounds the lead, it need not be it (2026-11-17)
+
+Forcing the demand first whatever the statistics say cost more than the case it fixed. On 50 Python files of
+B-now, `not_name($n) :- demand_not_name($n), within($n, $i), kind($i, #k1139)` led by the demand read 42,324
+demanded nodes and did 614,913 units of work; the search's own order, led by `kind($i, #k1139)` (498 nodes), did
+9,269. `bind_only`, `tp_name` and the other demanded rules did the same: 0.6 s of CPU on that run.
+
+What Q59 forbade is a lead the demand does not bound: an atom with every column free (`col(v, c)`) scans the
+corpus a chunk. So a demanded relation's rule may be led by its demand, or by an atom a constant restricts (a
+column a constant names, or a variable an equality binds to one); an order led by anything else is searched again
+from the demand (`Body::demand_bounds_lead`, in `plan_unshaped` and `valid_live_driver`). A demand-restricted
+aggregate keeps its demand first always (`Body::demand_first`): its witnesses come from the requested keys.
+
+Tests: `a_demanded_rule_is_driven_by_its_demand` (a scan lead refused, the demand leading) and
+`a_demanded_rule_may_be_led_by_a_constant_restricted_atom`. The 50-file run's findings are the same.

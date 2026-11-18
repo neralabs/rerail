@@ -72,7 +72,7 @@ pub struct ViewRow {
     pub rows: [u32; VIEWS.len()],
     pub view: crate::view::TapeView,
 }
-const _: () = assert!(std::mem::size_of::<ViewRow>() == 8 + 8 + 8 + 36 + 116);
+const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 36 + std::mem::size_of::<crate::view::TapeView>()).next_multiple_of(8));
 
 /// A batch's documents as its views' reads find them: the batch's block's GPU address (the entries' base), its
 /// documents' rows (their GPU address), how many.
@@ -147,9 +147,11 @@ pub fn msl() -> String {
         ("uint", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint", "within_hi", offset_of!(ViewDoc, within_hi)),
     ];
-    let mut s = String::from(
-        "struct ViewRow {\n    ulong entry;\n    device const uchar* tape;\n    device const uchar* lines;\n    uint rows[9];\n    uint view[29];\n};\n\
-         struct ViewDir {\n    device const uchar* chunk;\n    uint ndocs;\n    uint pad;\n    device const ViewRow* rows;\n};\n",
+    let mut s = format!(
+        "struct ViewRow {{\n    ulong entry;\n    device const uchar* tape;\n    device const uchar* lines;\n    uint rows[{}];\n    uint view[{}];\n}};\n\
+         struct ViewDir {{\n    device const uchar* chunk;\n    uint ndocs;\n    uint pad;\n    device const ViewRow* rows;\n}};\n",
+        VIEWS.len(),
+        std::mem::size_of::<crate::view::TapeView>() / 4,
     );
     s += &format!("static_assert(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
     s += &format!("static_assert(__builtin_offsetof(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));

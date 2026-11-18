@@ -65,9 +65,26 @@ struct Proof<'a> {
     /// Each lag's byte groups: a byte of each.
     groups: HashMap<u32, Vec<u8>>,
     budget: u32,
+    /// The position's own byte: the classes its readers tell apart, a byte of each and its
+    /// members.
+    own: Vec<(u8, ByteSet)>,
 }
 
-impl Proof<'_> {
+impl<'a> Proof<'a> {
+    fn of(ops: &'a [BlockOp], tables: &'a [ClassTable], v: u16, d: u8) -> Proof<'a> {
+        let (cone, readers) = cone(ops, v);
+        let groups = readers.iter().map(|(&lag, r)| (lag, groups(tables, r))).collect();
+        let own = classes(tables, readers.get(&u32::from(d)));
+        Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::new(), vals: HashMap::new(), cone, groups, budget: 0, own }
+    }
+
+    /// Whether the value is zero with the position's byte `b`.
+    fn zero_at(&mut self, v: u16, b: u8) -> bool {
+        self.b = b;
+        self.budget = BUDGET;
+        self.zero(v)
+    }
+
     fn byte(&self, lag: u32, open: &mut Option<Var>) -> Option<u16> {
         if lag == self.d {
             return Some(u16::from(self.b));
@@ -302,8 +319,9 @@ fn cone(ops: &[BlockOp], v: u16) -> (HashSet<(u16, u32)>, HashMap<u32, HashSet<R
                 work.extend([(s, lag), (e, lag)]);
             }
             // A fixed point's carry: free, as a position's pattern is (sound: it may be anything).
-            // A `back_fill` too: it reads bytes after, which the window does not hold.
-            BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Carry(_) | BlockOp::BackFill(..) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => {
+            // A `back_fill` too: it reads bytes after, which the window does not hold; and an
+            // `early`, a file's first bytes read ahead.
+            BlockOp::Early(..) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Carry(_) | BlockOp::BackFill(..) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => {
                 cone.insert((at, lag));
             }
         }
@@ -312,7 +330,43 @@ fn cone(ops: &[BlockOp], v: u16) -> (HashSet<(u16, u32)>, HashMap<u32, HashSet<R
 }
 
 /// A byte of each group the readers tell apart.
+/// The bytes `readers` tell apart (none: one class of every byte), a byte of each class (its
+/// least) and its members.
+fn classes(tables: &[ClassTable], readers: Option<&HashSet<Reader>>) -> Vec<(u8, ByteSet)> {
+    let readers: Vec<Reader> = readers.map(|r| r.iter().copied().collect()).unwrap_or_default();
+    let sig = |x: u8| -> Vec<bool> {
+        readers
+            .iter()
+            .map(|&r| match r {
+                Reader::Eq(c) => x == c,
+                Reader::Class(t, bits) => tables[usize::from(t)].member(x, bits),
+            })
+            .collect()
+    };
+    let mut out: Vec<(u8, ByteSet)> = Vec::new();
+    let mut at: HashMap<Vec<bool>, usize> = HashMap::new();
+    for x in 0..=255u8 {
+        let k = *at.entry(sig(x)).or_insert_with(|| {
+            out.push((x, [0; 4]));
+            out.len() - 1
+        });
+        out[k].1[usize::from(x / 64)] |= 1 << (x % 64);
+    }
+    out
+}
+
 fn groups(tables: &[ClassTable], readers: &HashSet<Reader>) -> Vec<u8> {
+    let of = group_of(tables, Some(readers));
+    (0..=255u8).filter(|&x| of[usize::from(x)] == x).collect()
+}
+
+/// Each byte's group: the first byte the readers do not tell from it. With no readers (`None`),
+/// one group: no test reads the byte.
+fn group_of(tables: &[ClassTable], readers: Option<&HashSet<Reader>>) -> [u8; 256] {
+    let mut of = [0u8; 256];
+    let Some(readers) = readers else {
+        return of;
+    };
     let readers: Vec<Reader> = readers.iter().copied().collect();
     let sig = |x: u8| -> Vec<bool> {
         readers
@@ -323,30 +377,36 @@ fn groups(tables: &[ClassTable], readers: &HashSet<Reader>) -> Vec<u8> {
             })
             .collect()
     };
-    let mut seen: HashSet<Vec<bool>> = HashSet::new();
-    (0..=255u8).filter(|&x| seen.insert(sig(x))).collect()
+    let mut first: HashMap<Vec<bool>, u8> = HashMap::new();
+    for x in 0..=255u8 {
+        of[usize::from(x)] = *first.entry(sig(x)).or_insert(x);
+    }
+    of
 }
 
 /// The bytes a value's set bits can be at, at delay `d` (bit `i` is byte `i - d`): each byte for
 /// which the value is not proved zero. Sound: a byte left out never has a bit.
+///
+/// The position's byte is read only by its readers (`cone`), so the bytes they cannot tell
+/// apart have one answer: one proof a class (`Proof::own`).
 pub fn first_bytes(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> ByteSet {
-    let (cone, readers) = cone(ops, v);
-    let groups = readers.iter().map(|(&lag, r)| (lag, groups(tables, r))).collect();
-    let mut p = Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::new(), vals: HashMap::new(), cone, groups, budget: 0 };
+    let mut p = Proof::of(ops, tables, v, d);
     let mut out = [0u64; 4];
-    for b in 0..=255u8 {
-        p.b = b;
-        p.budget = BUDGET;
-        if !p.zero(v) {
-            out[usize::from(b / 64)] |= 1 << (b % 64);
+    for (b, members) in std::mem::take(&mut p.own) {
+        if !p.zero_at(v, b) {
+            for i in 0..4 {
+                out[i] |= members[i];
+            }
         }
     }
     out
 }
 
-/// Whether a value is zero at every byte of every stream, proved.
+/// Whether a value is zero at every byte of every stream, proved: `first_bytes` empty, stopped
+/// at the first class of bytes not proved (most questions fail, and fail early).
 pub fn never(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
-    first_bytes(ops, tables, v, d) == [0; 4]
+    let mut p = Proof::of(ops, tables, v, d);
+    std::mem::take(&mut p.own).into_iter().all(|(b, _)| p.zero_at(v, b))
 }
 
 /// Whether a value is zero at every byte of every stream, proved by a SAT solver over a window

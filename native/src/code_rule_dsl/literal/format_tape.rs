@@ -18,7 +18,7 @@
 
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::{Grammar as Literal, PNode};
-use crate::code_rule_dsl::tape::{FileImage, Grammar, OwnTable, Pending, TapeImage, TemplateError, TreeParser, checked};
+use crate::code_rule_dsl::tape::{FileImage, Grammar, OwnTable, TapeImage, TemplateError, TreeParser, Visit, checked};
 use crate::code_rule_dsl::value::Value;
 use std::sync::OnceLock;
 
@@ -84,17 +84,23 @@ impl TreeParser for FormatStrings {
                 let p = order[i].1.expect("a child") as usize;
                 spans[p] = (spans[p].0.min(spans[i].0), spans[p].1.max(spans[i].1));
             }
-            let nodes = order
-                .into_iter()
-                .zip(spans)
-                .map(|((n, parent), (start, end))| {
-                    let (start, end) = (start as u32, end as u32);
-                    Pending { kf: n.kind, parent, start, length: end - start, size: 1, extra: n.extra, error: false, missing: false, kind_alias: None }
-                })
-                .collect();
-            TapeImage::finish(nodes, Vec::new(), tape, source, &budget)
+            // In preorder, each node closed when the next is not its descendant.
+            TapeImage::walked(tape, source, order.len(), &budget, |out| {
+                let mut open: Vec<u32> = Vec::new();
+                for ((n, parent), &(start, end)) in order.iter().zip(&spans) {
+                    while open.last().copied() != *parent && open.pop().is_some() {
+                        out.close();
+                    }
+                    let visit = Visit { kf: n.kind, start: start as u32, end: end as u32, extra: n.extra, error: false, missing: false, kind_alias: None };
+                    open.push(out.open(visit, *parent, &[])?);
+                }
+                for _ in open {
+                    out.close();
+                }
+                Ok(())
+            })
         };
-        Some(encode().map(FileImage::single).map_err(TemplateError::Encode))
+        Some(encode().map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
     }
 
     fn kinds(&self) -> Option<OwnTable> {

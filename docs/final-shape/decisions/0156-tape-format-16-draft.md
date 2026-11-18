@@ -1,6 +1,7 @@
 # 0156: Tape format 16, a byte tape read in place, in fixed blocks at rest (draft)
 
-Status: draft (2026-11-13), a design pass for the user's review. Nothing is built. Revised the same
+Status: the run's default format since 2026-11-17 (0340, the user: "Switch to format 16"); the tradeoffs below
+are still open. Draft (2026-11-13), a design pass for the user's review. Nothing is built. Revised the same
 day after the user's answers: open choices are written as tradeoffs to measure, not as bars to meet
 ("Tradeoffs", below).
 Revised 2026-11-15: sections 1–4 rewritten as the form the lab measured

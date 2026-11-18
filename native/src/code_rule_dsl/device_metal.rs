@@ -115,26 +115,25 @@ impl SolverDevice for Metal {
 
 pub mod matcher {
     use std::collections::BTreeSet;
-    use std::sync::Arc;
 
-    use crate::code_rule_dsl::tape::{TapeDoc, TapeSource};
-    use crate::code_rule_dsl::transducer::packed::device::{Engine, MatcherDevice, Outcome, PageConsumer, RootJobs};
+    use crate::code_rule_dsl::tape::TapeDoc;
+    use crate::code_rule_dsl::transducer::packed::device::{Engine, MatcherDevice, Outcome, RootJobs};
     use crate::code_rule_dsl::transducer::packed::{
-        BatchOutcome, Error, ExecutionBackend, LoweredMatcher, LoweredWave, PackedExecution, Program, matcher_metal, metal_grid_backend as grid,
+        BatchOutcome, Error, ExecutionBackend, LoweredMatcher, Budget, LoweredWave, PackedExecution, Program, matcher_metal,
         metal_program_backend as programs,
     };
 
     impl MatcherDevice for super::Metal {
-        fn execute_packed(&self, engine: Engine, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>) -> Result<PackedExecution, Error> {
+        fn execute_packed(&self, engine: Engine, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error> {
             match engine {
                 Engine::Interpreter => {
                     let engine = programs::compile_interpreter()?;
-                    programs::execute_packed_with_result_limits(&engine, batch, files, anchors, result_limits)
+                    programs::execute_packed_budgeted(&engine, batch, files, anchors, result_limits, budget)
                 }
                 Engine::Jit => {
                     let engine = crate::code_rule_dsl::prof::time("roots.jit", || programs::compile_jit_cached(batch))?;
                     let _run = crate::code_rule_dsl::prof::Stage::start("roots.metal");
-                    programs::execute_packed_with_result_limits(&engine, batch, files, anchors, result_limits)
+                    programs::execute_packed_budgeted(&engine, batch, files, anchors, result_limits, budget)
                 }
             }
         }
@@ -149,7 +148,6 @@ pub mod matcher {
                     let engine = programs::compile_jit_cached(batch)?;
                     programs::execute_outcomes(&engine, batch, files, anchors)
                 }
-                ExecutionBackend::Metal => grid::execute_outcomes(batch, files, anchors),
                 _ => Err(Error::UnsupportedBackend),
             }
         }
@@ -171,19 +169,11 @@ pub mod matcher {
             programs::compile_jit_cached(batch).map(|_| ())
         }
 
-        fn execute_shared_corpus(&self, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Arc<[u32]>>], result_limits: &[u32]) -> Result<PackedExecution, Error> {
-            grid::execute_shared_corpus(batch, files, anchors, result_limits)
-        }
-
-        fn execute_shared_corpus_pages(&self, batch: &[Program], files: &[TapeSource], anchors: &[Vec<Arc<[u32]>>], result_limits: &[u32], consumer: &mut PageConsumer<'_>) -> Result<(), Error> {
-            grid::execute_shared_corpus_pages(batch, files, anchors, result_limits, consumer)
-        }
-
         fn matcher_roots(&self, matcher: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {
             matcher_metal::matcher_roots(matcher, tapes)
         }
 
-        fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
+        fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: crate::code_rule_dsl::transducer::packed::device::ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
             matcher_metal::wave_roots(wave, tapes, roots)
         }
 
@@ -198,13 +188,18 @@ pub mod matcher {
         fn drop_label_pipelines(&self) {
             programs::label_passes::drop_pipelines();
         }
-        fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Option<Vec<Vec<u64>>> {
+        fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Result<Option<Vec<Vec<u64>>>, Error> {
             use programs::block_program::{ClassStrategy, Executor, LaneWidth, generated_ready, run_split};
             // Each set of patterns is a kernel of its own: until its compile (on a thread of its own) is done, the
             // interpreter's pipeline runs the batch, so no launch waits on the compiler.
             let executor = if generated_ready(natives, LaneWidth::W64) { Executor::Generated(ClassStrategy::Lookup) } else { Executor::Interpreter };
-            let run = run_split(natives, batch, LaneWidth::W64, executor, 64).ok()?;
-            Some(run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())
+            // A form Metal lacks is refused before anything runs, and recorded (`metal-form`, decision 0202): the cores'.
+            // Every other error is the run's (decision 0382).
+            match run_split(natives, batch, LaneWidth::W64, executor, 64) {
+                Ok(run) => Ok(Some(run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())),
+                Err(Error::UnsupportedBackend) => Ok(None),
+                Err(error) => Err(error),
+            }
         }
         fn execution_metrics(&self) -> (usize, usize) {
             #[cfg(any(test, feature = "test-hooks"))]

@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use crate::bucket::{BucketList, CellValue};
 use crate::compute_kernel_grid::ComputeKernelArgument;
-use crate::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, MetalComputeQueue};
+use crate::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, MetalComputeEvent, MetalComputeQueue};
 use crate::dataset_feature_space::{ColumnData, DatasetFeatureSpace};
 use crate::jml::committee::Committee;
 use crate::jml::decision_tree::DecisionTree;
@@ -345,6 +345,36 @@ struct Scratch {
     numbers: Option<(metal::Buffer, usize)>,
     codes: Option<(metal::Buffer, usize)>,
     tables: Option<(metal::Buffer, usize)>,
+    /// `predict_values`' next prediction, committed ahead and waiting on `event` (`Armed`), on the process's waiting queue (`gpu::shared`):
+    /// a command buffer waiting on an event holds back the ones its queue commits after it.
+    armed: Option<Armed>,
+    armed_queue: Option<MetalComputeQueue>,
+    event: Option<(metal::SharedEvent, u64)>,
+}
+
+/// A prediction of values encoded and committed before its rows are known (`predict_values`): its command buffer
+/// waits on the forest's event reaching `value`, then buckets and predicts. A call writes its rows into the buffers it
+/// reads and signals: the device starts at once, nothing encoded or committed on the call's path, and the next is
+/// armed after. Its sizes are fixed when it is armed (the kernels' launch plans take `rows` and the stride): a call
+/// of fewer rows packs only its own (`RB_WORDS`), the rest are bucket 0, and only its own are read back.
+struct Armed {
+    rows: usize,
+    /// Each column's kind (categorical), and the code tables' room, as armed.
+    categorical: Vec<bool>,
+    tables: usize,
+    bufs: ArmedBuffers,
+    value: u64,
+    pending: MetalComputeEvent,
+}
+
+/// An armed prediction's own buffers (none shared with the calls that are not armed).
+struct ArmedBuffers {
+    columns: metal::Buffer,
+    numbers: metal::Buffer,
+    codes: metal::Buffer,
+    tables: metal::Buffer,
+    data: metal::Buffer,
+    out: metal::Buffer,
 }
 
 /// The words describing a column to `rowBuckets` (`ROW_BUCKET_WORDS` in the kernels).
@@ -543,9 +573,22 @@ impl DeviceForest {
         Ok(self.predict_values_timed(b, columns)?.0)
     }
 
+    /// Arms a prediction of up to `rows` rows of columns of `like`'s kinds (`Armed`), so the first call is
+    /// already committed: the device starts as soon as its rows are written. Nothing if one is armed.
+    pub fn prepare_values(&self, b: &DeviceBucketizer, like: &[ColumnData], rows: usize) -> Result<(), String> {
+        if like.len() != self.num_features || b.columns.len() != self.num_features {
+            return Err(format!("{} columns and a bucketizer of {} for a forest over {}", like.len(), b.columns.len(), self.num_features));
+        }
+        let mut scratch = self.scratch.lock().map_err(|_| "a prediction panicked")?;
+        if scratch.armed.is_none() {
+            let categorical = like.iter().map(|c| matches!(c, ColumnData::Categorical { .. })).collect();
+            scratch.armed = Some(self.arm(&mut scratch, b, rows.next_power_of_two().max(64), categorical, 256, None)?);
+        }
+        Ok(())
+    }
+
     /// `predict_values`, with the GPU's seconds (bucketizing and predicting).
     pub fn predict_values_timed(&self, b: &DeviceBucketizer, columns: &[ColumnData]) -> Result<(Vec<[f32; 2]>, f64), String> {
-        use ComputeKernelArgument::{Buffer as B, Int};
         if columns.len() != self.num_features || b.columns.len() != self.num_features {
             return Err(format!("{} columns and a bucketizer of {} for a forest over {}", columns.len(), b.columns.len(), self.num_features));
         }
@@ -559,10 +602,80 @@ impl DeviceForest {
         if num_rows == 0 {
             return Ok((Vec::new(), 0.0));
         }
-        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
-        let device = &shared.device;
+        crate::gpu::shared::get().ok_or("no Metal device")?;
         let mut scratch = self.scratch.lock().map_err(|_| "a prediction panicked")?;
         let words: Vec<usize> = b.columns.iter().map(|c| crate::bucket::WritableBucketList::words_required(num_rows, (1u32 << c.bits) - 1)).collect();
+        let categorical: Vec<bool> = columns.iter().map(|c| matches!(c, ColumnData::Categorical { .. })).collect();
+        let table_words: usize = columns.iter().map(|c| if let ColumnData::Categorical { names, .. } = c { names.len() + 1 } else { 0 }).sum();
+        if let Some(a) = scratch.armed.take() {
+            if a.rows >= num_rows && a.categorical == categorical && a.tables >= table_words {
+                Self::write_values(b, columns, &a.bufs, a.rows, &words);
+                let fired = Self::fire(&scratch, &a);
+                let got = fired.and_then(|()| {
+                    let items = num_rows * self.num_forests as usize;
+                    let out = unsafe { std::slice::from_raw_parts(a.bufs.out.contents().cast::<[f32; 2]>(), items) };
+                    if out.iter().any(|v| v[0].is_nan()) {
+                        return Err("a walk did not reach a leaf".to_owned());
+                    }
+                    Ok((out.to_vec(), a.pending.gpu_seconds()))
+                });
+                let Armed { rows, categorical, tables, bufs, .. } = a;
+                scratch.armed = self.arm(&mut scratch, b, rows, categorical, tables, Some(bufs)).ok();
+                return got;
+            }
+            // Too small, or columns of other kinds: released (on the last call's rows, unread), and armed anew below.
+            let _ = Self::fire(&scratch, &a);
+        }
+        let got = self.predict_values_now(&mut scratch, b, columns, num_rows, &words);
+        if got.is_ok() {
+            let rows = num_rows.next_power_of_two().max(64);
+            scratch.armed = self.arm(&mut scratch, b, rows, categorical, (table_words * 2).max(256), None).ok();
+        }
+        got
+    }
+
+    /// Writes a call's values into an armed prediction's buffers (`rows` a column), described to pack `words` words
+    /// a column (its own rows').
+    fn write_values(b: &DeviceBucketizer, columns: &[ColumnData], bufs: &ArmedBuffers, rows: usize, words: &[usize]) {
+        let ncat = columns.iter().filter(|c| matches!(c, ColumnData::Categorical { .. })).count();
+        let nnum = columns.len() - ncat;
+        let desc = unsafe { std::slice::from_raw_parts_mut(bufs.columns.contents().cast::<u32>(), columns.len() * ROW_BUCKET_WORDS) };
+        let numbers = unsafe { std::slice::from_raw_parts_mut(bufs.numbers.contents().cast::<f64>(), nnum.max(1) * rows) };
+        let codes_out = unsafe { std::slice::from_raw_parts_mut(bufs.codes.contents().cast::<u32>(), ncat.max(1) * rows) };
+        let tables = unsafe { std::slice::from_raw_parts_mut(bufs.tables.contents().cast::<u32>(), (bufs.tables.length() / 4) as usize) };
+        let (mut num_at, mut code_at, mut at_table) = (0usize, 0usize, 0usize);
+        for (i, (c, bc)) in columns.iter().zip(&b.columns).enumerate() {
+            let d = &mut desc[i * ROW_BUCKET_WORDS..(i + 1) * ROW_BUCKET_WORDS];
+            d[1] = bc.bits;
+            d[7] = words[i] as u32;
+            match c {
+                ColumnData::Numeric(v) => {
+                    let at = num_at * rows;
+                    numbers[at..at + v.len()].copy_from_slice(v);
+                    (d[0], d[2], d[3], d[4], d[5], d[6]) = (0, at as u32, bc.num_splits, bc.split_start, bc.numeric_offset, bc.null_bucket);
+                    num_at += 1;
+                }
+                ColumnData::Categorical { codes, names } => {
+                    let at = code_at * rows;
+                    codes_out[at..at + codes.len()].copy_from_slice(codes);
+                    let t = &mut tables[at_table..at_table + names.len() + 1];
+                    for (e, name) in t.iter_mut().zip(names) {
+                        *e = bc.strings.get(name.as_str()).copied().unwrap_or(bc.unseen);
+                    }
+                    t[names.len()] = bc.null_bucket;
+                    (d[0], d[2], d[3], d[4], d[5], d[6]) = (1, at as u32, names.len() as u32, at_table as u32, 0, bc.null_bucket);
+                    code_at += 1;
+                    at_table += names.len() + 1;
+                }
+            }
+        }
+    }
+
+    /// `predict_values`, encoded and committed now (no armed prediction fits).
+    fn predict_values_now(&self, scratch: &mut Scratch, b: &DeviceBucketizer, columns: &[ColumnData], num_rows: usize, words: &[usize]) -> Result<(Vec<[f32; 2]>, f64), String> {
+        use ComputeKernelArgument::{Buffer as B, Int};
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let device = &shared.device;
         let stride = words.iter().copied().max().unwrap_or(0) + 1;
         let (mut num_numbers, mut num_codes, mut num_table) = (0usize, 0usize, 0usize);
         for c in columns {
@@ -636,17 +749,41 @@ impl DeviceForest {
             let mut ctx = queue.new_bind_context(k.function);
             k.launch_plan(&plans[&key], &buffers, &mut ctx)?;
         }
-        self.launch(&mut scratch, &d_data, num_rows, stride)
+        self.launch(scratch, &d_data, num_rows, stride)
     }
 
     /// Predicts the rows whose bucket columns are (or will be, earlier in the queue's command buffer) in `d_data`
     /// at `stride` words a column, and commits the command buffer.
     fn launch(&self, scratch: &mut Scratch, d_data: &metal::BufferRef, num_rows: usize, stride: usize) -> Result<(Vec<[f32; 2]>, f64), String> {
-        use ComputeKernelArgument::{Buffer as B, Int};
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
-        let device = &shared.device;
         let items = num_rows * self.num_forests as usize;
-        let d_out = kept::<f32>(device, &mut scratch.out, items * 2);
+        let Scratch { queue, plans, out, .. } = scratch;
+        let d_out = kept::<f32>(&shared.device, out, items * 2);
+        let queue = queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.queue));
+        self.encode_forest(plans, queue, d_data, &d_out, num_rows, stride)?;
+        let event = queue.flush();
+        event.await_()?;
+        let out = unsafe { std::slice::from_raw_parts(d_out.contents().cast::<[f32; 2]>(), items) };
+        if out.iter().any(|v| v[0].is_nan()) {
+            return Err("a walk did not reach a leaf".into());
+        }
+        Ok((out.to_vec(), event.gpu_seconds()))
+    }
+
+    /// Encodes the forests' walk of `num_rows` rows (their buckets in `d_data`) into `queue`, the predictions into
+    /// `d_out`.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_forest(
+        &self,
+        plans: &mut HashMap<(usize, u32, usize), crate::compute_kernel_grid::GridLaunchPlan>,
+        queue: &mut MetalComputeQueue,
+        d_data: &metal::BufferRef,
+        d_out: &metal::BufferRef,
+        num_rows: usize,
+        stride: usize,
+    ) -> Result<(), String> {
+        use ComputeKernelArgument::{Buffer as B, Int};
+        let items = num_rows * self.num_forests as usize;
         let k = kernel("predictForest")?;
         let lanes = lanes_per_row(items, self.max_trees as usize);
         let buffers: [(&str, &metal::BufferRef); 8] = [
@@ -657,10 +794,10 @@ impl DeviceForest {
             ("treeRoots", &self.roots),
             ("treeWeights", &self.weights),
             ("leafPreds", &self.leaves),
-            ("predictionsOut", &d_out),
+            ("predictionsOut", d_out),
         ];
         let key = (items, lanes, stride);
-        if !scratch.plans.contains_key(&key) {
+        if !plans.contains_key(&key) {
             let mut named = vec![
                 ("numItems", Int(items as i64)),
                 ("numForests", Int(self.num_forests as i64)),
@@ -669,23 +806,109 @@ impl DeviceForest {
                 ("columnStride", Int(stride as i64)),
             ];
             named.extend(buffers.iter().map(|&(n, b)| (n, B(b))));
-            if scratch.plans.len() >= 64 {
-                scratch.plans.clear();
+            if plans.len() >= 64 {
+                plans.clear();
             }
-            scratch.plans.insert(key, k.plan(&named, &[items as u32])?);
+            plans.insert(key, k.plan(&named, &[items as u32])?);
         }
-        let Scratch { queue, plans, .. } = scratch;
-        let queue = queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.queue));
         let mut ctx = queue.new_bind_context(k.function);
         k.launch_plan(&plans[&key], &buffers, &mut ctx)?;
-        drop(ctx);
-        let event = queue.flush();
-        event.await_()?;
-        let out = unsafe { std::slice::from_raw_parts(d_out.contents().cast::<[f32; 2]>(), items) };
-        if out.iter().any(|v| v[0].is_nan()) {
-            return Err("a walk did not reach a leaf".into());
+        Ok(())
+    }
+
+    /// Encodes and commits a prediction of `rows` rows of columns of these kinds (`Armed`), waiting on the forest's
+    /// event: the buffers are `bufs` (or new ones), their descriptions those of the last call (or none packed).
+    fn arm(&self, scratch: &mut Scratch, b: &DeviceBucketizer, rows: usize, categorical: Vec<bool>, tables: usize, bufs: Option<ArmedBuffers>) -> Result<Armed, String> {
+        use ComputeKernelArgument::{Buffer as B, Int};
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let device = &shared.device;
+        let ncat = categorical.iter().filter(|&&c| c).count();
+        let nnum = categorical.len() - ncat;
+        let stride = b.columns.iter().map(|c| crate::bucket::WritableBucketList::words_required(rows, (1u32 << c.bits) - 1)).max().unwrap_or(0) + 1;
+        let bufs = match bufs {
+            Some(bufs) => bufs,
+            None => {
+                let bufs = ArmedBuffers {
+                    columns: alloc_uninitialized_array_sync::<u32>(device, categorical.len() * ROW_BUCKET_WORDS),
+                    numbers: alloc_uninitialized_array_sync::<u64>(device, nnum.max(1) * rows),
+                    codes: alloc_uninitialized_array_sync::<u32>(device, ncat.max(1) * rows),
+                    tables: alloc_uninitialized_array_sync::<u32>(device, tables.max(1)),
+                    data: alloc_uninitialized_array_sync::<u32>(device, stride * categorical.len() + 1),
+                    out: alloc_uninitialized_array_sync::<f32>(device, rows * self.num_forests as usize * 2),
+                };
+                // Described as packing nothing (each column's words 0): a prediction signalled before a call wrote
+                // its rows reads no value.
+                let desc = unsafe { std::slice::from_raw_parts_mut(bufs.columns.contents().cast::<u32>(), categorical.len() * ROW_BUCKET_WORDS) };
+                for (i, bc) in b.columns.iter().enumerate() {
+                    let d = &mut desc[i * ROW_BUCKET_WORDS..(i + 1) * ROW_BUCKET_WORDS];
+                    d.fill(0);
+                    d[1] = bc.bits;
+                }
+                bufs
+            }
+        };
+        let (event, value) = {
+            let (e, v) = scratch.event.get_or_insert_with(|| (device.new_shared_event(), 0));
+            *v += 1;
+            (e.clone(), *v)
+        };
+        let k = kernel("rowBuckets")?;
+        let buffers: [(&str, &metal::BufferRef); 6] =
+            [("columns", &bufs.columns), ("numbers", &bufs.numbers), ("codes", &bufs.codes), ("splitKeys", &b.split_keys), ("codeTables", &bufs.tables), ("bucketDataOut", &bufs.data)];
+        let key = (rows, stride);
+        if !scratch.row_plans.contains_key(&key) {
+            let mut named = vec![("numRows", Int(rows as i64)), ("numColumns", Int(categorical.len() as i64)), ("columnStride", Int(stride as i64))];
+            named.extend(buffers.iter().map(|&(n, b)| (n, B(b))));
+            if scratch.row_plans.len() >= 64 {
+                scratch.row_plans.clear();
+            }
+            scratch.row_plans.insert(key, k.plan(&named, &[(categorical.len() * stride) as u32])?);
         }
-        Ok((out.to_vec(), event.gpu_seconds()))
+        let Scratch { armed_queue, row_plans, plans, .. } = scratch;
+        let queue = armed_queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.waiting));
+        // First in the command buffer, before any encoder: the device waits here for the call's rows.
+        queue.command_buffer.encode_wait_for_event(&event, value);
+        {
+            let mut ctx = queue.new_bind_context(k.function);
+            k.launch_plan(&row_plans[&key], &buffers, &mut ctx)?;
+        }
+        self.encode_forest(plans, queue, &bufs.data, &bufs.out, rows, stride)?;
+        let pending = queue.flush();
+        Ok(Armed { rows, categorical, tables, bufs, value, pending })
+    }
+
+    /// Signals an armed prediction and waits for it: its predictions, or an error if it did not complete.
+    fn fire(scratch: &Scratch, a: &Armed) -> Result<(), String> {
+        let (event, _) = scratch.event.as_ref().ok_or("an armed prediction with no event")?;
+        event.set_signaled_value(a.value);
+        a.pending.await_()
+    }
+}
+
+#[cfg(test)]
+impl DeviceForest {
+    /// Releases the armed prediction: the next call encodes its own (`predict_values_now`).
+    fn release_armed(&self) {
+        let mut scratch = self.scratch.lock().unwrap();
+        if let Some(a) = scratch.armed.take() {
+            Self::fire(&scratch, &a).unwrap();
+        }
+    }
+
+    /// The event's value: each prediction armed adds one.
+    fn armed_count(&self) -> u64 {
+        self.scratch.lock().unwrap().event.as_ref().map_or(0, |e| e.1)
+    }
+}
+
+impl Drop for DeviceForest {
+    /// An armed prediction is released (its command buffer completes, on stale rows, unread).
+    fn drop(&mut self) {
+        if let Ok(scratch) = self.scratch.get_mut()
+            && let (Some(a), Some((event, _))) = (&scratch.armed, &scratch.event)
+        {
+            event.set_signaled_value(a.value);
+        }
     }
 }
 
@@ -1370,6 +1593,8 @@ mod tests {
             let mut values: Vec<ColumnData> = part.iter().enumerate().map(|(i, c)| ColumnData::from_values(&format!("c{i}"), c).unwrap()).collect();
             let host = RowBuckets::from_values(&fs, &part).unwrap();
             let want = f.predict(&host).unwrap();
+            // Unarmed: the kept buckets read below are this call's.
+            f.release_armed();
             let got = f.predict_values(&b, &values).unwrap();
             assert_eq!(got, want, "{n} rows");
             let stride = host.columns.iter().map(|c| c.storage.data().len()).max().unwrap() + 1;
@@ -1383,6 +1608,51 @@ mod tests {
                 let mut swapped = part.clone();
                 swapped[i] = (0..n).map(|r| CellValue::Float(r as f64)).collect();
                 assert_eq!(f.predict_values(&b, &values).unwrap(), f.predict(&RowBuckets::from_values(&fs, &swapped).unwrap()).unwrap());
+            }
+        }
+    }
+
+    /// A prediction armed ahead (`Armed`) gives what one encoded on the call gives: calls of fewer rows than armed,
+    /// more (armed anew, larger), columns of another kind (released, armed anew), and a call long after arming.
+    #[test]
+    fn an_armed_prediction_is_the_unarmed_ones() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let (cols, labels) = columns(3000, 3);
+        let named: Vec<(String, Vec<CellValue>)> = cols.iter().enumerate().map(|(i, c)| (format!("c{i}"), c.clone())).collect();
+        let fs = Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Boolean).unwrap());
+        let forest = train_forest(&training_data(fs.clone(), &labels, None, None).unwrap(), &RandomForestProcedureConfig::default()).unwrap();
+        let f = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
+        let b = DeviceBucketizer::new(&fs).unwrap();
+        let (test, _) = columns(3000, 9);
+        let mut armed_before = 0;
+        for (k, n) in [33usize, 1, 64, 7, 700, 3000, 2, 3000].into_iter().enumerate() {
+            let part: Vec<Vec<CellValue>> = test.iter().map(|c| c[k..k + n.min(3000 - k)].to_vec()).collect();
+            let n = part[0].len();
+            let mut values: Vec<ColumnData> = part.iter().enumerate().map(|(i, c)| ColumnData::from_values(&format!("c{i}"), c).unwrap()).collect();
+            let want = f.predict(&RowBuckets::from_values(&fs, &part).unwrap()).unwrap();
+            if k == 3 {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            let (got, gpu) = f.predict_values_timed(&b, &values).unwrap();
+            // The same buckets; the trees summed over lanes chosen for the armed rows (`lanes_per_row`), not the
+            // call's, so in another order: equal to rounding.
+            assert_eq!(got.len(), want.len(), "{n} rows, call {k}");
+            for (g, w) in got.iter().zip(&want) {
+                assert!((g[0] - w[0]).abs() <= 1e-6 && (g[1] - w[1]).abs() <= 1e-6, "{n} rows, call {k}: {g:?} against {w:?}");
+            }
+            if k == 3 {
+                eprintln!("an armed prediction 20 ms after arming: {:.3} ms of the GPU", gpu * 1e3);
+            }
+            assert!(f.armed_count() > armed_before, "call {k}: armed after");
+            armed_before = f.armed_count();
+            if k == 4 && let Some(i) = values.iter().position(|v| matches!(v, ColumnData::Categorical { .. })) {
+                values[i] = ColumnData::Numeric((0..n).map(|r| r as f64).collect());
+                let mut swapped = part.clone();
+                swapped[i] = (0..n).map(|r| CellValue::Float(r as f64)).collect();
+                let (got, want) = (f.predict_values(&b, &values).unwrap(), f.predict(&RowBuckets::from_values(&fs, &swapped).unwrap()).unwrap());
+                assert!(got.iter().zip(&want).all(|(g, w)| (g[0] - w[0]).abs() <= 1e-6) && got.len() == want.len(), "kinds changed");
             }
         }
     }

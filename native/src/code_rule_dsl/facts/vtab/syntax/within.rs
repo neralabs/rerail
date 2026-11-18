@@ -106,7 +106,10 @@ pub struct Within {
     /// The format a test reads the documents' tapes in (`reading`); else each is read as held.
     format: Option<Format>,
     /// Per document, the axis's set as its tape's code numbers (all of them for the tree's containment).
-    sets: Box<[OnceLock<CodeSet>]>,
+    sets: Box<[OnceLock<Arc<CodeSet>>]>,
+    /// The sets made, by language and table: format 16's documents share their language's table (decision 0336 §7),
+    /// so the set is made once for all of them, not once per document over the whole table.
+    shared: Mutex<FxHashMap<(u16, usize), Arc<CodeSet>>>,
 }
 
 /// An axis's `n` side for every node of the batch, a derived relation written once where the solve computes it
@@ -153,6 +156,7 @@ impl Within {
             solved: OnceLock::new(),
             format: None,
             sets: (0..batch.docs.len()).map(|_| OnceLock::new()).collect(),
+            shared: Mutex::new(FxHashMap::default()),
             batch,
         }
     }
@@ -182,16 +186,25 @@ impl Within {
     /// tree's containment).
     fn set<T: Tape>(&self, doc: usize, t: &T) -> &CodeSet {
         self.sets[doc].get_or_init(|| {
-            if self.mode == Mode::Tree {
-                return t.table().set(|_| true);
-            }
-            // An ERROR node's kind is `ERROR_SYMBOL` (`Facts::kind`), slot 0 of its tag's stride whatever kind its entry
-            // holds: a member where the set names ERROR, as `member` and the device's bits read it (0289).
-            let members = self.members.get(&self.batch.docs[doc].tag);
-            t.table().set(|e| {
-                let slot = if e.flags & rerail_tape_format::CODE_ERROR != 0 { 0 } else { usize::from(e.kind) };
-                members.is_some_and(|m| m.get(slot).is_some_and(|&x| x))
-            })
+            let tag = self.batch.docs[doc].tag;
+            let key = (if self.mode == Mode::Tree { u16::MAX } else { u16::from(tag) }, std::ptr::from_ref(t.table()) as usize);
+            let mut shared = self.shared.lock();
+            shared
+                .entry(key)
+                .or_insert_with(|| {
+                    if self.mode == Mode::Tree {
+                        return Arc::new(t.table().set(|_| true));
+                    }
+                    // An ERROR node's kind is `ERROR_SYMBOL` (`Facts::kind`), slot 0 of its tag's stride whatever kind
+                    // its entry holds: a member where the set names ERROR, as `member` and the device's bits read it
+                    // (0289).
+                    let members = self.members.get(&tag);
+                    Arc::new(t.table().set(|e| {
+                        let slot = if e.flags & rerail_tape_format::CODE_ERROR != 0 { 0 } else { usize::from(e.kind) };
+                        members.is_some_and(|m| m.get(slot).is_some_and(|&x| x))
+                    }))
+                })
+                .clone()
         })
     }
 
@@ -294,6 +307,12 @@ impl Within {
         matches!(self.mode, Mode::Axis(Axis::Nearest | Axis::Inside) | Mode::Tree)
     }
 
+    /// Tests: whether the batch's solve has been made.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn is_solved(&self) -> bool {
+        self.solved.get().is_some()
+    }
+
     /// The first id of the rows made per looked-up `n`.
     fn looked_up(&self) -> usize {
         if self.solvable() { LOOKED_UP } else { 0 }
@@ -359,7 +378,7 @@ impl Within {
         start.push(len);
         // A derived fact like a rule's head, in a run's block alone, with room for an index by each column (strata
         // probe an axis by `n` and by `a`), as the device's solve writes it.
-        let rows = Part::for_writes_indexed(2, len as usize, 2);
+        let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, 2);
         let mut at = 0u32;
         for v in 0..n {
             let id = self.batch.id(v);
@@ -728,15 +747,20 @@ impl Source for Within {
     /// step 5).
     #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
-        self.solvable().then(|| self.solved_rows().in_block())
+        self.solvable().then(|| self.solved_rows().in_block(self.solved_rows().len()))
     }
     fn columns(&self) -> Vec<String> {
         self.names().iter().map(|&c| c.to_owned()).collect()
     }
-    /// Every pair once: a scan makes each node's containers, ids `0..len`.
+    /// Every pair once: a scan makes each node's containers, ids `0..len`. A solvable axis's are its solve's pairs,
+    /// counted exactly from the tree (`shape`) until something reads them: a guest round digests each input by its
+    /// length, and the solve made for that count alone held 780 MB of a PostHog run's 2.5 GB peak.
     fn len(&self) -> usize {
         if self.solvable() {
-            return self.solved_rows().len() as usize;
+            if self.solved.get().is_some() {
+                return self.solved_rows().len() as usize;
+            }
+            return self.shape().rows as usize;
         }
         *self.all.get_or_init(|| {
             for row in 0..self.batch.nodes.last().copied().unwrap_or(0) as u32 {
@@ -779,6 +803,23 @@ impl Source for Within {
             crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0143)", || "solved for the batch: a stratum on the device reads the axis whole (decision 0277)".into());
         }
         true
+    }
+    /// By `n`, a document's nodes looked up: a node's pairs are its own document's (none crosses documents), so
+    /// the rows of the documents `owned` names are found without the batch's solve or a scan.
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        if g != 0 {
+            return None;
+        }
+        let mut out = Vec::new();
+        for doc in 0..self.batch.docs.len() {
+            let (from, to) = (self.batch.nodes[doc], *self.batch.nodes.get(doc + 1)?);
+            if from == to || !owned(self.batch.id(from)) {
+                continue;
+            }
+            let ids: Vec<i64> = (from..to).map(|r| self.batch.id(r)).collect();
+            out.extend(self.lookup(0, &ids)?);
+        }
+        Some(out)
     }
     fn expect_lookups(&self, column: usize, keys: f64) {
         if column == 0 {

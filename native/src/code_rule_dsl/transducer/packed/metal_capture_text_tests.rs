@@ -140,7 +140,7 @@ fn query_text_quantifiers_preserve_empty_groups_duplicate_captures_and_transform
         for outputs in &mut limited[0] {
             outputs.truncate(limit as usize);
         }
-        let actual = metal_grid_backend::execute_packed_with_result_limits(
+        let actual = metal_packed(
             &programs,
             &files,
             &anchors,
@@ -175,7 +175,7 @@ fn shared_query_capture_text_batches_programs_and_files_without_output_directive
         }
         let scope = metal_backend::launch::LaunchScope::enter();
         let start = std::time::Instant::now();
-        let actual = metal_grid_backend::execute_packed_with_result_limits(
+        let actual = metal_packed(
             &programs,
             &files,
             &anchors,

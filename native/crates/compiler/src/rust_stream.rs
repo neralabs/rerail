@@ -80,6 +80,9 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
     if native.extras.len() > 1 {
         return Err("more than one kind of extra".into());
     }
+    if native.block_programs.iter().filter_map(|b| b.records.as_ref()).any(|r| r.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2)) {
+        return Err("a region tier 2 splits (decision 0323): not yet ahead of time".into());
+    }
     if native.structural.iter().any(|b| matches!(b.operation, Op::NodeSuper { .. })) {
         return Err("supertype classes in the tape's codes: not yet ahead of time".into());
     }
@@ -213,7 +216,7 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
         reread(out, i, r);
     }
     for (i, m) in n.token_marks.iter().enumerate() {
-        pattern(out, i, m, n.extras.first().map_or(0, |e| e.0));
+        pattern(out, i, m, n.extras.first().map(|e| e.0));
     }
     // The refusing token marks' tests, at a token whose code has a bit of theirs.
     let refusing: Vec<String> = n
@@ -469,11 +472,16 @@ fn token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>, extras: bool, fl
     } else {
         ("", "            self.last_end = self.rec_end;\n", "", "")
     };
-    let extra = match (extras, n.extras.first()) {
-        (true, Some(&(bit, kind))) => format!(
-            "            if c >> {} & 1 != 0 {{\n{extra_end}                self.leaf::<true, true>({kind}, self.rec_end);\n                self.room()?;\n                continue;\n            }}\n",
-            crate::records::MARK_SHIFT + u32::from(bit)
-        ),
+    let extra = match (extras, n.extras.split_first()) {
+        (true, Some((&(bit, kind), more))) => {
+            // The leaf's kind: the first's, or the last later kind whose bit the code has
+            // (`stream::extra_kind`).
+            let kind = more.iter().fold(kind.to_string(), |k, &(b, later)| format!("if c >> {} & 1 != 0 {{ {later} }} else {{ {k} }}", crate::records::MARK_SHIFT + u32::from(b)));
+            format!(
+                "            if c >> {} & 1 != 0 {{\n{extra_end}                self.leaf::<true, true>({kind}, self.rec_end);\n                self.room()?;\n                continue;\n            }}\n",
+                crate::records::MARK_SHIFT + u32::from(bit)
+            )
+        }
         _ => String::new(),
     };
     // The token marks that refuse (`TokenMark::refuses`): their bits in the code, one test; where
@@ -587,7 +595,8 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
                 for i in from..to {
                     let o = (*self.row(i)).start.wrapping_sub(m);
                     *self.off_c.add(i as usize) = o as OffT;
-                    wide |= u32::from(o > 0xffff) * WIDE_OFF;
+                    // Past its width (`OffT`'s): at 4 bytes an offset always fits.
+                    wide |= u32::from(o > OffT::MAX as u32) * WIDE_OFF;
                 }
                 last = m;
                 k += 1;
@@ -694,6 +703,21 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         $OPEN_MADE
         self.nopen += 1;
         self.nodes = n + 1;
+    }
+
+    /// `SETTLE`: the pending extras, from the first, while output `o` does not hold at their
+    /// starts, settled: the nodes closed next keep them.
+    #[inline(always)]
+    fn settle_before(&mut self, o: usize) {
+        let first = self.nodes - self.pending;
+        let mut i = first;
+        while i < self.nodes && !self.bit(o, unsafe { (*self.row(i)).start }) {
+            i += 1;
+        }
+        if i > first {
+            self.keep = unsafe { (*self.row(i - 1)).end };
+            self.pending = self.nodes - i;
+        }
     }
 
     /// `CLOSE`: its end, size and tail; the pending extras after it are its parent's. A node
@@ -1181,14 +1205,26 @@ fn reread(out: &mut String, i: usize, r: &crate::stream_ir::Reading) {
 }
 
 /// A token mark's tokens (`Words::token_marks`): each element at its offset among the records
-/// that are no extra. A step a record.
-fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: u8) {
-    let shift = crate::records::MARK_SHIFT + u32::from(extra_bit);
+/// that are no extra (`extra_bit`: none for a grammar without extras). A step a record.
+fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
+    // A record is an extra where its code has the extra's bit; with no extras, none is.
+    let no_extra = |c: &str| match extra_bit {
+        Some(b) => format!("{c} >> {} & 1 == 0", crate::records::MARK_SHIFT + u32::from(b)),
+        None => "true".into(),
+    };
+    let free = no_extra("c");
     let mut body = String::new();
     let test = |el: &crate::program::TokenElem| -> String {
         let mut t = Vec::new();
         if el.kinds != 0 {
-            t.push(format!("((c & 0xff) < 64 && {:#x}u64 >> (c & 0xff) & 1 != 0)", el.kinds));
+            // Not one of the kinds' hard keywords (`TokenElem::except`).
+            let keyword = if el.except.is_empty() {
+                String::new()
+            } else {
+                let x: Vec<String> = el.except.iter().map(|&s| (u32::from(s) + 1).to_string()).collect();
+                format!(" && !matches!((c >> 8) & 0xff, {})", x.join(" | "))
+            };
+            t.push(format!("((c & 0xff) < 64 && {:#x}u64 >> (c & 0xff) & 1 != 0{keyword})", el.kinds));
         }
         if !el.words.is_empty() {
             let w: Vec<String> = el.words.iter().map(|&s| (u32::from(s) + 1).to_string()).collect();
@@ -1204,13 +1240,13 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: u8) {
             0 => writeln!(body, "        let c = unsafe {{ *self.codes.add(here * self.rs) }};\n        if !({}) {{ return false; }}", test(el)).unwrap(),
             o if o < 0 => {
                 // The record before, past the extras (an offset of -1).
-                writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if c >> {shift} & 1 == 0 {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
+                writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
             }
             o => {
                 // No record left: an `end` element holds there (it is the last), any other fails.
                 let past = if el.end { "true" } else { "false" };
                 for _ in ahead..o {
-                    writeln!(body, "        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if c >> {shift} & 1 == 0 {{ break c; }}\n        }};").unwrap();
+                    writeln!(body, "        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};").unwrap();
                 }
                 ahead = o;
                 writeln!(body, "        if !({}) {{ return false; }}", test(el)).unwrap();
@@ -1571,6 +1607,7 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
             format!("s.leaf::<{deferred}, {extra}>({k}, {end});\n{}", jump(0)?)
         }
         Op::Settle { .. } => format!("s.pending = 0;\n{}", jump(0)?),
+        Op::SettleBefore { mask } => format!("s.settle_before({});\n{}", mask_output(n, mask)?, jump(0)?),
         Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
             let k = u32::from(order);
             let here = if (k as usize) < x.in_code {

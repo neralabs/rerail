@@ -2009,7 +2009,7 @@ pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_c
     // SAFETY: the scan completed: its last value is the total.
     let len = unsafe { *b.ptr::<u32>(start_at + 4 * n) } as usize;
     // Alone in its block, with room for an index by each column: strata probe an axis by `n` and by `a`.
-    let rows = Part::for_writes_indexed(2, len, 2);
+    let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, len, 2);
     if len > 0 {
         let needed = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
         let rows_at = rows.rows_at() as u64;
@@ -2050,7 +2050,7 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// A view read in place (decision 0353 step 4d): its rows are read through the views' reads, and its relation
     /// (of no columns) holds its indexes alone.
     pub(in crate::code_rule_dsl) view: Option<crate::code_rule_dsl::facts::vtab::ViewInPlace>,
-    /// Its descriptor's arity and base rows when it was made (Q125): a descriptor found otherwise later was
+    /// Its descriptor's arity and base rows when it was made (Q186): a descriptor found otherwise later was
     /// overwritten, not misread.
     made: (u32, u32),
 }
@@ -2137,7 +2137,8 @@ impl DevRel {
     pub(in crate::code_rule_dsl) fn in_block(b: &crate::code_rule_dsl::facts::rows::InBlock, cols: usize) -> Result<DevRel, Error> {
         assert!(b.at > 0, "a descriptor past the block's header");
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-        let buffer = Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.facts.clone()));
+        // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
+        let buffer = Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.clone()));
         Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0) }.noted())
     }
 
@@ -2375,7 +2376,7 @@ struct Building {
     home: std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
     rel: *const rerail_blocks::relation::Relation,
     room: rerail_blocks::relation::IndexRoom,
-    /// The relation's descriptor as it was once the index was reserved (Q125): checked before the index is marked
+    /// The relation's descriptor as it was once the index was reserved (Q186): checked before the index is marked
     /// built, so a descriptor something overwrote meanwhile names what changed instead of being followed.
     before: Vec<u8>,
 }
@@ -2403,7 +2404,7 @@ impl Building {
         let changed: Vec<usize> = (0..now.len() / 8).filter(|&k| now[8 * k..8 * k + 8] != self.before[8 * k..8 * k + 8]).map(|k| 8 * k).collect();
         let h = self.home.block.header();
         panic!(
-            "a relation's descriptor overwritten while its index was built (Q125): {origin}, at {} of a block of kind {} ({} used of {}), index {} (buckets at {}, rows at {}, {} rows); bytes changed at {changed:?}\n  before {}\n  now    {}",
+            "a relation's descriptor overwritten while its index was built (Q186): {origin}, at {} of a block of kind {} ({} used of {}), index {} (buckets at {}, rows at {}, {} rows); bytes changed at {changed:?}\n  before {}\n  now    {}",
             self.home.block.offset_of(self.rel), h.kind, self.home.block.used(), self.home.block.reserved(), self.room.index, self.room.offs, self.room.rows, self.room.rows_n, words(&self.before), words(&now)
         );
     }
@@ -2641,7 +2642,7 @@ impl Batch {
                 let now = r.rows.needed.load(std::sync::atomic::Ordering::Relaxed);
                 (now != w.needed).then(|| {
                     let held = r.rows.reserved.load(std::sync::atomic::Ordering::Relaxed);
-                    format!("{}: {} rows past its chunks (Q125), a relation of {} rows its device side says, {} its chunks hold, {} claimed, {} columns, at {} of a block of kind {}",
+                    format!("{}: {} rows past its chunks (Q186), a relation of {} rows its device side says, {} its chunks hold, {} claimed, {} columns, at {} of a block of kind {}",
                             w.what, now.wrapping_sub(w.needed), w.rows, held, r.rows.len.load(std::sync::atomic::Ordering::Relaxed), r.rows.ncols, w.at, w.home.block.header().kind)
                 })
             })
@@ -2766,11 +2767,11 @@ impl Batch {
         let home = rel.home.clone().expect("an index of a relation, not of words");
         let r = rel.relation();
         if r.base_rows != 0 {
-            // Q125: what was read, and where, so a writer that missed its own buffer can be named.
+            // Q186: what was read, and where, so a writer that missed its own buffer can be named.
             let h = home.block.header();
             let origin = if rel.view.is_some() { "a view read in place" } else if rel.part.is_some() { "the device's own" } else { "a relation in its block" };
             panic!(
-                "an index of a full relation (Q125): {origin} of {} rows, {} columns, at {} of a block of kind {} (magic {:#x}, {} used of {}); its header: arity {}, base rows {} ({:#x}), {} indexes, {} order keys; when made: arity {}, base rows {}\n  descriptor {}",
+                "an index of a full relation (Q186): {origin} of {} rows, {} columns, at {} of a block of kind {} (magic {:#x}, {} used of {}); its header: arity {}, base rows {} ({:#x}), {} indexes, {} order keys; when made: arity {}, base rows {}\n  descriptor {}",
                 rel.rows, rel.cols, rel.at, h.kind, h.magic, home.block.used(), home.block.reserved(), r.arity, r.base_rows, r.base_rows, r.nindex.load(std::sync::atomic::Ordering::Relaxed), r.nokey, rel.made.0, rel.made.1,
                 Building::descriptor(std::ptr::from_ref(r)).as_chunks::<8>().0.iter().map(|w| format!("{:016x}", u64::from_le_bytes(*w))).collect::<Vec<_>>().join(" ")
             );

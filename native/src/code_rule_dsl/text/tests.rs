@@ -114,8 +114,16 @@ fn the_vocabulary_engine_agrees_with_each_regex() {
     }
 }
 
-/// A random tree of spans over `len` bytes: each node's children split part of its span.
+/// A random tree of spans over `len` bytes: each node's children split part of its span. In
+/// preorder, as a tape's nodes are: the scan finds a start's nodes by searching their starts.
 fn spans(rng: &mut Lcg, len: usize) -> Vec<Range<usize>> {
+    let mut out = breadth(rng, len);
+    out.sort_by_key(|span| (span.start, std::cmp::Reverse(span.end)));
+    out
+}
+
+/// The tree of `spans`, breadth first.
+fn breadth(rng: &mut Lcg, len: usize) -> Vec<Range<usize>> {
     let mut out = vec![0..len];
     let mut at = 0;
     while at < out.len() && out.len() < 400 {

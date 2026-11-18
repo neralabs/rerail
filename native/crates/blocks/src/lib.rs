@@ -19,12 +19,14 @@
 //! Descriptors are never `Copy`: a reference is only meaningful at its own address, so a descriptor is only ever
 //! reached by reference into its block.
 
+pub mod alloc;
 pub mod block;
 pub mod chunk;
 pub mod col;
 #[cfg(unix)]
 pub mod deferrable;
 pub mod facts;
+pub mod free;
 /// A relation's reads, generated from their CLIF (decision 0325; `rerail_clif::relation`): what `Rows` and
 /// `Relation` read through, the same reads the kernels' MSL (`relation_reads.metal`) and the JIT make.
 #[rustfmt::skip]
@@ -34,6 +36,7 @@ pub const RELATION_READS: &str = include_str!("relation_reads.metal");
 pub mod journal;
 pub mod mem;
 pub mod packed;
+pub mod ranged;
 pub mod program;
 pub mod refs;
 pub mod relation;

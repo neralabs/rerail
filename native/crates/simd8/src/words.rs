@@ -95,7 +95,9 @@ const fn lane(w: &[u8], k: usize, fold: bool) -> u64 {
 /// The direct shape's slot: the first lane and the length, one multiply.
 #[inline(always)]
 const fn direct_slot(lo: u64, len: usize, mult: u64, bits: u32) -> usize {
-    ((lo ^ (len as u64).wrapping_mul(0x9e37_79b9)).wrapping_mul(mult) >> (64 - bits)) as usize
+    // The length is xor-ed into the key's low bits: the multiply carries them up to the slot's
+    // bits, and two words of one first lane differ in length.
+    ((lo ^ len as u64).wrapping_mul(mult) >> (64 - bits)) as usize
 }
 
 /// The direct shape's multiplier for `words` in `2^bits` slots: the first (of a fixed sequence) under
@@ -106,7 +108,7 @@ const fn direct_mult(words: &[&[u8]], fold: bool, bits: u32) -> u64 {
     let mut key = [0u64; DIRECT_MAX + 1];
     let mut i = 1;
     while i < words.len() {
-        key[i] = lane(words[i], 0, fold) ^ (words[i].len() as u64).wrapping_mul(0x9e37_79b9);
+        key[i] = lane(words[i], 0, fold) ^ words[i].len() as u64;
         i += 1;
     }
     let mut mark = [0u16; 1 << 12];
@@ -465,24 +467,7 @@ impl<const SLOTS: usize, const BUCKETS: usize, const N: usize, const FOLD_CASE: 
     }
 }
 
-/// The 8 bytes at `s` as a little-endian lane; past the text's end, zeros.
-#[inline(always)]
-fn load8(src: &[u8], s: usize) -> u64 {
-    match src.get(s..s + 8) {
-        Some(b) => u64::from_le_bytes(b.try_into().expect("8")),
-        None => load8_short(src, s),
-    }
-}
-
-/// `load8` within 8 bytes of the text's end: out of line, so the probe's registers stay few.
-#[cold]
-#[inline(never)]
-fn load8_short(src: &[u8], s: usize) -> u64 {
-    let mut b = [0u8; 8];
-    let n = src.len().saturating_sub(s).min(8);
-    b[..n].copy_from_slice(&src[s..s + n]);
-    u64::from_le_bytes(b)
-}
+use crate::swar::load8;
 
 #[cfg(test)]
 mod tests {

@@ -38,8 +38,8 @@ fn ids() -> &'static Ids {
 /// cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_sql_lean::Refusal> {
     let ids = ids();
-    let lacks = |what: &str, i: usize| format!("tree-sitter-sql lacks the lean parser's {what} {i}");
-    let code_of = |&key: &u32| -> Result<Code, String> {
+    let lacks = move |what: &str, i: usize| format!("tree-sitter-sql lacks the lean parser's {what} {i}");
+    let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, field, _, extra) = rerail_sql_lean::unkey(key);
         let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
         let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
@@ -49,7 +49,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
         }
         Ok(code)
     };
-    rerail_sql_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, &code_of))
+    rerail_sql_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// SQL's tree parser: the lean parser, standing in for tree-sitter-sql where it reads the file.
@@ -65,7 +65,7 @@ impl TreeParser for Lean {
             Ok(image) => {
                 drop(span);
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
-                Some(image.map(FileImage::single).map_err(TemplateError::Encode))
+                Some(image.map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
             }
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("SQL parse", || format!("a file the lean parser refused ({why:?}): tree-sitter-sql"));

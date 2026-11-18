@@ -26,6 +26,8 @@ pub const INDEX_BITS: u32 = 32 - SLOT_BITS;
 pub const SPAN_SLOTS: u32 = 16;
 /// An order key's low bits: its index in its granule; above them, its run's rank.
 pub const ORDER_INDEX_BITS: u32 = 18;
+/// The items a granule jump stands for (`Numbering::jumps`).
+pub const JUMP: u32 = 64;
 
 /// `len` items, `off` bytes from the run's own address (`rerail_blocks::refs::Span`'s layout).
 #[repr(C)]
@@ -96,8 +98,11 @@ pub struct Numbering {
     /// Each granule's start and end as ranks: `[nodes, tokens]`.
     pub rank_starts: [Run; 2],
     pub rank_ends: [Run; 2],
+    /// By item, the last granule starting at or before item number `JUMP * b`, for each `b` (u32s): a number's
+    /// granule is searched between two of them.
+    pub jumps: [Run; 2],
 }
-const _: () = assert!(std::mem::size_of::<Numbering>() == 32 + 16 * 21);
+const _: () = assert!(std::mem::size_of::<Numbering>() == 32 + 16 * 23);
 
 /// A field's byte offset in the descriptor.
 pub mod at {
@@ -123,6 +128,7 @@ pub mod at {
     pub const RUN_AT: i32 = offset_of!(Numbering, run_at) as i32;
     pub const RANK_STARTS: i32 = offset_of!(Numbering, rank_starts) as i32;
     pub const RANK_ENDS: i32 = offset_of!(Numbering, rank_ends) as i32;
+    pub const JUMPS: i32 = offset_of!(Numbering, jumps) as i32;
     /// A run's size, and its fields'.
     pub const RUN: i32 = std::mem::size_of::<Run>() as i32;
     pub const RUN_OFF: i32 = offset_of!(Run, off) as i32;
@@ -134,7 +140,7 @@ pub mod at {
 pub fn msl() -> String {
     use std::mem::offset_of;
     let (count, samples) = (format!("count[{ITEMS}]"), format!("samples[{ITEMS}]"));
-    let fields: [(&str, &str, usize); 20] = [
+    let fields: [(&str, &str, usize); 21] = [
         ("uint", "first", offset_of!(Numbering, first)),
         ("uint", "granules", offset_of!(Numbering, granules)),
         ("uint", &count, offset_of!(Numbering, count)),
@@ -155,6 +161,7 @@ pub fn msl() -> String {
         ("Run", "run_at", offset_of!(Numbering, run_at)),
         ("Run", "rank_starts[2]", offset_of!(Numbering, rank_starts)),
         ("Run", "rank_ends[2]", offset_of!(Numbering, rank_ends)),
+        ("Run", "jumps[2]", offset_of!(Numbering, jumps)),
     ];
     let mut s = String::from("struct Run {\n    long off;\n    ulong len;\n};\nstatic_assert(sizeof(Run) == 16, \"Run: size\");\n");
     s += "struct Numbering {\n";

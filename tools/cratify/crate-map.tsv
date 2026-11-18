@@ -36,6 +36,12 @@ logic::plan::sketch	rerail-facts
 logic::front	rerail-rr
 logic::magic	rerail-rr
 logic::rr	rerail-rr
+# The program image's core (decision 0377); the pass manager, the passes and the analyses stay in logic
+logic::program_image	rerail-program-image
+logic::program_facts	rerail-program-image
+logic::program_image::analyses	rerail-logic
+logic::program_image::manager	rerail-logic
+logic::program_image::passes	rerail-logic
 
 # Logic
 logic	rerail-logic

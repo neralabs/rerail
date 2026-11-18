@@ -1,6 +1,6 @@
 # 0403: A tape's reads are proven within its bytes, whatever the bytes hold
 
-Status: decided (2026-11-18), by the user, on Q125: "That's not just a correctness issue but a security issue too.
+Status: decided (2026-11-18), by the user, on Q186: "That's not just a correctness issue but a security issue too.
 That means both identifying and fixing the root-cause for corruption, and ensuring that (at least behind a flag)
 that we prove that reads can't exceed the bounds, being smart about it (for example, for an offset table we can
 validate that it's both sorted and the maximum is in bound rather than check every access when it happens)". Built
@@ -15,7 +15,7 @@ reader takes offsets and node numbers from the tape's own bytes and adds them to
 bounds check, and the CPU's JIT reads are raw loads too. A tape with a wrong number in it (a bug, a bit flipped on
 disk, or bytes made to do this) could make a read go outside the tape, or a write go outside the 16z cache. A read
 out of bounds is a wrong answer at best and a leak of other memory at worst. A write out of bounds corrupts the
-engine's own state. Q125, a relation read with a garbage header, looked like one.
+engine's own state. Q186, a relation read with a garbage header, looked like one.
 
 **The rule.** Every read of a tape stays within the tape's bytes, every span it gives stays within its source, every
 write of a 16z cache stays within the cache, and every row a kernel writes into a relation's block stays within the
@@ -34,12 +34,12 @@ A walk over the tree must also *end*, whatever the bytes hold: a kernel that loo
 
 | Structure | Check | Where |
 |---|---|---|
-| 16z block index (`at`, blocks + 1 u32s) | from 0, sorted, its last the compressed bytes' length; the compressed bytes start inside the tape | `Tape16Z::from_bytes` |
+| 16z piece index (decision 0399 §3: each piece's start in the payload and its length, u32s, then its kind, a byte; four pieces a block) | each piece within the payload; a raw piece exactly its decoded length; a repeat names another piece, itself no repeat, of the same decoded length; the tape's own regions (part starts, checkpoints, newline index, piece index) where its header says, the last ending at the tape's end | `Tape16Z::from_bytes` |
 | 16z header | its nodes fit a u32 (the device's ids); its blocks fit the cache key's 22 bits | `Tape16Z::from_bytes` |
-| 16z sides (4 lengths a block) | each block's decoded size at most 255 bytes a compressed byte, plus 4 KiB: what LZ4 can decode the block's bytes to. The sides size every cache entry, so they are bounded by the stored bytes, not taken on trust | `Tape16Z::from_bytes` |
-| 16z cache entry | sized for the largest block decoded *as a full block* (1024 nodes), so a node of a block, past the block's last too, lies in its entry | `Tape16Z::view` |
+| 16z pieces' decoded lengths (a piece's column in its block and its side list's part, from the part starts, which are sorted and end at each list's length) | an LZ4 piece's at most 255 bytes a stored byte, plus 64: what LZ4 can decode its bytes to. They size every cache entry, so they are bounded by the stored bytes, not taken on trust | `Tape16Z::from_bytes` |
+| 16z cache entry | sized for the largest block decoded as the reads lay it (`Tape16Z::entry_bytes`, `z_decode`); every read of an entry is masked to it, so a node of a block, past the block's last too, reads in its entry | `Tape16Z::view` |
 | Format 16 part tables | sorted, each list's last start its length (already, `placement`) | `f16::placement` |
-| Format 16 regions | each node region at least its nodes × the language's width | `Placement::view` |
+| Format 16 blocks (block-major, decision 0399) | the blocks' start and stride as the widths give them, and the tail where its lengths put it (`header`, `fits`); the language's widths the tape's own, so each block's columns hold its rows at the widths the reads take | `f16::placement`, `Placement::view` |
 | Format 15 columns | each exactly its nodes × its width, read by bounds-checked slices (already) | `f15_columns` |
 | A tape's source length (its header's) | the source the document holds: a resident document whose header states another is refused | `residency::slabs::planned` |
 | The 16z cache | `Spec::init` lays out the generations, the index, the entries, the dead entry, 256 bytes of slack and a 256-byte guard. Its words (generations, entries, shift, slots, stride, first entry, dead entry) are the only inputs of its addresses | `view::cache::Spec` |
@@ -55,15 +55,17 @@ The reads are the CLIF ones (`crates/clif/src/reads.rs`). Each line is why one k
 - **An entry** is `n << shift`, with `n < entries`. A writer claims `n` from the generation's count only when
   `n < entries`, and the slot it writes holds `n + 1`, so every number a reader finds is a writer's.
 - **A decode** first checks that the block's layout plus the slot's head and 64 bytes fit the entry. Its writes then
-  stop at the destination's end plus 32 bytes: the wild copies go 8 bytes past, and the side parts written after the
-  regions go 32 bytes past.
+  stop at the destination's end plus 40 bytes: each piece decodes into its column's place with 16 bytes of room
+  after it (the wild copies go 8 bytes past), and the side parts' starts are written after the checkpoints. A raw
+  piece is copied no further than its place; a repeat names a piece below the tape's count, else it is read as
+  itself (decision 0399 §3's pieces, at the merge with oscar, 2026-11-18).
 - **The decoder's source.**
   - A sequence's literals must lie in the source as well as in the destination. They were checked against the
     destination only: a literal length past the block's bytes read past the tape's end.
   - A match's offset needs both of its bytes in the source, not one.
   - A match reads only behind its own output, within the entry (`off ≤ written`).
 - **A block's number** must be below the tape's blocks. A block past the last gets the dead entry and a counted
-  failure, and the batch is refused. The block index is read only below its end.
+  failure, and the batch is refused. The piece index is read only below its end.
 - **A shared read whose tries ran out** reads the dead entry, a failure counted. It used to read the entry as it
   was, which another thread may have been rewriting, so it could hold two blocks' bytes. The run is refused, but
   only after its kernels have gone on with the value: a torn node, span or code used as an index reaches anywhere.
@@ -93,14 +95,15 @@ The reads are the CLIF ones (`crates/clif/src/reads.rs`). Each line is why one k
   keep. A batch whose kernels counted one fails, each relation named, and its strata run on the CPU. Before it, a
   kernel stored through `rows_at` and 8 bytes whatever the column's width. A row past the chunks made finds its
   chunk's offset 0, so its address is the column's directory itself. A write there overwrites the directory and
-  the descriptors after it (Q125, below).
+  the descriptors after it (Q186, below).
 - **A node a label pass marks or counts.** The label passes set a node's bit (`bits[node / 32]`) and add to its
   tally (`tally[node]`) at a node a pattern started at or captured, often reached by a walk. These are atomic
   writes at an offset from the node: unbounded, a node from a bad read reaches 512 MB past the bits and 16 GB past
   the tallies. Each is written only for a node below the batch's (`MARK`, `TALLY` in `metal_label_passes.metal`;
   the runtime's own, in `metal_batch_runtime.metal`). Any other is not written: the label kernels set flag 256,
   and the passes run again on the interpreter, counted (`gpu.node_past_batch`) and said once; the runtime fails
-  its task (error 8), and the batch runs on the CPU. A walk's hop can give the tape's node count itself, one past
+  its task (status 9; 8 is decision 0334's budget stop, which oscar's branch had taken), and the batch runs on the
+  CPU. A walk's hop can give the tape's node count itself, one past
   the last, so this bound is needed even with the walks bounded.
 - **A node a kernel reads** comes from a loop over the tape's nodes, from a walk (above), or from a view's row
   (`vread`: the document whose rows hold it). So reads of formats 15 and 16 take nodes below the tape's count, which
@@ -119,11 +122,11 @@ The reads are the CLIF ones (`crates/clif/src/reads.rs`). Each line is why one k
 
 - **`f16::tests::a_16z_tapes_reads_stay_within_its_bytes`:**
   - places a 16z tape so its last byte lies against a page no read may touch (64 KiB, unmapped for reading);
-  - makes the last block's literals claim more bytes than the block has;
+  - makes the last LZ4 piece's literals claim more bytes than the piece has;
   - reads every node with nine reads, the walks among them;
   - reads nodes past the tape's end, which count failures and do not fault;
-  - and checks that a side length past the LZ4 bound is refused, and that the cache's guard or shape overwritten is
-    found.
+  - and checks that a piece whose stated decoded length is past the LZ4 bound is refused, and that the cache's guard
+    or shape overwritten is found.
 
   Without the decoder's source check, the test dies of SIGBUS on the guard page: the old decoder read past the tape.
   Without the walk rules, `tape_parent` and `tape_next` never return.
@@ -136,9 +139,9 @@ The reads are the CLIF ones (`crates/clif/src/reads.rs`). Each line is why one k
   A cache found overwritten panics and names what: memory a writer missed is no state to go on from. This is the
   flag the user allowed for, made always-on: it costs a 256-byte compare per batch.
 
-## Q125
+## Q186
 
-Q125 is a relation in a device join whose header read `base_rows` 2,436,104,195: 1 run in 95, on 16z, on
+Q186 is a relation in a device join whose header read `base_rows` 2,436,104,195: 1 run in 95, on 16z, on
 2026-11-18. A loop of 150 runs since crashed once (SIGSEGV, run r-q125-139). The crash report puts the fault in
 `Relation::index_built`, called from `Batch::finish` in a wave's deferred flush. It is the store of the index's
 column count into `indexes[i]`, through the descriptor's `indexes` span. The span's length passed the bounds check,
@@ -152,7 +155,7 @@ The same descriptor words were written over in both: a row writer that missed it
   reaches the descriptors behind it.
 - So the writer is bounded where it writes (`rows_put`), not where it is sized. A run that would have written
   past a relation's chunks now fails its batch with the relation named (`a device batch refused: … rows past its
-  chunks (Q125)`). It no longer corrupts the block.
+  chunks (Q186)`). It no longer corrupts the block.
 - Ruled out by reading, or by runs:
   - the residency table's and the views' directory's `rel` (each from the address its kernels take);
   - the wave's lifetimes (the runs and their buffers kept until its flush);
@@ -160,7 +163,7 @@ The same descriptor words were written over in both: a row writer that missed it
   - the index build (its `n` the reservation's, its buckets masked);
   - a torn shared 16z read. Under a 1 MB cache, where tries run out by the million, 11 runs of the engine before
     the dead-entry change and 12 after were all clean.
-- The work queue's Q125 holds the runs since.
+- The work queue's Q186 holds the runs since.
 
 ## Open
 

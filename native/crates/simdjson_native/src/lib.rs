@@ -16,6 +16,7 @@ unsafe extern "C" {
     fn rerail_simdjson_kernel_runs(kernel: u32) -> i32;
     fn rerail_simdjson_v9np(kernel: u32, src: *const c_char, len: usize, sink: *mut Sink) -> i32;
     fn rerail_simdjson_v9np_jsonc(kernel: u32, src: *const c_char, len: usize, sink: *mut Sink) -> i32;
+    fn rerail_simdjson_v9np_unhashed(kernel: u32, src: *const c_char, len: usize, sink: *mut Sink) -> i32;
     fn rerail_simdjson_stage1(kernel: u32, src: *const c_char, len: usize, hashed: i32) -> i64;
     fn rerail_simdjson_v9np_rewalks(kernel: u32) -> u64;
     fn rerail_simdjson_release_above(keep: usize);
@@ -41,6 +42,12 @@ pub struct Sink {
     pub code_field: [u16; 36],
     pub code_value: [u8; 36],
     pub digest: [u8; 32],
+    /// Format 16 (decision 0399): where `ev` is set, the walk writes no column but each node's event, three words,
+    /// and calls `flush` with `ev_len` words when `ev_cap` are full and at the end (`rerail_simdjson::events_with`).
+    pub ev: *mut u32,
+    pub ev_len: u32,
+    pub ev_cap: u32,
+    pub flush: unsafe extern "C" fn(*mut Sink),
 }
 
 /// A v9np kernel: simdjson's stage 1 for one of its implementations, the source hashed in it, and our
@@ -118,6 +125,15 @@ impl Kernel {
         unsafe { rerail_simdjson_v9np_jsonc(self as u32, src.as_ptr().cast(), src.len(), sink) }
     }
 
+    /// As `tape`, the source not hashed (the digest zeros): for a measurement, against a reader
+    /// that does not hash (`rerail-json-lean`).
+    ///
+    /// # Safety
+    /// As `tape`.
+    pub unsafe fn tape_unhashed(self, src: &[u8], sink: &mut Sink) -> i32 {
+        // SAFETY: as `tape`.
+        unsafe { rerail_simdjson_v9np_unhashed(self as u32, src.as_ptr().cast(), src.len(), sink) }
+    }
     /// Stage 1 alone, for a measurement: the implementation's own, or with `hashed` ours (the source
     /// hashed in it). The structural index's length, simdjson's error code negated, or -1.
     pub fn stage1(self, src: &[u8], hashed: bool) -> i64 {

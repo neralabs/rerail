@@ -47,7 +47,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
     let Some(ids) = ids() else {
         return Ok(Err("tree-sitter-python lacks a kind or field the lean parser names".into()));
     };
-    let code_of = |&key: &u32| -> Result<Code, String> {
+    let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, field, class, extra) = rerail_python_lean::unkey(key);
         let kind = ids.kinds[usize::from(kind)];
         let mut code = Code::plain(kind, ids.fields[usize::from(field)], &ids.classes[usize::from(class)])?;
@@ -56,7 +56,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
         }
         Ok(code)
     };
-    rerail_python_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, &code_of))
+    rerail_python_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// Python's tree parser: the lean parser, standing in for tree-sitter-python where it reads the file.
@@ -74,7 +74,7 @@ impl TreeParser for Lean {
             Ok(image) => {
                 drop(span);
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
-                Some(image.map(FileImage::single).map_err(TemplateError::Encode))
+                Some(image.map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
             }
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("Python parse", || format!("a file the lean parser refused ({why:?}): tree-sitter-python"));

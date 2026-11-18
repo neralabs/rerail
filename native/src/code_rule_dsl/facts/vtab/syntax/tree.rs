@@ -125,9 +125,7 @@ impl Tree {
     /// The relations read, their strings as atoms (`atom` of a string index).
     pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
-            let mut r = Relation::new(columns);
-            rows.for_each(|row| r.push(&row));
-            r
+            Relation::from_rows(columns, rows)
         };
         let mut out = Vec::new();
         if self.op_at {

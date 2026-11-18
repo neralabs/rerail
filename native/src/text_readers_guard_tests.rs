@@ -18,8 +18,8 @@ const ALLOWED: [(&str, usize, &str); 7] = [
     ("native/src/code_rule_dsl/logic/plan/coverage.rs", 1, "the coverage ledger, a hand-kept document"),
     ("native/src/code_rule_dsl/typing/rounds.rs", 8, "the typing spike's fact dumps (T's research inputs), not a run's outputs"),
     ("native/src/code_rule_dsl/facts/ygraph/mod.rs", 2, "the y-graph's member lists and its recorded edges (fixtures of the replay)"),
-    ("accel/src/upkeep.rs", 2, "the build farm upkeep's record of when each job last finished, a file of its own beside the job's"),
-    ("native/crates/tape_format/src/f16.rs", 1, "format 16's code table choices in their text form (`to_text`, `from_text`), a checked-in grammar file"),
+    ("native/crates/tape_format/src/f16.rs", 1, "a language's format 16 code table, as the lab ships it (`Table::from_text`)"),
+    ("accel/src/upkeep.rs", 2, "the upkeep jobs' last finish times, a record of the job's own (`.upkeep`)"),
 ];
 
 /// Every lean parser's edit oracle (`native/crates/<language>_lean/src/oracle.rs`) reads a recorded edit script,

@@ -670,6 +670,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -773,6 +775,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(
@@ -883,6 +887,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -1068,6 +1074,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -1208,6 +1216,8 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                contains_start: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -1329,6 +1339,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -1429,6 +1441,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);
@@ -1547,6 +1561,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);
@@ -1726,6 +1742,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         unsafe {
             assert_eq!((compiled.cursor_equal)(&mut context, 2, 3), 1);
@@ -1994,6 +2012,8 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                contains_start: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             status
@@ -2224,6 +2244,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -2433,6 +2455,8 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                contains_start: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0, "operation {operation} mode {mode}");
@@ -2605,6 +2629,12 @@
             let mut context: NativeTaskContext = unsafe { mem::zeroed() };
             let tape = TestTape::of(&nodes);
             tape.bind(&mut context);
+            // The batch's row for the contains test (`packed_batch::contains_rows`): node 0's text, `example`,
+            // holds `amp`. The JIT reads the bit; no other case reads the rows.
+            let rows = [1_u32];
+            context.derived = rows.as_ptr();
+            context.derived_words = 1;
+            context.contains_start = 0;
             context.node_count = 1;
             context.source = source.as_ptr();
             context.source_length = source.len() as u32;
@@ -3400,6 +3430,8 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                contains_start: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -3503,6 +3535,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -3617,6 +3651,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -3731,6 +3767,8 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                contains_start: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -3826,6 +3864,8 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);

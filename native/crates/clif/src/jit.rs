@@ -12,11 +12,15 @@ pub struct Reads {
 }
 
 impl Reads {
-    #[allow(clippy::new_without_default)]
+    // The closure returns Cranelift's `ModuleError`, as `define_function` does.
+    #[allow(clippy::new_without_default, clippy::result_large_err)]
     pub fn new() -> Self {
         use cranelift_codegen::ir::{InstBuilder, UserFuncName};
         use cranelift_module::Linkage;
-        let builder = cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
+        let mut builder = cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
+        // One arena, so a call between the module's functions stays in a `bl`'s reach (±128 MiB on aarch64), however
+        // far apart the process's other allocations put separately allocated code (as the compiler's JITs do).
+        builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(64 << 20).unwrap()));
         let mut module = cranelift_jit::JITModule::new(builder);
         crate::inline::define_cold(&mut module, &mut |module, id, context| module.define_function(id, context)).unwrap();
         let mut ids = Vec::new();

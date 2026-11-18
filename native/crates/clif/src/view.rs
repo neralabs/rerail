@@ -3,7 +3,7 @@
 //! host), its format, its widths. One definition: the device's `DocView` is this, and its MSL is
 //! written from it ([`msl`]), with each field's offset asserted against Rust's.
 
-/// A document's view (116 bytes, u32s; the device's `DocView`, `metal_tape.metal`).
+/// A document's view (120 bytes, u32s; the device's `DocView`, `metal_tape.metal`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TapeView {
@@ -12,15 +12,19 @@ pub struct TapeView {
     pub at: u32,
     pub nodes: u32,
     pub node_base: u32,
-    /// The tape's format: 15 or 16 (a 16z tape is laid out as format 16 where it is placed).
+    /// The tape's format: 15, 16, or `F16Z_FORMAT` (a 16z tape as stored, read through a cache of its decoded
+    /// blocks, decision 0353 step 4b).
     pub format: u32,
     /// Format 15: `size`'s, `off`'s and `tail`'s widths in bytes, at bits 0, 4 and 8; bit 12: tails
     /// measured from the node's own start. Format 16: the slot, gap and length widths at bits 0, 4
     /// and 8, the checkpoints' at 12, and the four side lists' value widths at 16, 20, 24 and 28.
     pub widths: u32,
-    /// Format 15's columns (code, size, base, off, tail), or format 16's arrays (codes, slots, gaps,
-    /// lengths, checkpoints).
+    /// Format 15's columns (code, size, base, off, tail). Format 16 (block-major, decision 0399): block
+    /// 0's start, then the bytes a row holds before the slots, the gaps, the lengths and the checkpoints
+    /// (a block of R rows holds column r at `R * columns[r]` from its start).
     pub columns: [u32; 5],
+    /// Format 16: the blocks' stride, in bytes (a block is `F16_PART` nodes).
+    pub stride: u32,
     /// Format 16: the four side lists (codes' low parts, escaped slots, gaps, lengths), and each
     /// one's part starts (u32s, a part a 1,024 nodes).
     pub side: [u32; 4],
@@ -32,7 +36,8 @@ pub struct TapeView {
     pub codes: u32,
     pub source: u32,
     pub source_len: u32,
-    /// Line starts (u32, document-local bytes), the first 0, and how many.
+    /// Format 15: line starts (u32, document-local bytes), the first 0. Format 16: its newline index
+    /// (`rerail_tape_format::newlines`). And how many lines.
     pub lines: u32,
     pub line_count: u32,
     /// The code table's length.
@@ -43,19 +48,20 @@ pub struct TapeView {
     /// Where the stored tape starts.
     pub tape: u32,
 }
-const _: () = assert!(std::mem::size_of::<TapeView>() == 116);
+const _: () = assert!(std::mem::size_of::<TapeView>() == 120);
 
 /// The view's MSL: `struct TapeView`, `DocView` its name in the kernels, and each field's offset and
 /// the size asserted against this definition's, so the kernels cannot read a layout of their own.
 pub fn msl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 19] = [
+    let fields: [(&str, &str, usize); 20] = [
         ("uint", "at", offset_of!(TapeView, at)),
         ("uint", "nodes", offset_of!(TapeView, nodes)),
         ("uint", "node_base", offset_of!(TapeView, node_base)),
         ("uint", "format", offset_of!(TapeView, format)),
         ("uint", "widths", offset_of!(TapeView, widths)),
         ("uint", "columns[5]", offset_of!(TapeView, columns)),
+        ("uint", "stride", offset_of!(TapeView, stride)),
         ("uint", "side[4]", offset_of!(TapeView, side)),
         ("uint", "parts[4]", offset_of!(TapeView, parts)),
         ("uint", "cut", offset_of!(TapeView, cut)),
@@ -89,15 +95,20 @@ pub const F16_K: u32 = 8;
 pub const F16_BLOCK: u32 = 256;
 pub const F16_PART: u32 = 1024;
 pub const F16_SUB: u32 = F16_PART / F16_BLOCK;
-/// A 16z tape's format in its view (decision 0353 step 4b): format 16 in LZ4 blocks of `F16Z_BLOCK` nodes, read
-/// in place, a block decoded where a read falls into an entry of a rolling cache (`cache`). Its view's `columns` are
-/// the block index's offset (a u32 a block, one more at the end: each block's start in the compressed bytes), the
-/// blocks' side lengths' (four u32s a block), the compressed bytes', the cache's entry size (a power of two) and
-/// whether threads share the cache (1: a read checks its entry after it); `side` is the cache's address less the
-/// tape's (an i64, low word first) and the tape's id (a u64, its blocks' keys); its widths, cut and per are format
-/// 16's.
+/// A 16z tape's format in its view (decision 0353 step 4b): format 16 stored a block of `F16Z_BLOCK` nodes at a
+/// time in `F16Z_PIECES` pieces (decision 0399 §3), read in place, a block decoded where a read falls into an entry
+/// of a rolling cache (`cache`). Its view's `columns` are the piece index's offset (each piece's start in the
+/// payload, a u32; then each one's length; then each one's kind, a byte), the side lists' part starts' (list `k`'s
+/// `blocks + 1` u32s, list after list), the checkpoints' (raw, `F16Z_BLOCK / F16_K` a block), the cache's entry
+/// size (a power of two) and whether threads share the cache (1: a read checks its entry after it); `stride` is
+/// the payload's offset; `side` is the cache's address less the tape's (an i64, low word first) and the tape's id
+/// (a u64, its blocks' keys); `lines` and `line_count` its newline index, raw, as format 16's; its widths, cut and
+/// per are format 16's.
 pub const F16Z_FORMAT: u32 = 1016;
 pub const F16Z_BLOCK: u32 = 1024;
+/// The pieces a 16z block is stored in (decision 0399 §3): codes, slots, gaps, lengths, each its array's column in
+/// the block then its side list's part.
+pub const F16Z_PIECES: u32 = 4;
 
 /// A decoded 16z block in a cache entry's payload, from the entry's first byte: the block's view (format 16's, its
 /// offsets from the bytes) and its bytes (its regions, each side list's one part, and room for the decode's 8-byte
@@ -107,6 +118,12 @@ pub mod z {
     pub const SLOT_BYTES: i32 = 144;
     /// The room past a block's bytes: its side lists' parts (32 bytes) and the decode's copies past its end.
     pub const SLACK: usize = 64;
+    const _: () = assert!(SLOT_VIEW as usize + std::mem::size_of::<super::TapeView>() <= SLOT_BYTES as usize);
+    /// How a piece is stored (its kind byte in the piece index): as its bytes, as one LZ4 block, or as a repeat of
+    /// another piece (its payload that piece's number, a u32).
+    pub const RAW: u8 = 0;
+    pub const LZ4: u8 = 1;
+    pub const REPEAT: u8 = 2;
 }
 
 /// A rolling cache (decision 0353 step 4b, the user's design): a key (a u64) to an entry of fixed size, in `gens`
@@ -401,10 +418,13 @@ pub mod at {
     pub const FORMAT: i32 = offset_of!(TapeView, format) as i32;
     pub const WIDTHS: i32 = offset_of!(TapeView, widths) as i32;
     pub const COLUMNS: i32 = offset_of!(TapeView, columns) as i32;
+    pub const STRIDE: i32 = offset_of!(TapeView, stride) as i32;
     pub const SIDE: i32 = offset_of!(TapeView, side) as i32;
     pub const PARTS: i32 = offset_of!(TapeView, parts) as i32;
     pub const CUT: i32 = offset_of!(TapeView, cut) as i32;
     pub const PER: i32 = offset_of!(TapeView, per) as i32;
+    pub const LINES: i32 = offset_of!(TapeView, lines) as i32;
+    pub const LINE_COUNT: i32 = offset_of!(TapeView, line_count) as i32;
     pub const SOURCE_LEN: i32 = offset_of!(TapeView, source_len) as i32;
 }
 

@@ -10,7 +10,7 @@
 //! Every load here reads the tape or its view, which no code writes while it is read (`readonly`).
 //! Format 16's arrays have 8 bytes of room past their last value, so a value is one word's load.
 
-use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, at, z};
+use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, at, z};
 use cranelift_codegen::ir::{
     self, AbiParam, Function, InstBuilder, MemFlags, Signature, UserFuncName, Value,
     condcodes::IntCC,
@@ -84,6 +84,9 @@ pub const READS: &[Read] = &[
     Read { family: Family::Tape, name: "tape_length", params: &[I32], ret: I32, hot: true, body: length },
     Read { family: Family::Tape, name: "tape_start_next", params: &[I32, I32], ret: I32, hot: true, body: start_next },
     Read { family: Family::Tape, name: "tape_slot", params: &[I32], ret: I64, hot: true, body: slot },
+    Read { family: Family::Tape, name: "tape_line_select", params: &[I32, I32], ret: I32, hot: false, body: line_select },
+    Read { family: Family::Tape, name: "tape_line", params: &[I32], ret: I32, hot: true, body: line },
+    Read { family: Family::Tape, name: "tape_line_start", params: &[I32], ret: I32, hot: true, body: line_start },
     Read { family: Family::Relation, name: "rows_col", params: &[I32], ret: I64, hot: true, body: crate::relation::rows_col },
     Read { family: Family::Relation, name: "col_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_at },
     Read { family: Family::Relation, name: "col_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_get },
@@ -129,12 +132,12 @@ pub const READS: &[Read] = &[
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
 /// block).
-pub const F16_ONLY: &[&str] = &["tape_f16_side", "tape_slot"];
+pub const F16_ONLY: &[&str] = &["tape_f16_side", "tape_slot", "tape_line_select"];
 
 /// The reads a reader of the tape crate calls (the rest are the reads' own: a side list's value takes a list's
 /// number, which is the reads' to give).
 pub fn public(name: &str) -> bool {
-    name != "tape_f16_side"
+    name != "tape_f16_side" && name != "tape_line_select"
 }
 
 /// The read named `name`.
@@ -410,105 +413,6 @@ pub fn ids_msl_source() -> Result<String, String> {
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    /// The facts crate's numbering reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_facts_id_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.rs");
-        let source = super::ids_rust_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_reads_are_these");
-    }
-
-    /// The numbering's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_facts_id_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.metal");
-        let source = super::ids_msl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these");
-    }
-
-    /// The blocks crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_blocks_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/generated_reads.rs");
-        let source = super::relation_rust_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these");
-    }
-
-    /// The blocks crate's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_blocks_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/relation_reads.metal");
-        let source = super::relation_msl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these");
-    }
-
-    /// The views' kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_view_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/view_reads.metal");
-        let source = super::view_msl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these");
-    }
-
-    /// The kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/metal_tape_reads.metal");
-        let source = super::msl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these");
-    }
-
-    /// The 16z kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_16z_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/metal_tape_reads_z.metal");
-        let source = super::msl_z_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_16z_kernels_reads_are_these");
-    }
-
-    /// The tape crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_tape_crates_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tape_format/src/generated_reads.rs");
-        let source = super::rust_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these");
-    }
-}
-
 /// A body being built: the builder, the tape's base and view, the read's own parameters.
 pub struct B<'a, 'c> {
     pub(crate) f: FunctionBuilder<'a>,
@@ -659,6 +563,12 @@ impl B<'_, '_> {
             |b| b.in_block(0, sixteen),
             fifteen,
         )
+    }
+    /// `by_format` for a read of the tape's whole, not of a node (its newline index): a 16z tape holds it raw, where
+    /// its view names it, so a 16z tape's body is format 16's, read in place of the stored bytes (decision 0399).
+    fn by_format_whole(&mut self, ty: ir::Type, sixteen: impl Fn(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
+        let sixteen = &sixteen;
+        self.by_formats(ty, |b| sixteen(b), |b| sixteen(b), fifteen)
     }
     /// `by_format` with a 16z tape's body of its own (`zed`).
     fn by_formats(&mut self, ty: ir::Type, sixteen: impl FnOnce(&mut Self) -> Value, zed: impl FnOnce(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
@@ -889,11 +799,40 @@ impl B<'_, '_> {
         self.view = held;
         value
     }
-    /// Format 16's checkpoint `c`: the start of node `c * K`.
+    /// Format 16's column `r` (0 codes, 1 slots, 2 gaps, 3 lengths, 4 checkpoints) in block `b`: where it
+    /// starts. Blocks are `F16_PART` nodes at the view's stride from block 0's start, each its columns end to
+    /// end at its rows (the last block's are fewer: `nodes - b * F16_PART`), column `r` at `rows *
+    /// columns[r]` (decision 0399).
+    fn block_column(&mut self, r: i32, b: Value) -> Value {
+        let blocks = self.column(0);
+        let stride = self.view(at::STRIDE);
+        let base = self.f.ins().imul(b, stride);
+        let base = self.f.ins().iadd(base, blocks);
+        if r == 0 {
+            return base;
+        }
+        let nodes = self.view(at::NODES);
+        let first = self.f.ins().ishl_imm(b, i64::from(F16_PART.trailing_zeros()));
+        let left = self.f.ins().isub(nodes, first);
+        let part = self.c32(i64::from(F16_PART));
+        let rows = self.f.ins().umin(left, part);
+        let before = self.column(r);
+        let at = self.f.ins().imul(rows, before);
+        self.f.ins().iadd(base, at)
+    }
+    /// Node `i`'s block and its row there.
+    fn block_of(&mut self, i: Value) -> (Value, Value) {
+        let b = self.f.ins().ushr_imm(i, i64::from(F16_PART.trailing_zeros()));
+        let j = self.f.ins().band_imm(i, i64::from(F16_PART - 1));
+        (b, j)
+    }
+    /// Format 16's checkpoint `c`: the start of node `c * K`, in the checkpoints of its node's block.
     fn checkpoint(&mut self, c: Value) -> Value {
         let cw = self.width(3);
-        let checkpoints = self.column(4);
-        let at = self.f.ins().imul(c, cw);
+        let b = self.f.ins().ushr_imm(c, i64::from((F16_PART / F16_K).trailing_zeros()));
+        let checkpoints = self.block_column(4, b);
+        let row = self.f.ins().band_imm(c, i64::from(F16_PART / F16_K - 1));
+        let at = self.f.ins().imul(row, cw);
         let word = self.word(checkpoints, at);
         let mask = self.mask(cw);
         self.f.ins().band(word, mask)
@@ -918,8 +857,9 @@ impl B<'_, '_> {
     /// ones) its side list's.
     fn get(&mut self, a: u32, i: Value) -> Value {
         let w = self.width(a);
-        let array = self.column(1 + a as i32);
-        let at = self.f.ins().imul(i, w);
+        let (b, j) = self.block_of(i);
+        let array = self.block_column(1 + a as i32, b);
+        let at = self.f.ins().imul(j, w);
         let word = self.word(array, at);
         let mask = self.mask(w);
         let value = self.f.ins().band(word, mask);
@@ -1053,8 +993,9 @@ fn number(b: &mut B<'_, '_>) -> Value {
     b.by_format(
         I32,
         |b, i| {
-            let codes = b.column(0);
-            let byte = b.u8(codes, i);
+            let (block, j) = b.block_of(i);
+            let codes = b.block_column(0, block);
+            let byte = b.u8(codes, j);
             let cut = b.view(at::CUT);
             let below = b.f.ins().icmp(IntCC::UnsignedLessThan, byte, cut);
             b.either(
@@ -1127,8 +1068,9 @@ fn start_stated(b: &mut B<'_, '_>) -> Value {
             let byte = b.f.ins().icmp_imm(IntCC::Equal, gw, 1);
             b.f.ins().brif(byte, folded, &[], each, &[]);
             b.f.switch_to_block(folded);
-            let array = b.column(2);
-            let x = b.word(array, first);
+            let (block, row) = b.block_of(first);
+            let array = b.block_column(2, block);
+            let x = b.word(array, row);
             let all = b.c64(-1);
             let keep = b.f.ins().irsub_imm(r, i64::from(F16_K) - 1);
             let shift = b.f.ins().imul_imm(keep, 8);
@@ -1837,9 +1779,17 @@ fn cache_take(
     b.f.block_params(done)[0]
 }
 
-/// Block `block` of the reader's 16z tape decoded into the cache entry `slot` (`size` bytes): its bytes (LZ4's block
-/// format, `z_lz4`), each side list's one part after them, and its view. Whether it fits the entry (1), else 0 and
-/// nothing written.
+/// Block `block` of the reader's 16z tape decoded into the cache entry `slot` (`size` bytes), as a format 16 tape
+/// of one block (decision 0399 §3's stored form read through 0353 step 4b's cache): each of its `F16Z_PIECES`
+/// pieces (codes, slots, gaps, lengths) decoded where its view places it, the array's column then its side list's
+/// part (an LZ4 piece by `z_lz4`, a raw one copied, a repeat as the piece it names), its checkpoints copied, each
+/// side list's one part's starts after them, and its view. Column `q` lies at `nb * C[q]` (`nb` its nodes), `C[q]`
+/// the least that clears the piece before and 16 bytes of room: the view's `columns` hold `C`, as a block-major
+/// tape's hold the bytes a row has before each column. Whether it fits the entry (1), else 0 and nothing written.
+///
+/// The tape's view names its piece index (`columns[0]`: the pieces' starts in the payload, then their lengths,
+/// then their kinds, a byte each), its side lists' part starts (`columns[1]`), its checkpoints (`columns[2]`) and
+/// its payload (`stride`).
 fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value {
     let rw = MemFlags::new().with_notrap();
     let nodes = b.view(at::NODES);
@@ -1847,28 +1797,48 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value 
     let left = b.f.ins().isub(nodes, first);
     let most = b.c32(i64::from(F16Z_BLOCK));
     let nb = b.f.ins().umin(left, most);
-    // Its side lists' lengths, four u32s a block.
-    let sides = b.column(1);
-    let sixteen = b.f.ins().imul_imm(block, 16);
+    let blocks = b.f.ins().iadd_imm(nodes, i64::from(F16Z_BLOCK - 1));
+    let blocks = b.f.ins().ushr_imm(blocks, i64::from(F16Z_BLOCK.trailing_zeros()));
+    // Each side list's part of the block: from its start to the next's (list `q`'s starts at `4 * q * (blocks + 1)`).
+    let parts = b.column(1);
+    let count = b.f.ins().iadd_imm(blocks, 1);
     let side: Vec<Value> = (0..4)
-        .map(|k| {
-            let at = b.f.ins().iadd_imm(sixteen, 4 * k);
-            b.u32(sides, at)
+        .map(|q| {
+            let row = b.f.ins().imul_imm(count, q);
+            let row = b.f.ins().iadd(row, block);
+            let at = b.f.ins().imul_imm(row, 4);
+            let from = b.u32(parts, at);
+            let next = b.f.ins().iadd_imm(at, 4);
+            let to = b.u32(parts, next);
+            // Held to its list's order (checked where the tape is read in, decision 0403): never past it.
+            let to = b.f.ins().umax(to, from);
+            b.f.ins().isub(to, from)
         })
         .collect();
-    // Its regions as format 16's (`f16::layout`): the codes, slots, gaps and lengths, the checkpoints, the side
-    // lists, each with 8 bytes of room after it.
-    let (w0, w1, w2, cw) = (b.width(0), b.width(1), b.width(2), b.width(3));
-    let checkpoints = b.f.ins().iadd_imm(nb, i64::from(F16_K) - 1);
-    let checkpoints = b.f.ins().ushr_imm(checkpoints, i64::from(F16_K.trailing_zeros()));
-    let lens = [nb, b.f.ins().imul(nb, w0), b.f.ins().imul(nb, w1), b.f.ins().imul(nb, w2), b.f.ins().imul(checkpoints, cw), side[0], side[1], side[2], side[3]];
-    let mut at = vec![b.c32(0)];
-    for len in lens {
-        let last = *at.last().expect("a region's start");
-        let end = b.f.ins().iadd(last, len);
-        at.push(b.f.ins().iadd_imm(end, 8));
+    // The columns' places: column `q` holds `nb * w[q]` bytes, its side part after it, then 16 bytes of room.
+    let w = [b.c32(1), b.width(0), b.width(1), b.width(2)];
+    let cw = b.width(3);
+    let nb1 = b.f.ins().iadd_imm(nb, -1);
+    let mut c = vec![b.c32(0)];
+    let mut ends = Vec::new();
+    for q in 0..4 {
+        let at = b.f.ins().imul(nb, c[q]);
+        let bytes = b.f.ins().imul(nb, w[q]);
+        let end = b.f.ins().iadd(at, bytes);
+        ends.push(end);
+        let end = b.f.ins().iadd(end, side[q]);
+        let end = b.f.ins().iadd_imm(end, 16);
+        let up = b.f.ins().iadd(end, nb1);
+        c.push(b.f.ins().udiv(up, nb));
     }
-    let end = at[9];
+    let ckpt_at = b.f.ins().imul(nb, c[4]);
+    let ckpts = b.f.ins().iadd_imm(nb, i64::from(F16_K) - 1);
+    let ckpts = b.f.ins().ushr_imm(ckpts, i64::from(F16_K.trailing_zeros()));
+    let ckpt_len = b.f.ins().imul(ckpts, cw);
+    let parts_at = b.f.ins().iadd(ckpt_at, ckpt_len);
+    let parts_at = b.f.ins().iadd_imm(parts_at, 16 + 7);
+    let parts_at = b.f.ins().band_imm(parts_at, !7);
+    let end = b.f.ins().iadd_imm(parts_at, 32 + 8);
     let need = b.f.ins().uextend(I64, end);
     let need = b.f.ins().iadd_imm(need, i64::from(z::SLOT_BYTES) + z::SLACK as i64);
     let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, need, size);
@@ -1877,42 +1847,102 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value 
     let no = b.c32(0);
     b.f.ins().brif(fits, decode, &[], fitted, &[no.into()]);
     b.f.switch_to_block(decode);
-    // The compressed block: from its start in the block index to the next's.
-    let index = b.column(0);
-    let four = b.f.ins().imul_imm(block, 4);
-    let from = b.u32(index, four);
-    let after = b.f.ins().iadd_imm(four, 4);
-    let to = b.u32(index, after);
-    let comp = b.column(2);
-    let src = b.address(comp, from);
-    let src_end = b.address(comp, to);
     let dst = b.f.ins().iadd_imm(slot, i64::from(z::SLOT_BYTES));
-    let end64 = b.f.ins().uextend(I64, end);
-    let dst_end = b.f.ins().iadd(dst, end64);
-    z_lz4(b, src, src_end, dst, dst_end);
-    // Each side list's one part: from 0 to its length.
-    for (k, &len) in side.iter().enumerate() {
-        let zero = b.c32(0);
-        b.f.ins().store(rw, zero, dst_end, 8 * k as i32);
-        b.f.ins().store(rw, len, dst_end, 8 * k as i32 + 4);
-    }
-    // The block's view: its nodes, format 16's, its regions and parts, the tape's widths and choices.
+    // The block's view: its nodes, format 16's, its columns' places, its side parts, the tape's widths and choices.
     let view = b.f.ins().iadd_imm(slot, i64::from(z::SLOT_VIEW));
     let sixteen = b.c32(16);
+    let zero = b.c32(0);
     let widths = b.view(at::WIDTHS);
     let (cut, per) = (b.view(at::CUT), b.view(at::PER));
     let source = b.view(at::SOURCE_LEN);
-    for (value, offset) in [(nb, at::NODES), (sixteen, at::FORMAT), (widths, at::WIDTHS), (cut, at::CUT), (per, at::PER), (source, at::SOURCE_LEN)] {
+    for (value, offset) in [(nb, at::NODES), (sixteen, at::FORMAT), (widths, at::WIDTHS), (cut, at::CUT), (per, at::PER), (source, at::SOURCE_LEN), (zero, at::STRIDE)] {
         b.f.ins().store(rw, value, view, offset);
     }
-    for k in 0..5 {
-        b.f.ins().store(rw, at[k], view, at::COLUMNS + 4 * k as i32);
+    for (k, &value) in c[..5].iter().enumerate() {
+        b.f.ins().store(rw, value, view, at::COLUMNS + 4 * k as i32);
     }
-    for k in 0..4 {
-        b.f.ins().store(rw, at[5 + k], view, at::SIDE + 4 * k as i32);
-        let part = b.f.ins().iadd_imm(end, 8 * k as i64);
-        b.f.ins().store(rw, part, view, at::PARTS + 4 * k as i32);
+    let parts_end = b.f.ins().uextend(I64, parts_at);
+    let parts_end = b.f.ins().iadd(dst, parts_end);
+    for q in 0..4 {
+        b.f.ins().store(rw, ends[q], view, at::SIDE + 4 * q as i32);
+        let part = b.f.ins().iadd_imm(parts_at, 8 * q as i64);
+        b.f.ins().store(rw, part, view, at::PARTS + 4 * q as i32);
+        b.f.ins().store(rw, zero, parts_end, 8 * q as i32);
+        b.f.ins().store(rw, side[q], parts_end, 8 * q as i32 + 4);
     }
+    // Its checkpoints, raw where the tape stores them (`Z / K` a block, `cw` bytes each).
+    let ckpt = b.column(2);
+    let from = b.f.ins().imul_imm(block, i64::from(F16Z_BLOCK / F16_K));
+    let from = b.f.ins().imul(from, cw);
+    let src = b.address(ckpt, from);
+    let ckpt_at64 = b.f.ins().uextend(I64, ckpt_at);
+    let to = b.f.ins().iadd(dst, ckpt_at64);
+    let len = b.f.ins().uextend(I64, ckpt_len);
+    z_copy_exact(b, src, to, len);
+    // Its pieces, one a turn: the piece index's start, length and kind (a repeat's, the piece it names).
+    let pieces = b.f.ins().imul_imm(blocks, i64::from(F16Z_PIECES));
+    let starts = b.column(0);
+    let lens = b.f.ins().imul_imm(pieces, 4);
+    let lens = b.f.ins().iadd(starts, lens);
+    let kinds = b.f.ins().imul_imm(pieces, 4);
+    let kinds = b.f.ins().iadd(lens, kinds);
+    let payload = b.view(at::STRIDE);
+    let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.ins().jump(head, &[zero.into()]);
+    b.f.switch_to_block(head);
+    let q = b.f.block_params(head)[0];
+    let more = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, q, i64::from(F16Z_PIECES));
+    b.f.ins().brif(more, body, &[], done, &[]);
+    b.f.switch_to_block(body);
+    let j = b.f.ins().imul_imm(block, i64::from(F16Z_PIECES));
+    let j = b.f.ins().iadd(j, q);
+    let kind = b.u8(kinds, j);
+    let j4 = b.f.ins().imul_imm(j, 4);
+    let start = b.u32(starts, j4);
+    let named = b.u32(payload, start);
+    // A repeat names a piece of the tape that is none (checked where the tape is read in): else itself, read raw.
+    let repeat = b.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(z::REPEAT));
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, named, pieces);
+    let repeat = b.f.ins().band(repeat, inside);
+    let k = b.f.ins().select(repeat, named, j);
+    let kind = b.u8(kinds, k);
+    let k4 = b.f.ins().imul_imm(k, 4);
+    let start = b.u32(starts, k4);
+    let len = b.u32(lens, k4);
+    let src = b.address(payload, start);
+    let len = b.f.ins().uextend(I64, len);
+    let src_end = b.f.ins().iadd(src, len);
+    // Where it decodes: its column (`nb * C[q]`, from the view just written) to its side part's end.
+    let qw = b.f.ins().uextend(I64, q);
+    let qw = b.f.ins().ishl_imm(qw, 2);
+    let col = b.f.ins().iadd(view, qw);
+    let cq = b.f.ins().load(I32, rw, col, at::COLUMNS);
+    let side_at = b.f.ins().load(I32, rw, col, at::SIDE);
+    let at_q = b.f.ins().imul(nb, cq);
+    let pq = b.f.ins().iadd(parts_end, qw);
+    let pq = b.f.ins().iadd(pq, qw);
+    let side_len = b.f.ins().load(I32, rw, pq, 4);
+    let end_q = b.f.ins().iadd(side_at, side_len);
+    let at64 = b.f.ins().uextend(I64, at_q);
+    let to = b.f.ins().iadd(dst, at64);
+    let end64 = b.f.ins().uextend(I64, end_q);
+    let to_end = b.f.ins().iadd(dst, end64);
+    let lz4 = b.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(z::LZ4));
+    let (packed, raw, next) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(lz4, packed, &[], raw, &[]);
+    b.f.switch_to_block(packed);
+    z_lz4(b, src, src_end, to, to_end);
+    b.f.ins().jump(next, &[]);
+    b.f.switch_to_block(raw);
+    let want = b.f.ins().isub(to_end, to);
+    let n = b.f.ins().umin(len, want);
+    z_copy_exact(b, src, to, n);
+    b.f.ins().jump(next, &[]);
+    b.f.switch_to_block(next);
+    let q = b.f.ins().iadd_imm(q, 1);
+    b.f.ins().jump(head, &[q.into()]);
+    b.f.switch_to_block(done);
     let yes = b.c32(1);
     b.f.ins().jump(fitted, &[yes.into()]);
     b.f.switch_to_block(fitted);
@@ -2187,4 +2217,340 @@ fn child(b: &mut B<'_, '_>) -> Value {
     b.f.ins().jump(head, &[c.into(), k.into()]);
     b.f.switch_to_block(done);
     b.f.block_params(done)[0]
+}
+
+// ---- lines: format 16's newline index (`rerail_tape_format::newlines`), format 15's line starts ----------------
+
+/// The newline index's u32 field `k` (0 the newlines' count, 1 the low parts' width, 2 and 3 the zero and one
+/// samples' counts, 4 the high bits' words).
+fn lines_field(b: &mut B<'_, '_>, k: i64) -> Value {
+    let lines = b.view(at::LINES);
+    let k = b.c32(4 * k);
+    b.u32(lines, k)
+}
+
+/// Where the newline index's part at `offset` bytes past its first fields lies (tape-relative).
+fn lines_part(b: &mut B<'_, '_>, offset: Value) -> Value {
+    let lines = b.view(at::LINES);
+    let at = b.f.ins().iadd(lines, offset);
+    b.f.ins().iadd_imm(at, HEAD_LINES)
+}
+
+/// The newline index's first fields' bytes (`newlines::HEAD`).
+const HEAD_LINES: i64 = 20;
+/// Every 256th zero and one of the high bits is sampled (`newlines::SAMPLE_SHIFT`).
+const LINES_SAMPLE_SHIFT: i64 = 8;
+
+/// Newline `i`'s low part (`l` bits).
+fn line_low(b: &mut B<'_, '_>, i: Value, l: Value) -> Value {
+    let zs = lines_field(b, 2);
+    let os = lines_field(b, 3);
+    let words = lines_field(b, 4);
+    let samples = b.f.ins().iadd(zs, os);
+    let before = b.f.ins().iadd(samples, words);
+    let before = b.f.ins().imul_imm(before, 8);
+    let lows = lines_part(b, before);
+    let i64v = b.f.ins().uextend(I64, i);
+    let l64 = b.f.ins().uextend(I64, l);
+    let bit = b.f.ins().imul(i64v, l64);
+    let byte = b.f.ins().ushr_imm(bit, 3);
+    let byte = b.f.ins().ireduce(I32, byte);
+    let word = b.word(lows, byte);
+    let shift = b.f.ins().band_imm(bit, 7);
+    let word = b.f.ins().ushr(word, shift);
+    let one = b.c64(1);
+    let mask = b.f.ins().ishl(one, l64);
+    let mask = b.f.ins().iadd_imm(mask, -1);
+    b.f.ins().band(word, mask)
+}
+
+/// The position of the `r`-th set bit of `x` (one is there): six halvings, each a popcount.
+fn select_in_word(b: &mut B<'_, '_>, x: Value, r: Value) -> Value {
+    let (mut x, mut r, mut pos) = (x, r, b.c32(0));
+    for s in [32i64, 16, 8, 4, 2, 1] {
+        let low = b.f.ins().band_imm(x, (1i64 << s) - 1);
+        let c = b.f.ins().popcnt(low);
+        let c = b.f.ins().ireduce(I32, c);
+        let past = b.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, r, c);
+        let less = b.f.ins().isub(r, c);
+        r = b.f.ins().select(past, less, r);
+        let shifted = b.f.ins().ushr_imm(x, s);
+        x = b.f.ins().select(past, shifted, x);
+        let moved = b.f.ins().iadd_imm(pos, s);
+        pos = b.f.ins().select(past, moved, pos);
+    }
+    pos
+}
+
+/// The position in the newline index's high bits of its `j`-th one (`ones` 1) or zero (0): from the sample before
+/// it, a word at a time.
+fn line_select(b: &mut B<'_, '_>) -> Value {
+    let (ones, j) = (b.arg(0), b.arg(1));
+    let zs = lines_field(b, 2);
+    let os = lines_field(b, 3);
+    let zeros_bytes = b.f.ins().imul_imm(zs, 8);
+    let zero = b.c32(0);
+    let skip = b.f.ins().select(ones, zeros_bytes, zero);
+    let k = b.f.ins().ushr_imm(j, LINES_SAMPLE_SHIFT);
+    let k = b.f.ins().imul_imm(k, 8);
+    let sample = b.f.ins().iadd(skip, k);
+    let sample = lines_part(b, sample);
+    let w0 = b.u32(sample, zero);
+    let four = b.c32(4);
+    let before0 = b.u32(sample, four);
+    let samples = b.f.ins().iadd(zs, os);
+    let samples = b.f.ins().imul_imm(samples, 8);
+    let high = lines_part(b, samples);
+    let (head, done) = (b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(done, I32);
+    b.f.ins().jump(head, &[w0.into(), before0.into()]);
+    b.f.switch_to_block(head);
+    let (w, before) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let at = b.f.ins().imul_imm(w, 8);
+    let word = b.word(high, at);
+    let flipped = b.f.ins().bnot(word);
+    let x = b.f.ins().select(ones, word, flipped);
+    let c = b.f.ins().popcnt(x);
+    let c = b.f.ins().ireduce(I32, c);
+    let through = b.f.ins().iadd(before, c);
+    let here = b.f.ins().icmp(IntCC::UnsignedGreaterThan, through, j);
+    let (found, next) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(here, found, &[], next, &[]);
+    b.f.switch_to_block(next);
+    let w1 = b.f.ins().iadd_imm(w, 1);
+    b.f.ins().jump(head, &[w1.into(), through.into()]);
+    b.f.switch_to_block(found);
+    let r = b.f.ins().isub(j, before);
+    let bit = select_in_word(b, x, r);
+    let base = b.f.ins().imul_imm(w, 64);
+    let pos = b.f.ins().iadd(base, bit);
+    b.f.ins().jump(done, &[pos.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// The line byte `x` lies in (from 0): format 16's newlines before it, by the index (the zeros before and after its
+/// bucket, then a search of the bucket's low parts); format 15's line starts searched.
+fn line(b: &mut B<'_, '_>) -> Value {
+    let x = b.arg(0);
+    b.by_format_whole(
+        I32,
+        |b| {
+            let m = lines_field(b, 0);
+            let none = b.f.ins().icmp_imm(IntCC::Equal, m, 0);
+            b.either(
+                I32,
+                none,
+                |b| b.c32(0),
+                |b| {
+                    let l = lines_field(b, 1);
+                    let h = b.f.ins().ushr(x, l);
+                    let one = b.c32(1);
+                    let lbits = b.f.ins().ishl(one, l);
+                    let lmask = b.f.ins().iadd_imm(lbits, -1);
+                    let xl = b.f.ins().band(x, lmask);
+                    let xl = b.f.ins().uextend(I64, xl);
+                    let zero = b.c32(0);
+                    // The newlines in buckets before `h`, and through it.
+                    let first = b.f.ins().icmp_imm(IntCC::Equal, h, 0);
+                    let lo = b.either(
+                        I32,
+                        first,
+                        |b| b.c32(0),
+                        |b| {
+                            let h1 = b.f.ins().iadd_imm(h, -1);
+                            let p = b.call("tape_line_select", &[zero, h1]);
+                            b.f.ins().isub(p, h1)
+                        },
+                    );
+                    let p = b.call("tape_line_select", &[zero, h]);
+                    let hi = b.f.ins().isub(p, h);
+                    // The bucket's first newline whose low part is at or past `x`'s.
+                    let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+                    b.f.append_block_param(head, I32);
+                    b.f.append_block_param(head, I32);
+                    b.f.append_block_param(done, I32);
+                    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+                    b.f.switch_to_block(head);
+                    let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+                    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+                    b.f.ins().brif(more, body, &[], done, &[lo.into()]);
+                    b.f.switch_to_block(body);
+                    let sum = b.f.ins().iadd(lo, hi);
+                    let middle = b.f.ins().ushr_imm(sum, 1);
+                    let low = line_low(b, middle, l);
+                    let below = b.f.ins().icmp(IntCC::UnsignedLessThan, low, xl);
+                    let next = b.f.ins().iadd_imm(middle, 1);
+                    let lo = b.f.ins().select(below, next, lo);
+                    let hi = b.f.ins().select(below, hi, middle);
+                    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+                    b.f.switch_to_block(done);
+                    b.f.block_params(done)[0]
+                },
+            )
+        },
+        |b| {
+            // The last line start at or before `x`.
+            let lines = b.view(at::LINES);
+            let count = b.view(at::LINE_COUNT);
+            let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+            b.f.append_block_param(head, I32);
+            b.f.append_block_param(head, I32);
+            b.f.append_block_param(done, I32);
+            let one = b.c32(1);
+            b.f.ins().jump(head, &[one.into(), count.into()]);
+            b.f.switch_to_block(head);
+            let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+            let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+            b.f.ins().brif(more, body, &[], done, &[lo.into()]);
+            b.f.switch_to_block(body);
+            let sum = b.f.ins().iadd(lo, hi);
+            let middle = b.f.ins().ushr_imm(sum, 1);
+            let at = b.f.ins().imul_imm(middle, 4);
+            let start = b.u32(lines, at);
+            let past = b.f.ins().icmp(IntCC::UnsignedGreaterThan, start, x);
+            let next = b.f.ins().iadd_imm(middle, 1);
+            let lo = b.f.ins().select(past, lo, next);
+            let hi = b.f.ins().select(past, middle, hi);
+            b.f.ins().jump(head, &[lo.into(), hi.into()]);
+            b.f.switch_to_block(done);
+            let found = b.f.block_params(done)[0];
+            b.f.ins().iadd_imm(found, -1)
+        },
+    )
+}
+
+/// Line `k`'s first byte: 0 for the first; else one past newline `k - 1` (format 16: its bucket, from its one's
+/// position, and its low part); format 15's line start.
+fn line_start(b: &mut B<'_, '_>) -> Value {
+    let k = b.arg(0);
+    b.by_format_whole(
+        I32,
+        |b| {
+            let first = b.f.ins().icmp_imm(IntCC::Equal, k, 0);
+            b.either(
+                I32,
+                first,
+                |b| b.c32(0),
+                |b| {
+                    let i = b.f.ins().iadd_imm(k, -1);
+                    let one = b.c32(1);
+                    let p = b.call("tape_line_select", &[one, i]);
+                    let bucket = b.f.ins().isub(p, i);
+                    let l = lines_field(b, 1);
+                    let high = b.f.ins().ishl(bucket, l);
+                    let low = line_low(b, i, l);
+                    let low = b.f.ins().ireduce(I32, low);
+                    let at = b.f.ins().bor(high, low);
+                    b.f.ins().iadd_imm(at, 1)
+                },
+            )
+        },
+        |b| {
+            let lines = b.view(at::LINES);
+            let at = b.f.ins().imul_imm(k, 4);
+            b.u32(lines, at)
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    /// The facts crate's numbering reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_facts_id_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.rs");
+        let source = super::ids_rust_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_reads_are_these");
+    }
+
+    /// The numbering's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_facts_id_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.metal");
+        let source = super::ids_msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these");
+    }
+
+    /// The blocks crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_blocks_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/generated_reads.rs");
+        let source = super::relation_rust_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these");
+    }
+
+    /// The blocks crate's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_blocks_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/relation_reads.metal");
+        let source = super::relation_msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these");
+    }
+
+    /// The kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/metal_tape_reads.metal");
+        let source = super::msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these");
+    }
+
+    /// The tape crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_tape_crates_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tape_format/src/generated_reads.rs");
+        let source = super::rust_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these");
+    }
+
+    /// The views' kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_view_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/view_reads.metal");
+        let source = super::view_msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these");
+    }
+
+    /// The 16z kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_16z_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/metal_tape_reads_z.metal");
+        let source = super::msl_z_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_16z_kernels_reads_are_these");
+    }
 }

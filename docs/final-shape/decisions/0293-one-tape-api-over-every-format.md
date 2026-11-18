@@ -185,8 +185,10 @@ This record is steps 2, 3 and 4, and the API they need.
 9. **The device reads the tape** (step 5, its resident half; built). A resident document is its tape where it is
    placed, its source, its code table at a fixed width and its line starts: nothing per node beside the tape.
    - **Placed as stored:** format 15's image, format 16's tape, or a 16z tape as stored, read through its batch's
-     cache of decoded blocks (decision 0353 step 4b; until 2026-11-18 it was laid out as the format 16 tape it is
-     the blocks of, `Tape16Z::unblock_into`, a copy, now deleted). `f16::placement` says where a format 16 tape's arrays, side lists
+     cache of decoded blocks (decision 0353 step 4b; a block's four pieces decoded into a cache entry as a format 16
+     tape of one block, decision 0399 §3). Until 2026-11-18 a 16z tape was laid out as the format 16 tape it is the
+     blocks of (`Tape16Z::unblock_into`, then `decode_into` with 0336 §5's pieces decoded where they lie and 0336
+     §8's on the GPU): a copy, now gone. `f16::placement` says where a format 16 tape's arrays, side lists
      and part starts lie, checked as `Tape16::from_bytes` checks them; the device's view (`DocView`) names them.
    - **The device's reads** (`metal_tape.metal`) are format 16's `View`'s (a value too wide for its array read from
      its side list; a start from its checkpoint and gaps), or format 15's columns. A parent is a search: format
@@ -208,7 +210,7 @@ This record is steps 2, 3 and 4, and the API they need.
    on all 491 clauses (41 waves over 24 of the pack's files, from 236fc98d2~1), in the three formats (the spill
    test's floor of 1,000 roots needs the packs' full test data: those files give 621); with `metal-tests`, the device's roots equal the
    CPU's on every clause the resident interpreter takes alone, in the three formats, but for one clause past its
-   work limit, as at 6afcddb0a before this (work queue Q55, Q19 at f51cab698); the CLI's device run (`logic --metal`, the Vue rules
+   work limit, as at 6afcddb0a before this (work queue Q49, Q19 on oscar); the CLI's device run (`logic --metal`, the Vue rules
    over the mixed files) gives the same findings in the three formats, cold and warm.
 
 10. **A pass's roots are a rule, not a list** (built, 2026-11-16, the user: "yes, please do that. It's a better
@@ -230,7 +232,7 @@ This record is steps 2, 3 and 4, and the API they need.
 
     Checked (2026-11-16, on the build farm's M3 and M1 Max, 15, 16 and 16z): on the matcher's fixtures the
     device's roots equal the CPU's on all 491 clauses, the resident interpreter's on 114 of 122 with the D416
-    clause past its work limit as before (Q55); in 15 and 16, with the pack's files restored (618, from
+    clause past its work limit as before (Q49, Q19 on oscar); in 15 and 16, with the pack's files restored (618, from
     236fc98d2~1), the micro walks, the combined graph, the widened-walk catch, the device conformance test and the
     `waves::matches` tests pass, and with every walk spilling the device's roots equal the CPU's on all 491 clauses (the spill
     test's floor of 1,000 roots still wants the full test data). The two per-clause tests over all 618 files run
@@ -246,8 +248,8 @@ This record is steps 2, 3 and 4, and the API they need.
   `waves::matches`), the grid and register machines and the non-resident interpreter read it. The resident path
   (§9) does not.
 - **The core facts' digest** serializes a format 15 image to hash it (format 16's bytes are hashed as held).
-- **The tape tests** (`tape::tests`) are format 15's: they assert the run stores format 15, and fail under
-  `RERAIL_TAPE=16`.
+- **The tape tests** (`tape::tests`) are format 15's. Since 0340 made format 16 the default, the tests that read
+  format 15's columns pin their thread to format 15 (`formats::this_thread_stores`).
 
 ## Not done
 

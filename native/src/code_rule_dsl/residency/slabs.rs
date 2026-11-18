@@ -1,8 +1,9 @@
 //! The slab residency's documents (decision 0032): stored tapes placed in the Metal crate's slabs
 //! (`rerail_metal::slabs`: the arena, its budget, retirement, the sources and the drop). Here:
 //! reading the misses' frames in one store read (`ContentStore::resident_frames`), decompressing
-//! each straight into its slab (a 16z tape as stored), the reader's derived parts (the
-//! codes at a fixed width, the source's line starts; nothing per node), and the checks of the
+//! each straight into its slab (a 16z tape as stored), the reader's derived parts (format 15's
+//! codes at a fixed width and line starts; format 16's and 16z's codes are its language's table, once a
+//! slab, and its lines its tape's; nothing per node), and the checks of the
 //! bytes against the tape's and the source's SHA-256 and of the image's header against the
 //! source, once. A failed check is an error, never an empty document.
 
@@ -24,7 +25,7 @@ pub trait ResidentParts {
 
     /// The fixed-width code table (`DeviceCode`), as the device reads it.
     fn codes(&self) -> &[DeviceCode] {
-        let bytes = self.resident().bytes_at(self.resident().view.codes, 24 * self.resident().view.code_count as usize);
+        let bytes = self.resident().code_bytes();
         // SAFETY: admission wrote `code_count` `DeviceCode`s at this 16-byte offset.
         unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<DeviceCode>(), self.resident().view.code_count as usize) }
     }
@@ -47,9 +48,10 @@ fn invalid(message: impl std::fmt::Display) -> Error {
     Error::BackendFailure
 }
 
-/// Sizes of a document's parts, from its frames' raw lengths, the image's header and the source's
-/// newlines (read by one streamed decode that keeps nothing). A 16z tape is placed as stored, and read
-/// through a cache of its decoded blocks (decision 0353 step 4b).
+/// Sizes of a document's parts, from its frames' raw lengths, the image's header and (format 15) the
+/// source's newlines, read by one streamed decode that keeps nothing. Format 16 holds its newline index
+/// (decision 0336 §6): no line is counted for it. A 16z tape is placed as stored, and read through a
+/// cache of its decoded blocks (decision 0353 step 4b).
 struct Plan {
     tape: usize,
     source: usize,
@@ -57,6 +59,8 @@ struct Plan {
     codes: usize,
     lines: usize,
     stored: resident::Stored,
+    /// Format 16's and 16z's code table: its language's, once a slab (decision 0336 §7).
+    table: Option<Table>,
 }
 
 impl Plan {
@@ -64,14 +68,21 @@ impl Plan {
         aligned(self.tape) + aligned(self.source) + self.derived()
     }
 
-    /// The reader's state: the codes at a fixed width and the line starts. Nothing per node.
+    /// The reader's state beside the tape: format 15's codes at a fixed width and line starts. Format 16's are its
+    /// language's table (the slab's) and its tape's newline index. Nothing per node.
     fn derived(&self) -> usize {
-        aligned(24 * self.codes) + aligned(4 * self.lines)
+        if self.table.is_some() { 0 } else { aligned(24 * self.codes) + aligned(4 * self.lines) }
     }
 }
 
+/// The key of a format 16 tape's language table in a slab: its tag and its table's revision.
+fn table_of(head: &[u8], codes: usize) -> Result<Table, Error> {
+    let (tag, revision) = (*head.get(8).ok_or_else(|| invalid("a short format 16 header"))?, head[9]);
+    Ok(Table { key: u32::from(tag) | u32::from(revision) << 8, len: 24 * codes })
+}
+
 /// The plan of an image whose first bytes (at least a format 15 header's, or the whole image) are
-/// `head`, `tape` bytes long as stored, and of its 16z tape where it is one (`z`, read whole).
+/// `head`, `tape` bytes long as stored.
 fn planned(head: &[u8], tape: usize, source: usize, lines: usize) -> Result<Plan, Error> {
     let stored = resident::stored(head).map_err(invalid)?;
     // Every format's header states its source's length at the same place: the tape's reads hold every span to it,
@@ -90,17 +101,22 @@ fn planned(head: &[u8], tape: usize, source: usize, lines: usize) -> Result<Plan
             (nodes, resident::lang_of(head).map_err(invalid)?.table().len())
         }
     };
-    Ok(Plan { tape, source, nodes, codes, lines, stored })
+    let table = if stored == resident::Stored::F15 { None } else { Some(table_of(head, codes)?) };
+    Ok(Plan { tape, source, nodes, codes, lines, stored, table })
 }
 
 fn plan(frames: &crate::content_store::ResidentFrames) -> Result<Plan, Error> {
     let head = frames.tape_frame.head(resident::HEADER_LEN.min(frames.tape_length))
         .map_err(|error| invalid(format!("tape frame header: {error}")))?;
-    let mut lines = 1usize;
-    frames.source_frame.chunks(|chunk| {
-        lines += chunk.iter().filter(|&&byte| byte == b'\n').count();
-    })
-    .map_err(|error| invalid(format!("source frame: {error}")))?;
+    let stored = resident::stored(&head).map_err(invalid)?;
+    let mut lines = 0usize;
+    if stored == resident::Stored::F15 {
+        lines = 1;
+        frames.source_frame.chunks(|chunk| {
+            lines += chunk.iter().filter(|&&byte| byte == b'\n').count();
+        })
+        .map_err(|error| invalid(format!("source frame: {error}")))?;
+    }
     planned(&head, frames.tape_length, frames.source_length, lines)
 }
 
@@ -136,7 +152,8 @@ pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Ar
         for digest in &missing {
             let at = digests.iter().position(|candidate| candidate == digest).expect("a miss is one of the digests");
             let (image, source, grammar) = docs[at].resident_parts(images[at].take()).map_err(invalid)?;
-            let lines = 1 + source.bytes().filter(|&byte| byte == b'\n').count();
+            let stored = resident::stored(&image).map_err(invalid)?;
+            let lines = if stored == resident::Stored::F15 { 1 + source.bytes().filter(|&byte| byte == b'\n').count() } else { 0 };
             let plan = planned(&image, image.len(), source.len(), lines)?;
             owned.push((*digest, plan, Arc::clone(grammar), image, source));
         }
@@ -152,7 +169,7 @@ fn insert_parts(digests: &[[u8; 32]], parts: Vec<([u8; 32], &Plan, &Grammar, Par
     let placements = parts
         .into_iter()
         .map(|(digest, plan, grammar, parts)| -> Placement<'_> {
-            (digest, plan.bytes(), Box::new(move |slab: &Arc<Slab>, offset: usize| place(slab, offset, &digest, parts, plan, grammar)))
+            (digest, plan.bytes(), plan.table, Box::new(move |slab: &Arc<Slab>, offset: usize, table: Option<TableAt>| place(slab, offset, table, &digest, parts, plan, grammar)))
         })
         .collect();
     insert(digests, placements)
@@ -167,14 +184,16 @@ enum Parts<'a> {
     Bytes(&'a [u8], &'a [u8]),
 }
 
+/// A format 16 document's language table is the slab's (`table`): written here where the slab does not hold it yet.
 fn place(
     slab: &Arc<Slab>,
     offset: usize,
+    table: Option<TableAt>,
     digest: &[u8; 32],
     parts: Parts<'_>,
     plan: &Plan,
     grammar: &Grammar,
-) -> Result<Resident, Error> {
+) -> Result<Placed, Error> {
     let base = slab.host();
     // SAFETY: `room` gave this range to this document alone, inside the slab's mapping.
     let region = |at: usize, length: usize| unsafe { std::slice::from_raw_parts_mut(base.add(at), length) };
@@ -230,7 +249,8 @@ fn place(
         tape: at(tape_at)?,
         ..DocView::default()
     };
-    let codes = match plan.stored {
+    let mut new_table = None;
+    match plan.stored {
         resident::Stored::F15 => {
             let layout = resident::layout(tape).map_err(invalid)?;
             if layout.source_len != source.len() || layout.nodes as usize != plan.nodes || layout.code_count != plan.codes {
@@ -239,10 +259,28 @@ fn place(
             view.format = 15;
             view.widths = u32::from(layout.widths[0]) | u32::from(layout.widths[1]) << 4 | u32::from(layout.widths[2]) << 8 | u32::from(layout.from_start) << 12;
             view.columns = [at(tape_at + layout.code)?, at(tape_at + layout.size)?, at(tape_at + layout.base)?, at(tape_at + layout.off)?, at(tape_at + layout.tail)?];
-            resident::device_codes(tape, &layout, grammar).map_err(invalid)?
+            let codes = resident::device_codes(tape, &layout, grammar).map_err(invalid)?;
+            if codes.len() != plan.codes {
+                return Err(invalid("a tape's code table"));
+            }
+            // SAFETY: `24 * codes` bytes at a 16-byte offset of the mapping, and `DeviceCode` is 24 bytes, 2-aligned.
+            unsafe { std::ptr::copy_nonoverlapping(codes.as_ptr(), base.add(codes_at).cast::<DeviceCode>(), codes.len()) };
+            view.codes = at(codes_at)?;
+            // Format 15's line starts, placed beside it.
+            // SAFETY: as the codes', `4 * lines` bytes.
+            let lines = unsafe { std::slice::from_raw_parts_mut(base.add(lines_at).cast::<u32>(), plan.lines) };
+            lines[0] = 0;
+            let mut line = 1;
+            for (at, _) in source.iter().enumerate().filter(|(_, byte)| **byte == b'\n') {
+                lines[line] = at as u32 + 1;
+                line += 1;
+            }
+            view.lines = at(lines_at)?;
+            view.line_count = count(plan.lines)?;
         }
-        // A 16z tape as stored (decision 0353 step 4b): its view names its block index, side lengths and compressed
-        // bytes where they lie here, its id, and its entry size; the batch's table gives it a cache (`DocTable`).
+        // A 16z tape as stored (decision 0353 step 4b): its view names its piece index, side lists' part starts,
+        // checkpoints, payload and newline index where they lie here, its id, and its entry size; the batch's table
+        // gives it a cache (`DocTable`).
         resident::Stored::F16Z => {
             let lang = resident::lang_of(tape).map_err(invalid)?;
             // SAFETY: the room `place` writes, read only while this view is made, inside the slab's mapping.
@@ -252,51 +290,39 @@ fn place(
                 return Err(invalid("a tape and its source or language disagree"));
             }
             let zv = z.view(lang).map_err(invalid)?;
+            let here = |offset: u32| at(tape_at + offset as usize);
             view.format = zv.format;
             view.widths = zv.widths;
-            view.columns = [at(tape_at + zv.columns[0] as usize)?, at(tape_at + zv.columns[1] as usize)?, at(tape_at + zv.columns[2] as usize)?, zv.columns[3], 0];
+            view.columns = [here(zv.columns[0])?, here(zv.columns[1])?, here(zv.columns[2])?, zv.columns[3], 0];
+            view.stride = here(zv.stride)?;
             view.side = [0, 0, zv.side[2], zv.side[3]];
             (view.cut, view.per) = (zv.cut, zv.per);
-            resident::device_codes_of(lang.table(), grammar).map_err(invalid)?
+            (view.lines, view.line_count) = (here(zv.lines)?, zv.line_count);
+            view.codes = slab_table(table, lang, grammar, plan, offset, &mut new_table)?;
         }
         resident::Stored::F16 => {
             let p = resident::placement(tape).map_err(invalid)?;
             let lang = resident::lang_of(tape).map_err(invalid)?;
             let source_len = u64::from_le_bytes(tape[16..24].try_into().expect("8 bytes"));
-            if p.n != plan.nodes || p.n == 0 || source_len != source.len() as u64 || tape[9] != lang.revision() {
+            let (cut, per, w) = lang.device();
+            if p.n != plan.nodes || p.n == 0 || source_len != source.len() as u64 || tape[9] != lang.revision() || p.widths != w {
                 return Err(invalid("a tape and its source or language disagree"));
             }
-            let (cut, per, w) = lang.device();
+            // The tape's own view (`Placement::view`), its offsets from the document's start: where its blocks,
+            // side lists and newline index lie (which answers lines: nothing is counted here).
+            let placed = p.view(lang, tape_at - offset).map_err(invalid)?;
+            debug_assert_eq!((placed.cut, placed.per), (cut, per));
             view.format = 16;
-            view.widths = (w[0] | w[1] << 4 | w[2] << 8 | p.cw << 12 | p.vw[0] << 16 | p.vw[1] << 20 | p.vw[2] << 24 | p.vw[3] << 28) as u32;
-            view.columns = [at(tape_at + p.at[0])?, at(tape_at + p.at[1])?, at(tape_at + p.at[2])?, at(tape_at + p.at[3])?, at(tape_at + p.at[4])?];
-            view.side = [at(tape_at + p.at[5])?, at(tape_at + p.at[6])?, at(tape_at + p.at[7])?, at(tape_at + p.at[8])?];
-            view.parts = [at(tape_at + p.parts[0])?, at(tape_at + p.parts[1])?, at(tape_at + p.parts[2])?, at(tape_at + p.parts[3])?];
-            (view.cut, view.per) = (cut, per);
-            resident::device_codes_of(lang.table(), grammar).map_err(invalid)?
+            (view.widths, view.columns, view.stride, view.side, view.parts) = (placed.widths, placed.columns, placed.stride, placed.side, placed.parts);
+            (view.cut, view.per, view.lines, view.line_count) = (placed.cut, placed.per, placed.lines, placed.line_count);
+            view.codes = slab_table(table, lang, grammar, plan, offset, &mut new_table)?;
         }
-    };
-    if codes.len() != plan.codes {
-        return Err(invalid("a tape's code table"));
     }
-    // SAFETY: `24 * codes` bytes at a 16-byte offset of the mapping, and `DeviceCode` is 24 bytes, 2-aligned.
-    unsafe { std::ptr::copy_nonoverlapping(codes.as_ptr(), base.add(codes_at).cast::<DeviceCode>(), codes.len()) };
-    // SAFETY: as the codes', `4 * lines` bytes.
-    let lines = unsafe { std::slice::from_raw_parts_mut(base.add(lines_at).cast::<u32>(), plan.lines) };
-    lines[0] = 0;
-    let mut line = 1;
-    for (at, _) in source.iter().enumerate().filter(|(_, byte)| **byte == b'\n') {
-        lines[line] = at as u32 + 1;
-        line += 1;
-    }
-    view.codes = at(codes_at)?;
     view.source = at(source_at)?;
     view.source_len = count(plan.source)?;
-    view.lines = at(lines_at)?;
-    view.line_count = count(plan.lines)?;
     view.code_count = count(plan.codes)?;
     crate::code_rule_dsl::prof::count("residency.decompressed_kb", (plan.tape + plan.source) >> 10);
-    Ok(Resident {
+    let document = Resident {
         digest: *digest,
         slab: Arc::clone(slab),
         view,
@@ -304,7 +330,24 @@ fn place(
         len: plan.bytes(),
         bytes: [aligned(plan.tape), aligned(plan.source), plan.derived()],
         tape_length: plan.tape,
-    })
+        table: plan.table,
+    };
+    Ok(Placed { document, table: new_table })
+}
+
+/// A format 16 or 16z document's language table: the slab's (`table`), made into `new_table` where the slab does
+/// not hold it yet (decision 0336 §7); its offset from the document's start.
+fn slab_table(table: Option<TableAt>, lang: &crate::code_rule_dsl::tape::f16::Lang, grammar: &Grammar, plan: &Plan, offset: usize, new_table: &mut Option<Vec<u8>>) -> Result<u32, Error> {
+    let table = table.ok_or_else(|| invalid("a format 16 document without its language's table"))?;
+    if !table.held {
+        let codes = resident::device_codes_of(lang.table(), grammar).map_err(invalid)?;
+        if codes.len() != plan.codes {
+            return Err(invalid("a tape's code table"));
+        }
+        // SAFETY: `DeviceCode` is plain data, 24 bytes each.
+        *new_table = Some(unsafe { std::slice::from_raw_parts(codes.as_ptr().cast::<u8>(), 24 * codes.len()) }.to_vec());
+    }
+    Ok(codes_offset(offset, table.at))
 }
 
 /// A room's bytes borrowed while its view is made (`Tape16Z::from_bytes` over them, in place).

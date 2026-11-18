@@ -110,7 +110,7 @@ fn selection_handles_empty_groups_missing_targets_and_zero_length_mime_values() 
     );
     assert_eq!(
         observe_output("selection-empty-groups", || {
-            execute_with_backend(ExecutionBackend::Metal, &programs, &files, &anchors)
+            execute_with_backend(ExecutionBackend::MetalJit, &programs, &files, &anchors)
         }),
         Ok(expected)
     );
@@ -161,7 +161,7 @@ fn query_order_after_capture_removal_uses_original_candidate_ordinals() {
         expected[0][0][2].captures[0].node
     );
     assert_eq!(
-        execute_with_backend(ExecutionBackend::Metal, &programs, &files, &anchors),
+        execute_with_backend(ExecutionBackend::MetalJit, &programs, &files, &anchors),
         Ok(expected)
     );
 }
@@ -240,7 +240,7 @@ fn adjacent_capture_selection_preserves_properties_and_mime_snapshots_in_directi
     );
     assert_eq!(
         observe_output("adjacent-captures-and-mime-snapshots", || {
-            execute_with_backend(ExecutionBackend::Metal, &programs, &files, &anchors)
+            execute_with_backend(ExecutionBackend::MetalJit, &programs, &files, &anchors)
         }),
         Ok(expected)
     );
@@ -318,7 +318,7 @@ fn mime_properties_use_source_snapshots_and_reject_missing_captures_before_witne
             evaluation.truncate(limit as usize);
         }
         let actual = observe_output(&format!("mime-source-snapshots-limit-{limit}"), || {
-            metal_grid_backend::execute_packed_with_result_limits(
+            metal_packed(
                 &programs,
                 &files,
                 &anchors,

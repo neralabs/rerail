@@ -57,7 +57,8 @@ pub struct Graph {
     /// digest, which keys the program, leaves them out.
     pub(in crate::code_rule_dsl) rules: BTreeMap<PathBuf, [u8; 32]>,
     /// The plans the run of `bootstrap.rr` that derived it used (`Report::plans`): the run that reads the graph
-    /// names them in its record, so they stay live. Not part of the graph's digest.
+    /// names them in its record, so they stay live. A graph kept as an image keeps them (`Images`, Q150), so a run
+    /// that reads it names what the run that derived it named. Not part of the graph's digest.
     pub(in crate::code_rule_dsl) plans: Vec<[u8; 32]>,
 }
 
@@ -149,9 +150,17 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         let map = kept.lock().expect("phase 0's graphs");
         seeds.iter().map(|s| map.get(s).cloned()).collect()
     };
-    for g in found.iter_mut() {
-        if g.as_ref().is_some_and(|g| !g.holds()) {
-            *g = None;
+    // A kept graph that no longer holds leaves the process's map too: the images' step below fills a seed from the
+    // map, and found the stale graph there again, so a file edited after its graph was kept was read as it was (its
+    // include's old digest), though phase 0 derived its graph anew.
+    let stale: Vec<&Seed> = seeds.iter().zip(found.iter_mut()).filter(|(_, g)| g.as_ref().is_some_and(|g| !g.holds())).map(|(s, g)| {
+        *g = None;
+        s
+    }).collect();
+    if !stale.is_empty() {
+        let mut map = kept.lock().expect("phase 0's graphs");
+        for s in stale {
+            map.remove(s);
         }
     }
     let wanted: Vec<Seed> = {
@@ -211,7 +220,9 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         let whole = derive(&wanted).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
         let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
         // Kept as images (decision 0246) whichever process derived them: an image is the engine build's, not the
-        // process's.
+        // process's. The image keeps the bootstrap run's plans (Q150), so this run and the next, which reads it, name
+        // the same plans (`the_run_after_a_cold_one_writes_nothing`). Clearing them here as well (f7e047997, from
+        // before images kept them) made the run that derived a graph name none and the run that read it name them.
         if let Some(images) = Images::here() {
             for (seed, g) in &made {
                 crate::code_rule_dsl::logic::rr::keep_graph_image(images.store.as_deref(), images.key(seed), images.encode(g));
@@ -308,7 +319,9 @@ pub(in crate::code_rule_dsl) fn phase_lib() -> Option<PathBuf> {
 
 /// Graphs as images (`rr::graph_image`): keyed by the engine's build and the seed, their paths written relative to the
 /// library and the phase programs' directory, so a bundle made where those stand elsewhere is read here too (each file
-/// is then checked by its digest, `Graph::holds`). The bootstrap run's plans are not kept: a graph read so used none.
+/// is then checked by its digest, `Graph::holds`). The bootstrap run's plans are kept with it: a run that reads the
+/// graph names them in its manifest, as the run that derived it did, so a warm run's manifest is the cold run's and
+/// what the graph came from stays live while it is used (Q150).
 struct Images {
     lib: String,
     phases: String,
@@ -363,11 +376,12 @@ impl Images {
         let digests: Vec<String> = g.digests.iter().flat_map(|(path, d)| [p(path), hex(d)]).collect();
         let phases: Vec<String> = g.phases.iter().flat_map(|(from, to)| to.iter().flat_map(move |(ph, path)| [self.rel(from), ph.clone(), p(path)])).collect();
         let rules: Vec<String> = g.rules.iter().flat_map(|(path, d)| [p(path), hex(d)]).collect();
-        crate::content_store::observe::encode_lists(&[&includes[..], &missing[..], &absent[..], &digests[..], &phases[..], &rules[..]])
+        let plans: Vec<String> = g.plans.iter().map(hex).collect();
+        crate::content_store::observe::encode_lists(&[&includes[..], &missing[..], &absent[..], &digests[..], &phases[..], &rules[..], &plans[..]])
     }
 
     fn decode(&self, bytes: &[u8]) -> Option<Graph> {
-        let [includes, missing, absent, digests, phases, rules]: [Vec<String>; 6] = crate::content_store::observe::decode_lists(bytes)?.try_into().ok()?;
+        let [includes, missing, absent, digests, phases, rules, plans]: [Vec<String>; 7] = crate::content_store::observe::decode_lists(bytes)?.try_into().ok()?;
         let unhex = |s: &str| -> Option<[u8; 32]> {
             let mut out = [0u8; 32];
             for (i, b) in out.iter_mut().enumerate() {
@@ -399,6 +413,7 @@ impl Images {
             let [path, d] = r else { return None };
             g.rules.insert(PathBuf::from(self.abs(path)?), unhex(d)?);
         }
+        g.plans = plans.iter().map(|d| unhex(d)).collect::<Option<_>>()?;
         Some(g)
     }
 }

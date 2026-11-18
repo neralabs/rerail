@@ -10,7 +10,7 @@
 //! - `num_low_of`, `num_number_of`: an item's id's low 32 bits from its number, and back.
 //! - `num_order_of`, `num_number_of_order`: a node's order key from its number, and back.
 
-use crate::ids::{INDEX_BITS, ORDER_INDEX_BITS, WORDS, at};
+use crate::ids::{INDEX_BITS, JUMP, ORDER_INDEX_BITS, SLOT_BITS, WORDS, at};
 use crate::reads::{B, NONE};
 use cranelift_codegen::ir::{
     InstBuilder, Value,
@@ -77,14 +77,25 @@ impl B<'_, '_> {
         let p = self.item(self.tape, item, 4);
         self.word_at(I32, p, at::COUNT)
     }
+    /// The length of the run at descriptor offset `offset` plus `k` runs' (`k` a u32), as a u32.
+    fn run_k_len(&mut self, offset: i32, k: Value) -> Value {
+        let base = self.f.ins().iadd_imm(self.tape, i64::from(offset));
+        let run = self.item(base, k, i64::from(at::RUN));
+        let len = self.word_at(I64, run, at::RUN_LEN);
+        self.f.ins().ireduce(I32, len)
+    }
     /// The first `i` in `0..n` (u32s) for which `below(i)` is false, `below` true before it and false from it.
     pub(crate) fn bisect(&mut self, n: Value, below: &mut dyn FnMut(&mut Self, Value) -> Value) -> Value {
+        let zero = self.c32(0);
+        self.bisect_in(zero, n, below)
+    }
+    /// `bisect` within `lo..hi`: the first `i` there for which `below(i)` is false (`hi` where none is).
+    fn bisect_in(&mut self, lo: Value, hi: Value, below: &mut dyn FnMut(&mut Self, Value) -> Value) -> Value {
         let (head, body, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block());
         self.f.append_block_param(head, I32);
         self.f.append_block_param(head, I32);
         self.f.append_block_param(done, I32);
-        let zero = self.c32(0);
-        self.f.ins().jump(head, &[zero.into(), n.into()]);
+        self.f.ins().jump(head, &[lo.into(), hi.into()]);
         self.f.switch_to_block(head);
         let (lo, hi) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
         let more = self.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
@@ -130,6 +141,11 @@ impl B<'_, '_> {
         let high = self.f.ins().ishl_imm(slot, i64::from(INDEX_BITS));
         let low = self.f.ins().band_imm(index, (1i64 << INDEX_BITS) - 1);
         self.f.ins().bor(high, low)
+    }
+    /// The slot of entry `i` of the `[slot, granule, continuation]`s at `by_slot`.
+    fn slot_at(&mut self, by_slot: Value, i: Value) -> Value {
+        let p = self.item(by_slot, i, 12);
+        self.word_at(I32, p, 0)
     }
     /// Word `w` (0: the granule; 1, 2: nodes, tokens before it) of child granule entry `k` (u32s).
     fn kid(&mut self, k: Value, w: Value) -> Value {
@@ -301,12 +317,31 @@ pub fn select(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `num_granule(item, k)`: the innermost granule holding `item` number `k` (0 or 1), and the last granule starting at
-/// or before it, as `g << 32 | j` (`NONE64` for none): a bisection of the starts' ranks, then up the parents.
+/// or before it, as `g << 32 | j` (`NONE64` for none): a bisection of the starts' ranks between the jumps either side
+/// of `k` (`Numbering::jumps`), then up the parents.
 pub fn granule(b: &mut B<'_, '_>) -> Value {
+    const _: () = assert!(JUMP.is_power_of_two());
     let (item, k) = (b.arg(0), b.arg(1));
     let starts = b.run_k(at::RANK_STARTS, item);
     let n = b.field(at::GRANULES);
-    let after = b.bisect(n, &mut |b, i| {
+    let jumps = b.run_k(at::JUMPS, item);
+    let held = b.run_k_len(at::JUMPS, item);
+    let q = b.f.ins().ushr_imm(k, i64::from(JUMP.trailing_zeros()));
+    let q1 = b.f.ins().iadd_imm(q, 1);
+    let has_lo = b.f.ins().icmp(IntCC::UnsignedLessThan, q, held);
+    let lo = b.either(I32, has_lo, |b| b.u32_of(jumps, q), |b| b.c32(0));
+    let has_hi = b.f.ins().icmp(IntCC::UnsignedLessThan, q1, held);
+    let hi = b.either(
+        I32,
+        has_hi,
+        |b| {
+            let j = b.u32_of(jumps, q1);
+            let j = b.f.ins().iadd_imm(j, 1);
+            b.f.ins().umin(j, n)
+        },
+        |_| n,
+    );
+    let after = b.bisect_in(lo, hi, &mut |b, i| {
         let s = b.u32_of(starts, i);
         b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, s, k)
     });
@@ -412,17 +447,69 @@ pub fn number_in(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `num_number_of(low)`: the item whose id's low 32 bits are `low`, as `item << 32 | number` (`NONE64` for none):
-/// the slot's granule by bisection, then its index among the granule's nodes or tokens.
+/// the slot's entry, then its index among the granule's nodes or tokens. The slots are hashes, about evenly spread:
+/// the entry is near `slot`'s share of them, a few steps from a guess there; a run of clashes past `STEPS` is
+/// bisected.
 pub fn number_of(b: &mut B<'_, '_>) -> Value {
+    const STEPS: i64 = 8;
     let low = b.arg(0);
     let slot = b.f.ins().ushr_imm(low, i64::from(INDEX_BITS));
     let by_slot = b.follow(b.tape, at::BY_SLOT);
     let n = b.run_len(at::BY_SLOT);
-    let at_ = b.bisect(n, &mut |b, i| {
-        let p = b.item(by_slot, i, 12);
-        let s = b.word_at(I32, p, 0);
-        b.f.ins().icmp(IntCC::UnsignedLessThan, s, slot)
-    });
+    // The guess: `slot`'s share of the entries, the last one at most.
+    let (s64, n64) = (b.f.ins().uextend(I64, slot), b.f.ins().uextend(I64, n));
+    let share = b.f.ins().imul(s64, n64);
+    let share = b.f.ins().ushr_imm(share, i64::from(SLOT_BITS));
+    let share = b.f.ins().ireduce(I32, share);
+    let empty = b.f.ins().icmp_imm(IntCC::Equal, n, 0);
+    let last = b.f.ins().iadd_imm(n, -1);
+    let zero = b.c32(0);
+    let last = b.f.ins().select(empty, zero, last);
+    let guess = b.f.ins().umin(share, last);
+    // Forward while the entry is below the slot, then back while the one before is not, `STEPS` in all.
+    let (fwd, fwd_load, back, back_load, walked) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    for block in [fwd, back, walked] {
+        b.f.append_block_param(block, I32);
+        b.f.append_block_param(block, I32);
+    }
+    b.f.ins().jump(fwd, &[guess.into(), zero.into()]);
+    b.f.switch_to_block(fwd);
+    let (at_f, steps_f) = (b.f.block_params(fwd)[0], b.f.block_params(fwd)[1]);
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, at_f, n);
+    let budget = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, steps_f, STEPS);
+    let go = b.f.ins().band(inside, budget);
+    b.f.ins().brif(go, fwd_load, &[], back, &[at_f.into(), steps_f.into()]);
+    b.f.switch_to_block(fwd_load);
+    let s = b.slot_at(by_slot, at_f);
+    let below = b.f.ins().icmp(IntCC::UnsignedLessThan, s, slot);
+    let (at_n, steps_n) = (b.f.ins().iadd_imm(at_f, 1), b.f.ins().iadd_imm(steps_f, 1));
+    b.f.ins().brif(below, fwd, &[at_n.into(), steps_n.into()], back, &[at_f.into(), steps_f.into()]);
+    b.f.switch_to_block(back);
+    let (at_b, steps_b) = (b.f.block_params(back)[0], b.f.block_params(back)[1]);
+    let after_first = b.f.ins().icmp_imm(IntCC::NotEqual, at_b, 0);
+    let budget = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, steps_b, STEPS);
+    let go = b.f.ins().band(after_first, budget);
+    b.f.ins().brif(go, back_load, &[], walked, &[at_b.into(), steps_b.into()]);
+    b.f.switch_to_block(back_load);
+    let before = b.f.ins().iadd_imm(at_b, -1);
+    let s = b.slot_at(by_slot, before);
+    let not_below = b.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, s, slot);
+    let steps_n = b.f.ins().iadd_imm(steps_b, 1);
+    b.f.ins().brif(not_below, back, &[before.into(), steps_n.into()], walked, &[at_b.into(), steps_b.into()]);
+    b.f.switch_to_block(walked);
+    let (at_w, steps_w) = (b.f.block_params(walked)[0], b.f.block_params(walked)[1]);
+    let spent = b.f.ins().icmp_imm(IntCC::Equal, steps_w, STEPS);
+    let at_ = b.either(
+        I32,
+        spent,
+        |b| {
+            b.bisect(n, &mut |b, i| {
+                let s = b.slot_at(by_slot, i);
+                b.f.ins().icmp(IntCC::UnsignedLessThan, s, slot)
+            })
+        },
+        |_| at_w,
+    );
     let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, at_, n);
     b.either(
         I64,

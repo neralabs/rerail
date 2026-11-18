@@ -606,6 +606,71 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0327, mode (b): a translation unit's answer is kept while the files it read are unchanged. An edit to a
+/// header asks again for the units that read it, and for no other; a header made where a unit's search looked first
+/// is one it read (its path was looked at). The outputs are those of a run with nothing kept.
+#[test]
+fn a_header_edit_asks_again_only_for_the_units_that_read_it() {
+    crate::install_store_functions();
+    // The journal names what changed (decision 0105): the engine's tests run without it, and this one turns it on
+    // (after the first observer, which turns it off once a process).
+    super::observe(|_| ());
+    crate::content_store::observe::set_journal(true);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("c-units-kept");
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(ws.join("sys")).unwrap();
+    std::fs::write(ws.join("one.c"), "#include \"h.h\"\nint one = H;\n").unwrap();
+    std::fs::write(ws.join("two.c"), "#include <g.h>\nint two = G;\n").unwrap();
+    std::fs::write(ws.join("three.c"), "int three;\n").unwrap();
+    std::fs::write(ws.join("h.h"), "#define H 1\n").unwrap();
+    std::fs::write(ws.join("sys/g.h"), "#define G 2\n").unwrap();
+    let rule = dir.join("p.rr");
+    std::fs::write(&rule, r#"
+.language c
+#include "c/preprocess.rr"
+.decl c_file(p: symbol)
+c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
+c_lang("c", "c", "gnu17").
+c_include_dir("c", 0, "sys", "angle").
+c_tu(p, "c") :- c_file(p).
+.decl entered(t: symbol, p: symbol)
+entered(t, p) :- c_pp_included(t, _, _, _, p, _).
+.decl uses(t: symbol, name: symbol, at: symbol)
+uses(t, n, p) :- c_pp_expansion(t, _, _, n, p, _, _, _, _).
+.decl active(t: symbol, p: symbol, end: number)
+active(t, p, e) :- c_pp_active(t, _, p, _, e).
+.output entered, uses, active
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut asked: Vec<String> = report.language_asked.iter().filter(|(r, _)| r == "c_pp_tu_req").map(|(_, k)| std::path::Path::new(k).file_name().unwrap().to_string_lossy().into_owned()).collect();
+        asked.sort();
+        let shown = ["entered", "uses", "active"].map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap());
+        (asked, shown)
+    };
+    let (asked, first) = run("kept.sqlite");
+    assert_eq!(asked, ["one.c", "three.c", "two.c"], "the first run asks for every unit");
+    std::fs::write(ws.join("h.h"), "#define H 3\n#define K 4\n").unwrap();
+    let (asked, edited) = run("kept.sqlite");
+    assert_eq!(asked, ["one.c"], "an edit to h.h asks again for the unit that read it alone");
+    assert_eq!(edited, run("fresh-1.sqlite").1, "the kept answers are a fresh run's");
+    // `<g.h>` searches the search path alone, not the includer's directory: a `g.h` made there is no file a unit
+    // looked at.
+    std::fs::write(ws.join("g.h"), "#define G 5\n").unwrap();
+    let (asked, _) = run("kept.sqlite");
+    assert_eq!(asked, Vec::<String>::new(), "a file no unit looked at asks for none");
+    std::fs::write(ws.join("sys/g.h"), "#define G 6\n").unwrap();
+    let (asked, last) = run("kept.sqlite");
+    assert_eq!(asked, ["two.c"]);
+    assert_eq!(last, run("fresh-2.sqlite").1);
+    assert_ne!(first, last);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// t32 4.1: a new process maintains its cross-file part from the rows the last process kept, as a session does.
 /// After an edit that changes a cross-file row, a changed stratum is maintained from its deltas, not derived
 /// again, and the outputs are a run's with an empty store.
@@ -924,6 +989,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
             assert!(path.to_string_lossy().contains("rerail-test-stores"), "{}", path.display());
             let count = |sql: &str| -> i64 { rusqlite::Connection::open(&path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
             assert!(count("SELECT count(*) FROM tape_objects") > tapes, "the library's tapes and the test's own");
+            assert_eq!(crate::content_store::holding(&path), (0, 0), "the run left store handles or connections open (handles, connections)");
             (path.parent().unwrap().to_path_buf(), count("SELECT id FROM store_identity"))
         }).unwrap()
     };
@@ -934,7 +1000,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
     for dir in [a, b] {
         assert!(!dir.exists(), "{} is removed with its test", dir.display());
         #[cfg(target_vendor = "apple")]
-        assert_eq!(super::test_store::open_under(&dir), 0, "nothing of {} is held open after its test", dir.display());
+        assert_eq!(super::test_store::held_under(&dir), Vec::<String>::new(), "nothing of {} is held open after its test (handles, connections: {:?})", dir.display(), crate::content_store::holding(&dir.join("store.sqlite")));
     }
 }
 
@@ -1165,7 +1231,9 @@ fn the_run_after_a_cold_one_writes_nothing() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let lines: Vec<&str> = stderr.lines().collect();
         let faults: Vec<String> = lines.iter().enumerate().filter(|(_, l)| l.starts_with("rerail: RERAIL_WARM")).map(|(i, l)| format!("{l}{}", lines.get(i + 1).map_or(String::new(), |n| format!(" ({})", n.trim())))).collect();
-        assert!(output.status.success(), "the run's process: {}; {}", output.status, faults.join("; "));
+        // No fault named: the process failed some other way, and its stderr's tail says how.
+        let tail = if faults.is_empty() { lines[lines.len().saturating_sub(30)..].join("\n") } else { String::new() };
+        assert!(output.status.success(), "the run's process: {}; {}{tail}", output.status, faults.join("; "));
     };
     run(false);
     let cold = manifests();
@@ -1176,13 +1244,63 @@ fn the_run_after_a_cold_one_writes_nothing() {
     assert!(new.is_empty(), "the warm run named what the cold run named: no manifest of its own ({} new)", new.len());
 }
 
+/// A rule's edit over files the stat index knows writes their memo entries with no SQL in the waves (decision 0104,
+/// `RERAIL_SQL_STRICT`). The edit keeps the memo's space (the same relations, `memo::space_digest`), so each file's entry is found
+/// by its stat before the first wave, unhashed, and misses the edited relation: the file is built, its content a
+/// stored source with no digest. Its entry's write, on the chunk's thread, needs that digest: the run hashes the text
+/// it holds (`build_doc`); read from the store, it was `source_digests` inside the waves, and the strict run aborted
+/// (e70f79dab). The runs are processes of their own, as `the_run_after_a_cold_one_writes_nothing`'s are.
+#[test]
+fn a_rule_edit_over_known_files_writes_their_entries_with_no_sql_in_the_waves() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path();
+    let src = base.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    for i in 0..3 {
+        std::fs::write(src.join(format!("m{i}.py")), format!("x{i} = 1
+y = x{i} + 2
+")).unwrap();
+    }
+    let rule = |name: &str, extra: &str| {
+        let path = base.join(name);
+        std::fs::write(&path, format!("#include \"core.rr\"\n.decl idents(s: number, e: number)\nidents(s, e) :- node(_, n, \"identifier\", s, e), kind(n, \"identifier\"){extra}.\n.output idents\n")).unwrap();
+        path
+    };
+    let (before, edited) = (rule("before.rr", ""), rule("edited.rr", ", s >= 0"));
+    // Past the observer's racy window, so the second run knows each file by its stat (`RACY_NS`).
+    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
+    let store = base.join("store.sqlite");
+    let run = |program: &std::path::Path, strict: bool| {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
+            .env("RERAIL_TAPE_CACHE", &store)
+            .env("RERAIL_CHILD_RUN", &src)
+            .env("RERAIL_CHILD_OUT", base.join("out"))
+            .env("RERAIL_CHILD_PROGRAM", program)
+            .env("RERAIL_COSTS", base.join("costs.sqlite"))
+            .env("RERAIL_IMAGE_STORE", base.join("images"));
+        if strict {
+            child.env("RERAIL_SQL_STRICT", "1");
+        }
+        let output = child.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(2).collect();
+        assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join(" "));
+    };
+    run(&before, false);
+    run(&edited, true);
+}
+
 /// One corpus run in a process of its own, for `the_run_after_a_cold_one_writes_nothing`.
 #[test]
 #[ignore = "a parent test runs it in a process of its own"]
 fn one_corpus_run_for_a_parent() {
     let (Some(src), Some(out)) = (std::env::var_os("RERAIL_CHILD_RUN"), std::env::var_os("RERAIL_CHILD_OUT")) else { return };
+    // `RERAIL_CHILD_PROGRAM=<file.rr>`: that rule file, else the pickle pack's.
     let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
-    let program = crate::code_rule_dsl::logic::settings::program_text(&rules.join("bandit-b301-pickle.rr")).unwrap();
+    let file = std::env::var_os("RERAIL_CHILD_PROGRAM").map_or_else(|| rules.join("bandit-b301-pickle.rr"), std::path::PathBuf::from);
+    let program = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
     // `RERAIL_CHILD_RUNS=<n>`: n runs in this one process, as a daemon's or `repeat`'s; under `RERAIL_CHILD_SESSION`,
     // runs of one session.
     let runs: usize = std::env::var("RERAIL_CHILD_RUNS").ok().and_then(|n| n.parse().ok()).unwrap_or(1);
@@ -1272,6 +1390,26 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     let _ = std::fs::remove_dir_all(&dir);
     ran.unwrap();
     assert!(findings.contains("PYI062") && findings.contains("PYI059"), "both rules' findings: {findings}");
+}
+
+/// Programs combined that make guests are each hidden alone; each part's on-request rewrite (decision 0174) is undone
+/// before that, not after: hiding copied `token`'s answer rules into its grammar-scoped copy (`rr_in_<g>_token`),
+/// the undo then dropped the inputs they read (`rr_token_anon`, `rr_token_named`), and the combined run failed on an
+/// undeclared relation (Q67: these three of the data-layer pack, on any file).
+#[test]
+fn programs_hidden_alone_keep_their_attribute_copies_declared() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.py"), "def f(x: int) -> int:\n    if x is not None:\n        return 1\n    return 0\n").unwrap();
+    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates/datalog/authored");
+    let programs: Vec<String> = ["data-layer-schema-bootstrap-contracts.rr", "data-layer-unresolved-forward-refs.rr", "data-layer-versioned-merged-identity.rr"]
+        .iter()
+        .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
+        .collect();
+    let ran = super::run_all(&programs.iter().map(String::as_str).collect::<Vec<_>>(), &dir.join("src"), &dir.join("out"), "program", Binding::Cpu, 1 << 18);
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap();
 }
 
 /// A text test over `node_text` that a cross-file relation reads (`passes` reads `uses`, which joins two files) gives
@@ -1377,8 +1515,15 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_SPLIT_DUMP",
         "RERAIL_DEMAND_DUMP",
         "RERAIL_PREPARED_TRACE",
-        // Decision 0173's version simulation, traced to a directory (`version_trace`): written, never read back.
+        // How the combine's link is made (decision 0373): spliced into the last one, linked whole, or both and compared;
+        // the program is the same (`check` asserts it).
+        "RERAIL_COMBINE_LINK",
+        // A measurement aid: the program as the passes before lowering leave it, written to a directory.
+        "RERAIL_FRONT_DUMP",
+        // A measurement aid (decision 0173): each version a program takes, written to a directory; the program is the same.
         "RERAIL_VERSION_TRACE",
+        // A profile's live heap by allocating stack (`heap-frames.tsv`): a diagnostic; the program is the same.
+        "RERAIL_HEAP_FRAMES",
         "RERAIL_SPIKE_PROJECTION",
         // A diagnostic: a refused component's members, printed (`front::unstratified_trace`).
         "RERAIL_STRATA_COUNTS",
@@ -1396,6 +1541,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_WARM",
         "RERAIL_MEMO_PROGRAM_DUMP",
         "RERAIL_STATS_KEEP_TRACE",
+        // A measurement aid: writes each program made from another to a trace directory (`version_trace`).
+        "RERAIL_VERSION_TRACE",
         "RERAIL_SESSION",
         // The library's directory: its files' paths and digests are in the texts' digest (the module graph).
         "RERAIL_RR_LIB",
@@ -1403,6 +1550,15 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_COSTS",
         // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
         "RERAIL_SOURCES_PHASE",
+        // Where rule images are read from and kept (decision 0246 §6): an image is keyed by its text, its scope and
+        // the format, so whichever store gives it, it is the same program; off, the text is lowered again.
+        "RERAIL_MODULE_IMAGES",
+        "RERAIL_IMAGE_STORE",
+        "RERAIL_SHIPPED_IMAGES",
+        // A bundle's export: the images written beside the store as well.
+        "RERAIL_EXPORT_IMAGES",
+        // A measurement aid (decision 0173): each version written out, the program unchanged.
+        "RERAIL_VERSION_TRACE",
     ];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
@@ -1468,10 +1624,15 @@ fn every_switch_lowering_reads_is_classified() {
         let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
         corpus[a..b].to_owned()
     };
-    // Combining: `combine_read`, what it calls that reads a switch (`scoping::guard`), and the `.rr` lowering its
-    // `rr::parse` runs (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
-    let mut combining = sources(&["logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs"]);
-    combining.push(("corpus.rs, combine_read".to_owned(), region("\nfn combine_read(", "\n}\n")));
+    // Combining: `combine_read` (its link, `combine_linked`, and its tail on the tree and on the version), what it
+    // calls that reads a switch (`scoping::guard`, the tail's passes), and the `.rr` lowering its `rr::parse` runs
+    // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
+    let mut combining = sources(&[
+        "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
+        "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
+    ]);
+    combining.push(("corpus.rs, combine_read and its tail".to_owned(), region("\nfn combine_read(", "\n/// `combine_read` up to the programs linked")));
+    combining.push(("corpus.rs, combine_linked".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies }))")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`hiding::fold_own`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
@@ -1480,6 +1641,8 @@ fn every_switch_lowering_reads_is_classified() {
     let mut preparing = sources(&[
         "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
         "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
+        // Its passes on the version: `fold_own`'s and the merges (`combining`), and the combine's fact spaces.
+        "logic/plan/corpus/preparation/combining.rs",
         "logic/plan/corpus/session.rs", "logic/profile.rs", "logic/costs.rs", "typing/file_local.rs", "typing/file_local",
     ]);
     preparing.push(("corpus.rs, run_observed's preparation".to_owned(), region("\nfn run_observed(", "Arc::new(Prepared {")));
@@ -1506,4 +1669,42 @@ fn every_switch_lowering_reads_is_classified() {
     }
     let unread: Vec<&str> = super::COMBINING.iter().chain(super::PREPARING).copied().filter(|s| !seen.contains(*s)).collect();
     assert!(unread.is_empty(), "switches listed as combining or preparing that nothing there reads: {unread:?}");
+}
+
+/// Q22, a guard: a run after a rule's edit parses no file the last run read. The edit makes a new lane (the programs'
+/// texts) and plan, and the tapes are found by the root's last runs (`root_sources`), read before the first wave
+/// (decision 0104). It regressed unseen: the tapes were looked up by lane, which every edit changes. A guest's tape is
+/// not stored (Q30, `a_run_stores_no_source_of_its_guests`): its parse is cheaper than storing and reading it.
+#[test]
+fn an_edit_parses_no_file_the_last_run_read() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("file-tapes");
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(ws.join("a.py"), "from typing import List, Optional\n\nx: \"List[int]\" = []\n\ndef f(a: \"Optional[Foo]\") -> \"Baz\":\n    pass\n").unwrap();
+    std::fs::write(ws.join("b.py"), "y: \"Optional[int]\" = None\n").unwrap();
+    let program = |extra: &str| format!(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl names(x: symbol)
+names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), node(_, m, "identifier", _, _), text(m, x){extra}.
+.output names
+"#);
+    let out = dir.join("out");
+    let run = |text: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        super::run(text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap()
+    };
+    // The first run's files are parsed by its sources phase, which runs first, and found by the run itself.
+    let first = run(&program(""));
+    assert_eq!(first.file_tapes.0 + first.file_tapes.1, 2, "{:?}", first.file_tapes);
+    // An edited rule: a new lane and plan; the files are as they were.
+    let edited = run(&program(", x != \"q22\""));
+    assert_eq!(edited.file_tapes.1, 0, "no file is parsed again (found, parsed): {:?}", edited.file_tapes);
+    assert!(edited.file_tapes.0 > 0, "the files' tapes are the last run's: {:?}", edited.file_tapes);
+    // And again: a run that found its tapes names them, so the next finds them too.
+    let again = run(&program(", x != \"q22b\""));
+    assert_eq!(again.file_tapes.1, 0, "{:?}", again.file_tapes);
+    assert!(again.file_tapes.0 > 0, "{:?}", again.file_tapes);
+    let _ = std::fs::remove_dir_all(&dir);
 }

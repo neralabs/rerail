@@ -37,6 +37,10 @@ impl<'a> P<'a> {
             if !self.statement(mode)? {
                 break;
             }
+            if mode == Stmts::File {
+                // A top-level item is final: its nodes are committed (passed to format 16's ops; decision 0399 §2).
+                self.w.commit();
+            }
         }
         self.no_struct = saved;
         Ok(())
