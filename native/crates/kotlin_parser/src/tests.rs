@@ -780,6 +780,10 @@ fn show() {
                 let got = image_text(&image).unwrap_or_default();
                 if got == lean {
                     eprintln!("== {p}: the same");
+                    // `RERAIL_KOTLIN_PRINT`: the tape too.
+                    if std::env::var_os("RERAIL_KOTLIN_PRINT").is_some() {
+                        eprintln!("{lean}");
+                    }
                 } else {
                     eprintln!("== {p}: DIFFERS\n-- lean\n{lean}-- grammar\n{got}");
                     if std::env::var_os("RERAIL_KOTLIN_TOKENS").is_some() {

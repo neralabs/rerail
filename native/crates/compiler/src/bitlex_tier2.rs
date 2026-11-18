@@ -190,6 +190,9 @@ pub struct Mark {
     /// `, settles`: its mask from each bit to the next grammar token's start, which its arms
     /// settle the pending extras before (`SETTLE`).
     pub settle: Option<u16>,
+    /// `, drops W`: `W`'s mask, at whose tokens its arms drop the extra pending last
+    /// (`SETTLE m=1`).
+    pub drop: Option<u16>,
     /// `, ends`: hidden, and a level that may end where it holds and does not take it ends
     /// there, its caller to take it.
     pub ends: bool,
@@ -483,6 +486,10 @@ impl Emit<'_> {
                 Act::SettleMark => {
                     let m = self.marks.iter().find(|m| m.kind == token).and_then(|m| m.settle).expect("a settling mark's mask");
                     self.push("SETTLE", 0, Arg::Num(m));
+                    // `drops`: the extra pending last, where its mask holds at the token.
+                    if let Some(d) = self.marks.iter().filter(|m| m.kind == token).find_map(|m| m.drop) {
+                        self.push("SETTLE", 1, Arg::Num(d));
+                    }
                     continue;
                 }
                 Act::ExtraNow => {

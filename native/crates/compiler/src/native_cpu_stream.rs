@@ -4602,6 +4602,32 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     f.switch_to_block(after);
                     f.ins().jump(fall, &[]);
                 }
+                Op::DropLast { mask } => {
+                    // `drops`: where the mask holds at the token's start, the extra pending last
+                    // dropped; the next node made takes its row and cells.
+                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                    let start = mget(&mut f, Mem::Start);
+                    let w = f.ins().ushr_imm(start, 6);
+                    let off = f.ins().imul_imm(output_stride, output as i64);
+                    let base = f.ins().iadd(outputs_p, off);
+                    let word = mask_word(&mut f, base, lasts_stride, w);
+                    let s = f.ins().band_imm(start, 63);
+                    let bit = f.ins().ushr(word, s);
+                    let bit = f.ins().band_imm(bit, 1);
+                    let pending = mget(&mut f, Mem::Pending);
+                    let some = f.ins().icmp_imm(IntCC::NotEqual, pending, 0);
+                    let some = f.ins().uextend(types::I64, some);
+                    let both = f.ins().band(bit, some);
+                    let drop = f.create_block();
+                    f.ins().brif(both, drop, &[], fall, &[]);
+                    f.switch_to_block(drop);
+                    let p = f.ins().iadd_imm(pending, -1);
+                    mset(&mut f, Mem::Pending, p);
+                    let n = mget(&mut f, Mem::Nodes);
+                    let n = f.ins().iadd_imm(n, -1);
+                    mset(&mut f, Mem::Nodes, n);
+                    f.ins().jump(fall, &[]);
+                }
                 // A keyword's: its token's word's kind (`WORD_KIND`), in a word of its own.
                 Op::Remember { kind: WORD_KIND } => {
                     let word_kinds = &native.word_kinds;
@@ -5846,6 +5872,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::Switch { .. } => vec![BYTES],
         Op::Mark { .. } | Op::Row { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
         Op::SettleBefore { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE, ROWS],
+        Op::DropLast { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
         Op::Open { .. } => vec![ROWS, OPEN],
         Op::Close { .. } => vec![OPEN, ROWS],
         Op::Leaf { .. } => vec![ROWS],

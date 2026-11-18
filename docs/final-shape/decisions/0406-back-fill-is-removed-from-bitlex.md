@@ -34,8 +34,8 @@ A grammar may not write `back_fill`, as a mask or as a number. The parse refuses
 
 A grammar not yet moved says `deprecated back_fill` on a line of its own. That is the
 deprecation period: Kotlin's step 35 and the `.rr` ladder's steps 15 to 21 carry the line, and
-so do the tests of the IR's backward pass. When Kotlin's grammar is moved, the line goes from
-the language as well.
+so do the tests of the IR's backward pass. Kotlin's step 36 is moved: it has no `back_fill`
+and no such line (below).
 
 **What stays.** The block program's `BackFill` operation stays an operation of the IR: Metal's
 lowering and the interpreter's keep it. The language writes one itself for a region kind with
@@ -80,8 +80,86 @@ The rest after it is tried at each turn: in Cranelift's `token_pattern`, a block
 generated Rust, `pattern_N_rest(at)`. The interpreter matches in turn (`stream::token_follows`),
 and so does Bitlex's reference (`eval::seq_holds`).
 
+A run may be of a `~`: `(~("@" | "{" | ";"))*`, any number of tokens none of those. Each
+executor's element test already took a `~`.
+
+## A token's kind from its own bytes
+
+A decimal number's kind (integer or real) was told at its first byte by a back fill over its
+digits. The lean lexer reads the number, then names its kind. The grammar now has one row for
+decimal numbers, `integer_literal`, and a mark that tests the token's own bytes
+(`mark real = empty, at integer_literal when count(frac_dot | e_at | f_at) at least 1`, the
+token loop's test, decision 0177). The tree takes `real integer_literal as real_literal`. A number
+that starts with a `.` (`.5`) is real, a row of its own.
+
+A mark's token test may now test a kind at a first byte that another kind's rows start at too
+(`0` starts a hex number too). The test runs on every token that starts there, so its mask
+must hold in no token of the other kinds. The fraction, the exponent and the `f` are none of a
+hex number's. An escape (`escape … at KIND when …`) is still refused there: it would refuse the
+other kind's tokens.
+
+## A comment the semicolon swallows: `drops`
+
+The lean lexer's `asi` reads a block comment that starts the line after a line break, and
+looks at what follows it. Before a word that starts with `a`, `e` or `w`, it swallows the
+comment into the semicolon (`Asi::Swallow`): the parser removes the comment from its extras. The
+grammar did this in tier 1, with back fills: it skipped the comment's bytes, so they made no
+token. That is a choice tier 1 cannot make forward, because the word after the comment decides it.
+
+Now every comment is a token, and the semicolon's arm drops it:
+`mark semi = …, settles, drops W`. Where the mark's arm runs at a token where `W` holds, the
+extra pending last is dropped from the tape (`SETTLE m=1`). `W` is forward
+(`swallow_at = awe_word & after_sw`): the word right after such a comment, so the extra pending
+last is that comment. The interpreter pops the node. Cranelift and the generated Rust step the
+node count back, and the next node takes the row and its cells. A comment the parser's state
+does not ask about stays, as in the lean parser.
+
+## Escapes told forward
+
+The grammar's escapes that looked past a comment (`next(back_fill(goes, solid))`, a `;` with
+nothing after it) are told at the byte that decides them. Since an escape refuses the whole
+file, the byte it is told at does not matter. So `block_end & next(back_fill(X, solid))` is
+`X & prev(fill(block_end, solid))`: `X` at the first solid byte after the comment. An `else`
+that goes on is told at the solid byte after the word, a `constructor` after modifiers at the
+`constructor` (`prev(fill(start, stops))`), and a `;` that ends the file at its last byte.
+
+## Kotlin's step 36
+
+Step 36 has no `back_fill`. What each back fill became:
+
+| Back fill | Now |
+|---|---|
+| the semicolon's next token (`goes`, `else ->`, `constructor` in a header) | `semi`'s `unless before`s; a second statement in a class's header |
+| `}` after a line break | `semi_close = close_at, before "}"` |
+| a lambda's parameters to `->` | `mark lam_params = tokens "{" P (P)* "->"` |
+| an accessor's `get` / `set` | `acc`'s `unless before`s |
+| type arguments to `>` and `(`, a parenthesized type, `suspend`, a function type's receiver, an annotated `if` / `when` | `generic`'s `before`s, one mask (each starts with its own token) |
+| a declaration's receiver and its last `.` | `dotted`'s `before`s with a run |
+| a real number | the token test `real` |
+| a raw string's run to its quotes | a part that ends at the first of its quotes and its end |
+| a swallowed comment | `drops` |
+| the comment escapes, the `;` at the file's end | forward escapes |
+
+Tier 1 is one forward pass with nothing stored between passes. The corpus is unchanged: 429 files
+the same as the lean parser's tapes, 62 refused, 0 differ. The generated Rust's tapes are the
+JIT's (`aot_tapes_are_the_jits`).
+
+Each mark statement that has a pattern of its own takes a bit of the record's code, and a code
+holds 16 (the extras take 2). Two statements of one kind whose patterns start with different
+tokens share a mask (`dotted`, `generic`).
+
+The forward scans differ from the lean parser's in two places, each an open item:
+- A run stops at the first place its rest holds, not where a depth closes.
+  `type_args_end` counts `<` and `>`.
+- A run passes line breaks: they are no tokens. The annotation before `if` / `when` ran to
+  a line break before.
+
 ## Tests
 
+- `syntax::tier2_tests::a_settling_mark_drops_an_extra`: `drops` parsed with `settles`,
+  refused without.
+- `kotlin_parser::tests::swallowed_comments_are_the_lean_parsers`: the dropped comments, on
+  Cranelift and the interpreter; the corpus and `aot_tapes_are_the_jits` for the generated Rust.
 - `syntax::tier2_tests::back_fill_is_refused`: a mask's and a number's `back_fill` are refused
   with the message; with `deprecated back_fill`, parsed.
 - `syntax::tier2_tests::a_mark_is_before_a_token`: `before` and `unless before` parse to their

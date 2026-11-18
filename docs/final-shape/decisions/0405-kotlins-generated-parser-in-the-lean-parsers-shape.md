@@ -102,6 +102,12 @@ step; `jit_against_aot` measures it at the end of a stage, as information.
 | | Passes | Slots a block | CPU body's instructions |
 |---|---|---|---|
 | step 35, before this work | 7 (4 forward, 3 back) | 555 | 1,743 + 1,168 + 184 + 254 |
+| step 36, no back fills (0406) | 1 (forward) | 0 | 2,462 |
 
 Measured as information (`jit_against_aot`, the 429 corpus files the grammar takes, load 60–80):
 tier 1 ahead of time 289 cycles a node; the lean parser's whole parse 115.
+
+Step 36 (load 27–33): tier 1 ahead of time 524M instructions, 146M cycles, 43.5 ms CPU (956
+instructions and 267 cycles a node); tier 2 ahead of time 376M instructions, 93M cycles,
+28.7 ms; tiers 1 and 2 ahead of time 436 cycles a node, the JIT's 563; the lean parser's whole
+parse 296M instructions, 64.5M cycles, 19.2 ms (118 cycles a node).

@@ -1646,6 +1646,8 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         }
         Op::Settle { .. } => format!("s.pending = 0;\n{}", jump(0)?),
         Op::SettleBefore { mask } => format!("s.settle_before({});\n{}", mask_output(n, mask)?, jump(0)?),
+        // The next node made takes the dropped one's row and cells.
+        Op::DropLast { mask } => format!("if s.pending != 0 && s.bit({}, s.start) {{ s.pending -= 1; s.nodes -= 1; }}\n{}", mask_output(n, mask)?, jump(0)?),
         Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
             let k = u32::from(order);
             // A token mark past the code's (decision 0407): live at every token, its tokens

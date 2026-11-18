@@ -100,6 +100,9 @@ pub const CHECK: u8 = 0x66;
 /// hold, from the first on, are no longer pending: the nodes closed next keep them, as a leaf
 /// taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
 /// line break are the statement's. (0x84: 0x67 became the preprocessing words' `READ`.)
+/// `m=1` (`mark … , drops W`): where mask `operand` holds at the token's start, the extra
+/// pending last is dropped: no node of the tape (decision 0406, the lean lexer's swallowed
+/// comment).
 pub const SETTLE: u8 = 0x84;
 
 // The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token

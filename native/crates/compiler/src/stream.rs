@@ -69,7 +69,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         FLAG => mode <= 2 && operand < 16,
         COUNT => mode <= 1 && usize::from(operand) < program.counts.len(),
         CHECK => mode == 0 && usize::from(operand) < program.local_checks.len(),
-        SETTLE => mode == 0 && usize::from(operand) < masks,
+        SETTLE => mode <= 1 && usize::from(operand) < masks,
         CLOSE => mode <= 1 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
         PUSH => mode <= 32 && usize::from(operand) < words,
@@ -556,6 +556,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             ROW => {
                 if !mask_bit(operand, start) {
                     pc += 1;
+                }
+            }
+            SETTLE if mode == 1 => {
+                // `drops`: the extra pending last, where the mask holds at the token.
+                if pending > 0 && mask_bit(operand, start) {
+                    nodes.pop();
+                    pending -= 1;
                 }
             }
             SETTLE => {

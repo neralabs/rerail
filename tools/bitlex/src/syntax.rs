@@ -675,7 +675,11 @@ pub enum Stmt {
     /// mark is before, as a token mark's run (`tokens`), as a parser asks of the tokens it peeks
     /// at. `next` holds them, each with whether it is an `unless`: the mark holds where no
     /// `unless before` does and, if it has a `before`, one of them does.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)> },
+    ///
+    /// `, drops W` (with `settles`): where its arm runs at a token where `W` holds, the extra
+    /// pending last is dropped, as the lean lexer's `asi` loses the comment it swallows into the
+    /// semicolon (decision 0406). `W` holds at the token right after such an extra.
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Option<Expr> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -1960,7 +1964,7 @@ impl P {
                         }
                     }
                 }
-                let (mut end, mut unplaced, mut checks, mut settles, mut ends) = (false, None, vec![], false, false);
+                let (mut end, mut unplaced, mut checks, mut settles, mut ends, mut drops) = (false, None, vec![], false, false, None);
                 let mut next: Vec<(bool, Vec<Vec<TokenElem>>)> = Vec::new();
                 while self.eat_p(",") {
                     self.nls();
@@ -1975,6 +1979,8 @@ impl P {
                         next.push((not, seq));
                     } else if self.eat_kw("settles") {
                         settles = true;
+                    } else if self.eat_kw("drops") {
+                        drops = Some(self.expr()?);
                     } else if self.eat_kw("ends") {
                         ends = true;
                     } else if self.eat_kw("else") {
@@ -1994,7 +2000,10 @@ impl P {
                         end = true;
                     }
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next }
+                if drops.is_some() && !settles {
+                    return self.err("`drops` on a mark that settles");
+                }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops }
             }
             "token" => {
                 let kind = self.kind()?;
@@ -2305,6 +2314,14 @@ mod tier2_tests {
             Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone(), word(",")])])], vec![word("->")]])], false))
         );
         assert!(parse("lexer t\nmark k = tokens \"{\" (name | \",\")* \"->\"\n").is_ok());
+    }
+
+    /// A settling mark's `drops W` (decision 0406): parsed with `settles`, refused without.
+    #[test]
+    fn a_settling_mark_drops_an_extra() {
+        let mark = |m: &str| parse(&format!("lexer t\nclass lf = '\\n'\n{m}\n")).map(|s| matches!(s.last(), Some(Stmt::Mark { drops: Some(_), .. })));
+        assert_eq!(mark("mark k = lf, settles, drops lf"), Ok(true));
+        assert!(mark("mark k = lf, drops lf").is_err());
     }
 
     /// The tier-2 forms of decision 0071, as JSON's tree section writes them.

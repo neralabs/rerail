@@ -43,7 +43,6 @@
 # and more.
 
 lexer kotlin
-deprecated back_fill
 
 class ws        = ' ' '\t' '\n' '\r' 0x0c
 class lf        = '\n'
@@ -232,8 +231,6 @@ mask ctor_w     = kw_start & text("constructor") & ~next(w, 11)
 
 # A byte of code that is not blank, or a string's opener: where a token starts or goes on.
 mask solid      = (code | opens) & ~ws
-# `else` before `->` is a `when` entry's, which a line break ends before.
-mask arrow_next = back_fill(code & text("->"), solid)
 # What a line may start with and go on the line before: tree-sitter-kotlin's scanner, which
 # inserts no semicolon before these (`scan_automatic_semicolon`). `by` and `constructor` go on
 # everywhere here: they are keywords of this grammar, so a line they start where the scanner
@@ -255,61 +252,82 @@ mask head_brace = code & lbrace & prev(class_decl)
 mask object_w   = kw_start & text("object") & ~next(w, 6)
 mask obj_decl   = fill(object_w, code & lbrace)
 mask del_brace  = head_brace & prev(fill(by_w & class_decl, lbrace)) | code & lbrace & prev(obj_decl) & prev(fill(by_w & obj_decl, lbrace))
-# A line of a class's header that starts with an annotation (no arguments) before its
-# `constructor`, on that line or the ones after: the primary constructor's modifiers.
 mask vis_w      = kw_start & (text("private") & ~next(w, 7) | text("protected") & ~next(w, 9) | text("internal") & ~next(w, 8) | text("public") & ~next(w, 6))
-mask ctor_ann   = code & (at_sign | vis_w) & class_head & back_fill(ctor_w & class_head, ~(code & (word | ws | dot | at_sign)) | head_stop)
-mask goes       = code & goes_on | code & text("!=") | else_w & ~next(arrow_next, 4) | as_w | where_w | catch_w | finally_w | by_w | ctor_w & class_head | ctor_ann
+# The `constructor` that an annotation or a visibility modifier in a class's header reaches over
+# words, blanks, dots and `@`s (`ann_ctor`, from `S`'s bytes): the primary constructor's
+# modifiers. Told at the `constructor`, as the lean lexer's `modifier_then_constructor` reads on.
+mask ctor_stop  = ctor_w & class_head | ~(code & (word | ws | dot | at_sign)) | head_stop
 # A line break in code where the next token does not go on the line: the statement's end. Before
 # a `}`, a mark of its own: a block's statements may end with one, a class body's members must.
 # A line break after a `;` (and blanks or comments): the `;` was the semicolon.
 mask after_semi = fill(prev(code & semicolon), solid)
-mask ends_line  = lf & code & ~back_fill(goes, solid) & ~after_semi
 # The line breaks that may end a statement: the semicolon's gap. Its tokens after decide (`semi`).
 mask lf_end     = lf & code & ~after_semi
 # A `}` after a `;`: the `;` closed the line, so the `}` closes as after a line break.
 mask close_at   = lf_end | code & rbrace & (prev(after_semi) | prev(code & semicolon))
 
-# The scanner reads a block comment that starts a line through, and where what follows it goes
-# on, tree-sitter loses the comment: not read yet.
-escape "a block comment before a token that goes on the line" when block_end & next(back_fill(goes, solid))
+# A block comment the lean lexer's `asi` reads (one that starts the line after a line break where
+# a semicolon may come): what follows it decides, as there. Each test is told at the byte that
+# decides it, after the comment, as the lexer reads on: the first solid byte after a block
+# comment's end (`after_blk`), and after an `else` there, the solid byte after the word.
+mask after_blk  = solid & prev(fill(block_end, solid))
+# Where what follows goes on, tree-sitter loses the comment (a comment of no width): not read
+# yet. What goes on, at the first solid byte after the comment: a byte of `goes_on`, `!=`, `as`,
+# `where`, `catch`, `finally`, `by`, `constructor` in a class's header, `else` but a `when`
+# entry's (`else ->`), and an annotation or a visibility modifier before a header's `constructor`.
+mask goes_now   = code & goes_on | code & text("!=") | as_w | where_w | catch_w | finally_w | by_w | ctor_w & class_head
+mask else_blk   = else_w & after_blk
+mask else_next  = solid & (prev(else_blk, 4) | prev(fill(prev(else_blk, 4) & ~solid, solid)))
+mask ann_blk    = code & (at_sign | vis_w) & class_head & after_blk
+mask ann_ctor   = ctor_w & class_head & prev(fill(ann_blk, ctor_stop))
+escape "a block comment before a token that goes on the line" when goes_now & after_blk | else_next & ~text("->") | ann_ctor
+# A block comment that starts a line after a token's line: the scanner reads it. (Where what
+# follows goes on, the escape above refuses the file, so the line break is any that may end a
+# statement.)
+mask asked_blk  = fill(o_block & prev(fill(lf_end & prev(fill(solid, lf)), solid)), block_end)
+# After a token's line, before another comment, the scanner reads it through and the tree keeps
+# a comment of no width where the next one starts: not read yet.
+escape "a block comment that starts a line, before a comment" when (o_line | o_block) & prev(fill(block_end & prev(asked_blk), ~ws))
 # Before a word that starts with `a`, `e` or `w` (`abstract`, `external`), and that is not `as`,
 # `else` or `where`, the scanner swallows the comment into the semicolon it inserts after it (the
-# lean lexer's `Asi::Swallow`), and the tree loses it: not read yet. Right after a delegation
-# specifier or a property with no initializer, a word with `b` does the same (open, 0332).
-# A block comment that starts a line after a token's line: the scanner reads it.
-mask asked_blk  = fill(o_block & prev(fill(ends_line & prev(fill(solid, lf)), solid)), block_end)
-# After a token's line, before another comment, the scanner reads it through and the tree keeps a comment of no width
-# where the next one starts: not read yet.
-escape "a block comment that starts a line, before a comment" when block_end & prev(asked_blk) & next(back_fill(o_line | o_block, ~ws))
+# lean lexer's `Asi::Swallow`), and the tree loses it: the semicolon drops it (`drops`). Right
+# after a delegation specifier or a property with no initializer, a word with `b` does the same
+# (open, 0332).
 # Swallowed where a semicolon may come: after a line that ends with a word, `)`, `]`, `}` or a
 # quote (`sw_blk`), and that is no header's (a header holds its semicolon, so its node would end
-# at the word), before no `else` (a `when` entry holds its line break the same way). After a `{` (`br_blk`) none may, and the comment is read as any other. After
-# any other line end, not read yet.
-mask awe_word   = code & word & ~prev(w) & (text("a") | text("e") | text("w")) & ~goes
-mask sw_word    = awe_word & ~else_w
+# at the word), before no `else` (a `when` entry holds its line break the same way). After a `{`
+# (`br_blk`) none may, and the comment is read as any other. After any other line end, not read
+# yet.
+mask awe_word   = code & word & ~prev(w) & (text("a") | text("e") | text("w")) & ~as_w & ~where_w & ~else_w
 mask hdr_line   = fill(kw_start & (prev(fill(lf & code, solid)) | ~prev(~empty)) & (text("package") | text("import")), lf)
 mask hdr_gap    = fill(prev(hdr_line) & lf, solid)
 # (A fill holds at its start even where that is a stop: `& ~solid`, so that the last solid
 # byte before the line break is the one named.)
 mask ok_lf      = lf & fill(prev(code & (word | text(")") | text("]") | rbrace) | dq | text("'")) & ~solid, solid) & ~hdr_gap
 mask brace_lf   = lf & fill(prev(code & lbrace) & ~solid, solid)
-mask sw_blk     = fill(o_block & prev(fill(ends_line & prev(fill(solid, lf)) & ok_lf, solid)), block_end)
-mask br_blk     = fill(o_block & prev(fill(ends_line & brace_lf, solid)), block_end)
-escape "a block comment before a word with `a`, `e` or `w`" when block_end & prev(asked_blk) & ~prev(sw_blk) & ~prev(br_blk) & next(back_fill(awe_word, solid))
-escape "a block comment before `else`" when block_end & prev(sw_blk) & next(back_fill(awe_word & else_w, solid))
-mask swallow_end = block_end & prev(sw_blk) & next(back_fill(sw_word, solid))
-mask swallow_open = o_block & back_fill(next(swallow_end), ~sw_blk)
-mask swallowed  = sw_blk & back_fill(swallow_end, ~sw_blk) | swallow_end
+mask sw_blk     = fill(o_block & prev(fill(lf_end & prev(fill(solid, lf)) & ok_lf, solid)), block_end)
+mask br_blk     = fill(o_block & prev(fill(lf_end & brace_lf, solid)), block_end)
+mask after_odd  = solid & prev(fill(block_end & prev(asked_blk) & ~prev(sw_blk) & ~prev(br_blk), solid))
+mask after_sw   = solid & prev(fill(block_end & prev(sw_blk), solid))
+# A `when` entry's `else ->` after one: the `->`.
+mask else_odd   = else_w & after_odd
+mask else_sw    = else_w & after_sw
+mask arrow_odd  = code & text("->") & (prev(else_odd, 4) | prev(fill(prev(else_odd, 4) & ~solid, solid)))
+mask arrow_sw   = code & text("->") & (prev(else_sw, 4) | prev(fill(prev(else_sw, 4) & ~solid, solid)))
+escape "a block comment before a word with `a`, `e` or `w`" when awe_word & after_odd | arrow_odd
+escape "a block comment before `else`" when arrow_sw
+# The word after a swallowed comment, where the semicolon drops it.
+mask swallow_at = awe_word & after_sw
 # The first token of each line, and the bytes of a line from an `@` or a visibility modifier
 # that starts it: `constructor` there may be a primary constructor's (the scanner's
 # `check_modifier_then_constructor`), not read yet.
 mask line_first = solid & prev(fill(lf & code, solid))
 escape "a `;` that starts a line" when code & semicolon & line_first
-escape "a `;` that ends the file" when code & semicolon & ~next(back_fill(solid, solid))
+# No solid byte after it, at the file's last byte.
+escape "a `;` that ends the file" when last_byte & fill(code & semicolon, solid)
 mask line_mod   = fill(line_first & (at_sign | text("private") | text("protected") | text("internal") | text("public")), lf | head_stop)
-mask ctor_line  = fill(line_first & ctor_ann, lf)
-escape "`constructor` after modifiers at a line's start" when ctor_w & line_mod & class_head & ~ctor_line
+mask ctor_reach = ctor_w & class_head & prev(fill(line_first & (at_sign | vis_w) & class_head, ctor_stop))
+escape "`constructor` after modifiers at a line's start" when ctor_w & line_mod & class_head & ~ctor_reach
 # `@Test // c` before a declaration: the annotation takes the line's semicolon, so the comment
 # would be the annotation's, where the lean parser keeps it the declaration's: not read yet.
 mask at_line    = fill(line_first & at_sign, lf)
@@ -348,7 +366,7 @@ mask acc_word   = code & (line_first | line_mod & acc_vis) & (text("get") | text
 # --- Tokens ------------------------------------------------------------------------------------
 
 token line_comment = start slash & o_line read line
-token multiline_comment = start slash & o_block & ~swallow_open read block
+token multiline_comment = start slash & o_block read block
 # A word and the `@` it touches: `return@` (`break@`, `continue@`, `this@`, `super@`), or a
 # label's definition (`loop@`). `as?`, and `enum` before `class`: one token each.
 mask at_after   = code & at_sign & prev(w)
@@ -429,8 +447,6 @@ keywords op3 { "===" "!==" "..<" } required
 keywords punct { "." "*" "/" "," ":" "(" ")" "{" "}" "[" "]" ";" "<" ">" "=" "+" "-" "!" "?" "%" "@" "->" "==" "!=" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "?." "?:" ".." "!!" "::" } required
 
 skip ws
-# A swallowed comment's bytes (step 30): no token's.
-skip swallowed
 
 # A line break that ends a statement, or the file's end: the scanner's semicolon (the lean lexer's
 # `asi`), unless the next token goes on the line: one that starts with a byte of `goes_on`, `!=`,
@@ -438,8 +454,8 @@ skip swallowed
 # `}`, `semi_close`. In a class's header (the scanner's `constructor` context), `constructor` goes
 # on too, and so does an annotation or a visibility modifier before it. The comments before it
 # are the statement's (`settles`).
-mark semi       = lf_end & ~class_head, unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends
-mark semi       = lf_end & class_head, unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, unless before "constructor", unless before "@" | "public" | "private" | "internal" | "protected" (simple_identifier | "." | "@")* "constructor", end, settles, ends
+mark semi       = lf_end & ~class_head, unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends, drops swallow_at
+mark semi       = lf_end & class_head, unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, unless before "constructor", unless before "@" | "public" | "private" | "internal" | "protected" (simple_identifier | "." | "@")* "constructor", end, settles, ends, drops swallow_at
 mark semi_close = close_at, before "}", settles, ends
 # A receiver's `.`, where the name's loop of `.`s must stop (with the receiver's first token,
 # where the optional part opens), and a delegation's `{`. Before `generic`, which holds at a
