@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
-import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
 import type { DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
@@ -40,6 +40,9 @@ export interface StoredSessionSummary {
   endedAt: number | null;
   eventCount: number;
 }
+
+/** A session as a surface drawn ahead of time reads it (`SqliteSessionReader.drawnSessions`). */
+export type DrawnSession = Pick<StoredSessionSummary, "sessionId" | "cwd" | "endedAt">;
 
 export interface SessionEventRecord {
   sequence: number;
@@ -442,6 +445,19 @@ export class SqliteSessionReader {
   session(sessionId: string): StoredSessionSummary | undefined {
     const database = this.#database.open();
     return database === undefined ? undefined : listSessions(database, { sessionId })[0];
+  }
+
+  /**
+   * The sessions of `host` that have not ended, and those among `sessionIds` whatever their state: what a surface drawn
+   * ahead of time for each session (the Claude Code status files) reads to keep them current. A daemon's stop ends
+   * every open session, and the session's next event opens it again, so an ended one may still be running.
+   */
+  drawnSessions(host: AdapterSession["host"], sessionIds: readonly string[]): DrawnSession[] {
+    const database = this.#database.open();
+    if (database === undefined) return [];
+    return database.select({ sessionId: sessions.sessionId, cwd: sessions.cwd, endedAt: sessions.endedAt }).from(sessions)
+      .where(and(eq(sessions.host, host), or(isNull(sessions.endedAt), sessionIds.length === 0 ? undefined : inArray(sessions.sessionId, [...sessionIds]))))
+      .all();
   }
 
   hud(sessionId: string): SessionHud {

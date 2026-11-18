@@ -1,6 +1,6 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
 import { renameWithRetrySync, replaceFileSync } from "../engine/file-replace.js";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { BLOCK_STEERS_NOTE } from "../engine/catalog/rule-mode.js";
@@ -8,6 +8,9 @@ import type { UpdateResult } from "../setup/updater.js";
 import { NO_PROGRESS, type Progress } from "../runtime/progress.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, eraseFreedPages, openRerailDatabase, resetRepositoryHistoryIn } from "../engine/storage/database.js";
+import { STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
+import { removeUnrecordedStatusFiles } from "../presentation/claude-status-files.js";
+import { SqliteSessionReader } from "../runtime/session-store.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { listRepositories, lookupCheckout, repositoryHistoryIds } from "../engine/catalog/repository-registry.js";
 import { defaultRulesDumpPath, exportRulesDump, importRulesDump } from "../engine/catalog/rule-bootstrap.js";
@@ -177,11 +180,28 @@ function plural(count: number, noun: string): string {
 }
 
 /**
+ * Removes the Claude Code status file of each session a reset of the database at `database` deleted, from the status
+ * folder beside it; returns why it could not, if it could not.
+ */
+function removeDeletedStatusFiles(database: string): string | undefined {
+  const reader = new SqliteSessionReader(database);
+  try {
+    removeUnrecordedStatusFiles(join(dirname(database), STATUS_LINES_FOLDER), reader);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  } finally {
+    reader.close();
+  }
+}
+
+/**
  * Delete this repository's execution history, across all its checkouts, from the Rerail database: sessions recorded
- * under its key or aliases, and older ones under its checkouts' clone ids. Rules, other repositories, and settings
- * stay; live sessions never observe a rule reset. The file is then rewritten (`eraseFreedPages`) so the deleted
- * history cannot be read back from its bytes or its WAL. When that rewrite fails or another reader keeps the WAL, the
- * history is still deleted; the command says what may remain and exits 1, and running it again finishes the rewrite.
+ * under its key or aliases, and older ones under its checkouts' clone ids, and with each deleted session the Claude
+ * Code status line the daemon drew for it. Rules, other repositories, and settings stay; live sessions never observe a
+ * rule reset. The file is then rewritten (`eraseFreedPages`) so the deleted history cannot be read back from its bytes
+ * or its WAL. When that rewrite fails or another reader keeps the WAL, the history is still deleted; the command says
+ * what may remain and exits 1, and running it again finishes the rewrite.
  */
 export function runResetCommand(args: readonly string[], usage: () => string): number {
   parseArguments(args, { flags: [], options: [] }, argument => `Unknown reset option: ${argument}\n\n${usage()}`);
@@ -220,6 +240,10 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
     + kept
     + ". Rules and other repositories are unchanged.\n",
   );
+  const statusLinesKept = removeDeletedStatusFiles(database);
+  if (statusLinesKept !== undefined) {
+    process.stdout.write(`Could not remove the deleted sessions' status lines from ${join(dirname(database), STATUS_LINES_FOLDER)} (${statusLinesKept}).\n`);
+  }
   if (eraseFailure !== undefined) {
     process.stdout.write(
       `Could not rewrite ${database} to erase the deleted history (${eraseFailure}). The history is deleted, but its `

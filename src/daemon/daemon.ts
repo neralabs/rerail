@@ -30,6 +30,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
+import type { RerailApiStores } from "../api/operation.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
@@ -118,6 +119,12 @@ export interface RerailDaemonOptions {
   enginePlatform?: NodeJS.Platform;
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
+  /**
+   * Keeps what a coding agent's status line shows drawn ahead of time, from the daemon's `stores`, until the daemon
+   * closes and stops it. The daemon's entry point passes presentation's (`keepClaudeStatusFiles`), a layer above the
+   * daemon's; omitted, nothing is drawn ahead.
+   */
+  statusLines?: (stores: RerailApiStores) => { stop(): Promise<void> };
   /**
    * The certificate (a PEM chain, leaf first) and private key to serve https with; omitted, the daemon serves http.
    * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
@@ -494,6 +501,8 @@ export class RerailDaemon {
   /** What this daemon wrote to the state file, which its close removes only while the file still holds it. */
   #recordText: string | undefined;
   #provenanceMove: { readonly stop: AbortController; readonly done: Promise<void> } | undefined;
+  /** What `RerailDaemonOptions.statusLines` started: stopped first on close, while the stores it reads are open. */
+  #statusLines: { stop(): Promise<void> } | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
@@ -603,6 +612,7 @@ export class RerailDaemon {
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, worktreeWalks, ...sharedMergeAssist,
       });
       await daemon.#announce(remembered);
+      daemon.#statusLines = options.statusLines?.(stores);
       daemon.#startCheckoutPruning();
       daemon.#startProvenanceMove();
       return daemon;
@@ -752,6 +762,7 @@ export class RerailDaemon {
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
     try {
+      await this.#statusLines?.stop();
       this.#provenanceMove?.stop.abort();
       await this.#provenanceMove?.done;
       // Pruning stops first: a remote sink that fails to stop must not leave a pass free to commit after close begins.
@@ -1227,7 +1238,7 @@ async function packageVersion(): Promise<string> {
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
  */
-type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCheck" | "remoteRefused">;
+type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "statusLines" | "recordCheck" | "remoteRefused">;
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's

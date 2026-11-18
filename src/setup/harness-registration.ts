@@ -33,7 +33,7 @@ import { sameFile } from "../harness/same-file.js";
 import { commandLine, POWERSHELL_SAFE, powershellLiteral, shellWord } from "../engine/command-line.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
-import { CURRENT_LINK, DAEMON_ACCESS_TOKEN_FILE, defaultRerailHome, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
+import { CURRENT_LINK, DAEMON_ACCESS_TOKEN_FILE, defaultRerailHome, STATUS_LINES_FOLDER, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
 import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { runGit } from "../engine/git.js";
 import { replaceFile } from "../engine/file-replace.js";
@@ -977,41 +977,72 @@ function planGroupedHooks(
 }
 
 /**
- * The hooks' recorded-first, PATH-fallback order for the status line: without it, once the recorded node is gone the
- * status line shows the shell's "No such file or directory" in its place. `"$@"` carries the script and, for a
- * project's settings, the settings path after it. Claude Code runs the status line through Git Bash on Windows too, so
- * every word after it is quoted for a POSIX shell there as well (`claudeStatusCommand`). There the `sh` is a second Git
- * Bash process: 14 to 23 ms and about 6 MB a run, at most 1.2% of the status line's 2 s budget. The same test written
- * inline skips it, but registration would then write a second form and recognise one more, so every platform keeps
- * this one.
+ * The hooks' recorded-first, PATH-fallback order for the status line that starts node: without it, once the recorded
+ * node is gone the status line shows the shell's "No such file or directory" in its place. `"$@"` carries the script
+ * and, for a project's settings, the settings path after it. Registration writes it on Windows only, where Claude Code
+ * runs the status line through Git Bash, so every word after it is quoted for a POSIX shell there as well
+ * (`claudeStatusCommand`). There the `sh` is a second Git Bash process: 14 to 23 ms and about 6 MB a run. On macOS
+ * and Linux earlier versions wrote it too, and registration still recognises it (`generatedClaudeStatus`).
  */
 const CLAUDE_STATUS_FALLBACK = `sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' `;
 
-/** The status line command for the settings at `path`: the fallback, then node, the script and a project's settings path. */
-function claudeStatusCommand(context: Context, path: string): string {
-  // A POSIX word on every platform: Git Bash reads it on Windows, and keeps each backslash it escapes.
-  const word = (value: string): string => hookWord(value, "posix");
-  const settings = path === join(context.home, ".claude", "settings.json") ? "" : ` ${word(path)}`;
-  return `${CLAUDE_STATUS_FALLBACK}${word(context.nodePath)} ${word(hookScript(context, ENTRY_POINTS.claudeStatus))}${settings}`;
+/** A POSIX word on every platform: Git Bash reads it on Windows, and keeps each backslash it escapes. */
+const claudeStatusWord = (value: string): string => hookWord(value, "posix");
+
+/**
+ * The status line command for the settings at `path`.
+ *
+ * On macOS and Linux Claude Code runs it as `/bin/sh -c <command>`, and the command has that shell read Rerail's status
+ * script (`. <claude-status.sh>`), which prints the line the daemon keeps for the session with shell built-ins: a
+ * refresh starts no process but the shell Claude Code starts anyway. With a status line of the person's own to run
+ * first (`composed`), the command hands the script node, the Node status script and, for a project's settings, the
+ * settings path (`set -- …`), and the script starts node in the shell's place.
+ *
+ * On Windows every status line still starts node behind the fallback (`CLAUDE_STATUS_FALLBACK`): the status script has
+ * not been run under Git Bash, where `.` takes a Windows path and the home is not always `$HOME`.
+ */
+function claudeStatusCommand(context: Context, path: string, composed: boolean): string {
+  const settings = path === join(context.home, ".claude", "settings.json") ? "" : ` ${claudeStatusWord(path)}`;
+  const node = `${claudeStatusWord(context.nodePath)} ${claudeStatusWord(hookScript(context, ENTRY_POINTS.claudeStatus))}${settings}`;
+  if (context.platform === "win32") return `${CLAUDE_STATUS_FALLBACK}${node}`;
+  const script = `. ${claudeStatusWord(hookScript(context, ENTRY_POINTS.claudeStatusShell))}`;
+  return composed ? `set -- ${node}; ${script}` : script;
 }
 
-function composedClaudeStatus(previous: ClaudeStatusLine | null | undefined, command: string): ClaudeStatusLine {
-  return { ...previous, type: "command", command, refreshInterval: previous?.refreshInterval ?? 5 };
+/**
+ * The refresh interval earlier versions set on a status line that had none, so Claude Code ran it every five seconds
+ * in every session, idle ones included. Registration sets none now: Claude Code runs the status line on its own events.
+ */
+const LEGACY_REFRESH_INTERVAL = 5;
+
+/**
+ * Whether the interval on `generated`, a status line Rerail composed over `previous`, is the default an earlier version
+ * wrote, not the person's: 5, on a command of the shape those versions wrote, where `previous` set none of its own. On
+ * Windows every command still has that shape, so an interval of exactly 5 a person sets there later reads the same.
+ */
+function isLegacyRefreshInterval(generated: ClaudeStatusLine, previous: ClaudeStatusLine | null, platform: NodeJS.Platform): boolean {
+  return generated.refreshInterval === LEGACY_REFRESH_INTERVAL && previous?.refreshInterval === undefined
+    && generatedClaudeStatus(generated.command, platform)?.legacy === true;
 }
 
 /**
  * `replaceable`: the predecessor is a status line of this package, or of an install that is gone, whose composition
  * this home has no record of.
  * It keeps its display settings but is not recorded, so removal never brings back a status line of another install.
+ * The interval an earlier version set on it goes (`isLegacyRefreshInterval`); any other is the person's and stays.
  */
 function registerClaudeStatus(
   context: Context, path: string, next: JsonObject, statusLine: ClaudeStatusLine | undefined,
   inherited: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration | undefined, replaceable: boolean,
 ): ClaudeStatusRegistration {
-  const command = claudeStatusCommand(context, path);
   const ownsStatus = registration !== undefined && statusLine?.command === registration.installedCommand;
-  const predecessor = ownsStatus ? registration : unownedClaudeStatus(context, path, command, { statusLine, inherited, replaceable });
-  next.statusLine = composedClaudeStatus(statusLine ?? inherited, command);
+  const predecessor = ownsStatus ? registration : unownedClaudeStatus(context, path, { statusLine, inherited, replaceable });
+  const command = claudeStatusCommand(context, path, predecessor.previous !== null || predecessor.previousInherited === true);
+  const base = statusLine ?? inherited;
+  // The status line's display settings stay around Rerail's command.
+  const composed: ClaudeStatusLine = { ...base, type: "command", command };
+  if (base !== undefined && isLegacyRefreshInterval(base, predecessor.previous, context.platform)) delete composed.refreshInterval;
+  next.statusLine = composed;
   return {
     settingsPath: path, installedRoot: context.root, installedCommand: command,
     previous: predecessor.previous,
@@ -1021,34 +1052,50 @@ function registerClaudeStatus(
 
 /**
  * What a status line Rerail has no record of owning leaves for removal to bring back: nothing when it is `replaceable`,
- * else itself or the one it inherits, which must not be a wrapper of Rerail's own (`claudeStatusScript`).
+ * else itself or the one it inherits, which must not be a status line of Rerail's own (`generatedClaudeStatus`).
  */
 function unownedClaudeStatus(
-  context: Context, path: string, command: string,
+  context: Context, path: string,
   { statusLine, inherited, replaceable }: { statusLine: ClaudeStatusLine | undefined; inherited: ClaudeStatusLine | undefined; replaceable: boolean },
 ): Pick<ClaudeStatusRegistration, "previous" | "previousInherited"> {
   if (replaceable) return { previous: null };
   const previous = statusLine ?? inherited;
-  if (previous !== undefined && (previous.command === command || claudeStatusScript(previous.command, context.platform) !== undefined)) {
-    throw new Error(`Cannot preserve the existing rerail status line in ${path}: registration ownership is missing`);
-  }
+  const own = previous !== undefined && (generatedClaudeStatus(previous.command, context.platform) !== undefined
+    || [false, true].some(composed => previous.command === claudeStatusCommand(context, path, composed)));
+  if (own) throw new Error(`Cannot preserve the existing rerail status line in ${path}: registration ownership is missing`);
   return { previous: previous ?? null, previousInherited: statusLine === undefined && inherited !== undefined };
 }
 
-function restoreClaudeStatus(next: JsonObject, statusLine: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration): void {
+/**
+ * The status lines registration may have left for `registration`: its predecessor's display settings around the
+ * installed command, and that with the interval an earlier version set (`isLegacyRefreshInterval`).
+ */
+function installedClaudeStatuses(registration: ClaudeStatusRegistration, platform: NodeJS.Platform): ClaudeStatusLine[] {
+  const installed: ClaudeStatusLine = { ...registration.previous, type: "command", command: registration.installedCommand };
+  const legacy = { ...installed, refreshInterval: LEGACY_REFRESH_INTERVAL };
+  return isLegacyRefreshInterval(legacy, registration.previous, platform) ? [installed, legacy] : [installed];
+}
+
+function restoreClaudeStatus(
+  next: JsonObject, statusLine: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration, platform: NodeJS.Platform,
+): void {
   if (statusLine?.command !== registration.installedCommand) return;
-  const installedStatus = composedClaudeStatus(registration.previous, registration.installedCommand);
-  if (registration.previous === null || (registration.previousInherited && stableJsonText(statusLine) === stableJsonText(installedStatus))) {
+  const installed = installedClaudeStatuses(registration, platform);
+  const untouched = installed.some(status => stableJsonText(statusLine) === stableJsonText(status));
+  if (registration.previous === null || (registration.previousInherited && untouched)) {
     delete next.statusLine;
     return;
   }
-  next.statusLine = restoredClaudeStatus(statusLine, registration.previous, installedStatus);
+  next.statusLine = restoredClaudeStatus(statusLine, registration.previous, installed);
 }
 
-/** `previous` back in place of the installed status line, keeping the display settings the person changed since. */
-function restoredClaudeStatus(current: ClaudeStatusLine, previous: ClaudeStatusLine, installed: ClaudeStatusLine): ClaudeStatusLine {
+/**
+ * `previous` back in place of the installed status line, keeping the display settings the person changed since: an
+ * interval none of the `installed` status lines has is theirs.
+ */
+function restoredClaudeStatus(current: ClaudeStatusLine, previous: ClaudeStatusLine, installed: readonly ClaudeStatusLine[]): ClaudeStatusLine {
   const restored: ClaudeStatusLine = { ...current, type: previous.type, command: previous.command };
-  if (current.refreshInterval !== installed.refreshInterval) return restored;
+  if (!installed.some(status => status.refreshInterval === current.refreshInterval)) return restored;
   if (previous.refreshInterval === undefined) delete restored.refreshInterval;
   else restored.refreshInterval = previous.refreshInterval;
   return restored;
@@ -1165,7 +1212,7 @@ function addWantedEntries(
 const RERAIL_HOME_DATA_ENTRIES: readonly string[] = [
   "*.json*", "*.sqlite*", "*.log*", "*.lock",
   ...[DAEMON_ACCESS_TOKEN_FILE, ACTIVE_PROFILE_FILE].map(file => `${file}*`),
-  ...[DEVICE_SECRETS_DIR, PROFILES_DIR].map(folder => `${folder}/**`),
+  ...[DEVICE_SECRETS_DIR, PROFILES_DIR, STATUS_LINES_FOLDER].map(folder => `${folder}/**`),
 ];
 
 /** `path` as the absolute path of a Read or Edit rule (`//path`), its gitignore pattern characters escaped. */
@@ -1278,7 +1325,7 @@ async function nextClaudeStatusRecord(
     return registerClaudeStatus(context, path, next, statusLine, inherited, registration, replaceable);
   }
   if (registration?.installedRoot !== context.root) return registration;
-  restoreClaudeStatus(next, statusLine, registration);
+  restoreClaudeStatus(next, statusLine, registration, context.platform);
   return undefined;
 }
 
@@ -1363,32 +1410,53 @@ async function planCursorCli(context: Context): Promise<Plan[]> {
   }))];
 }
 
-/**
- * The node and the script a status line command runs, unquoted, when it has the generated shape: direct, as Windows
- * and earlier versions write it, or behind the POSIX fallback, with a project's settings path after the script or not.
- */
-function claudeStatusNodeAndScript(command: string, platform: NodeJS.Platform): [node: string, script: string] | undefined {
-  const fallback = command.startsWith(CLAUDE_STATUS_FALLBACK);
-  const direct = fallback ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command;
-  const words = direct.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu) ?? [];
-  if (![2, 3].includes(words.length) || words.join(" ") !== direct) return undefined;
-  // Words behind the fallback are POSIX-quoted on every platform; only the direct form earlier Windows set-ups wrote is not.
-  const windows = platform === "win32" && !fallback;
-  return [unquoteShellWord(words[0]!, windows), unquoteShellWord(words[1]!, windows)];
+/** One word of a generated status line command, as `claudeStatusWord` writes it. */
+const STATUS_WORD = String.raw`"(?:\\.|[^"\\])*"|[\w./:@+=-]+`;
+const STATUS_WORDS = new RegExp(STATUS_WORD, "gu");
+/** `. <claude-status.sh>`, after `set -- <node> <claude-status.js> [<settings>]; ` where a status line of the person's own runs first. */
+const STATUS_SCRIPT_COMMAND = new RegExp(String.raw`^(?:set -- ((?:${STATUS_WORD})(?: (?:${STATUS_WORD})){1,2}); )?\. (${STATUS_WORD})$`, "u");
+
+/** A status line command of a shape registration writes or wrote, recognized even when its package or ownership record is gone. */
+interface GeneratedClaudeStatus {
+  /** The package file the command names, `<root>/<executable>`, which identifies its install. */
+  script: string;
+  /** The `ENTRY_POINTS` path `script` ends in. */
+  executable: string;
+  /**
+   * The command starts node itself, direct or behind the fallback: the shape every version wrote before the status
+   * script, with a refresh interval of its own (`LEGACY_REFRESH_INTERVAL`), and the one Windows still gets.
+   */
+  legacy: boolean;
 }
 
-/** The script of a generated status line (`claudeStatusNodeAndScript`), recognized even when its old package/ownership is gone. */
-function claudeStatusScript(command: string, platform: NodeJS.Platform): string | undefined {
-  const words = claudeStatusNodeAndScript(command, platform);
-  if (words === undefined) return undefined;
-  const [node, script] = words;
-  return isNodeExecutable(node) && script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatus) ? script : undefined;
+/** The Node status script that `text` starts (`<node> <claude-status.js> [<settings>]`), unquoted; undefined for any other words. */
+function nodeStatusScript(text: string, windows: boolean): string | undefined {
+  const words = text.match(STATUS_WORDS) ?? [];
+  if (![2, 3].includes(words.length) || words.join(" ") !== text) return undefined;
+  const script = unquoteShellWord(words[1]!, windows);
+  return isNodeExecutable(unquoteShellWord(words[0]!, windows)) && script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatus) ? script : undefined;
+}
+
+/** What `command` is when it has a generated shape (`claudeStatusCommand`, and the direct form earlier versions wrote). */
+function generatedClaudeStatus(command: string, platform: NodeJS.Platform): GeneratedClaudeStatus | undefined {
+  const sourced = STATUS_SCRIPT_COMMAND.exec(command);
+  if (sourced !== null) {
+    const script = unquoteShellWord(sourced[2]!);
+    const generated = script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatusShell)
+      && (sourced[1] === undefined || nodeStatusScript(sourced[1], false) !== undefined);
+    return generated ? { script, executable: ENTRY_POINTS.claudeStatusShell, legacy: false } : undefined;
+  }
+  const fallback = command.startsWith(CLAUDE_STATUS_FALLBACK);
+  // Words behind the fallback are POSIX-quoted on every platform; only the direct form earlier Windows set-ups wrote is not.
+  const script = nodeStatusScript(fallback ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command, platform === "win32" && !fallback);
+  return script === undefined ? undefined : { script, executable: ENTRY_POINTS.claudeStatus, legacy: true };
 }
 
 /** A status line generated by any install of this package, or by one that is gone, identified as hooks are (`isReplaceableScript`). */
 async function isPackageClaudeStatus(context: Context, statusLine: ClaudeStatusLine | undefined): Promise<boolean> {
-  const script = statusLine === undefined ? undefined : claudeStatusScript(statusLine.command, context.platform);
-  return script !== undefined && pathsOf(context.platform).isAbsolute(script) && await isReplaceableScript(context, script, ENTRY_POINTS.claudeStatus);
+  const generated = statusLine === undefined ? undefined : generatedClaudeStatus(statusLine.command, context.platform);
+  return generated !== undefined && pathsOf(context.platform).isAbsolute(generated.script)
+    && await isReplaceableScript(context, generated.script, generated.executable);
 }
 
 /** Claude uses the safe main-checkout root for local settings, but shared settings stay at cwd. */

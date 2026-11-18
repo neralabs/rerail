@@ -23,7 +23,7 @@ import { ENTRY_POINTS } from "../engine/package-root.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { PACK_COMPILE_CHECKS_FILE } from "../engine/catalog/pack-compile-checks.js";
-import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER } from "../engine/storage/rerail-home.js";
+import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER, STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
 import { contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
@@ -401,9 +401,10 @@ function printFailedRemovals(failed: readonly FailedRemoval[]): void {
 }
 
 /**
- * What the uninstall deletes from the installation, each with what it is, in the order it goes. A folder with `ours`
- * goes whole only when everything in it is Rerail's; otherwise only Rerail's entries go and the folder stays, so a
- * Rerail home shared with other files (`RERAIL_HOME=$HOME`) keeps its own `bin`, `versions` or `packs`.
+ * What the uninstall deletes from the installation, each with what it is, in the order it goes: the installed
+ * package and what it drew for the coding agents it is now disconnected from. A folder with `ours` goes whole only
+ * when everything in it is Rerail's; otherwise only Rerail's entries go and the folder stays, so a Rerail home shared
+ * with other files (`RERAIL_HOME=$HOME`) keeps its own `bin`, `versions` or `packs`.
  */
 function installedFiles(context: SetupContext): Array<{ path: string; what: string; ours?: (name: string, path: string) => boolean }> {
   const { updater } = context;
@@ -425,6 +426,7 @@ function installedFiles(context: SetupContext): Array<{ path: string; what: stri
     },
     { path: updater.statePath, what: "the record of them" },
     { path: installedPacksPrefix(context.home), what: "the installed rule packs", ours: name => RULE_PACK_PREFIX_ENTRIES.has(name) },
+    { path: join(context.home, STATUS_LINES_FOLDER), what: "the Claude Code status lines" },
     { path: mainContentStoreDirectory(), what: "the cache" },
     ...(process.platform === "win32" ? [{ path: legacyWindowsContentStoreDirectory(), what: "the cache an earlier release kept" }] : []),
   ];
@@ -466,6 +468,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   REMOTE_CONFIG_FILE,
   REMOTE_TOKENS_FOLDER,
   MACHINE_ID_FILE,
+  STATUS_LINES_FOLDER,
   UPDATE_STATE_FILE,
   UPDATE_LOCK_DIR,
   VERSIONS_DIR,
