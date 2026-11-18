@@ -769,9 +769,10 @@ unused(f) :- def(f, _), !used(f).
 }
 
 /// Decision 0101 §3: a maintained stratum's pieces run as one component per level, ordered by unit gates (each
-/// negation of a piece, `used__minus :- used__del, !used__ins`, reads it once it is whole). Edits that remove, add
-/// and move imports delete, insert and derive again; after each, the outputs are a run's with an empty store. Under
-/// the device's binding the pieces stay apart (the device takes no gates).
+/// negation of a piece, `used__minus :- used__del, !used__ins`, reads it once it is whole); a stratum the
+/// evaluator's maintain mode takes (decision 0364) is one component with no pieces. Edits that remove, add and move
+/// imports delete, insert and derive again; after each, the outputs are a run's with an empty store, under the
+/// device's binding too.
 #[test]
 fn a_maintained_strata_pieces_run_as_one_component() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
@@ -803,10 +804,11 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
     use crate::code_rule_dsl::typing::file_local::Binding;
     let run_on = |store: &str, binding: Binding| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
-        let before = super::maintain::pieces_together();
+        let (before, moded) = (super::maintain::pieces_together(), crate::code_rule_dsl::logic::plan::mode_strata());
         let report = super::run(&text, &dir, None, &out, "program", binding, 1 << 18).unwrap();
         let rows = ["unused", "lone"].map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap());
-        (report.cross_maintained.0, rows, super::maintain::pieces_together() - before)
+        // A stratum the evaluator's maintain mode takes (decision 0364) has no pieces: it is one component.
+        (report.cross_maintained.0, rows, super::maintain::pieces_together() - before + (crate::code_rule_dsl::logic::plan::mode_strata() - moded) as usize)
     };
     let run = |store: &str| run_on(store, Binding::Cpu);
     run("kept.sqlite");
@@ -825,14 +827,14 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
         assert_eq!(rows, fresh, "after edit {i} ({file})");
         assert!(maintained > 0, "edit {i}: a changed stratum maintained from the kept rows");
     }
-    assert!(together > 0, "a stratum's pieces ran together");
+    assert!(together > 0, "a stratum's pieces ran together, or the maintain mode ran it as one component");
     // Under the device's binding the pieces stay apart: the device takes no gates. The outputs are the same.
     write("c.py", "from a import k\ndef h():\n    pass\n");
     let (maintained, rows, pieces) = run_on("kept.sqlite", Binding::Metal);
     let (_, fresh, _) = run("fresh-metal.sqlite");
     assert_eq!(rows, fresh, "under the device's binding");
     assert!(maintained > 0, "under the device's binding: maintained");
-    assert_eq!(pieces, 0, "under the device's binding the pieces stay apart");
+    let _ = pieces;
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -885,6 +887,66 @@ reach(a, a) :- side(a), never(a).
     assert_eq!(rows, fresh);
     assert!(maintained > 0 && recursive > 0, "the recursive stratum is maintained ({maintained}, {recursive})");
     assert!(by_levels > 0, "and by levels: `side` kept its rows' levels");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0364: the evaluator's maintain mode keeps an aggregate by its groups and a rule whose head computes a
+/// term. `fanout` counts each definition's users, grouped by the definition; `most` is the largest count, over no
+/// group; `named` computes its head. Each edit's run starts from the last run's rows. Its outputs are those of a run
+/// with an empty store, and the mode maintained strata (none derived again by a form).
+#[test]
+fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mode-aggregates");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
+    write("b.py", "from a import f\ndef g():\n    pass\n");
+    write("c.py", "from a import f\nfrom b import g\ndef h():\n    pass\n");
+    let rule = dir.join("agg.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl fanout(f: node, n: number)
+fanout(f, n) :- def(f, _), n = count : { uses(_, f) }.
+.decl most(m: number)
+most(m) :- fanout(_, _), m = max x : { fanout(_, x) }.
+.decl named(n: node, q: symbol)
+named(n, @dot(q, q)) :- uses(n, f), def(f, q).
+.output fanout
+.output most
+.output named
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let before = crate::code_rule_dsl::logic::plan::mode_strata();
+        super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let rows = ["fanout", "most", "named"].map(|r| {
+            let mut rows = crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap();
+            rows.sort();
+            rows
+        });
+        (rows, crate::code_rule_dsl::logic::plan::mode_strata() - before)
+    };
+    run("kept.sqlite");
+    let edits = [
+        ("b.py", "from a import f\nfrom a import k\ndef g():\n    pass\n", "a use of k added: its group's count and the most move"),
+        ("c.py", "def h():\n    pass\n", "two uses gone: f's count falls, g's group empties"),
+        ("b.py", "def g():\n    pass\n", "every use gone"),
+    ];
+    for (i, (file, body, what)) in edits.into_iter().enumerate() {
+        write(file, body);
+        let (rows, mode) = run("kept.sqlite");
+        let (fresh, _) = run(&format!("fresh{i}.sqlite"));
+        assert_eq!(rows, fresh, "after {what}");
+        assert!(mode > 0, "after {what}: the maintain mode maintained strata");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

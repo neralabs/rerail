@@ -5,9 +5,9 @@
 This is the list of open work from the merges of 2026-11-15, kept so that nobody has to remember it. The agent doing
 the work keeps it current and works through it in order, without being prompted.
 
-An item is **done** only when an independent reviewer, given the code and not the author's explanation, finds the
-result no worse than either side on every property listed. The brief the reviewer gets is
-[reviewer-brief.md](reviewer-brief.md). The author fixes what the reviewer finds and does not argue with it.
+An item is **done** once the agent doing it has reviewed its own diff against
+[reviewer-brief.md](reviewer-brief.md) (read cold, callers traced, every property listed kept) and fixed what that
+finds. No separate reviewer: the user stopped review by subagents (2026-11-15).
 
 A real tradeoff, where both properties cannot hold at once, goes to the user with evidence for each option. Such
 questions wait in "Questions for the user" and go to the user together.
@@ -182,6 +182,7 @@ into notes once the queue is done).
     `COMBINING` switch (the rule-file entries, 0275, look up under it); the shipped bundle is made per engine build,
     so its plan follows the switch list; the moved switches still reach every prepared key through the combined
     program's.
+
 ### Q3. No duplicate widened copies; the dropping test strict again
 
 - **Keep**: 0174's widened copies where they serve a reader; the user's "Prune knows requests" (gated prune);
@@ -459,6 +460,7 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
     rerail-engine --bin rerail-engine` on the M3 prints no warning and no error. Done when holds. Found beside it:
     the library built with `test-hooks` alone (`cargo check --lib --features test-hooks`, AGENTS.md's CLI feature
     set) lists 90 warnings, all in the generated mounts (`native/src/code_rule_dsl/mod.rs`): Q120.
+
 ### Q14. Plan-time switches and the plan cache
 
 (Found in Q2's review 4.) `keeps::choose` (what each derived relation keeps, stored or inlined) runs in
@@ -929,8 +931,38 @@ pass.
     (463778 kept, 463777 held)`, `unparen (463778 kept, 463777 held)`. The keeper counts one row more than is held, in
     each, from the run that counted every file in (a new build's).
   - **Ruled out:** a row given to `Exports::add` twice (a counter of those read 0 for all three), and a value document
-    held by two files (`Keeper::holders`: none held by more than one). Not traced further: the next step is a
-    per-document comparison of the keeper's count-in against the rows held.
+    held by two files (`Keeper::holders`: none held by more than one). `holders` tracks only documents past
+    `HIDDEN_KEYS`, so it could not see the cause below.
+  - **Found** (2026-11-16, m3, a fresh ep2 store's cold run, `RERAIL_KEPT_DOCS=alias_value`, a per-document
+    comparison of the keeper's count-in against the rows held): one document, 1348786882, has 4 rows counted and 3
+    held. It is an annotation document (`ANNOTATION_KEYS..HIDDEN_KEYS`), and two files' entries name it:
+    `benchmarks/bench_versioning_git.py` gives 3 rows, `conform/l1100_rbac_schema/test_rbac_provider.py` gives 1,
+    equal to one of the 3. The held table keeps the union, and the keeper adds both.
+    - **The cause is a guest key collision**, not a shared document. A guest's key hashes (host path, place,
+      grammar) into its range (2^28 for annotations), and `guests::key` probes only against the chunk's own
+      `taken`. The two hosts are in different chunks, so both took the same key, and their nodes the same ids
+      (`key << 32 | index`). By the birthday bound, ep2's tens of thousands of guests give about one such
+      collision. On the 9,010-file repo they would give dozens.
+    - **More than a statistic.** Two documents share node ids, so the held table folds one file's row into the
+      other's. A memo hit's guests are never made, so no run-wide probe could see them either. The probe also
+      makes a key depend on the chunk's other files, against 0055's "a function of what it is".
+    - **The fix is the user's call** (a node-id or store format choice). Claiming keys in the store breaks 0104
+      (guests are made inside the waves). Reading the registry before the first wave is a read of unchanged data on
+      every edit. Provisional keys mapped at the store, as atoms are (0160/0170), are baked into memoised rows.
+      Wider keys change the node-id format.
+    - **Fixed** (2026-11-16, 51e67e692): the user chose the registry read before the first wave, decision 0323.
+      `guest_keys(identity, key, path)` is read once a process and held with the store's atoms; every chunk claims
+      in memory, probing past every key held; a run's claims are an item of its record.
+      - Tests: `two_chunks_guests_that_hash_alike_take_two_keys` (failed before), and the store's two in
+        `guest_keys::tests`.
+      - m3, fresh ep2 store, profiling build, strict:
+        - The cold run (887.5 G, 15.1 s wall) prints no `RERAIL_KEPT_DOCS` mismatch for `alias_value`, `type_bare`
+          or `unparen`, and holds 27,073 guest keys.
+        - The edits give 1334 rows, none differing from h1, at 31.3 G and 30.6 G (28–29.5 G before, on the build
+          before the Typing-support and cost-classifier merges). A profiled edit reads "983 kept; 0 measured from
+          the rows held".
+      - `RERAIL_KEPT_DOCS` is meant for cold runs only. In an edit the keeper counts no memo hit, so it prints every
+        held row: 246,000 lines, and two edits hit the 115 s cap.
   - For phased-facts' 0290: its table's "the kept inputs" (0.76 s on dl10) was measured before a2ff8071e.
 - **Typing-support's record** (at the hub's merge of 6ce382887, 2026-11-18), lines the hub's item lacks:
     held by two files (`Keeper::holders`: none held by more than one). `holders` tracks only documents past
@@ -1494,19 +1526,32 @@ pass.
 - **Done when**: the move rewrites the image's branded name leaves and cells in place (`kind::BRANDED` with the name
   class, `Cell::Branded`), no tree decoded, and the version's digests stay right; the test above passes unchanged.
 
-### Q35. Store the general forms through 0281 step 5's keyed preparation steps
+### Q35. Store the general forms through 0281 step 5's keyed preparation steps (done, 2026-11-16)
 
-- **Keep**: 0298's general forms (steps 1–3, behind `RERAIL_GENERAL_FORMS`): every reached stratum not recursive
-  selects its rules from them, with the same rows as the forms written per run; 0281's pass manager and its keyed
-  steps (Typing-support), one way of storing every preparation step's output.
-- **Done when**: Typing-support's step 5 has landed and is merged here; the general forms are one keyed step of it
-  (key: the program's digest and `olds_signature`), read by a new process instead of written; the switch is the
-  default and removed; the edit's cross-file part costs about 0.29 s less than today's (0298's table), with the
-  same rows on the five steps.
-- **Record**: the user's call (2026-11-16): watch Typing-support until step 5 is done, then integrate here.
+- **Keep**: 0298's general forms: every reached stratum selects its rules from them, with the same rows as the
+  forms written per run; 0281's pass manager and its keyed steps (Typing-support), one way of storing every
+  preparation step's output; decision 0104 (no SQL inside the waves) and 0290 (a relation naming no document moves
+  to the cross-file part).
+- **Done when**: Typing-support's step 5 storage is merged here; each general form is a keyed step, read by a new
+  process instead of written; the switch is removed; an edit costs less than today's, with the same rows on the
+  five steps.
+- **Record**: merged Typing-support 7a07e4081 (step 5 (a), (b), (c) storage). One semantic conflict, fixed: their
+  version passes (`Locate`, the `FileLocal` split) were ported before 0290, so the 4 relations naming no document
+  were refused, not moved (a debug check against the tree's `locate` stopped every run). Ported: the version split
+  holds a `cross_file` relation cross-file with 0290's cause, and `preparation::run` qualifies what `Locate` leaves
+  (`MoveCrossFile`) and locates again, as the tree's rounds. Then 0298 step 4, two of the user's calls (2026-11-16):
+  one keyed step per stratum, written when first reached (over one image per part); its reads inside the waves
+  (0104's one exception, `profile::read_in_waves`). On the manager: `Pipeline::keyed_by` (an identity given) and
+  `made` (a step whose output another writer makes); `StoredSteps::keep_bytes`, `find_unpinned`,
+  `open_bytes_unpinned`; `Version::layer`. Edit 79.3–79.6 G → 77.4–77.7 G; cold +2.8 G, the first edit after a
+  cold run +5.5 G (0298's results). Rows: each of the five steps against a cold run on a fresh store, 0 files
+  differ. Tests: general_tests, run_state, preparation::, file_local (16), program_image::tests (27),
+  corpus::session::tests (17). Review (reviewer-brief, by the author, no subagents): the forms' identity was read on
+  every driven run, now at the first stratum reached; nothing else found.
   For Typing-support, when it pulls this branch: `program_image/manager.rs`' `Delta::of` no longer compares the
   declarations and facts of an overlay of the input whose own layer states none (0298, "A selection's own cost");
-  the program image's 26 tests, which check carried analyses in a debug build, pass.
+  `Pipeline::keyed_by` and `made` are added beside `keyed`; the version split and `preparation::run` carry 0290's
+  moves (`file_local::MoveCrossFile`).
 
 ### Q46. (Q29 at 64e416c9b) A rule reading `value` sends SQL inside the waves
 
@@ -1766,8 +1811,11 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   The hub's record of the test passing (b40d89145) is before the merges of d5cc33981 (a stat-known file's digest from
   its text, not SQL in the waves), 05e2bbf6a and 17417fb8f (Q45: racy answers settled at a run's end), the
   candidates for what stopped reading the root first.
+- **Seen again** (2026-11-17, Typing-support-final-shape's Q101, folded in here at its merge): the same exit 3
+  while linking library modules on versions (decision 0377), and the same at `caa1bfdb2`, before that change.
 - **Done when**: the warm child run exits 0. Either the root's part is read before the waves wherever the requests'
   world will watch it, or the world watches it before they start.
+
 ### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU) — done
 
 - **Found** (2026-11-16, t41 §2): `references::add_file` parses again with tree-sitter and runs W's
@@ -2006,6 +2054,11 @@ the host's copy still held them, and `executors_are_shared` (which reads every s
   (staged `git rm`), the host's copy still held all of them. Nothing mounted them, so builds were right. But
   `executors_are_shared`, which reads every source file, failed on the stale grid files. A deleted file that is still
   mounted somewhere would build on the host and fail here.
+
+Seen again 2026-11-17, at the merge of final-rerail-shape-rr-align: `executors_are_shared` failed on one host's
+copy on `metal_frontier_conformance.rs`, `metal_frontier_reduce.rs` and `metal_register_conformance.rs`, which no
+side of the merge has (neither history holds them).
+
 - **Keep**: the mirror's incremental sends.
 - **Done when**: a file the checkout deleted (tracked at the host's copy's last sync, now gone) is removed from the
   host's copy before the command runs, and a test of the mirror covers it.
@@ -2271,6 +2324,7 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
    Measured on 47 data-layer programs, per row vs native costs the same (+0.6%). Options: (a) leave copies per row
    (as built); (b) teach the factorized store and the export cut to see through a row-filter native, so copies can
    be native too (more work, no measured gain at 50 files).
+   **Answered (2026-11-16): leave them per row** (as built); no change.
 2. **Q2/Q5: a node's text read in the cross-file part is empty (a wrong result).** A cross-file reader
    (`passes(f) :- uses(_, f), node_text(f, t), …`, `uses` cross-file) asks for the text of another file's node.
    `@rr_node_text_any` reads only batches still held, and each chunk's batch is dropped when the chunk is done, so
@@ -2286,6 +2340,15 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
    (`corpus::requests_file_local`, `file_local::requests_file_local`), with the test
    `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
    runs again.
+
+3. **Q13: stale jobserver warnings replayed from the shared compile cache.** sccache entries made before the farm
+   stripped `CARGO_MAKEFLAGS` (2026-11-15) hold the warning in their stderr, and every hit replays it. Options:
+   (a) remove those entries from the cache: one scan of the local cache (up to 100 GiB of entries, each opened to
+   read its stderr), then each such crate compiles once more, cleanly; (b) have the wrapper drop that one
+   diagnostic from what sccache prints: a pipe through the wrapper on every compile, and it hides the line rather
+   than removing its cause; (c) leave it until the cache evicts those entries (LRU at the 100 GiB cap).
+   Recommended: (a), run once at nice 19.
+   **Answered (2026-11-16): (c), leave it.** The cause is fixed in the farm; the replays end as the entries age out.
 
 ### Q55. (Q66 at Native-and-GPU-strata e0a0362b9) Relations are blocks the CPU and GPU read in place (0325): steps 4–7
 
@@ -3523,3 +3586,95 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
   module a second queue for buffers that wait on events.
 - **Also seen**: on m3 the guard reads three files the checkout deleted (`metal_frontier_conformance.rs`,
   `metal_frontier_reduce.rs`, `metal_register_conformance.rs`). That is Q63's stale mirror, not the tree.
+
+### Q170. (Q137 at django-bugs 42b33a424; Q100 on Typing-support-final-shape at 6ce382887, Q91 before it) A cut of a gated program keeps `node`'s projections: retain's test expects an empty part
+
+- **Found** (2026-11-17, while making 0377's cuts): `retain::tests::unchanged_gated_programs_reuse_only_complete_retained_results`
+  fails: the cut of an unchanged gated program (`Cut::program`) holds two rules, `kind($n, $k) :- node(_, $n, $k, _, _)`
+  and `docof($n, $d) :- node($d, $n, _, _, _)`, where the test asserts none. Since `6fe55cb12` (Q37, 2026-11-16) a copy
+  of an input's columns is a view of it, not a stratum, so `cut` never counts the projections clean, and the part
+  keeps every rule whose head is not clean. Not 0377's: the part is made by the same passes (`Retain`, `PartOf`), now
+  through `passes::Parts`, and the rules kept are those `clean` leaves.
+- **Done when**: either the cut counts a view of an input's columns clean with the input (the part then has no rules,
+  as the test says), or the test asserts the part holds only such views; the planner's owner of Q37 decides which.
+
+### Q171. (Q142 at django-bugs 42b33a424; Q113 on investigate-bend-vs-datalog at 0098f4340) A device relation's block is leased outside the one block policy
+
+Found 2026-11-17 (the roll-up of final-rerail-shape-phased-facts, 58f1627c3): `facts::rows`'s blocks for
+`Life::Device` (a relation alone in a block the device writes) are leased by `lease_block_for_join`, sized to the
+relation and kept within the join's budget. Every other FACTS block goes through `rerail_blocks::alloc::block`
+(decision 0342), whose device block is a slab of at least `SLAB_MIN` (16 MB).
+
+- **Keep**: a device relation's block sized to it (a 4-page minimum), and the join's budget bounding it.
+- **Done when**: the policy takes a need for an exact-size device block within a named budget, `lease_exact` goes
+  through it, and no FACTS block is leased past the policy.
+- **Record**: —
+
+### Q172. (Q143 at django-bugs 42b33a424; Q114 on investigate-bend-vs-datalog at 0098f4340) (done) A cold run's cross part hands nothing off in `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady`
+
+Found 2026-11-17, rolling up final-rerail-shape-phased-facts (58f1627c3). The test is red at that commit too (same
+message), so it is not the merge's. The test asserts `cold.cross_handed > 0`; the run hands off 0.
+
+- **Seen**: the cross part's strata are `at`, `both`, `flag_col`, `twice` (`Graph::components`: Tarjan over the
+  sorted names). `at`, `flag_col` and `twice` are outputs, which stay; `both` is the one kept relation, and its last
+  reader (`twice`) is the last stratum, so the run ends before any stratum follows that reader. No relation of this
+  program can be handed off in that order.
+- **Keep**: Q74's hand-off (a relation's frame made once no later stratum reads it).
+- **Done when**: either the strata are ordered so that a relation's last reader comes soon after it (shorter live
+  ranges; `twice` before `flag_col` here) and the test passes, or the test's program has a relation read before the
+  last stratum, with the reason recorded.
+- **Record** (2026-11-17, the merge of investigate-bend-vs-datalog into django-bugs): the relations a cold run
+  handed off here were the counting supports (`h__supN`), gone with decision 0364 stage 1, so nothing was left to
+  hand. The test's program now has one: `both` is read by `doubled`, which a later output (`many`) reads, so `both`
+  goes once `doubled` has run. The cold run's assertion passes; the test then stops at Q102's (the new build's
+  first edit), as it did before the merge.
+
+### Q173. (Q144 at django-bugs 42b33a424; Q115 on investigate-bend-vs-datalog at 0098f4340) (done) Three corpus tests stop on the version's `asked` record differing from the tree's after `simplify`
+
+Found 2026-11-17, during 0364 stage 3. Red with the maintain mode off too (`RERAIL_MAINTAIN_MODE=off`), so not
+stage 3's: `base_tests::value_types_are_ws_value_types` ("the version after `simplify` is the tree's": `asked`
+row `("a", "rr_value_req", 0, "vals")` against `… 1 …`), `tests::a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies`
+(the combine's tail: `asked` rows' reader indices off by one), and `tests::libraries_are_held_once_and_equal_requests_share_one_cone`
+(a panic in `rr.rs:308` on a CPU thread).
+
+- **Seen**: each `asked` row's rule index (the request's `k`-th rule) differs by one between the version's passes and
+  the tree's, after a request rule is dropped or kept on one side only (`subsume_requests`, `prune`'s gate).
+- **Keep**: the debug checks that the version's passes are the tree's (0281).
+- **Done when**: the version's `simplify` keeps the `asked` record as the tree's does, and the three tests pass.
+- **Record** (2026-11-17, the merge into django-bugs): fixed on django-bugs' side before this merge
+  (13f589787): `simplify`'s inlining drops a gone request's stale record entry, and the checks compare programs
+  by `same_program` (equal digest without the record, and the record equal by each rule's content), so a record
+  whose rules are only in another order is the same program. The three tests pass on the merge.
+
+### Q174. (Q145 at django-bugs 42b33a424; Q116 on investigate-bend-vs-datalog at 0098f4340) The maintain mode's recheck order is not priced
+
+Found 2026-11-17, during 0364 stage 4. A mode stratum's removal, add and probe lines take the program's kept plans
+(`plan_rule_reused`), as a semi-naive probe does. Its recheck (a rule with its head bound, run once per candidate)
+takes `bound_head_order`: one pass over the body, each literal as soon as its variables are bound, the atom that
+shares the most of them first. No search prices it, because the planner takes no bound head. Where that order has no
+native join it falls back to the planner's whole-rule order.
+
+- **Wanted**: the planner prices a body with a set of variables bound before its first step, for the recheck. The
+  order is then kept as the other lines' are.
+- **Also open**: the mode's lines report no work to `Model::ran`, because `MaintMode` counts per kind, not per line.
+  The 0122 budget therefore prices their kept plans again rather than taking them as they are.
+
+
+### Q175. (done) A rebased version's request record sat on other rules (`a_library_held_once_is_read_by_each_policy_in_its_own_scope`, half its runs)
+
+- **Found** (2026-11-18, merging django-bugs 42b33a424): with django's `same_program` as the preparation's per-stage
+  debug check, `a_library_held_once_is_read_by_each_policy_in_its_own_scope` failed in 6 of 12 runs, after the
+  "inputs" stage: `rr_value_req`'s three rules held each other's readers (the `__all__` rule serving `plain_str`). It
+  passed alone and in every run with a print added: it failed only when the run found the last run's passes stored
+  (`preparation::kept`), which the store's lagging write decides.
+- **Cause**: `manager::rebase` writes the new program as an edit of the last run's input: the rules both hold in the
+  last input's order, the new program's others after them. It took the new program's header whole, its request record
+  too, and the record states each request rule's readers by its place among its relation's rules (decision 0331). Where
+  a request relation's rules lie in another order in the two programs, each place named another rule. The hub's check
+  compared size and digest, both blind to the order, so it never failed there; `prune` gates a request rule by those
+  readers.
+- **Done**: `rebase` restates the record by rule (`rebased_record`: each rule's readers by its head and hash, in the
+  new program's order, laid over the rebased order). `program_image::tests::a_rebased_version_keeps_each_request_rules_readers`
+  swaps a request relation's two rules between the two programs: it fails without the restatement (the readers
+  swapped) and passes with it. The library test passed 10 runs of 10. `differences` now prints a request relation's
+  readers by rule where the rows agree as sets.

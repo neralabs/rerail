@@ -1430,6 +1430,36 @@ fn a_stored_run_reruns_on_an_edit_in_a_new_process() {
     ContentStore::forget(&path);
 }
 
+/// A rebased version (`manager::rebase`) holds the last input's rules in its order and the new program's others after
+/// them: the request record is restated by rule, so each request rule keeps the readers the new program gave it
+/// (decision 0331). Taken by place, `q`'s two rules swapped their readers: `a_library_held_once_is_read_by_each_policy_in_its_own_scope`
+/// failed `same_program` in the runs that found their last run stored.
+#[test]
+fn a_rebased_version_keeps_each_request_rules_readers() {
+    use std::collections::BTreeSet;
+    let program = |order: &[usize], extra: &str| {
+        let rules = ["q($n) :- k($n), $n < 3.", "q($n) :- k($n), $n > 5."];
+        let mut text = String::from(".decl q(n: number)\n.decl a(n: number)\n.decl b(n: number)\n.decl k(n: number)\n.input k\n");
+        for &i in order {
+            text.push_str(rules[i]);
+            text.push('\n');
+        }
+        text.push_str("a($n) :- q($n).\nb($n) :- q($n).\n");
+        text.push_str(extra);
+        let mut p = crate::code_rule_dsl::logic::front::parse(&text).unwrap();
+        // The rule `< 3` serves `a`, the rule `> 5` serves `b`, wherever each lies.
+        p.asked_by.insert("q".into(), order.iter().map(|&i| BTreeSet::from([["a", "b"][i].to_owned()])).collect());
+        Builder::of_program(&p).unwrap().finish().unwrap().0
+    };
+    let last = program(&[0, 1], "");
+    let new = program(&[1, 0], ".decl c(n: number)\nc($n) :- a($n).\n");
+    let v = super::manager::rebase(&last, &new).unwrap().expect("an edit of the last input");
+    // The case: `q`'s rules lie in the last input's order, the new program's reversed.
+    let first = |x: &Version| x.heads(x.rel("q").unwrap()).next().map(|r| x.show_rule(r)).unwrap();
+    assert!(first(&v).contains("< 3") && first(&new).contains("> 5"), "{} / {}", first(&v), first(&new));
+    assert!(super::same_program(&v, &new), "{}", super::differences(&v, &new));
+}
+
 /// A rerun runs a step whole when it cannot run on the edit alone: a program pass, a rule pass that keeps the
 /// default `WHOLE`, and a rule pass whose analyses the edit changed. Across the edit, the analyses the last input
 /// held are carried to the new input.
@@ -1704,4 +1734,28 @@ fn a_rewrite_renames_an_aggregates_result_too() {
     let w = b.finish().unwrap().0;
     let shown = w.show();
     assert!(shown.contains("$m = count") && !shown.contains("$n"), "{shown}");
+}
+
+/// A debug check compares a version with the tree's image as one program (`same_program`): the digest is blind to the
+/// rules' order, and the request record (decision 0331), stated by a rule's place among its relation's rules, is
+/// compared by rule. The same rules in another order, each with its readers, are one program; a reader on the other
+/// rule is not, though its digest is the same.
+#[test]
+fn a_record_by_place_is_compared_by_rule() {
+    use std::collections::BTreeSet;
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl q(x: number)\n.output q\nq(x) :- a(x).\nq(x) :- b(x).\n";
+    let image = |swap: bool, readers: [&str; 2]| {
+        let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        if swap {
+            p.rules.swap(0, 1);
+        }
+        p.asked_by.insert("q".into(), readers.iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect());
+        Builder::of_program(&p).unwrap().finish().unwrap().0
+    };
+    let (first, moved, wrong) = (image(false, ["r1", "r2"]), image(true, ["r2", "r1"]), image(true, ["r1", "r2"]));
+    assert_ne!(first.digest(), moved.digest(), "the record by place differs");
+    assert!(super::same_program(&first, &moved), "{}", super::differences(&first, &moved));
+    // The digest alone takes it for the same: a sum over the rules, and the same rows by place.
+    assert_eq!(first.digest(), wrong.digest());
+    assert!(!super::same_program(&first, &wrong), "a reader on the other rule");
 }

@@ -1013,7 +1013,7 @@ pub mod tests {
         p.program(&mut super::super::preparation::hide::Hide { bound: 1 << 30 });
         let (v, _) = p.finish().unwrap();
         let (tv, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).unwrap();
-        assert_eq!((tv.size(), tv.digest()), (v.size(), v.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
+        assert!(crate::code_rule_dsl::logic::program_image::same_program(&tv, &v), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
     }
 
     /// A relation read with guest variables in two columns its rules bind apart is copied once, with both seeded:

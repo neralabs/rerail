@@ -4914,12 +4914,13 @@ pub fn made_on_request(rel: &str) -> bool {
 }
 
 /// Whether rules of `head` are the on-request rewrite's own (decision 0174): an attribute's answer, its requests, a
-/// widened copy. They are no reader of anything a program adds: a library's cone (`rr::with_cone`) is taken without
+/// widened copy, a request's readers' asks (decision 0291, `{req}_by_{reader}_{col}`, which `undo_on_request` removes). They are no reader of anything a program adds: a library's cone (`rr::with_cone`) is taken without
 /// them, or it reached, from a relation a program adds to, the widened copies of its readers, their requests, the
 /// attribute's answer and then every reader of the attribute (five of the Python pack's programs took 1,300 of the
 /// library's rules each).
 pub fn on_request_rule(head: &str) -> bool {
-    head.starts_with("rr_wide_") || ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.rel == head || a.req == head)
+    head.starts_with("rr_wide_")
+        || ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.rel == head || a.req == head || head.strip_prefix(a.req).is_some_and(|rest| rest.starts_with("_by_")))
 }
 
 /// What answers an attribute's request for a node.

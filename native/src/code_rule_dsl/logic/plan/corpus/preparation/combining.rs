@@ -412,6 +412,8 @@ impl ProgramPass for FoldOwn<'_> {
         let named = |b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, c: Cell, gone: &dyn Fn(&str) -> bool| matches!(c, Cell::Str(a) if gone(b.text(a)));
         let qualifiers: Vec<Vec<Cell>> = b.about_rows("qualifier").into_iter().filter(|r| !named(b, r[1], &|x| folded.contains_key(x))).collect();
         b.set_about_rows("qualifier", qualifiers);
+        // The request record's readers (`hiding::fold_own`'s `rename_readers`, decision 0331).
+        b.rename_asked_readers(&|r| folded.get(r).cloned());
         for about in ["kindset", "kindset_kind"] {
             let rows: Vec<Vec<Cell>> = b.about_rows(about).into_iter().filter(|r| !named(b, r[1], &|x| sets.contains_key(x))).collect();
             b.set_about_rows(about, rows);
@@ -429,6 +431,18 @@ impl ProgramPass for FoldOwn<'_> {
             let p = super::demand::about_p(b);
             let rows: Vec<Vec<Cell>> = renamed(f.demand().map(str::to_owned).collect()).iter().enumerate().map(|(k, r)| vec![p, Cell::Int(k as i64), Cell::Str(b.atom(r))]).collect();
             b.set_about_rows("demand", rows);
+        }
+        // The request record's readers renamed as the reads are (`Program::rename_readers`): a request of a folded
+        // copy serves its original (decision 0331).
+        let was = b.asked();
+        let mut asked = was.clone();
+        for readers in asked.values_mut().flatten() {
+            if readers.iter().any(|x| folded.contains_key(x)) {
+                *readers = std::mem::take(readers).into_iter().map(|x| folded.get(&x).cloned().unwrap_or(x)).collect();
+            }
+        }
+        if asked != was {
+            b.set_asked(&asked);
         }
         self.folded += folded.len() + sets.len();
         Ok(())

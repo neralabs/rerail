@@ -171,7 +171,9 @@ fn room_for(k: usize, rows: usize) -> usize {
     bytes + (k + 1) * size_of::<rerail_blocks::rows::ColDir>() + 4096
 }
 
-/// A block of the device's own of at least `bytes`: a relation alone in it. Without Metal, anonymous memory.
+/// A block of the device's own of at least `bytes`: a relation alone in it. Without Metal, anonymous memory. Leased
+/// as a device join's buffers are (bounded inside the join's budget, a refusal running it on the CPU), which the
+/// block policy (decision 0342) has no need for yet: the one block made outside it (work queue Q171).
 fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
     #[cfg(target_os = "macos")]
     if life == Life::Device {
@@ -995,6 +997,20 @@ mod tests {
         assert!(rows.segs.iter().any(|(_, p)| std::ptr::eq(p.rel, place)), "the part itself is a segment");
         let frozen = rows.freeze(6);
         assert_eq!(*frozen.row(4, k), [12, 22]);
+    }
+
+    /// An empty kept relation has its width: one started from it holds what it pushes. Its width was inferred from its
+    /// rows, so 0, and the started one dropped every row and read past its segments (a session's maintained cross-file
+    /// stratum over an empty kept relation: "a row of the tail").
+    #[test]
+    fn a_relation_started_from_an_empty_kept_one_holds_its_rows() {
+        let k = 3;
+        let kept = Rows::frozen(k, Vec::new(), 0);
+        let mut next = kept.shared(0);
+        next.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(next.len(), 6);
+        assert_eq!(*next.row(1, k), [4, 5, 6]);
+        assert_eq!(next.get(0, 2), 3);
     }
 
     /// The block a relation's rows lie in.

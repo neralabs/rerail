@@ -446,6 +446,28 @@ impl Builder<'_> {
         }
         self.set_about_rows("lattice", rows);
     }
+    /// Renames readers in the request record (`asked` rows, column 3), as `Program::rename_readers` does: a request
+    /// of a merged or folded reader serves the relation it went into. Each rule's readers are a set, so readers
+    /// renamed to one are one row.
+    pub fn rename_asked_readers(&mut self, rename: &dyn Fn(&str) -> Option<String>) {
+        let rows = self.about_rows("asked");
+        if !rows.iter().any(|row| matches!(row.get(3), Some(&Cell::Str(a)) if rename(self.text(a)).is_some())) {
+            return;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut renamed = Vec::with_capacity(rows.len());
+        for mut row in rows {
+            if let Some(&Cell::Str(a)) = row.get(3)
+                && let Some(t) = rename(self.text(a))
+            {
+                row[3] = Cell::Str(self.atom(&t));
+            }
+            if seen.insert(format!("{row:?}")) {
+                renamed.push(row);
+            }
+        }
+        self.set_about_rows("asked", renamed);
+    }
     /// Removes relation `rel`'s native operator (`Program::natives`' entry): its rows of each native about relation,
     /// every one of which names its relation in column 1.
     pub fn drop_native(&mut self, rel: &str) {
@@ -571,6 +593,20 @@ impl Builder<'_> {
             .map(|(req, i, b)| vec![p, Cell::Str(self.atom(req)), Cell::Int(i as i64), Cell::Str(self.atom(b))])
             .collect();
         self.set_about_rows("answer", rows);
+    }
+    /// The request record as the program being built holds it (`Version::asked`).
+    pub fn asked(&mut self) -> Asked {
+        let mut asked = Asked::new();
+        for row in self.about_rows("asked") {
+            let (Some(&Cell::Str(req)), Some(&Cell::Int(k)), Some(&Cell::Str(b))) = (row.get(1), row.get(2), row.get(3)) else { continue };
+            let Ok(k) = usize::try_from(k) else { continue };
+            let readers = asked.entry(self.text(req).to_owned()).or_default();
+            if readers.len() <= k {
+                readers.resize(k + 1, Default::default());
+            }
+            readers[k].insert(self.text(b).to_owned());
+        }
+        asked
     }
     /// States the request record (`Program::asked_by`, `Version::asked`): each request relation's rules, in order, each
     /// with the relations whose readers it serves. Replaces the program's.

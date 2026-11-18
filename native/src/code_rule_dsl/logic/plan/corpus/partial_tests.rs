@@ -35,7 +35,9 @@ const FILES: &[(&str, &str)] = &[
 ];
 
 /// A cross-file rule (`at`) reads `col` of the nodes an export (`called`) names, joined with another file's export
-/// (`defined`); a file-local rule (`flagged`) is the one edited, its body testing `kind`.
+/// (`defined`); a file-local rule (`flagged`) is the one edited, its body testing `kind`. `both` and `doubled` are
+/// read by a later stratum (`many` reads `doubled`), so a cold run hands `both` off once `doubled` has read it, which
+/// its hand-off asserts (Q172; the counting supports, gone with decision 0364, were the relations it handed before).
 fn program(kind: &str) -> String {
     format!(
         r#"
@@ -47,18 +49,20 @@ defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x)
 at(x, k) :- called(c, x), defined(_, x), col(c, k).
 .decl both(d: node, e: node, x: symbol)
 both(d, e, x) :- defined(d, x), defined(e, x), d != e.
-.decl twice(x: symbol)
-twice(x) :- both(_, _, x).
+.decl doubled(x: symbol)
+doubled(x) :- both(_, _, x).
+.decl many(x: symbol)
+many(x) :- doubled(x), at(x, _).
 .decl flagged(n: node)
 flagged(n) :- kind(n, "assert_statement"), !kind(n, "{kind}").
 .decl flag_col(k: number, l: number)
 flag_col(k, l) :- flagged(n), col(n, k), line(n, l).
-.output at, flag_col, twice
+.output at, flag_col, many
 "#
     )
 }
 
-const OUTPUTS: &[&str] = &["at", "flag_col", "twice"];
+const OUTPUTS: &[&str] = &["at", "flag_col", "many"];
 
 /// An edit of `flagged`'s body: the second run reads every file as a partial hit, and gives the rows a run with no
 /// memo gives, its cross-file part seeing no input changed (no export nor base relation the edit did not touch).
