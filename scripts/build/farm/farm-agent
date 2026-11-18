@@ -64,19 +64,47 @@ def leave(kind, value, tb):
 
 sys.excepthook = leave
 
-ROOT = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/root.noindex")
-XATTR = b"org.rerail.farm.sent"
+# The farm's own directory on the host: macOS's caches, or on Linux XDG's.
+MACOS = sys.platform == "darwin"
+FARM = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm") if MACOS else \
+    os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "rerail-farm")
+ROOT = os.path.join(FARM, "root.noindex")
+# Linux keeps a program's attributes in the `user.` namespace.
+XATTR = b"org.rerail.farm.sent" if MACOS else b"user.org.rerail.farm.sent"
 
 out = sys.stdout.buffer
 inp = sys.stdin.buffer
 write_lock = threading.Lock()
 refused = []
 
-libc = ctypes.CDLL(None, use_errno=True)
-libc.getxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
-libc.getxattr.restype = ctypes.c_ssize_t
-libc.setxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
-libc.setxattr.restype = ctypes.c_int
+if MACOS:
+    # Python has no xattr calls on macOS: libc's, which take a position and options.
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.getxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
+    libc.getxattr.restype = ctypes.c_ssize_t
+    libc.setxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
+    libc.setxattr.restype = ctypes.c_int
+
+
+def get_tag(path, follow=True):
+    """The attribute's bytes on `path` (None: it has none)."""
+    if not MACOS:
+        try:
+            return os.getxattr(path, XATTR, follow_symlinks=follow)
+        except OSError:
+            return None
+    buf = ctypes.create_string_buffer(96)
+    n = libc.getxattr(path.encode(), XATTR, buf, 96, 0, 0 if follow else 0x0001)  # XATTR_NOFOLLOW
+    return buf.raw[:n] if n > 0 else None
+
+
+def set_tag(path, tag):
+    if not MACOS:
+        os.setxattr(path, XATTR, tag)
+        return
+    if libc.setxattr(path.encode(), XATTR, tag, len(tag), 0, 0) != 0:
+        e = ctypes.get_errno()
+        raise OSError(e, "setxattr failed", path)
 
 
 def at(path):
@@ -116,11 +144,10 @@ def seen(kept, touch=False):
             os.utime(kept, ns=(time.time_ns(), st.st_mtime_ns))
         except OSError:
             pass
-    buf = ctypes.create_string_buffer(96)
-    n = libc.getxattr(kept.encode(), XATTR, buf, 96, 0, 0)
-    if n > 0:
+    tag = get_tag(kept)
+    if tag:
         try:
-            mtime, size, written = (int(x) for x in buf.raw[:n].split())
+            mtime, size, written = (int(x) for x in tag.split())
             if written == st.st_mtime_ns and size == st.st_size:
                 return [mtime, size]
         except ValueError:
@@ -152,7 +179,8 @@ def under(path, dirs):
 
 
 def under_mount(path):
-    mounts = [l.split(" on ", 1)[1].rsplit(" (", 1)[0] for l in
+    # macOS: `X on /path (nfs, ...)`; Linux: `X on /path type nfs (...)`.
+    mounts = [re.sub(r" type \S+$", "", l.split(" on ", 1)[1].rsplit(" (", 1)[0]) for l in
               subprocess.run(["mount", "-t", "nfs,autofs"], capture_output=True, text=True).stdout.splitlines() if " on " in l]
     return any(path == m or path.startswith(m.rstrip("/") + "/") for m in mounts)
 
@@ -168,16 +196,17 @@ def put(header, payload):
     # The attribute before the mode: macOS refuses it on a read-only file (EACCES), and a tree's
     # git objects are read-only: every one failed, and the daemon dropped this agent each time
     # (2026-11-17).
-    if libc.setxattr(tmp.encode(), XATTR, tag, len(tag), 0, 0) != 0:
-        e = ctypes.get_errno()
+    try:
+        set_tag(tmp, tag)
+    except OSError as e:
         os.unlink(tmp)
-        raise OSError(e, "setxattr failed", kept)
+        raise OSError(e.errno, "setxattr failed", kept)
     os.chmod(tmp, header.get("mode", 0o644) & 0o7777)
     os.replace(tmp, kept)
 
 
 def has_tag(path):
-    return libc.getxattr(path.encode(), XATTR, None, 0, 0, 0x0001) > 0  # XATTR_NOFOLLOW
+    return get_tag(path, follow=False) is not None
 
 
 def unlisted(header):
@@ -332,7 +361,6 @@ def over_tcp(header):
     return True
 
 
-FARM = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm")
 TARGETS = os.path.join(FARM, "targets.noindex")
 # The commands' TMPDIR: the farm's, so what their runs leave (stores, scratch) is the farm's to free,
 # never the host's own temporary directory (pruned as the root is, every file counting).

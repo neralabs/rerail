@@ -212,7 +212,9 @@ hosts, and everything compiles and tests here, as without the farm.
 
 | Key | Meaning |
 |---|---|
-| `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link", "unattended"}` |
+| `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link", "unattended", "os", "nice", "max_target_gb"}` |
+| `os` | `"macos"` (default) or `"linux"`: a Linux host runs test commands only (below, "Linux hosts") |
+| `nice` | the nice value of `test-remote`'s commands there (default 10); 19 on a host that serves other work |
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
@@ -231,6 +233,27 @@ trackpad reports touches on its own (one did, every 0.1–4 s, on 2026-11-15) is
 `"unattended": true`: then its input counts for nothing. Compiles take slots in turn across the hosts (each host's
 first slot, then each one's second), so every host works, not only the first listed. Not its load average: macOS's background analysis (Photos,
 Spotlight) keeps that high on an idle Mac, at a priority every compile preempts.
+
+### Linux hosts
+
+A Linux host (`"os": "linux"`) runs `test-remote` commands, as a Linux build and run of the
+checkout: the engine's Linux build is CI's, on Ubuntu 24.04. It takes nothing else. A compile of
+this Mac's cannot run there: a crate's proc-macros are macOS libraries its rustc cannot load,
+and a build script's C needs the macOS SDK. Nor does a Relax run (`live-test-remote`).
+
+`test-remote` gives a command to a Mac first, and to a Linux host when every Mac slot is taken.
+A command that names Metal, or sends a `--tree` (a program built here is a macOS one), runs on a
+Mac only; `--os` chooses (`macos`, `linux`, `any`). The host's line says it is Linux, so a result
+is never taken for a macOS one.
+
+There the farm's directory is `~/.cache/rerail-farm` (XDG's), the mirror's attribute is
+`user.org.rerail.farm.sent`, free disk is statvfs's, and the probe reads the arrival interface
+with `ip`, the load from `/proc`, NFS mounts with `findmnt`. A server has no keyboard: it is never
+attended. `setup` installs the pinned toolchain with the host's rustup; rustup itself and
+`cargo-nextest` (the version here) are installed once by hand, in the host user's home:
+
+    curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal
+    curl -LsSf https://get.nexte.st/<version>/linux-arm | tar zxf - -C ~/.cargo/bin
 
 ### The farm's root on a host
 

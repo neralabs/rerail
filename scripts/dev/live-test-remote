@@ -100,7 +100,8 @@ def main(argv):
     if not argv:
         sys.exit(__doc__)
     if host is None:
-        hosts = farm.usable()
+        # Relax runs on the Macs only (a Linux host has no Relax of the farm's).
+        hosts = [h for h in farm.usable() if farm.host_os(h) == "macos"]
         if not hosts:
             reasons = [f"{h['name']}: {farm.health(h).get('why')}" for h in farm.hosts() if h.get("enabled", True)]
             sys.exit("live-test-remote: no usable host" + (f" ({'; '.join(reasons)})" if reasons else "")

@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 28
+VERSION = 29
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -774,6 +774,14 @@ def hosts():
     return [h for h in config()["hosts"] if h.get("name")]
 
 
+def host_os(host):
+    """`host`'s system: "macos" (the default) or "linux" (`os` in the configuration). A Linux host
+    runs test commands only (test-remote), as a Linux build: it takes no compile of this Mac's (a
+    proc-macro is a macOS library its rustc cannot load, and C compiles need the macOS SDK), and no
+    Relax run."""
+    return host.get("os", "macos")
+
+
 def read_json(path, default):
     try:
         return json.load(open(path))
@@ -831,7 +839,12 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["mbps"], h["mbps_at"] = None, 0  # another path: its throughput is not known
     # Free disk: what macOS gives an important write (AVAILABLE_JS), then statvfs's, in KB.
     available = shlex.quote(AVAILABLE_JS)
-    script = ('echo "$SSH_CONNECTION"; echo "$(osascript -l JavaScript -e ' + available + ' 2>/dev/null) $(df -k "$HOME" | tail -1 | awk \'{print $4}\')";'
+    # Linux: df alone (no purgeable space), no input to idle on (a server: never attended), the
+    # interface that holds the address ssh arrived at, /proc's load, and NFS mounts by findmnt.
+    linux = ('echo "$SSH_CONNECTION"; df -k "$HOME" | tail -1 | awk \'{print $4}\'; echo 1000000000000000;'
+             " s=$(echo $SSH_CONNECTION | cut -d' ' -f3); echo \"$(ip -o addr show | awk -v s=\"$s\" '{split($4, a, \"/\")} a[1]==s {print $2; exit}')\";"
+             " cut -d' ' -f1 /proc/loadavg; findmnt -rn -t nfs,nfs4 -o TARGET; true")
+    script = linux if host_os(host) == "linux" else ('echo "$SSH_CONNECTION"; echo "$(osascript -l JavaScript -e ' + available + ' 2>/dev/null) $(df -k "$HOME" | tail -1 | awk \'{print $4}\')";'
               " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'; echo \"$(" + ARRIVAL + ")\";"
               " sysctl -n vm.loadavg; mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
     try:
@@ -1282,7 +1295,7 @@ def remote_slot():
         return None, None
     open_hosts = []
     for h in hosts():
-        if not h.get("enabled", True):
+        if not h.get("enabled", True) or host_os(h) != "macos":
             continue
         open_hosts.append((h, capacity(h)))
     for i in range(max((c for _, c in open_hosts), default=0)):

@@ -960,6 +960,8 @@ fn benchmark_test_store_copy() {
 
 /// `benchmark_test_store_copy`'s steps apart: the clone, the identity's write (as `copy` makes it, and without a
 /// journal or a sync), a first open as a store, and the removal.
+/// APFS's `clonefile`: macOS only (elsewhere a test's store is a copy, `test_store::clone_file`).
+#[cfg(target_vendor = "apple")]
 #[test]
 #[ignore = "a benchmark: the steps of a test's store"]
 fn benchmark_test_store_copy_steps() {
