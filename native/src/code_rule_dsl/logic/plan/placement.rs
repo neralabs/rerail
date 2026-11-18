@@ -196,6 +196,13 @@ const GPU_PER_SUBMISSION: f64 = 0.15e-3;
 /// the GPU had to be twice the cheaper (`MARGIN`, 2), against estimates 8 times off (decision 0320).
 pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
 
+/// How long a stratum placed on the device may wait for the device's memory before it runs on the CPU instead (Q180):
+/// the CPU's price for its `work` units of planned work less the device's, at the prices it was placed by. Never
+/// negative.
+pub fn worth_waiting(work: f64) -> f64 {
+    ((CPU_PER_STRATUM + CPU_PER_WORK * work) - (GPU_PER_SUBMISSION + GPU_PER_WORK * work)).max(0.0)
+}
+
 /// `GPU_BIAS`, or `RERAIL_GPU_BIAS` when set: a measurement aid only, to refit the bias over runs at several.
 pub(in crate::code_rule_dsl) fn gpu_bias() -> f64 {
     static BIAS: std::sync::OnceLock<f64> = std::sync::OnceLock::new();

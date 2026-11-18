@@ -2881,6 +2881,9 @@ pub struct Report {
     pub dispatches: u32,
     /// Runs again from an overflowing stage.
     pub reruns: u32,
+    /// Times it waited for the device's memory before it encoded (`gpu::shared::admit`, Q180), and the seconds.
+    pub admit_waits: u32,
+    pub admit_seconds: f64,
     pub gpu_seconds: f64,
     /// This thread's CPU: encoding (uploads and sorts' encoding included), waiting, and reading the rows back into
     /// the store.
