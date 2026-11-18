@@ -476,8 +476,8 @@ event in `untaken-events` in the Rerail home and answers, and while such an even
 its own behind it at once without asking the daemon. A session's start still waits. As soon as the daemon reads again
 it checks those events as it checks any event, in the order their hooks met them and before any later event; what a
 check finds reaches the agent with the session's next answer, not with the hook that left the event. A tool's output
-is not kept with them. The folder keeps at most 256 events and 16 MB, so a daemon that reads again checks them within
-seconds; past that a hook's event is lost and the line above counts it. While events wait, `rerail status` says
+is not kept with them. The folder keeps at most 256 events and 16 MB, so what a daemon that reads again has to check
+is bounded; past that a hook's event is lost and the line above counts it. While events wait, `rerail status` says
 `Hooks: N hook events wait in untaken-events for the Rerail daemon, which has not read since <time>`; once the daemon
 has checked them it says how many it checked late, and how many it could not check. In Cursor, prompts and answers
 read from the transcript stay unread until the next hook the daemon answers, which checks them.
