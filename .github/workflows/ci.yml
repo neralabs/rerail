@@ -192,8 +192,18 @@ jobs:
       e2e: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.e2e || 'true' }}
       integration: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.integration || 'true' }}
       sessions: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.sessions || 'true' }}
+      # Which Rust packages' tests the change can affect (scripts/check/rust-selection.mjs): the changed crates and every
+      # crate that depends on one. Everything off pull requests, past 3000 files, and when the step fails: rust-all
+      # 'true', rust-packages every package (or ["all"] when even the package list could not be read), rust-cargo-args
+      # `--workspace`, rust-nextest-filter `all()`, rust-engine 'true'. rust-packages '[]': no crate's tests to run.
+      rust-all: ${{ steps.select.outputs.rust-all || 'true' }}
+      rust-packages: ${{ steps.select.outputs.rust-packages || '["all"]' }}
+      rust-cargo-args: ${{ steps.select.outputs.rust-all == 'false' && steps.select.outputs.rust-cargo-args || '--workspace' }}
+      rust-nextest-filter: ${{ steps.select.outputs.rust-nextest-filter || 'all()' }}
+      rust-engine: ${{ steps.select.outputs.rust-engine || 'true' }}
     steps:
-      # Pull requests only: paths-filter lists a pull request's files through the API, so no checkout is needed.
+      # paths-filter lists a pull request's files through the API; the Rust selection reads the crates' manifests and
+      # module trees from a checkout.
       # `common`, `engine` and `package` are only shared by the filters below (YAML anchors); nothing reads their outputs.
       - id: filter
         if: github.event_name == 'pull_request'
@@ -259,6 +269,8 @@ jobs:
               - '.github/actions/pack-test-data/**'
               - 'scripts/s3/**'
               - 'scripts/samples/**'
+              - '.github/actions/rust-compile-cache/**'
+              - 'scripts/check/rust-selection.mjs'
             # What every job installs, builds or runs with: this workflow and its actions, the dependencies, the Rust
             # toolchain and the engine's crates, the LFS attributes.
             common: &common
@@ -341,6 +353,31 @@ jobs:
               - *common
               - *package
               - 'scripts/host/**'
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The pull request's files (a rename lists both names) against the crates; any other event, or a pull request the
+      # API cannot list whole, selects everything (Cargo.lock reaches every package). The runner's stable cargo reads the
+      # manifests (`cargo metadata --no-deps`); rust-toolchain.toml's channel would be a download for nothing.
+      - id: select
+        name: Select the Rust packages to test
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          FILES: ${{ github.event.pull_request.changed_files || 0 }}
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$FILES" -lt 3000 ]; then
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed.txt"
+          else
+            echo Cargo.lock > "$RUNNER_TEMP/changed.txt"
+          fi
+          node scripts/check/rust-selection.mjs "$RUNNER_TEMP/changed.txt" --github >> "$GITHUB_OUTPUT"
 
   # Fills the Actions cache with every key the jobs below restore (.github/actions/pack-test-data, `fetch: "true"`): every
   # tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the four tool-packs the

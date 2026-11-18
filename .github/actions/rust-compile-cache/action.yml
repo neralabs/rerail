@@ -64,7 +64,8 @@ runs:
         echo "dir=$dir" >> "$GITHUB_OUTPUT"
         echo "artifact=rust-compile-cache-$RUNNER_OS-$RUNNER_ARCH-$NAME" >> "$GITHUB_OUTPUT"
 
-    # The newest unexpired artifact of that name from a run on main. Any failure leaves the store empty.
+    # The newest unexpired artifact of that name from a run on main (this repository's: a fork's branch may be named
+    # main too). Any failure leaves the store empty.
     - name: Start from main's store
       if: inputs.warm == 'true'
       shell: bash
@@ -74,7 +75,7 @@ runs:
         DIR: ${{ steps.env.outputs.dir }}
       run: |
         id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$ARTIFACT&per_page=30" \
-          --jq '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == "main")][0].id // empty' || true)
+          --jq '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == "main" and .workflow_run.head_repository_id == .workflow_run.repository_id)][0].id // empty' || true)
         if [ -z "$id" ]; then echo "No store from main: compiling cold."; exit 0; fi
         if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/sccache.zip" \
           && { unzip -q -o "$RUNNER_TEMP/sccache.zip" -d "$DIR" || 7z x -y -o"$DIR" "$RUNNER_TEMP/sccache.zip" > /dev/null; }; then
