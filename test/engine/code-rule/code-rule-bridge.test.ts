@@ -18,6 +18,7 @@ import {
   type SourceObservationCache,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-rule/tool-call-windows.js";
+import { claudeCodeReportedPreimage, type ReportedPreimage } from "../../../src/engine/code-rule/tool-result/reported-preimage.js";
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import type * as Git from "../../../src/engine/git.js";
@@ -1727,6 +1728,454 @@ describe("CodeRuleBridge", () => {
 
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => ({ mode: batch.mode ?? "session", ...edit })))).toEqual([
       { mode: "session", path: "src/a.py", language: "python", previousText: "mine\n", generatedText: "mine\nmore\n" },
+    ]);
+  });
+});
+
+describe("CodeRuleBridge and a call it takes up only after its tool wrote the file", () => {
+  /**
+   * `src/<file>` holding `before` when the session opens, in a repository's one commit with `committed`, then `after`
+   * written by a Claude Code Edit whose call the bridge begins only once the tool ran, as a daemon too busy to answer the
+   * hook in time does; the call finishes with the tool's result, `output`, once something else has written `then`, when
+   * given (a formatter, the next edit). The edits the auditor was given.
+   */
+  async function lateEdit(
+    before: string,
+    after: string,
+    output: (path: string) => unknown,
+    { file = "a.py", committed = false, then }: { file?: string; committed?: boolean; then?: string } = {},
+  ) {
+    const root = await workspace();
+    const path = join(root, "src", file);
+    await writeFile(path, before);
+    if (committed) commitAll(root);
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await writeFile(path, after);
+    await bridge.begin("edit-1", "Edit", { file_path: path });
+    if (then !== undefined) {
+      await awaitClockAfter(path);
+      await writeFile(path, then);
+    }
+    await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(output(path)) });
+    return auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits);
+  }
+  /** Claude Code's Edit result with the line diff it made (`structuredPatch`) and no copy of the text it replaced. */
+  const editResult = (lines: readonly string[]) => (path: string) => ({
+    filePath: path, oldString: "two", newString: "TWO", originalFile: null, userModified: false, replaceAll: false,
+    structuredPatch: [{ oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines }],
+  });
+
+  it("reads the edit against the text the result's line diff rebuilds when the result leaves out the text it replaced", async () => {
+    const before = "one\ntwo\nthree\n";
+    const after = "one\nTWO\nthree\nfour\n";
+    const output = (path: string) => ({
+      ...editResult([])(path),
+      structuredPatch: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 4, lines: [" one", "-two", "+TWO", " three", "+four"] }],
+    });
+    expect(await lateEdit(before, after, output)).toEqual([{ path: "src/a.py", language: "python", previousText: before, generatedText: after }]);
+  });
+
+  it.each([
+    { carriageReturns: "without", lines: [" one", "-two", "+TWO"] },
+    { carriageReturns: "with", lines: [" one\r", "-two\r", "+TWO\r"] },
+  ])("rebuilds a file with CRLF line endings from a line diff $carriageReturns carriage returns", async ({ lines }) => {
+    expect(await lateEdit("one\r\ntwo\r\n", "one\r\nTWO\r\n", editResult(lines))).toEqual([
+      { path: "src/a.py", language: "python", previousText: "one\r\ntwo\r\n", generatedText: "one\r\nTWO\r\n" },
+    ]);
+  });
+
+  it("rebuilds a last line with no line feed", async () => {
+    const lines = [" one", "-two", "\\ No newline at end of file", "+TWO", "\\ No newline at end of file"];
+    expect(await lateEdit("one\ntwo", "one\nTWO", editResult(lines))).toEqual([
+      { path: "src/a.py", language: "python", previousText: "one\ntwo", generatedText: "one\nTWO" },
+    ]);
+  });
+
+  // Claude Code's line diff shows each tab of the run a line starts with as two spaces: the file's own lines are matched
+  // through that, and a line only the diff holds gets its tabs back where the hunk's lines in the file have them.
+  it.each([
+    {
+      indents: "one tab",
+      before: "if a:\n\tone\n\ttwo\n", after: "if a:\n\tone\n\tTWO\n",
+      lines: [" if a:", "   one", "-  two", "+  TWO"], newStart: 1,
+    },
+    {
+      indents: "two tabs, under a line with one",
+      before: "class A:\n\tdef f(self):\n\t\treturn 1\n\t# note\n", after: "class A:\n\tdef f(self):\n\t\treturn 2\n\t# note\n",
+      lines: ["   def f(self):", "-    return 1", "+    return 2", "   # note"], newStart: 2,
+    },
+    {
+      indents: "one tab, beside a line indented tab, space, tab, which the diff shows as three spaces and a tab",
+      before: "if a:\n\t \t# note\n\tone\n\ttwo\n", after: "if a:\n\t \t# note\n\tone\n\tTWO\n",
+      lines: [" if a:", "    \t# note", "   one", "-  two", "+  TWO"], newStart: 1,
+    },
+  ])("rebuilds a file indented with tabs ($indents) from a line diff that shows them as spaces", async ({ before, after, lines, newStart }) => {
+    const output = (path: string) => ({
+      ...editResult([])(path),
+      structuredPatch: [{ oldStart: newStart, oldLines: 3, newStart, newLines: 3, lines }],
+    });
+    expect(await lateEdit(before, after, output)).toEqual([{ path: "src/a.py", language: "python", previousText: before, generatedText: after }]);
+  });
+
+  // A file that starts with a byte order mark, whose line diff may show its first line with or without the mark: the
+  // file's first line is matched either way, and the text rebuilt holds the mark once, as the file does.
+  it.each([
+    { edit: "beside line 1", after: "﻿one\nTWO\nthree\n", lines: [" one", "-two", "+TWO", " three"] },
+    { edit: "beside line 1, which the diff shows with the mark", after: "﻿one\nTWO\nthree\n", lines: [" ﻿one", "-two", "+TWO", " three"] },
+    { edit: "of line 1", after: "﻿ONE\ntwo\nthree\n", lines: ["-one", "+ONE", " two", " three"] },
+    { edit: "of line 1, which the diff shows with the mark", after: "﻿ONE\ntwo\nthree\n", lines: ["-﻿one", "+﻿ONE", " two", " three"] },
+  ])("rebuilds a file with a byte order mark from a line diff $edit", async ({ after, lines }) => {
+    const before = "﻿one\ntwo\nthree\n";
+    const output = (path: string) => ({ ...editResult([])(path), structuredPatch: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 3, lines }] });
+    expect(await lateEdit(before, after, output)).toEqual([{ path: "src/a.py", language: "python", previousText: before, generatedText: after }]);
+    const then = `${after}four\n`;
+    expect(await lateEdit(before, after, output, { then })).toEqual([{ path: "src/a.py", language: "python", previousText: before, generatedText: then }]);
+  });
+
+  it("checks the edit over its whole file, saying why, when the file no longer holds the diff's lines and the result gives no text it replaced", async () => {
+    // Changed again after the tool wrote it, and `originalFile` is null: nothing says what the file held, so the edit is
+    // read as one whose earlier text is unknown, as a shell write to a file never seen is, not as no change.
+    expect(await lateEdit("one\ntwo\n", "one\nTWO, then changed\n", editResult([" one", "-two", "+TWO"]))).toEqual([{
+      path: "src/a.py", language: "python", generatedText: "one\nTWO, then changed\n",
+      previousReadError: "The tool's result no longer fits the file, so what it held before the tool ran is unknown",
+    }]);
+  });
+
+  // Changed again after the tool wrote it (a formatter, another edit): the diff no longer fits, so the edit is read
+  // against the text the result gives, as an edit whose call came on time is read against its capture whatever wrote
+  // the file since. That text takes the file's CRLF line endings where it has none of its own.
+  it.each([
+    { endings: "LF", before: "one\ntwo\n", after: "one\nTWO, then changed\n" },
+    { endings: "CRLF", before: "one\r\ntwo\r\n", after: "one\r\nTWO, then changed\r\n" },
+  ])("reads the edit against the text the result gives where the $endings file no longer holds the diff's lines", async ({ before, after }) => {
+    const output = (path: string) => ({ ...editResult([" one", "-two", "+TWO"])(path), originalFile: "one\ntwo\n" });
+    expect(await lateEdit(before, after, output)).toEqual([{ path: "src/a.py", language: "python", previousText: before, generatedText: after }]);
+  });
+
+  // Changed again after the call's capture took the tool's write (a formatter, the next edit): the line diff fits that
+  // capture, as no capture taken before the tool ran does, so the edit is read against the text it rebuilds from it,
+  // the tool's own lines with whatever changed since, as an edit whose call came on time is read.
+  it.each([
+    { changed: "by a formatter", then: "ONE\nTWO\nthree\n", originalFile: null },
+    { changed: "by a formatter, its result giving the text it replaced", then: "ONE\nTWO\nthree\n", originalFile: "one\ntwo\nthree\n" },
+    { changed: "by the next edit", then: "one\nTWO\nTHREE\n", originalFile: null },
+  ])("reads the edit against the text the diff rebuilds from its capture when the file changed $changed after it", async ({ then, originalFile }) => {
+    const output = (path: string) => ({ ...editResult([" one", "-two", "+TWO", " three"])(path), originalFile });
+    expect(await lateEdit("one\ntwo\nthree\n", "one\nTWO\nthree\n", output, { then })).toEqual([
+      { path: "src/a.py", language: "python", previousText: "one\ntwo\nthree\n", generatedText: then },
+    ]);
+  });
+
+  // An Edit that added a line at the file's end: its line diff holds only the lines before the one it added, which a
+  // capture taken after the tool wrote holds too, so where the file changed again only what the capture holds of the
+  // tool's line tells when it was taken.
+  const threeLines = "a = 0\nb = 1\nc = 2\n";
+  const appendResult = (path: string) => ({
+    ...editResult([])(path),
+    structuredPatch: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 4, lines: [" a = 0", " b = 1", " c = 2", "+mine = 3"] }],
+  });
+
+  it("reads the edit against the text the diff rebuilds from its capture when the next edit wrote the tool's line again", async () => {
+    const then = `${threeLines}mine = 3\nmine = 3\n`;
+    expect(await lateEdit(threeLines, `${threeLines}mine = 3\n`, appendResult, { then })).toEqual([
+      { path: "src/a.py", language: "python", previousText: threeLines, generatedText: then },
+    ]);
+  });
+
+  it("reads the edit against its capture when a formatter rewrote the tool's line before the call was read and the file changed again", async () => {
+    // Nothing in the result rebuilds what the tool replaced, and its line diff does not place the capture before the
+    // tool: it shows nothing about the capture, which another writer between the call and the tool would leave the
+    // same way. Read against the capture, as an edit whose result says nothing is. A call that came while the rules
+    // opened is read the other way (`deferredEdit` below).
+    const then = `${threeLines}mine = 3  # fmt\nx = 4\n`;
+    expect(await lateEdit(threeLines, `${threeLines}mine = 3  # fmt\n`, appendResult, { then })).toEqual([
+      { path: "src/a.py", language: "python", previousText: `${threeLines}mine = 3  # fmt\n`, generatedText: then },
+    ]);
+  });
+
+  it("finds no edit where an on-time Edit's file was put back before its result, which gives no text it replaced", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, threeLines);
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await bridge.begin("edit-1", "Edit", { file_path: path });
+    await writeFile(path, `${threeLines}mine = 3\n`);
+    await writeFile(path, threeLines);
+    await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(appendResult(path)) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([]);
+  });
+
+  it("reads an on-time edit against its capture where the next edit changed the file and the capture holds a line like the tool's", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "mine\na\nb\n");
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await bridge.begin("edit-1", "Edit", { file_path: path });
+    await writeFile(path, "mine\na\nmine\nb\n");
+    await writeFile(path, "MINE\na\nmine\nb\n");
+    const output = { ...editResult([])(path), structuredPatch: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 4, lines: [" mine", " a", "+mine", " b"] }] };
+    await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(output) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "src/a.py", language: "python", previousText: "mine\na\nb\n", generatedText: "MINE\na\nmine\nb\n" },
+    ]);
+  });
+
+  it("leaves the edit unchecked when the result names another file", async () => {
+    const output = (path: string) => ({ ...editResult([" one", "+TWO"])(path), filePath: join(path, "..", "b.py") });
+    expect(await lateEdit("one\n", "one\nTWO\n", output)).toEqual([]);
+  });
+
+  // A file named like one holding secrets keeps only the digest of what the result says it held, as a capture does: the
+  // edit is read against that text only where the session or Git holds text with that digest.
+  it.each([
+    { holds: "Git holds it", committed: true, previous: { previousText: "one\n" } },
+    { holds: "nothing holds it", committed: false, previous: { previousReadError: "Rerail keeps no copy of a file holding secrets" } },
+  ])("keeps only the digest of what a secret-like file held, and reads the edit against it where $holds", async ({ committed, previous }) => {
+    expect(await lateEdit("one\n", "one\nTWO\n", editResult([" one", "+TWO"]), { file: "secrets.py", committed })).toEqual([
+      { path: "src/secrets.py", language: "python", ...previous, generatedText: "one\nTWO\n" },
+    ]);
+  });
+
+  // A result with no line diff cannot show that the call's capture is the file before the tool: a capture taken after the
+  // tool wrote holds what it wrote, and an edit read against it would show none of the tool's lines. What the result says
+  // the file held is read instead: nothing, for a file the tool made where the result does not say what it wrote, or the
+  // text the tool replaced, whatever wrote the file between the call and the tool. A Write that made a file the call read
+  // another text of than it wrote came after that capture: the file was removed between the call and the tool, and the
+  // edit is read against the capture, as an edit whose result says nothing is.
+  it.each([
+    {
+      says: "the tool made the file", then: "one\nTWO\n", reported: (path: string): ReportedPreimage => ({ kind: "created", path }),
+      previous: {},
+    },
+    {
+      says: "the tool made again the file it removed after the call", then: "one\nTWO\n",
+      reported: (path: string) => claudeCodeReportedPreimage({ type: "create", filePath: path, content: "one\nTWO\n", structuredPatch: [], originalFile: null }),
+      previous: { previousText: "one\n" },
+    },
+    {
+      says: "the text the tool replaced", then: "other\nTWO\n", reported: (path: string): ReportedPreimage => ({ kind: "text", path, text: "other\n" }),
+      previous: { previousText: "other\n" },
+    },
+  ])("reads an edit whose result has no line diff against what the result says the file held, where it says $says", async ({ then, reported, previous }) => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "one\n");
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await bridge.begin("edit-1", "Edit", { file_path: path });
+    await writeFile(path, then);
+    await bridge.finish("edit-1", false, { reported: reported(path) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "src/a.py", language: "python", ...previous, generatedText: then },
+    ]);
+  });
+
+  // A call taken up only after its tool wrote, its file written again before the result (a formatter, the next edit),
+  // whose result has no line diff: its capture holds what the tool wrote, in whatever form the file had when the call
+  // read it, so a Write that made the file is read against an empty file where that capture is its `content`.
+  const madeFile = (content: string) => (path: string) => ({ type: "create", filePath: path, content, structuredPatch: [], originalFile: null });
+  it.each([
+    { says: "a Write made the file", before: undefined, atCall: "mine = 1\n", previous: {}, output: madeFile("mine = 1\n") },
+    { says: "a Write made the file, held with CRLF line endings", before: undefined, atCall: "mine = 1\r\n", previous: {}, output: madeFile("mine = 1\n") },
+    { says: "a Write made the file, held with a byte order mark", before: undefined, atCall: "﻿mine = 1\n", previous: {}, output: madeFile("mine = 1\n") },
+    { says: "a Write made the file, held with a last line feed", before: undefined, atCall: "mine = 1\n", previous: {}, output: madeFile("mine = 1") },
+    {
+      says: "a Write replaced the text it gives", before: "one\n", atCall: "one\nmine = 1\n", previous: { previousText: "one\n" },
+      output: (path: string) => ({ type: "update", filePath: path, content: "one\nmine = 1\n", originalFile: "one\n" }),
+    },
+  ])("reads a late call's edit against what its result says the file held where $says and the file changed again", async ({ before, atCall, previous, output }) => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    if (before !== undefined) {
+      await writeFile(path, before);
+      await awaitClockAfter(path);
+    }
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await writeFile(path, atCall);
+    await bridge.begin("write-1", "Write", { file_path: path, content: atCall });
+    await awaitClockAfter(path);
+    await writeFile(path, `${atCall}x = 2\n`);
+    await bridge.finish("write-1", false, { reported: claudeCodeReportedPreimage(output(path)) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "src/a.py", language: "python", ...previous, generatedText: `${atCall}x = 2\n` },
+    ]);
+  });
+
+  // A Write whose result says it made the file, where the call's capture holds other text than its `content`: the call
+  // read the file before the tool ran and another process removed it between the call and the tool, or the call was
+  // taken up only after a formatter changed the made file. No result tells the two apart, so once the file changed again
+  // the edit is read against that capture, as an edit whose result says nothing is, and the lines the file held before
+  // the Write are not read as the Write's.
+  it.each([
+    { capture: "the file before another process removed it after the call", before: "one\n", atTool: "one\nTWO\n", early: true },
+    { capture: "the made file once a formatter changed it", before: undefined, atTool: "mine = 1  # fmt\n", early: false },
+  ])("reads a Write that made its file against its capture where that capture is $capture and the file changed again", async ({ before, atTool, early }) => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    if (before !== undefined) {
+      await writeFile(path, before);
+      await awaitClockAfter(path);
+    }
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    if (early) {
+      await bridge.begin("write-1", "Write", { file_path: path, content: atTool });
+      await rm(path);
+    }
+    await writeFile(path, atTool);
+    if (!early) await bridge.begin("write-1", "Write", { file_path: path, content: atTool });
+    await awaitClockAfter(path);
+    await writeFile(path, `${atTool}x = 2\n`);
+    await bridge.finish("write-1", false, { reported: claudeCodeReportedPreimage(madeFile(early ? atTool : "mine = 1\n")(path)) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "src/a.py", language: "python", previousText: before ?? atTool, generatedText: `${atTool}x = 2\n` },
+    ]);
+  });
+
+  it("reads an on-time edit against its capture where nothing in its result rebuilds what the tool replaced", async () => {
+    // Another writer put a line at the top between the call and the tool, so the diff's lines are not where its
+    // `oldStart` places them in the capture; the tool added a line the file already holds, and a formatter rewrote the
+    // file before the result, which gives no `originalFile`. Read against the capture, as on a call no result describes.
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "a\nb\nc\n");
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await bridge.begin("edit-1", "Edit", { file_path: path });
+    await writeFile(path, "top\na\nb\nc\n");
+    await writeFile(path, "top\na\nb\na\nc\n");
+    await writeFile(path, "top\na\nb\na\nC\n");
+    const output = { ...editResult([])(path), structuredPatch: [{ oldStart: 1, oldLines: 4, newStart: 1, newLines: 5, lines: [" top", " a", " b", "+a", " c"] }] };
+    await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(output) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "src/a.py", language: "python", previousText: "a\nb\nc\n", generatedText: "top\na\nb\na\nC\n" },
+    ]);
+  });
+
+  it("reads an edit whose call came before its tool against the call's own capture, though the result's line diff also fits that capture", async () => {
+    // Removing one of three like lines: the diff's lines fit the file before the tool as well as after it.
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x\nx\nx\n");
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await bridge.begin("edit-1", "Edit", { file_path: path });
+    await writeFile(path, "x\nx\n");
+    const output = { filePath: path, originalFile: null, structuredPatch: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 2, lines: [" x", "-x", " x"] }] };
+    await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(output) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "src/a.py", language: "python", previousText: "x\nx\nx\n", generatedText: "x\nx\n" },
+    ]);
+  });
+
+  it.each([
+    { then: undefined },
+    { then: "﻿ONE\ntwo\nthree  # fmt\n" },
+  ])("reads an on-time Edit of line 1 of a file with a byte order mark against its capture (then $then)", async ({ then }) => {
+    const before = "﻿one\ntwo\nthree\n";
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, before);
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await bridge.begin("edit-1", "Edit", { file_path: path });
+    await writeFile(path, "﻿ONE\ntwo\nthree\n");
+    if (then !== undefined) await writeFile(path, then);
+    const output = { ...editResult([])(path), structuredPatch: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 3, lines: ["-one", "+ONE", " two", " three"] }] };
+    await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(output) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "src/a.py", language: "python", previousText: before, generatedText: then ?? "﻿ONE\ntwo\nthree\n" },
+    ]);
+  });
+
+  // The result of a Write that left the file as it was may give the text it replaced without the file's byte order
+  // mark, or with LF where the file has CRLF: that difference is no edit.
+  it.each([
+    { differs: "CRLF line endings", file: "one\r\ntwo\r\n" },
+    { differs: "byte order mark", file: "\uFEFFone\ntwo\n" },
+  ])("finds no edit where a Write left the file as it was and its result gives the text without the file's $differs", async ({ file }) => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, file);
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await bridge.begin("write-1", "Write", { file_path: path, content: file });
+    await writeFile(path, file);
+    const output = { type: "update", filePath: path, content: file, structuredPatch: [], originalFile: "one\ntwo\n" };
+    await bridge.finish("write-1", false, { reported: claudeCodeReportedPreimage(output) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([]);
+  });
+});
+
+// Several Claude Code Edits of one file whose tools all ran before a busy daemon took any of their calls up, the
+// common case under load.
+describe("CodeRuleBridge and a burst of late calls on one file", () => {
+  const numbered = (index: number) => `line${String(index).padStart(2, "0")}`;
+  /** Twenty numbered lines with `ending`, those in `change` replaced. */
+  const text = (ending: string, change: Record<number, string> = {}) =>
+    Array.from({ length: 20 }, (_, index) => `${change[index + 1] ?? numbered(index + 1)}${ending}`).join("");
+  /** Claude Code's Edit result: its line diff, one hunk from `newStart`, and `originalFile`. */
+  const editResult = (newStart: number, lines: readonly string[], originalFile: string | null) => (path: string) => ({
+    filePath: path, oldString: "x", newString: "y", originalFile, userModified: false, replaceAll: false,
+    structuredPatch: [{ oldStart: newStart, oldLines: 0, newStart, newLines: 0, lines }],
+  });
+  /** Each tool writes its text in turn; only then are the calls begun and finished in order. The edits of each call. */
+  async function burst(before: string, edits: ReadonlyArray<{ after: string; output: (path: string) => unknown }>) {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, before);
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    for (const edit of edits) await writeFile(path, edit.after);
+    const perCall: unknown[][] = [];
+    for (const [index, edit] of edits.entries()) {
+      const seen = auditGeneratedEdits.mock.calls.length;
+      await bridge.begin(`edit-${index}`, "Edit", { file_path: path });
+      await bridge.finish(`edit-${index}`, false, { reported: claudeCodeReportedPreimage(edit.output(path)) });
+      perCall.push(auditGeneratedEdits.mock.calls.slice(seen).flatMap(([, batch]) => batch.edits));
+    }
+    return perCall;
+  }
+  const edit = (previousText: string, generatedText: string) => ({ path: "src/a.py", language: "python", previousText, generatedText });
+
+  it.each([{ ending: "\n" }, { ending: "\r\n" }])("reads each of two late edits far apart against its own lines ($ending)", async ({ ending }) => {
+    const before = text(ending);
+    const afterFirst = text(ending, { 3: "LINE03" });
+    const after = text(ending, { 3: "LINE03", 17: "LINE17" });
+    const first = editResult(1, [" line01", " line02", "-line03", "+LINE03", " line04", " line05", " line06"], null);
+    const second = editResult(14, [" line14", " line15", " line16", "-line17", "+LINE17", " line18", " line19", " line20"], null);
+    expect(await burst(before, [{ after: afterFirst, output: first }, { after, output: second }])).toEqual([
+      [edit(text(ending, { 17: "LINE17" }), after)],
+      [edit(afterFirst, after)],
+    ]);
+  });
+
+  it("reads the first of two late edits of one line against originalFile, holding the second's line too", async () => {
+    const before = text("\n");
+    const afterFirst = text("\n", { 3: "LINE03" });
+    const after = text("\n", { 3: "LINE03B" });
+    const first = editResult(1, [" line01", " line02", "-line03", "+LINE03", " line04", " line05", " line06"], before);
+    const second = editResult(1, [" line01", " line02", "-LINE03", "+LINE03B", " line04", " line05", " line06"], afterFirst);
+    expect(await burst(before, [{ after: afterFirst, output: first }, { after, output: second }])).toEqual([
+      [edit(before, after)],
+      [edit(afterFirst, after)],
+    ]);
+  });
+
+  it("checks the first of two late edits of one line over its whole file where its result gives no originalFile", async () => {
+    const before = text("\n");
+    const afterFirst = text("\n", { 3: "LINE03" });
+    const after = text("\n", { 3: "LINE03B" });
+    const first = editResult(1, [" line01", " line02", "-line03", "+LINE03", " line04", " line05", " line06"], null);
+    const second = editResult(1, [" line01", " line02", "-LINE03", "+LINE03B", " line04", " line05", " line06"], null);
+    expect(await burst(before, [{ after: afterFirst, output: first }, { after, output: second }])).toEqual([
+      [{
+        path: "src/a.py", language: "python", generatedText: after,
+        previousReadError: "The tool's result no longer fits the file, so what it held before the tool ran is unknown",
+      }],
+      [edit(afterFirst, after)],
     ]);
   });
 });
