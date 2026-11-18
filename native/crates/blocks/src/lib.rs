@@ -20,6 +20,7 @@
 //! reached by reference into its block.
 
 pub mod alloc;
+pub mod atoms;
 pub mod block;
 pub mod chunk;
 pub mod col;

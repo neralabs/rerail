@@ -29,6 +29,8 @@ pub mod kind {
     pub const OUTPUTS: u32 = 4;
     pub const JOURNAL: u32 = 5;
     pub const SCRATCH: u32 = 6;
+    /// The store's atoms (decision 0401): strings and their hash table.
+    pub const ATOMS: u32 = 7;
 }
 
 structure! {
@@ -512,6 +514,49 @@ impl Block {
         let mut b = self;
         b.writable = false;
         Frozen(Arc::new(b))
+    }
+
+    /// Maps the block in the file at `path` as it is, open or frozen (a store's block that one process appends to and
+    /// others read up to an end they are told, decision 0401): its magic and kind checked, its whole file mapped,
+    /// writable or not. Without shared mappings (WASI) the file is read into memory, and a writer writes it back
+    /// itself (`bytes`).
+    pub fn map_file(path: &Path, kind: u32, writable: bool) -> io::Result<Block> {
+        let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {what}", path.display()));
+        let f = std::fs::OpenOptions::new().read(true).write(writable).open(path)?;
+        let len = f.metadata()?.len() as usize;
+        if len < size_of::<Header>() {
+            return Err(invalid(format!("{len} bytes, shorter than a header")));
+        }
+        #[cfg(unix)]
+        let b = {
+            let prot = if writable { libc::PROT_READ | libc::PROT_WRITE } else { libc::PROT_READ };
+            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+            if p == libc::MAP_FAILED {
+                return Err(io::Error::last_os_error());
+            }
+            Block::make(p.cast(), len, len, Some(f), writable, None)
+        };
+        #[cfg(not(unix))]
+        let b = {
+            let mut f = f;
+            let reserved = len.div_ceil(PAGE) * PAGE;
+            let p = crate::mem::reserve(reserved);
+            std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) })?;
+            Block::make(p, reserved, len, None, writable, None)
+        };
+        let h = b.header();
+        if h.magic != MAGIC || h.kind != kind {
+            return Err(invalid(format!("not a block of kind {kind}")));
+        }
+        if h.state != OPEN && h.state != FROZEN {
+            return Err(invalid(format!("state {}", h.state)));
+        }
+        Ok(b)
+    }
+
+    /// The file a block maps, when it maps one.
+    pub fn mapped_file(&self) -> Option<&File> {
+        self.file.as_ref()
     }
 
     /// Maps a block's file read-only, valid only if it was frozen whole: magic, kind, state, and the length its
