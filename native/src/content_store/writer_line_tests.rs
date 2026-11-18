@@ -138,8 +138,9 @@ fn the_writer_ahead_hands_the_store_to_the_waiting_writers_in_arrival_order() {
     assert_eq!(*order.lock().unwrap(), ["holder", "first", "second"]);
 }
 
-/// Two stores of one process on one file, however its path is spelled, share one line: a write
-/// on one waits in the line for a write on the other, not in SQLite's busy handler.
+/// Two stores of one process on one file, however its folder is spelled, share one line: a write
+/// on one waits in the line for a write on the other, not in SQLite's busy handler. The first
+/// store opens the file before it exists (on Windows SQLite creates it then), the second after.
 #[test]
 fn two_stores_on_one_file_share_its_line() {
     let (path, first) = store("shared-line");
@@ -170,6 +171,25 @@ fn a_waiter_that_gives_up_marks_the_holder_stalled_until_it_lets_go() {
     holder.let_go();
     assert!(!store.writes_stalled(), "the stall ends when its holder lets go");
     batch(&store, 1).unwrap();
+}
+
+/// A writer that panics while it holds the store hands the line on as it unwinds: the next write
+/// is handed the store without waiting.
+#[test]
+fn a_writer_that_panics_while_holding_the_store_hands_it_on() {
+    let (_path, store) = store("panicking-holder");
+    let panicking = Arc::clone(&store);
+    let ended = thread::spawn(move || {
+        panicking.immediate_transaction(|_| -> StoreResult<()> { panic!("the holder fails") })
+    })
+    .join();
+    assert!(ended.is_err(), "the holder panicked");
+    LINE_WAIT_HOOK.set(Some(Box::new(|| {
+        panic!("the next write waited for a holder that is gone")
+    })));
+    let written = batch(&store, 1);
+    LINE_WAIT_HOOK.set(None);
+    written.unwrap();
 }
 
 /// A write with no time left in its operation's deadline gives up at once, and says nothing about
