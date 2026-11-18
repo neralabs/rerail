@@ -301,7 +301,7 @@ describe("answer commands for PowerShell", () => {
 describe("T4 / C4 recommended rule packs", () => {
   it("keeps the blank line before what follows the question in --json, where the question goes out as data", () => {
     const text = renderQuestion(recommendedPacksQuestion(PACKS, "json"), "json");
-    expect(text).toContain("Connecting is free.\n\nWhen your coding agent breaks a rule, Rerail tells it");
+    expect(text).toContain("work out what went wrong.\n\nWhen your coding agent breaks a rule, Rerail tells it");
     expect(renderQuestion(sessionsQuestion({ carriedArgs: [] }), "json")).not.toMatch(/^\n/u);
   });
 
@@ -313,7 +313,7 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(text).toMatch(/acme-api\s+92\s+matches the acme_api package/);
     expect(text).not.toContain("Installs from npm");
     expect(text).not.toContain("replaces");
-    expect(text).toContain("  Will connect to: Claude Code, Cursor\n  Adds /rerail commands and a status line to each. Connecting is free.");
+    expect(text).toContain("  Will connect to: Claude Code, Cursor\n  Adds /rerail commands and a status line to each. Connecting is free.\n  The commands load Rerail’s skills: instructions your agent follows to write rules and to work out what went wrong.");
     expect(text).toContain("Start Rerail in acme-web with these 2 rule packs?");
     expect(text).toContain("When your coding agent breaks a rule, Rerail tells it, and the agent fixes\nits own work. Rerail never edits your code itself.");
     expect(text).toContain("1. Yes, start Rerail");
