@@ -3992,12 +3992,13 @@ pub fn hold_view_in_place(conn: impl Scoped, table: &str, src: Arc<dyn crate::co
     DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
 }
 
-/// A changed read's versions given, not marked (0364 R1, R2): an input's old rows, its rows gone and its rows added,
+/// A changed read's versions given, not marked (0364 R1, R2): an input's old rows, its rows gone, its rows added and
+/// its rows now,
 /// each read in place over its source (its columns `cols` of it, or all), as `Version(table, Old | Minus | Plus)`
 /// reads them while the maintain mode runs a stratum that reads it. Beside the relation, not in its place: an input
 /// the engine holds is read as it is, with its indexes, and none is held under another name. `take_versions` drops
 /// them.
-pub fn give_versions(conn: impl Scoped, table: &str, types: Vec<u8>, given: [(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<Vec<usize>>); 3]) {
+pub fn give_versions(conn: impl Scoped, table: &str, types: Vec<u8>, given: [(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<Vec<usize>>); 4]) {
     let conn = conn.db();
     let k = types.len();
     let view = |(src, cols): (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<Vec<usize>>)| -> Arc<InRel> {
@@ -4018,8 +4019,8 @@ pub fn take_versions(conn: impl Scoped, tables: &[String]) {
     }
 }
 
-/// The given versions of a run's changed reads (`give_versions`): `Old`, `Minus`, `Plus`.
-static GIVEN: LazyLock<ByScope<HashMap<(usize, String), [Arc<InRel>; 3]>>> = LazyLock::new(Default::default);
+/// The given versions of a run's changed reads (`give_versions`): `Old`, `Minus`, `Plus`, `New`.
+static GIVEN: LazyLock<ByScope<HashMap<(usize, String), [Arc<InRel>; 4]>>> = LazyLock::new(Default::default);
 
 /// Holds `table` in `conn`'s run as `src`'s rows, read in place (a view of every row): a relation an index holds
 /// (the reach index, decision 0119) is probed through the source's own lookups, never copied into rows.
@@ -6647,9 +6648,9 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                     // its rows at the run's start, those gone and those new, in place.
                     Source::Version(table, ver) => {
                         // A changed input's versions are given beside it (`give_versions`); a held relation's are its marks.
-                        let given = (*ver != spec::Ver::New).then(|| GIVEN.lock(conn.at()).get(&(conn.at(), table.clone())).cloned()).flatten();
-                        let rel = if let Some([old, minus, plus]) = given {
-                            Some(match ver { spec::Ver::Old => old, spec::Ver::Minus => minus, _ => plus })
+                        let given = GIVEN.lock(conn.at()).get(&(conn.at(), table.clone())).cloned();
+                        let rel = if let Some([old, minus, plus, now]) = given {
+                            Some(match ver { spec::Ver::Old => old, spec::Ver::Minus => minus, spec::Ver::Plus => plus, spec::Ver::New => now })
                         } else {
                         let held = DERIVED.lock(conn.at()).get(&(conn.at(), table.clone())).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
                         match ver {

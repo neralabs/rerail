@@ -6231,7 +6231,9 @@ fn observed_fans(stats: &Stats, rule: u64, order: Order<'_, '_>) -> Vec<Option<f
 /// The changed inputs a stratum in the maintain mode reads (decision 0364): each one's old rows, rows gone and rows
 /// added, as sources.
 /// A view of an input's columns (`input_view_shape`, Q37) has its input's, read through its columns (`Some`).
-type ModeInputs = BTreeMap<String, ([Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 3], Option<Vec<usize>>)>;
+/// A changed read's versions for the maintain mode, each read in place: `[old, minus, plus, new]`, and the columns of
+/// its source each holds (an input view's), or all.
+type ModeInputs = BTreeMap<String, ([Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 4], Option<Vec<usize>>)>;
 
 /// Strata the evaluator's maintain mode maintained (decision 0364 stage 3), over the process.
 static MODE_STRATA: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -7513,9 +7515,9 @@ impl<'a> Run<'a, '_> {
                     Lit::Agg { atom: a, .. } if scc.contains(b.rel(a)) => return Some("an aggregate over its own stratum".into()),
                     Lit::Agg { atom: a, .. } if moved.contains(b.rel(a)) => {
                         let rel = b.rel(a);
+                        // A changed input's, or input view's, versions are given whole, its rows now among them
+                        // (`give_versions`), so its aggregate joins read whole columns throughout.
                         match ins.get(rel) {
-                            Some((_, Some(_))) => return Some("an aggregate over a changed view of an input".into()),
-                            Some(_) if self.versions.whole(self.version).is_input(rel) => return Some("an aggregate over a changed input".into()),
                             Some(_) => {}
                             None if super::native::component::held(self.db, rel).is_some_and(|x| x.start().is_some()) => {}
                             None => return Some(format!("{rel} changed without a version")),
@@ -7563,9 +7565,9 @@ impl<'a> Run<'a, '_> {
         }
         // The changed inputs' versions, given in place over their sources beside each input (`give_versions`) while
         // the stratum runs: its joins read `Version(r, …)`, as they read a derived relation's.
-        for (r, ([o, mi, pl], cols)) in ins {
+        for (r, ([o, mi, pl, now], cols)) in ins {
             let t: Vec<u8> = pf.types(r).iter().map(|t| sym_char(&self.model.inputs, t) as u8).collect();
-            let given = [(Arc::clone(o), cols.clone()), (Arc::clone(mi), cols.clone()), (Arc::clone(pl), cols.clone())];
+            let given = [(Arc::clone(o), cols.clone()), (Arc::clone(mi), cols.clone()), (Arc::clone(pl), cols.clone()), (Arc::clone(now), cols.clone())];
             super::native::component::give_versions(self.db, r, t, given);
             input_held.push(r.clone());
         }
@@ -7612,7 +7614,7 @@ impl<'a> Run<'a, '_> {
                     continue;
                 }
                 let (gone, added) = match ins.get(rel) {
-                    Some(([_, mi, pl], _)) => (mi.len(), pl.len()),
+                    Some(([_, mi, pl, _], _)) => (mi.len(), pl.len()),
                     None => {
                         let x = held(rel).expect("a changed read with a version");
                         (x.version_ids(super::native::component::Ver::Minus).map_or(0, |v| v.len()), x.version_ids(super::native::component::Ver::Plus).map_or(0, |v| v.len()))
@@ -7671,7 +7673,7 @@ impl<'a> Run<'a, '_> {
                     continue;
                 }
                 let (gone, added) = match ins.get(rel) {
-                    Some(([_, mi, pl], _)) => (mi.len(), pl.len()),
+                    Some(([_, mi, pl, _], _)) => (mi.len(), pl.len()),
                     None => {
                         let x = held(rel).expect("a changed read with a version");
                         (x.version_ids(super::native::component::Ver::Minus).map_or(0, |v| v.len()), x.version_ids(super::native::component::Ver::Plus).map_or(0, |v| v.len()))
@@ -7685,12 +7687,17 @@ impl<'a> Run<'a, '_> {
                         plan_site("the maintain mode's aggregate join");
                         let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, None)?;
                         self.mode_reads.clear();
-                        if removing {
-                            for i in 0..b.len() {
-                                let (Lit::Atom(x) | Lit::Agg { atom: x, .. }) = b.view(i) else { continue };
-                                if ins.contains_key(b.rel(x)) {
-                                    self.mode_reads.insert(i, JoinSource::Version(b.rel(x).to_owned(), V::Old));
-                                }
+                        // A changed input read in its versions, whole: what was in a removal, and in an add the
+                        // aggregate's own atom now, so its columns are the delta atom's that leads the join.
+                        for i in 0..b.len() {
+                            let (Lit::Atom(x) | Lit::Agg { atom: x, .. }) = b.view(i) else { continue };
+                            if !ins.contains_key(b.rel(x)) {
+                                continue;
+                            }
+                            if removing {
+                                self.mode_reads.insert(i, JoinSource::Version(b.rel(x).to_owned(), V::Old));
+                            } else if i == k {
+                                self.mode_reads.insert(i, JoinSource::Version(b.rel(x).to_owned(), V::New));
                             }
                         }
                         let made = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels);
@@ -11623,7 +11630,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                         {
                             let w = o.k;
                             let cols = |x: &Arc<super::native::component::InRel>| x.source((0..w).map(|c| sql_col(r, c)).collect());
-                            return Some((r.clone(), ([cols(&o), cols(&mi), cols(&pl)], None)));
+                            let now = super::native::component::held(db, r)?;
+                            return Some((r.clone(), ([cols(&o), cols(&mi), cols(&pl), cols(&now)], None)));
                         }
                         let (base, cols) = if f0.is_input(r) {
                             (r.clone(), None)
@@ -11634,7 +11642,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                             (base, Some(cols))
                         };
                         let [mi, pl] = m.given(&base)?;
-                        Some((r.clone(), ([m.old_input(&base)?, mi, pl], cols)))
+                        let now = crate::code_rule_dsl::facts::vtab::bound_source(db, &base)?;
+                        Some((r.clone(), ([m.old_input(&base)?, mi, pl, now], cols)))
                     }).collect();
                     // 0090 §4's threshold (0364 R4): a stratum whose changed reads' deltas reach past θ of its kept rows
                     // is derived again, its levels fresh from that derive. The deltas are their versions' sizes.

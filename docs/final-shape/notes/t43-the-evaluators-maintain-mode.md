@@ -304,3 +304,31 @@ too many rows dead and makes the change marks against its live rows. A unit test
 A first form of the input versions replaced an input the engine holds with a view of it while its stratum ran, so
 its probes lost its indexes (kept step 04: 231 G against 163 G). The versions now lie beside the relation
 (`give_versions`), and its own rows are read as they are.
+
+## Step 4: the kinds still derived again (R3)
+
+Counted over the session replay, the strata derived again for a reason R3 does not allow:
+- **`cparam` changed without a version** (14–28 an edit sequence): `cparam` and `gbase_at` read `nearest`, which
+  the mode refuses. Derived again, each time from SQL, they are never kept, so their readers have no version and
+  are derived again in turn.
+- **An aggregate over a changed input** (every small edit of R3's test: `width` counts `child`).
+
+**Aggregates over a changed input.** The refusal was there because an input's rows are read projected (its
+query's columns) while its versions are whole. The add join is led by a delta atom that holds the aggregate's
+arguments over whole columns, so the aggregate's own read must be whole too. An input's versions now include its
+rows now (`New`, given beside it with `Old`, `Minus` and `Plus`), and the add join reads the aggregate's atom from
+them. Both refusals ("…over a changed input", "…over a changed view of an input") are gone.
+
+**`nearest` (design, next).** The spec has an item for it (`JoinItem::Near`), but the engine has no step and
+refuses the spec. So a stratum that reads `nearest` runs in SQL (its tree read climbs the tape), and the engine
+keeps nothing of it. The first part is that step: climb a bound node's parents on the tape, each tested by its
+kind, as SQL's tree read does, binding the first whose kind is in the set (or, bound from above, walk down). With
+it, an add join or a recheck reads the tape as it is now, which is right. A removal join reads what was, but a changed file's
+tape is its new one: an old node of that file has no old ancestors to climb to. A file that did not change has the
+same tape, so `nearest` of its nodes is as before. So, for a stratum that reads `nearest`:
+- its removal joins evaluate `nearest` as they do now, which is exact for every node of a file that did not change;
+- and every kept row of the stratum that names a node of a changed file is a removal candidate too, read through
+  the stratum's kept rows by document (its node columns' documents, as the kept inputs' owner ranges find them).
+  The recheck then evaluates each against the tape as it is now and keeps those still derived.
+That is sound, since a candidate is only removed when the recheck derives it no more, and it costs the changed
+files' rows. Then `gbase_at` and `cparam` are kept and maintained, and their readers have versions.

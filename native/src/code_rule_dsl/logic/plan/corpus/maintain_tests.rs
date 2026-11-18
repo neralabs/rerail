@@ -197,7 +197,6 @@ fn r1_the_engine_source_names_no_maintenance_relation() {
 /// R3: a stratum an edit reaches is skipped, maintained by the mode, or derived again for one of two reasons only:
 /// its part's first run (nothing kept) or 0090 §4's threshold (R4). Every kind 0328 §6 names is maintained.
 #[test]
-#[ignore = "R3: strata of several kinds are still derived again (t43 step 4)"]
 fn r3_a_reached_stratum_is_derived_again_only_on_its_first_run_or_past_the_threshold() {
     let allowed: BTreeSet<&str> = [maintain::FIRST_RUN, maintain::THRESHOLD].into();
     let mut s = kinds("r3");
