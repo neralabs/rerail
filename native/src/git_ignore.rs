@@ -79,7 +79,9 @@ impl GitIgnore {
     /// every folder below the root.
     fn leave_folders(&mut self) {
         // A file that cannot be read on the way is reported by the question that reads it.
-        let _ = self.stack.at_path(Path::new(".git"), Some(Mode::DIR), &self.repository.objects);
+        let _ = self
+            .stack
+            .at_path(Path::new(".git"), Some(Mode::DIR), &self.repository.objects);
     }
 
     /// Whether Git ignores `relative` (to the opened root, `/`-separated). The root itself and any

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -171,15 +171,16 @@ describe("GitIgnoreMatchers", () => {
   });
 
   it("follows the file a configuration value names with a comment after it, and that file's changes", async () => {
-    const { root, home, linked } = await checkout();
+    const { home, linked } = await checkout();
     const matchers = new GitIgnoreMatchers();
     const ask = (name: string, path: string) => matchers.matcher(linked, user(name))?.ignored(path, false);
-    const named = join(root, "commented-ignore");
-    await writeFile(named, "c1/\n");
-    // A hand-edited line: Git reads the value up to the comment.
-    await writeFile(join(home, ".gitconfig"), `[core]\n\texcludesFile = ${slashed(named)} ; mine\n`);
+    await writeFile(join(home, "commented-ignore"), "c1/\n");
+    // A line added by hand to the file Git wrote: Git reads the value up to the comment.
+    git(linked, "config", "--global", "user.name", "Rerail");
+    const config = join(home, ".gitconfig");
+    await writeFile(config, `${await readFile(config, "utf8")}[core]\n\texcludesFile = ~/commented-ignore ; mine\n`);
     expect([ask("first", "c1/a.py"), ask("first", "c2/a.py")]).toEqual([true, false]);
-    await writeFile(named, "c2/\n");
+    await writeFile(join(home, "commented-ignore"), "c2/\n");
     expect([ask("changed", "c1/a.py"), ask("changed", "c2/a.py")]).toEqual([false, true]);
   });
 });
