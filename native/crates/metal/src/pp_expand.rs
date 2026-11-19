@@ -445,6 +445,7 @@ pub const X_HASH: u32 = 128;
 pub const X_ACROSS: u32 = 256;
 pub const X_VA_OPT: u32 = 512;
 pub const X_RELEX: u32 = 1024;
+pub const X_SPLICE: u32 = 2048;
 
 /// The expansion's rungs: rung `k`'s arena holds `2^(k+1)` tokens a top token.
 pub const EXP_RUNGS: u32 = 5;
@@ -463,7 +464,6 @@ const CLOSE_BITS: u32 = 40;
 ///   items a list);
 /// - the output (refs), and the control words (the arena's tops, the refusals).
 pub struct Exp {
-    tok_cap: u32,
     list_cap: u32,
     out_cap: u32,
     q_cap: u32,
@@ -521,7 +521,6 @@ impl Exp {
         let (sb, st) = ((64usize << 10) << rung, tok / 4 + 256);
         let words = [unit.table.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options];
         Ok(Exp {
-            tok_cap: tok as u32,
             list_cap: lists as u32,
             out_cap: out as u32,
             q_cap: q as u32,
@@ -701,6 +700,17 @@ impl Exp {
     }
 
     /// The refusals, and the output's refs where there are none (after the command buffer).
+    /// Each store's use and room (`ROOM_STORES`'s order): its top (past the room where it ran
+    /// out: a top only grows) and its capacity.
+    pub fn room(&self) -> [(u32, u32); 5] {
+        // SAFETY: the device finished; `ctl` and `words` are the control and capacity words.
+        unsafe {
+            let ctl = self.ctl.host().cast::<u32>();
+            let w = self.words.host().cast::<u32>();
+            [(0, 1), (1, 2), (3, 3), (4, 8), (5, 9)].map(|(t, c)| (*ctl.add(t), *w.add(c)))
+        }
+    }
+
     pub fn read(&self) -> (u32, Vec<u32>) {
         // SAFETY: the device finished; `out` holds at least `n_out` words where no room ran out.
         unsafe {
@@ -727,7 +737,12 @@ pub struct Expanded {
     /// kind).
     pub scratch: Vec<u8>,
     pub stoks: Vec<[u32; 3]>,
+    /// The arena's use and room at the rung it ran at, store by store (`ROOM_STORES`).
+    pub room: [(u32, u32); 5],
 }
+
+/// The arena's stores, as `Expanded::room` lists them.
+pub const ROOM_STORES: [&str; 5] = ["tokens", "lists", "arguments", "scratch bytes", "scratch tokens"];
 
 /// A ref to a scratch token, not a tape node.
 pub const SCRATCH: u32 = 0x8000_0000;
@@ -762,7 +777,7 @@ pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Err
             continue;
         }
         let (scratch, stoks) = exp.scratch();
-        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches, scratch, stoks });
+        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches, scratch, stoks, room: exp.room() });
     }
 }
 

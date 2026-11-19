@@ -311,3 +311,18 @@ outermost call becomes the queue's first items.
   `__VA_OPT__`'s space; where it has none, `__VA_OPT__(…)` is one placemarker. `#__VA_OPT__` is
   refused (`X_VA_OPT`). 4 shapes in C and C++ give the serial pass's tokens
   (`va_opt_is_the_serial_passes`).
+- **The plans in the first level.** A scan's or a segmented scan's level 0 is dispatched at the
+  capacity's blocks (known to the host); it reads the count itself, and its first thread writes
+  the plan the later levels' indirect dispatches read. A sort's plan is written by its `iota`.
+  That saves a launch a scan and two a sort: an evaluation took 151 launches, now 118, and the
+  corpus's largest takes 168 with its rung reruns (the bound is 200; libev's `ev.c` went past it
+  before).
+- **A token with a line splice inside.** The serial pass spells a token after phase 2, its
+  splices left out. `#` and `##` of such a token are refused (`X_SPLICE`), since their spelling
+  is the CPU's for now. The tests spell the device's tape tokens through `phase2` too.
+- **R10, the corpus.** Every file of both corpora is expanded on the device as its own unit,
+  with empty stubs for its headers (`the_corpus_expands_on_the_device`, run in slices). 3,099
+  units give the serial pass's tokens, 7.4 M in all. Refused: 33 by built-ins (`X_BUILTIN`), one
+  by a call across a stretch's end (`X_ACROSS`), and 2 by the spike's P1 (`#line`). No unit runs
+  out of room at the last rung. When a unit runs out of room, the test names the store
+  (`Expanded::room`).

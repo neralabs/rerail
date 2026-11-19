@@ -60,9 +60,12 @@ fn zeroed(n: usize) -> Result<MappedBuffer, Error> {
 }
 
 /// An exclusive scan of up to `capacity` u32s, its total in `total`. Only the levels the
-/// capacity needs are encoded: 2 launches to 1,024 elements, 4 to 2^20, 6 past it.
+/// capacity needs are encoded: 1 launch to 1,024 elements, 3 to 2^20, 5 past it. Level 0 is
+/// dispatched at the capacity's blocks; it reads the count itself and writes the plan the later
+/// levels' indirect dispatches read.
 pub struct Scan {
     levels: u32,
+    blocks: u64,
     plan: MappedBuffer,
     sums1: MappedBuffer,
     out1: MappedBuffer,
@@ -79,26 +82,26 @@ impl Scan {
             return Err(Error::BackendCapacity);
         }
         let levels = if capacity <= BLOCK { 1 } else if capacity <= BLOCK * BLOCK { 2 } else { 3 };
-        Ok(Scan { levels, plan: zeroed(20)?, sums1: zeroed(n1)?, out1: zeroed(n1)?, sums2: zeroed(n2)?, out2: zeroed(n2)?, total: zeroed(1)? })
+        Ok(Scan { levels, blocks: n1 as u64, plan: zeroed(20)?, sums1: zeroed(n1)?, out1: zeroed(n1)?, sums2: zeroed(n2)?, out2: zeroed(n2)?, total: zeroed(1)? })
     }
 
     /// `out` = the exclusive scan of `input`'s first `n[at]` words.
     pub fn encode(&self, enc: &Enc<'_>, n: &BufferRef, at: u32, input: &BufferRef, out: &BufferRef) -> Result<(), Error> {
         let plan = &self.plan.buffer;
-        enc.run("pb_scan_plan", None, &[n, plan], &[at], Grid::Groups(1))?;
+        let level0 = Grid::Groups(self.blocks);
         match self.levels {
             // One block: its sum is the total.
-            1 => enc.run("pb_scan_block", None, &[input, out, &self.total.buffer, plan], &[0], Grid::Groups(1)),
+            1 => enc.run("pb_scan_block", None, &[input, out, &self.total.buffer, plan, n], &[0, at], level0),
             // Blocks, then one block of their sums.
             2 => {
-                enc.run("pb_scan_block", None, &[input, out, &self.sums1.buffer, plan], &[0], Grid::Indirect(plan, 16))?;
-                enc.run("pb_scan_block", None, &[&self.sums1.buffer, &self.out1.buffer, &self.total.buffer, plan], &[1], Grid::Groups(1))?;
+                enc.run("pb_scan_block", None, &[input, out, &self.sums1.buffer, plan, n], &[0, at], level0)?;
+                enc.run("pb_scan_block", None, &[&self.sums1.buffer, &self.out1.buffer, &self.total.buffer, plan, plan], &[1, 0], Grid::Groups(1))?;
                 enc.run("pb_scan_add", None, &[out, &self.out1.buffer, plan], &[0], Grid::Indirect(plan, 52))
             }
             _ => {
-                enc.run("pb_scan_block", None, &[input, out, &self.sums1.buffer, plan], &[0], Grid::Indirect(plan, 16))?;
-                enc.run("pb_scan_block", None, &[&self.sums1.buffer, &self.out1.buffer, &self.sums2.buffer, plan], &[1], Grid::Indirect(plan, 28))?;
-                enc.run("pb_scan_block", None, &[&self.sums2.buffer, &self.out2.buffer, &self.total.buffer, plan], &[2], Grid::Indirect(plan, 40))?;
+                enc.run("pb_scan_block", None, &[input, out, &self.sums1.buffer, plan, n], &[0, at], level0)?;
+                enc.run("pb_scan_block", None, &[&self.sums1.buffer, &self.out1.buffer, &self.sums2.buffer, plan, plan], &[1, 0], Grid::Indirect(plan, 28))?;
+                enc.run("pb_scan_block", None, &[&self.sums2.buffer, &self.out2.buffer, &self.total.buffer, plan, plan], &[2, 0], Grid::Indirect(plan, 40))?;
                 enc.run("pb_scan_add", None, &[&self.out1.buffer, &self.out2.buffer, plan], &[1], Grid::Indirect(plan, 64))?;
                 enc.run("pb_scan_add", None, &[out, &self.out1.buffer, plan], &[0], Grid::Indirect(plan, 52))
             }
@@ -115,6 +118,7 @@ pub enum SegOp {
 
 /// An inclusive segmented scan of up to `capacity` u32s, each with a head flag (a word, 0 or 1).
 pub struct SegScan {
+    blocks: u64,
     plan: MappedBuffer,
     seen0: MappedBuffer,
     levels: [(MappedBuffer, MappedBuffer, MappedBuffer, MappedBuffer); 2],
@@ -130,7 +134,7 @@ impl SegScan {
         }
         // A level's aggregates (values, flags), its scan, and its `seen`.
         let level = |n: usize| -> Result<_, Error> { Ok((zeroed(n)?, zeroed(n)?, zeroed(n)?, zeroed(n)?)) };
-        Ok(SegScan { plan: zeroed(20)?, seen0: zeroed(capacity)?, levels: [level(n1)?, level(n2)?], last: level(1)? })
+        Ok(SegScan { blocks: n1 as u64, plan: zeroed(20)?, seen0: zeroed(capacity)?, levels: [level(n1)?, level(n2)?], last: level(1)? })
     }
 
     /// `out` = the inclusive scan of `input`'s first `n[at]` words, cut at `heads`.
@@ -138,10 +142,9 @@ impl SegScan {
         let plan = &self.plan.buffer;
         let c = Some(op as u32);
         let ([(v1, f1, o1, s1), (v2, f2, o2, s2)], (v3, f3, _, _)) = (&self.levels, &self.last);
-        enc.run("pb_scan_plan", None, &[n, plan], &[at], Grid::Groups(1))?;
-        enc.run("pb_seg_block", c, &[input, heads, out, &self.seen0.buffer, &v1.buffer, &f1.buffer, plan], &[0], Grid::Indirect(plan, 16))?;
-        enc.run("pb_seg_block", c, &[&v1.buffer, &f1.buffer, &o1.buffer, &s1.buffer, &v2.buffer, &f2.buffer, plan], &[1], Grid::Indirect(plan, 28))?;
-        enc.run("pb_seg_block", c, &[&v2.buffer, &f2.buffer, &o2.buffer, &s2.buffer, &v3.buffer, &f3.buffer, plan], &[2], Grid::Indirect(plan, 40))?;
+        enc.run("pb_seg_block", c, &[input, heads, out, &self.seen0.buffer, &v1.buffer, &f1.buffer, plan, n], &[0, at], Grid::Groups(self.blocks))?;
+        enc.run("pb_seg_block", c, &[&v1.buffer, &f1.buffer, &o1.buffer, &s1.buffer, &v2.buffer, &f2.buffer, plan, plan], &[1, 0], Grid::Indirect(plan, 28))?;
+        enc.run("pb_seg_block", c, &[&v2.buffer, &f2.buffer, &o2.buffer, &s2.buffer, &v3.buffer, &f3.buffer, plan, plan], &[2, 0], Grid::Indirect(plan, 40))?;
         enc.run("pb_seg_add", c, &[&o1.buffer, &s1.buffer, &o2.buffer, plan], &[1], Grid::Indirect(plan, 64))?;
         enc.run("pb_seg_add", c, &[out, &self.seen0.buffer, &o1.buffer, plan], &[0], Grid::Indirect(plan, 52))
     }
@@ -150,6 +153,7 @@ impl SegScan {
 /// A stable LSD radix sort of up to `capacity` u64 keys, each with a u32 payload (its index
 /// before the sort, by `iota`).
 pub struct Sort {
+    tiles: u64,
     plan: MappedBuffer,
     hist: MappedBuffer,
     scanned: MappedBuffer,
@@ -164,6 +168,7 @@ impl Sort {
         let h = capacity.div_ceil(TG as usize).max(1) * 256;
         let device = crate::device()?;
         Ok(Sort {
+            tiles: capacity.div_ceil(TG as usize).max(1) as u64,
             plan: zeroed(8)?,
             hist: zeroed(h)?,
             scanned: zeroed(h)?,
@@ -179,8 +184,7 @@ impl Sort {
     /// `vals_b`: `sorted` says which.
     pub fn encode(&self, enc: &Enc<'_>, n: &BufferRef, at: u32, keys: &BufferRef, bits: u32) -> Result<(), Error> {
         let plan = &self.plan.buffer;
-        enc.run("pb_sort_plan", None, &[n, plan], &[at], Grid::Groups(1))?;
-        enc.run("pb_iota", None, &[&self.vals_a.buffer, plan], &[], Grid::Indirect(plan, 16))?;
+        enc.run("pb_iota", None, &[&self.vals_a.buffer, plan, n], &[at], Grid::Groups(self.tiles))?;
         for p in 0..bits.div_ceil(8) {
             let (a, b): ([&BufferRef; 2], [&BufferRef; 2]) = ([keys, &self.vals_a.buffer], [&self.keys_b.buffer, &self.vals_b.buffer]);
             let ([ki, vi], [ko, vo]) = if p % 2 == 0 { (a, b) } else { (b, a) };

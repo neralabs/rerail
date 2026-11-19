@@ -377,7 +377,8 @@ fn expanded(files: &[(&str, &str)], cpp: bool, rung: u32) -> (Result<Vec<Vec<u8>
             }
             let f = x.ev.bases.partition_point(|&b| b <= g) - 1;
             let i = (g - x.ev.bases[f]) as usize;
-            p1.files[f][views[f].start(i) as usize..views[f].end(i) as usize].to_vec()
+            // The serial pass spells a token after phase 2: its line splices left out.
+            rerail_metal::pp_eval::phase2(&p1.files[f][views[f].start(i) as usize..views[f].end(i) as usize]).into_owned()
         })
         .collect();
     (Ok(spelled), serial.0, x.rung, x.launches)
@@ -530,4 +531,103 @@ fn va_opt_is_the_serial_passes() {
     ];
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
+}
+
+/// R10 of decision 0448: the corpus expanded on the device, each file its own unit with empty
+/// stubs for its headers, against the serial pass; every unit the device does not refuse gives
+/// the serial pass's tokens, and the refusals are counted by reason. `RERAIL_PP_FIRST` and
+/// `RERAIL_PP_COUNT` choose the files of each language.
+#[test]
+#[ignore = "the corpus (~/orca/rerail-shared/lean-corpus); run in slices"]
+fn the_corpus_expands_on_the_device() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::{DirKind, Search};
+    use rerail_metal::pp_expand::*;
+    let root = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus");
+    let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(40);
+    let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let reasons = [
+        (X_BUILTIN, "built-ins"),
+        (X_PAST_END, "a call past a list's end"),
+        (X_PASTE, "## in a row"),
+        (X_DEPTH, "depth"),
+        (X_ROOM, "room at the last rung"),
+        (X_QUEUE, "the queue"),
+        (X_HASH, "#"),
+        (X_ACROSS, "a call across a stretch's end"),
+        (X_VA_OPT, "#__VA_OPT__"),
+        (X_RELEX, "a paste the relexer refuses"),
+        (X_SPLICE, "# or ## of a token with a line splice"),
+    ];
+    let (mut same_units, mut tokens, mut launches) = (0, 0, 0);
+    let mut refused = std::collections::BTreeMap::<&str, usize>::new();
+    let stub = |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new));
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+        paths.sort();
+        for p in paths.into_iter().skip(first).take(count) {
+            let path = p.to_string_lossy().into_owned();
+            let cfg = Config::new(crate::pp::options(cpp));
+            let mut serial = Spelled::default();
+            let mut io = Search::new(vec![("<stub>".into(), DirKind::After)], stub);
+            let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+            pp.run(&path);
+            drop(pp);
+            let mut io = Search::new(vec![("<stub>".into(), DirKind::After)], stub);
+            let p1 = match rerail_c_pp::stream::parallel::p1_of(cfg, &mut io, &path) {
+                Ok(p1) => p1,
+                Err(why) => {
+                    *refused.entry(why).or_default() += 1;
+                    continue;
+                }
+            };
+            let (unit, lay, tapes) = unit_of(&p1, cpp);
+            let x = match expand(&unit, &lay) {
+                Ok(x) => x,
+                Err(e) => {
+                    eprintln!("ERROR {path}: {e:?} ({} top tokens at most, {} nodes)", top_bound(&unit, &lay), unit.node_bound);
+                    panic!("{path}");
+                }
+            };
+            launches = launches.max(x.launches);
+            // Room counts only alone: with another refusal the unit is not rerun, and the other is why.
+            let refused_by = if x.refused & !X_ROOM != 0 { x.refused & !X_ROOM } else { x.refused };
+            if refused_by & X_ROOM != 0 {
+                let full: Vec<_> = ROOM_STORES.iter().zip(x.room).filter(|(_, (u, c))| u > c).map(|(n, (u, c))| format!("{n} {u}/{c}")).collect();
+                eprintln!("ROOM {path} at rung {}: {}", x.rung, full.join(", "));
+            }
+            if x.refused != 0 {
+                for (bit, why) in reasons {
+                    if refused_by & bit != 0 {
+                        *refused.entry(why).or_default() += 1;
+                    }
+                }
+                continue;
+            }
+            let views: Vec<View> = tapes.iter().map(|t| View::new(t).unwrap()).collect();
+            let got: Vec<Vec<u8>> = x
+                .out
+                .iter()
+                .map(|&g| {
+                    if g & SCRATCH != 0 {
+                        let [a, b, _] = x.stoks[(g & !SCRATCH) as usize];
+                        return x.scratch[a as usize..b as usize].to_vec();
+                    }
+                    let f = x.ev.bases.partition_point(|&b| b <= g) - 1;
+                    let i = (g - x.ev.bases[f]) as usize;
+                    rerail_metal::pp_eval::phase2(&p1.files[f][views[f].start(i) as usize..views[f].end(i) as usize]).into_owned()
+                })
+                .collect();
+            if got != serial.0 {
+                let k = got.iter().zip(&serial.0).position(|(a, b)| a != b).unwrap_or(got.len().min(serial.0.len()));
+                let near = |v: &[Vec<u8>]| show(&v[k.saturating_sub(8)..(k + 8).min(v.len())]);
+                eprintln!("DIFF {path}: token {k} (device {}, serial {})\n  device: {}\n  serial: {}", got.len(), serial.0.len(), near(&got), near(&serial.0));
+                panic!("{path}");
+            }
+            same_units += 1;
+            tokens += got.len();
+        }
+    }
+    eprintln!("{same_units} units the serial pass's ({tokens} tokens), at most {launches} launches; refused {refused:?}");
 }

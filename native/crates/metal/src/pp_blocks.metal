@@ -23,10 +23,10 @@ inline void pb_set_args(device uint* args, uint at, uint groups) {
 //   [0] n0, [1] n1 = its blocks, [2] n2 = their blocks;
 //   [4..7) level 0's groups (n1), [7..10) level 1's (n2), [10..13) level 2's (1);
 //   [13..16) the add-back of level 0 (n0 / 256), [16..19) of level 1 (n1 / 256).
-kernel void pb_scan_plan(device const uint* n [[buffer(0)]], device uint* plan [[buffer(1)]],
-                         constant uint& at [[buffer(2)]], uint i [[thread_position_in_grid]]) {
-    if (i != 0u) return;
-    uint n0 = n[at], n1 = (n0 + PB_BLOCK - 1u) / PB_BLOCK, n2 = (n1 + PB_BLOCK - 1u) / PB_BLOCK;
+// Written by level 0's first thread (its blocks read `n0` from the count itself, dispatched at
+// the capacity the host knows): no launch of its own.
+inline void pb_write_plan(device uint* plan, uint n0) {
+    uint n1 = (n0 + PB_BLOCK - 1u) / PB_BLOCK, n2 = (n1 + PB_BLOCK - 1u) / PB_BLOCK;
     plan[0] = n0;
     plan[1] = n1;
     plan[2] = n2;
@@ -64,14 +64,17 @@ inline uint pb_tg_exscan(uint v, threadgroup uint* sh, uint lane, uint sg, uint 
 }
 
 // A level of the exclusive scan: block `b` scans its PB_BLOCK elements of `in` (`plan[level]`
-// of them) into `out`, and writes its sum to `sums[b]`.
+// of them; level 0's, `count[at]`, and its first thread writes the plan) into `out`, and writes
+// its sum to `sums[b]`.
 kernel void pb_scan_block(device const uint* in [[buffer(0)]], device uint* out [[buffer(1)]],
-                          device uint* sums [[buffer(2)]], device const uint* plan [[buffer(3)]],
-                          constant uint& level [[buffer(4)]], uint b [[threadgroup_position_in_grid]],
+                          device uint* sums [[buffer(2)]], device uint* plan [[buffer(3)]],
+                          device const uint* count [[buffer(4)]], constant uint& level [[buffer(5)]],
+                          constant uint& at [[buffer(6)]], uint b [[threadgroup_position_in_grid]],
                           uint t [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]],
                           uint sg [[simdgroup_index_in_threadgroup]], uint nsg [[simdgroups_per_threadgroup]]) {
     threadgroup uint sh[33];
-    uint n = plan[level];
+    uint n = level == 0u ? count[at] : plan[level];
+    if (level == 0u && b == 0u && t == 0u) pb_write_plan(plan, n);
     uint base = b * PB_BLOCK + t * 4u;
     uint v[4];
     uint s = 0u;
@@ -129,12 +132,14 @@ inline Seg pb_simd_seg(Seg x, uint lane) {
 kernel void pb_seg_block(device const uint* in [[buffer(0)]], device const uint* heads [[buffer(1)]],
                          device uint* out [[buffer(2)]], device uint* seen [[buffer(3)]],
                          device uint* agg_v [[buffer(4)]], device uint* agg_f [[buffer(5)]],
-                         device const uint* plan [[buffer(6)]], constant uint& level [[buffer(7)]],
+                         device uint* plan [[buffer(6)]], device const uint* count [[buffer(7)]],
+                         constant uint& level [[buffer(8)]], constant uint& at [[buffer(9)]],
                          uint b [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
                          uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]],
                          uint nsg [[simdgroups_per_threadgroup]]) {
     threadgroup uint sh_f[33], sh_v[33];
-    uint n = plan[level];
+    uint n = level == 0u ? count[at] : plan[level];
+    if (level == 0u && b == 0u && t == 0u) pb_write_plan(plan, n);
     uint base = b * PB_BLOCK + t * 4u;
     Seg local[4];
     Seg run = {0u, 0u};
@@ -198,22 +203,21 @@ kernel void pb_seg_add(device uint* out [[buffer(0)]], device const uint* seen [
 
 // --- The radix sort ----------------------------------------------------------------------------------
 
-// A sort's plan for `n[at]` elements: [0] n, [1] tiles (of 256), [2] the histogram's length
-// (256 a tile); [4..7) one group a tile.
-kernel void pb_sort_plan(device const uint* n [[buffer(0)]], device uint* plan [[buffer(1)]],
-                         constant uint& at [[buffer(2)]], uint i [[thread_position_in_grid]]) {
-    if (i != 0u) return;
-    uint m = n[at], tiles = (m + PB_TG - 1u) / PB_TG;
-    plan[0] = m;
-    plan[1] = tiles;
-    plan[2] = tiles * 256u;
-    pb_set_args(plan, 4u, tiles);
-}
-
-// Each element's own index, its payload before the sort.
-kernel void pb_iota(device uint* vals [[buffer(0)]], device const uint* plan [[buffer(1)]],
+// Each element's own index, its payload before the sort, for `count[at]` elements (dispatched at
+// the capacity). Its first thread writes the sort's plan: [0] n, [1] tiles (of 256), [2] the
+// histogram's length (256 a tile); [4..7) one group a tile.
+kernel void pb_iota(device uint* vals [[buffer(0)]], device uint* plan [[buffer(1)]],
+                    device const uint* count [[buffer(2)]], constant uint& at [[buffer(3)]],
                     uint i [[thread_position_in_grid]]) {
-    if (i < plan[0]) vals[i] = i;
+    uint m = count[at];
+    if (i == 0u) {
+        uint tiles = (m + PB_TG - 1u) / PB_TG;
+        plan[0] = m;
+        plan[1] = tiles;
+        plan[2] = tiles * 256u;
+        pb_set_args(plan, 4u, tiles);
+    }
+    if (i < m) vals[i] = i;
 }
 
 // Tile `g`'s count of each digit at `shift`, at `hist[digit * tiles + g]`.

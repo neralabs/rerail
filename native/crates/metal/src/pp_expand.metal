@@ -540,7 +540,7 @@ constant uint TOP = 0x80000000u, NO_DEF = 0xffffffffu;
 constant uint IT_SUBST = 0u, IT_PLACE = 1u << 30, IT_CALL = 2u << 30, IT_SCAN = 3u << 30, IT_KIND = 3u << 30;
 // Why a unit is refused (`ctl[2]`); `X_ROOM` reruns it at the next rung.
 constant uint X_BUILTIN = 1u, X_PAST_END = 4u, X_PASTE = 8u, X_DEPTH = 16u, X_ROOM = 32u, X_QUEUE = 64u;
-constant uint X_HASH = 128u, X_ACROSS = 256u, X_VA_OPT = 512u, X_RELEX = 1024u;
+constant uint X_HASH = 128u, X_ACROSS = 256u, X_VA_OPT = 512u, X_RELEX = 1024u, X_SPLICE = 2048u;
 // A token's flags: painted (never a candidate again); space before it (or a line's start).
 constant uint T_NOEXP = 1u, T_SPACE = 2u;
 // Before the pastes: a body's `##` (an operator), and a token a paste consumed.
@@ -620,6 +620,17 @@ struct Ux {
     device const uint* tdepth; ulong va_opt;
     device const uchar* sbytes; device const PxScratch* stoks; uint relex_options;
 };
+
+// Whether `p[0..n)` holds a line splice (`\`, blanks, a newline): its phase-2 spelling differs.
+inline bool has_splice(device const uchar* p, uint n) {
+    for (uint b = 0u; b < n; b++) {
+        if (p[b] != uchar('\\')) continue;
+        uint k = b + 1u;
+        while (k < n && (p[k] == uchar(' ') || p[k] == uchar('\t') || p[k] == 0x0bu || p[k] == 0x0cu)) k++;
+        if (k < n && (p[k] == uchar('\n') || p[k] == uchar('\r'))) return true;
+    }
+    return false;
+}
 
 // A token's bytes and kind: a tape node's in its file's source, a scratch token's in the scratch
 // bytes.
@@ -1180,6 +1191,8 @@ inline uint px_stringize(Ux u, Ar a, uint p, uint lo, uint hi, uint lane) {
         uint k = c0 + lane, len = 0u;
         if (k < hi) {
             Span r = ref_span(u, par_ref(u, a, p, k));
+            // A token with a line splice inside: its phase-2 spelling is the CPU's.
+            if (has_splice(r.p, r.len)) px_refuse(a.ctl, X_SPLICE);
             len = r.len + (k > lo && (par_flags(u, a, p, k) & T_SPACE) != 0u ? 1u : 0u);
             if (r.kind == K_LITERAL) for (uint b = 0u; b < r.len; b++) len += (r.p[b] == uchar('"') || r.p[b] == uchar('\\')) ? 1u : 0u;
         }
@@ -1240,10 +1253,8 @@ inline uint px_paste(Ux u, Ar a, uint l, uint lf, uint r, uint rf, thread uint& 
     if (base + n > a.sb_cap) { px_refuse(a.ctl, X_ROOM); ok = false; return l; }
     for (uint b = 0u; b < x.len; b++) a.sbytes[base + b] = x.p[b];
     for (uint b = 0u; b < y.len; b++) a.sbytes[base + x.len + b] = y.p[b];
-    // A line splice inside: the lexer's reading of it is the CPU's.
-    for (uint b = 0u; b + 1u < n; b++) {
-        if (a.sbytes[base + b] == uchar('\\') && (a.sbytes[base + b + 1u] == uchar('\n') || a.sbytes[base + b + 1u] == uchar('\r'))) { px_refuse(a.ctl, X_RELEX); ok = false; return l; }
-    }
+    // A line splice inside: its phase-2 spelling is the CPU's.
+    if (has_splice(a.sbytes + base, n)) { px_refuse(a.ctl, X_SPLICE); ok = false; return l; }
     uint kind = relex(a.sbytes + base, n, u.relex_options);
     if (kind == RELEX_REFUSED) { px_refuse(a.ctl, X_RELEX); ok = false; return l; }
     if (kind == RELEX_NONE) { ok = false; return l; }
