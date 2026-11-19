@@ -5359,3 +5359,17 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   Only a lifted mark the loop keeps in the code shows the fault (tier 2 tests the lazy ones
   itself): `ladder_tests::a_loop_gap_mark_waits_for_a_late_extra` has one a `without` reads,
   and fails without the condition (`"// a, [1] é\r\n/*\n\n*/"`, the comment took the bit).
+
+### Q280. Metal runs no prefix (0335, 0389), so JSON's ladder steps are refused there
+
+- **What**: `metal::block_program::missing_form` refuses a program with a prefix: its
+  `Prefix` value and its records' `prefix` (the token loop's first state past it). Since 0422
+  kept each ladder's last step only, `parser_tests::metal_tests::every_step_on_metal_equals_the_interpreter`
+  has three steps, and 14-json and 15-jsonc (prefix `0xef 0xbb 0xbf`) are both refused. So its
+  "most steps run on Metal" assertion fails (2 of 3 refused). This was so before 0330's `early`
+  was generated on Metal (2026-11-19): `early` was refused too. On the CPU the host strips the prefix (0389,
+  `native_cpu_block::host_stripped`). Metal needs the same without host evaluation: the file's
+  row started past the prefix in place (its `FileRow`, no copy), and the outputs and records
+  back at the file's positions on the device.
+- **Done when**: the two JSON steps run on Metal and equal the interpreter, including files that
+  start with the mark, and the test passes.
