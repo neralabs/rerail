@@ -327,9 +327,6 @@ dj_message(m) :- kind(m, "call"), field(m, "function", f), sym_of(f, q), dj_mess
 // (`notify_order.s(1)`, `task.using(priority=1)`). A parameter or local (`client.delay(2.0)`) is not one.
 .decl dj_task_ref(t: node)
 dj_task_ref(t) :- sym_of(t, q), !dj_plain_def(q).
-// An imported name, or an attribute of one, also when sym_of does not resolve it (a relative import of three dots or
-// more, `from .....order.tasks import t`, has no sym_of row).
-dj_task_ref(t) :- kind(t, "identifier"), text(t, x), look(t, x, s), binding(s, x, _, "import").
 dj_task_ref(t) :- attr_of(t, o, _), unparen(o, u), dj_task_ref(u).
 dj_task_ref(t) :- kind(t, "call"), field(t, "function", f), attr_of(f, o, _), unparen(o, u), dj_task_ref(u).
 .decl dj_plain_def(q: symbol)
@@ -340,9 +337,8 @@ dj_plain_def(q) :- kind(g, "function_definition"), qualname(g, q), !decorator(g,
 // `Celery(..., task_cls=AMOTask)`). Such a call already waits for the commit.
 .decl dj_task_waits_for_commit(c: node)
 dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
-    (m = "delay" ; m = "apply_async"), sym_of(o, q), kind(g, "function_definition"), qualname(g, gq),
-    dj_same_name(q, gq), decorator(g, e), kind(e, "call"), call_arg(e, _, "base", bv), sym_of(bv, bq),
-    dj_deferring_task_class(cq), dj_same_name(bq, cq).
+    (m = "delay" ; m = "apply_async"), sym_of(o, q), kind(g, "function_definition"), qualname(g, q), decorator(g, e),
+    kind(e, "call"), call_arg(e, _, "base", bv), sym_of(bv, bq), dj_deferring_task_class(bq).
 dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
     (m = "delay" ; m = "apply_async"), dj_app_defers(_).
 .decl dj_deferring_task_class(cq: symbol)
@@ -350,20 +346,7 @@ dj_deferring_task_class(cq) :- mro_method(cq, m, h), (m = "delay" ; m = "apply_a
     field(oc, "function", of), sym_of(of, "django.db.transaction.on_commit").
 .decl dj_app_defers(k: node)
 dj_app_defers(k) :- kind(k, "call"), field(k, "function", f), sym_of(f, "celery.Celery"), call_arg(k, _, "task_cls", v),
-    sym_of(v, bq), dj_deferring_task_class(cq), dj_same_name(bq, cq).
-// dj_same_name(q, dq): the name q an import resolves to (a task, or a task class) denotes the definition named dq.
-// In a src layout the engine names a module by its path (`src.pretix.base.services.tasks`) while imports say
-// `pretix.base.services.tasks`, so dq may carry a leading package more.
-.decl dj_same_name(q: symbol, dq: symbol)
-dj_same_name(q, q) :- dj_task_name(q).
-dj_same_name(q, dq) :- dj_task_name(q), dj_def_name(dq), suffix(cat(".", q), dq).
-.decl dj_task_name(q: symbol)
-dj_task_name(q) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), (m = "delay" ; m = "apply_async"),
-    sym_of(o, q).
-dj_task_name(q) :- kind(e, "call"), call_arg(e, _, k, v), (k = "base" ; k = "task_cls"), sym_of(v, q).
-.decl dj_def_name(dq: symbol)
-dj_def_name(dq) :- kind(g, "function_definition"), qualname(g, dq).
-dj_def_name(dq) :- class_def(_, dq).
+    sym_of(v, bq), dj_deferring_task_class(bq).
 // dj_dispatch_in_failing_handler(c): side effect c sits in an except handler that always re-raises
 // (py_reraising_handler): the transaction rolls back, so an on_commit callback would never run (a failure mail or
 // error task belongs there).

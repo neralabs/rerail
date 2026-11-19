@@ -8,9 +8,9 @@
 // queryset itself loads or counts every matching row; exists() stops at the first. The queryset is a chain from a
 // manager written in the test, so no other code reads its rows (the docs' "Don't overuse exists()" case, a queryset
 // in a variable that is iterated later, is left alone). The queryset must be Django's: in a file that imports Django
-// or DRF (python/django's dj_django_doc), or rooted at a model class of the run (dj_qs_model) or at a name that is no
-// class of the run (an import the engine does not resolve, as in a src layout); mongoengine's `Document.objects`
-// has count() but no exists(), so a Document class of the run in a file without Django is left alone.
+// or DRF (python/django's dj_django_doc), or rooted at a model class of the run (dj_qs_model); mongoengine's
+// `Document.objects` has count() but no exists(), so a Document class of the run in a file without Django is left
+// alone.
 //   if Book.objects.filter(author=a).count() > 0:      reported
 //   if len(Book.objects.filter(author=a)) == 0:        reported
 //   if not Book.objects.filter(author=a):              reported
@@ -32,15 +32,10 @@ efe_counted(x, q, "`.count()` counts every matching row") :- dj_qs_call(x, "coun
 efe_counted(x, q, "`len()` loads every matching row") :- kind(x, "call"), field(x, "function", f),
     sym_of(f, "builtins.len"), posarg(x, 0, a), !posarg(x, 1, _), unparen(a, q), dj_qs(q), !dj_qs_call(q, "raw").
 // efe_django(q): queryset q is Django's, outside test code: its file imports Django, or its chain starts at a model
-// class of the run, or at a name that resolves to no class of the run (plane's `apps/api/plane/...` modules are
-// named from the repository root, so `from plane.db.models import X` never reaches X's class_def).
+// class of the run.
 .decl efe_django(q: node)
 efe_django(q) :- dj_qs(q), docof(q, d), dj_django_doc(d), !dj_test_doc(d).
 efe_django(q) :- dj_qs_model(q, _), docof(q, d), !dj_test_doc(d).
-efe_django(q) :- dj_qs_root(q, r), !efe_run_class(r), docof(q, d), !dj_test_doc(d).
-// efe_run_class(r): expression r names a class defined in the run.
-.decl efe_run_class(r: node)
-efe_run_class(r) :- dj_qs_root(_, r), sym_of(r, q), class_def(_, q).
 
 ExistsForExistence(c, how) :- py_empty_cmp(c, x), efe_counted(x, q, how), efe_django(q).
 ExistsForExistence(x, how) :- py_truth(x), efe_counted(x, q, how), efe_django(q).
@@ -55,6 +50,8 @@ ExistsForExistence(x, "Testing the queryset itself loads every matching row") :-
     .fixture "shop/services/stock.py" from "cases/django-practice-exists-for-existence/shop/services/stock.py"
     .fixture "shop/tests/test_views.py" from "cases/django-practice-exists-for-existence/shop/tests/test_views.py"
     .fixture "shop/views.py" from "cases/django-practice-exists-for-existence/shop/views.py"
+    .fixture "src/inventory/__init__.py" from "cases/django-practice-exists-for-existence/src/inventory/__init__.py"
+    .fixture "src/inventory/models.py" from "cases/django-practice-exists-for-existence/src/inventory/models.py"
     .expect _ at "shop/services/stock.py":7
     .expect _ at "shop/services/stock.py":12
     .expect _ at "shop/views.py":7

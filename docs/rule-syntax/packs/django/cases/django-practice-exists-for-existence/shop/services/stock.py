@@ -8,5 +8,5 @@ def in_stock(title):
 
 
 def item_known(sku):
-    # Item resolves to no class of the run (as when the engine misnames a src-layout module): taken as Django's.
+    # Item is a model of the run in a src layout (src/inventory/models.py is the module inventory.models).
     return Item.objects.filter(sku=sku).count() > 0  # caught

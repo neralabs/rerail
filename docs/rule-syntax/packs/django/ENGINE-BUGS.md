@@ -143,10 +143,12 @@ to the scanned root. Python resolves `shop.base` from the source root (`src/`), 
 `AppConfig` subclass's base `ralph.apps.RalphAppConfig` did not resolve to the run's `src.ralph.apps.RalphAppConfig`,
 which broke a first version of the dropped `django-practice-receiver-never-connected`.
 
-**Workarounds used (rule-local).** `django-practice-enqueue-on-commit` matches a class by name suffix;
-`django-practice-settings-module-import` (`smi_resolves`) tries the imported name under each package prefix of the
-importer's module; `django-practice-exists-for-existence` accepts a manager whose class resolves to nothing in the
-run.
+**Workarounds used (rule-local), removed now that main names modules from their package roots.** python/django matched
+a task or task class by name suffix (`dj_same_name`), and `django-practice-exists-for-existence` accepted a manager
+whose class resolved to nothing in the run; both are gone, and the rules' cases pass without them
+(exists-for-existence's src-layout case is a model in `src/inventory/`). `django-practice-settings-module-import` keeps its source-root
+matching (`smi_resolves`, `smi_mod`): that is Python's semantics, not a workaround, since a folder below a source root
+with no `__init__.py` (a namespace package) keeps its path's name in the engine.
 
 **Suggested fix.** Name documents from their source roots: the highest directory that holds `__init__.py` (or has no
 `__init__.py` above it), or configured roots; or let `doc` carry every importable name of a document so `sym_of` and
@@ -196,8 +198,10 @@ So a class whose base is imported this way is neither a view nor a model to `pyt
 (An earlier note blamed tree-sitter reading `...` as an ellipsis. That is wrong: the module name node's text is
 `..x`, `...x`, `....x`, and `import_alias` resolves them.)
 
-**Workaround used.** enqueue-on-commit accepts any import-bound name (`binding(_, _, _, "import")`), with a four-dot
-case.
+**Workaround used, removed now that main resolves any number of dots.** python/django's `dj_task_ref` accepted any
+import-bound name (`binding(_, _, _, "import")`), and select-for-update-outside-atomic's `sfu_cm_call` matched an
+unresolved call to a decorated def by name; both are gone, and the four-dot case of enqueue-on-commit passes through
+`sym_of`.
 
 **Suggested fix.** Add the multi-dot forms to `impmod` from `rel_base`, as `module_text` does (rules 2 and 3 of
 `module_text`, lines 77-78), so `irel_open` keeps only imports outside a package.

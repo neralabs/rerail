@@ -78,15 +78,11 @@ sfu_in_atomic(n) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_c
 // sfu_atomic_cm(g): def g (a `@contextmanager`) has a `yield` that runs in a transaction.
 .decl sfu_atomic_cm(g: node)
 sfu_atomic_cm(g) :- kind(y, "yield"), sfu_in_atomic(y), nearest(y, g, dj_region_stop), kind(g, "function_definition").
-// sfu_cm_call(e, g): call e calls def g: a call-graph edge, the def its callee resolves to by import (python/calls
-// does not see through `@contextmanager`), or, where neither resolves (a `from ..m import x` of two dots or more binds
-// nothing sym_of follows: saleor's `transaction_with_commit_on_errors`), a decorated def of the run with the callee's
-// name.
+// sfu_cm_call(e, g): call e calls def g: a call-graph edge, or the def its callee resolves to by import (python/calls
+// does not see through `@contextmanager`, ENGINE-BUGS.md bug 8).
 .decl sfu_cm_call(e: node, g: node)
 sfu_cm_call(e, g) :- kind(e, "call"), call_target(e, g).
 sfu_cm_call(e, g) :- kind(e, "call"), field(e, "function", fe), sym_of(fe, q), qualname(g, q).
-sfu_cm_call(e, g) :- kind(e, "call"), !call_target(e, _), call_name(e, x), kind(g, "function_definition"), def_name(g, x),
-    decorator(g, _).
 // sfu_atomic_def(f): def f runs in a transaction it opens: `@transaction.atomic`, `@method_decorator(
 // transaction.atomic)`, a method of a class decorated `@method_decorator(transaction.atomic, name=x)` where x is
 // `dispatch` (it calls every handler) or f's name, or a decorator of the run whose wrapper calls the decorated function

@@ -85,8 +85,8 @@ one, in three shapes: `<qs>.count()` with no arguments, compared with 0 or 1 as 
 positions; and `<qs>` itself read for its truth (`if Book.objects.filter(…):`, a `while` or `assert` test, `not …`,
 `bool(…)`, a conditional expression's or comprehension's `if`, an `and`/`or` operand that is itself a test). The
 queryset must be Django's: in a file that imports Django or Django REST framework, or starting at a model class of the
-run, or at a name that resolves to no class of the run (in a src layout, imports do not reach their class
-definitions). The message names which of the three shapes it is.
+run (in a src layout too: `src/inventory/models.py` is the module `inventory.models`). The message names which of the
+three shapes it is.
 
 It leaves alone: a real count (`> 5`, `== 1`); chained comparisons (`0 < qs.count() < 10`, a range); querysets in
 variables (the docs' "Don't overuse exists()" case: `if books: for b in books`); `if Book.objects:` (a manager is
