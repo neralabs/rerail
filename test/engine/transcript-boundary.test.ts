@@ -1,5 +1,5 @@
 import { type EncodingOption, mkdirSync, mkdtempSync, type PathLike, realpathSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -482,6 +482,21 @@ describe("the transcript boundary for coding agents", () => {
       expect(callNamesSecretPath({ command: `curl https://net/${host}/api/v1` }, root), host).toBe(false);
     }
     expect(lookups.filter(path => path !== root)).toEqual(here.map(host => `/net/${host}/api/v1`));
+  });
+
+  it("looks up a share or a `/net` path on this machine's own name right after a `:`, as `main` does", () => {
+    const root = checkout("rerail-transcript-own-name-");
+    const lookups = recordLookups();
+    // The name the system gives this machine, in either letter case: a lookup there stays on this machine.
+    const names = [hostname(), hostname().toUpperCase()];
+    const words = process.platform === "win32"
+      ? names.flatMap(name => [`//${name}/c$/x`, `\\\\${name}\\c$\\x`])
+      : names.map(name => `//net/${name}/api/v1`);
+    for (const word of words) {
+      lookups.splice(0);
+      expect(callNamesSecretPath({ command: `curl https:${word}` }, root), word).toBe(false);
+      expect(lookups.filter(path => path !== root), word).toEqual([resolve(root, word)]);
+    }
   });
 
   it.runIf(process.platform === "linux")("looks up a URL's host and path under `/NET`, which on Linux is a folder of its own, not the automount root", () => {
