@@ -353,7 +353,7 @@ by byte). Word ids: 12 `{`, 15 `}`, 16 `[`, 17 `]`, 13 `:`, 14 `,`, 9 to 11 the 
 | `array_begin`, `array_value`: a value switch | 46–47 (a value or `]`), 97–98 (after `,`) | yes |
 | `array_continue`: `,` or `]` | 94–95 | yes, since step 7 |
 | `scope_end`: `is_array[depth]` picks the continue state | `PUSH` of the place to go back to (43, 94 or 150), `RETURN` there | yes: a stack of where to continue |
-| `parse_string`: one call reads the string | each part (content, an escape, the closing `"`) goes back through `TOKEN`, a `SWITCH` and an edge, then a `GOTO` | **no** |
+| `parse_string`: one call reads the string | each part (content, an escape, the closing `"`) goes from the scan's outcome to its place, then a direct `GOTO` back | yes, since step 11 |
 | `parse_string`'s loop only where a string is read | the part scan only in the four string loops (7, 38, 51, 126) | yes, since step 8 |
 
 ## Step 7, done: a continue state takes its punctuation by byte, straight to its target
@@ -429,6 +429,27 @@ platform's convention, it fails at the root string loop.
 
 The frame is still read at a scope's close (the stack of open scopes, as simdjson's
 `is_array[depth]`) and in the numbers' and atoms' words.
+
+## Step 11, done: a string's part branches once
+
+Before, the scan knew a part's outcome: the closer, an escape or content. But the part went
+back through the `TOKEN`'s common path, and the `SWITCH` after dispatched on its kind again.
+The content's arm was also shared by the four string loops (`shared_runs`). So each part
+stored `Sel` and `Shift` and went back into its loop through a dispatch on `Sel`.
+`parse_string`'s loop branches once a part and turns with a direct branch. Now:
+- **Each outcome goes to its place** (`Onward`). The closer and the content go to the
+  switch's target for their kinds. An escape, whose words the switch names, goes to the
+  switch on its word: `escape_map`'s load, then one range test.
+- **The loop's turn is a direct jump.** A run that goes back into a string loop (a place where
+  a part may be pending) is a body of its own, not shared. A body with one target writes no
+  `Sel`, and its own first place writes no `Shift`.
+- **Two compiler passes.** One drops dead block parameters: a part's kind, which no word
+  after reads, kept its load alive through one. The other drops unused pure instructions.
+- **`Pending` is the constant 0** in a program with no extras, and `BlockBase` is held with
+  the loop's state. So a leaf reads and writes no frame on its hot path.
+
+The starts test asserts that every string loop's parts go straight on (`part_onward`).
+Sending the closer to the content's place fails the trees test.
 
 ## Order
 

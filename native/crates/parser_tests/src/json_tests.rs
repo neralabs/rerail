@@ -59,6 +59,9 @@ fn simdjson_forms_starts_are_simdjsons_indexes() {
         .collect();
     assert!(!loops.is_empty(), "the string loops");
     assert_eq!(c.parser.tier2.part_scans, loops, "the part scan in the string loops alone");
+    // Each part branches once, as `parse_string`'s: the scan's outcome goes straight to the place
+    // the switch after would take it to, not back through the token's path and the switch.
+    assert_eq!(c.parser.tier2.part_onward, loops, "every string loop's parts go straight on");
     // The loop's state in registers, as simdjson's `src` and `next_structural`: no word of the
     // string loops or the continue states (the `TOKEN`s whose switch takes the `,` and no
     // escape) reads or writes the frame. Their cold calls keep the caller's registers

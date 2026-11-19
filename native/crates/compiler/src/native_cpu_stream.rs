@@ -277,6 +277,9 @@ pub struct CompiledStream {
     /// The `TOKEN`s that hold the scan for a region's next part (`parts_pending`), where it is
     /// read as simdjson's `parse_string`.
     pub part_scans: Vec<usize>,
+    /// Those whose scan takes each outcome (the closer, the content, a part) straight to the
+    /// place the switch after takes it to (`Onward`): one branch a part, as `parse_string`'s.
+    pub part_onward: Vec<usize>,
     /// The program has `WRAP`: the tape has the frames, chains and preorder columns.
     pub wraps: bool,
     /// The widths the tape is written at (docs/parser-generators/37), and the language's tag.
@@ -731,11 +734,12 @@ pub const HELD_IN_RULES: [u32; 0] = [];
 
 /// The fields tier 2 holds as SSA values where it is one function (`Cut::one`): those every
 /// token reads and writes (the next token's index, its start, limit and code, the end of the
-/// token before, the nodes made and open, a split region's cursor), as simdjson's stage 2
+/// token before, the nodes made and open, the tape block's base every leaf's start is coded
+/// from, a split region's cursor), as simdjson's stage 2
 /// keeps `next_structural` and `src` in registers. The loop's cold calls keep the caller's
 /// general registers (`preserve_most`), and the values from far away are made again where used
 /// (`remat_far`), so these stay in registers. The rest stays in the frame, read where used.
-pub const HELD_IN_ONE: [u32; 8] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::LastEnd as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::PartAt as u32];
+pub const HELD_IN_ONE: [u32; 9] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::LastEnd as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::BlockBase as u32, Mem::PartAt as u32];
 
 /// A compare tree over a byte (or a place), as rustc lowers a `match` (LLVM's switch lowering):
 /// `runs` are runs of one target (the first from 0, the last on to `end`, past every value the
@@ -3141,13 +3145,14 @@ fn split_token(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, s:
 /// gives it: at the closer, the closer; else the nearest part's bit before the closer, a word at
 /// a time; a part there, its bytes; else the bytes before it (or the closer), the content. Then
 /// on to `fetched`; none pending, on in the current block.
-fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw: &crate::native_cpu_bytes::Bytewise<'_>, fetched: Block, read_word: Option<&[u8]>, heads: &mut Vec<(Block, Step)>) {
+#[allow(clippy::too_many_arguments)]
+fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw: &crate::native_cpu_bytes::Bytewise<'_>, fetched: Block, onward: Option<&Onward>, read_word: Option<&[u8]>, heads: &mut Vec<(Block, Step)>) {
     let (part, record) = (f.create_block(), f.create_block());
     let at = (e.get)(f, Mem::PartAt);
     f.ins().brif(at, part, &[], record, &[]);
     f.switch_to_block(part);
     if let Some(seq) = &sp.seq {
-        split_next_seq(f, e, sp, seq, bw, at, fetched, read_word, heads);
+        split_next_seq(f, e, sp, seq, bw, at, fetched, onward, read_word, heads);
         f.switch_to_block(record);
         return;
     }
@@ -3245,7 +3250,8 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
 /// `backslash_and_quote::copy_and_find`): the closer there, or a part of two bytes, or the
 /// bytes before it, the content. No closer before the file's end refuses it.
 #[allow(clippy::too_many_arguments)]
-fn split_next_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, seq: &Seq, bw: &crate::native_cpu_bytes::Bytewise<'_>, at: Value, fetched: Block, read_word: Option<&[u8]>, heads: &mut Vec<(Block, Step)>) {
+fn split_next_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, seq: &Seq, bw: &crate::native_cpu_bytes::Bytewise<'_>, at: Value, fetched: Block, onward: Option<&Onward>, read_word: Option<&[u8]>, heads: &mut Vec<(Block, Step)>) {
+    let to = |pick: fn(&Onward) -> Option<Block>| onward.and_then(pick).unwrap_or(fetched);
     let consts = crate::native_cpu_block::Consts::make(f);
     let file = crate::native_cpu_bytes::File { bytes: (e.ctx)(f, BYTES), len: (e.ctx)(f, LEN), nibble: consts.nibble, weights: consts.weights, even: consts.even };
     let stride = i64::from(bw.short_stride_x(&[seq.x, seq.e]));
@@ -3276,7 +3282,7 @@ fn split_next_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts,
     f.switch_to_block(content);
     (e.set)(f, Mem::PartAt, i);
     let l = f.ins().iadd_imm(i, -1);
-    split_token(f, e, sp, at, l, fetched, read_word, Some(std::array::from_fn(|k| !seq.stops[k])));
+    split_token(f, e, sp, at, l, to(|o| o.content), read_word, Some(std::array::from_fn(|k| !seq.stops[k])));
     // At `at`: the closer, or a part of two bytes.
     f.switch_to_block(here);
     let sh = if stride == 1 { tz } else { f.ins().imul_imm(k, stride) };
@@ -3287,7 +3293,7 @@ fn split_next_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts,
     f.switch_to_block(closer);
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::PartAt, zero);
-    split_token(f, e, sp, at, at, fetched, read_word, Some(seq.xs));
+    split_token(f, e, sp, at, at, to(|o| o.closer), read_word, Some(seq.xs));
     f.switch_to_block(part);
     let after = f.ins().iadd_imm(at, 2);
     (e.set)(f, Mem::PartAt, after);
@@ -3305,10 +3311,21 @@ fn split_next_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts,
             (e.set)(f, Mem::Start, at);
             (e.set)(f, Mem::Limit, l1);
             (e.set)(f, Mem::Taken, code);
-            f.ins().jump(fetched, &[]);
+            f.ins().jump(to(|o| o.part), &[]);
         }
         None => split_token(f, e, sp, at, l, fetched, read_word, None),
     }
+}
+
+/// Where a sequential region's parts go once read (`split_next_seq`), where the `SWITCH` after
+/// the `TOKEN` takes each outcome to one place: the closer, the content and the part (an
+/// escape), each to the switch's target for its kinds, or to its words' switch. As
+/// `parse_string`'s outcomes, each branch once. None: on through the token's common path.
+#[derive(Clone, Copy, Default)]
+struct Onward {
+    closer: Option<Block>,
+    content: Option<Block>,
+    part: Option<Block>,
 }
 
 /// A mask's lane from its bit (`short_word`'s masks have `stride` bits a lane): a shift where
@@ -3428,7 +3445,7 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
     let no_guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a token's fetch does not refuse");
     let senv = WordEnv { get: &get, set: &set, ctx: &at_ctx, guard: &no_guard };
     if let (Some((sp, bw)), Some(fetched)) = (&split, fetched) {
-        split_next(f, &senv, sp, bw, fetched, None, heads);
+        split_next(f, &senv, sp, bw, fetched, None, None, heads);
     }
     // The stream's end, one compare a token (`Next` is one past the count once the end is
     // taken): the end's token, or past it.
@@ -3896,7 +3913,9 @@ fn plain(op: &Op) -> bool {
 /// index of its `GOTO`'s target, and the body's end jumps by it (a jump table): an indirect
 /// jump an arm, as simdjson's stage 2 takes one a token, for code the size of the distinct
 /// arms instead of every arm's.
-pub fn shared_runs(native: &Structure, pushes: &[u16]) -> SharedRuns {
+/// `alone_to`: the places a run going on to stays a body of its own, its `GOTO` a direct jump
+/// (a string loop's head, `parts_pending`: the loop's turn a part, as `parse_string`'s).
+pub fn shared_runs(native: &Structure, pushes: &[u16], alone_to: Option<&[bool]>) -> SharedRuns {
     let words = &native.structural;
     let n = words.len();
     // Entered other than by falling from a plain word before it.
@@ -3934,7 +3953,7 @@ pub fn shared_runs(native: &Structure, pushes: &[u16]) -> SharedRuns {
     // appears that a shared jump closes, the run whose jump goes where its own does not is
     // alone; again, until none is left.
     let chains = bounds(native).chains;
-    let mut alone = vec![false; occ.len()];
+    let mut alone: Vec<bool> = occ.iter().map(|o| alone_to.is_some_and(|a| a.get(usize::from(o.2)).copied().unwrap_or(false))).collect();
     let goto_of: std::collections::HashMap<usize, usize> = occ.iter().enumerate().map(|(i, o)| (o.1, i)).collect();
     loop {
         let mut keys: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -4090,6 +4109,27 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     // own. None where the kinds fill a byte.
     let end_kind: Option<u8> = kind_reps.as_ref().and_then(|r| u8::try_from(r.len()).ok());
     let word_kinds: Vec<u8> = starts.and(native.block_programs.first().and_then(|b| b.records.as_ref())).map_or_else(Vec::new, |r| r.words.iter().map(|w| r.kinds[usize::from(w[0])]).collect());
+    // A switch's targets by kind, on the first byte with records (`records`): each kind's
+    // target, its least byte's; the end's, where it is a kind (`end_kind`); a kind whose words
+    // the switch names, `BY_WORD` and the kind, with the kind's own target beside it.
+    let kind_targets = |s: &ByteSwitch, end_in_tree: Option<u8>| -> Option<(ByteSwitch, Vec<(usize, u16)>)> {
+        let reps = kind_reps.as_ref().filter(|_| s.offset == 0)?;
+        let mut by_word = Vec::new();
+        let mut t = vec![REFUSE; 256];
+        for (k, &b) in reps.iter().enumerate() {
+            t[k] = s.targets[usize::from(b)];
+        }
+        if let Some(e) = end_in_tree {
+            t[usize::from(e)] = s.end;
+        }
+        for k in 0..reps.len() {
+            if s.words.iter().any(|&(w, _)| word_kinds.get(usize::from(w)).is_some_and(|&x| usize::from(x) == k)) {
+                by_word.push((k, t[k]));
+                t[k] = BY_WORD + k as u16;
+            }
+        }
+        Some((ByteSwitch { targets: t, ..s.clone() }, by_word))
+    };
     // Whether the `TOKEN` at `pc` is taken by a `SWITCH` on its first byte next, by kinds: where
     // tier 2 makes the records, that switch's edges make them (page 40).
     let lazy_switch = |pc: usize| -> bool {
@@ -4273,11 +4313,15 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     let mut word_fns: std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = std::collections::HashMap::new();
     let mut lowered: Vec<Lowered> = Vec::new();
     let mut all_scans: Vec<usize> = Vec::new();
+    let mut all_onward: Vec<usize> = Vec::new();
     let mut word_insts: Vec<u32> = vec![0; words.len()];
     let phase = std::time::Instant::now();
     let times = std::env::var_os("RERAIL_STREAM_TIMES").is_some();
+    // The `TOKEN`s where a string's part may be pending (`parts_pending`); all, where a region
+    // is read in parts with an escape carry.
+    let pending_all = table.fetch.filter(|ft| ft.seq.iter().any(|&x| x) && table.split.is_some_and(|(sp, _)| sp.seq.is_some())).map(|ft| parts_pending(native, &pushes, ft));
     // With native calls, a function a rule: no arms shared across them.
-    let shared_all = if cut.calls { SharedRuns { bodies: Vec::new(), at: Default::default(), ends: Default::default(), skipped: vec![false; words.len()] } } else { shared_runs(native, &pushes) };
+    let shared_all = if cut.calls { SharedRuns { bodies: Vec::new(), at: Default::default(), ends: Default::default(), skipped: vec![false; words.len()] } } else { shared_runs(native, &pushes, pending_all.as_deref()) };
     if times {
         eprintln!("tier 2: shared runs {:.2?}", phase.elapsed());
     }
@@ -4414,9 +4458,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         let bound = bounds(native);
         let chains = bound.chains;
         let unchecked = bound.unchecked(marks_of(words));
-        // The `TOKEN`s where a string's part may be pending (`parts_pending`); all, where a region
-        // is read in parts with an escape carry.
-        let pending = table.fetch.filter(|ft| ft.seq.iter().any(|&x| x) && table.split.is_some_and(|(sp, _)| sp.seq.is_some())).map(|ft| parts_pending(native, &pushes, ft));
+        let pending = &pending_all;
         // Programs without `WRAP` or a `relabel` pay nothing for them: no frames, no chains, no
         // reorder (which runs only once a wrap was made).
         let wrapping = framed(words);
@@ -4471,7 +4513,12 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         // The state's fields the cut holds in registers (`Cut::held`): SSA variables within the
         // function, loaded where it is entered and stored where it calls another cluster.
         let vars: Vec<Option<cranelift_frontend::Variable>> = (0..Mem::COUNT).map(|k| cut.held.contains(&k).then(|| f.declare_var(types::I64))).collect();
+        // A field no word can make other than 0, a constant: `Pending` where no leaf is
+        // deferred (no extras), as a program without comments has no comment to keep.
+        let never_pending = native.extras.is_empty() && !words.iter().any(|w| matches!(w.operation, Op::Leaf { deferred: true, .. } | Op::Leaf { extra: true, .. }));
+        let constant = |k: Mem| never_pending && matches!(k, Mem::Pending);
         let mget = |f: &mut FunctionBuilder<'_>, k: Mem| match (vars[k as usize], slot) {
+            _ if constant(k) => f.ins().iconst(types::I64, 0),
             (Some(v), _) => f.use_var(v),
             (None, Some(s)) => f.ins().stack_load(types::I64, s, 8 * k as i32),
             (None, None) => {
@@ -4480,6 +4527,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
             }
         };
         let mset = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| match (vars[k as usize], slot) {
+            _ if constant(k) => {}
             (Some(v), _) => f.def_var(v, x),
             (None, Some(s)) => {
                 f.ins().stack_store(x, s, 8 * k as i32);
@@ -4681,10 +4729,16 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
             if let Some(&(body, ti)) = shared.at.get(&pc) {
                 let first = shared.bodies[body].start;
                 f.switch_to_block(wb[pc].expect("its own place"));
-                let i = f.ins().iconst(types::I64, ti as i64);
-                mset(&mut f, Mem::Sel, i);
-                let sh = f.ins().iconst(types::I64, pc as i64 - first as i64);
-                mset(&mut f, Mem::Shift, sh);
+                // The target's index, where the body's end picks among more than one; the
+                // shift, where it is not 0 (outside a shared run it is: every end sets it so).
+                if shared.bodies[body].targets.len() > 1 {
+                    let i = f.ins().iconst(types::I64, ti as i64);
+                    mset(&mut f, Mem::Sel, i);
+                }
+                if pc != first {
+                    let sh = f.ins().iconst(types::I64, pc as i64 - first as i64);
+                    mset(&mut f, Mem::Shift, sh);
+                }
                 f.ins().jump(body_entry(body), &[]);
                 if pc != first {
                     continue;
@@ -4694,9 +4748,12 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                 f.switch_to_block(wb[pc].expect("its own place"));
             }
             if let Some(&body) = shared.ends.get(&pc) {
-                // The run's end: its place's next word, by the index the place gave.
-                let zero = f.ins().iconst(types::I64, 0);
-                mset(&mut f, Mem::Shift, zero);
+                // The run's end: its place's next word, by the index the place gave; the shift
+                // back to 0, where a place other than the first enters.
+                if shared.at.iter().any(|(&p, &(b, _))| b == body && p != shared.bodies[body].start) {
+                    let zero = f.ins().iconst(types::I64, 0);
+                    mset(&mut f, Mem::Shift, zero);
+                }
                 let targets = &shared.bodies[body].targets;
                 if let [t] = targets.as_slice() {
                     f.ins().jump(word(*t), &[]);
@@ -4907,8 +4964,74 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         }
                         // Only where a part may be pending (`parts_pending`).
                         if pending.as_ref().is_none_or(|p| p[pc]) {
-                        all_scans.push(pc);
-                        split_next(&mut f, &env, sp, bw, fetched, words_read(native, &pushes, &word_kinds, pc + 1).as_deref(), &mut heads);
+                            all_scans.push(pc);
+                            // Each part's outcome straight to the switch's place for it, where
+                            // the token's path does nothing a part needs (no extra, no refusing
+                            // mark, every mark live), as `parse_string` branches once a part.
+                            let after = match words.get(pc + 1).map(|w| w.operation) {
+                                Some(Op::Switch { table: at }) if extra.is_none() && any_mark.is_none() && in_code == 0 && !native.token_marks.iter().any(|m| m.refuses) => {
+                                    let s = &native.switches[usize::from(at)];
+                                    kind_targets(s, end_kind.filter(|_| kind_reps.is_some() && s.offset == 0)).map(|(byk, by_word)| (s, byk, by_word))
+                                }
+                                _ => None,
+                            };
+                            let mut dests: Vec<(Block, u16)> = Vec::new();
+                            let onward = match (&sp.seq, &after) {
+                                (Some(seq), Some((_, byk, _))) => {
+                                    let kind_of = |b: usize| (sp.tables.words[b / 8] >> (8 * (b % 8))) as u8;
+                                    let of_bytes = |set: [u64; 4]| -> Vec<u8> { (0..256usize).filter(|&b| set[b / 64] >> (b % 64) & 1 == 1).map(kind_of).collect() };
+                                    let mut dest = |kinds: Vec<u8>| -> Option<Block> {
+                                        let mut ts: Vec<u16> = kinds.iter().map(|&k| byk.targets[usize::from(k)]).collect();
+                                        ts.sort_unstable();
+                                        ts.dedup();
+                                        let &[t] = ts.as_slice() else { return None };
+                                        let b = f.create_block();
+                                        dests.push((b, t));
+                                        Some(b)
+                                    };
+                                    let closer = dest(of_bytes(seq.xs));
+                                    let content = dest(of_bytes(std::array::from_fn(|k| !seq.stops[k])));
+                                    let part = seq.codes2.as_ref().and_then(|t| dest(t.iter().map(|&c| c as u8).collect()));
+                                    if closer.is_some() && content.is_some() && part.is_some() {
+                                        all_onward.push(pc);
+                                    }
+                                    Some(Onward { closer, content, part })
+                                }
+                                _ => None,
+                            };
+                            split_next(&mut f, &env, sp, bw, fetched, onward.as_ref(), words_read(native, &pushes, &word_kinds, pc + 1).as_deref(), &mut heads);
+                            // Each outcome's place: the target, or the words' switch of a kind
+                            // whose words the switch names; a refusal at the switch's place.
+                            if let Some((s, _, by_word)) = &after {
+                                let back = f.current_block().expect("in a block");
+                                let no = f.create_block();
+                                for &(b, t) in &dests {
+                                    f.switch_to_block(b);
+                                    mset(&mut f, Mem::Live, all);
+                                    match by_word.iter().find(|&&(k, _)| t != REFUSE && BY_WORD + k as u16 == t) {
+                                        Some(&(k, plain)) => {
+                                            let w = token_word(&mut f);
+                                            let mut ts = vec![plain; word_kinds.len() + 1];
+                                            for &(x, to) in &s.words {
+                                                if word_kinds.get(usize::from(x)).is_some_and(|&y| usize::from(y) == k) {
+                                                    ts[usize::from(x) + 1] = to;
+                                                }
+                                            }
+                                            let sw = ByteSwitch { targets: ts, ..ByteSwitch::refusing(0) };
+                                            let r = runs(&sw, &|t| if t == REFUSE { no } else { word(t) });
+                                            dispatch(&mut f, w, &r, 256);
+                                        }
+                                        None => {
+                                            f.ins().jump(if t == REFUSE { no } else { word(t) }, &[]);
+                                        }
+                                    }
+                                }
+                                f.switch_to_block(no);
+                                f.set_cold_block(no);
+                                let at = f.ins().iconst(types::I64, pc as i64 + 2);
+                                f.ins().jump(refuse, &[BlockArg::from(at)]);
+                                f.switch_to_block(back);
+                            }
                         }
                     }
                     // One compare a token (`Next` is one past the count once the end is
@@ -5115,23 +5238,10 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     // A word's kind is its first byte's, so a token of the kind is one of its
                     // words or none. Tokens that are no keyword pay one test, as a parser's
                     // keywords are its identifiers' case.
-                    let mut by_word: Vec<(usize, u16)> = Vec::new();
-                    let by_kind = kind_reps.as_ref().filter(|_| s.offset == 0).map(|reps| {
-                        let mut t = vec![REFUSE; 256];
-                        for (k, &b) in reps.iter().enumerate() {
-                            t[k] = s.targets[usize::from(b)];
-                        }
-                        if let Some(e) = end_in_tree {
-                            t[usize::from(e)] = s.end;
-                        }
-                        for k in 0..reps.len() {
-                            if s.words.iter().any(|&(w, _)| word_kinds.get(usize::from(w)).is_some_and(|&x| usize::from(x) == k)) {
-                                by_word.push((k, t[k]));
-                                t[k] = BY_WORD + k as u16;
-                            }
-                        }
-                        ByteSwitch { targets: t, ..s.clone() }
-                    });
+                    let (by_kind, by_word) = match kind_targets(s, end_in_tree) {
+                        Some((b, w)) => (Some(b), w),
+                        None => (None, Vec::new()),
+                    };
                     let s = by_kind.as_ref().unwrap_or(s);
                     let kind_blocks: Vec<Block> = by_word.iter().map(|_| f.create_block()).collect();
                     let plain_of = |t: u16| by_word.iter().find(|&&(k, _)| BY_WORD + k as u16 == t).map(|&(_, p)| p);
@@ -6335,7 +6445,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         if !pinned_ctx {
             state_in_registers(&mut func);
         }
-        drop_unused_loads(&mut func);
+        drop_dead_params(&mut func);
+        drop_unused(&mut func);
         drop_dead_slot_stores(&mut func);
         remat_far(&mut func);
         lowered.push(Lowered { func, heads, targets, exits, tails });
@@ -6498,7 +6609,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     let marks = marks_of(words);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, tables, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, tables, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -6897,7 +7008,82 @@ fn drop_dead_slot_stores(func: &mut cranelift_codegen::ir::Function) {
     }
 }
 
-fn drop_unused_loads(func: &mut cranelift_codegen::ir::Function) {
+/// Block parameters no instruction reads, dropped with their arguments: a parameter is read
+/// where an instruction other than a branch's block call uses it, or where it is passed on to a
+/// parameter that is read. A field held as an SSA value (`HELD_IN_ONE`) is a parameter of every
+/// block it reaches, and a value written and never read before its next write (a part's code
+/// where the word after takes no code) kept its load alive through it (`drop_unused`).
+fn drop_dead_params(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::ir::{BlockArg, Opcode};
+    let Some(entry) = func.layout.entry_block() else { return };
+    let blocks: Vec<Block> = func.layout.blocks().collect();
+    let mut live: std::collections::HashSet<Value> = func.dfg.block_params(entry).iter().copied().collect();
+    let mut edges: Vec<(Value, Value)> = Vec::new();
+    for &b in &blocks {
+        for inst in func.layout.block_insts(b) {
+            let d = &func.dfg.insts[inst];
+            if matches!(d.opcode(), Opcode::TryCall | Opcode::TryCallIndirect) {
+                return;
+            }
+            for &v in d.arguments(&func.dfg.value_lists) {
+                live.insert(func.dfg.resolve_aliases(v));
+            }
+            for call in d.branch_destination(&func.dfg.jump_tables, &func.dfg.exception_tables) {
+                let params = func.dfg.block_params(call.block(&func.dfg.value_lists));
+                for (a, &p) in call.args(&func.dfg.value_lists).zip(params) {
+                    if let BlockArg::Value(v) = a {
+                        edges.push((p, func.dfg.resolve_aliases(v)));
+                    }
+                }
+            }
+        }
+    }
+    loop {
+        let mut grew = false;
+        for &(p, v) in &edges {
+            if live.contains(&p) && live.insert(v) {
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    let dead: std::collections::HashMap<Block, Vec<usize>> = blocks
+        .iter()
+        .filter(|&&b| b != entry)
+        .filter_map(|&b| {
+            let d: Vec<usize> = func.dfg.block_params(b).iter().enumerate().filter(|(_, p)| !live.contains(p)).map(|(i, _)| i).collect();
+            (!d.is_empty()).then_some((b, d))
+        })
+        .collect();
+    if dead.is_empty() {
+        return;
+    }
+    for &b in &blocks {
+        let insts: Vec<cranelift_codegen::ir::Inst> = func.layout.block_insts(b).collect();
+        for inst in insts {
+            let dfg = &mut func.dfg;
+            for call in dfg.insts[inst].branch_destination_mut(&mut dfg.jump_tables, &mut dfg.exception_tables) {
+                if let Some(d) = dead.get(&call.block(&dfg.value_lists)) {
+                    for &i in d.iter().rev() {
+                        call.remove(i, &mut dfg.value_lists);
+                    }
+                }
+            }
+        }
+    }
+    for (b, d) in dead {
+        for &i in d.iter().rev() {
+            let p = func.dfg.block_params(b)[i];
+            func.dfg.remove_block_param(p);
+        }
+    }
+}
+
+/// Instructions whose results nothing uses, dropped: a load that cannot trap, and one with no
+/// effect but its results. To a fixpoint, so a chain of them goes.
+fn drop_unused(func: &mut cranelift_codegen::ir::Function) {
     loop {
         let mut used = std::collections::HashSet::new();
         let blocks: Vec<Block> = func.layout.blocks().collect();
@@ -6914,7 +7100,11 @@ fn drop_unused_loads(func: &mut cranelift_codegen::ir::Function) {
                 let data = &func.dfg.insts[inst];
                 let op = data.opcode();
                 let quiet = data.memflags().is_some_and(|m| m.trap_code().is_none());
-                if op.can_load() && !op.can_store() && !op.is_call() && quiet && func.dfg.inst_results(inst).iter().all(|r| !used.contains(r)) {
+                let unused = !func.dfg.inst_results(inst).is_empty() && func.dfg.inst_results(inst).iter().all(|r| !used.contains(r));
+                // A load that cannot trap, or an instruction with no effect but its results
+                // (whose operands a load gave).
+                let pure = !op.can_load() && !op.can_store() && !op.is_call() && !op.is_branch() && !op.is_terminator() && !op.other_side_effects() && !op.can_trap();
+                if unused && ((op.can_load() && !op.can_store() && !op.is_call() && quiet) || pure) {
                     dead.push(inst);
                 }
             }
