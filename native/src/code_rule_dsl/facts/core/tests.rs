@@ -138,46 +138,42 @@ fn every_format_reads_the_same_facts_off_the_tape() {
     }
 }
 
-/// Decision 0434 step 6, part 3: a parsed tape's presence is kept by the store with the tape, and a tape read from the
-/// store is given it, read in place in the store's kept file: its answers are the writer's for every kind.
+/// Decision 0434 §4, step 6: a parsed tape's home holds its presence after it; the store keeps the two as one, and a
+/// tape read back from the store answers each block's kinds as the parse's did, by the same read where it lies
+/// (`tape_has_kind`). In 16z the stored frame is the bytes as they are, and its presence is read there unloaded.
 #[test]
-fn a_stored_tape_is_given_the_presence_its_writer_made() {
+fn a_stored_tape_holds_the_presence_its_writer_made() {
     use crate::code_rule_dsl::build_ids::grammar_version;
-    use crate::code_rule_dsl::tape::{self, KeptPresence, TapePresence};
-    use sha2::Digest as _;
+    use crate::code_rule_dsl::tape::{self, PRESENCE_BLOCK};
+    use crate::code_rule_dsl::tape::formats::{Format, this_thread_stores};
+    use crate::code_rule_dsl::facts::core::build_cached_with_tape;
+    this_thread_stores(Format::F16Z);
     let dir = tempfile::tempdir().unwrap();
     let cache = crate::content_store::ContentStore::open(&dir.path().join("p.sqlite")).unwrap();
     // Past two blocks of nodes: the class is in the first alone.
     let file = Text("python".into(), Arc::new(format!("class A:\n    def f(self):\n        return g(1)\n{}", "x = 1\n".repeat(500))));
-    let (_, _, doc) = build_cached_with_tape(&file, &cache, None, true).unwrap();
-    let Some(TapePresence::Made(made)) = doc.expect("the tape").image.presence.clone() else { panic!("a format 16 parse has its writer's presence") };
+    let (_, _, parsed) = build_cached_with_tape(&file, &cache, None, true).unwrap();
+    let parsed = parsed.expect("the tape");
+    assert!(parsed.has_presence(), "a format 16 parse lays its presence in the tape's home");
     cache.written().unwrap();
     let tag = i64::from(tape_tag(dialect_by_label("python").unwrap()).unwrap());
     let (gv, fv) = (grammar_version(), i64::from(tape::formats::stored_version()));
-    let digest: [u8; 32] = sha2::Sha256::digest(file.source().as_bytes()).into();
-    let key = tape_key(&digest, tag, gv, fv);
-    let lang = rerail_tape_format::f16::lang(tag as u8).unwrap();
-    let space = Arc::new(cache.kept_space(&crate::content_store::kept_facts::presence::presence_space()).unwrap().expect("the store keeps the presences"));
-    let kept = TapePresence::Kept(KeptPresence::find(&space, &key, tag as u8).expect("the tape's presence, kept"));
-    let kinds = lang.presence_words().0 * 64;
-    assert!(made.doc.iter().any(|w| *w != 0), "a document has kinds");
-    for kind in 0..kinds as u16 {
-        assert_eq!(kept.has_kind(kind), made.has_kind(kind), "kind {kind}");
-    }
-    // Each block's, read in place, the writer's; past the last block, none.
-    let blocks = made.blocks.len() / (made.kind_words + made.field_words);
-    let writer = TapePresence::Made(Arc::clone(&made));
-    assert!(blocks >= 2, "{blocks} blocks");
-    for b in 0..=blocks {
-        for kind in 0..kinds as u16 {
-            assert_eq!(kept.block_has_kind(b, kind), writer.block_has_kind(b, kind), "block {b}, kind {kind}");
-        }
-    }
-    let class = (0..kinds as u16).find(|&kind| made.has_kind(kind) && !kept.block_has_kind(blocks - 1, kind).unwrap()).is_some();
-    assert!(class, "a kind of the document the last block lacks");
-    // A build of the tape the store holds: its image is given the kept presence.
     let source = cache.source_by_hash(crate::content_store::HashKey::sha256(file.source().as_bytes())).unwrap().expect("the source, stored");
     let frame = cache.tape_frames_for(&[source], tag, gv, fv).unwrap().remove(0).expect("the tape, stored");
-    let (_, doc) = build_in_wave_with_tape(&file, &cache, Some(digest), Some(&frame), Some(&space), false, true).unwrap();
-    assert!(matches!(doc.expect("the tape").image.presence, Some(TapePresence::Kept(_))), "a stored tape's presence is the store's");
+    let stored = tape::stored_presence(frame.in_place().expect("a 16z frame is its bytes as they are"), tag as u8).expect("the presence, stored");
+    let (_, doc) = build_in_wave_with_tape(&file, &cache, None, Some(&frame), false, true).unwrap();
+    let doc = doc.expect("the tape, read from the store");
+    assert!(doc.has_presence(), "a stored tape's home holds its presence");
+    let blocks = parsed.transducer_len().div_ceil(PRESENCE_BLOCK);
+    assert!(blocks >= 2, "{blocks} blocks");
+    let mut lacking = false;
+    for kind in 0..400u16 {
+        assert_eq!(doc.may_have_kind(kind), parsed.may_have_kind(kind), "kind {kind}");
+        assert_eq!(stored.has_kind(u32::MAX, kind), parsed.may_have_kind(kind), "kind {kind}, unloaded");
+        for b in 0..blocks {
+            assert_eq!(doc.block_may_have_kind(b, kind), parsed.block_may_have_kind(b, kind), "block {b}, kind {kind}");
+        }
+        lacking |= parsed.may_have_kind(kind) && !parsed.block_may_have_kind(blocks - 1, kind);
+    }
+    assert!(lacking, "a kind of the document the last block lacks");
 }

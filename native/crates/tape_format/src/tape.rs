@@ -215,6 +215,12 @@ impl CodeSet {
 pub trait Tape {
     /// The nodes.
     fn len(&self) -> usize;
+    /// Whether block `block` (nodes `f16::Z * block ..`; `u32::MAX`: the document) may have a node of kind `kind`,
+    /// by the tape's presence in its home (`tape_has_kind`, decision 0434 §4, step 6): true for a tape that has none.
+    fn has_kind(&self, block: u32, kind: u16) -> bool {
+        let _ = (block, kind);
+        true
+    }
     fn is_empty(&self) -> bool {
         self.len() == 0
     }

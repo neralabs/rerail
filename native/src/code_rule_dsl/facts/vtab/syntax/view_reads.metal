@@ -5,7 +5,7 @@ struct ViewRow {
     device const uchar* tape;
     device const uchar* lines;
     uint rows[9];
-    uint view[30];
+    uint view[31];
 };
 struct ViewDir {
     device const uchar* chunk;

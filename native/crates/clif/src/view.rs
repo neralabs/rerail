@@ -3,7 +3,7 @@
 //! host), its format, its widths. One definition: the device's `DocView` is this, and its MSL is
 //! written from it ([`msl`]), with each field's offset asserted against Rust's.
 
-/// A document's view (120 bytes, u32s; the device's `DocView`, `metal_tape.metal`).
+/// A document's view (124 bytes, u32s; the device's `DocView`, `metal_tape.metal`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TapeView {
@@ -47,14 +47,18 @@ pub struct TapeView {
     pub line_base: u32,
     /// Where the stored tape starts.
     pub tape: u32,
+    /// Format 16 and 16z: the tape's presence (decision 0434 §4, step 6), in its home after the tape: `[u32 kind words,
+    /// u32 field words, u32 presences, u32 0]`, then the document's words and each block's (`tape_has_kind`). 0 where
+    /// it has none (format 15, or a tape stored without one).
+    pub presence: u32,
 }
-const _: () = assert!(std::mem::size_of::<TapeView>() == 120);
+const _: () = assert!(std::mem::size_of::<TapeView>() == 124);
 
 /// The view's MSL: `struct TapeView`, `DocView` its name in the kernels, and each field's offset and
 /// the size asserted against this definition's, so the kernels cannot read a layout of their own.
 pub fn msl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 20] = [
+    let fields: [(&str, &str, usize); 21] = [
         ("uint", "at", offset_of!(TapeView, at)),
         ("uint", "nodes", offset_of!(TapeView, nodes)),
         ("uint", "node_base", offset_of!(TapeView, node_base)),
@@ -75,6 +79,7 @@ pub fn msl() -> String {
         ("uint", "source_base", offset_of!(TapeView, source_base)),
         ("uint", "line_base", offset_of!(TapeView, line_base)),
         ("uint", "tape", offset_of!(TapeView, tape)),
+        ("uint", "presence", offset_of!(TapeView, presence)),
     ];
     let mut s = String::from("struct TapeView {\n");
     for (ty, name, _) in fields.iter() {
@@ -426,6 +431,7 @@ pub mod at {
     pub const LINES: i32 = offset_of!(TapeView, lines) as i32;
     pub const LINE_COUNT: i32 = offset_of!(TapeView, line_count) as i32;
     pub const SOURCE_LEN: i32 = offset_of!(TapeView, source_len) as i32;
+    pub const PRESENCE: i32 = offset_of!(TapeView, presence) as i32;
 }
 
 #[cfg(test)]

@@ -491,13 +491,12 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0434 step 6, part 3: a run's parses are written with their presences, which the store keeps beside the
-/// tapes (gathered in the run's waves, one kept file for them): each file's presence is found by its tape's key.
+/// Decision 0434 §4, step 6: a run's parses are stored with their presences after them, each tape's home as one: a
+/// tape read back from the store holds its document's kinds.
 #[test]
-fn a_runs_tapes_are_kept_with_their_presences() {
-    use sha2::Digest as _;
+fn a_runs_tapes_are_stored_with_their_presences() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
-    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("kept-presences");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("stored-presences");
     std::fs::create_dir_all(&dir).unwrap();
     let bodies = [("a.py", "def f():\n    pass\n"), ("b.py", "class B:\n    x = 1\n"), ("c.py", "print(1)\n")];
     for (file, body) in bodies {
@@ -505,20 +504,22 @@ fn a_runs_tapes_are_kept_with_their_presences() {
     }
     let rule = ".decl f(n: node)\nf(n) :- kind(n, \"function_definition\").\n.output f\n";
     let out = dir.join("out");
-    let store = dir.join("kept.sqlite");
+    let store = dir.join("stored.sqlite");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.clone()));
     super::run(rule, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
     let cache = crate::content_store::ContentStore::open(&store).unwrap();
-    let space = cache.kept_space(&crate::content_store::kept_facts::presence::presence_space()).unwrap().expect("the run's presences, kept");
-    let tag = i64::from(crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::dialect_by_label("python").unwrap()).unwrap());
+    let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+    let tag = i64::from(crate::code_rule_dsl::language::tape_tag(python).unwrap());
     let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
-    let (kinds, fields) = rerail_tape_format::f16::lang(tag as u8).unwrap().presence_words();
+    // The kind of a `function_definition` node.
+    let function = ast_grep_language::LanguageExt::get_ts_language(&python).id_for_node_kind("function_definition", true);
     for (file, body) in bodies {
-        let digest: [u8; 32] = sha2::Sha256::digest(format!("{marker}{body}").as_bytes()).into();
-        let rows = crate::content_store::kept_facts::presence::find(&space, &crate::code_rule_dsl::facts::core::tape_key(&digest, tag, gv, fv));
-        let rows = rows.unwrap_or_else(|| panic!("{file}'s presence, kept"));
-        assert!(rows.len() >= kinds + fields && (0..kinds).any(|w| rows.get(w, 0) != 0), "{file}: its document's words");
+        let source = cache.source_by_hash(crate::content_store::HashKey::sha256(format!("{marker}{body}").as_bytes())).unwrap().expect("the source, stored");
+        let frame = cache.tape_frames_for(&[source], tag, gv, fv).unwrap().remove(0).unwrap_or_else(|| panic!("{file}'s tape, stored"));
+        let bytes = frame.bytes().unwrap();
+        let presence = crate::code_rule_dsl::tape::stored_presence(&bytes, tag as u8).unwrap_or_else(|| panic!("{file}'s presence, stored with its tape"));
+        assert_eq!(presence.has_kind(u32::MAX, function), body.starts_with("def"), "{file}: its document's kinds");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -28,8 +28,9 @@ pub enum Format {
 
 /// Format 16's and 16z's stored layout: 3 since decision 0336 §6 (a newline index after the side lists, its count
 /// in the header; 16z holds it raw after the checkpoints). Layout 2 (0336: region starts in the header; 16z's blocks
-/// one piece an array, raw, LZ4 or a repeat) had keys 216 and 1216; layout 1, 16 and 1016.
-const F16_LAYOUT: u32 = 4;
+/// one piece an array, raw, LZ4 or a repeat) had keys 216 and 1216; layout 1, 16 and 1016. Layout 5 (decision 0434
+/// §4, step 6): the tape's presence stored after it, in its home.
+const F16_LAYOUT: u32 = 5;
 
 impl Format {
     pub const ALL: [Format; 3] = [Format::F15, Format::F16, Format::F16Z];
@@ -399,7 +400,7 @@ impl TapeImage {
             f16::Written::F16(t) => Held::F16(Arc::new(t)),
             f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
         };
-        Self { held, presence: Some(super::TapePresence::Made(Arc::new(f.presence))), ..self }
+        Self { held, ..self }
     }
 
     /// A lean parser's tape written in format 16 or 16z (`lean`), with its presence and its source's digest: `digest`,
@@ -413,7 +414,7 @@ impl TapeImage {
             f16::Written::F16(t) => Held::F16(Arc::new(t)),
             f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
         };
-        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest), presence: Some(super::TapePresence::Made(Arc::new(written.presence))) })
+        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest) })
     }
 
     /// The language's table, where the image is held in format 16.

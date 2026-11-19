@@ -222,9 +222,7 @@ pub(crate) fn build_cached_as(file: &dyn SourceFile, cache: &crate::content_stor
 
 /// What a file's tape is queued under until the store's writer has written it (decision 0102): its source's
 /// SHA-256, its grammar's tag and version, and the tape format. A tape is named by the content it is parsed from.
-/// The write-back key a tape is queued and stored under: its source's digest, language, grammar and format versions. The
-/// store keeps the tape's presence under it too (`kept_facts::presence`).
-pub fn tape_key(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_store::write_back::Key {
+fn queued_tape(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"tape", source, &tag.to_le_bytes(), &gv.to_le_bytes(), &fv.to_le_bytes()])
 }
 
@@ -265,32 +263,7 @@ fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crat
     }
     let mut primary = TapeImage::from_home(home.clone(), grammar)?;
     primary.source_digest = image.source_digest;
-    // The writer's presence of the same tape (decision 0434 step 6): the image read in the room is the parse's.
-    primary.presence = image.presence.clone();
     Ok((Arc::new(home), primary))
-}
-
-/// The presence `image`'s writer made, kept by the store with the tape queued under `key` (decision 0434 step 6,
-/// part 3): its words, and the presence itself for a read of it before the store writes it.
-pub fn queue_presence(cache: &crate::content_store::ContentStore, key: &crate::content_store::write_back::Key, image: &crate::code_rule_dsl::tape::TapeImage) {
-    if let Some(crate::code_rule_dsl::tape::TapePresence::Made(p)) = &image.presence {
-        let words = p.doc.iter().chain(&p.blocks).map(|&w| w as i64).collect();
-        cache.queue_presence(key, words, Arc::clone(p) as crate::content_store::write_back::Held);
-    }
-}
-
-/// `image`, a tape read from the store under `key`, with the presence the store keeps for it, read in place in
-/// `presences` (the run's presence space), or still queued by this process.
-fn with_presence(mut image: crate::code_rule_dsl::tape::TapeImage, cache: &crate::content_store::ContentStore, key: &crate::content_store::write_back::Key, presences: Option<&Arc<crate::content_store::kept_facts::KeptSpace>>, tag: i64) -> crate::code_rule_dsl::tape::TapeImage {
-    use crate::code_rule_dsl::tape::{KeptPresence, TapePresence};
-    if image.presence.is_none() {
-        image.presence = presences
-            .zip(u8::try_from(tag).ok())
-            .and_then(|(space, tag)| KeptPresence::find(space, key, tag))
-            .map(TapePresence::Kept)
-            .or_else(|| cache.queued_presence::<rerail_tape_format::f16::Presence>(key).map(TapePresence::Made));
-    }
-    image
 }
 
 /// [`build`] in a run's waves (decision 0104): no SQL is read or written. The tape is `found` (read before the
@@ -304,19 +277,16 @@ pub fn build_in_wave(
     found: Option<&crate::content_store::TapeFrame>,
     named: bool,
 ) -> Result<Built, String> {
-    build_in_wave_with_tape(file, cache, digest, found, None, named, false).map(|(built, _)| built)
+    build_in_wave_with_tape(file, cache, digest, found, named, false).map(|(built, _)| built)
 }
 
 /// [`build_in_wave`], with the tape the facts were read off where `keep` (a program's matchers run over it, decision
-/// 0106). `presences`: the store's kept tape presences, opened once for the run (`kept_facts::presence`), which a
-/// tape read from the store is given (decision 0434 step 6, part 3).
-#[allow(clippy::too_many_arguments)]
+/// 0106).
 pub fn build_in_wave_with_tape(
     file: &dyn SourceFile,
     cache: &crate::content_store::ContentStore,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
-    presences: Option<&Arc<crate::content_store::kept_facts::KeptSpace>>,
     named: bool,
     keep: bool,
 ) -> Result<(Built, Option<TapeDoc>), String> {
@@ -336,7 +306,7 @@ pub fn build_in_wave_with_tape(
             sha2::Sha256::digest(bytes).into()
         }
     };
-    let key = tape_key(&digest, tag, gv, fv);
+    let key = queued_tape(&digest, tag, gv, fv);
     let grammar = tape::Grammar::embedded(language)?;
     // Stored: decompressed (or read from its segment) straight into its one home, a slab's room, and read there
     // (decision 0353 step 4a).
@@ -357,12 +327,12 @@ pub fn build_in_wave_with_tape(
         (Some(home), _) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "hit".into());
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
-            with_presence(TapeImage::from_home(home, &grammar)?, cache, &key, presences, tag)
+            TapeImage::from_home(home, &grammar)?
         }
         (None, Some(stored)) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "hit".into());
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
-            with_presence(queued_image(&stored, &grammar)?, cache, &key, None, tag)
+            queued_image(&stored, &grammar)?
         }
         (None, None) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
@@ -380,7 +350,6 @@ pub fn build_in_wave_with_tape(
             // the writer (decision 0104).
             let canonical = HashKey::from_sha256_digest(digest);
             cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, named).map_err(|e| e.to_string())?;
-            queue_presence(cache, &key, &primary);
             primary
         }
     };
@@ -421,11 +390,10 @@ pub fn build_cached_with_tape(
     {
         use sha2::Digest as _;
         let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-        let key = tape_key(&digest, tag, gv, fv);
-        if let Some(held) = cache.queued_tape(&key) {
+        if let Some(held) = cache.queued_tape(&queued_tape(&digest, tag, gv, fv)) {
             let held = held.map_err(|e| e.to_string())?;
             let grammar = tape::Grammar::embedded(language)?;
-            let primary = with_presence(queued_image(&held, &grammar)?, cache, &key, None, tag);
+            let primary = queued_image(&held, &grammar)?;
             let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
             let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
             return Ok((Built::Facts(read_off(doc.as_ref(), file, &grammar, primary, lines)?), known, doc));
@@ -473,9 +441,7 @@ pub fn build_cached_with_tape(
             let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
             // Queued as `build_in_wave` queues it: gathered in a run's waves, else compressed here and queued alone.
             let canonical = HashKey::from_sha256_digest(digest);
-            let key = tape_key(&digest, tag, gv, fv);
-            cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, false).map_err(|e| e.to_string())?;
-            queue_presence(cache, &key, &primary);
+            cache.queue_source_and_tape(queued_tape(&digest, tag, gv, fv), canonical, tag, gv, fv, file.source(), tape, false).map_err(|e| e.to_string())?;
             primary
         }
     };

@@ -87,6 +87,7 @@ pub const READS: &[Read] = &[
     Read { family: Family::Tape, name: "tape_line_select", params: &[I32, I32], ret: I32, hot: false, body: line_select },
     Read { family: Family::Tape, name: "tape_line", params: &[I32], ret: I32, hot: true, body: line },
     Read { family: Family::Tape, name: "tape_line_start", params: &[I32], ret: I32, hot: true, body: line_start },
+    Read { family: Family::Tape, name: "tape_has_kind", params: &[I32, I32], ret: I32, hot: true, body: has_kind },
     Read { family: Family::Relation, name: "rows_col", params: &[I32], ret: I64, hot: true, body: crate::relation::rows_col },
     Read { family: Family::Relation, name: "col_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_at },
     Read { family: Family::Relation, name: "col_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_get },
@@ -2414,6 +2415,53 @@ fn line(b: &mut B<'_, '_>) -> Value {
             b.f.switch_to_block(done);
             let found = b.f.block_params(done)[0];
             b.f.ins().iadd_imm(found, -1)
+        },
+    )
+}
+
+/// Whether the tape's block `block` (its nodes `F16_PART * block ..`; `NONE`: the whole document) has a node of kind
+/// `kind`, by its presence (the view's `presence`, decision 0434 §4, step 6): 1 where the tape has none to tell by
+/// (format 15, or one stored without it), and the document's answer where its blocks' presences are not held. The
+/// host's planners and the kernels ask this one read.
+fn has_kind(b: &mut B<'_, '_>) -> Value {
+    let (block, kind) = (b.arg(0), b.arg(1));
+    let at = b.view(at::PRESENCE);
+    let none = b.f.ins().icmp_imm(IntCC::Equal, at, 0);
+    b.either(
+        I32,
+        none,
+        |b| b.c32(1),
+        |b| {
+            let zero = b.c32(0);
+            let kinds = b.u32(at, zero);
+            let word = b.f.ins().ushr_imm(kind, 6);
+            let outside = b.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, word, kinds);
+            b.either(
+                I32,
+                outside,
+                |b| b.c32(0),
+                |b| {
+                    let four = b.c32(4);
+                    let fields = b.u32(at, four);
+                    let eight = b.c32(8);
+                    let count = b.u32(at, eight);
+                    // The block's presence follows the document's; `NONE` + 1 is the document's (0).
+                    let next = b.f.ins().iadd_imm(block, 1);
+                    let held = b.f.ins().icmp(IntCC::UnsignedLessThan, next, count);
+                    let index = b.f.ins().select(held, next, zero);
+                    let words = b.f.ins().iadd(kinds, fields);
+                    let k = b.f.ins().imul(index, words);
+                    let k = b.f.ins().iadd(k, word);
+                    let k = b.f.ins().ishl_imm(k, 3);
+                    let k = b.f.ins().iadd_imm(k, 16);
+                    let w = b.word(at, k);
+                    let shift = b.f.ins().band_imm(kind, 63);
+                    let shift = b.f.ins().uextend(I64, shift);
+                    let bit = b.f.ins().ushr(w, shift);
+                    let bit = b.f.ins().band_imm(bit, 1);
+                    b.f.ins().ireduce(I32, bit)
+                },
+            )
         },
     )
 }

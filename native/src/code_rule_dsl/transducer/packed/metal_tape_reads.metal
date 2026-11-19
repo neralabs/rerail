@@ -60,6 +60,7 @@ inline ulong clif_tape_slot(device const uchar* t,CLIF_VIEW_SPACE const uint* v,
 inline uint clif_tape_line_select(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
 inline uint clif_tape_line(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_line_start(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_has_kind(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
 inline ulong clif_tape_f16_side(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
  uint v0=0;
  uint v1=0;
@@ -1646,4 +1647,73 @@ inline uint clif_tape_line_start(device const uchar* t,CLIF_VIEW_SPACE const uin
   {uint t0=v73;v5=t0;}
  }
  return v5;
+}
+inline uint clif_tape_has_kind(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
+ uint v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v6=0;
+ uint v8=0;
+ uint v13=0;
+ uint v14=0;
+ uint v16=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ v3=a3;
+ v4=uint(clif_view(v,(v1+uint(120u))));
+ uchar v5=uchar((uint)(v4)==(uint)(uint(0ul)));
+ if(v5!=0){
+  uint v7=uint(1ul);
+  {uint t0=v7;v6=t0;}
+ }else{
+  v8=uint(0ul);
+  uint v9=uint(v4);
+  uint v10=uint(v8);
+  uint v11=v0+v9;
+  uint v12=v11+v10;
+  v13=uint(clif_u32(t,v12));
+  v14=uint((uint)(v3)>>(uint(6)&31u));
+  uchar v15=uchar((uint)(v14)>=(uint)(v13));
+  if(v15!=0){
+   uint v17=uint(0ul);
+   {uint t0=v17;v16=t0;}
+  }else{
+   uint v18=uint(4ul);
+   uint v19=uint(v4);
+   uint v20=uint(v18);
+   uint v21=v0+v19;
+   uint v22=v21+v20;
+   uint v23=uint(clif_u32(t,v22));
+   uint v24=uint(8ul);
+   uint v25=uint(v4);
+   uint v26=uint(v24);
+   uint v27=v0+v25;
+   uint v28=v27+v26;
+   uint v29=uint(clif_u32(t,v28));
+   uint v30=v2+uint(1ul);
+   uchar v31=uchar((uint)(v30)<(uint)(v29));
+   uint v32=v31!=0?v30:v8;
+   uint v33=v13+v23;
+   uint v34=v32*v33;
+   uint v35=v34+v14;
+   uint v36=uint((uint)(v35)<<(uint(3)&31u));
+   uint v37=v36+uint(16ul);
+   uint v38=uint(v4);
+   uint v39=uint(v37);
+   uint v40=v0+v38;
+   uint v41=v40+v39;
+   ulong v42=ulong(clif_u64(t,v41));
+   uint v43=v3&uint(63ul);
+   uint v44=uint(v43);
+   uint v45=uint((ulong)(v42)>>(uint(v44)&63u));
+   uint v46=v45&uint(1ul);
+   uint v47=uint(v46);
+   {uint t0=v47;v16=t0;}
+  }
+  {uint t0=v16;v6=t0;}
+ }
+ return v6;
 }

@@ -371,20 +371,11 @@ impl<B: Borrow<Block>> KeptChain<'_, B> {
     }
 }
 
-impl<'a, B: Borrow<Block>> KeptChain<'a, B> {
-    /// `key`'s entry (`KeptRead::get`), borrowed from the files it lies in, not from the chain: a reader that holds the
-    /// files keeps it past the chain.
-    pub fn get_kept(&self, key: &FactKey) -> Option<Kept<'a>> {
-        let files: &'a [KeptFacts<B>] = self.files;
-        let mut found = files.iter().rev().filter_map(|f| f.find(key));
-        let (own, first) = found.next()?;
-        resolve(own, first, found.map(|(_, f)| f))
-    }
-}
-
 impl<B: Borrow<Block>> KeptRead for KeptChain<'_, B> {
     fn get(&self, key: &FactKey) -> Option<Kept<'_>> {
-        self.get_kept(key)
+        let mut found = self.files.iter().rev().filter_map(|f| f.find(key));
+        let (own, first) = found.next()?;
+        resolve(own, first, found.map(|(_, f)| f))
     }
     fn of<'s>(&'s self, rel: &str) -> Box<dyn Iterator<Item = Kept<'s>> + 's> {
         let rel = rel.to_owned();

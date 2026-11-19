@@ -2385,7 +2385,18 @@ holds the design, its requirements (R1–R12) and its steps.
 - **Withdrawn** (2026-11-19): the device's skips by bits the host made from the presence (per file, part 2; per
   block, 82a7c73a5): host work for the kernels, and a structure only they read. Next in step 6: the presence's one
   home, read by the host and the kernels alike through one CLIF read from the tape's view; the CPU's root walks skip
-  blocks by it too.
+  blocks by it too. The user (2026-11-19) chose the tape's room. Plan:
+  - P1 (tape format): a format 16 or 16z tape's home holds the tape, then its presence at the tape's end rounded up to
+    8 bytes: `[u32 kind words, u32 field words, u32 presences (1 + blocks), u32 0]`, then the document's words and each
+    block's. `Tape16::as_bytes` stays the tape; the view's `presence` names the region (0: none). The writer lays it
+    there as it finishes.
+  - P2 (CLIF): `tape_has_kind(block, kind)` (block `NONE`: the document's), one read for the host and the kernels.
+  - P3 (host): `TapeDoc::may_have_kind`, the clause skip and the CPU's root walks by that read; `TapePresence`,
+    `image.presence` and part 3's kept entry (`kept_facts::presence`) go.
+  - P4 (store): the presence a frame beside the tape's, loaded into the room with it; the warm selector reads that
+    frame alone.
+  - P5 (kernels): `root_mask_in` and `root_admits` by the read, per block; the two ignored Metal tests on again, with a
+    device count.
 - **Next**: SQL commits at its statements once `claim` decides a program's held tokens as they come; C, C++, Go,
   Kotlin, Scala and Swift take a `Sink` when their tables come; simdjson's index writer (a CPU no
   kernel runs on) on the ops.

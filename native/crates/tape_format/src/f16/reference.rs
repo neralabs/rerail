@@ -537,7 +537,9 @@ impl<'l> Writer<'l> {
         let p = Placement::of(HEAD16, n, self.cw, self.w, self.vw, [0; 4], lines.len(), newlines, self.source_len);
         if let Some(z) = self.z.take() {
             let tape = z.finish(p, self.tag, mark, self.source_len, &lines)?;
-            return Ok(Finished { tape: Written::F16Z(tape), presence });
+            let mut out = tape.as_bytes().to_vec();
+            super::presence::lay(&mut out, &presence);
+            return Ok(Finished { tape: Written::F16Z(Tape16Z::from_bytes(out)?) });
         }
         // The last block's columns down to its rows.
         if count > 0 {
@@ -575,7 +577,8 @@ impl<'l> Writer<'l> {
         let p = Placement::of(HEAD16, n, self.cw, self.w, self.vw, sides, lines.len(), newlines, self.source_len);
         debug_assert_eq!(buf.len(), p.end);
         p.head_into(&mut buf, MAGIC16, self.tag, mark, self.source_len)?;
-        Ok(Finished { tape: Written::F16(Tape16 { mark, p, source_len: self.source_len, buf: buf.into(), frame: p.frame_of(self.source_len) }), presence })
+        super::presence::lay(&mut buf, &presence);
+        Ok(Finished { tape: Written::F16(Tape16::from_bytes(buf)?) })
     }
 }
 

@@ -347,7 +347,7 @@ fn metal_passes_skip_the_files_their_presence_rules_out() {
     let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
     let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
     let tapes = [python_tape("x = ['a'] + b\ny = (['a'] + b) + c\n"), python_tape("pass\n")];
-    assert!(tapes.iter().all(|tape| tape.image.presence.is_some()), "a format 16 parse keeps its presence");
+    assert!(tapes.iter().all(TapeDoc::has_presence), "a format 16 parse lays its presence in the tape's home");
     take_presence_ruled_out();
     let metal = program.roots_metal(&tapes).expect("the passes run on Metal").0;
     let ruled_out = take_presence_ruled_out();

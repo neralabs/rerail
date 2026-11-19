@@ -247,13 +247,22 @@ impl Tape16 {
     pub fn is_empty(&self) -> bool {
         self.p.n == 0
     }
-    /// The bytes it takes in memory: as stored.
+    /// The bytes it takes in memory: its home's (the tape, and its presence after it).
     pub fn bytes(&self) -> usize {
         self.buf.len()
     }
     /// The source's length.
     pub fn source_len(&self) -> u64 {
         self.source_len
+    }
+    /// Its home's bytes: the tape (`as_bytes`), then its presence where it has one (`presence::at`). What a reader's
+    /// offsets count from on the host, and what a room holds.
+    pub fn extent(&self) -> &[u8] {
+        &self.buf
+    }
+    /// Its presence's bytes in its home (`presence`), if it has one.
+    pub fn presence_bytes(&self) -> Option<&[u8]> {
+        (self.p.presence != 0).then(|| &self.buf[self.p.presence..])
     }
     /// The language tag its header names (`set_tag`).
     pub fn tag(&self) -> u8 {
@@ -263,9 +272,9 @@ impl Tape16 {
     pub fn set_tag(&mut self, tag: u8) {
         self.buf.own_mut()[head::LANGUAGE] = tag;
     }
-    /// The tape as stored.
+    /// The tape as stored, without its presence.
     pub fn as_bytes(&self) -> &[u8] {
-        &self.buf
+        &self.buf[..self.p.end]
     }
     /// Where its bytes are.
     pub fn home(&self) -> &crate::home::Home {
@@ -306,6 +315,7 @@ impl Tape16 {
             return Err(format!("a tape of revision {} (widths {:?}), read with revision {} ({:?})", self.mark, self.p.widths, lang.revision, lang.widths));
         }
         let frame = self.frame.ok_or("a format 16 tape whose source is past 4 GiB: the reads' offsets do not reach it")?;
+        presence::of_lang(self.presence_bytes(), lang)?;
         Ok(F16 { bytes: &self.buf, view: bind(frame, lang)?, lang })
     }
 }
@@ -330,6 +340,9 @@ pub struct Placement {
     pub parts: [usize; 4],
     pub lines: usize,
     pub end: usize,
+    /// Where the tape's presence lies in its home, after the tape (`presence::at`); 0 where the home holds the tape
+    /// alone. Not the tape's layout: `fits` compares the layout without it.
+    pub presence: usize,
 }
 
 impl Placement {
@@ -337,7 +350,7 @@ impl Placement {
     /// bytes long and a newline index `lines` bytes long of `newlines`, of a source `source_len` long.
     #[allow(clippy::too_many_arguments)]
     fn of(blocks: usize, n: usize, cw: usize, widths: [usize; 3], vw: [usize; 4], sides: [usize; 4], lines: usize, newlines: u32, source_len: u64) -> Self {
-        let mut p = Placement { n, source_len, cw, widths, vw, newlines, blocks, stride: stride_of(widths, cw), side: [0; 4], parts: [0; 4], lines: 0, end: 0 };
+        let mut p = Placement { n, source_len, cw, widths, vw, newlines, blocks, stride: stride_of(widths, cw), side: [0; 4], parts: [0; 4], lines: 0, end: 0, presence: 0 };
         let count = p.block_count();
         let mut at = p.blocks_end() + 8;
         for (k, len) in sides.iter().enumerate() {
@@ -406,6 +419,7 @@ impl Placement {
             parts: [at(self.parts[0])?, at(self.parts[1])?, at(self.parts[2])?, at(self.parts[3])?],
             lines: at(self.lines)?,
             line_count: self.newlines.checked_add(1).ok_or("a source past 4 G lines")?,
+            presence: if self.presence == 0 { 0 } else { at(self.presence)? },
             ..Default::default()
         })
     }
@@ -484,6 +498,7 @@ fn header(buf: &[u8]) -> Result<Placement, String> {
         parts: [tail[4], tail[5], tail[6], tail[7]],
         lines: tail[8],
         end: tail[9],
+        presence: 0,
     };
     if p.blocks != HEAD16 || p.stride != stride_of(widths, cw) || p.end < p.lines + 8 {
         return Err("a format 16 header that does not fit itself".into());
@@ -511,7 +526,9 @@ fn side_lengths(buf: &[u8], parts: [usize; 4], count: usize) -> Result<[usize; 4
 /// newline index's.
 fn fits(p: &Placement, buf: &[u8], parts: [usize; 4]) -> Result<[usize; 4], String> {
     let sides = side_lengths(buf, parts, p.block_count())?;
-    if Placement::of(p.blocks, p.n, p.cw, p.widths, p.vw, sides, p.end - 8 - p.lines, p.newlines, p.source_len) != *p {
+    let mut laid = Placement::of(p.blocks, p.n, p.cw, p.widths, p.vw, sides, p.end - 8 - p.lines, p.newlines, p.source_len);
+    laid.presence = p.presence;
+    if laid != *p {
         return Err("a format 16 header that does not fit its parts".into());
     }
     Ok(sides)
@@ -523,10 +540,11 @@ pub fn placement(buf: &[u8]) -> Result<Placement, String> {
     if buf.len() < HEAD16 || &buf[..8] != MAGIC16 {
         return Err("not a format 16 tape".into());
     }
-    let p = header(buf)?;
-    if buf.len() != p.end {
+    let mut p = header(buf)?;
+    if buf.len() < p.end {
         return Err(format!("a format 16 tape of {} bytes, its header says {}", buf.len(), p.end));
     }
+    p.presence = presence::find(buf, p.end, p.block_count())?;
     if buf[head::Z..HEAD16].iter().any(|&b| b != 0) {
         return Err("a format 16 tape with a 16z tape's fields".into());
     }
@@ -580,10 +598,137 @@ pub enum Written {
     F16Z(Tape16Z),
 }
 
-/// What a writer's `finish` gives: the tape, and its presence beside it (decision 0434 §4).
+/// A stored format 16 or 16z tape's presence, read in place in its stored bytes (`buf`, its home as stored: the tape,
+/// then its presence) by the tape's read (`tape_has_kind`), through its view's `presence` (no other read of the tape
+/// is asked here). What a planner asks of a tape it has not loaded.
+pub struct StoredPresence<'a> {
+    buf: &'a [u8],
+    view: TapeView,
+}
+
+impl<'a> StoredPresence<'a> {
+    /// The presence `buf` holds after its tape, checked to fill it, of `lang`'s kinds and fields; `None` where it holds
+    /// none (format 15, or a tape stored without one) or is no format 16 or 16z tape's home.
+    pub fn of(buf: &'a [u8], lang: &Lang) -> Option<Self> {
+        let p = header(buf).ok()?;
+        let end = if buf.starts_with(MAGIC16) {
+            p.end
+        } else if buf.starts_with(MAGIC16Z) {
+            u32_at(buf, head::Z + 4 * ZEND) as usize
+        } else {
+            return None;
+        };
+        if end > buf.len() {
+            return None;
+        }
+        let at = presence::find(buf, end, p.block_count()).ok().filter(|&at| at != 0)?;
+        presence::of_lang(Some(&buf[at..]), lang).ok()?;
+        Some(StoredPresence { buf, view: TapeView { presence: u32::try_from(at).ok()?, ..Default::default() } })
+    }
+    /// `Tape::has_kind`: block `block` (`u32::MAX`: the document) may have a node of kind `kind`.
+    pub fn has_kind(&self, block: u32, kind: u16) -> bool {
+        reads::tape_has_kind(self.buf, &self.view, block, u32::from(kind)) != 0
+    }
+}
+
+/// What a writer's `finish` gives: the tape, its presence laid in its home after it (decision 0434 §4, step 6).
 pub struct Finished {
     pub tape: Written,
-    pub presence: Presence,
+}
+
+impl Written {
+    /// Its home's bytes: the tape, then its presence.
+    pub fn extent(&self) -> &[u8] {
+        match self {
+            Written::F16(t) => t.extent(),
+            Written::F16Z(t) => t.extent(),
+        }
+    }
+    /// Its presence's bytes in its home, if it has one.
+    pub fn presence_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Written::F16(t) => t.presence_bytes(),
+            Written::F16Z(t) => t.presence_bytes(),
+        }
+    }
+    /// Its presence, read out of its home: a test's oracle (the engine reads it in place, `tape_has_kind`).
+    #[cfg(any(test, feature = "reference"))]
+    pub fn presence(&self) -> Presence {
+        self.presence_bytes().map(presence::read).unwrap_or_default()
+    }
+}
+
+/// A tape's presence in its home (decision 0434 §4, step 6): after the tape, at its end rounded up to 8 bytes, a
+/// header of four u32s (its kinds' words, its fields' words, its presences, 0), then the document's words (kinds',
+/// then fields') and each block's after them. Not the tape's layout: the tape's reads never reach it, and its stored
+/// bytes (`as_bytes`) end before it. Read in place by `tape_has_kind` (decision 0310), on the host and the device.
+pub mod presence {
+    use super::{Presence, u32_at};
+
+    /// The header's bytes.
+    pub const HEAD: usize = 16;
+
+    /// Where a tape `end` bytes long lays its presence.
+    pub fn at(end: usize) -> usize {
+        end.next_multiple_of(8)
+    }
+
+    /// `p`'s bytes, laid after the tape in `out` (`out.len()` its end): the writer's last write, from what it
+    /// accumulated.
+    pub fn lay(out: &mut Vec<u8>, p: &Presence) {
+        let words = p.kind_words + p.field_words;
+        let count = 1 + if words == 0 { 0 } else { p.blocks.len() / words };
+        lay_words(out, (p.kind_words, p.field_words), count, &mut p.doc.iter().chain(&p.blocks).copied());
+    }
+
+    /// `count` presences of these words (`kind_words`, `field_words`) each, laid after the tape in `out`.
+    pub fn lay_words(out: &mut Vec<u8>, (kind_words, field_words): (usize, usize), count: usize, words: &mut dyn Iterator<Item = u64>) {
+        out.resize(at(out.len()), 0);
+        for v in [kind_words, field_words, count, 0] {
+            out.extend_from_slice(&(v as u32).to_le_bytes());
+        }
+        for w in words.take((kind_words + field_words) * count) {
+            out.extend_from_slice(&w.to_le_bytes());
+        }
+    }
+
+    /// Where the presence in the home `buf` of a tape `end` bytes long and of `blocks` blocks lies, checked to fill
+    /// the home past the tape: 0 where the home holds the tape alone. One presence, the document's, or one more than
+    /// the blocks.
+    pub(super) fn find(buf: &[u8], end: usize, blocks: usize) -> Result<usize, String> {
+        if buf.len() == end {
+            return Ok(0);
+        }
+        let at = at(end);
+        let bad = || "a tape's presence does not fit its home".to_owned();
+        if buf.len() < at + HEAD || buf[end..at].iter().any(|&b| b != 0) {
+            return Err(bad());
+        }
+        let w = |k: usize| u32_at(buf, at + 4 * k) as usize;
+        let (words, count) = (w(0) + w(1), w(2));
+        if words == 0 || w(3) != 0 || (count != 1 && count != 1 + blocks) || buf.len() - at - HEAD != 8 * words * count {
+            return Err(bad());
+        }
+        Ok(at)
+    }
+
+    /// The presence `bytes` (`find`'s) holds `lang`'s kinds' and fields' words (`Lang::presence_words`).
+    pub(super) fn of_lang(bytes: Option<&[u8]>, lang: &super::Lang) -> Result<(), String> {
+        match bytes {
+            Some(b) if (u32_at(b, 0) as usize, u32_at(b, 4) as usize) != lang.presence_words() => Err("a tape's presence of another language's kinds and fields".into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// The presence `bytes` (`find`'s) as a `Presence`: a test's oracle.
+    #[cfg(any(test, feature = "reference"))]
+    pub fn read(bytes: &[u8]) -> Presence {
+        let w = |k: usize| u32_at(bytes, 4 * k) as usize;
+        let word = |k: usize| u64::from_le_bytes(bytes[HEAD + 8 * k..HEAD + 8 * k + 8].try_into().expect("8 bytes"));
+        let (kind_words, field_words, count) = (w(0), w(1), w(2));
+        let words = kind_words + field_words;
+        Presence { kind_words, field_words, doc: (0..words).map(word).collect(), blocks: (words..words * count).map(word).collect() }
+    }
 }
 
 /// The kinds and fields a tape's nodes have, as bitmaps over its language's kinds and fields (`Lang::presence_words`):
@@ -878,6 +1023,10 @@ impl Tape for F16<'_> {
     fn len(&self) -> usize {
         self.view.nodes as usize
     }
+    /// By the tape's presence in its home (`tape_has_kind`, the kernels' read).
+    fn has_kind(&self, block: u32, kind: u16) -> bool {
+        reads::tape_has_kind(self.bytes, &self.view, block, u32::from(kind)) != 0
+    }
     #[inline(always)]
     fn table(&self) -> &CodeTable {
         &self.lang.table
@@ -1004,8 +1153,17 @@ impl Tape16Z {
     pub fn tag(&self) -> u8 {
         self.buf[head::LANGUAGE]
     }
+    /// The tape as stored, without its presence.
     pub fn as_bytes(&self) -> &[u8] {
+        &self.buf[..self.zat[ZEND]]
+    }
+    /// Its home's bytes: the tape, then its presence where it has one (as `Tape16::extent`).
+    pub fn extent(&self) -> &[u8] {
         &self.buf
+    }
+    /// Its presence's bytes in its home, if it has one.
+    pub fn presence_bytes(&self) -> Option<&[u8]> {
+        (self.p.presence != 0).then(|| &self.buf[self.p.presence..])
     }
     /// Where its bytes are.
     pub fn home(&self) -> &crate::home::Home {
@@ -1038,10 +1196,13 @@ impl Tape16Z {
             || zat[ZLENS] != zat[ZSTARTS] + 4 * pieces
             || zat[ZKINDS] != zat[ZLENS] + 4 * pieces
             || zat[ZEND] != zat[ZKINDS] + pieces
-            || zat[ZEND] != buf.len()
+            || zat[ZEND] > buf.len()
         {
             return Err(bad());
         }
+        // Its presence, after it in its home, where it has one.
+        let mut p = p;
+        p.presence = presence::find(&buf, zat[ZEND], count)?;
         fits(&p, &buf, std::array::from_fn(|k| at_parts + 4 * k * (count + 1)))?;
         let source_len = u64_at(&buf, head::SOURCE_LEN)?;
         check_lines(&buf[zat[ZLINES]..zat[ZLINES] + lines], &p, source_len)?;
@@ -1237,6 +1398,7 @@ impl Tape16Z {
         if self.mark != lang.revision || self.p.widths != lang.widths {
             return Err(format!("a tape of revision {} (widths {:?}), read with revision {} ({:?})", self.mark, self.p.widths, lang.revision, lang.widths));
         }
+        presence::of_lang(self.presence_bytes(), lang)?;
         Ok(F16Z { t: self, lang })
     }
 }
@@ -1334,6 +1496,11 @@ impl Tape for F16Z<'_> {
     #[inline(always)]
     fn len(&self) -> usize {
         self.t.p.n
+    }
+    /// The presence lies in the 16z tape's home, read where it lies through the tape's own view (`tape_has_kind`).
+    fn has_kind(&self, block: u32, kind: u16) -> bool {
+        let view = self.t.view(self.lang).expect("a 16z tape's view: its reader's language is its own");
+        reads::tape_has_kind(&self.t.buf, &view, block, u32::from(kind)) != 0
     }
     #[inline(always)]
     fn table(&self) -> &CodeTable {
@@ -1461,7 +1628,7 @@ mod tests {
             z.decode_block_into(b, &mut by_block, &mut scratch).unwrap();
         }
         assert_eq!(by_block, plain.as_bytes(), "16z's blocks decode in place");
-        let p = placement(plain.as_bytes()).unwrap();
+        let p = placement(plain.extent()).unwrap();
         assert_eq!(p, plain.p, "the placement is the reader's");
         compact(&p);
         lines_answer(&plain.reader(lang).unwrap(), &source);
@@ -1619,7 +1786,7 @@ mod tests {
         // The same tape in fixed blocks: every read decodes the block it falls in.
         let z = Tape16Z::from_bytes(t.blocks().as_bytes().to_vec()).unwrap();
         assert!(z.len() > 6 * Z, "several blocks");
-        assert_eq!(Tape16::from_bytes(t.as_bytes().to_vec()).unwrap(), t);
+        assert_eq!(Tape16::from_bytes(t.extent().to_vec()).unwrap(), t);
         same(&plain, &z.reader(&lang).unwrap(), &number);
         let mut c = Vec::new();
         z.reader(&lang).unwrap().match_groups(&set, |base, m| c.push((base, m)));
@@ -2085,7 +2252,7 @@ mod tests {
             let room = w.buffer(rerail_clif::writer::part::OUT);
             let (room, cap) = (room.as_ptr(), room.len());
             let f = w.finish().unwrap();
-            match f.tape {
+            match &f.tape {
                 Written::F16(t) => {
                     assert_eq!(t.as_bytes(), want.as_bytes(), "16 by the ops");
                     // A tape within the room the nodes' hint made is the room; one whose side lists outgrow it
@@ -2102,7 +2269,7 @@ mod tests {
                     assert_eq!(d, want.as_bytes(), "16z by the ops (commit every {every})");
                 }
             }
-            let p = &f.presence;
+            let p = &f.tape.presence();
             let mut doc = vec![0u64; p.kind_words + p.field_words];
             for b in 0..nodes.len().div_ceil(Z) {
                 let mut want = vec![0u64; p.kind_words + p.field_words];
@@ -2119,6 +2286,20 @@ mod tests {
             }
             assert_eq!(p.doc, doc, "the document's presence");
             assert!(p.has_kind(299) && !p.has_kind(300) && p.has_field(6), "its bits");
+            // The tape's read (`tape_has_kind`, the kernels' too) answers each block's and the document's, where it lies.
+            let has = |b: u32, kind: u16| match &f.tape {
+                Written::F16(t) => t.reader(&lang).unwrap().has_kind(b, kind),
+                Written::F16Z(t) => t.reader(&lang).unwrap().has_kind(b, kind),
+            };
+            let blocks = nodes.len().div_ceil(Z) as u32;
+            for kind in (0..320u16).chain([400, 2000]) {
+                for b in 0..blocks {
+                    let want = p.block(b as usize).is_some_and(|(kinds, _)| kinds.get(usize::from(kind) / 64).is_some_and(|w| w >> (kind % 64) & 1 != 0));
+                    assert_eq!(has(b, kind), want, "block {b}, kind {kind} (16z {z})");
+                }
+                assert_eq!(has(u32::MAX, kind), p.has_kind(kind) && usize::from(kind) < 64 * p.kind_words, "the document, kind {kind}");
+                assert_eq!(has(blocks, kind), has(u32::MAX, kind), "past the last block: the document's");
+            }
         }
         assert_eq!(in_place, 0, "the escaped tape's side lists outgrow the hint's room");
         // A tape of few escapes (its side lists within the hint's `nodes / 2` bytes) is the writer's own room (R4).
@@ -2413,7 +2594,7 @@ mod tests {
                             }
                             _ => panic!("{what}: the formats"),
                         }
-                        assert_eq!(c.presence, r.presence, "{what}: the presence");
+                        assert_eq!(c.tape.presence_bytes(), r.tape.presence_bytes(), "{what}: the presence");
                     }
                     (Err(_), Err(_)) => assert!(nodes.is_empty(), "{what}: both failed"),
                     (r, c) => panic!("{what}: the reference {:?}, the ops {:?}", r.map(|_| ()), c.map(|_| ())),

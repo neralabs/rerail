@@ -384,101 +384,19 @@ pub struct TapeImage {
     /// The source's SHA-256 where the image was encoded from it; not stored (v12), so `None` for
     /// an image read from bytes, whose store pairs it with its source.
     pub source_digest: Option<[u8; 32]>,
-    /// The kinds and fields the tape's nodes have, the document's and each block's (decision 0434 §4): what a planner
-    /// reads to leave out a clause the document cannot hold a root of. The writer's where a format 16 writer made the
-    /// image, the store's kept one where it was read from the store (0434 step 6, part 3); `None` for format 15, or a
-    /// stored tape the store keeps none for.
-    pub presence: Option<TapePresence>,
+}
+
+/// A stored tape's presence, read in place in its stored bytes (`f16::StoredPresence`).
+pub use rerail_tape_format::f16::StoredPresence;
+
+/// The presence the stored bytes `bytes` of a tape of tape tag `tag` hold after the tape, read in place; `None` where
+/// they hold none.
+pub fn stored_presence(bytes: &[u8], tag: u8) -> Option<StoredPresence<'_>> {
+    StoredPresence::of(bytes, rerail_tape_format::f16::lang(tag)?)
 }
 
 /// Nodes a block's presence covers (`f16::PART`): block `b` is nodes `PRESENCE_BLOCK * b ..`.
 pub const PRESENCE_BLOCK: usize = rerail_tape_format::f16::PART;
-
-/// A format 16 tape's presence (decision 0434 §4): as the writer made it, or as the store keeps it, read in place.
-#[derive(Clone)]
-pub enum TapePresence {
-    Made(Arc<rerail_tape_format::f16::Presence>),
-    Kept(KeptPresence),
-}
-
-impl TapePresence {
-    /// Whether the document has a node of kind `kind`.
-    pub fn has_kind(&self, kind: u16) -> bool {
-        match self {
-            TapePresence::Made(p) => p.has_kind(kind),
-            TapePresence::Kept(k) => k.word(usize::from(kind) / 64, k.kind_words).is_some_and(|w| w >> (kind % 64) & 1 != 0),
-        }
-    }
-
-    /// Whether block `b` (its nodes `1024 b ..`) has a node of kind `kind`; `None` where no block's presence is held.
-    pub fn block_has_kind(&self, b: usize, kind: u16) -> Option<bool> {
-        let k = usize::from(kind);
-        match self {
-            TapePresence::Made(p) => {
-                let (kinds, _) = p.block(b)?;
-                Some(kinds.get(k / 64).is_some_and(|w| w >> (k % 64) & 1 != 0))
-            }
-            TapePresence::Kept(p) => {
-                let w = p.kind_words + p.field_words;
-                if k / 64 >= p.kind_words {
-                    return Some(false);
-                }
-                // The document's words come first, then each block's.
-                Some(p.at(w * (b + 1) + k / 64)? >> (k % 64) & 1 != 0)
-            }
-        }
-    }
-}
-
-/// A tape's presence in the store's kept file (`content_store::kept_facts::presence`): its words, the document's and
-/// then each block's, are the rows of one column of its entry, read where they lie by position. It holds the space's
-/// mapped files, so the rows stay where they are while it lives.
-#[derive(Clone)]
-pub struct KeptPresence {
-    _space: Arc<crate::content_store::kept_facts::KeptSpace>,
-    rows: std::ptr::NonNull<crate::content_store::kept_facts::presence::Packed>,
-    kind_words: usize,
-    field_words: usize,
-}
-
-// SAFETY: `rows` points into one of `space`'s files, mapped read-only and frozen; `space` keeps them mapped while this
-// lives, and nothing writes them.
-unsafe impl Send for KeptPresence {}
-unsafe impl Sync for KeptPresence {}
-
-impl KeptPresence {
-    /// The presence the store keeps for the tape queued under `tape` (its write-back key), of the language of tape tag
-    /// `tag`, in the presence space `space` (`kept_facts::presence`); `None` when it keeps none, or one of another
-    /// shape.
-    pub fn find(space: &Arc<crate::content_store::kept_facts::KeptSpace>, tape: &crate::content_store::write_back::Key, tag: u8) -> Option<KeptPresence> {
-        let lang = rerail_tape_format::f16::lang(tag)?;
-        let rows = crate::content_store::kept_facts::presence::find(space, tape)?;
-        let (kind_words, field_words) = lang.presence_words();
-        let words = kind_words + field_words;
-        // The document's words, then whole blocks' (`f16::Presence`): another shape is another layout's, not this.
-        if rows.arity != 1 || rows.len() < words || (words > 0 && rows.len() % words != 0) {
-            return None;
-        }
-        Some(KeptPresence { _space: Arc::clone(space), rows: std::ptr::NonNull::from(rows), kind_words, field_words })
-    }
-
-    /// Word `i` of the document's kinds (`below` = `kind_words`) or fields, read in place.
-    fn word(&self, i: usize, below: usize) -> Option<u64> {
-        (i < below).then(|| self.at(i)).flatten()
-    }
-
-    /// Row `i`'s word, read in place; `None` past the rows.
-    fn at(&self, i: usize) -> Option<u64> {
-        // SAFETY: see the type's `Send`: the rows lie in `space`'s mapped files.
-        let rows = unsafe { self.rows.as_ref() };
-        (i < rows.len()).then(|| rows.get(i, 0) as u64)
-    }
-
-    /// The words a document's presence, and each block's, has.
-    pub fn words(&self) -> (usize, usize) {
-        (self.kind_words, self.field_words)
-    }
-}
 
 /// A tape as held, in one format.
 #[derive(Clone)]
@@ -1300,8 +1218,8 @@ impl TapeImage {
                 let code_bytes = c.codes.iter().map(Code::stored_len).sum::<usize>();
                 HEADER_BYTES + c.columns_bytes().len() + code_bytes + alias_bytes
             }
-            Held::F16(t) => t.as_bytes().len(),
-            Held::F16Z(t) => t.as_bytes().len(),
+            Held::F16(t) => t.extent().len(),
+            Held::F16Z(t) => t.extent().len(),
         }
     }
 
@@ -1309,14 +1227,24 @@ impl TapeImage {
     fn emit(&self, put: &mut dyn FnMut(&[u8])) -> Result<(), String> {
         match &self.held {
             Held::F15(c) => self.emit15(c, put),
+            // The tape's home: the tape, and its presence after it (decision 0434 §4, step 6), stored and placed as one.
             Held::F16(t) => {
-                put(t.as_bytes());
+                put(t.extent());
                 Ok(())
             }
             Held::F16Z(t) => {
-                put(t.as_bytes());
+                put(t.extent());
                 Ok(())
             }
+        }
+    }
+
+    /// Whether the tape's home holds its presence (decision 0434 §4, step 6).
+    pub fn has_presence(&self) -> bool {
+        match &self.held {
+            Held::F15(_) => false,
+            Held::F16(t) => t.presence_bytes().is_some(),
+            Held::F16Z(t) => t.presence_bytes().is_some(),
         }
     }
 
@@ -1396,7 +1324,7 @@ impl TapeImage {
             Held::F16Z(t) => t.source_len(),
             Held::F15(_) => unreachable!(),
         };
-        let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None, presence: None };
+        let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None };
         if image.node_count() == 0 {
             return Err("an empty tape".into());
         }
@@ -1406,7 +1334,7 @@ impl TapeImage {
     /// An image of format 15's columns (code, size, base, off, tail), laid out in one buffer.
     fn of15(columns: [&[u8]; 5], widths: [u8; 3], codes: Vec<Code>, kind_aliases: Vec<(String, bool)>, language: GrammarDialect, source_len: usize, source_digest: Option<[u8; 32]>) -> Self {
         let (bytes, at) = Columns15::laid(columns);
-        Self { held: Held::F15(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest, presence: None }
+        Self { held: Held::F15(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
     }
 
     /// The tape as held.
@@ -1573,7 +1501,7 @@ impl TapeImage {
                 start = padded(start + column.len());
             }
             let c = Columns15 { bytes: home.clone(), base: columns_at, at, widths, codes, kind_aliases, table: Default::default() };
-            return Ok(Self { held: Held::F15(c), language, source_len, source_digest: None, presence: None });
+            return Ok(Self { held: Held::F15(c), language, source_len, source_digest: None });
         }
         Ok(Self::of15(columns, widths, codes, kind_aliases, language, source_len, None))
     }
@@ -2881,14 +2809,20 @@ impl TapeDoc {
     /// 0434 §4), read before any node is: `false` only where the writer saw no node of that kind. An error node's
     /// kind is `ERROR_SYMBOL`, which no presence holds, so it is always possible.
     pub fn may_have_kind(&self, kind: u16) -> bool {
-        kind == ERROR_SYMBOL || self.image.presence.as_ref().is_none_or(|p| p.has_kind(kind))
+        use rerail_tape_format::tape::Tape;
+        kind == ERROR_SYMBOL || rerail_tape_format::with_tape!(self.tape(), |t| t.has_kind(u32::MAX, kind))
     }
 
     /// Whether block `b` (nodes `PRESENCE_BLOCK * b ..`) may hold a node of kind `kind`: as `may_have_kind`, by the
-    /// block's presence where it is held, else the document's.
+    /// block's presence where the tape holds it, else the document's (the same read as the kernels', `tape_has_kind`).
     pub fn block_may_have_kind(&self, b: usize, kind: u16) -> bool {
-        kind == ERROR_SYMBOL
-            || self.image.presence.as_ref().is_none_or(|p| p.block_has_kind(b, kind).unwrap_or_else(|| p.has_kind(kind)))
+        use rerail_tape_format::tape::Tape;
+        kind == ERROR_SYMBOL || rerail_tape_format::with_tape!(self.tape(), |t| t.has_kind(u32::try_from(b).unwrap_or(u32::MAX - 1), kind))
+    }
+
+    /// Whether the tape's home holds its presence (decision 0434 §4, step 6): a format 16 or 16z writer's.
+    pub fn has_presence(&self) -> bool {
+        self.image.has_presence()
     }
 
     fn node_is_named(&self, node: u32) -> bool {

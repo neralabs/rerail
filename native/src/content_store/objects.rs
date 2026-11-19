@@ -1414,6 +1414,16 @@ pub struct TapeFrame {
 }
 
 impl TapeFrame {
+    /// The tape's stored bytes where the frame holds them as they are (a segment's range, or a plain frame), read in
+    /// place: `None` for a compressed frame, which only a decompression reads.
+    pub fn in_place(&self) -> Option<&[u8]> {
+        match &self.frame {
+            ObjectFrame::Raw(b) => Some(b.bytes()),
+            ObjectFrame::Plain(f) => Some(f),
+            ObjectFrame::Zstd(_) => None,
+        }
+    }
+
     /// The tape's bytes: decompressed, or read in place.
     pub fn bytes(&self) -> StoreResult<super::ObjectBytes> {
         // The frame may name a language's dictionary (RER-131's `compression`), which `decompress` reads.

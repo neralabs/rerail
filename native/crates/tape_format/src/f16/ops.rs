@@ -3,7 +3,7 @@
 //! op the host reserves what the op can need, as a `Vec` reserves before a push, so an op never finds a part full:
 //! a full part is the device's failure, whose document is parsed again on the host.
 
-use super::{Finished, K, Lang, Presence, Tape16, Tape16Z, Written, Z, before, bytes_for, mask, stride_of};
+use super::{Finished, K, Lang, Tape16, Tape16Z, Written, Z, before, bytes_for, mask, stride_of};
 use crate::generated_writer as ops;
 use rerail_clif::writer::{self as w, LAID_AT, OPEN, Part, SIDE_AREA, State, TABLE, part};
 
@@ -135,8 +135,9 @@ impl Writer {
             kinds.len() + 8,
             64 * OPEN as usize,
             // 16: the tape is this part (R4): its blocks, then the tail's room at `finish` (the side lists' usual share,
-            // their part starts, the newline index), so a tape within the hint is not moved.
-            if z { w::HEAD16 as usize + ZBLOCK_MAX + 64 } else { w::HEAD16 as usize + count * stride + 8 + nodes / 2 + 16 * (count + 1) + lines.len() + 9 * 4 * count + 64 + 8 },
+            // their part starts, the newline index) and the presence's after it, so a tape within the hint is not
+            // moved.
+            if z { w::HEAD16 as usize + ZBLOCK_MAX + 64 } else { w::HEAD16 as usize + count * stride + 8 + nodes / 2 + 16 * (count + 1) + lines.len() + 9 * 4 * count + 64 + 8 + 8 + super::presence::HEAD + words * (1 + if blocks { count } else { 0 }) },
             count * TABLE as usize,
             2 * SIDE_AREA as usize,
             64,
@@ -440,6 +441,9 @@ impl Writer {
                 };
                 blocks_end + laid + 16 * (count + 1) + lines + 8 * 6 + 8
             };
+            // And the presence's, laid after the tape (`finished`), so the tape stays where it is (R4).
+            let (kw, fw) = self.presence_words;
+            let need = need + 8 + super::presence::HEAD + 8 * (kw + fw) * (1 + if self.keep_blocks { count } else { 0 });
             self.reserve(part::OUT, need);
             let desc = self.desc();
             // SAFETY: as `open`'s.
@@ -452,17 +456,14 @@ impl Writer {
     }
 }
 
-/// A finished writer's tape (`out`, its OUT part at its length) and its presence, from its PRESENCE part: a
-/// presence a block where `blocks` counts them.
-fn finished(out: Vec<u8>, presence: &[u8], (kind_words, field_words): (usize, usize), blocks: Option<usize>, z: bool) -> Result<Finished, String> {
-    let words = kind_words + field_words;
-    // The presence leaves the writer as the store keeps it, words in a `Vec` (`Presence`).
+/// A finished writer's tape (`out`, its OUT part at its length), with its presence laid after it in its home
+/// (`presence::lay_words`), from its PRESENCE part: the document's, and a presence a block where `blocks` counts them.
+fn finished(mut out: Vec<u8>, presence: &[u8], words: (usize, usize), blocks: Option<usize>, z: bool) -> Result<Finished, String> {
     let word = |k: usize| u64::from_le_bytes(presence[8 * k..8 * k + 8].try_into().expect("8 bytes"));
-    let doc = (0..words).map(word).collect();
-    let blocks = blocks.map_or_else(Vec::new, |count| (words..words * (1 + count)).map(word).collect());
-    let presence = Presence { kind_words, field_words, doc, blocks };
+    let count = 1 + blocks.unwrap_or(0);
+    super::presence::lay_words(&mut out, words, count, &mut (0..(words.0 + words.1) * count).map(word));
     let tape = if z { Written::F16Z(Tape16Z::from_bytes(out)?) } else { Written::F16(Tape16::from_bytes(out)?) };
-    Ok(Finished { tape, presence })
+    Ok(Finished { tape })
 }
 
 

@@ -5458,9 +5458,6 @@ fn run_observed(
     // The same tapes by their text's hash (Q22), for a file the run knows by its digest alone (no memo, or one named
     // by digest in a wave).
     let mut by_text: HashMap<crate::content_store::HashKey, (crate::content_store::SourceId, crate::content_store::TapeFrame)> = HashMap::new();
-    // The store's kept tape presences (decision 0434 step 6, part 3), mapped before the first wave with the tapes: a
-    // tape read from the store is given its presence there, read in place.
-    let mut presences: Option<Arc<crate::content_store::kept_facts::KeptSpace>> = None;
     // The files built with a tape read before the first wave, and those parsed (`Report::file_tapes`).
     let file_tapes = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
     // Files looked up together: stat each, find the entries of those the stat index knows in one statement, read and
@@ -5817,7 +5814,6 @@ fn run_observed(
             }
             let _ = wave_tapes.set(frames.iter().map(|(s, _, f)| (*s, f.clone())).collect());
             by_text = frames.into_iter().map(|(source, hash, frame)| (hash, (source, frame))).collect();
-            presences = cache.kept_space(&crate::content_store::kept_facts::presence::presence_space()).map_err(|e| Error::Plan(e.to_string()))?.map(Arc::new);
         }
     }
     let guest_parses = guests::Parses::default();
@@ -5997,7 +5993,7 @@ fn run_observed(
                     }
                 };
                 if tape.is_some() { &file_tapes.0 } else { &file_tapes.1 }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), presences.as_ref(), true, keep_tapes || references.is_some())
+                core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), true, keep_tapes || references.is_some())
             }
             Some(_) => unreachable!("no tape cache without `tape-cache`"),
             None => core::build_with_tape(&file, keep_tapes || references.is_some()),
