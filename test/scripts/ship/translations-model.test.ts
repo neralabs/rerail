@@ -144,6 +144,14 @@ describe("the gate", () => {
     expect(gateProblems(declaration({}), [same(parse)], ["examples"], pack, { examples: ["adapter-error: boom", "adapter-error: again"] })).toEqual(["on examples, the original's run had 2 failure(s) of no rule; the first: adapter-error: boom"]);
     expect(gateProblems(declaration({ equivalent: false }), [same(parse)], ["examples"], pack, { examples: ["adapter-error: boom"] })).toEqual([]);
   });
+
+  it("fails a listed different rule its original failed on files of for another reason than syntax errors", () => {
+    const diff = ruleResult({ rule: "diff", translation: "diff.rerail", corpora: { examples: { original: [f("x.ts", 1)], translation: [], originalFailures: ["budget-exceeded: spent"] } } });
+    expect(diff.status).toBe("different");
+    const d = declaration({ different: { diff: { reason: "why", right: "translation", counts: { examples: { originalOnly: 1, translationOnly: 0 } } } } });
+    expect(gateProblems(d, [diff], ["examples"], pack)).toEqual(["diff: on examples, the original failed on 1 file(s) for another reason than syntax errors; the first: budget-exceeded: spent"]);
+    expect(gateProblems({ ...d, equivalent: false }, [diff], ["examples"], pack)).toEqual([]);
+  });
 });
 
 describe("the declaration", () => {

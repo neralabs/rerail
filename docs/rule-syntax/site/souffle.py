@@ -683,8 +683,16 @@ def _match(l, bound, force):
     """match/match_all: binds the regex's named groups (and match_all's match columns); needs its subject."""
     args = _split_top(l[2:-1], ",")
     groups = set(re.findall(r"\(\?P?<([A-Za-z_]\w*)>", l[2])) | _match_all_binds(l[0], args)
-    subj = _vars(args[1]) if len(args) > 1 else set()
+    subj = _match_needs(l[0], args)
     return groups, subj, force or subj <= bound
+
+
+def _match_needs(name, args):
+    """What a match needs bound, as rr/check.rs reads it: match_all's subject at the arities that bind columns (3 and
+    5), else every argument after the regex."""
+    if name == "match_all" and len(args) in (3, 5):
+        return _vars(args[1])
+    return set().union(*(_vars(a) for a in args[1:]))
 
 
 def _match_all_binds(name, args):

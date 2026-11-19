@@ -341,13 +341,18 @@ function untranslatedProblems(declaration: Declaration, r: RuleResult): string[]
   return problems;
 }
 
-/**
- * A same rule's disagreements: still listed in `different`, or, gating, the original failed on files of a corpus for
- * another reason than their syntax errors, so the rule's findings there were not compared.
- */
+/** A same rule's disagreement: still listed in `different`. */
 function sameProblems(declaration: Declaration, r: RuleResult): string[] {
-  const problems = declaration.different[r.rule] === undefined ? [] : [`${r.rule}: reports the same findings as its original now; remove it from different`];
-  if (!declaration.equivalent) return problems;
+  return declaration.different[r.rule] === undefined ? [] : [`${r.rule}: reports the same findings as its original now; remove it from different`];
+}
+
+/**
+ * A translated rule's original, in a gating pack, failed on files of a corpus for another reason than their syntax
+ * errors, so the rule's findings there were not compared: whether its findings are the same or listed as different.
+ */
+function originalFailureProblems(declaration: Declaration, r: RuleResult): string[] {
+  if (!declaration.equivalent) return [];
+  const problems: string[] = [];
   for (const [corpus, c] of Object.entries(r.corpora)) {
     const other = c.originalFailures?.other;
     if (other !== undefined) problems.push(`${r.rule}: on ${corpus}, the original failed on ${other.count} file(s) for another reason than syntax errors; the first: ${other.first.slice(0, 200)}`);
@@ -386,10 +391,14 @@ function differentProblems(declaration: Declaration, r: RuleResult, ran: readonl
   return [...(declaration.equivalent ? unexplained(r.rule, listed, ran) : []), ...changedCounts(r.rule, listed, counts, ran)];
 }
 
-/** A translated rule's disagreements: still listed in `untranslated`, then those of a same or a different rule. */
+/**
+ * A translated rule's disagreements: still listed in `untranslated`, then those of a same or a different rule, then
+ * its original's failures on files.
+ */
 function translatedProblems(declaration: Declaration, r: RuleResult, ran: readonly string[]): string[] {
   const problems = declaration.untranslated[r.rule] === undefined ? [] : [`${r.rule}: is translated now; remove it from untranslated`];
   problems.push(...(r.status === "same" ? sameProblems(declaration, r) : differentProblems(declaration, r, ran)));
+  problems.push(...originalFailureProblems(declaration, r));
   return problems;
 }
 
