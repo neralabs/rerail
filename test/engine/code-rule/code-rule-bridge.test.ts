@@ -1878,6 +1878,42 @@ describe("CodeRuleBridge", () => {
     ]);
   });
 
+  // A command writes a file the session has not seen, held as the walk at its result opens it, while an edit tool call
+  // on the file is pending: the session holds no observation of the file, but the walk keeps the command's call for it.
+  // The next walk cannot list the file's folder, so it finds no source of the file; the walk after it lists the folder
+  // and misses the file again. The walk that reads the file takes the command's write as the session's, by its stamp.
+  it("checks the write of a command to a file an edit tool call was pending on, though a walk could not list its folder and the next missed it", async () => {
+    const root = await workspace();
+    const folder = join(root, "src");
+    const path = join(folder, "a.py");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    const answered = vi.spyOn(ToolCallWindows.prototype, "answered");
+    onTestFinished(() => answered.mockRestore());
+
+    await bridge.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await writeFile(path, "x = 1\n");
+    heldFromReads(path, 20);
+    // The edit tool call begins after the write's stamp: only the command ran when the file was written.
+    await awaitClockAfter(path);
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await bridge.finish("shell-1");
+    await bridge.finish("write-1");
+    discovery.directories.set(folder, [async () => { throw new Error(`EMFILE: too many open files, opendir '${folder}'`); }]);
+    for (const id of ["shell-2", "shell-3"]) {
+      await bridge.begin(id, "Bash", { command: "ls" });
+      await bridge.finish(id);
+    }
+    discovery.opens.delete(path);
+    await bridge.begin("shell-4", "Bash", { command: "ls" });
+    await bridge.finish("shell-4");
+    expect(readEdits(auditGeneratedEdits)).toEqual([{ mode: undefined, path: "src/a.py", generatedText: "x = 1\n" }]);
+    // The walk that could not list the folder answers for no call; the one after it keeps shell-1's for the file.
+    expect(answered.mock.calls).toEqual([[1, [{ after: 0, through: 1 }]], [4, [{ after: 0, through: 4 }]], [5, []]]);
+  });
+
   // An edit tool's result could not read the file it wrote, nor could the walk after it: the next walk that reads the
   // file takes the write as the session's, by its stamp, and checks it.
   it("checks an edit tool's write that neither its result nor the walk after it could read at the next walk, as the session's", async () => {
