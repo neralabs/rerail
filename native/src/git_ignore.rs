@@ -210,16 +210,24 @@ impl IndexFile {
 }
 
 /// What tells one index file from another and from itself rewritten: the file's identity (device
-/// and inode on Unix; volume and file id on Windows, as the tree watch reads a folder's), which
-/// every write of Git's changes, and its modification time and size, which a write in place
-/// changes. The change time is left out: only a write in place that keeps the size and sets the
-/// time back would need it, and Git never writes the index in place.
+/// and inode on Unix; volume serial and file index on Windows), which every write of Git's
+/// changes, and its modification time and size, which a write in place changes. All three come
+/// from the one query a stat makes, so a question costs what it cost before. The change time is
+/// left out: only a write in place that keeps the size and sets the time back would need it, and
+/// Git never writes the index in place.
 #[derive(Debug, PartialEq, Eq)]
 struct FileStamp {
-    identity: (u64, u128),
-    modified: Option<std::time::SystemTime>,
+    identity: (u64, u64),
+    modified: FileTime,
     len: u64,
 }
+
+/// A file's modification time as its stat gives it.
+#[cfg(unix)]
+type FileTime = Option<std::time::SystemTime>;
+/// A file's modification time as its stat gives it: the `FILETIME` count of 100 ns.
+#[cfg(windows)]
+type FileTime = u64;
 
 impl FileStamp {
     /// `path`'s stamp; `None` when it is absent or cannot be read.
@@ -228,19 +236,22 @@ impl FileStamp {
         use std::os::unix::fs::MetadataExt;
         let metadata = std::fs::metadata(path).ok()?;
         Some(Self {
-            identity: (metadata.dev(), u128::from(metadata.ino())),
+            identity: (metadata.dev(), metadata.ino()),
             modified: metadata.modified().ok(),
             len: metadata.len(),
         })
     }
 
-    /// `path`'s stamp; `None` when it is absent or cannot be read.
+    /// `path`'s stamp; `None` when it is absent or cannot be read. One open and one query, the
+    /// ones `std::fs::metadata` makes, so a question costs a stat: the 128-bit file id would take
+    /// a second query. The 64-bit index may repeat across folders on ReFS, where the time and size
+    /// still tell a rewrite.
     #[cfg(windows)]
     fn of(path: &Path) -> Option<Self> {
         use std::os::windows::fs::OpenOptionsExt;
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::Storage::FileSystem::{
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+            BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, GetFileInformationByHandle,
         };
         // No access, as `std::fs::metadata` opens it, and every share mode: Git may rename meanwhile.
         let file = std::fs::OpenOptions::new()
@@ -248,24 +259,22 @@ impl FileStamp {
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
             .open(path)
             .ok()?;
-        let metadata = file.metadata().ok()?;
-        let mut info = FILE_ID_INFO::default();
-        // SAFETY: an open handle and a buffer of the size passed.
-        let identified = unsafe {
-            GetFileInformationByHandleEx(
-                file.as_raw_handle(),
-                FileIdInfo,
-                (&raw mut info).cast(),
-                size_of::<FILE_ID_INFO>() as u32,
-            )
-        } != 0;
-        identified.then(|| Self {
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        // SAFETY: an open handle and a buffer of the type the call fills.
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) } == 0 {
+            return None;
+        }
+        let join = |high: u32, low: u32| (u64::from(high) << 32) | u64::from(low);
+        Some(Self {
             identity: (
-                info.VolumeSerialNumber,
-                u128::from_le_bytes(info.FileId.Identifier),
+                u64::from(info.dwVolumeSerialNumber),
+                join(info.nFileIndexHigh, info.nFileIndexLow),
             ),
-            modified: metadata.modified().ok(),
-            len: metadata.len(),
+            modified: join(
+                info.ftLastWriteTime.dwHighDateTime,
+                info.ftLastWriteTime.dwLowDateTime,
+            ),
+            len: join(info.nFileSizeHigh, info.nFileSizeLow),
         })
     }
 }
