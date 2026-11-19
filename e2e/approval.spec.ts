@@ -36,9 +36,11 @@ test("rules your coding agent added wait for approval: Overview sends you to the
   // its page.
   await expect(yours(page)).toContainText("Your coding agent added 3 rules. They’re on Log only until you approve them.");
   await expect(banner(page)).toContainText("1 rule waits for approval");
-  for (const id of [LIBRARY_RULE, ...MORE_LIBRARY_RULES]) {
+  // A rule that would steer is held in Log by the approval; one written as Log runs in Log by its own default.
+  for (const id of [LIBRARY_RULE, "storefront-no-inner-html"]) {
     expect(await modeOf(rerail, id)).toEqual({ mode: "log", by: "awaiting-approval", approved: false });
   }
+  expect(await modeOf(rerail, "storefront-no-default-export")).toEqual({ mode: "log", by: "rule-default", approved: false });
 
   // Its one button goes to Created by you, where each rule is read and approved on its sheet.
   await yours(page).locator('[data-act="nav"][data-i="created"]').click();
