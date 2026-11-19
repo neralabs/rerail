@@ -68,13 +68,15 @@ sfu_reads_param(t, f) :- param(f, x, _), x != "self", x != "cls", look(n, x, f),
 // yields in `with transaction.atomic()`).
 .decl sfu_in_atomic(n: node)
 sfu_in_atomic(n) :- dj_in_transaction(n).
-sfu_in_atomic(n) :- sfu_atomic_def(f), field(f, "body", b), within_stop(n, b, dj_region_stop).
+sfu_in_atomic(n) :- sfu_atomic_def(f), field(f, "body", b), within(n, b), nearest(n, f, dj_scope_stop).
 sfu_in_atomic(n) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wa, i),
     kind(wa, "with_item"), field(wa, "value", v), (unparen(v, e) ; kind(v, "as_pattern"), child(v, v0, 0), unparen(v0, e)),
-    dj_atomic(e), child(wc, wb, j), i < j, kind(wb, "with_item"), within_stop(n, wb, dj_region_stop).
+    dj_atomic(e), child(wc, wb, j), i < j, kind(wb, "with_item"), within(n, wb),
+    nearest(n, s, dj_scope_stop), within(wb, s).
 sfu_in_atomic(n) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
     kind(wi, "with_item"), field(wi, "value", v), (unparen(v, e) ; kind(v, "as_pattern"), child(v, v0, 0), unparen(v0, e)),
-    kind(e, "call"), sfu_cm_call(e, g), sfu_atomic_cm(g), field(w, "body", b), within_stop(n, b, dj_region_stop).
+    kind(e, "call"), sfu_cm_call(e, g), sfu_atomic_cm(g), field(w, "body", b), within(n, b),
+    nearest(n, s, dj_scope_stop), within(b, s).
 // sfu_atomic_cm(g): def g (a `@contextmanager`) has a `yield` that runs in a transaction.
 .decl sfu_atomic_cm(g: node)
 sfu_atomic_cm(g) :- kind(y, "yield"), sfu_in_atomic(y), nearest(y, g, dj_region_stop), kind(g, "function_definition").
