@@ -355,6 +355,8 @@ by byte). Word ids: 12 `{`, 15 `}`, 16 `[`, 17 `]`, 13 `:`, 14 `,`, 9 to 11 the 
 | `scope_end`: `is_array[depth]` picks the continue state | `PUSH` of the place to go back to (43, 94 or 150), `RETURN` there | yes: a stack of where to continue |
 | `parse_string`: one call reads the string | each part (content, an escape, the closing `"`) goes from the scan's outcome to its place, then a direct `GOTO` back | yes, since step 11 |
 | `parse_string`'s loop only where a string is read | the part scan only in the four string loops (7, 38, 51, 126) | yes, since step 8 |
+| `parse_number`: validates while reading, then the byte after | the edge reads 16 bytes once: the end and the check from them | yes, since step 12 |
+| `parse_true_atom` and the others: the atom's bytes alone | the atom's word test; the number's check decided by the word as tier 2 compiles | yes, since step 12 |
 
 ## Step 7, done: a continue state takes its punctuation by byte, straight to its target
 
@@ -450,6 +452,35 @@ stored `Sel` and `Shift` and went back into its loop through a dispatch on `Sel`
 
 The starts test asserts that every string loop's parts go straight on (`part_onward`).
 Sending the closer to the content's place fails the trees test.
+
+## Step 12, done: a number read once
+
+`parse_number` reads the digits and validates them as it goes. Where they stop, it tests the
+byte after (`is_not_structural_or_whitespace`). Ours read a number's bytes twice:
+- the switch's edge found the end: the run of `wordbyte` scanned 16 bytes from `s + 1`;
+- the check (`check number = …`, a token check, decision 0398) loaded the 16 bytes from `s`
+  again and classified them again.
+
+The atoms are keywords of the number's row, so `true` ran the number's check too. Now:
+- **The edge reads the bytes once** (`fused_check`), where the target's words are the
+  token's `SPAN`s and then its check. The target's check is over the token's bytes alone:
+  none back, no gate.
+  - 16 bytes are loaded at `s`. The check's byte sets and the run's end set (the bytes not in
+    the run's class) are classified together: one nibble split, the tables once, one tree of
+    adds.
+  - The end is the first byte past `s` in the end set. The check runs over the bytes before it.
+  - Passed, the edge goes on past the check's word. Inside a shared run it goes to the body's
+    word, with the place's `Sel` and `Shift`.
+  - A token whose end is past the 16 bytes takes the path as before.
+- **An atom's check is decided as tier 2 compiles** (`check_at`, with `token_value`). A check
+  of no delay reads only the token's bytes, and the edge knows the word. So `true` goes past
+  the number's check, as simdjson tests an atom by its bytes and nothing else.
+- **`token_classes` splits the bytes into nibbles once** for all its tables.
+
+The starts test asserts it: every check over a token's bytes is made where its token is found,
+in the edge (`fused_checks`) or as it compiles (`static_checks`). The trees test gained
+numbers that fail the check, at the file's end and past 16 bytes. Two mutations fail it: the
+fused check never refusing, and the atoms' decision inverted.
 
 ## Order
 

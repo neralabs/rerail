@@ -62,6 +62,25 @@ fn simdjson_forms_starts_are_simdjsons_indexes() {
     // Each part branches once, as `parse_string`'s: the scan's outcome goes straight to the place
     // the switch after would take it to, not back through the token's path and the switch.
     assert_eq!(c.parser.tier2.part_onward, loops, "every string loop's parts go straight on");
+    // A number is read once, as `parse_number` reads it: its check (over the token's bytes
+    // alone) made in the switch's edge that finds its end, from the one read of its bytes.
+    let number_checks: Vec<usize> = (0..native.structural.len())
+        .filter(|&pc| match native.structural[pc].operation {
+            rerail_compiler::native_ir::StructuralOperation::Check { check } => {
+                let lc = &native.local_checks[usize::from(check)];
+                lc.token && lc.back == 0
+            }
+            _ => false,
+        })
+        .collect();
+    assert!(!number_checks.is_empty(), "the numbers' checks");
+    // At a check after a number's run: made there. At one after an atom (a keyword of the row):
+    // decided by the atom's bytes as tier 2 compiles. Every check over a token's bytes is one.
+    let mut either: Vec<usize> = c.parser.tier2.fused_checks.iter().chain(&c.parser.tier2.static_checks).copied().collect();
+    either.sort_unstable();
+    either.dedup();
+    assert_eq!(either, number_checks, "every check of a number's row made where its token is found");
+    assert!(!c.parser.tier2.fused_checks.is_empty() && !c.parser.tier2.static_checks.is_empty(), "both: {:?}, {:?}", c.parser.tier2.fused_checks, c.parser.tier2.static_checks);
     // The loop's state in registers, as simdjson's `src` and `next_structural`: no word of the
     // string loops or the continue states (the `TOKEN`s whose switch takes the `,` and no
     // escape) reads or writes the frame. Their cold calls keep the caller's registers
@@ -159,6 +178,22 @@ fn simdjson_forms_trees_are_14_jsons() {
         br#"{"a":[1}"#.to_vec(),
         br#"[[],{},[1,{"b":[]}]]"#.to_vec(),
         br#"[] x"#.to_vec(),
+        // A number checked in the pass that finds its end (step 12): each value place, good and
+        // bad, at the file's end, and longer than the 16 bytes read at once.
+        br#"[1.]"#.to_vec(),
+        br#"[-]"#.to_vec(),
+        br#"[1e]"#.to_vec(),
+        br#"[1.5e+]"#.to_vec(),
+        br#"[1x,2]"#.to_vec(),
+        br#"[-0.25e-7,0,-0,1E+2]"#.to_vec(),
+        br#"{"a":01}"#.to_vec(),
+        br#"{"a":-1.5E3,"b":2}"#.to_vec(),
+        br#"-12"#.to_vec(),
+        br#"1."#.to_vec(),
+        br#"[123456789012345]"#.to_vec(),
+        br#"[1234567890123456,12345678901234567]"#.to_vec(),
+        br#"[1.234567890123456e+10]"#.to_vec(),
+        br#"[1.23456789012345.6]"#.to_vec(),
     ];
     for pad in [0usize, 1, 61, 62, 63, 64, 65, 127] {
         for n in [0usize, 1, 62, 63, 64, 130] {
@@ -495,6 +530,12 @@ fn json_tier2_by_word() {
                 b = e + 1;
             }
             words += &format!("\t\tend -> {}{}\n", s.end, if s.words.is_empty() { String::new() } else { format!(", words {:?}", s.words) });
+        }
+        // A check: a token's (over its bytes) or at a tier-1 mask's bits, and its ops.
+        if let rerail_compiler::native_ir::StructuralOperation::Check { check } = w.operation {
+            let c = &native.local_checks[usize::from(check)];
+            let at = if c.token { "the token's bytes".to_owned() } else { format!("mask {}", c.mask) };
+            words += &format!("\t\t{at}, delay {}, back {}: {:?}\n", c.delay, c.back, c.ops);
         }
     }
     std::fs::write(format!("{dir}/{name}.words"), words).expect("writes");

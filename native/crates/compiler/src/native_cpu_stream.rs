@@ -280,6 +280,12 @@ pub struct CompiledStream {
     /// Those whose scan takes each outcome (the closer, the content, a part) straight to the
     /// place the switch after takes it to (`Onward`): one branch a part, as `parse_string`'s.
     pub part_onward: Vec<usize>,
+    /// The `CHECK`s a switch's edge makes in the pass that finds the token's end, from the one
+    /// read of its bytes (`fused_check`), as simdjson's `parse_number` validates while reading.
+    pub fused_checks: Vec<usize>,
+    /// The `CHECK`s a switch's edge decides as it compiles, where it takes a known word (an
+    /// atom): the word's bytes, not read again.
+    pub static_checks: Vec<usize>,
     /// The program has `WRAP`: the tape has the frames, chains and preorder columns.
     pub wraps: bool,
     /// The widths the tape is written at (docs/parser-generators/37), and the language's tag.
@@ -1342,7 +1348,7 @@ fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::pro
     let file_left = f.ins().isub(file_left, p);
     let file_left = f.ins().iadd_imm(file_left, i64::from(c.back));
     let back = ended.map(|ended| Back { pre, ended });
-    let v = token_window(f, c, form, &consts, &vectors, Some(is_first), left, file_left, Some((&carried, before)), Some((&fills, cin)), back);
+    let v = token_window(f, c, form, &consts, &vectors, Some(is_first), left, file_left, Some((&carried, before)), Some((&fills, cin)), back, None);
     // The places tested: the frame's, from `delay` on.
     let (ones, one) = (f.ins().iconst(types::I64, -1), f.ins().iconst(types::I64, 1));
     let full = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, frame, 64);
@@ -1385,7 +1391,7 @@ fn token_check_short(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck
     let file_left = f.ins().isub(len, begin);
     let left = f.ins().iadd_imm(n, i64::from(c.back));
     let back = (c.back != 0).then(|| Back { pre, ended: ended.unwrap_or_else(|| f.ins().iconst(types::I64, 0)) });
-    let v = token_window(f, c, form, &consts, &[vector], None, left, file_left, None, None, back);
+    let v = token_window(f, c, form, &consts, &[vector], None, left, file_left, None, None, back, None);
     // Places `back + delay` to `back + n + delay`.
     let one = f.ins().iconst(types::I64, 1);
     let below = f.ins().ishl(one, n);
@@ -1532,13 +1538,18 @@ fn token_classes(f: &mut FunctionBuilder<'_>, form: &crate::rust_stream::WordFor
     let hl = f.func.dfg.constants.insert(cranelift_codegen::ir::ConstantData::from(&lo[..]));
     let hh = f.func.dfg.constants.insert(cranelift_codegen::ir::ConstantData::from(&hi[..]));
     let (tlo, thi) = (f.ins().vconst(types::I8X16, hl), f.ins().vconst(types::I8X16, hh));
-    let t: Vec<Value> = vectors
-        .iter()
-        .map(|&b| {
-            let lo = f.ins().band(b, consts.nibble);
-            let hi = f.ins().ushr_imm(b, 4);
-            let l = f.ins().swizzle(tlo, lo);
-            let h = f.ins().swizzle(thi, hi);
+    // The bytes' nibbles, split once for every table (kept under `NIBBLES`: low, high a vector).
+    const NIBBLES: usize = usize::MAX;
+    if !tables.contains_key(&NIBBLES) {
+        let split: Vec<Value> = vectors.iter().flat_map(|&b| [f.ins().band(b, consts.nibble), f.ins().ushr_imm(b, 4)]).collect();
+        tables.insert(NIBBLES, split);
+    }
+    let split = tables[&NIBBLES].clone();
+    let t: Vec<Value> = split
+        .chunks(2)
+        .map(|n| {
+            let l = f.ins().swizzle(tlo, n[0]);
+            let h = f.ins().swizzle(thi, n[1]);
             f.ins().band(l, h)
         })
         .collect();
@@ -1568,31 +1579,41 @@ fn token_carried(c: &crate::program::LocalCheck) -> Vec<usize> {
 /// (`None`: none). `back`: a check that reads before its token (decision 0428): the window's
 /// places before the file, and the tokens' ends before it (`Back`).
 #[allow(clippy::too_many_arguments)]
-fn token_window(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], first: Option<Value>, left: Value, file_left: Value, before: Option<(&[usize], &[Value])>, cin: Option<(&[usize], &[Value])>, back: Option<Back>) -> Vec<Value> {
+/// On one vector, the masks of a check's byte sets (`Bytes` ops, by op), made together
+/// (`bitmasks16`): one split of the bytes into nibbles, each table once, one tree of adds.
+fn token_sets(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vector: Value, tables: &mut std::collections::HashMap<usize, Vec<Value>>) -> std::collections::HashMap<usize, Value> {
+    use crate::program::LocalOp as L;
+    let sets: Vec<(usize, usize, u8)> = (0..c.ops.len()).filter(|&k| matches!(c.ops[k], L::Bytes(_))).map(|k| (k, form.class_of[&k].0, form.class_of[&k].1)).filter(|&(_, _, bits)| bits != 0).collect();
+    let zero16 = {
+        let z = f.ins().iconst(types::I8, 0);
+        f.ins().splat(types::I8X16, z)
+    };
+    let mut parts = Vec::with_capacity(sets.len());
+    for &(_, ti, bits) in &sets {
+        let cl = token_classes(f, form, consts, &[vector], tables, ti)[0];
+        let b = f.ins().iconst(types::I8, i64::from(bits));
+        let mask = f.ins().splat(types::I8X16, b);
+        let y = f.ins().band(cl, mask);
+        parts.push(f.ins().icmp(IntCC::NotEqual, y, zero16));
+    }
+    let masks = crate::native_cpu_block::bitmasks16(f, &parts, consts.weights);
+    sets.iter().map(|s| s.0).zip(masks).collect()
+}
+
+/// `made_in`: the byte sets' masks (`token_sets`), where the caller made them.
+#[allow(clippy::too_many_arguments)]
+fn token_window(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], first: Option<Value>, left: Value, file_left: Value, before: Option<(&[usize], &[Value])>, cin: Option<(&[usize], &[Value])>, back: Option<Back>, made_in: Option<std::collections::HashMap<usize, Value>>) -> Vec<Value> {
     use crate::program::LocalOp as L;
     // Each table's classes of the window's bytes, made once.
     let mut tables: std::collections::HashMap<usize, Vec<Value>> = std::collections::HashMap::new();
     let zero = f.ins().iconst(types::I64, 0);
     let one = f.ins().iconst(types::I64, 1);
     // On one vector, the byte sets' masks are made together (`bitmasks16`): one tree of adds.
-    let mut made: std::collections::HashMap<usize, Value> = std::collections::HashMap::new();
-    if vectors.len() == 1 {
-        let sets: Vec<(usize, usize, u8)> = (0..c.ops.len()).filter(|&k| matches!(c.ops[k], L::Bytes(_))).map(|k| (k, form.class_of[&k].0, form.class_of[&k].1)).filter(|&(_, _, bits)| bits != 0).collect();
-        let zero16 = {
-            let z = f.ins().iconst(types::I8, 0);
-            f.ins().splat(types::I8X16, z)
-        };
-        let mut parts = Vec::with_capacity(sets.len());
-        for &(_, ti, bits) in &sets {
-            let cl = token_classes(f, form, consts, vectors, &mut tables, ti)[0];
-            let b = f.ins().iconst(types::I8, i64::from(bits));
-            let mask = f.ins().splat(types::I8X16, b);
-            let y = f.ins().band(cl, mask);
-            parts.push(f.ins().icmp(IntCC::NotEqual, y, zero16));
-        }
-        let masks = crate::native_cpu_block::bitmasks16(f, &parts, consts.weights);
-        made = sets.iter().map(|s| s.0).zip(masks).collect();
-    }
+    let made: std::collections::HashMap<usize, Value> = match made_in {
+        Some(m) => m,
+        None if vectors.len() == 1 => token_sets(f, c, form, consts, vectors[0], &mut tables),
+        None => std::collections::HashMap::new(),
+    };
     let mut v: Vec<Value> = Vec::with_capacity(c.ops.len());
     for (k, op) in c.ops.iter().enumerate() {
         let x = match *op {
@@ -4314,6 +4335,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     let mut lowered: Vec<Lowered> = Vec::new();
     let mut all_scans: Vec<usize> = Vec::new();
     let mut all_onward: Vec<usize> = Vec::new();
+    let mut all_fused: Vec<usize> = Vec::new();
+    let mut all_static: Vec<usize> = Vec::new();
     let mut word_insts: Vec<u32> = vec![0; words.len()];
     let phase = std::time::Instant::now();
     let times = std::env::var_os("RERAIL_STREAM_TIMES").is_some();
@@ -4715,6 +4738,64 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                 foreign.borrow_mut().insert(words.len() + b);
             }
             entries[b]
+        };
+        // The token's check a switch's edge can make itself (`fused_check`'s caller): where its
+        // target is a run's, the target's words a token's `SPAN`s then a `CHECK` over the token's
+        // bytes alone (none back, no gate), the run's class a byte set. Its place, the check,
+        // and the bytes not in the class (the run's end).
+        // Place `t`'s words a token's `SPAN`s then a `CHECK` over its bytes alone (none back, no
+        // gate): the check's place and the check.
+        let check_at = |t: usize| -> Option<(usize, crate::program::LocalCheck)> {
+            if flagged || clustered {
+                return None;
+            }
+            let mut q = t;
+            while matches!(words.get(q).map(|w| w.operation), Some(Op::Span { last: true, .. })) {
+                q += 1;
+            }
+            let Some(Op::Check { check }) = words.get(q).map(|w| w.operation) else { return None };
+            let c = native.local_checks.get(usize::from(check))?.clone();
+            if !c.token || c.back != 0 || token_gate(&c).is_some() || c.delay >= 15 || q + 1 >= words.len() {
+                return None;
+            }
+            Some((q, c))
+        };
+        let fused_check = |t: usize, rule: u8, ft: &Fetch| -> Option<(usize, crate::program::LocalCheck, [u64; 4])> {
+            let class = ft.run_class.get(usize::from(rule)).and_then(Option::as_ref)?;
+            let (q, c) = check_at(t)?;
+            let mut not_c = [0u64; 4];
+            for (b, &x) in class.iter().enumerate() {
+                if x == 0 {
+                    not_c[b / 64] |= 1 << (b % 64);
+                }
+            }
+            Some((q, c, not_c))
+        };
+        // On to place `p`'s word, from the current block: its own, or inside a shared run, the
+        // body's word at the same offset, its place's target index and shift set as its entry
+        // sets them.
+        let jump_to_place = |f: &mut FunctionBuilder<'_>, p: usize| {
+            let run = shared.at.iter().find(|&(&r, &(b, _))| r <= p && p <= r + (shared.bodies[b].end - shared.bodies[b].start)).map(|(&r, &x)| (r, x));
+            match run {
+                Some((r, _)) if r == p => {
+                    f.ins().jump(wb[p].expect("its own place"), &[]);
+                }
+                Some((r, (b, ti))) => {
+                    let body = &shared.bodies[b];
+                    if body.targets.len() > 1 {
+                        let i = f.ins().iconst(types::I64, ti as i64);
+                        mset(f, Mem::Sel, i);
+                    }
+                    if r != body.start {
+                        let sh = f.ins().iconst(types::I64, r as i64 - body.start as i64);
+                        mset(f, Mem::Shift, sh);
+                    }
+                    f.ins().jump(wb[body.start + (p - r)].expect("the body's word"), &[]);
+                }
+                None => {
+                    f.ins().jump(goto(p), &[]);
+                }
+            }
         };
         let mut marks_at: Vec<(usize, usize)> = Vec::new();
         for (pc, w) in words.iter().enumerate() {
@@ -5349,12 +5430,95 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                                             Some(plain) => s.words.iter().find(|&&(y, _)| usize::from(y) == x).map_or(plain, |&(_, to)| to),
                                             None => t,
                                         };
-                                        f.ins().jump(if to == REFUSE { no_e } else { word(to) }, &[]);
+                                        // A check there over the token's bytes alone, of no
+                                        // delay: the word's bytes decide it here, as simdjson
+                                        // tests an atom by its bytes and nothing else.
+                                        match check_at(usize::from(to)).filter(|(_, c)| c.delay == 0) {
+                                            Some((q, c)) if to != REFUSE => {
+                                                if !all_static.contains(&q) {
+                                                    all_static.push(q);
+                                                }
+                                                if crate::program::token_value(&c, w, 0, w.len(), &|_| false) {
+                                                    let at_q = f.ins().iconst(types::I64, q as i64 + 1);
+                                                    f.ins().jump(refuse, &[BlockArg::from(at_q)]);
+                                                } else {
+                                                    jump_to_place(&mut f, q + 1);
+                                                }
+                                            }
+                                            _ => {
+                                                f.ins().jump(if to == REFUSE { no_e } else { word(to) }, &[]);
+                                            }
+                                        }
                                         f.switch_to_block(other);
                                     }
                                 }
                             }
-                            let (l, bad) = fetch_last_by(&mut f, &env, ft, &bw, rule, start, &mut heads);
+                            // A run whose target takes the token's check over its bytes next (past
+                            // its `SPAN`s): both from one read of its first 16 bytes, as
+                            // simdjson's `parse_number` validates while it finds the number's end
+                            // (the first byte of no number, then `is_not_structural_or_whitespace`).
+                            // Its end, the first byte past the start not in the run's class; the
+                            // check, over the bytes to it. A token longer than the frame, as before.
+                            let fused = fused_check(usize::from(t), rule, ft);
+                            let (l, bad, checked) = match &fused {
+                                Some((q, c, not_c)) => {
+                                    if !all_fused.contains(q) {
+                                        all_fused.push(*q);
+                                    }
+                                    // The check's ops and the run's end's byte set, one set of
+                                    // classes of the bytes: the end's mask is the last op's.
+                                    let mut both = c.clone();
+                                    both.ops.push(crate::program::LocalOp::Bytes(*not_c));
+                                    let form = crate::rust_stream::word_form(&both.ops).map_err(|_| Error::UnsupportedBackend)?;
+                                    let len_v = (env.ctx)(&mut f, LEN);
+                                    let at = f.ins().iadd(bytes, start);
+                                    let v = f.ins().load(types::I8X16, MemFlags::trusted(), at, 0);
+                                    let consts = crate::native_cpu_block::Consts::make(&mut f);
+                                    let file_left = f.ins().isub(len_v, start);
+                                    let mut tables = std::collections::HashMap::new();
+                                    let made = token_sets(&mut f, &both, &form, &consts, v, &mut tables);
+                                    let Some(&ends) = made.get(&c.ops.len()) else { return Err(Error::UnsupportedFeature("a run's end with no byte set")) };
+                                    // A last byte the frame holds the check at: `n <= 16 - delay`.
+                                    let most = 16 - u32::from(c.delay);
+                                    let ends = f.ins().band_imm(ends, (((1u64 << (most + 1)) - 1) & !1) as i64);
+                                    let (short, long, join) = (f.create_block(), f.create_block(), f.create_block());
+                                    for _ in 0..3 {
+                                        f.append_block_param(join, types::I64);
+                                    }
+                                    f.ins().brif(ends, short, &[], long, &[]);
+                                    f.switch_to_block(short);
+                                    let n = f.ins().ctz(ends);
+                                    let l = f.ins().iadd(start, n);
+                                    let l = f.ins().iadd_imm(l, -1);
+                                    // The check over places 0 to `n - 1` (and its delay), as
+                                    // `token_check_short`'s.
+                                    let vals = token_window(&mut f, &both, &form, &consts, &[v], None, n, file_left, None, None, None, Some(made));
+                                    let one = f.ins().iconst(types::I64, 1);
+                                    let below = f.ins().ishl(one, n);
+                                    let valid = f.ins().iadd_imm(below, -1);
+                                    let valid = if c.delay == 0 { valid } else { f.ins().ishl_imm(valid, i64::from(c.delay)) };
+                                    let hit = f.ins().band(vals[c.ops.len() - 1], valid);
+                                    let (passed, failed) = (f.create_block(), f.create_block());
+                                    f.ins().brif(hit, failed, &[], passed, &[]);
+                                    f.switch_to_block(failed);
+                                    f.set_cold_block(failed);
+                                    let at_q = f.ins().iconst(types::I64, *q as i64 + 1);
+                                    f.ins().jump(refuse, &[BlockArg::from(at_q)]);
+                                    f.switch_to_block(passed);
+                                    let one = f.ins().iconst(types::I64, 1);
+                                    f.ins().jump(join, &[l.into(), zero.into(), one.into()]);
+                                    f.switch_to_block(long);
+                                    let (l, bad) = fetch_last_by(&mut f, &env, ft, &bw, rule, start, &mut heads);
+                                    f.ins().jump(join, &[l.into(), bad.into(), zero.into()]);
+                                    f.switch_to_block(join);
+                                    let p = f.block_params(join).to_vec();
+                                    (p[0], p[1], Some(p[2]))
+                                }
+                                None => {
+                                    let (l, bad) = fetch_last_by(&mut f, &env, ft, &bw, rule, start, &mut heads);
+                                    (l, bad, None)
+                                }
+                            };
                             let (no, ok) = (f.create_block(), f.create_block());
                             f.ins().brif(bad, no, &[], ok, &[]);
                             f.switch_to_block(no);
@@ -5400,7 +5564,18 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                                     split_enter(&mut f, &env, sp, sbw, start, l, read.as_deref(), &mut heads);
                                 }
                             }
-                            f.ins().jump(word(t), &[]);
+                            match (checked, &fused) {
+                                // Checked here: on past the check's word.
+                                (Some(ch), Some((q, _, _))) => {
+                                    let past = f.create_block();
+                                    f.ins().brif(ch, past, &[], word(t), &[]);
+                                    f.switch_to_block(past);
+                                    jump_to_place(&mut f, *q + 1);
+                                }
+                                _ => {
+                                    f.ins().jump(word(t), &[]);
+                                }
+                            }
                         }
                         f.switch_to_block(kindpath);
                     }
@@ -6609,7 +6784,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     let marks = marks_of(words);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, tables, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, tables, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
