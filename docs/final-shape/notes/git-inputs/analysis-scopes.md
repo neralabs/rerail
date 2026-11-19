@@ -69,6 +69,7 @@ connects a scope to each corpus run manifest. Existing manifest facts connect
 the run to its sources and plans. `analysis_scope_snapshot(scope, snapshot_id)`
 connects a named scope to each of its audit snapshots. A directory scope keeps
 the latest snapshot for each workspace in `analysis_scope_workspace_snapshot`.
+These relations live in the content store's SQLite schema. Policy programs have no public relation for scope membership.
 If an index restores a file's results, the current snapshot names its saved source and compatible tape.
 This ownership protects the tape when collection removes an older snapshot.
 
@@ -93,6 +94,9 @@ that owns a directory scope. Homes can share a store and keep independent
 directory scopes. A directory scope keeps the latest snapshot for each
 workspace. It protects the latest manifest for each policy set. An edited
 policy keeps its policy set and gets a new cache key.
+
+Deleting a named scope releases its memberships. The store retains a generation row to reject older writers.
+The home also keeps directory-to-store registrations after a stop. One-time scope names and directories can accumulate these bookkeeping rows.
 
 The home records each directory and its analysis stores in a separate SQLite database.
 A scan or watch opens the store, registers it, and then reads the generation.
