@@ -1150,11 +1150,18 @@ pub struct DeviceStats {
     pub calls: usize,
     /// The syncs by what read (`DeviceRun::syncs_by`).
     pub syncs_by: std::collections::BTreeMap<&'static str, usize>,
+    /// The most device bytes a run held at once (`DeviceRun::peak_bytes`).
+    pub peak_bytes: usize,
+    pub by_kernel: std::collections::BTreeMap<&'static str, usize>,
 }
 
 impl DeviceStats {
     pub fn add(&mut self, o: &DeviceStats) {
         (self.runs, self.gpu_seconds, self.dispatches, self.syncs, self.calls) = (self.runs + o.runs, self.gpu_seconds + o.gpu_seconds, self.dispatches + o.dispatches, self.syncs + o.syncs, self.calls + o.calls);
+        self.peak_bytes = self.peak_bytes.max(o.peak_bytes);
+        for (k, n) in &o.by_kernel {
+            *self.by_kernel.entry(k).or_default() += n;
+        }
         for (k, n) in &o.syncs_by {
             *self.syncs_by.entry(k).or_default() += n;
         }
@@ -1202,7 +1209,7 @@ impl Prog {
                 let mut jobs: Vec<rerail_metal::array_program::Job> = inputs.iter().zip(hosts.iter_mut()).map(|(i, h)| rerail_metal::array_program::Job { inputs: i.clone(), params: Vec::new(), calls: h }).collect();
                 match rerail_metal::array_program::run_batch(&self.p, &mut jobs) {
                     Ok((out, r)) => {
-                        runner.device.add(&DeviceStats { runs: 1, gpu_seconds: r.gpu_seconds, dispatches: r.dispatches, syncs: r.syncs, calls: r.calls, syncs_by: r.syncs_by });
+                        runner.device.add(&DeviceStats { runs: 1, gpu_seconds: r.gpu_seconds, dispatches: r.dispatches, syncs: r.syncs, calls: r.calls, syncs_by: r.syncs_by, peak_bytes: r.peak_bytes, by_kernel: r.by_kernel });
                         if std::env::var_os("RERAIL_PP_ORACLE").is_some() {
                             // Each unit's run against the interpreter's, output by output.
                             drop(jobs);

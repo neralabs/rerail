@@ -94,6 +94,17 @@ asked past the element: a merge, which refuses the unit for now (the corpus had 
 The first failing operation's error is kept by an atomic minimum, so a refusal names the same
 operation the interpreter names.
 
+**A batch.** `run_batch` runs a program for many units in the same launches. Each array is
+its units' arrays end to end, with each unit's offsets on the host and on the device. A kernel
+finds an element's unit by a binary search of the offsets, so each unit keeps its own lengths
+and broadcasts, its scans reset at its first element, and its gathers and searches stay in its
+own range. A sort takes the unit as its most significant key. A refused unit stays refused at
+its first operation and drops out; the batch goes on. The interpreter's meaning is each unit
+run alone, and a batch is checked against it.
+
+The passes read a batch in lockstep (`passes::run_batch`): one ROUND run a round for every
+unit still moving, then one TEXT run for all.
+
 **What the host still does** (counted in `DeviceRun`):
 - reads a count where a length is made by data (compact, expand, a scatter's `n`);
 - reads which bytes of a sort key vary;
@@ -133,14 +144,40 @@ tests equal the interpreter. The first C corpus unit reads the same.
 The syncs by cause: sort-key bytes 904, local fixed points 869, compact 409, expand 203,
 calls 89, the rest 60.
 
-This is not yet the gate's shape. One unit pays every launch alone, and the GPU time is the
-launches' own cost. 0408's gate is about 0.15 s for the whole corpus on one core.
+**Batches**, the first C units, all read the same:
+
+| | 10 alone | 10, one batch | 50, one batch |
+|---|---:|---:|---:|
+| Program runs | 137 | 30 | 30 |
+| Dispatches | 138,003 | 41,684 | 43,248 |
+| Syncs | 9,785 | 2,652 | 2,674 |
+| GPU time | 1.13 s | 0.40 s | 0.36 s |
+| Device bytes at the peak | 47 MB | 95 MB | 374 MB |
+| Elements the host called | 29,657 | 29,657 | 141,641 |
+
+A batch costs about what its deepest unit costs alone: the launches, not the data. At 50 units
+that is 7 ms of GPU time a unit. 0408's gate is about 0.15 s for the whole corpus on one core,
+so the launches are still the cost to cut.
+
+The 50-unit batch's dispatches by kernel: scans 12,630 (a scan of more than 256 elements is
+three launches or more), maps 8,448, gathers 6,271, radix passes 3,506, a scatter's parts
+about 4,400. That is about 250 operations a round, 30 rounds, one launch or more each.
+
+**Found on the way** (each by the device oracle, `RERAIL_PP_ORACLE=1`, which checks each
+device run against the interpreter, unit by unit, and with `RERAIL_PP_ORACLE_OPS` names the
+first operation whose value differs):
+- a unit with no directive was refused (`stretches` gathered a directive's place at 0);
+- the words handed a test's looked-at pairs back in a hash map's order, so the same test's
+  pairs came back in another order call by call; the memo compares them in order;
+- the corpus harness kept one directory of stub headers, remade for each file, so a batch
+  settled before it was read lost its earlier units' stubs.
 
 ## What is left
 
-1. **Every unit of a batch in the same launches.** The program lowered over a unit column, so
-   a launch serves the whole batch, and a sync is paid once a batch.
-2. **Fewer syncs:** a sort's varying bytes and a fixed point's verdict kept on the device.
+1. ~~Every unit of a batch in the same launches~~ (built, above).
+2. **Fewer launches and syncs:** scans in one launch (a single-pass scan), elementwise runs
+   fused into one kernel, a sort's varying bytes and a fixed point's verdict kept on the
+   device.
 3. **The calls on the device**, through 0408's lockstep batch, once the element's file is made
    by array operations.
 4. **Cranelift**, the CPU path.

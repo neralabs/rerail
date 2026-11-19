@@ -98,6 +98,11 @@ pub struct DeviceRun {
     pub calls: usize,
     /// The syncs by what read: a sort's varying bytes, a count, a call's elements, the rounds' verdict.
     pub syncs_by: BTreeMap<&'static str, usize>,
+    /// The most bytes the process's device leases held at once during the run (sampled at each
+    /// launch): the batch's live arrays, not the pool's idle buffers.
+    pub peak_bytes: usize,
+    /// The dispatches by kernel.
+    pub by_kernel: BTreeMap<&'static str, usize>,
 }
 
 /// A unit of a batch: its columns, its parameters, and the host that answers its calls.
@@ -170,7 +175,9 @@ impl Gpu {
         use crate::launch::CheckedComputeEncoder;
         encoder.checked_dispatch_thread_groups(command, MTLSize::new(threads.div_ceil(TILE) as u64, 1, 1), MTLSize::new(TILE as u64, 1, 1));
         self.held.extend(buffers.iter().map(|&b| b.clone()));
+        self.run.peak_bytes = self.run.peak_bytes.max(rerail_accel::gpu::shared::held_bytes().0);
         self.run.dispatches += 1;
+        *self.run.by_kernel.entry(name).or_default() += 1;
         self.launched += 1;
         Ok(())
     }

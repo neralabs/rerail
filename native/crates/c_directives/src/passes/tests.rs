@@ -274,6 +274,8 @@ fn the_corpus_by_the_programs() {
         println!("{lang}: {same} the same, {differ} differ, refused {refused:?}");
         if exec != Exec::Interpreter {
             println!("  the device: {device:?}");
+            #[cfg(target_os = "macos")]
+            println!("  the pool: {:?} blocks and bytes made", rerail_metal::pool::made());
         }
         wrong += differ;
     }
