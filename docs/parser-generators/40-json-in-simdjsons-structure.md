@@ -550,6 +550,24 @@ goes straight to its leaf.
 The trees test with the Rust asserts each number's arm makes its end and check from one read.
 Two mutations fail it: the fused check never refusing, and the atoms' decision inverted.
 
+## Step 15, done: one dispatch a value, in the generated Rust
+
+The array's first value has a switch of its own, since it also takes `]`, the empty array. Both
+it and the switch after each `,` went to every value's place, so the loop had an entry for
+each. Rust has no goto: the structure (`clif_rust::Shape`) put the place in a variable, `d`,
+and the loop's head took the arms apart again with `match d`. Each value was dispatched twice.
+
+- **A switch whose arms are another's and some of its own** (`delegate_of`, by each byte's arm
+  as `byte_sig` gives it) keeps its own arms, and sends every other byte to the other switch,
+  as `walk_document` peeks for `]` and then goes to `array_begin`. The array's loop now has one
+  entry, its value switch.
+- **A switch reached only from the `TOKEN` before it**, which takes a token (`fresh`), has no
+  path on the kind: its token is not made yet, or the stream has ended. The path on the kind is
+  left at the three switches a call returns to (`again`).
+
+The trees test with the Rust asserts both: no `match d`, and the path on the kind only at the
+switches a call returns to. Sending the empty array's `]` on to the value switch fails it.
+
 ## The generated Rust next to simdjson's stage 2
 
 The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` writes it as
@@ -562,7 +580,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 | nesting on a stack of its own (`is_array[depth]`); `scope_end` goes back to the state of the scope it returns to | nesting by recursion (`r46(s)?`, `s.depth`). A call returns `Ok(again)`, and the caller then switches on the same token again | no |
 | `advance()`: the next index | `token_all()`: a room check on the tape each token, the end's test, `last_end`, `live` | no |
 | `switch (*value)` | `match s.byte(s.start)`, the record made in the arm | yes |
-| one switch a value | the arms meet at a word they share, `open(10)` (the value's node), then `match d` takes them apart again; and an `else` path switches on the kind, for a token switched on again | no |
+| one switch a value; `case '['`: `]` peeked for, then `array_begin` and the one value switch | the array's loop was entered at each value's place from two switches (the first value's, which also takes `]`, and the one after `,`), so the arms set `d` and the loop's `match d` took them apart again; every switch also had a path on the kind | yes, since step 15: the first value's switch takes `]`, then sends every other byte to the one value switch; the kind path only where a call returns to switch on its token again |
 | `case ','`, `case ']'` in the continue states | each punctuation byte straight to its place, every other byte refused | yes |
 | atoms: `str4ncmp(src, "true")`, then the byte after not structural or white space | the same test, a word load | yes |
 | `parse_number`: the digits read once, validated as they are read | `run_0_check_0`: one read of 16 bytes, the end and the check from it, then on past the check | yes, since step 14 (a number past 15 bytes: as before) |
@@ -574,8 +592,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 What follows, in order, each change made in `rust_stream` or in the compiler, and judged on
 the Rust it writes:
 1. Done in step 14.
-2. One dispatch a value: no shared word between the switch and the value's place, and no
-   switch on the kind where a token is switched on once.
+2. Done in step 15.
 3. The `\u` checks only after a `u`; one test for the escape's words.
 4. No room check a token: the tape sized from the input once, as the JIT's.
 5. One function, the nesting on a stack of its own, as `walk_document`.

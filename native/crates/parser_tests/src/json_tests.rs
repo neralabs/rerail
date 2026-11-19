@@ -240,6 +240,17 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         let first = arm.lines().nth(1).unwrap_or("");
         assert!(first.starts_with("match s.run_") && first.contains("_check_"), "a number's arm reads its bytes once: {first}");
     }
+    // One dispatch a value, as `walk_document`'s `switch (*value)`: no variable saying which
+    // place a loop was entered at (the array's first value goes to the one value switch), and a
+    // switch on the kind only where a call's return switches on its token again (`again`).
+    assert!(!src.contains("match d {"), "a loop entered at one place");
+    let again: std::collections::BTreeSet<usize> = native
+        .structural
+        .iter()
+        .filter_map(|w| if let rerail_compiler::native_ir::StructuralOperation::Push { target, .. } = w.operation { Some(usize::from(target) + 1) } else { None })
+        .filter(|&t| matches!(native.structural.get(t).map(|w| w.operation), Some(rerail_compiler::native_ir::StructuralOperation::Switch { .. })))
+        .collect();
+    assert_eq!(src.matches("if s.rec_end == 0 && !s.at_end {").count(), again.len(), "the kind path only where a call returns: {again:?}");
     let entry = aot_entry(&src);
     // SAFETY: the source is this program's tier 2 (from its own native IR), reading and writing
     // `Ctx` as the JIT's does; it counts its calls open itself.

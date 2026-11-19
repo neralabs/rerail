@@ -1455,6 +1455,21 @@ fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, word: &s
     Ok(())
 }
 
+/// A word's successors as its operation names them (`succ` before the part's `TOKEN` and a
+/// switch's sending its shared bytes on): its next, its targets, a call's two returns.
+fn plain_succ(x: &Facts<'_>, pc: usize) -> Vec<usize> {
+    let n = x.native.structural.len();
+    let v = match x.native.structural[pc].operation {
+        Op::Goto { target } => vec![usize::from(target)],
+        Op::Switch { table } => x.native.switches[usize::from(table)].all_targets().filter(|&t| t != REFUSE).map(usize::from).collect(),
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
+        Op::Push { target, .. } => vec![usize::from(target), usize::from(target) + 1],
+        Op::Return { .. } | Op::Accept | Op::Stop => vec![],
+        _ => vec![pc + 1],
+    };
+    v.into_iter().filter(|&t| t < n).collect()
+}
+
 /// A word's successors in its function: its next, its targets, a call's two returns.
 fn succ(x: &Facts<'_>, pc: usize) -> Vec<usize> {
     let n = x.native.structural.len();
@@ -1573,6 +1588,15 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
         (Some(fx), true) => Some(fetched_arms(x, fx, sw, &mut p)),
         _ => None,
     };
+    // Reached only from the `TOKEN` before it, which takes a token: the token is made here, or
+    // the stream has ended; no switch on its kind, as simdjson switches on a value once.
+    if let Some(b) = &by_byte
+        && fresh(x, sw)
+    {
+        let j = p.to(sw.end);
+        p.code = format!("if s.at_end {{ {j} }} else {{\n{b}}}\n");
+        return p;
+    }
     if let (true, Some(reps)) = (on_kinds(x, sw), &x.kind_reps) {
         let mut t: Vec<u16> = reps.iter().map(|&b| sw.targets[usize::from(b)]).collect();
         if x.end_kind.is_some() {
@@ -2023,6 +2047,10 @@ fn kind_target(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, code: u32) -> u16 {
 fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> String {
     use crate::records::EndRule;
     let ft = &fx.ft;
+    // A switch whose arms are another's and some of its own (an array's first value, which also
+    // takes `]`, and its value after a `,`): its own arms, then the other's switch for every other
+    // byte, as `walk_document` peeks for `]` before the one value switch (`delegate_of`).
+    let delegate = delegate_of(x, fx, sw);
     // (form, code or rule, kind, place): 0 one byte, 1 an opener, 2 a run.
     let mut groups: BTreeMap<(u8, u32, u32, u16), Vec<usize>> = BTreeMap::new();
     for b in 0..256usize {
@@ -2033,6 +2061,11 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
             _ => (0, ft.codes1[b], 0, kind_target(x, fx, sw, ft.codes1[b])),
         };
         if key.3 == REFUSE && !named {
+            continue;
+        }
+        if let Some((_, other)) = delegate
+            && byte_sig(x, fx, other, b) == byte_sig(x, fx, sw, b)
+        {
             continue;
         }
         groups.entry(key).or_default().push(b);
@@ -2092,8 +2125,99 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
         };
         writeln!(s, "{} => {{\n{body}\n}}", pats.join(" | ")).unwrap();
     }
-    s.push_str("_ => return Err(false),\n}\n");
+    match delegate {
+        Some((at, _)) => {
+            let j = p.to(at);
+            writeln!(s, "_ => {{ {j} }}\n}}").unwrap();
+        }
+        None => s.push_str("_ => return Err(false),\n}\n"),
+    }
     s
+}
+
+/// What a switch does with a token of first byte `b` (`fetched_arms`): its arm's form, code and
+/// rule, and each place it can go to (a word's that begins with `b`, then the rest's). None: it
+/// refuses it.
+fn byte_sig(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, b: usize) -> Option<(u8, u32, Vec<u16>)> {
+    use crate::records::EndRule;
+    let ft = &fx.ft;
+    let named = sw.words.iter().any(|&(y, _)| ft.words.get(usize::from(y)).is_some_and(|(w, _)| w.first() == Some(&(b as u8))));
+    let (form, a, t) = match ft.rules.get(usize::from(ft.ends[b])) {
+        Some(&EndRule::Run(_)) => (2, u32::from(ft.ends[b]), kind_target(x, fx, sw, u32::from(ft.kinds[b]))),
+        Some(&EndRule::Read(_)) => (1, ft.codes1[b], kind_target(x, fx, sw, ft.codes1[b])),
+        _ => (0, ft.codes1[b], kind_target(x, fx, sw, ft.codes1[b])),
+    };
+    if t == REFUSE && !named {
+        return None;
+    }
+    let mut to: Vec<u16> = ft.words.iter().filter(|(w, _)| w.first() == Some(&(b as u8))).map(|(_, code)| kind_target(x, fx, sw, *code)).collect();
+    to.push(t);
+    if to.iter().all(|&t| t == REFUSE) {
+        return None;
+    }
+    Some((form, a, to))
+}
+
+/// The switch `sw` sends the bytes it shares with another to (`fetched_arms`): another switch on a
+/// token's first byte in the same function, which does with each byte what `sw` does, or refuses
+/// it, and refuses some `sw` takes: its place and table. The smallest such, so a chain of them
+/// ends.
+fn delegate_of<'a>(x: &'a Facts<'_>, fx: &Fetched, sw: &ByteSwitch) -> Option<(u16, &'a ByteSwitch)> {
+    let words = &x.native.structural;
+    let mine = |o: &ByteSwitch| -> Option<usize> {
+        let (mut own, mut shared) = (0, 0);
+        for b in 0..256usize {
+            match (byte_sig(x, fx, sw, b), byte_sig(x, fx, o, b)) {
+                (a, c) if a == c => shared += usize::from(a.is_some()),
+                (Some(_), None) => own += 1,
+                _ => return None,
+            }
+        }
+        (own > 0 && shared > 0).then_some(shared)
+    };
+    let here = words.iter().position(|w| matches!(w.operation, Op::Switch { table } if std::ptr::eq(&x.native.switches[usize::from(table)], sw)))?;
+    let mut best: Option<(usize, u16, &'a ByteSwitch)> = None;
+    for (pc, w) in words.iter().enumerate() {
+        let Op::Switch { table } = w.operation else { continue };
+        let o = &x.native.switches[usize::from(table)];
+        if pc == here || !on_kinds(x, o) || o.end != sw.end || !reaches(x, here, pc) {
+            continue;
+        }
+        if let Some(shared) = mine(o)
+            && best.as_ref().is_none_or(|&(s, _, _)| shared > s)
+        {
+            best = Some((shared, pc as u16, o));
+        }
+    }
+    best.map(|(_, pc, o)| (pc, o))
+}
+
+/// Whether switch `sw` is reached only from the `TOKEN` before it, where that takes a token: its
+/// token not made yet, or the stream's end.
+fn fresh(x: &Facts<'_>, sw: &ByteSwitch) -> bool {
+    let words = &x.native.structural;
+    let Some(here) = words.iter().position(|w| matches!(w.operation, Op::Switch { table } if std::ptr::eq(&x.native.switches[usize::from(table)], sw))) else { return false };
+    if here == 0 || !matches!(words[here - 1].operation, Op::Token { .. }) || x.phase[here - 1] != crate::stream::TAKEN || x.fetch.as_ref().is_some_and(|fx| fx.part_at(x, here - 1)) {
+        return false;
+    }
+    (0..words.len()).all(|pc| pc == here - 1 || !plain_succ(x, pc).contains(&here))
+}
+
+/// Whether word `to` is reached from word `from` in the same function (`succ`, the plain
+/// successors: no switch's to another).
+fn reaches(x: &Facts<'_>, from: usize, to: usize) -> bool {
+    let mut seen = vec![false; x.native.structural.len()];
+    let mut work = vec![from];
+    while let Some(pc) = work.pop() {
+        if pc == to {
+            return true;
+        }
+        if std::mem::replace(&mut seen[pc], true) {
+            continue;
+        }
+        work.extend(plain_succ(x, pc));
+    }
+    false
 }
 
 /// What a part's `TOKEN` (`Fetched::part_at`) and the switch after it go to: the closer's
