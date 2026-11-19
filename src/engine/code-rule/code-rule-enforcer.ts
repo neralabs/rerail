@@ -661,6 +661,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /** Audits this evaluator started and has not finished: all it may end when the session-wide interrupt is not its to make. */
   readonly #runningAudits = new Set<string>();
   #reportableViolations: CodeRuleViolation[] = [];
+  /** The revision `#reportableViolations` holds: the newest published, so a revision published late never replaces it. */
+  #reportableRevision = 0;
   #responseMode: AuditMode;
   #evaluation = emptyEvaluation();
 
@@ -2045,17 +2047,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * Held until the queue emptied, a recorded finding missed every boundary the session reached meanwhile.
    */
   async #publishReady(): Promise<void> {
-    const queued = new Set([...this.#pending.values()].map(stored => stored.revision));
-    const ready = [...this.#readyViolations.entries()].filter(([revision]) => !queued.has(revision));
-    for (const [revision] of ready) this.#readyViolations.delete(revision);
-    for (const [revision, byPath] of ready) {
+    for (const [revision, byPath] of this.#takeReady()) {
       const current = [...byPath].filter(([path]) => this.#versions.get(path) === revision);
       if (current.length === 0) continue;
       const violations = current.flatMap(([, pathViolations]) => pathViolations);
       const mode = this.#readyModes.get(revision) ?? this.#mode;
       this.#readyModes.delete(revision);
-      this.#reportableViolations = violations;
-      this.#responseMode = mode;
+      this.#answerWith(revision, violations, mode);
       await this.#publish(
         revision,
         current.map(([path]) => path),
@@ -2065,6 +2063,22 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         true,
       );
     }
+  }
+
+  /** The ready revisions none of whose edits is still queued, in the order they became ready, taken from the ready map. */
+  #takeReady(): [number, Map<string, CodeRuleViolation[]>][] {
+    const queued = new Set([...this.#pending.values()].map(stored => stored.revision));
+    const ready = [...this.#readyViolations].filter(([revision]) => !queued.has(revision));
+    for (const [revision] of ready) this.#readyViolations.delete(revision);
+    return ready;
+  }
+
+  /** What `#response` answers with: the findings of the newest revision published, as when revisions went out in order. */
+  #answerWith(revision: number, violations: CodeRuleViolation[], mode: AuditMode): void {
+    if (revision < this.#reportableRevision) return;
+    this.#reportableRevision = revision;
+    this.#reportableViolations = violations;
+    this.#responseMode = mode;
   }
 
   async #publish(

@@ -630,6 +630,31 @@ describe("mechanical code rule regressions", () => {
         expect(order).toEqual(["recorded api/a.py", "recorded api/b.py", "steered api/a.py,api/b.py"]);
       } finally { await enforcer.close(); }
     });
+
+    it("and the evaluator still answers with the newest tool call's findings when an older call's go out after it", async () => {
+      const { root, enforcer, order } = await ordered();
+      try {
+        for (const name of ["a", "b", "c"]) await writeFile(join(root, "api", `${name}.py`), "NEEDLE\n");
+        await enforcer.openWorkspace("newest-answer");
+        // The first call's second file is queued behind the second call's file, so the second call's steer goes first.
+        await Promise.all([
+          enforcer.auditGeneratedEdits("newest-answer", {
+            revision: 1,
+            checkpoints: ["edit"],
+            edits: ["a", "b"].map(name => ({ path: `api/${name}.py`, language: "python" as const, generatedText: "NEEDLE\n" })),
+          }),
+          enforcer.auditGeneratedEdits("newest-answer", {
+            revision: 2,
+            checkpoints: ["edit"],
+            edits: [{ path: "api/c.py", language: "python", generatedText: "NEEDLE\n" }],
+          }),
+        ]);
+        const status = await settled(enforcer);
+
+        expect(order.filter(entry => entry.startsWith("steered"))).toEqual(["steered api/c.py", "steered api/a.py,api/b.py"]);
+        expect(status.violations.map(violation => violation.path)).toEqual(["api/c.py"]);
+      } finally { await enforcer.close(); }
+    });
   });
 
   it("credits a steer to the distinct rules whose steer and block violations it rendered", async () => {
