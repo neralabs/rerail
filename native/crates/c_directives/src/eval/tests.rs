@@ -631,3 +631,32 @@ fn the_corpus_expands_on_the_device() {
     }
     eprintln!("{same_units} units the serial pass's ({tokens} tokens), at most {launches} launches; refused {refused:?}");
 }
+
+/// R7 of decision 0448: calls whose `(` or `)` is past their list's end. The call reads the
+/// frames after it raw (R-peek), its list is made in the frame that holds its `)` (R-ctx), and what
+/// it reads is rolled back: a sibling call it covers is dead (its tokens read raw into the
+/// arguments), and so is that sibling's own exit, even one reaching past the live call's end.
+/// Chains of such calls, exits through two lists, exits inside a macro's list and inside an
+/// argument's, the fence an argument's end makes, C17 §6.10.3.5's example 3, and DEFER/OBSTRUCT.
+#[test]
+fn calls_past_an_end_are_the_serial_passes() {
+    let example3 = "#define x 3\n#define f(a) f(x * (a))\n#undef x\n#define x 2\n#define g f\n#define z z[0]\n#define h g(~\n#define m(a) a(w)\n#define w 0,1\n#define t(a) a\n#define p() int\n#define q(x) x\n#define r(x,y) x ## y\n#define str(x) # x\nf(y+1) + f(f(z)) % t(t(g)(0) + t)(1);\ng(x+(3,4)-w) | h 5) & m\n(f)^m(m);\np() i[q()] = { q(1), r(2,3), r(4,), r(,5), r(,) };\nchar c[2][6] = { str(hello), str() };\n";
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define f(x) g\n#define g(y) y + 1\n#define F f\nf(1)(2) F(3)(4)\n")],
+        &[("main.c", "#define h(a) [a]\n#define H h(\nH 5) end\n")],
+        &[("main.c", "#define f(x) g\n#define g(y) y\nf(1) + 2\n")],
+        &[("main.c", example3)],
+        &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define h(z) <z>\nf(1)(h(2)) end h(3)\n")],
+        &[("main.c", "#define f(a) g\n#define g(a) #a\n#define y k((\n#define k(a) {a}\nf(0)( y ) z ) )\n")],
+        &[("main.c", "#define f(a) g\n#define g(a) [a]\n#define y k\n#define k(a) {a}\nf(0)( y (1) ) z\n")],
+        &[("main.c", "#define f(x) g\n#define g(x) f\nf(1)(2)(3)(4) end\n")],
+        &[("main.c", "#define A B\n#define B C\n#define C(x) <x>\nA(1) x A (2)\n")],
+        &[("main.c", "#define H h(\n#define HH H\n#define h(a) [a]\nHH 5) end HH (6, 7)) x\n")],
+        &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define W(z) f(1)(z) w\nW(2)\n")],
+        &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define h(z) <z>\n#define W(z) f(1)(h(z)) w\nW(2) W(h(3))\n")],
+        &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define t(a) a\nt(f(1))(2) t(f(1)(3))\n")],
+        &[("main.c", "#define EMPTY()\n#define DEFER(id) id EMPTY()\n#define OBSTRUCT(...) __VA_ARGS__ DEFER(EMPTY)()\n#define EXPAND(...) __VA_ARGS__\n#define A() 123\nDEFER(A)() EXPAND(DEFER(A)()) OBSTRUCT(A)() EXPAND(OBSTRUCT(A)()) EXPAND(EXPAND(OBSTRUCT(A)()))\n")],
+    ];
+    let (tokens, launches) = shapes_agree(shapes);
+    eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
+}

@@ -430,8 +430,8 @@ impl Vis {
     }
 }
 
-/// A list (`PxList` in the MSL): 20 words; an argument (`PxArg`): 3.
-const LIST_WORDS: usize = 20;
+/// A list (`PxList` in the MSL): 24 words; an argument (`PxArg`): 3.
+const LIST_WORDS: usize = 24;
 const ARG_WORDS: usize = 3;
 
 /// Why a unit is refused (`pp_expand.metal`'s `X_*`). `X_ROOM` reruns it at the next rung.
@@ -469,8 +469,9 @@ pub struct Exp {
     q_cap: u32,
     words: MappedBuffer,
     /// The scratch tokens (`#`'s and `##`'s): their bytes, and each one's (start, end, kind).
-    pub sbytes: MappedBuffer,
-    pub stoks: MappedBuffer,
+    /// `st_cap` (start, end, kind) words, then `sb_cap` bytes and slack.
+    scratch: MappedBuffer,
+    st_cap: usize,
     theads: MappedBuffer,
     delta: MappedBuffer,
     depth: MappedBuffer,
@@ -490,6 +491,13 @@ pub struct Exp {
     oscan: Scan,
     v: MappedBuffer,
     obase: MappedBuffer,
+    /// The top level's rollback: the exit-bearing calls flagged, their scan, their places in
+    /// order, and the live claims' running end.
+    xflag: MappedBuffer,
+    xat: MappedBuffer,
+    xscan: Scan,
+    xpos: MappedBuffer,
+    xcover: MappedBuffer,
     vscan: Scan,
     lists: MappedBuffer,
     tok: MappedBuffer,
@@ -517,8 +525,9 @@ impl Exp {
             return Err(Error::BackendCapacity);
         }
         let va_opt = name_key(b"__VA_OPT__");
-        // The scratch: bytes (64 KB at rung 0, doubling) and tokens.
-        let (sb, st) = ((64usize << 10) << rung, tok / 4 + 256);
+        // The scratch: bytes (64 KB at rung 0, doubling) and tokens, in one buffer: the tokens (an
+        // even number, so the bytes after them are 8-byte aligned), then the bytes.
+        let (sb, st) = ((64usize << 10) << rung, (tok / 4 + 256).next_multiple_of(2));
         let words = [unit.table.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options];
         Ok(Exp {
             list_cap: lists as u32,
@@ -526,8 +535,8 @@ impl Exp {
             q_cap: q as u32,
             words: MappedBuffer::from_slice(&device, &words)?,
             // Slack past the last byte: a name's key reads 8 bytes at a time.
-            sbytes: MappedBuffer::zeroed::<u8>(&device, sb + 16)?,
-            stoks: zeroed(st * 3)?,
+            scratch: MappedBuffer::zeroed::<u8>(&device, st * 12 + sb + 16)?,
+            st_cap: st,
             theads: zeroed(top)?,
             delta: zeroed(top)?,
             depth: zeroed(top)?,
@@ -547,6 +556,11 @@ impl Exp {
             oscan: Scan::new(top)?,
             v: zeroed(top)?,
             obase: zeroed(top)?,
+            xflag: zeroed(top)?,
+            xat: zeroed(top)?,
+            xscan: Scan::new(top)?,
+            xpos: zeroed(top)?,
+            xcover: zeroed(top)?,
             vscan: Scan::new(top)?,
             lists: zeroed(lists * LIST_WORDS)?,
             tok: zeroed(tok)?,
@@ -614,8 +628,14 @@ impl Exp {
             by_top,
         )?;
         enc.run("px_seed", None, &[&self.oscan.total.buffer, &self.qctl.buffer, &self.ctl.buffer], &[self.list_cap], Grid::Groups(1))?;
-        self.work(enc, unit, front, defs, vis)?;
-        enc.run("px_top_sizes", None, &[&self.state.buffer, &self.oid.buffer, &self.lists.buffer, n_toks, &self.v.buffer], &[], by_top)?;
+        self.work(enc, unit, front, defs, vis, closes)?;
+        // The top level's rollback: the exit-bearing calls in order, decided by one SIMD group.
+        enc.run("px_top_xflag", None, &[&self.state.buffer, &self.oid.buffer, &self.lists.buffer, n_toks, &self.xflag.buffer], &[], by_top)?;
+        self.xscan.encode(enc, n_toks, 0, &self.xflag.buffer, &self.xat.buffer)?;
+        enc.run("px_top_xlist", None, &[&self.xflag.buffer, &self.xat.buffer, n_toks, &self.xpos.buffer], &[], by_top)?;
+        let n_x = &self.xscan.total.buffer;
+        enc.run("px_top_cover", None, &[&self.xpos.buffer, n_x, &self.oid.buffer, &self.lists.buffer, &self.xcover.buffer, &self.ctl.buffer], &[], Grid::Groups(1))?;
+        enc.run("px_top_sizes", None, &[&self.state.buffer, &self.oid.buffer, &self.lists.buffer, n_toks, &self.v.buffer, &self.xpos.buffer, n_x, &self.xcover.buffer], &[], by_top)?;
         self.vscan.encode(enc, n_toks, 0, &self.v.buffer, &self.obase.buffer)?;
         enc.run(
             "px_top_place",
@@ -638,12 +658,12 @@ impl Exp {
             &[self.out_cap, self.q_cap],
             by_top,
         )?;
-        self.work(enc, unit, front, defs, vis)?;
+        self.work(enc, unit, front, defs, vis, closes)?;
         enc.run("px_check", None, &[&self.qctl.buffer, &self.vscan.total.buffer, &self.ctl.buffer], &[self.out_cap], Grid::Groups(1))
     }
 
     /// The queue's persistent dispatch, `WORK_LAUNCHES` times.
-    fn work(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis) -> Result<(), Error> {
+    fn work(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis, closes: &BufferRef) -> Result<(), Error> {
         for _ in 0..WORK_LAUNCHES {
             enc.run(
                 "px_work",
@@ -677,8 +697,9 @@ impl Exp {
                     &self.qctl.buffer,
                     &self.ctl.buffer,
                     &self.words.buffer,
-                    &self.sbytes.buffer,
-                    &self.stoks.buffer,
+                    &self.scratch.buffer,
+                    closes,
+                    &self.close_scan.total.buffer,
                 ],
                 &[],
                 Grid::Groups(WORKER_GROUPS),
@@ -693,9 +714,10 @@ impl Exp {
         unsafe {
             let ctl = self.ctl.host().cast::<u32>();
             let (nb, nt) = (*ctl.add(4) as usize, *ctl.add(5) as usize);
-            let nb = nb.min(self.sbytes.byte_length());
-            let nt = nt.min(self.stoks.byte_length() / 12);
-            (std::slice::from_raw_parts(self.sbytes.host(), nb).to_vec(), std::slice::from_raw_parts(self.stoks.host().cast::<[u32; 3]>(), nt).to_vec())
+            let bytes = self.scratch.host().add(self.st_cap * 12);
+            let nb = nb.min(self.scratch.byte_length() - self.st_cap * 12);
+            let nt = nt.min(self.st_cap);
+            (std::slice::from_raw_parts(bytes, nb).to_vec(), std::slice::from_raw_parts(self.scratch.host().cast::<[u32; 3]>(), nt).to_vec())
         }
     }
 

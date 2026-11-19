@@ -545,28 +545,39 @@ constant uint X_HASH = 128u, X_ACROSS = 256u, X_VA_OPT = 512u, X_RELEX = 1024u, 
 constant uint T_NOEXP = 1u, T_SPACE = 2u;
 // Before the pastes: a body's `##` (an operator), and a token a paste consumed.
 constant uint T_PASTE = 4u, T_DROP = 8u;
+// A name its list's scan found disabled (R-paint): stored as `T_NOEXP` only where the token is
+// copied out expanded (an argument's flatten), never where it is read raw.
+constant uint T_PAINT = 16u;
+// No position.
+constant uint NO_POS = 0xffffffffu;
 // A placemarker (an empty argument beside `##`), before the pastes.
 constant uint PLACEMARKER = 0xffffffffu;
 // A ref to a scratch token (made by `#`, `##`), not a tape node.
 constant uint SCRATCH = 0x80000000u;
 struct PxScratch { uint start, end, kind; };
 // A list's kind.
-constant uint LK_MACRO = 0u, LK_ARG = 1u;
+constant uint LK_MACRO = 0u, LK_ARG = 1u, LK_JOIN = 2u;
+// The frames an exit reads (its own list's rest and each frame's after it); a chain of exits.
+constant uint MAX_SEGS = 16u, MAX_EXITS = 1u << 20;
 // The close table's keys: a depth (biased) above a top token's position.
 constant uint DEPTH_BIAS = 1u << 15, POS_BITS = 24u;
 // A chain's lists at most, and an idle worker's polls.
 constant uint MAX_CHAIN = 1024u;
 constant uint POLLS = 4096u;
 
-// A list: its parent (a list, or `TOP`), its definition's row (`NO_DEF`: an argument), its
-// stretch's slot, its tokens in the arena, the range of its parent it covers (`lo..=hi`) or, an
-// argument, the raw range it was read from, its tokens no child covers, its children not yet
-// final and their sizes, its size and its base. A call: its arguments' entries and the argument
-// lists not yet flattened. An argument: its call's list, and its flatten's PLACE items not done.
-// `dest`: where its PLACE writes, the output (0) or the arena for argument list `dest - 1`.
+// A list: its parent (a list, or `TOP`: the frame that holds its call's `)`), its definition's
+// row (`NO_DEF`: an argument), its stretch's slot, its tokens in the arena, the range of its
+// parent it covers (`lo..=hi`) or, an argument, the raw range it was read from; its children not
+// yet final, its size and its base. A call: the list holding its raw tokens (`src`: its parent, or
+// an exit's join), its name and `)` there (`at`, `end`), its arguments' entries and the argument
+// lists not yet flattened. Its exit (`exit`, the list + 1 of a call that reads past its end, set
+// when it is final) and its own exit's name and call (`xname`, `xcall`, + 1). An argument: its
+// call's list, and its flatten's PLACE items not done. `dest`: where its PLACE writes, the output
+// (0) or the arena for argument list `dest - 1`.
 struct PxList {
-    uint parent, def, slot, first, len, lo, hi, own;
-    atomic_uint pending, acc;
+    uint parent, def, slot, first, len, lo, hi, src;
+    atomic_uint pending;
+    uint at, end, exit, xname, xcall;
     uint size, base, kind, call, dest, args, nargs;
     atomic_uint apending, fpending;
     uint pad;
@@ -582,9 +593,9 @@ static void px_fence() { atomic_thread_fence(mem_flags::mem_device, memory_order
 static void px_refuse(device atomic_uint* ctl, uint why) { atomic_fetch_or_explicit(&ctl[2], why, memory_order_relaxed); }
 
 inline void px_init(device PxList& l, uint parent, uint def, uint slot, uint kind) {
-    l.parent = parent; l.def = def; l.slot = slot; l.first = 0u; l.len = 0u; l.lo = 0u; l.hi = 0u; l.own = 0u;
+    l.parent = parent; l.def = def; l.slot = slot; l.first = 0u; l.len = 0u; l.lo = 0u; l.hi = 0u; l.src = parent;
     atomic_store_explicit(&l.pending, 1u, memory_order_relaxed);
-    atomic_store_explicit(&l.acc, 0u, memory_order_relaxed);
+    l.at = 0u; l.end = 0u; l.exit = 0u; l.xname = 0u; l.xcall = 0u;
     l.size = 0u; l.base = 0u; l.kind = kind; l.call = 0u; l.dest = 0u; l.args = 0u; l.nargs = 0u;
     atomic_store_explicit(&l.apending, 1u, memory_order_relaxed);
     atomic_store_explicit(&l.fpending, 0u, memory_order_relaxed);
@@ -619,6 +630,7 @@ struct Ux {
     device const uint* text_nodes; device const uint* gat; uint n_gaps; device const uint* firsts; uint n_toks;
     device const uint* tdepth; ulong va_opt;
     device const uchar* sbytes; device const PxScratch* stoks; uint relex_options;
+    device const ulong* closes; uint n_close;
 };
 
 // Whether `p[0..n)` holds a line splice (`\`, blanks, a newline): its phase-2 spelling differs.
@@ -709,13 +721,18 @@ kernel void px_close_keys(device const uint* depth [[buffer(0)]], device const u
 
 // The `)` that closes the `(` at top token `open`: the first after it back at the depth before
 // it, in its stretch (a search of the sorted close table); `0xffffffff` where none is.
-inline uint top_close(device const ulong* closes, uint n_close, device const uint* depth, uint open, uint end) {
-    uint b = (depth[open] - 1u + DEPTH_BIAS) & (2u * DEPTH_BIAS - 1u);
-    ulong q = (ulong(b) << POS_BITS) | ulong(open + 1u);
+// The first top `)` at or after `from`, before `end`, whose depth after it is `target`: the first
+// time the depth comes back to it.
+inline uint top_close_to(device const ulong* closes, uint n_close, uint target, uint from, uint end) {
+    uint b = (target + DEPTH_BIAS) & (2u * DEPTH_BIAS - 1u);
+    ulong q = (ulong(b) << POS_BITS) | ulong(from);
     uint c = pb_lower_bound(closes, n_close, q);
-    if (c >= n_close || uint(closes[c] >> POS_BITS) != b) return 0xffffffffu;
+    if (c >= n_close || uint(closes[c] >> POS_BITS) != b) return NO_POS;
     uint pos = uint(closes[c] & ((1ul << POS_BITS) - 1ul));
-    return pos < end ? pos : 0xffffffffu;
+    return pos < end ? pos : NO_POS;
+}
+inline uint top_close(device const ulong* closes, uint n_close, device const uint* depth, uint open, uint end) {
+    return top_close_to(closes, n_close, depth[open] - 1u, open + 1u, end);
 }
 
 // Each top token's call: an object-like name, or a function-like one followed in its stretch by
@@ -780,7 +797,7 @@ kernel void px_top_lists(device const uint* lookups [[buffer(0)]], device const 
     uint m = lookups[s];
     device PxList& l = lists[c];
     px_init(l, TOP, m, gslot[pb_item_of(gat, n_gaps[0], s)], LK_MACRO);
-    l.lo = s; l.hi = cend[s] - 1u;
+    l.lo = s; l.hi = cend[s] - 1u; l.at = l.lo; l.end = l.hi;
     uint item = (defs[m].flags & D_FNLIKE) != 0u ? (c | IT_CALL) : (c | IT_SUBST);
     atomic_store_explicit(&slots[c], item + 1u, memory_order_relaxed);
 }
@@ -849,34 +866,6 @@ inline bool px_peek_paren(Ux u, device PxList* lists, device const uint* tok, ui
     return false;
 }
 
-// List `l` is final where its last child is (lane 0). A macro's list adds its size into its
-// parent, climbing; an argument's starts its flatten: room for its tokens, its PLACE pushed.
-inline void px_final(Ar a, uint l) {
-    uint k = l;
-    for (uint step = 0u; step < MAX_CHAIN; step++) {
-        px_fence();
-        device PxList& K = a.lists[k];
-        uint size = K.own + atomic_load_explicit(&K.acc, memory_order_relaxed);
-        K.size = size;
-        if (K.kind == LK_ARG) {
-            uint base = atomic_fetch_add_explicit(&a.ctl[0], size, memory_order_relaxed);
-            if (base + size > a.tok_cap) { px_refuse(a.ctl, X_ROOM); return; }
-            K.base = base;
-            K.dest = k + 1u;
-            atomic_store_explicit(&K.fpending, 1u, memory_order_relaxed);
-            px_fence();
-            px_push(a, k | IT_PLACE);
-            return;
-        }
-        uint p = K.parent;
-        if ((p & TOP) != 0u) return;
-        atomic_fetch_add_explicit(&a.lists[p].acc, size, memory_order_relaxed);
-        px_fence();
-        if (atomic_fetch_sub_explicit(&a.lists[p].pending, 1u, memory_order_relaxed) != 1u) return;
-        k = p;
-    }
-}
-
 // The max of `x` over the lanes at or before this one.
 inline uint px_prefix_max(uint x, uint lane) {
     for (uint k = 1u; k < 32u; k <<= 1u) {
@@ -886,10 +875,253 @@ inline uint px_prefix_max(uint x, uint lane) {
     return x;
 }
 
+// Child `c` of list `k` (or `TOP`) with its exits' chain in `k`: the last position of `k` the
+// chain covers, its sizes, and the exit that goes on past `k`'s end (+ 1; 0 none).
+struct Claim { uint end, size, through; };
+inline Claim px_claim(Ar a, uint k, uint c) {
+    Claim r;
+    r.end = a.lists[c].hi; r.size = a.lists[c].size; r.through = 0u;
+    uint x = a.lists[c].exit;
+    for (uint step = 0u; step < MAX_EXITS && x != 0u; step++) {
+        device PxList& N = a.lists[x - 1u];
+        if (N.parent != k) { r.through = x; return r; }
+        r.end = N.hi; r.size += N.size;
+        x = N.exit;
+    }
+    return r;
+}
+
+// The pieces of list `k` once its children are final (rollback, R-done): in order, a child is
+// live unless an earlier live child's exits cover it (their claims: a chain of calls in `k` after
+// it); a live exit that goes on past `k`'s end (a child's, or `k`'s own call at `xname`) ends `k`,
+// and is `k`'s exit. A token is a piece where no live child or claim covers it. The exit-bearing
+// children of 32 are decided one after another (a ballot), the rest by a carried prefix max of
+// the live claims' ends. With `place`, the pieces are written at `k`'s base: its tokens (to the
+// output, or flattening an argument with their paint stored), each live child's and its chain's
+// base, their PLACE pushed.
+struct Walked { uint size, exit; };
+inline Walked px_walk(Ar a, uint k, uint lane, bool place) {
+    device PxList& K = a.lists[k];
+    uint n = K.len, first = K.first, xj = K.xname == 0u ? NO_POS : K.xname - 1u;
+    uint dest = K.dest, at = K.base;
+    uint cover = 0u, stop = NO_POS, exit = 0u, reach = 0u, total = 0u;
+    for (uint c0 = 0u; c0 < n && c0 < stop; c0 += 32u) {
+        uint j = c0 + lane, child = 0u, ends = 0u;
+        bool on = j < n, xb = false, own = false;
+        Claim r;
+        r.end = 0u; r.size = 0u; r.through = 0u;
+        if (on) child = a.tchild[first + j];
+        if (child != 0u) {
+            r = px_claim(a, k, child - 1u);
+            ends = a.lists[child - 1u].hi + 1u;
+            xb = a.lists[child - 1u].exit != 0u;
+        } else if (on && j == xj) {
+            xb = true; own = true; r.end = j; r.through = K.xcall;
+        }
+        uint cover0 = cover;
+        bool live_x = false;
+        ulong todo = px_ballot(xb);
+        for (uint guard = 0u; guard < 32u && todo != 0u; guard++) {
+            uint who = uint(ctz(todo));
+            todo &= todo - 1u;
+            uint jw = c0 + who, ew = simd_shuffle(r.end, ushort(who)), tw = simd_shuffle(r.through, ushort(who));
+            bool ow = simd_shuffle(own ? 1u : 0u, ushort(who)) != 0u;
+            bool lv = jw >= cover && jw < stop;
+            if (lv) {
+                cover = max(cover, ew + 1u);
+                if (tw != 0u) { stop = ow ? jw : ew + 1u; exit = tw; }
+            }
+            if (lane == who) live_x = lv;
+        }
+        uint claims = px_prefix_max(live_x ? r.end + 1u : 0u, lane);
+        uint cb = max(cover0, lane == 0u ? 0u : simd_shuffle_up(claims, 1u));
+        uint incl = px_prefix_max(ends, lane);
+        uint before = max(max(reach, cb), lane == 0u ? 0u : simd_shuffle_up(incl, 1u));
+        bool alive = on && j < stop && j >= before && !own;
+        uint v = alive ? (child != 0u ? r.size : 1u) : 0u;
+        uint off = at + simd_prefix_exclusive_sum(v);
+        if (place) {
+            if (alive && child == 0u) {
+                if (dest == 0u) {
+                    if (off < a.out_cap) a.out[off] = a.tok[first + j]; else px_refuse(a.ctl, X_ROOM);
+                } else {
+                    uint f = a.tflag[first + j];
+                    a.tok[off] = a.tok[first + j];
+                    a.tflag[off] = (f & T_PAINT) != 0u ? (f | T_NOEXP) & ~T_PAINT : f;
+                    a.tchild[off] = 0u;
+                }
+            }
+            // The live children and their chains, each placed after the one before.
+            uint pushes = 0u;
+            if (alive && child != 0u) {
+                pushes = 1u;
+                uint x = a.lists[child - 1u].exit;
+                for (uint step = 0u; step < MAX_EXITS && x != 0u && a.lists[x - 1u].parent == k; step++) { pushes++; x = a.lists[x - 1u].exit; }
+            }
+            uint kp = simd_sum(pushes);
+            if (dest != 0u && lane == 0u && kp != 0u) atomic_fetch_add_explicit(&a.lists[dest - 1u].fpending, kp, memory_order_relaxed);
+            if (pushes != 0u) {
+                uint c = child - 1u, b = off;
+                for (uint step = 0u; step < pushes; step++) {
+                    a.lists[c].base = b;
+                    a.lists[c].dest = dest;
+                    b += a.lists[c].size;
+                    px_fence();
+                    px_push(a, c | IT_PLACE);
+                    c = a.lists[c].exit - 1u;
+                }
+            }
+        }
+        uint sum = simd_sum(v);
+        at += sum; total += sum;
+        reach = max(reach, simd_max(incl));
+        cover = max(cover, simd_max(claims));
+    }
+    Walked w;
+    w.size = total; w.exit = exit;
+    return w;
+}
+
+// List `l` is final where its last child is (all 32 lanes): its pieces walked, its size and exit
+// set. A macro's list then counts down its parent's children, climbing where it was the last; an
+// argument's starts its flatten: room for its tokens, its PLACE pushed.
+inline void px_final(Ar a, uint l, uint lane) {
+    uint k = l;
+    for (uint step = 0u; step < MAX_CHAIN; step++) {
+        px_fence();
+        simdgroup_barrier(mem_flags::mem_device);
+        Walked w = px_walk(a, k, lane, false);
+        device PxList& K = a.lists[k];
+        if (lane == 0u) { K.size = w.size; K.exit = w.exit; }
+        px_fence();
+        simdgroup_barrier(mem_flags::mem_device);
+        if (K.kind == LK_ARG) {
+            if (lane == 0u) {
+                uint base = atomic_fetch_add_explicit(&a.ctl[0], w.size, memory_order_relaxed);
+                if (base + w.size > a.tok_cap) { px_refuse(a.ctl, X_ROOM); return; }
+                K.base = base;
+                K.dest = k + 1u;
+                atomic_store_explicit(&K.fpending, 1u, memory_order_relaxed);
+                px_fence();
+                px_push(a, k | IT_PLACE);
+            }
+            return;
+        }
+        uint p = K.parent;
+        if ((p & TOP) != 0u) return;
+        uint left = 0u;
+        if (lane == 0u) left = atomic_fetch_sub_explicit(&a.lists[p].pending, 1u, memory_order_relaxed);
+        if (simd_broadcast(left, 0) != 1u) return;
+        k = p;
+    }
+}
+
+// A list's scan or its wrong call is done: its own count down, final where it was the last.
+inline void px_done(Ar a, uint l, uint lane) {
+    px_fence();
+    simdgroup_barrier(mem_flags::mem_device);
+    uint left = 0u;
+    if (lane == 0u) left = atomic_fetch_sub_explicit(&a.lists[l].pending, 1u, memory_order_relaxed);
+    if (simd_broadcast(left, 0) == 1u) px_final(a, l, lane);
+}
+
+// The exit of list `l`'s call at `j` (macro `m`), whose `(` or `)` is past `l`'s end (R-peek,
+// R-ctx), by the 32 lanes: the frames after it climbed (each one's rest, never past an argument's
+// end nor a stretch's), its `)` found where the depth first comes back (a ballot search in a list,
+// a search of the top level's close table), its raw tokens joined into a source list (with their
+// depths, a carried SIMD scan), and its call list made in the frame holding `)`, counted there,
+// its CALL pushed.
+inline void px_exit(Ux u, Ar a, uint l, uint j, uint m, uint lane) {
+    device PxList& L = a.lists[l];
+    uint segl[MAX_SEGS], seglo[MAX_SEGS], seghi[MAX_SEGS];
+    uint ns = 1u;
+    segl[0] = l; seglo[0] = j; seghi[0] = L.len - 1u;
+    uint r = a.tdepth[L.first + L.len - 1u] - a.tdepth[L.first + j];
+    uint k = l, x = NO_POS, e = NO_POS;
+    for (uint step = 0u; step + 1u < MAX_SEGS; step++) {
+        device PxList& K = a.lists[k];
+        if (K.kind != LK_MACRO) break;
+        uint p = K.parent, s0 = K.hi + 1u;
+        if ((p & TOP) != 0u) {
+            uint end = top_end(u.gat, u.n_gaps, u.n_toks, K.lo);
+            uint c = top_close_to(u.closes, u.n_close, u.tdepth[K.hi] - r, s0, end);
+            if (c != NO_POS) { segl[ns] = TOP; seglo[ns] = s0; seghi[ns] = c; ns++; x = TOP; e = c; }
+            break;
+        }
+        device PxList& P = a.lists[p];
+        uint base = a.tdepth[P.first + K.hi], target = base - r, found = NO_POS;
+        for (uint c0 = s0; c0 < P.len && found == NO_POS; c0 += 32u) {
+            uint q = c0 + lane;
+            ulong h = px_ballot(q < P.len && a.tdepth[P.first + q] == target && ref_is(u, a.tok[P.first + q], ')'));
+            if (h != 0u) found = c0 + uint(ctz(h));
+        }
+        if (found != NO_POS) { segl[ns] = p; seglo[ns] = s0; seghi[ns] = found; ns++; x = p; e = found; break; }
+        if (s0 < P.len) {
+            segl[ns] = p; seglo[ns] = s0; seghi[ns] = P.len - 1u; ns++;
+            r += a.tdepth[P.first + P.len - 1u] - base;
+        }
+        k = p;
+    }
+    // No `)` before an argument's end (the serial pass's error), or past the frames' bound.
+    if (x == NO_POS) {
+        if (lane == 0u) px_refuse(a.ctl, X_PAST_END);
+        return;
+    }
+    uint total = 0u;
+    for (uint t = 0u; t < ns; t++) total += seghi[t] - seglo[t] + 1u;
+    uint jid = 0u, base = 0u;
+    if (lane == 0u) {
+        jid = atomic_fetch_add_explicit(&a.ctl[1], 2u, memory_order_relaxed);
+        base = atomic_fetch_add_explicit(&a.ctl[0], total, memory_order_relaxed);
+    }
+    jid = simd_broadcast(jid, 0);
+    base = simd_broadcast(base, 0);
+    uint nid = jid + 1u;
+    if (nid >= a.list_cap || base + total > a.tok_cap) {
+        if (lane == 0u) px_refuse(a.ctl, X_ROOM);
+        return;
+    }
+    uint w = base;
+    for (uint t = 0u; t < ns; t++) {
+        uint len = seghi[t] - seglo[t] + 1u;
+        for (uint q = lane; q < len; q += 32u) {
+            a.tok[w + q] = par_ref(u, a, segl[t], seglo[t] + q);
+            a.tflag[w + q] = par_flags(u, a, segl[t], seglo[t] + q) & ~(T_PAINT | T_PASTE | T_DROP);
+            a.tchild[w + q] = 0u;
+        }
+        w += len;
+    }
+    px_fence();
+    simdgroup_barrier(mem_flags::mem_device);
+    uint carry = 0u;
+    for (uint c0 = 0u; c0 < total; c0 += 32u) {
+        uint q = c0 + lane;
+        uint d = q < total ? paren_delta(u, a.tok[base + q]) : 0u;
+        uint depth = carry + simd_prefix_inclusive_sum(d);
+        if (q < total) a.tdepth[base + q] = depth;
+        carry += simd_sum(d);
+    }
+    px_fence();
+    simdgroup_barrier(mem_flags::mem_device);
+    if (lane == 0u) {
+        device PxList& J = a.lists[jid];
+        px_init(J, x, NO_DEF, L.slot, LK_JOIN);
+        J.first = base; J.len = total;
+        device PxList& N = a.lists[nid];
+        px_init(N, x, m, L.slot, LK_MACRO);
+        N.lo = seglo[ns - 1u]; N.hi = e; N.src = jid; N.at = 0u; N.end = total - 1u;
+        if ((x & TOP) == 0u) atomic_fetch_add_explicit(&a.lists[x].pending, 1u, memory_order_relaxed);
+        L.xname = j + 1u; L.xcall = nid + 1u;
+        px_fence();
+        px_push(a, nid | IT_CALL);
+    }
+}
+
 // SCAN `l`'s tokens (written): their depths (a SIMD scan carried 32 at a time), then their
-// calls: a name not painted whose macro is not disabled on the chain, a function-like one
-// followed by `(` in the list, to its `)` (a SIMD search a call); the outermost (a carried max of
-// the calls' reach) each a child list, pushed.
+// calls: a name not painted whose macro is not disabled on the chain (else `T_PAINT`), a
+// function-like one followed by `(` in the list, to its `)` (a SIMD search a call); the outermost
+// (a carried max of the calls' reach) each a child list, pushed. A call whose `(` or `)` is past
+// the list's end reaches past every later token: where it is outermost, it is the list's exit.
 inline void px_scan(Ux u, Ar a, uint l, uint lane) {
     device PxList& L = a.lists[l];
     uint n = L.len, first = L.first;
@@ -903,10 +1135,10 @@ inline void px_scan(Ux u, Ar a, uint l, uint lane) {
     }
     px_fence();
     simdgroup_barrier(mem_flags::mem_device);
-    uint covered = 0u, reach = 0u;
-    for (uint c0 = 0u; c0 < n; c0 += 32u) {
+    uint reach = 0u, xj = NO_POS, xm = 0u;
+    for (uint c0 = 0u; c0 < n && xj == NO_POS; c0 += 32u) {
         uint j = c0 + lane, m = 0u, e = 0u;
-        bool call = false, fn = false, open = false;
+        bool call = false, fn = false, open = false, past = false;
         if (j < n && (a.tflag[first + j] & T_NOEXP) == 0u) {
             uint g = a.tok[first + j];
             if (ref_kind(u, g) == K_IDENTIFIER) {
@@ -915,14 +1147,14 @@ inline void px_scan(Ux u, Ar a, uint l, uint lane) {
                     px_refuse(a.ctl, X_BUILTIN);
                 } else if (m < L_BUILTIN) {
                     if (px_disabled(a.lists, l, m, a.ctl)) {
-                        a.tflag[first + j] |= T_NOEXP;
+                        a.tflag[first + j] |= T_PAINT;
                     } else if ((u.defs[m].flags & D_FNLIKE) == 0u) {
                         call = true; e = j;
                     } else if (j + 1u < n) {
                         open = ref_is(u, a.tok[first + j + 1u], '(');
                         fn = true;
                     } else if (px_peek_paren(u, a.lists, a.tok, l)) {
-                        px_refuse(a.ctl, X_PAST_END);
+                        call = true; e = n; past = true;
                     }
                 }
             }
@@ -942,14 +1174,23 @@ inline void px_scan(Ux u, Ar a, uint l, uint lane) {
                 if (h != 0u) found = k0 + uint(ctz(h));
             }
             if (lane == who) {
-                if (found == 0xffffffffu) px_refuse(a.ctl, X_PAST_END);
-                else { call = true; e = found; }
+                call = true;
+                if (found == 0xffffffffu) { e = n; past = true; }
+                else e = found;
             }
         }
         uint incl = px_prefix_max(call ? e + 1u : 0u, lane);
         uint before = max(reach, lane == 0u ? 0u : simd_shuffle_up(incl, 1u));
         reach = max(reach, simd_max(incl));
         call = call && before <= j;
+        // The outermost call past the end: the list's exit (made after the scan).
+        ulong xb = px_ballot(call && past);
+        if (xb != 0u) {
+            uint who = uint(ctz(xb));
+            xj = c0 + who;
+            xm = simd_shuffle(m, ushort(who));
+        }
+        call = call && !past;
         uint k = simd_sum(call ? 1u : 0u);
         if (k == 0u) continue;
         uint cfirst = 0u;
@@ -967,17 +1208,14 @@ inline void px_scan(Ux u, Ar a, uint l, uint lane) {
             device PxList& C = a.lists[child];
             px_init(C, l, m, L.slot, LK_MACRO);
             C.lo = j; C.hi = e;
+            C.at = j; C.end = e;
             a.tchild[first + j] = child + 1u;
         }
-        covered += simd_sum(call ? e - j + 1u : 0u);
         px_fence();
         if (call) px_push(a, child | ((u.defs[m].flags & D_FNLIKE) != 0u ? IT_CALL : IT_SUBST));
     }
-    if (lane == 0u) {
-        L.own = n - covered;
-        px_fence();
-        if (atomic_fetch_sub_explicit(&L.pending, 1u, memory_order_relaxed) == 1u) px_final(a, l);
-    }
+    if (xj != NO_POS) px_exit(u, a, l, xj, xm, lane);
+    px_done(a, l, lane);
 }
 
 // Copies `n` tokens (refs and flags) from `src` to `dst` of the arena, by the 32 lanes.
@@ -999,7 +1237,8 @@ inline void px_call(Ux u, Ar a, uint l, uint lane) {
     PpDef d = u.defs[L.def];
     uint np = d.n_params >= 2u ? (d.n_params - 1u) / 2u : 0u;
     bool va = (d.flags & D_VARIADIC) != 0u;
-    uint p = L.parent, open = L.lo + 1u, close = L.hi;
+    // Its raw tokens: in its parent, or an exit's join.
+    uint p = L.src, open = L.at + 1u, close = L.end;
     uint depth = par_depth(u, a, p, open);
     // The splitting commas.
     uint splits = 0u;
@@ -1015,7 +1254,10 @@ inline void px_call(Ux u, Ar a, uint l, uint lane) {
     bool fill = np > 0u && va && nargs + 1u == np;
     bool wrong = np == 0u ? !empty : (fill ? false : nargs != np);
     if (wrong) {
-        // The name alone, painted.
+        // The name alone, painted: an exit's tokens after it would be lost (the CPU's for now).
+        if ((p & TOP) == 0u && a.lists[p].kind == LK_JOIN) {
+            if (lane == 0u) px_refuse(a.ctl, X_PAST_END);
+        }
         uint base = 0u;
         if (lane == 0u) base = atomic_fetch_add_explicit(&a.ctl[0], 1u, memory_order_relaxed);
         base = simd_broadcast(base, 0);
@@ -1024,16 +1266,14 @@ inline void px_call(Ux u, Ar a, uint l, uint lane) {
                 px_refuse(a.ctl, X_ROOM);
                 L.len = 0u;
             } else {
-                a.tok[base] = par_ref(u, a, p, L.lo);
-                a.tflag[base] = par_flags(u, a, p, L.lo) | T_NOEXP;
+                a.tok[base] = par_ref(u, a, p, L.at);
+                a.tflag[base] = (par_flags(u, a, p, L.at) & ~T_PAINT) | T_NOEXP;
                 a.tchild[base] = 0u;
                 L.len = 1u;
             }
             L.first = base;
-            L.own = L.len;
-            px_fence();
-            if (atomic_fetch_sub_explicit(&L.pending, 1u, memory_order_relaxed) == 1u) px_final(a, l);
         }
+        px_done(a, l, lane);
         return;
     }
     // The arguments' entries: each one's raw range.
@@ -1109,12 +1349,13 @@ inline void px_call(Ux u, Ar a, uint l, uint lane) {
             }
             for (uint j = lane; j < len; j += 32u) {
                 a.tok[base + j] = par_ref(u, a, p, lo + j);
-                a.tflag[base + j] = par_flags(u, a, p, lo + j);
+                a.tflag[base + j] = par_flags(u, a, p, lo + j) & ~T_PAINT;
                 a.tchild[base + j] = 0u;
             }
             if (lane == 0u) {
+                // Its context the call's (R-args): the frame holding `)`.
                 device PxList& A = a.lists[id];
-                px_init(A, p, NO_DEF, L.slot, LK_ARG);
+                px_init(A, L.parent, NO_DEF, L.slot, LK_ARG);
                 A.first = base; A.len = len; A.lo = lo; A.hi = lo + len; A.call = l;
                 atomic_store_explicit(&a.args[ab + qw].list, id + 2u, memory_order_relaxed);
                 atomic_fetch_add_explicit(&L.apending, 1u, memory_order_relaxed);
@@ -1386,8 +1627,8 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
             // An absent `__VA_OPT__` is a placemarker (no parameter).
             uint lo = qw < L.nargs ? a.args[L.args + qw].lo : 0u, len = qw < L.nargs ? a.args[L.args + qw].hi - lo : 0u;
             for (uint j = lane; j < len; j += 32u) {
-                a.tok[dst + j] = par_ref(u, a, L.parent, lo + j);
-                a.tflag[dst + j] = par_flags(u, a, L.parent, lo + j) & ~(T_PASTE | T_DROP);
+                a.tok[dst + j] = par_ref(u, a, L.src, lo + j);
+                a.tflag[dst + j] = par_flags(u, a, L.src, lo + j) & ~(T_PASTE | T_DROP | T_PAINT);
                 a.tchild[dst + j] = 0u;
             }
             simdgroup_barrier(mem_flags::mem_device);
@@ -1403,7 +1644,7 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
             uint dst = simd_shuffle(off, ushort(who)), spw = simd_shuffle(sp, ushort(who));
             uint qw = u.items[d.ifirst + simd_shuffle(i, ushort(who)) + 1u] & 0xffffu;
             uint lo = qw < L.nargs ? a.args[L.args + qw].lo : 0u, hi = qw < L.nargs ? a.args[L.args + qw].hi : 0u;
-            uint ref = px_stringize(u, a, L.parent, lo, hi, lane);
+            uint ref = px_stringize(u, a, L.src, lo, hi, lane);
             if (lane == 0u) {
                 a.tok[dst] = ref;
                 a.tflag[dst] = spw;
@@ -1476,51 +1717,18 @@ inline void px_subst(Ux u, Ar a, uint l, uint lane) {
     }
     if (lane == 0u) {
         L.first = base; L.len = kept;
-        if (kept > 0u) a.tflag[base] = (a.tflag[base] & ~T_SPACE) | (par_flags(u, a, L.parent, L.lo) & T_SPACE);
+        if (kept > 0u) a.tflag[base] = (a.tflag[base] & ~T_SPACE) | (par_flags(u, a, L.src, L.at) & T_SPACE);
     }
     px_fence();
     simdgroup_barrier(mem_flags::mem_device);
     px_scan(u, a, l, lane);
 }
 
-// PLACE `l`: its tokens no child covers at its base, in order, and each child's base (a SIMD
-// scan of the pieces' sizes, carried 32 at a time), each child's PLACE pushed. It writes to the
-// output, or (flattening an argument) to the arena with the tokens' paint, and counts its
-// flatten's items down: the last done tells the call.
+// PLACE `l`: its pieces at its base (`px_walk`), to the output or (flattening an argument) to
+// the arena; a flatten's items counted down, the last done telling the call.
 inline void px_place(Ar a, uint l, uint lane) {
-    device PxList& L = a.lists[l];
-    uint dest = L.dest;
-    uint at = L.base, reach = 0u;
-    for (uint c0 = 0u; c0 < L.len; c0 += 32u) {
-        uint j = c0 + lane, v = 0u, child = 0u, ends = 0u;
-        if (j < L.len) {
-            child = a.tchild[L.first + j];
-            if (child != 0u) ends = a.lists[child - 1u].hi + 1u;
-        }
-        uint incl = px_prefix_max(ends, lane);
-        uint before = max(reach, lane == 0u ? 0u : simd_shuffle_up(incl, 1u));
-        if (j < L.len) v = child != 0u ? a.lists[child - 1u].size : before > j ? 0u : 1u;
-        uint off = at + simd_prefix_exclusive_sum(v);
-        if (j < L.len && child == 0u && v == 1u) {
-            if (dest == 0u) {
-                if (off < a.out_cap) a.out[off] = a.tok[L.first + j]; else px_refuse(a.ctl, X_ROOM);
-            } else {
-                a.tok[off] = a.tok[L.first + j];
-                a.tflag[off] = a.tflag[L.first + j];
-                a.tchild[off] = 0u;
-            }
-        }
-        uint k = simd_sum(child != 0u ? 1u : 0u);
-        if (dest != 0u && lane == 0u && k != 0u) atomic_fetch_add_explicit(&a.lists[dest - 1u].fpending, k, memory_order_relaxed);
-        if (child != 0u) {
-            a.lists[child - 1u].base = off;
-            a.lists[child - 1u].dest = dest;
-            px_fence();
-            px_push(a, (child - 1u) | IT_PLACE);
-        }
-        at += simd_sum(v);
-        reach = max(reach, simd_max(incl));
-    }
+    uint dest = a.lists[l].dest;
+    px_walk(a, l, lane, true);
     if (dest != 0u && lane == 0u) {
         px_fence();
         device PxList& A = a.lists[dest - 1u];
@@ -1547,7 +1755,8 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
                     device PxArg* args [[buffer(22)]], device uint* out [[buffer(23)]],
                     device atomic_uint* slots [[buffer(24)]], device atomic_uint* qctl [[buffer(25)]],
                     device atomic_uint* ctl [[buffer(26)]], constant uint* words [[buffer(27)]],
-                    device uchar* sbytes [[buffer(28)]], device PxScratch* stoks [[buffer(29)]],
+                    device PxScratch* scratch [[buffer(28)]], device const ulong* closes [[buffer(29)]],
+                    device const uint* n_close [[buffer(30)]],
                     uint lane [[thread_index_in_simdgroup]]) {
     // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high), the scratch
     // bytes' and tokens' capacities.
@@ -1556,7 +1765,11 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
     u.sorted = sorted; u.perm = perm; u.n_rows = n_rows[0]; u.name_keys = name_keys; u.values = values;
     u.text_nodes = text_nodes; u.gat = gat; u.n_gaps = n_gaps[0]; u.firsts = firsts; u.n_toks = n_toks[0];
     u.tdepth = top_depth; u.va_opt = ulong(words[6]) | (ulong(words[7]) << 32);
+    // The scratch: its tokens (`st_cap`, an even number), then its bytes.
+    device PxScratch* stoks = scratch;
+    device uchar* sbytes = (device uchar*)(scratch + words[9]);
     u.sbytes = sbytes; u.stoks = stoks; u.relex_options = words[10];
+    u.closes = closes; u.n_close = n_close[0];
     Ar a;
     a.lists = lists; a.tok = tok; a.tflag = tflag; a.tchild = tchild; a.tdepth = tdepth; a.args = args; a.out = out; a.ctl = ctl;
     a.q.slots = slots; a.q.control = qctl; a.q.capacity = words[5];
@@ -1589,18 +1802,83 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
     }
 }
 
-// Each top token's piece of the output: 1 for a token no call covers, its list's size for an
-// outermost call's name, 0 inside a call.
-kernel void px_top_sizes(device const uint* state [[buffer(0)]], device const uint* oid [[buffer(1)]],
+// The top level's rollback (after the queue's first phase, when every list is final): each
+// outermost top call with an exit flagged (for a scan and a compaction, in order).
+kernel void px_top_xflag(device const uint* state [[buffer(0)]], device const uint* oid [[buffer(1)]],
                          device const PxList* lists [[buffer(2)]], device const uint* n_toks [[buffer(3)]],
-                         device uint* v [[buffer(4)]], uint s [[thread_position_in_grid]]) {
+                         device uint* xflag [[buffer(4)]], uint s [[thread_position_in_grid]]) {
     if (s >= n_toks[0]) return;
-    uint st = state[s];
-    v[s] = st == 0u ? 1u : st == 1u ? lists[oid[s]].size : 0u;
+    xflag[s] = state[s] == 1u && lists[oid[s]].exit != 0u ? 1u : 0u;
 }
 
-// Each top token at its place (`obase`, the sizes' scan), and each outermost call's list's base,
-// its PLACE pushed.
+kernel void px_top_xlist(device const uint* xflag [[buffer(0)]], device const uint* xat [[buffer(1)]],
+                         device const uint* n_toks [[buffer(2)]], device uint* xpos [[buffer(3)]],
+                         uint s [[thread_position_in_grid]]) {
+    if (s >= n_toks[0] || xflag[s] == 0u) return;
+    xpos[xat[s]] = s;
+}
+
+// The exit-bearing top calls, in order, by one SIMD group (they are few): each live unless an
+// earlier live one's claim covers it (decided one after another, a ballot of 32); `xcover[i]` the
+// end of the live claims through call `i` (a running max).
+kernel void px_top_cover(device const uint* xpos [[buffer(0)]], device const uint* n_x [[buffer(1)]],
+                         device const uint* oid [[buffer(2)]], device PxList* lists [[buffer(3)]],
+                         device uint* xcover [[buffer(4)]], device atomic_uint* ctl [[buffer(5)]],
+                         uint t [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+    if (t >= 32u) return;
+    Ar a;
+    a.lists = lists; a.ctl = ctl;
+    uint n = n_x[0], cover = 0u;
+    for (uint c0 = 0u; c0 < n; c0 += 32u) {
+        uint i = c0 + lane, s = 0u, e = 0u;
+        if (i < n) {
+            s = xpos[i];
+            e = px_claim(a, TOP, oid[s]).end;
+        }
+        uint mine = 0u;
+        uint m = min(32u, n - c0);
+        for (uint who = 0u; who < m; who++) {
+            uint sw = simd_shuffle(s, ushort(who)), ew = simd_shuffle(e, ushort(who));
+            if (sw >= cover) cover = max(cover, ew + 1u);
+            if (lane == who) mine = cover;
+        }
+        if (i < n) xcover[i] = mine;
+    }
+}
+
+// The first of `n` sorted words at or after `q`.
+inline uint px_lower_bound(device const uint* v, uint n, uint q) {
+    uint lo = 0u, hi = n;
+    while (lo < hi) {
+        uint mid = (lo + hi) / 2u;
+        if (v[mid] < q) lo = mid + 1u; else hi = mid;
+    }
+    return lo;
+}
+
+// Each top token's piece of the output: 0 inside a live exit's claim (its state made 2), else 1
+// for a token no call covers, its list's size and its exits' chain's for an outermost call's name,
+// 0 inside a call.
+kernel void px_top_sizes(device uint* state [[buffer(0)]], device const uint* oid [[buffer(1)]],
+                         device PxList* lists [[buffer(2)]], device const uint* n_toks [[buffer(3)]],
+                         device uint* v [[buffer(4)]], device const uint* xpos [[buffer(5)]],
+                         device const uint* n_x [[buffer(6)]], device const uint* xcover [[buffer(7)]],
+                         uint s [[thread_position_in_grid]]) {
+    if (s >= n_toks[0]) return;
+    uint i = px_lower_bound(xpos, n_x[0], s);
+    if (i > 0u && xcover[i - 1u] > s) {
+        state[s] = 2u;
+        v[s] = 0u;
+        return;
+    }
+    uint st = state[s];
+    Ar a;
+    a.lists = lists;
+    v[s] = st == 0u ? 1u : st == 1u ? px_claim(a, TOP, oid[s]).size : 0u;
+}
+
+// Each top token at its place (`obase`, the sizes' scan), and each live outermost call's list's
+// base and its exits' chain's, their PLACE pushed.
 kernel void px_top_place(device const uint* state [[buffer(0)]], device const uint* oid [[buffer(1)]],
                          device PxList* lists [[buffer(2)]], device const uint* n_toks [[buffer(3)]],
                          device const uint* obase [[buffer(4)]], device const uint* text_nodes [[buffer(5)]],
@@ -1615,12 +1893,18 @@ kernel void px_top_place(device const uint* state [[buffer(0)]], device const ui
         if (obase[s] < out_cap) out[obase[s]] = top_ref(text_nodes, gat, n_gaps[0], firsts, s);
         else px_refuse(ctl, X_ROOM);
     } else if (st == 1u) {
-        uint c = oid[s];
-        lists[c].base = obase[s];
-        lists[c].dest = 0u;
-        px_fence();
         WorkQueue q; q.slots = slots; q.control = qctl; q.capacity = q_cap;
-        if (!wq_push(q, c | IT_PLACE)) px_refuse(ctl, X_QUEUE);
+        uint c = oid[s], b = obase[s];
+        for (uint step = 0u; step < MAX_EXITS; step++) {
+            lists[c].base = b;
+            lists[c].dest = 0u;
+            b += lists[c].size;
+            px_fence();
+            if (!wq_push(q, c | IT_PLACE)) px_refuse(ctl, X_QUEUE);
+            uint x = lists[c].exit;
+            if (x == 0u || lists[x - 1u].parent != TOP) break;
+            c = x - 1u;
+        }
     }
 }
 

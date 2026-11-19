@@ -326,3 +326,41 @@ outermost call becomes the queue's first items.
   by a call across a stretch's end (`X_ACROSS`), and 2 by the spike's P1 (`#line`). No unit runs
   out of room at the last rung. When a unit runs out of room, the test names the store
   (`Expanded::room`).
+- **R7: calls past a list's end, and rollback.** A function-like name whose `(` (R-peek) or `)` is
+  past its list's end is that list's exit, if it is outermost. Its 32 lanes climb the frames
+  after it: each frame's rest, never past an argument's end (`X_PAST_END`, the serial pass's
+  error) nor a stretch's end. In each frame they look for the first place the depth comes back
+  to the call's, by a ballot search in a list and by the close table at the top level. The
+  frames' raw tokens are joined into a source list (`LK_JOIN`, never placed), with their depths
+  by a carried SIMD scan. The call's list is made in the frame that holds `)` (R-ctx), and that
+  frame counts it. Its CALL, SUBST and `#` read the join (`src`, `at`, `end`); for any other call
+  the source is its parent.
+
+  Rollback is not a kill. Every list runs to its end, so every count stays exact. A list's
+  pieces are decided when it is final (`px_walk`), and PLACE walks the same pieces:
+  - in order, a child is live unless an earlier live child's claim covers it (its exits' chain
+    in the list);
+  - an exit that goes on past the list's end (a child's, or the list's own) ends the list, and
+    is its exit;
+  - the exit-bearing children of 32 are decided one after another by a ballot, the rest by a
+    carried prefix max of the live claims.
+
+  At the top level, the exit-bearing calls are compacted in order by a scan. One SIMD group
+  decides them (they are few), and each top token searches their running cover. Paint found in
+  a scan is `T_PAINT`, stored as `NOEXP` only where a flatten copies the token out. An exit's
+  raw tokens never carry it: a frame's tokens after its child were never read in that frame. A
+  tail call with the wrong count of arguments is refused for now. 14 shapes in C and C++ give
+  the serial pass's tokens (`calls_past_an_end_are_the_serial_passes`):
+  - the spike's merges;
+  - C17 §6.10.3.5's example 3, whole;
+  - a sibling read raw into an exit's arguments;
+  - a dead sibling's exit reaching past the live one's end;
+  - a chain of four calls;
+  - exits through two lists;
+  - exits in a macro's list and in an argument's;
+  - an argument's fence;
+  - DEFER/EMPTY/OBSTRUCT.
+
+  The corpus is unchanged: 3,099 units give the serial pass's tokens, at most 174 launches.
+  `px_work`'s scratch tokens and bytes now share one buffer (tokens, then bytes, 8-byte
+  aligned), since Metal binds 31 buffers at most.
