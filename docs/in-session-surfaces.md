@@ -192,7 +192,7 @@ Each coding agent waits briefly after an edit for its check, so the steer lands 
 - **Claude Code, Codex, Cursor** wait up to one second after an edit for its check, so the agent sees the steer under the edit and can act that turn. Checks usually take tens of milliseconds.
 - **OMP and Pi** wait up to 10 seconds at a tool result and at turn end, so a shell command that wrote thousands of files does not stall the agent for minutes.
 
-Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule.
+Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule. A hook stops waiting for a Rerail too busy to answer it within 30 seconds; a steer its answer would have carried goes to the session's next hook.
 
 </details>
 

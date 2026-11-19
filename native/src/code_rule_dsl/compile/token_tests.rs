@@ -296,13 +296,13 @@ impl Reach {
     fn find(lang: &Lang, regex: &str) -> Option<Self> {
         use crate::code_rule_dsl::regexes::Regex;
         let compiled = Regex::new(regex).ok()?;
-        if !lang.tokens.iter().any(|token| compiled.is_match(token)) {
+        if !lang.tokens().any(|token| compiled.is_match(token)) {
             return None;
         }
         let whole = Regex::new(&format!("^(?:{regex})$")).ok()?;
         // A regex that matches a token without spanning it tests a node's text, and reaches a
         // token only by accident (`.`, `^[rub]*f`): `incidental`.
-        let incidental = !lang.tokens.iter().any(|token| whole.is_match(token)) || ["x", "foo_bar", "0"].iter().any(|text| compiled.is_match(text));
+        let incidental = !lang.tokens().any(|token| whole.is_match(token)) || ["x", "foo_bar", "0"].iter().any(|text| compiled.is_match(text));
         let reads = if incidental { compiled } else { whole };
         let tokens = lang.distinct().iter().filter(|&&(token, _)| reads.is_match(token)).map(|&(token, _)| token.to_owned()).collect();
         Some(Self { incidental, tokens })
