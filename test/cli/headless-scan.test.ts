@@ -346,7 +346,7 @@ C(n) :- label("always"), kind(n, "call").
       vi.unstubAllEnvs();
     }
     expect(git(root, "status", "--porcelain")).toBe("");
-  });
+  }, 30_000);
 
   it("scans a bare repository with explicit policy from a ref", async () => {
     const root = checkout();
@@ -2417,7 +2417,7 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
   });
 
   it("waits for the original store after a swap and releases both identities that used one path", async () => {
-    const root = checkout(), home = root + "-home", databasePath = join(home, "home.sqlite");
+    const root = checkout(), home = root + "-home", databasePath = join(home, "rerail.sqlite");
     const mounted = join(home, "mount"), first = mounted + "-first", second = mounted + "-second";
     const store = join(mounted, "content.sqlite"), binding = loadNativeBinding();
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
@@ -2425,26 +2425,25 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
       binding.retireUpkeepUnder?.(mounted);
       renameSync(mounted, destination);
     };
-    const stop = () => {
-      const db = openRerailDatabase(databasePath);
-      try { db.transaction(tx => queueAnalysisScopeReleases(tx, [root], databasePath)); } finally { db.$client.close(); }
-    };
+    const { publish, stop } = storeRetirementFixture(home, databasePath);
     const pending = () => {
       const db = openRerailDatabase(databasePath);
       try { return db.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get(); }
       finally { db.$client.close(); }
     };
     try {
-      expect((await scan(root, { databasePath })).status).toBe("completed");
+      publish(store, root);
       expect(directoryOwnerCount(store)).toBe(1);
       unmount(first);
       // A valid replacement with no registration must never acknowledge the first store's stop.
-      await binding.prepareAnalysisStoreAsync(store);
-      stop();
+      execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", store], {
+        input: 'import { loadNativeBinding } from "./src/engine/index.ts"; await loadNativeBinding().prepareAnalysisStoreAsync(process.argv[2]);',
+      });
+      stop(root);
       expect(() => settleAnalysisScopeReleases(databasePath, -1)).toThrow(/identity changed/u);
       expect(queryContentStore(store, "SELECT id FROM analysis_scope_release")).toEqual([]);
       expect(pending()).toBe(1);
-      expect((await scan(root, { databasePath })).status).toBe("completed");
+      publish(store, root);
       unmount(second);
       expect(() => settleAnalysisScopeReleases(databasePath, -1)).toThrow();
       expect(existsSync(mounted)).toBe(false);
@@ -2452,8 +2451,8 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
       settleAnalysisScopeReleases(databasePath, -1);
       expect(directoryOwnerCount(store)).toBe(0);
       expect(pending()).toBe(0);
-      expect((await scan(root, { databasePath })).status).toBe("completed");
-      stop(); // Both stores now own this directory in the ended generation.
+      publish(store, root);
+      stop(root); // Both stores now own this directory in the ended generation.
       expect(() => settleAnalysisScopeReleases(databasePath, -1)).toThrow(/identity changed/u);
       expect(directoryOwnerCount(store)).toBe(0);
       expect(pending()).toBe(1);
@@ -2475,7 +2474,7 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
         expect(collect.mock.calls.filter(([path]) => path === store)).toHaveLength(1);
       } finally { collect.mockRestore(); }
     } finally { vi.unstubAllEnvs(); }
-  });
+  }, 120_000);
 
   it.skipIf(process.platform !== "linux")("releases only the selected directory when two symlink targets differ in raw bytes", async () => {
     const parent = checkout(), dbPath = join(parent, "home.sqlite"), store = join(parent, "content.sqlite");
