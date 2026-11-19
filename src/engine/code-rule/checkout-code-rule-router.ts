@@ -228,11 +228,16 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return lane === undefined ? this.#gitIgnores(owner, directory) : lane.enforcer.ignoresPath(owner.path, directory);
   }
 
-  /** An open lane at the version of the rules `root`'s catalog holds; undefined for a checkout that may not run rules. */
+  /**
+   * An open lane at the version of the rules `root`'s catalog holds; undefined for a checkout that may not run rules.
+   * Rules that cannot be read throw, as they did from a lane opened for the question, and leave `root` out of the
+   * checkouts answered for.
+   */
   #laneWithRulesOf(root: string): Lane | undefined {
     if (this.#sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
+    const version = this.#options.catalogs.catalog(root).status.version;
     this.#answeredByOthers.add(root);
-    return this.#laneAt(this.#options.catalogs.catalog(root).status.version);
+    return this.#laneAt(version);
   }
 
   /** An open lane whose rules are at `version`. */
@@ -241,10 +246,19 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return undefined;
   }
 
-  /** Reads again the rules of each checkout another lane answers for, as each lane reads its own (`refreshCodeRules`). */
+  /**
+   * Reads again the rules of each checkout another lane answers for, as each lane reads its own (`refreshCodeRules`).
+   * Rules that fail to load open the checkout's own lane, whose refresh records the failure in the session's responses
+   * as a lane that answered for itself did; the other checkouts and every lane still refresh.
+   */
   #refreshAnsweredCatalogs(): void {
     for (const root of this.#answeredByOthers) {
-      if (!this.#lanes.has(root) && this.#mayRun(root)) this.#options.catalogs.catalog(root).refresh();
+      if (this.#lanes.has(root) || !this.#mayRun(root)) continue;
+      try {
+        this.#options.catalogs.catalog(root).refresh();
+      } catch {
+        this.#lane(root);
+      }
     }
   }
 

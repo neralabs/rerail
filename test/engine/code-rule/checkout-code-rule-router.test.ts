@@ -8,7 +8,7 @@ import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
-import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { CheckoutCatalogs, CheckoutCodeRuleCatalog, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { SqliteAuditReader } from "../../../src/engine/audit/audit-store.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
@@ -766,6 +766,68 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await edit(auditor, "open-again", 1, join(worktree, "gen", "x.py"));
     expect(violations(audits)).toEqual([]);
     expect(errors.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
+  });
+
+  /**
+   * Has `root`'s rules fail to load while `failing()` says so, as a rule the catalog cannot represent makes them: its
+   * catalog's first read throws (no catalog is made), and a catalog made before throws as it reads them again.
+   */
+  function failingCatalogOf(root: string, failing: () => boolean): void {
+    const catalogOf = CheckoutCatalogs.prototype.catalog;
+    const ofRoot = new Set<CheckoutCodeRuleCatalog>();
+    const catalogs = vi.spyOn(CheckoutCatalogs.prototype, "catalog").mockImplementation(function (this: CheckoutCatalogs, asked: string) {
+      if (asked === root && failing() && ofRoot.size === 0) throw new Error("Policy worktree:notes is not JSON representable");
+      const catalog = catalogOf.call(this, asked);
+      if (asked === root) ofRoot.add(catalog);
+      return catalog;
+    });
+    const refresh = CheckoutCodeRuleCatalog.prototype.refresh;
+    const refreshes = vi.spyOn(CheckoutCodeRuleCatalog.prototype, "refresh").mockImplementation(function (this: CheckoutCodeRuleCatalog) {
+      if (ofRoot.has(this) && failing()) throw new Error("Policy worktree:notes is not JSON representable");
+      return refresh.call(this);
+    });
+    cleanups.push(async () => { catalogs.mockRestore(); refreshes.mockRestore(); });
+  }
+
+  /** The session checkout takes a rule that reads Markdown, so a lane that read its rules again accepts README.md. */
+  async function sessionReadsMarkdown(session: string): Promise<void> {
+    await mkdir(join(session, ".rerail", "rules"), { recursive: true });
+    await writeFile(join(session, ".rerail", "rules", "notes.json"), JSON.stringify({ ...needle("session:notes", "NOTES"), scope: { include: ["**/*.md"], exclude: [] } }));
+  }
+
+  it("refreshes every lane though the rules of a worktree another lane answers for fail to load, and records the failure as that worktree's lane", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    await writeFile(join(worktree, "api", "x.py"), "seed\n");
+    let broken = false;
+    failingCatalogOf(worktree, () => broken);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("answered-fails");
+    expect(auditor.walkView().acceptsPath(walked(session, worktree, "api/x.py"))).toBe(true);
+
+    broken = true;
+    await sessionReadsMarkdown(session);
+    expect(() => auditor.refreshCodeRules()).not.toThrow();
+    expect(auditor.acceptsPath("README.md")).toBe(true);
+    const response = await auditor.auditGeneratedEdits("answered-fails", { revision: 1, checkpoints: ["edit"], edits: [] });
+    expect(response.failures).toContainEqual(expect.objectContaining({ clauseId: "catalog", code: "adapter-error", message: expect.stringContaining("not JSON representable") }));
+  });
+
+  it("refreshes every lane after a walk asked about a worktree whose rules could not be read at all", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    let broken = true;
+    failingCatalogOf(worktree, () => broken);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("never-read");
+    // As when a lane opened for the question: the catalog's error reaches the walk.
+    expect(() => auditor.walkView().acceptsPath(walked(session, worktree, "api/x.py"))).toThrow("not JSON representable");
+
+    await sessionReadsMarkdown(session);
+    expect(() => auditor.refreshCodeRules()).not.toThrow();
+    expect(auditor.acceptsPath("README.md")).toBe(true);
+    broken = false;
   });
 
   it("judges a sibling worktree from a session that started in a worktree", async () => {
