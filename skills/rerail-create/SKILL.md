@@ -76,7 +76,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    it under Left out. A candidate that fails a gate, or does not pass after about five rounds, is left out too.
 5. **Add the ones that pass, in Log.** For each: `rerail rules add <tmp>/draft.json`, and do **not** approve it. A rule that is
    added but not approved runs in Log whatever its mode: Rerail records what it would catch and tells the agent nothing. It
-   waits on the dashboard's Overview, under "rules you created wait for your approval", where the person can approve it.
+   waits on the dashboard's Overview, under "Your coding agent added …", and the person approves it from its page there.
    Skip a candidate that does the same as a rule in `rules export`; say so under Left out.
 6. **Ask once, in exactly this form.** One block per rule added, in the order added:
 

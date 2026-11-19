@@ -11,7 +11,7 @@ Start with `/rerail-create` in your coding agent (`$rerail-create` in Codex):
 | `/rerail-create use our logger, not console.log` | The agent writes that rule |
 | `/rerail-create the no-sync rule keeps telling you to use fs/promises in our CLI` | The agent tunes that rule, or offers to switch it to Log |
 
-The agent tests each draft. A rule you asked for is read back and added only after you say yes. Rules it suggests are added in Log, steering no one, and the agent asks once whether to approve them so they steer; the ones you leave wait on the dashboard's Overview, where you approve them one by one or all at once.
+The agent tests each draft. A rule you asked for is read back and added only after you say yes. Rules it suggests are added in Log, steering no one, and the agent asks once whether to approve them so they steer; the ones you leave wait on the dashboard's Overview, which says what they caught in Log and sends you to Created by you, where you read each one and approve it on its page.
 
 <details>
 <summary>Where the agent's method comes from</summary>

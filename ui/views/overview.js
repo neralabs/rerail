@@ -5,11 +5,10 @@
  */
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon } from "../dom.js";
 import { ago, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
-import { awaitingApproval, awaitingYourApproval, isFromPack, isRunning, messageText, worktreeLeftOut } from "../derive.js";
+import { awaitingApproval, awaitingYourApproval, isFromPack, isRunning, worktreeLeftOut } from "../derive.js";
 import { data, ui, ALL_TIME, activityAllOf, allFires, fires, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
-import { approveMany } from "../actions.js";
 import { rangeControl, syncRange } from "../render/range.js";
 import { loggedTip } from "../render/rules.js";
 import { enforcementTag, ruleTableHead, updateEnforcementTag } from "../render/enforcement.js";
@@ -94,34 +93,21 @@ function renderLeftOut(root) {
 export const yourRulesToApprove = () => (data.loaded ? rulesArray().filter(awaitingYourApproval) : [])
   .sort((a, b) => titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: "base" }) || a.rule.id.localeCompare(b.rule.id));
 
-/** Everything a rule can tell the coding agent: each clause's message, once each, or a conversation rule's action. */
-const allMessages = stored => (stored.kind === "conversation" ? [messageText(stored)]
-  : [...new Set((stored.rule.clauses ?? []).map(clause => clause.violation?.message ?? ""))]).filter(text => text !== "");
-
-/** What a rule in Log caught since install: what it would have steered, had it been approved. */
-const caughtLine = n => (n === 0 ? "Nothing caught in Log yet." : `Caught ${fmt(n)} ${plural(n, "violation")} in Log so far.`);
-
 /**
- * The rules created by you that wait for your approval (`/rerail-create` adds the rules it finds this way): each with
- * what it tells the coding agent and what it caught in Log, approved from here one by one or all at once. Each Approve
- * approves the content this page read. Not dismissible: a rule left here keeps running in Log.
+ * The rules your coding agent added that wait for your approval (`/rerail-create` adds the rules it suggests this way):
+ * how many, what they caught in Log that the agent was not told, and one button to Created by you, where each is opened
+ * and read in full before it is approved from its sheet. Not dismissible: a rule left here keeps running in Log.
  */
 function renderYours(root) {
-  const list = yourRulesToApprove().map(stored => ({
-    id: stored.rule.id, title: titleOf(stored), says: allMessages(stored), caught: allFires(stored.rule.id), digest: stored.approval.subject.digest,
-  }));
-  const n = list.length;
-  setContent(root, JSON.stringify(list), () => (n === 0 ? null : h("div.welcome.yours", { role: "status" }, icon("done", 22), h("div", null,
-    h("b", null, `${fmt(n)} ${plural(n, "rule")} you created ${n === 1 ? "waits" : "wait"} for your approval. Until approved, ${n === 1 ? "it runs" : "they run"} in Log and steer${n === 1 ? "s" : ""} no one; then each runs in the mode it is set to.`),
-    h("p", null, `Read what ${n === 1 ? "it tells" : "each tells"} the coding agent, then approve ${n === 1 ? "it" : "the ones you want"}.`),
-    h("ul.approvelist", null, list.map(item => h("li", { "data-rule": item.id },
-      h("b", null, item.title),
-      ...item.says.map(text => h("p", null, "Tells the agent: ", h("q", null, text))),
-      h("p", null, caughtLine(item.caught)),
-      h("p.acts", null,
-        h("button.btn.sm.solid", { "data-act": "approve", "data-i": item.id, "data-kind": "rule", "data-digest": item.digest }, "Approve"),
-        h("button.btn.sm", { "data-act": "detail", "data-i": item.id }, "Open"))))),
-    n < 2 ? null : h("p.acts", null, h("button.btn.sm.solid", { "data-act": "approveall" }, `Approve all ${fmt(n)}`))))));
+  const rules = yourRulesToApprove(), n = rules.length, one = n === 1;
+  const caught = rules.reduce((sum, stored) => sum + allFires(stored.rule.id), 0);
+  setContent(root, JSON.stringify([rules.map(stored => stored.rule.id), caught]), () => (n === 0 ? null : h("div.welcome.warn.yours", { role: "status" }, icon("steered", 22), h("div", null,
+    h("b", null, one ? "Your coding agent added a rule. It’s on Log only until you approve it."
+      : `Your coding agent added ${fmt(n)} rules. They’re on Log only until you approve them.`),
+    h("p", null, caught === 0 ? "Nothing caught in Log yet. "
+      : `${one ? "It" : "Together they"} caught ${fmt(caught)} ${plural(caught, "violation")} in Log, which your coding agent wasn’t told about. `,
+      `Open ${one ? "it" : "each one"} in Created by you to see what it checks and what it tells the coding agent, then approve it so it steers.`),
+    h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": "created" }, "Review in Created by you"))))));
 }
 
 /**
@@ -372,6 +358,4 @@ export function render(root) {
 
 export const actions = {
   dismisswelcome: () => { dismissWelcome(); invalidate(); },
-  /** Approve all: every rule created by you that waits for approval, at the content this page read. */
-  approveall: () => approveMany(yourRulesToApprove().map(stored => ({ kind: "rule", id: stored.rule.id, digest: stored.approval.subject.digest }))),
 };

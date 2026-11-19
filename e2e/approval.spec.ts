@@ -20,30 +20,39 @@ async function modeOf(rerail: RerailScenarios, id: string): Promise<unknown> {
   return { mode: rule.mode, by: rule.modeSource.by, approved: rule.approval?.approved };
 }
 
-test("rules created by you wait for approval on the Overview, approved one by one or all at once", async ({ page, rerail }) => {
+/** Open rule `id` in Created by you and approve it from its sheet, after it is read. */
+async function approveInCreated(page: Page, id: string): Promise<void> {
+  await page.locator(`#content .row[data-i="${id}"] button.t`).click();
+  const notice = sheet(page).locator(".welcome.warn");
+  await expect(notice).toContainText("Added by your coding agent, on Log only.");
+  await notice.locator('[data-act="approve"]').click();
+  await expect(page.locator("#toast")).toContainText(`${id} is approved`);
+}
+
+test("rules your coding agent added wait for approval: Overview sends you to them, each approved on its page", async ({ page, rerail }) => {
   await page.goto(await rerail.dashboard("awaiting-approval"));
 
-  // Overview lists the three rules a coding agent added, each with what it tells the agent; the worktree's own rule
-  // stays in the banner that sends you to its page.
-  await expect(yours(page)).toContainText("3 rules you created wait for your approval");
-  await expect(yours(page).locator(`li[data-rule="${LIBRARY_RULE}"]`)).toContainText("Call the API through the generated client in src/api/generated.");
+  // Overview says how many rules the coding agent added; the worktree's own rule stays in the banner that sends you to
+  // its page.
+  await expect(yours(page)).toContainText("Your coding agent added 3 rules. They’re on Log only until you approve them.");
   await expect(banner(page)).toContainText("1 rule waits for approval");
   for (const id of [LIBRARY_RULE, ...MORE_LIBRARY_RULES]) {
     expect(await modeOf(rerail, id)).toEqual({ mode: "log", by: "awaiting-approval", approved: false });
   }
 
-  // Approve, for one.
-  await yours(page).locator(`li[data-rule="${LIBRARY_RULE}"] [data-act="approve"]`).click();
-  await expect(page.locator("#toast")).toContainText(`${LIBRARY_RULE} is approved`);
-  await expect(yours(page)).toContainText("2 rules you created wait for your approval");
+  // Its one button goes to Created by you, where each rule is read and approved on its sheet.
+  await yours(page).locator('[data-act="nav"][data-i="created"]').click();
+  await approveInCreated(page, LIBRARY_RULE);
   expect(await modeOf(rerail, LIBRARY_RULE)).toEqual({ mode: "steer", by: "rule-default", approved: true });
 
-  // Approve all, for the rest: each runs in the mode it is set to.
-  await yours(page).locator('[data-act="approveall"]').click();
-  await expect(page.locator("#toast")).toContainText("2 rules are approved");
-  await expect(yours(page)).toHaveCount(0);
+  // The rest: each runs in the mode it is set to once approved.
+  for (const id of MORE_LIBRARY_RULES) await approveInCreated(page, id);
   expect(await modeOf(rerail, "storefront-no-inner-html")).toEqual({ mode: "steer", by: "rule-default", approved: true });
   expect(await modeOf(rerail, "storefront-no-default-export")).toEqual({ mode: "log", by: "rule-default", approved: true });
+  await sheet(page).locator('[data-act="close"]').click();
+
+  await page.locator('[data-act="nav"][data-i="overview"]').first().click();
+  await expect(yours(page)).toHaveCount(0);
 
   // The worktree's own rule is approved from its page, after it is read.
   await banner(page).locator(`[data-act="detail"][data-i="${WORKTREE_RULE}"]`).click();

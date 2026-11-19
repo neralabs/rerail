@@ -6,7 +6,7 @@
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { fmt, whenLabel, clock, shortSessionId } from "../format.js";
-import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
+import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { MODE_READ_ONLY, enforcementTag, updateEnforcementTag } from "./enforcement.js";
@@ -116,10 +116,19 @@ function renderStats(stored, id) {
  * While the rule's content (or its pack's) waits for a person's approval, what that means and an Approve button that
  * approves exactly the content this page read; nothing once approved, or for a rule that needs none.
  */
+/** A rule your coding agent added that waits: who added it, what it caught in Log, and Approve, here after it is read. */
+const yourRuleNotice = (subject, caught) => h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+  h("b", null, "Added by your coding agent, on Log only."),
+  h("p", null, caught === 0 ? "Nothing caught in Log yet. " : `Caught ${fmt(caught)} ${caught === 1 ? "violation" : "violations"} in Log so far, and your coding agent wasn’t told. `,
+    "Review what it checks and what it tells the coding agent, then approve it: Rerail tells your coding agent as it works, so it fixes them."),
+  h("p.acts", null, h("button.btn.sm.solid", { "data-act": "approve", "data-i": subject.id, "data-kind": subject.kind, "data-digest": subject.digest }, "Approve"))));
+
 function renderApproval(stored) {
   const waiting = awaitingApproval(stored), subject = stored.approval?.subject;
   const pack = subject?.kind === "pack" ? data.packs.find(x => x.approval?.subject.id === subject.id) : undefined;
-  setContent(p.approval, JSON.stringify([waiting, subject, pack?.name]), () => (!waiting ? null
+  const yours = awaitingYourApproval(stored), caught = yours ? allFires(stored.rule.id) : 0;
+  setContent(p.approval, JSON.stringify([waiting, subject, pack?.name, yours, caught]), () => (!waiting ? null
+    : yours ? yourRuleNotice(subject, caught)
     : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
       h("b", null, subject.kind === "pack" ? `Its pack, ${pack?.name ?? subject.id}, waits for approval.` : "This rule waits for approval."),
       h("p", null, subject.kind === "pack"

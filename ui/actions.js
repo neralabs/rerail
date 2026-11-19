@@ -74,26 +74,6 @@ async function approveContent(subject) {
   await refreshNow();
 }
 
-/**
- * Approve each of `subjects` (rules at the digests this page read), one request each, then reload once. One that
- * changed since, or fails, is left waiting and named; the rest are approved.
- */
-export async function approveMany(subjects) {
-  const checkout = ui.scope?.checkout;
-  const refused = [];
-  for (const subject of subjects) {
-    try {
-      await send("POST", "/api/rule-approvals", { ...subject, ...(checkout === undefined ? {} : { checkout }) });
-    } catch (error) {
-      refused.push({ subject, error });
-    }
-  }
-  const approved = subjects.length - refused.length;
-  if (refused.length === 0) toast(`${approved} rules are approved: each runs in the mode it is set to from the coding agent’s next turn.`);
-  else toast(failed(`Approved ${approved} of ${subjects.length}. Couldn’t approve ${refused.map(r => r.subject.id).join(", ")}`, refused[0].error));
-  await refreshNow();
-}
-
 export const commonActions = {
   /** `data-i` is a view's hash (`routes.js`): "overview", "pack/<id>", "packs", "create", "history"… */
   nav: hash => { const route = parseRoute(hash); if (route.view !== null) go(route); },
