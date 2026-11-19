@@ -459,16 +459,9 @@ pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> 
         program.facts.insert("source_grammar_suffix".to_owned(), rows);
     }
     if program.inputs.iter().any(|name| name == "source_grammar_registry") {
-        use sha2::Digest as _;
-        static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        let version = VERSION.get_or_init(|| {
-            let entries: Vec<_> = crate::code_rule_dsl::language::source_grammar_suffixes().collect();
-            let bytes = serde_json::to_vec(&entries).expect("grammar registry entries");
-            let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-            crate::content_store::observe::hex(&digest)
-        });
         program.inputs.retain(|name| name != "source_grammar_registry");
-        program.facts.insert("source_grammar_registry".to_owned(), vec![[Value::Str(version.as_str().into())].into()]);
+        let version = crate::code_rule_dsl::language::SOURCE_GRAMMAR_REGISTRY;
+        program.facts.insert("source_grammar_registry".to_owned(), vec![[Value::Str(version.into())].into()]);
     }
     if program.inputs.iter().any(|name| name == "source_tape_version") {
         program.inputs.retain(|name| name != "source_tape_version");
