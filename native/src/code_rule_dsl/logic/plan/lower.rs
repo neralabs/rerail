@@ -522,17 +522,21 @@ pub struct Lowered {
     /// The name atoms of `flat_bin`'s operators `+`, `-` and `*`.
     pub(in crate::code_rule_dsl) ops: [i64; 3],
     pub dialect: GrammarDialect,
+    /// The program normalized as a run reads it (`body::Placed::normalized`), by `apart`: made by its first run and
+    /// read by every later one (Q203 item 3 (ii)). A corpus run's chunks each normalized it again, a version of
+    /// their own, and so every analysis that version holds again (decision 0281 §2); now they share one.
+    pub(in crate::code_rule_dsl) normal: std::sync::Arc<[std::sync::OnceLock<std::sync::Arc<super::body::Normalized>>; 2]>,
 }
 
 impl Lowered {
     /// The program `p` places, read beside `domains`, `ops` and `dialect`.
     pub fn of_placed(p: super::body::Placed, domains: Domains, ops: [i64; 3], dialect: GrammarDialect) -> Lowered {
-        Lowered { version: p.v, domains, ops, dialect }
+        Lowered { version: p.v, domains, ops, dialect, normal: Default::default() }
     }
     /// A program of version `v` read beside this one's domains, operators and dialect (a part of it, or an edit of
     /// it).
     pub fn with_version(&self, v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Lowered {
-        Lowered { version: v, domains: self.domains.clone(), ops: self.ops, dialect: self.dialect }
+        Lowered { version: v, domains: self.domains.clone(), ops: self.ops, dialect: self.dialect, normal: Default::default() }
     }
     /// What the program's run reads beside its version (`plan::run`).
     pub fn lowering(&self) -> Lowering<'_> {
@@ -541,6 +545,18 @@ impl Lowered {
     /// The version `plan::run` reads.
     pub fn placed(&self) -> super::Result<super::body::Placed> {
         Ok(super::body::Placed::whole(self.version.clone()))
+    }
+    /// The program normalized for a run (`Placed::normalized`, `apart` its stated facts apart): made once, by the
+    /// first run that asks, with its fields read, and the same for every run after (`normal`).
+    pub fn normalized(&self, apart: bool) -> super::Result<std::sync::Arc<super::body::Normalized>> {
+        let slot = &self.normal[usize::from(apart)];
+        if let Some(n) = slot.get() {
+            return Ok(n.clone());
+        }
+        let n = self.placed()?.normalized(apart)?;
+        // Its fields read now, on the one every run clones (`Placed::fields` is shared by the clones made after).
+        let _ = n.placed.fields();
+        Ok(slot.get_or_init(|| std::sync::Arc::new(n)).clone())
     }
     /// The program's digest (`Placed::digest`): its version's, kept as it was made, with its maintained parts'.
     pub fn digest(&self) -> super::Result<u64> {

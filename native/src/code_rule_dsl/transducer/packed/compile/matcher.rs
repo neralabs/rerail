@@ -1206,7 +1206,22 @@ impl LoweredWave {
     /// the batch on its own where the whole outgrows a workspace or the launch bound (a file's labels read only that
     /// file).
     fn roots_metal_split(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
-        match super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active))) {
+        let found = super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active)));
+        // Past the device's room at one tape, in as few lanes and states as it runs in: its workspace was admitted as
+        // a stratum's tables are and refused (`label_passes`: no lease coming back makes the room, or waiting for it
+        // costs more than the cores take, `placement::admission_patience`), so the price has chosen the cores (0334).
+        // Its roots are found there, counted and named. A Metal failure of any other kind still stops the run (0382
+        // §6). The room is the pool's ledger and leases alone: the driver's figure, which counts the host pages
+        // wrapped for the device, refused 43 tapes with a third of a 2 GB budget free (t62, Q203).
+        if tapes.len() == 1 && matches!(found, Err(Error::BackendCapacity)) {
+            crate::code_rule_dsl::prof::count("wave.tape_on_cpu", 1);
+            #[cfg(target_os = "macos")]
+            crate::code_rule_dsl::logic::profile::decision("a matcher wave's tape not admitted to the device, its roots found on the cores (0334)", || {
+                format!("{} nodes; the device: {}", tapes[0].transducer_len(), rerail_accel::gpu::shared::describe())
+            });
+            return self.roots_batch_budgeted(Backend::Cpu, tapes, active, WorkBudget::current());
+        }
+        match found {
             Err(Error::BackendCapacity | Error::BackendLaunchLimit) if tapes.len() > 1 => {
                 let half = tapes.len() / 2;
                 let part = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();

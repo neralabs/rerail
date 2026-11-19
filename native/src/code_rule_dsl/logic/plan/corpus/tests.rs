@@ -40,6 +40,50 @@ fn benchmark_phase_0() {
         super::usage().2
     );
 }
+/// Q203 item 3 (ii): a corpus run's chunks read one normalized program, made once, not one each (each chunk's
+/// own version held every analysis of it again); the findings are those of one chunk.
+#[test]
+fn a_runs_chunks_normalize_the_program_once() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("normal-once");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (i, name) in ["a", "b", "c", "d", "e", "f", "g", "h"].iter().enumerate() {
+        std::fs::write(dir.join(format!("{name}.py")), format!("def f{i}():\n    x = {i}\n    return x\n\ndef g{i}():\n    return f{i}()\n")).unwrap();
+    }
+    let rule = dir.join("calls.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
+.decl calls(n: node, x: symbol)
+calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
+.output calls
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |chunk_nodes: usize, store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(format!("store-{store}.sqlite"))));
+        let before = crate::code_rule_dsl::logic::plan::body::NORMALIZED.load(std::sync::atomic::Ordering::Relaxed);
+        let report = super::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes).unwrap();
+        let normalized = crate::code_rule_dsl::logic::plan::body::NORMALIZED.load(std::sync::atomic::Ordering::Relaxed) - before;
+        (report.chunks, normalized, crate::code_rule_dsl::logic::plan::output::shown(&out, "calls").unwrap())
+    };
+    // The process's first run of the program does more than any later one (its images made): a warm-up, then
+    // each measured run over a store of its own.
+    run(1 << 20, "warm-up");
+    let (one, once, whole) = run(1 << 20, "one");
+    let (few, fewer, chunked) = run(80, "few");
+    let (many, normalized, more_chunked) = run(4, "many");
+    assert_eq!(one, 1);
+    assert!(few >= 2 && many > few, "the chunked runs' chunks: {few}, {many}");
+    assert_eq!(chunked, whole, "the findings of one chunk");
+    assert_eq!(more_chunked, whole, "the findings of one chunk");
+    assert!(whole.len() >= 4, "{whole:?}");
+    // The same at any chunk count (the file-local part's once, the cross part's, ...), none more a chunk; one chunk's
+    // run takes a part of its own besides.
+    assert_eq!(normalized, fewer, "{normalized} normalizations for {many} chunks, {fewer} for {few}");
+    assert!(normalized <= once, "{normalized} normalizations for {many} chunks, {once} for one");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The import closure (`components.rr`, decision 0450 §3): a program that reads `rr_cx_reach` has its rules added. b
 /// imports a; c imports nothing. The cross-file memo's pragma is refused: the memo is removed.
 #[test]
@@ -596,6 +640,42 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     // back (decision 0145).
     std::fs::write(ws.join("c.py"), "x = 2\n").unwrap();
     both("a library shadowed by the workspace's module", &["a.pyi", "builtins.pyi"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Q187: a run whose loaded document's chunk fails ends with that chunk's error, not waits. Two loads here, one from
+/// a file's lines and one from a directory's entries. The hang needed a second load posted ahead and answered after
+/// the first's error (the full shape on Metal, 3 of 13 runs); this program's cone does not post them so, and the test
+/// passes without `Builder::next`'s stopped check too: it keeps the error's way out, not that order.
+#[test]
+fn a_load_whose_chunk_fails_ends_the_run_with_its_error() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("load-fails");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("lib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    let (fails, other) = (lib.join(super::FAILS_ITS_CHUNK), lib.join("b.pyi"));
+    std::fs::write(&fails, "def f() -> None: ...\n").unwrap();
+    std::fs::write(&other, "def b() -> None: ...\n").unwrap();
+    std::fs::write(ws.join("rerail.env"), "test.libraries = ../lib\n").unwrap();
+    std::fs::write(ws.join("main.py"), "x = 1\n").unwrap();
+    std::fs::write(ws.join("later.txt"), format!("{}\n", fails.display())).unwrap();
+    let rule = dir.join("p.rr");
+    std::fs::write(&rule, format!(
+        "#include \"core.rr\"\nload(p, \"f\", \"python\") :- file_line(\"later.txt\", 1, p).\nload(p, \"b\", \"python\") :- dir_entry(\"{lib}\", \"b.pyi\", 0), p = cat(\"{lib}\", \"/b.pyi\").\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n",
+        lib = lib.display()
+    )).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let (out, store) = (dir.join("out"), dir.join("store.sqlite"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store));
+        let r = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+        let _ = tx.send(r.err().map(|e| e.to_string()));
+    });
+    let err = rx.recv_timeout(std::time::Duration::from_secs(120)).expect("the run ends, not waits for ever");
+    let err = err.expect("the run fails");
+    assert!(err.contains(super::FAILS_ITS_CHUNK), "the run ends with the chunk's error: {err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1923,4 +2003,18 @@ fn a_programs_nearest_over_a_library_relation_of_kinds_finds_in_a_pack_what_it_f
     let (alone, together) = alone_and_together("library-kind-relation-own", ("a.ts", ts), near, other, "stopped");
     assert_eq!(alone, [["function_declaration"]]);
     assert_eq!(together, alone);
+}
+
+/// Q180: a chunk is sized by what it added to the host's footprint. The device's slabs and buffers, bounded by the
+/// Metal budget on top of the overall one (decision 0126), are not a chunk's: counted, Metal's chunks were cut at
+/// half to a third of the CPU's.
+#[test]
+fn a_chunks_growth_leaves_out_the_devices_memory() {
+    use super::host_added_mb;
+    // [footprint, lifetime peak, device MB] at the chunk's start and at its end.
+    assert_eq!(host_added_mb([1_000, 1_000, 0], [1_300, 1_300, 0]), 300, "no device: the footprint's growth");
+    assert_eq!(host_added_mb([1_000, 1_000, 100], [1_700, 1_700, 500]), 300, "the device's 400 MB more left out");
+    assert_eq!(host_added_mb([1_000, 2_000, 100], [1_200, 2_000, 150]), 150, "under the old peak: the footprint now");
+    assert_eq!(host_added_mb([1_000, 1_000, 100], [1_900, 2_600, 300]), 1_400, "past the old peak: the peak");
+    assert_eq!(host_added_mb([1_000, 1_000, 400], [900, 900, 300]), 1, "shrunk: at least 1");
 }

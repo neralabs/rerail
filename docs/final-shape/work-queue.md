@@ -2785,6 +2785,151 @@ submitted" now hold device memory at once.
 
 - **Done when**: a budget refusal says so, with its numbers, in the profile's refusals (an error kind of its own);
   the 512 MB budget's refusals measured against the strata a wave holds at once.
+- **Measured** (2026-11-18, the full shape cold on Metal, t41 beside t54 at load 86-91): t41 0 refusals, 7 chunks,
+  548.6 G instructions, 33.1 s wall; t54 111 refusals (28 in another run), 10 chunks, 596.9 G instructions
+  (+8.8%), 47.1 s wall. Each refused stratum runs on the CPU. This is the Metal side's backslide since t41.
+- **Cause** (t54's Metal profile, profm41-side/t54.txt): the refused are binding tables of 0.5-1.4 M rows (8 slots)
+  past the budget, while 430-445 MB of the 512 MB is leased: the chunks' row blocks (a run's 23, 1023 MB written of
+  1472 MB) take slabs inside it. Since t41 (9a9b270ce) the hub put the device's relations in blocks (0325 steps 4-6),
+  made every block through one policy that gives a `Device::May` block a slab while half the budget is spare (0342,
+  9e08ed961), and kept each job's device work apart (0386). The budget is the user's (half the memory limit, row
+  blocks inside it); the bench lifts `RERAIL_RUN_MB`, the chunks' line, not `RERAIL_MEMORY_MB`, which sets it.
+  The user's answer (2026-11-18): plan the device's memory rather than give up greedily; raising the limit is fine
+  for now. With a 2 GB budget (metal4g-t54.txt) both refuse none, and t54 cuts 14-19 chunks where t41 cuts 7.
+- **Built** (2026-11-18): (1) 3524ec47e: a stage's table is sized by the planner's estimate of its rows
+  (`StepPlan::all` through `JoinSpec::est`), twice it, not its input doubled; the "large tables" were guesses
+  (rr_token_req's 730 k-row tables held 7,453). (2) 68674305a: admission (`gpu::shared::admit`): a stratum reserves
+  its tables' room whole before it encodes and waits, helping the pool, for leases other threads hold; it goes to
+  the CPU past the budget, when threads that go on hold less than it lacks (no deadlock), or past
+  `placement::worth_waiting` (at most 0.5 s). (3) cb55e0b5a: a chunk is sized by the host memory it added, the
+  device's slabs and buffers (Metal's own budget, 0126) left out. (4) cea2183a4: admission's reservations shut the
+  matcher's waves out of `make_room`; a one-tape wave now waits for what others hold (`wait_for_release`) and runs
+  again, instead of panicking.
+- **Measured** (2026-11-18, the full shape cold on Metal at 512 MB, the M3 at load 103-132): t57 runs to the end,
+  findings identical by value to t41's CPU run; 8 chunks (t41 7, t54 10-19); 10-14 budget refusals (t54 68-111).
+  755.8 G instructions against t54's 596.9 G (load 86-91) and t41's 548.6 G: not yet explained.
+- **Instructions explained** (2026-11-19, the M1 Max at load 2-6, 2 GB budget, cost store off, one profiled run
+  each, own CPU by span): t41 552-562 G, 7 chunks; t54 619-643 G, 16 chunks; t61 (HEAD then) 776-914 G, 7 chunks.
+  (1) t61's whole rise over t54 is one span, the store writer's kept facts (0401 step 6, from the hub): 37.1 s of
+  own CPU, 1,041 jobs, 8.2 GB allocated for 344 MB held. Each input queued its own kept puts for the run's one
+  space, and each write carried every entry the wave's earlier writes put: quadratic. Gathered per space per wave
+  (b4bf47d37): t62 595-609 G, under t54. (2) t54's rise over t41 (+6.6 s own CPU) is its 16 chunks (native steps
+  22,884 -> 53,761 calls, device joins) and the inputs' frames job (1.15 -> 2.95 s over the same ~1,000 calls);
+  HEAD cuts 7 chunks again (Q180's chunk sizing). (3) ab60's 8.9 s of program lowering at t54 was the bench's: the
+  image store named for t54 had been written by another build, so every program was lowered again; a store per
+  build, cleared, reads them (ab62). (4) The one-tape wave's wait for room (`wait_for_release`, 5 s a tape) found
+  none in 30 of 43 tapes and held the chunks' pipeline 215 s (t62 wall 100-253 s against t54's 31-34 s): removed,
+  a one-tape capacity refusal goes to the cores at once (0334). t63 (both): 584.2-616.5 G, CPU 54-59 s, wall
+  37.5-48.9 s against t54's 621-624 G, 61 s, 29-34 s (one t63 run idle 11.5 s at 0.1 G/s, not in the profiled one).
+- **The plan** (the user, 2026-11-19: "tell me how we should properly address the things you found, rather than pile
+  lazy fixes on top of each other", then "please implement this full plan"), in order 6, 1, 2, 3, 4, 5:
+  - (6) t61's deaths: rerun three times (ab66): 745-790 G, wall 127-210 s, none died. ab62's "deaths" were the
+    300 s cap's `KILLED` (counted with panics), reached through the one-tape wave's wait; that wait is gone and
+    admission is bounded (0.5 s), so the path is not there to test.
+  - (1) The device's room (ebed2808e): one account (the pool's leases and slabs from the ledger; a no-copy wrap of
+    host pages is host memory, so `driver_refuses` asks the OS's working set, not the budget); idle buffers and kept
+    workspaces evicted by `make_room` (`evict_one`, `evict_workspace`); a matcher wave's workspace admitted as a
+    stratum's tables are (`admit`, `admission_patience`); a level past the room run in the lanes that fit
+    (`lanes_in`); the cores by the cost model only. The wait the wave had is admission now, bounded. Tests:
+    `host_pages_wrapped_past_the_budget_leave_the_budgets_buffers`,
+    `two_works_past_the_budget_together_both_run_on_the_device_in_turn`,
+    `a_level_larger_than_the_room_runs_in_the_lanes_that_fit`.
+  - (2) Kept facts in one format: final-rerail-shape-rr-align's chain (0443, was 0402) merged (40e610525), the
+    gathering kept as one append a space a wave.
+  - (4) The inputs' frames job (641515550): since the chain, a granule's frame is metadata, yet its job still
+    encoded the rows into the frames' segments (dropped by the writer) and copied them twice for the kept entry.
+    Now the rows are read once into the entry and the frame shares them (`Data::Queued`). Spans split.
+  - (5) Late GPU waits (e22c75a47): a wait for a batch's launches has a deadline (their expected end), and a named
+    job expected past it, or unknown, declines and goes back to its queue (`declines`, `Waiting::help_within`).
+    The end state stays a batch's completion scheduling its continuation (0386).
+  - (3) Chunk count, measured (t65, the M1 Max at load 6-14, unprofiled, alternated, ab70): 7 forced chunks
+    600-672 G (median 610), 14 chunks 667-701 G (median 694): about 12 G (1.3 s CPU) a chunk; t54 at 16 chunks
+    625 G. Where it is not: native steps' per-run setup (strata with unchanged rows: 0.46 s over 901 extra runs);
+    the 3 s single runs of `class_chain`, `value`, `qual_part`, `rr_up`, `node_text` at 16 chunks (8 s of
+    native.tsv's "outside steps") are other jobs those runs ran while they waited, counted in their thread's CPU,
+    and vary run to run. Whole-run samples at 7 and 14 chunks (ab71: +6,112 running samples) spread it over each
+    stratum's per-chunk pipeline: joins (+~1,500), the program image's lookups by name (`Version::text`,
+    `Image::find`, `Image::node`, `rel_atom`: +~700 attributed, more in frames the sampler could not walk),
+    memcmp/memmove (+~570), and the item 5 regression below (+~670, fixed in a9e38758b). Rayon's idle workers'
+    yields are 17% of the running samples.
+  - (3) Why a default run cuts 7, 10, 12 or 14 chunks: the sizer (`corpus.rs`, "chunk size") takes the process's
+    footprint rise during a chunk over the chunks in flight, and keeps the most bytes a node seen. One chunk that
+    meets the run's one-time allocations (2.1-2.3 GB for 25,829 nodes) sets ~11,000-node chunks for the rest; later
+    chunks reuse freed pages and measure 1 MB, "sizing nothing". So the instructions a run retires depend on when
+    that rise lands.
+  - (3) What fixes it properly: (i) a chunk sized by what its own work holds (the rows' blocks, relations and texts
+    it made: `facts::rows::held` and the allocator's per-job bytes), not the process's footprint, so the count is a
+    function of the corpus and the memory line; (ii) per-chunk per-stratum work that does not depend on the chunk's
+    rows (the program's lookups by name, specs, plans) made once a run and read by each chunk (prepared plans,
+    [[planning-lean-replan-slow]]); then 7 vs 16 forced chunks again, by instructions.
+  - (3, done (i), b6d2c1eba) Each chunk keeps an account (`rows::Chunk`): its live blocks' bytes and its jobs' net
+    allocation (jemalloc's per-thread counters, carried into its jobs), at their most; the sizer reads that. Bench
+    (ab72, M1 Max, load 7-21, cost store off; the connection was lost after five runs): default 601.5 G / 10
+    chunks and 720.3 G / 12 chunks; forced 65,300 nodes 604.8 G / 10 chunks, 28,600 nodes 667.9 G / 16 chunks
+    (t54 earlier: 625.0 G / 16). So: the count no longer swings 7-14 on footprint noise, but still 10-12, as the
+    most bytes a node seen depends on which chunks finish first; and the default runs differ by 119 G at 10 vs 12
+    chunks, more than six chunks' cost (~10 G each). The run-to-run spread at a fixed chunking, not the count, is
+    now the larger variance.
+  - (3, measured before (ii)) The row-independent per-chunk work (ab68 profiles, 7 vs 15 chunks): the program's
+    version (`normalized`, 12 ms a chunk), statistics and plan, spec, engine open, live statistics: +0.6 s CPU
+    over 8 chunks, under 0.1 s a chunk of the ~2 s. The growth is in the joins: "engine run (joins)" own CPU
+    9.4 -> 25.3 s at the same step rows (325.1 M in, 413.2 M out in both), every join internal 1.3-1.5x in the
+    samples: a slower rate, not more work. So (ii) as written fixes about 5% of a chunk's cost; it is not done
+    yet, as the rest's cause (the joins' rate, and the spread at a fixed chunking) is not known.
+  - (3, the spread) In ab72 a run's instructions fall as the host's load rises, whatever the chunking: 720.3 G at
+    load 7.5, 667.9 at 9.4, 660.6 at 14.3, 604.8 at 16.3, 601.5 at 20.9. So the instructions a run retires depend on
+    how much of the machine it gets, and a 7-vs-16 pair on a shared host measures load as much as chunks. Ruled out
+    by ab71's samples and ab68's profiles: rayon's idle loop (1% of running samples, its yields 0.9%); our polling
+    waits (`recv_timeout(100 µs)`, `sleep(50 µs)`, `help_until`'s naps: under 0.1%); work run twice (`Claims::claim`
+    is exclusive, `take_late` takes only unclaimed launches); the lanes (0.2 s CPU of launches in all); join morsels
+    (cut by `threads::max()`, not by steals). Not found yet: what in a run depends on timing (chunks at once by
+    headroom, plans replanned when slow, the vocabulary's racing batches, `declines` by job walls). Next: two
+    profiled runs at one forced chunking, a quiet host and a loaded one, and a diff of their decisions and spans'
+    calls; then an A/B is meaningful only on an idle host or with that cause removed.
+  - (3, ab73: M3, t66, 28,600-node chunks, one run alone and one beside a copy of itself) Quiet 737.7 G / 17
+    chunks, loaded 706.3 G / 18; the default-chunked warm-up 611.0 G / 9. The joins' rows are the same in both
+    (323.96 M vs 323.24 M in, 411.97 M vs 411.27 M out, 9,107 vs 9,091 stratum runs), so at one chunking the spread
+    is 4%, under the chunk count's effect (~12 G a chunk: 611 G at 9 chunks, 706-738 G at 17-18). The quiet run's
+    joins allocated 19.8 GB own against 16.1 GB, at the same rows: not attributable, as below. The wall times
+    (51 s alone, 27 s loaded) say the M3 had other work during the "quiet" run: a host's load is not ours to set.
+  - (accounting, what blocks placing the 12 G) A span's own CPU and allocation include rayon's par_iter pieces its
+    thread steals while it waits (a join's sort, the vocabulary's `par_iter`): pool jobs (`threads::spawn_in`) open
+    their own spans and are subtracted, morsels included (0.6-0.8 s), but a par_iter's pieces are under no span.
+    `profile::carried` names such pieces only on a thread with no span open, the case that misses a steal. The
+    fix: `carried` opens its span when the thread's top span is not the caller's, and the heavy par_iters
+    (`Searchers::evaluate`, `runs::sort_unstable_par`'s callers) run through it, by pieces, not items.
+  - (3, accounting fixed, 7562bf8a94; ab74: M3, t67, profiled, chunks forced to 52,000 and 28,600 nodes) 659.2 G /
+    11 chunks against 695.4 G / 16: ~7 G a chunk. Own CPU 60.6 -> 66.3 s (+5.7 s; the text tests' pieces now
+    0.01-0.03 s, charged apart). The growth by kind: per-stratum setup +2.68 s (the stratum wrappers +1.40, spec
+    +0.27, statistics and plan +0.15, open +0.08, ...: ~0.05 ms a stratum run, calls +40% with the chunks), joins
+    +2.07 s (+16,120 runs, 0.11 ms a run; native.tsv's big runs 15% slower at the same count, the host's load 73 ->
+    85: part load), per-chunk other +0.68, outside chunks +0.27. So (ii), the per-chunk per-stratum work made once a
+    run, is about half a chunk's cost, not the 5% ab68's misattributed profiles gave; the joins' own per-run setup
+    is the next part.
+  - (ii, step 1, b5b6ab869) A corpus run's chunks read one normalized program (`lower::Lowered::normalized`, a
+    slot of the run's program, handed to each run by `Hooks::normalized`), not one each: each chunk's own
+    version held every analysis again. Test: corpus::tests::a_runs_chunks_normalize_the_program_once (2 and 8
+    chunks normalize the same number of times; with the hand-over off, 20 against 8). Under Relax, then cargo on a
+    Linux host (4c281bc2d made the engine build there again). Its profiled pair (ab75) is not run yet: the M3 ran
+    out of disk in its build twice (the host's own use), the M1 Max is unreachable, and Linux has no Metal.
+  - (ii, what is left, from ab71's samples at 16 chunks) The stratum's program-only setup (its cycles, gates,
+    levels, the rules it leaves out, types) is under 1% of `native_stratum_`'s own samples: made once a run, it
+    would save almost nothing. Its samples outside the drive go to planning (`plan_rule_reused_in` 2,969, of
+    which `plan_search` 1,976: searches, not a kept plan taken), opening (`Fx::open` 2,396: binding the joins to
+    the chunk's relations, `join_rule_bound` 1,973, `view` and `InRel::index` in it) and, inside opening,
+    `Interner::for_loading` waiting on the shared symbols' lock (2,004 samples parked behind `sym_atom` and
+    `sym_cat`'s writes) to clone an arena handle that never changes. Next: whether a plan another chunk searched
+    is taken by the chunks after it (the plan cache's counts at 9 and 17 chunks), then the joins' binding; the
+    lock is wall time, not instructions, and is fixed apart (the handle kept outside the lock).
+  - (accounting, before 7562bf8a94) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
+    other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
+    of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
+    only `help_once`.
+  - (5, regression) e22c75a47's deadline was inherited by jobs run in the wait, and rayon's own waits inside them
+    declined and re-stole in a loop; job walls sat under one contended lock. Fixed (a9e38758b).
+- **Open**: (c) the refusals left are leases past a stratum's reservation (an estimate under its rows, or an
+  unestimated stage), which `lease_within` refuses without waiting; (d) a derived relation's frame is still
+  encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —
 
 ### Q189. (bend's Q117, benchmarks-on-integration's Q54, then Q179 there) The journal's answer across processes is not a guarantee FSEvents makes
@@ -2886,6 +3031,50 @@ with the default line takes the slow pass.
   `sources.rr` includes `c/includes.rr`). The pair needs t41 built from a worktree at its own commit, its own
   target (no shared target across worktrees), or a t48 built with the hub's chunk changes taken out one at a time
   (47785e475 first).
+- **Hot spots, found without t41 beside** (t41's, t48's and t50's profiles side by side, and a `sample` of t48's
+  chunks): join probes 32.9 s CPU at t41, 41.1 s at t50, over the same planned work (417 M and 404 M units).
+  (1) `p299_attempt`'s kept greedy order was a cross product. After `$k = #k1249` it read `kind($m, $k)` by its
+  kind alone (11 rows a binding priced, 75 read) for each of 15 k texts: 1.16 M rows, none kept. That made `kind`
+  lookups by kind +2.3 s, `text` membership +2.2 s and `child` lookups +0.7 s. The cause: a variable an equality binds
+  to a constant counted as joining its atom to the rest, so the greedy order's "no cross product while a connected
+  step remains" (decision 0038) let it through. t41 priced that step at 4,657 a binding (postings) and so never
+  took it; 6d34fde07's kind frequency priced it at 11. Fixed (this commit): such a variable joins nothing, in the
+  greedy order's connectivity, the search's crossing mask and the cross product's floor. Test:
+  `a_variable_bound_to_a_constant_does_not_connect_a_step` (fails without the fix, as the run did). The 140 planner
+  tests pass.
+  (2) The derived `kind` is now read as a view of the held projection (0353, no copy). A first step `kind($c, K)`
+  reads the same 165 k rows at 142 ns a row against 9 at t41: each lookup walks every document's nodes of the kind
+  (`Facts::of_kind`), then ranks each match (`local_of_node`) and selects its id (`Projected::global`), per row. Its
+  scans and memberships too: 61 against 13 ns a row, 216 against 130. Together about 4 s of CPU. In the sample,
+  view reads (`find_read`, `find_keyed`, `row_at`) are a third of the joins, and the block index's compares
+  (`Run::find`'s `Rows::get` a value) half of `find_at`.
+  Done for (2), with no copy: a lookup of a kind by value walks a document's numbered nodes (`node_ids`) where the
+  kind is at least one node in 16 (`KIND_WALK_SHARE`), so each match has its local id and id from the walk, with no
+  rank or select. A node's document is searched in a dense index of the batch's keys, not across the projections
+  (`Batch::doc`). A join's scan of a whole view, put in the next step's key order (decision 0112), is read in one
+  walk with the values the step needs and ordered by them (`walked_in_order`, up to 2^18 rows). Before, each row was
+  read alone twice: its keys to sort by, then its values. Tests: `a_kind_lookup_reads_the_rows_a_per_row_read_finds`
+  (every kind, both ways), the view tests and setfix's 60.
+  t53 (those, and the cross product closed) against t50, CPU cold on the M3, alternated: 77.41 and 69.02 against
+  77.89 and 75.31 s; findings identical. Its profile and a sample showed what was left. (3) A probe `kind($m, $k)`
+  still scanned every document's tape for the kind's codes (`Facts::of_kind`): 55 k probes at 39 µs. The batch now
+  keeps an index of the `node` view's rows by kind (`Batch::by_kind`, made once in a walk of the numbered nodes, each
+  match with its local id and tape node): an index, not a copy (0353). The walk by `KIND_WALK_SHARE` and the
+  dialects' `codes` and the batch's `of_tag`, which only that scan read, are gone. (4) Membership by id
+  (`kind($n, K)`, 26 M probes at 184 ns against 130 at t41) is an id's number (`num_number_of`) then a select:
+  10% of the join samples, in the CLIF reads. Open.
+  Not a regression: the A/B and profile runs here lower all 317 programs (4.1 s CPU), since no bundle
+  (`rerail-library.images`) is beside `tmp/m3slow/bin/tNN`; the bench's `run.sh` packs one beside the engine.
+  t41 runs with m3bench2's library (the 11-16 inputs), so it was profiled beside t54 after all (`prof41.sh`, the
+  images kept in each binary's store, the M3 at load 57-60). Findings identical by value (660 relations, 30,449
+  rows). Work: t54 921.3 -> 942.4 G instructions (+2.3%), 250.6 -> 260.3 G cycles (+3.8%); span CPU 76.70 -> 78.02 s.
+  CPU seconds alone mislead on the M3: t41 took 60.8-81.2 s across runs, as its threads landed on efficiency cores
+  under other jobs' load; instructions are the measure. Wall 20.7 -> 28.9 s: chunks' wait 10.3 -> 11.2 (t54's main
+  thread runs no job while it waits, 75848623b, decision 0254 §5: 5.4 s of t41's main thread's CPU was chunk
+  work), `local` 4.7 -> 8.4 and `cross` 3.9 -> 6.2. Those two are the main thread's serial work: its own CPU
+  +1.0 s (base rows for the memo +0.35, hold the export +0.28, publishing entries +0.15) and +0.8 s, and the rest
+  its time off a core (t54's `local` 20.2 s of threads ready with no core, t41's 6.8). At a load of 57-95 all day
+  on the one farm host, the wall's remaining 1.8 s of serial CPU is the part that is the engine's.
 
 ### Q221. (Q184 on benchmarks-on-integration) A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
 
@@ -2962,9 +3151,13 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   chunk builder ended before a load's documents", and the run ends with its error, not a hang. t51 (the fix): 8 of 8
   cold Metal runs of the full shape ended, rc 0, 22-33 s (the M3 at load 50-90). Before it, 3 of 13 hung. No run
   failed, so the first chunk's own error is not seen yet: a run that meets it now ends with it in its log.
-- **Open**: no test fails a load's chunk (the builder is local to `run_observed`, and no hook fails a load), and
-  12 more cold Metal runs are owed for the 20.
-- **Record**: —
+- **Done** (2026-11-18): t54, 12 more cold Metal runs of the full shape all end, rc 0, 22-104 s (the M3 at load
+  50-95): 20 of 20 since the fix. A test fails a load's chunk (`FAILS_ITS_CHUNK`, a test-hooks build's file name
+  whose chunk's projection fails): `a_load_whose_chunk_fails_ends_the_run_with_its_error` (the run ends with the
+  chunk's error, within 120 s). It does not pin the hang's order: two small programs (loads from a file's lines and
+  from a directory's entries) do not get a second load posted ahead of the failing one's error, and the test passes
+  without the stopped check too. The full shape on Metal did, 3 of 13 times.
+- **Record**: the fix 1fc292eb2; the runs in working-data/bench-1118/ab41-t54.txt.
 
 ### Q232. (Q40 on Go-C-and-C-support) Step 22 reads float chains and long floats in tier 1 (0413)
 
@@ -5686,6 +5879,21 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   All four are decision 0400's listing checks, and 27 of the 31 observer tests pass. Not PR #508's.
 - **Done when**: all four pass.
 
+### Q262. The settle-window test's first leg can no longer miss an edit
+
+- **Found** (2026-11-18, running the store's journal tests after restoring Q221's caller bound): failed before that
+  change as after it. `an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing`
+  hides an edit by moving the root's cursor past its event and expects a run with no settle window to miss it.
+  Since 0400 a replay answers by arrival, not by id (718434dca), so the in-process stream still names the edit
+  ("2 forgotten as changed") and the miss doesn't happen. The engine's answer is the safer one; the test's premise
+  went stale.
+- **Done when**: the test hides an edit from the journal in a way 0400 keeps (an edit before the stream's last
+  sync, or a new process's stream), so the window's leg is what decides the check again; un-ignored.
+- **Record**: ignored with this reason.
+- **Not here** (2026-11-19, the sync branch's roll-up of benchmarks-on-integration): with 0433's observer (a
+  listing names a directory's entries; a racy answer checked by its bytes) the test passes as written, so it is
+  not ignored on this line.
+
 ### Q251. (Q217 on final-rerail-shape-rr-align) Relations that declare their output sorted (decision 0456 K7)
 
 - **Asked** (the user, 2026-11-18): "we may eventually want to allow the relations to say if they output sorted
@@ -5735,3 +5943,14 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   (surveyed: no shipped program declares it, it does not pay on an edit, its format is decoded into columns).
 - **Next**: once §2 and §3 are agreed, 0450's order of work, starting with results, call summaries and tree pages
   in segments.
+
+### Q290. (Q265 on benchmarks-on-integration; done) `ane::tests::exact_random_shapes` failed on the M3: Core ML placed a matmul on the CPU
+
+- **What** (2026-11-19, found running rerail-accel's tests for Q203 item 5): one of the test's two random
+  constants (146 rows of 12 words, 0.46e9 operations a prediction, over `MIN_FLOPS`' 0.25e9) is placed on the CPU
+  by the M3's Core ML; the M1 Max places it on the Neural Engine. The lane's placement check
+  (`coreml::check_placement`) refused it, correctly, and the test asserted no shape is ever refused.
+- **Done**: the cutoff is the chip's planner's, so `MIN_FLOPS` is a floor (its doc says so), and the test asserts
+  what the lane promises: a refused constant is refused by the placement check, every accepted launch is exact
+  against the CPU reference, at least one constant runs on the Neural Engine, one model a constant run. ane:: 13/13
+  on the M3 and the M1 Max.

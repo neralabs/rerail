@@ -153,10 +153,99 @@ pub fn held() -> [(usize, usize, usize); 3] {
 /// made, to count those that outlive it. A block lives while any relation in it does, so one shared by every chunk
 /// at once was kept whole by a few rows of each, and the run's footprint (the line its chunk sizes are cut by)
 /// counted it whole.
+///
+/// It also keeps what its work holds (Q203 item 3), the measure its chunks are sized by: the bytes of its blocks that
+/// live, plus what its jobs allocated and did not free (`enter_chunk`), at their most so far (`held_most`). The
+/// process's footprint is not a chunk's: the run's one-time allocations and the other chunks' in flight are in it,
+/// and pages freed before a chunk hid its growth; the same 29,000-node chunks so measured 1 to 1,471 MB.
 #[derive(Default)]
 pub struct Chunk {
     open: [Mutex<Option<Arc<Facts>>>; 4],
     made: Mutex<Vec<std::sync::Weak<Facts>>>,
+    /// What its jobs allocated less what they freed, so far (bytes; another chunk's frees can make it negative).
+    heap: std::sync::atomic::AtomicI64,
+    /// The most its live blocks and its jobs' heap held at once, seen at a block made or a job's end.
+    most: std::sync::atomic::AtomicUsize,
+}
+
+impl Chunk {
+    /// Notes what it holds now (`most`).
+    fn note(&self) {
+        let blocks: usize = self.made.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(std::sync::Weak::upgrade).map(|f| f.block.reserved()).sum();
+        let heap = self.heap.load(std::sync::atomic::Ordering::Relaxed).max(0) as usize;
+        self.most.fetch_max(blocks + heap, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The most its work held at once so far (bytes): its live blocks and its jobs' heap.
+    pub fn held_most(&self) -> usize {
+        self.note();
+        self.most.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// This thread's bytes allocated less those freed, from the allocator's own counters (installed by the engine, which
+/// links the allocator: `install_heap_net`); 0 without one.
+static HEAP_NET: std::sync::OnceLock<fn() -> i64> = std::sync::OnceLock::new();
+
+/// Installs the allocator's per-thread counter of bytes allocated less freed; the first one stays.
+pub fn install_heap_net(net: fn() -> i64) {
+    let _ = HEAP_NET.set(net);
+}
+
+fn heap_net() -> i64 {
+    HEAP_NET.get().map_or(0, |f| f())
+}
+
+thread_local! {
+    /// The bytes this thread's chunk scopes (`enter_chunk`) gave their chunks so far: a scope's own are its thread's
+    /// net less what the scopes inside it gave theirs (a job of another chunk run while it waited).
+    static GIVEN: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+    /// The innermost scope's thread net and `GIVEN` at its entry: its allocation so far, for `chunk_held_most`.
+    static TOP: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// A chunk entered on this thread (`enter_chunk`): when it drops, the thread's chunk is back, and what this thread
+/// allocated less freed meanwhile (less the scopes inside) is the chunk's.
+pub struct InChunk {
+    old: Option<Option<Arc<Chunk>>>,
+    chunk: Option<Arc<Chunk>>,
+    net: i64,
+    given: i64,
+    top: (i64, i64),
+}
+
+/// Enters `chunk` on this thread, for a job carried into it or its own evaluation (`in_chunk`).
+pub fn enter_chunk(chunk: Option<Arc<Chunk>>) -> InChunk {
+    let old = CHUNK.with(|c| c.replace(chunk.clone()));
+    let (net, given) = (heap_net(), GIVEN.with(std::cell::Cell::get));
+    InChunk { old: Some(old), chunk, net, given, top: TOP.with(|t| t.replace((net, given))) }
+}
+
+impl Drop for InChunk {
+    fn drop(&mut self) {
+        let own = (heap_net() - self.net) - (GIVEN.with(std::cell::Cell::get) - self.given);
+        GIVEN.with(|g| g.set(g.get() + own));
+        TOP.with(|t| t.set(self.top));
+        if let Some(c) = &self.chunk {
+            c.heap.fetch_add(own, std::sync::atomic::Ordering::Relaxed);
+            c.note();
+        }
+        if let Some(old) = self.old.take() {
+            CHUNK.with(|c| *c.borrow_mut() = old);
+        }
+    }
+}
+
+/// What the chunk this thread evaluates has held at its most so far (`Chunk::held_most`); `None` outside one.
+pub fn chunk_held_most() -> Option<usize> {
+    let chunk = CHUNK.with(|c| c.borrow().clone())?;
+    // The scope this thread is in, its allocation so far: its chunk's, not given yet.
+    let (net, given) = TOP.with(std::cell::Cell::get);
+    let open = (heap_net() - net) - (GIVEN.with(std::cell::Cell::get) - given);
+    chunk.heap.fetch_add(open, std::sync::atomic::Ordering::Relaxed);
+    let most = chunk.held_most();
+    chunk.heap.fetch_sub(open, std::sync::atomic::Ordering::Relaxed);
+    Some(most)
 }
 
 thread_local! {
@@ -168,10 +257,10 @@ thread_local! {
 /// with the last of its rows (decision 0289: a chunk is a block). What outlives the chunk keeps only its own block;
 /// the profile counts those (`a chunk's blocks outlived it`).
 pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
-    struct Leave(Option<Arc<Chunk>>, Arc<Chunk>);
+    struct Leave(Option<InChunk>, Arc<Chunk>);
     impl Drop for Leave {
         fn drop(&mut self) {
-            CHUNK.with(|c| *c.borrow_mut() = self.0.take());
+            drop(self.0.take());
             for open in &self.1.open {
                 open.lock().unwrap_or_else(|e| e.into_inner()).take();
             }
@@ -186,7 +275,7 @@ pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
         }
     }
     let chunk = Arc::new(Chunk::default());
-    let _leave = Leave(CHUNK.with(|c| c.borrow_mut().replace(chunk.clone())), chunk);
+    let _leave = Leave(Some(enter_chunk(Some(chunk.clone()))), chunk);
     f()
 }
 
@@ -214,6 +303,7 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
     let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?));
     if let Some(c) = chunk {
         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
+        c.note();
     }
     let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
     live[life as usize].retain(|w| w.strong_count() > 0);
@@ -1701,6 +1791,43 @@ impl std::fmt::Debug for Row {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(test)]
+    thread_local! {
+        /// The allocator's net counter, for these tests: a test moves it as its "work" allocates.
+        static NET: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+    }
+    fn net() -> i64 {
+        NET.with(std::cell::Cell::get)
+    }
+    fn alloc(bytes: i64) {
+        NET.with(|n| n.set(n.get() + bytes));
+    }
+
+    /// Q203 item 3: a chunk is sized by what its own work held, not the process's footprint: what its scope
+    /// allocated and kept is its, a job of another chunk run on its thread meanwhile is that chunk's, and what the
+    /// thread allocates outside any chunk (a run's one-time allocations) is no chunk's.
+    #[test]
+    fn a_chunk_holds_what_its_own_work_allocated() {
+        install_heap_net(net);
+        alloc(500 << 20);
+        let other = Arc::new(Chunk::default());
+        let held = in_chunk(|| {
+            alloc(100 << 20);
+            {
+                // Another chunk's job, run while this one waited.
+                let _job = enter_chunk(Some(other.clone()));
+                alloc(50 << 20);
+            }
+            alloc(30 << 20);
+            alloc(-10 << 20);
+            chunk_held_most().expect("in a chunk")
+        });
+        // Its most when asked: its own 100 + 30 - 10 MB, the other chunk's 50 MB not, the 500 MB before it not.
+        assert_eq!(held, 120 << 20, "{} MB", held >> 20);
+        assert_eq!(other.held_most(), 50 << 20, "the other chunk's job is its own");
+        assert!(CHUNK.with(|c| c.borrow().is_none()), "the thread's chunk is back");
+    }
 
     /// An empty kept relation keeps its width: one started from it holds the rows pushed to it (it dropped them when
     /// the width came from the rows, none for no rows).

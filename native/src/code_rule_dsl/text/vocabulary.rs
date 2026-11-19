@@ -304,14 +304,18 @@ impl Searchers {
     /// For each plan, the indexes of the `terms` it matches, ascending. A term a plan cannot decide (a backtracking
     /// pattern past its limits) is left out; `undecided` says which plans had one.
     pub(in crate::code_rule_dsl) fn evaluate(&self, terms: &[&[u8]]) -> (Vec<Vec<u32>>, Vec<bool>) {
-        use rayon::prelude::*;
+        // The terms in pieces, each through the profile's `carried`: one taken by a thread that waits in another
+        // span is charged apart (Q203 item 3).
+        fn pieces<R: Send>(name: &'static str, terms: &[&[u8]], f: impl Fn(&[&[u8]]) -> Vec<R> + Sync + Send) -> Vec<R> {
+            crate::code_rule_dsl::logic::profile::par_pieces(name, terms, 64, f)
+        }
         let mut out = vec![Vec::new(); self.plans];
         let mut undecided = vec![false; self.plans];
         for &at in &self.always {
             out[at] = (0..terms.len() as u32).collect();
         }
         for (at, compiled) in &self.backtracking {
-            let found = terms.par_iter().map(|term| compiled.is_match(term)).collect::<Vec<_>>();
+            let found = pieces("text tests: a plan", terms, |piece| piece.iter().map(|term| compiled.is_match(term)).collect());
             undecided[*at] = found.iter().any(Option::is_none);
             out[*at] = found.iter().enumerate().filter(|(_, m)| **m == Some(true)).map(|(i, _)| i as u32).collect();
         }
@@ -330,9 +334,7 @@ impl Searchers {
             let (slot, longest) = (*slot, *longest);
             // A prefix (suffix) literal lies within the first (last) `longest` bytes: only those are searched, and only
             // hits at the edge count (overlapping search is not anchored).
-            let hits = terms
-                .par_iter()
-                .map(|term| {
+            let hits = pieces("text tests: affixes", terms, |piece| piece.iter().map(|term| {
                     let edge;
                     let haystack: &[u8] = match slot {
                         0 => &term[..term.len().min(longest)],
@@ -351,8 +353,7 @@ impl Searchers {
                     plans.sort_unstable();
                     plans.dedup();
                     plans
-                })
-                .collect::<Vec<_>>();
+                }).collect());
             for (i, plans) in hits.into_iter().enumerate() {
                 plans.into_iter().for_each(|at| out[at].push(i as u32));
             }
@@ -360,33 +361,30 @@ impl Searchers {
         for group in &self.groups {
             if let Engine::Each(each) = &group.engine {
                 for (at, compiled) in group.owners.iter().zip(each) {
-                    let found = terms.par_iter().map(|term| compiled.is_match(term)).collect::<Vec<_>>();
+                    let found = pieces("text tests: a plan", terms, |piece| piece.iter().map(|term| compiled.is_match(term)).collect());
                     undecided[*at] |= found.iter().any(Option::is_none);
                     out[*at] = found.iter().enumerate().filter(|(_, m)| **m == Some(true)).map(|(i, _)| i as u32).collect();
                 }
                 continue;
             }
-            let hits = terms
-                .par_iter()
-                .map_init(
-                    || regex_automata::PatternSet::new(group.owners.len()),
-                    |set, term| {
+            let hits = pieces("text tests: a group", terms, |piece| {
+                let mut set = regex_automata::PatternSet::new(group.owners.len());
+                piece.iter().map(|term| {
+                    set.clear();
+                    let input = regex_automata::Input::new(*term);
+                    let asked_lazily = match &group.engine {
+                        Engine::Dfa(dfa) => regex_automata::dfa::Automaton::try_which_overlapping_matches(&**dfa, &input, &mut set).is_err(),
+                        _ => true,
+                    };
+                    if asked_lazily {
                         set.clear();
-                        let input = regex_automata::Input::new(*term);
-                        let asked_lazily = match &group.engine {
-                            Engine::Dfa(dfa) => regex_automata::dfa::Automaton::try_which_overlapping_matches(&**dfa, &input, set).is_err(),
-                            _ => true,
-                        };
-                        if asked_lazily {
-                            set.clear();
-                            if let Some(regex) = group.lazy() {
-                                regex.which_overlapping_matches(&input, set);
-                            }
+                        if let Some(regex) = group.lazy() {
+                            regex.which_overlapping_matches(&input, &mut set);
                         }
-                        set.iter().map(|pattern| pattern.as_usize()).collect::<Vec<_>>()
-                    },
-                )
-                .collect::<Vec<_>>();
+                    }
+                    set.iter().map(|pattern| pattern.as_usize()).collect::<Vec<_>>()
+                }).collect()
+            });
             for (i, patterns) in hits.into_iter().enumerate() {
                 patterns.into_iter().for_each(|pattern| out[group.owners[pattern]].push(i as u32));
             }

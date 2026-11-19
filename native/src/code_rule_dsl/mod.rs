@@ -4751,6 +4751,9 @@ pub(crate) fn install_languages() {
     facts::nearest::install_nearest(typing::file_local::nearest);
     // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
     facts::rows::install_block_device(logic::plan::placement::block_device);
+    // What a chunk's jobs allocated less freed (Q203 item 3): the allocator's own per-thread counters.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    facts::rows::install_heap_net(heap_net);
     // `core.rr`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
     // What the evaluator keeps per connection, dropped with it.
@@ -4916,4 +4919,14 @@ pub(crate) fn install_languages() {
 pub(crate) fn install_devices() {
     #[cfg(target_os = "macos")]
     device_metal::register();
+}
+
+/// This thread's bytes allocated less freed, from jemalloc's per-thread counters (`facts::rows::install_heap_net`).
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+fn heap_net() -> i64 {
+    thread_local! {
+        static COUNTERS: Option<(tikv_jemalloc_ctl::thread::ThreadLocal<u64>, tikv_jemalloc_ctl::thread::ThreadLocal<u64>)> =
+            tikv_jemalloc_ctl::thread::allocatedp::read().ok().zip(tikv_jemalloc_ctl::thread::deallocatedp::read().ok());
+    }
+    COUNTERS.with(|c| (*c).map_or(0, |(a, d)| a.get() as i64 - d.get() as i64))
 }

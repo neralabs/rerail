@@ -94,9 +94,9 @@ inline void clif_fence(){atomic_thread_fence(mem_flags::mem_device,memory_order_
 inline uint clif_num_is(device const uchar* t,ulong a0,uint a1,uint a2);
 inline uint clif_num_rank(device const uchar* t,ulong a0,uint a1,uint a2);
 inline uint clif_num_select(device const uchar* t,ulong a0,uint a1,uint a2);
-inline ulong clif_num_granule(device const uchar* t,ulong a0,uint a1,uint a2);
+__attribute__((noinline)) ulong clif_num_granule(device const uchar* t,ulong a0,uint a1,uint a2);
 inline uint clif_num_low_of(device const uchar* t,ulong a0,uint a1,uint a2);
-inline uint clif_num_number_in(device const uchar* t,ulong a0,uint a1,uint a2,uint a3,uint a4);
+__attribute__((noinline)) uint clif_num_number_in(device const uchar* t,ulong a0,uint a1,uint a2,uint a3,uint a4);
 inline ulong clif_num_number_of(device const uchar* t,ulong a0,uint a1);
 inline uint clif_num_order_of(device const uchar* t,ulong a0,uint a1);
 inline uint clif_num_number_of_order(device const uchar* t,ulong a0,uint a1);
@@ -345,7 +345,7 @@ inline uint clif_num_select(device const uchar* t,ulong a0,uint a1,uint a2){
  }
  return v8;
 }
-inline ulong clif_num_granule(device const uchar* t,ulong a0,uint a1,uint a2){
+__attribute__((noinline)) ulong clif_num_granule(device const uchar* t,ulong a0,uint a1,uint a2){
  ulong v0=0;
  uint v1=0;
  uint v2=0;
@@ -581,7 +581,7 @@ inline uint clif_num_low_of(device const uchar* t,ulong a0,uint a1,uint a2){
  }
  return v5;
 }
-inline uint clif_num_number_in(device const uchar* t,ulong a0,uint a1,uint a2,uint a3,uint a4){
+__attribute__((noinline)) uint clif_num_number_in(device const uchar* t,ulong a0,uint a1,uint a2,uint a3,uint a4){
  ulong v0=0;
  uint v1=0;
  uint v2=0;
