@@ -223,9 +223,16 @@ const LOCK_HELD_MS = 2_000;
 
 /**
  * A bound past the five seconds a Rerail connection waits for a lock: a {@link holdWriteLock} process given it outlasts
- * that wait unless the test releases it.
+ * that wait unless it is released.
  */
 const LOCK_OUTLASTS_WAIT_MS = 8_000;
+
+/** How a {@link holdWriteLock} process ends besides its release: its bound, and a process whose exit releases it. */
+interface LockHold {
+  readonly boundMs?: number;
+  /** A process whose exit gives the lock back, as the holder sees for itself, whatever the test's thread is doing. */
+  readonly untilExitOf?: number;
+}
 
 /** A process holding a database's write lock ({@link holdWriteLock}). */
 interface LockHolder {
@@ -238,26 +245,29 @@ interface LockHolder {
 
 /**
  * Another process holding the write lock of the database at `path` from its start. It gives the lock back when the
- * test writes a file in a folder of its own under `folder` ({@link LockHolder.release}), when it is ended, or once
- * `boundMs` ({@link LOCK_HELD_MS} unless given) is over. It writes nothing on its standard output, so it can stand in
- * for a Git read.
+ * test writes a file in a folder of its own under `folder` ({@link LockHolder.release}), when it is ended, once the
+ * process `hold.untilExitOf` names has exited (it asks every 10 ms), or once `hold.boundMs` ({@link LOCK_HELD_MS}
+ * unless given) is over. It writes nothing on its standard output, so it can stand in for a Git read.
  */
-function holdWriteLock(path: string, folder: string, boundMs = LOCK_HELD_MS): LockHolder {
+function holdWriteLock(path: string, folder: string, hold: LockHold = {}): LockHolder {
   const signals = join(folder, "write-lock");
   mkdirSync(signals, { recursive: true });
   const released = join(signals, "released");
   const script = [
     "const { existsSync, watch } = require(\"node:fs\");",
-    "const [driver, path, folder, released, boundMs] = process.argv.slice(1);",
+    "const [driver, path, folder, released, boundMs, untilExitOf] = process.argv.slice(1);",
     "const database = new (require(driver))(path);",
     "database.exec(\"BEGIN IMMEDIATE\");",
     "const end = () => { database.exec(\"ROLLBACK\"); database.close(); process.exit(0); };",
     "watch(folder, () => { if (existsSync(released)) end(); });",
     "if (existsSync(released)) end();",
     "setTimeout(end, Number(boundMs));",
+    "const gone = pid => { try { process.kill(pid, 0); return false; } catch { return true; } };",
+    "if (Number(untilExitOf) > 0) setInterval(() => { if (gone(Number(untilExitOf))) end(); }, 10);",
     "process.stderr.write(\"held\\n\");",
   ].join(" ");
-  const child = actualSpawn(process.execPath, ["-e", script, SQLITE_DRIVER, path, signals, released, String(boundMs)], { stdio: ["pipe", "pipe", "pipe"] });
+  const args = [SQLITE_DRIVER, path, signals, released, String(hold.boundMs ?? LOCK_HELD_MS), String(hold.untilExitOf ?? 0)];
+  const child = actualSpawn(process.execPath, ["-e", script, ...args], { stdio: ["pipe", "pipe", "pipe"] });
   const exited = new Promise<void>(done => child.once("exit", () => done()));
   // The workspace's folder goes after the test: Windows refuses to remove a database a process holds.
   onTestFinished(async () => {
@@ -879,11 +889,11 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
       holdNextBranchRead = true;
       const turnOff = service.setEnabled(ws.repo, false);
       const read = await reading.promise;
-      const holder = holdWriteLock(ws.databasePath, ws.folder, LOCK_OUTLASTS_WAIT_MS);
+      // The other process gives the lock back once the hook command has exited, as it sees for itself, and not by
+      // itself within Rerail's five seconds: a stop that waits for the lock before it ends the command meets the lock
+      // held all that wait.
+      const holder = holdWriteLock(ws.databasePath, ws.folder, { boundMs: LOCK_OUTLASTS_WAIT_MS, untilExitOf: command.pid ?? 0 });
       await holder.held;
-      // The other process gives the lock back once the hook command has ended, and not by itself within Rerail's five
-      // seconds: a stop that waits for the lock before it ends the command meets the lock held all that wait.
-      command.once("exit", () => void holder.release());
       const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
       try {
         await service.stop(UNREACHED_MS);
