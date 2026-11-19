@@ -377,8 +377,6 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::
         // Phase 1 ran before any phase, for the run (`PhaseOne`): its exports are handed on as it left them. A run
         // that did not run it (given its files, or with `RERAIL_SOURCES_PHASE=off`) reads none.
         if name == SOURCES {
-            // Its program is still read: a run without it fails here, as before.
-            source(&name, dir.as_deref())?.expect("sources.rr, a builtin phase program");
             let rows = PHASE_ONE.with(|p| p.borrow().as_ref().map(|o| o.rows.clone())).unwrap_or_default();
             hand_on(&reads, &rows, &mut facts);
             continue;

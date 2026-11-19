@@ -125,9 +125,29 @@ pub fn pass_deadline_unpolled() {
     });
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// The matcher calls this thread spent (`matcher_call_budget_exhausted`), for tests.
+    static MATCHER_CALLS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The matcher calls this thread has spent since `reset_matcher_calls`: what a work budget counts, one call at a
+/// time.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn matcher_calls() -> u64 {
+    MATCHER_CALLS.get()
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_matcher_calls() {
+    MATCHER_CALLS.set(0);
+}
+
 /// `matcher_budget_exhausted` for matcher entry points: polls every `BUDGET_CHECK_INTERVAL`
 /// calls, so a spent budget is noticed at most that many calls late.
 pub fn matcher_call_budget_exhausted() -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    MATCHER_CALLS.set(MATCHER_CALLS.get() + 1);
     let countdown = BUDGET_COUNTDOWN.get();
     if countdown > 0 {
         BUDGET_COUNTDOWN.set(countdown - 1);

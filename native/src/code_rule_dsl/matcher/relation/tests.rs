@@ -496,3 +496,42 @@ r([1, u, 2, 3], [4, 5, u, 6]);
         }
         assert!(reported > 20, "the rules report findings: {reported}");
     }
+
+    /// A sibling walk to the end spends the matcher calls a walk over the full tree spends, implied tokens and all
+    /// (`charged`): a named-only tape leaves out an array's `[`, `,` and `]`, which a full tree's walk tests as
+    /// candidates, so the same work budget would buy its walk twice the integers (the audit's out-of-work file ran
+    /// out later, and slower, than on main's full tapes).
+    #[test]
+    fn a_sibling_walk_spends_what_a_walk_over_the_full_tree_does() {
+        use crate::code_rule_dsl::budget::{matcher_calls, reset_matcher_calls};
+        use crate::code_rule_dsl::language::GrammarDialect;
+        use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
+        use ast_grep_core::AstGrep;
+        use ast_grep_core::tree_sitter::LanguageExt;
+        use std::sync::Arc;
+        let source = format!("x = [{}];\n", (0..200).map(|n| n.to_string()).collect::<Vec<_>>().join(", "));
+        let grammar = Grammar::new(GrammarDialect::TypeScript).expect("grammar");
+        let image = TapeImage::parse(&grammar, &source, &|| false).expect("parses").expect("encodes");
+        let tape = AstGrep::doc(TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).expect("restores"));
+        let full = GrammarDialect::TypeScript.ast_grep(&source);
+        for relation in ["follows", "precedes"] {
+            let compiled = compile_typescript_rule(json!({ "kind": "number", relation: { "stopBy": "end", "kind": "string" } }))
+                .unwrap_or_else(|error| panic!("{}", error.reason));
+            let matcher = &grammar_matchers(&compiled)[0];
+            reset_matcher_calls();
+            for number in tape.root().dfs().filter(|node| node.kind() == "number") {
+                let mut work = usize::MAX;
+                assert!(matcher.match_root(number, &mut work).expect("fits").is_none());
+            }
+            let on_tape = matcher_calls();
+            reset_matcher_calls();
+            for number in full.root().dfs().filter(|node| node.kind() == "number") {
+                let mut work = usize::MAX;
+                assert!(matcher.match_root(number, &mut work).expect("fits").is_none());
+            }
+            let on_full = matcher_calls();
+            // 200 numbers, each walking past the others and the 199 commas and a bracket.
+            assert_eq!(on_tape, on_full, "{relation}");
+            assert!(on_full > 2 * 200 * 199 / 2, "{relation}: {on_full}");
+        }
+    }

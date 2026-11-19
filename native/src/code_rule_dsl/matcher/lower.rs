@@ -713,6 +713,9 @@ impl Lowering {
         if count.binding.is_some() {
             return Err(Unsupported("count as"));
         }
+        if count.gap.is_some() {
+            return Err(Unsupported("count of implied tokens"));
+        }
         let (axis, related, stop) = match &count.relation {
             AstMatcher::Inside(related, stop) => (Axis::Inside, related, stop),
             AstMatcher::Has(related, stop) => (Axis::Has, related, stop),

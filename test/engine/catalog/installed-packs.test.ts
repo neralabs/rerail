@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -69,6 +69,17 @@ function summary(catalog: RuleCatalog) {
 
 beforeEach(() => {
   removeInstalledPacks();
+});
+
+describe("the shipped packs", () => {
+  // Each pack in this repository reads whole: a pack with one document the catalog refuses is skipped, all its rules
+  // with it (the 18 rules whose token tests carry `stored` once took the JavaScript, Python and TypeScript packs out).
+  it("all read, none skipped", () => {
+    const packs = readdirSync(repositoryPath("packs"), { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => repositoryPath("packs", entry.name));
+    const catalog = readRuleCatalog(packs);
+    expect(catalog.skipped.map(skip => [skip.packageName, skip.reason.slice(0, 300)])).toEqual([]);
+    expect(catalog.documents.has("typescript-eslint-explicit-member-accessibility")).toBe(true);
+  });
 });
 
 describe("the installed-pack catalog", () => {

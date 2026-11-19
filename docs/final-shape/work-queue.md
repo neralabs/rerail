@@ -3033,7 +3033,7 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
 - **Waits on the user:** stage M (the pass-through mask, which would also shorten the CPU's
   path), and whether the device keeps expansion at all. Question 3 below.
 
-### Q42. The preprocessor as parallel passes (0421): a spike of the shape
+### Q289. (Q42 until 2026-11-19: Q42 is the store test's) The preprocessor as parallel passes (0421): a spike of the shape
 
 - **Done** (2026-11-18): `rerail_c_pp::stream::parallel`, P0–P4 as passes over arrays, the serial
   pass's own expansion for each invocation alone. Both corpora under clang's profile: 3,132 of
@@ -3101,7 +3101,7 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
    than 100× slower than one core: a thread's chain of dependent loads, about 9 µs a token.
    Open: (a) stop the device path for expansion here, keeping 0408's code as the measured basis;
    (b) build stage M (the pass-through mask) for the CPU's path only; (c) both.
-4. **Q42: where the parallel preprocessor's passes live.** The spike (0421) shows the shape holds
+4. **Q289: where the parallel preprocessor's passes live.** The spike (0421) shows the shape holds
    on both corpora. Options: (a) the passes as a transducer side program (column operations:
    scans, sorts by key, searches, gathers, scatters), the directives' fixpoint in the same ops;
    (b) the directives' level (definitions by position, tests, activity, the include tree) as
@@ -5497,16 +5497,26 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 
 ### Q248. (PR #508, t47) Tests that wait on code or data
 
-- 7529228ce (`budget::matcher_calls`), 53361e039 (`clif_text::reachable_calls`) and 65ff68df5's vendored half need
-  functions the hub lacks: their tests go in with the ports.
-- `slice::tests::the_backends_find_the_same_keys_on_real_files` needs the Python pack's upstream fixtures, which are
-  not in Git; the farm's checkout has 1 file of the 4 it samples. Send them with the job (`--tree`) or restore them
-  (`pack-data` from 236fc98d2~1).
+Done (2026-11-19):
+- 7529228ce: ported (c6815a3af), its sibling-walk charge then made a parent's gaps once a walk outside a tape's
+  scope, n² on every path but label facts; the file's index keeps them (4c5e85057).
+- 53361e039: the hub fixed its four parser tests its own way; `reached_calls` reads a branch behind a source
+  location, with Tim's test (2c9ab87b9).
+- Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f, ed1872a09): ported with their fixes, `--delete-data` written for
+  the v6 store (5b19487fb).
+- Found on the way, fixed: the rule schema refused RER-131's `stored` note, skipping the JavaScript, Python and
+  TypeScript packs whole (f2cf3dc2a); five shipped rules' caught examples found nothing, gap tests not answering a
+  condition on an implied comma or a count of them (a3db5929d); vitest ran git with the person's config, so a
+  machine signing commits failed about 120 tests (4c5e85057). audit-cli's four failures are a debug addon's speed
+  (each scan's wait is 10 s): with an optimised addon all 13 pass.
+
+Open:
+- Pack test data. `slice::tests::the_backends_find_the_same_keys_on_real_files`,
+  `compile_matcher_tests::a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not`,
+  and 965 TypeScript tests (`packs.test.ts` checks 4 and 6 and its fixtures, `react-practice-rules`) read the packs'
+  upstream fixtures, which are not in Git and no checkout holds whole: `npm run fixtures:pull` (AWS CLI, signed in)
+  fetches them, then send them with the job (`--tree`).
 - Windows, Linux and x86-64 (12 commits, t47's portability class) come last, with the Windows work.
-- Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f: `rules test` on a `.rr` file; ed1872a09: `--delete-data`)
-  are ported into `test/cli/` with their fixes.
-- `compile_matcher_tests::ast_pattern_captures_are_pinned` and `ast_pattern_verdicts_reuse_their_bindings` read six
-  Ruff fixtures the farm's checkout lacks: restored from 236fc98d2~1 and sent with the job (`--tree`), both pass.
 
 ### Q249. The typing oracles' node products are unbounded at the hub tip
 
@@ -5514,6 +5524,17 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
   "bound node products by their readers: unbounded node Cartesian product in `base`" (18) and "in `res`: the read in
   `res` has no connected demand" (1). Not PR #508's: the same with Q241's and Q244's ports and without them.
 - **Done when**: the 30 pass, the product bound at its producer (no relation computed in full to be filtered).
+- **Done** (2026-11-19). The products the pass refused are bounded by declared fan-outs:
+  - `pv(o, "cls", c) :- attr_of(_, o, _), builtin_ref(o, "object"), qv("builtins.object", "cls", c)` (calls.rr) pairs
+    each reference to `object` with the few class nodes of one qualified name.
+  - `res(p, "mod", r) :- kind(p, "crate"), modn(r, "crate")` (calls_rust.rr) pairs each `crate` path with the
+    crate's root.
+  `product_demand::fixed_vars` counts a variable as fixed when it is reached from constants (and fixed variables)
+  through a relation's declared key or a fan-out of one, few or at most 16 rows (`.layout`, 0361), as a variable
+  set to a constant already was. calls.rr declares `.layout qv fanout(q, k -> v, few)`, and calls_rust.rr
+  declares `.layout modn fanout(q -> m, few)` (the program models one crate: a qualified name is one module).
+  A refusal now names its product rules and the read it could not key. The 30 oracle tests pass on the M1 Max, with
+  the pass's 11 tests (one new), the RIR dumps, the production contracts and the file-local typing tests.
 
 ### Q250. Four observer tests fail at the hub's tip
 
@@ -5531,6 +5552,16 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
   (`a_watched_root_is_not_statted_where_the_journal_says_nothing_changed` and three like it) depend on a new stream's
   first events arriving within the observer's 5 s budget. Run alone, they came in 0.4–3.3 s in two runs, and none
   came in 5 s in three; the wait was the same 5 s with and without the bound.
+- **Done** (2026-11-19): two causes, neither the hosts'.
+  - Q189's settle window (6c7467af5) was applied to every trusted root, also to one its listings checked (decision
+    0400). There each answer is compared with the listing's stat, so the journal's silence is not what trusts it. A
+    small root's second run stated every file it had recorded in the last two minutes. The window now applies only
+    to paths under no listed root (`Observer::listed_over`), which fixes the three listing tests.
+  - The Q189 test means the journal's path, but its root is small enough to be checked by listings, which name the
+    edit. It sets `list_max = 0` now. It also hid the edit with `current_id()` after a 500 ms sleep, in an epoch
+    already synced; it now asks `journal::since` from the stored cursor in a new epoch, whose cookie follows the
+    edit's events.
+  All 31 observer tests pass on the M1 Max, twice, with the engine's warm-run tests (4 of 4).
 
 ### Q258. Red after the merge of the hub's ffc390de8: four planner tests and the hub's test targets
 

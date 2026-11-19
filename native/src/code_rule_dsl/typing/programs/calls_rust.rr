@@ -35,6 +35,9 @@ nm(n, x) :- field(n, "name", i), text(i, x).
 
 // ---- modules ------------------------------------------------------------------------------------------------------
 .decl modn(m: node, q: symbol)
+// A qualified name is one module of the crate (a few, with `cfg` variants): `modn(r, "crate")` is its root, so a rule
+// pairing it with every `crate` path is no node product (Q249).
+.layout modn fanout(q -> m, few)
 modn(r, q) :- node(d, r, "source_file", _, _), doc(d, _, q).
 modn(m, @dot(q, x)) :- kind(m, "mod_item"), field(m, "body", _), nm(m, x), nearest(m, p, modk), modn(p, q).
 // `mod x;` names the file module `<parent>.x`; an inline `mod x { }` is its own node.

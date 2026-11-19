@@ -691,6 +691,8 @@ export interface CodeRuleDslAstRule extends CodeRuleDslSemanticAstRuleFields {
   pattern?: CodeRuleDslAstPattern;
   kind?: string;
   regex?: string;
+  /** Why the token `regex` tests is stored where the rule looks (the engine's `compile::token_tests`); needs `regex`. */
+  stored?: string;
   nthChild?: CodeRuleDslNthChild;
   filePath?: CodeRuleDslTextCondition;
   all?: CodeRuleDslAstRule[];
