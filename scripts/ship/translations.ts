@@ -48,9 +48,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { ConversationRuleRegistry } from "../../src/engine/catalog/registry.js";
-import { stableJsonText } from "../../src/engine/stable-json.js";
-import { resolveModelPath } from "../../src/runtime/session-paths.js";
+import { bundledModelPath, ConversationRuleRegistry, stableJsonText } from "../../src/engine/index.js";
 import { hashTree } from "./corpus-tree.js";
 import { engineJson } from "./engine-json.js";
 import { engineBinary } from "./metric.js";
@@ -213,7 +211,7 @@ function runOriginalCalls(calls: readonly ExampleToolCall[], documents: Readonly
   const failures = new Map<string, string>();
   let registry: ConversationRuleRegistry;
   try {
-    registry = new ConversationRuleRegistry({ modelPath: resolveModelPath(SELF) });
+    registry = new ConversationRuleRegistry({ modelPath: bundledModelPath() });
   } catch (error) {
     const why = `the conversation engine does not load: ${error instanceof Error ? error.message : String(error)}`;
     return { findings: [], failures: new Map([...documents.keys()].map((rule) => [rule, why])), incidents: new Map(), notes: [] };
