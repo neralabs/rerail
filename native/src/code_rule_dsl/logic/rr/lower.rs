@@ -3773,6 +3773,12 @@ impl Lowerer {
             let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
             let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone().into())).collect();
             let rel = self.helper_once(rel, "cover", types, alts.into_iter().map(|b| (args.clone(), b)).collect());
+            // Stored (decision 0099's `no_inline`): the cover is the groups the context reaches, made once. Unfolded
+            // into its reader (an aggregate's witnesses), its join runs again for every witness: `p49_rr_cover5`'s
+            // `need` and `reset` of each name in a document, 45 s of one stratum over 91 files of the data layer.
+            self.prog.edit(|b| b.qualifiers(), |q| Field::Qualifiers(q), |all| {
+                all.entry(rel.clone()).or_default().insert("no_inline".to_owned());
+            });
             out.push(Lit::Atom { rel, args: cols.into_iter().map(STerm::Var).collect(), neg: false });
         }
         Ok(out)

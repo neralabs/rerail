@@ -23,7 +23,7 @@
 //! `RERAIL_OBSERVED_STEPS=off` prices from estimates alone, for comparison.
 //!
 //! Stored always: outputs, inputs, lattices, relations with facts, natives and what they read,
-//! demanded relations, gates, answers, recursive relations, relations read inside an aggregate (a count, a sum or a
+//! demanded relations, an aggregate's demand (the keys it enumerates from), gates, answers, recursive relations, relations read inside an aggregate (a count, a sum or a
 //! string join reads the distinct rows), and relations read by a negation whose unfolding is not a negation of plain
 //! literals (below).
 //!
@@ -616,6 +616,18 @@ fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, V
     for rel in rules_of.keys() {
         if rel.starts_with(super::super::strings::RELATION) || rel.starts_with("magic_") || rel.starts_with("done_") {
             why.insert((*rel).to_owned(), "the engine's (a text test or demand's own)");
+        }
+    }
+    // A demand-restricted aggregate's demand (`Body::demand_first`): its rows are the keys the aggregate enumerates
+    // witnesses from, the boundary its planning keeps first. Inlined, the aggregate reads the demand's own join in
+    // their place (`need` and `reset` of every name in a document, unbounded: 25M rows priced for 805 keys, 45 s
+    // of one stratum over 91 files of the data layer's 50 policies).
+    for k in 0..n {
+        let b = base.body(k);
+        if let Some(i) = b.demand_first()
+            && let Some(a) = b.atom(i)
+        {
+            why.insert(b.rel(a).to_owned(), "an aggregate's demand");
         }
     }
     // Read inside an aggregate, by a gated negation, or by an atom with a computed argument.
@@ -1846,6 +1858,30 @@ pub mod tests {
         let done = choose(&Placed::of_program(&prog).unwrap(), &mut model).unwrap().map(|(done, _)| done).unwrap_or_default();
         assert!(!(done.iter().any(|r| r == "s") && done.iter().any(|r| r == "r")), "both inlined: {done:?}");
         assert!(!done.is_empty(), "nothing inlined: the case does not choose");
+    }
+
+    /// An aggregate's demand, read first by the aggregate it restricts (`Body::demand_first`), is stored: inlined,
+    /// the aggregate would enumerate the demand's own join in place of its keys. A relation of the same shape read
+    /// otherwise stays a candidate.
+    #[test]
+    fn an_aggregates_demand_is_stored() {
+        let prog = super::super::super::rr::parse(
+            ".decl b(x: number, y: number)\n.decl c(x: number)\n.input b\n.input c\n\
+             .decl rr_demand_agg_g(x: number)\nrr_demand_agg_g(x) :- b(x, _), c(x).\n\
+             .decl g(x: number, y: number)\ng(x, y) :- rr_demand_agg_g(x), b(x, y).\n\
+             .decl s(x: number)\ns(x) :- b(x, _), c(x).\n\
+             .decl o(x: number, y: number)\no(x, y) :- s(x), g(x, y).\n.output o\n",
+        )
+        .unwrap();
+        let placed = Placed::of_program(&prog).unwrap();
+        let f = Fields::of(&placed).unwrap();
+        let mut rules_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for k in 0..placed.len() {
+            rules_of.entry(placed.v.rel_name(placed.rule(k).head().rel())).or_default().push(k);
+        }
+        let why = refusals(&f, &placed, placed.len(), &rules_of, &[]);
+        assert_eq!(why.get("rr_demand_agg_g").copied(), Some("an aggregate's demand"), "{why:?}");
+        assert!(!why.contains_key("s"), "{why:?}");
     }
 
     fn model_with(prog: &Program, inputs: &[(&str, f64, &[f64])]) -> Model {

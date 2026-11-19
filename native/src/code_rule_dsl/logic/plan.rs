@@ -3409,6 +3409,9 @@ impl Model {
             && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes)
         {
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a line's plan taken as prepared: not searched".to_owned());
+            if std::env::var("RERAIL_PLAN_SHOW").is_ok_and(|r| r.split(',').any(|name| name == b.rel(b.head()))) {
+                eprintln!("plan show {} prepared: work {:.1} rows {:.1}: {}", b.show_head(), plan.1, plan.2, b.shown(&plan.0).join(" , "));
+            }
             let explained = if explain { self.explain_order(pf, b, first, &plan.0) } else { None };
             return Ok((plan, explained));
         }
@@ -8763,6 +8766,9 @@ impl<'a> Run<'a, '_> {
                 Some(got) => got,
                 None => self.model.plan_rule_reused(pf, b, None)?,
             };
+            if std::env::var("RERAIL_PLAN_SHOW").is_ok_and(|w| scc.iter().any(|r| w.split(',').any(|n| n == r))) {
+                eprintln!("plan show seed of {scc:?} head {}: work {work:.1} rows {rows:.1}: {}", b.show_head(), b.shown(&order).join(" , "));
+            }
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
             shape.add(Order::new(b, &order), work, false, false);

@@ -56,7 +56,7 @@ impl<'v> R<'v> {
 
 /// A base relation of the corpus: an input, a view of an input's columns, a `nearest_<set>` or an `inside_<set>`.
 fn base(f: &Fields<'_>, rel: &str, a: AtomRef<'_>) -> bool {
-    f.is_input(rel) || rel.starts_with("nearest_") || rel.starts_with(super::super::super::front::AXIS) || view_of(f, a).is_some()
+    f.is_input(rel) || super::super::super::front::is_transduced(rel) || view_of(f, a).is_some()
 }
 
 /// Atom `a` of a view of an input's columns (Q37, `kind(n, k) :- node(_, n, k, _, _)`) as the input's reads it: the
@@ -81,7 +81,7 @@ fn base_rows(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<
         Some((input, at)) => (input.as_str(), Some(at.as_slice())),
         None => (rel, None),
     };
-    let all = if rel.starts_with("nearest_") || rel.starts_with(super::super::super::front::AXIS) { model.stats.nodes } else { model.card(rel) };
+    let all = if super::super::super::front::is_transduced(rel) { model.stats.nodes } else { model.card(rel) };
     let names: Option<Vec<&str>> = f.v.decl_of(rel).map(|d| d.cols().map(|(n, _)| f.v.text(n)).collect());
     a.args()
         .enumerate()
@@ -110,11 +110,64 @@ fn base_rows(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<
 /// An atom that restricts the rows a body reaches: a derived relation (not a text test, whose selectivity is unknown),
 /// or a base atom whose measured rows are fewer than a scan's (`node(_, $n, 1223, _, _)`, not the 6M identifiers of
 /// `node(_, $n, 1025, _, _)`).
-fn anchor(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<'_>) -> bool {
+/// A derived relation of a row per node (`per_node_relations`) restricts nothing: two of its atoms joined off their
+/// key (`mf_def($c, $f), mf_def($a, $f)`) are every pair of nodes in a def, 22M rows of `pre_292` on 91 files.
+fn anchor(f: &Fields<'_>, model: &super::super::Model, per_node: &BTreeSet<String>, rel: &str, a: AtomRef<'_>) -> bool {
     if rel.starts_with("strtest_") || rel.starts_with("demand_") {
         return false;
     }
-    !base(f, rel, a) || base_rows(f, model, rel, a) < model.stats.nodes / 32.0
+    if base(f, rel, a) { base_rows(f, model, rel, a) < model.stats.nodes / 32.0 } else { !per_node.contains(rel) }
+}
+
+/// The derived relations of a row per node: one of their rules reads its head's key only at the key of a per-node
+/// read (a `nearest`, an axis or a kind-free `node` atom, or another such relation; `mf_def(n, f) :- mf_up(n, f), ..`
+/// over `mf_up(n, o) :- nearest(n, o, mf_mark), ..`). A rule whose positive atom tests the key otherwise
+/// (`kind(c, "call")`) restricts it. Structural: no estimate is read.
+fn per_node_relations(rules: &[R<'_>]) -> BTreeSet<String> {
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    loop {
+        let before = out.len();
+        for r in rules {
+            if out.contains(r.head()) {
+                continue;
+            }
+            let Some(TermRef::Var(key)) = r.r.head().args().next() else { continue };
+            let (mut sourced, mut restricted) = (false, false);
+            for i in 0..r.lits.len() {
+                match r.lits[i].view() {
+                    Lit::Nearest { n, a, .. } => {
+                        if n == key {
+                            sourced = true;
+                        } else if a == key {
+                            restricted = true;
+                        }
+                    }
+                    Lit::Atom(a) if !a.neg() => {
+                        let at: Vec<usize> = a.args().enumerate().filter(|(_, t)| t.var() == Some(key)).map(|(c, _)| c).collect();
+                        if at.is_empty() {
+                            continue;
+                        }
+                        let rel = r.rel(a);
+                        let source = if super::super::super::front::is_transduced(rel) || out.contains(rel) {
+                            at == [0]
+                        } else {
+                            rel == "node" && at == [1] && matches!(a.args().nth(2), Some(TermRef::Wild))
+                        };
+                        if source { sourced = true } else { restricted = true }
+                    }
+                    // A comparison or a negation on the key (a scope's `$d = @doc($n), !rr_scope_not($d)`) keeps
+                    // a share of unknown size: it does not make the relation small.
+                    _ => {}
+                }
+            }
+            if sourced && !restricted {
+                out.insert(r.head().to_owned());
+            }
+        }
+        if out.len() == before {
+            return out;
+        }
+    }
 }
 
 /// The relations `split_negations` demands, before its rounds (the module's conditions): derived, not kept, not
@@ -147,7 +200,7 @@ pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super
         (0..r.lits.len()).any(|i| match r.lits[i].view() {
             Lit::Atom(a) if !a.neg() => {
                 let rel = r.rel(a);
-                ((rel.starts_with("nearest_") || rel.starts_with(super::super::super::front::AXIS)) && on_key(a, 0))
+                (super::super::super::front::is_transduced(rel) && on_key(a, 0))
                     || (rel == "node" && on_key(a, 1) && matches!(a.args().nth(2), Some(TermRef::Wild)))
             }
             Lit::Nearest { n, .. } => n == key,
@@ -252,7 +305,7 @@ fn disconnected(r: &R<'_>, cut: &dyn Fn(usize) -> bool) -> bool {
 /// estimate of a derived relation is read, and an axis read from its ancestor end (every descendant) is not a
 /// lookup. Decision 0048's extension, since axes are made per looked-up node (decision 0057).
 /// Also the variables so bound.
-fn reached(f: &Fields<'_>, model: &super::super::Model, r: &R<'_>, own: bool, cut: &dyn Fn(usize) -> bool) -> (BTreeSet<String>, bool) {
+fn reached(f: &Fields<'_>, model: &super::super::Model, per_node: &BTreeSet<String>, r: &R<'_>, own: bool, cut: &dyn Fn(usize) -> bool) -> (BTreeSet<String>, bool) {
     let mut bound: BTreeSet<String> = if own { r.head_vars() } else { BTreeSet::new() };
     let lookup = |a: AtomRef<'_>, bound: &BTreeSet<String>| {
         let on = |c: usize| match a.args().nth(c) {
@@ -279,7 +332,7 @@ fn reached(f: &Fields<'_>, model: &super::super::Model, r: &R<'_>, own: bool, cu
         let before = todo.len();
         todo.retain(|&j| {
             let hit = match r.lits[j].view() {
-                Lit::Atom(b) => anchor(f, model, r.rel(b), b) || lookup(b, &bound),
+                Lit::Atom(b) => anchor(f, model, per_node, r.rel(b), b) || lookup(b, &bound),
                 Lit::Nearest { n, .. } => bound.contains(r.name(n)),
                 _ => true,
             };
@@ -302,6 +355,10 @@ pub(super) type Analysis = (BTreeMap<usize, Split>, Vec<(String, Vec<(String, St
 pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, candidates: &BTreeSet<&str>) -> Result<Analysis, BTreeSet<String>> {
     let n = p.len();
     let rules: Vec<R<'_>> = (0..n).map(|k| R::of(p, k)).collect();
+    let per_node = per_node_relations(&rules);
+    if std::env::var_os("RERAIL_DEMAND_TRACE").is_some() {
+        eprintln!("demand: relations of a row per node: {per_node:?}");
+    }
     let negated = |r: &R<'_>, i: usize| r.plain(i).is_some_and(|a| candidates.contains(r.rel(a)));
     let readers: Vec<usize> = (0..n).filter(|&k| (0..rules[k].lits.len()).any(|i| negated(&rules[k], i))).collect();
     // A positive read is cut only where one kept anchor binds all its variables (the module's guard). Every reader is
@@ -326,14 +383,14 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
             let vars = r.lit_vars(i);
             let anchors = |demanded: bool| {
                 (0..r.lits.len()).find_map(|j| match r.plain(j) {
-                    Some(b) if j != i && !b.neg() && negated(r, j) == demanded && anchor(f, model, r.rel(b), b) && vars.is_subset(&r.lit_vars(j)) => Some(r.rel(b)),
+                    Some(b) if j != i && !b.neg() && negated(r, j) == demanded && anchor(f, model, &per_node, r.rel(b), b) && vars.is_subset(&r.lit_vars(j)) => Some(r.rel(b)),
                     _ => None,
                 })
             };
             // Bound by the kept anchors through bounded lookups; or anchored only by another demanded read, which then
             // stays in the body instead (its relation is built whole).
             let own = candidates.contains(r.head());
-            let (reach, small) = reached(f, model, r, own, &cut);
+            let (reach, small) = reached(f, model, &per_node, r, own, &cut);
             if anchors(false).is_none() && !vars.is_subset(&reach) {
                 match anchors(true) {
                     Some(b) => refused.insert(b.to_owned()),
@@ -445,7 +502,7 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
 
 #[cfg(test)]
 mod tests {
-    use super::{R, base, disconnected, view_of};
+    use super::{R, base, disconnected, per_node_relations, view_of};
     use super::super::super::body::Placed;
     use super::super::super::fields::Fields;
 
@@ -455,6 +512,35 @@ mod tests {
         let p = Placed::of_program(&prog).unwrap();
         let r = R::of(&p, k);
         disconnected(&r, &|j| r.plain(j).is_some_and(|a| r.rel(a) == cut))
+    }
+
+    /// A relation of a row per node, through another (`mf_def` over `mf_up`), is per node; one that tests its key
+    /// (`ctor`) or reads it off a per-node relation's key (`by_def`) is not.
+    #[test]
+    fn relations_of_a_row_per_node_are_found_through_others() {
+        let p = r#"
+            .decl node(d: number, n: node, k: number, s: number, e: number)
+            .decl kind(n: node, k: symbol)
+            .decl up(n: node, o: node)
+            .decl def(n: node, f: node)
+            .decl ctor(n: node)
+            .decl by_def(f: node, n: node)
+            .decl rr_nearest_ks1(n: node, a: node)
+            .decl near(n: node, o: node)
+            .input node, kind, rr_nearest_ks1
+            .output def, ctor, by_def, near
+            up($n, $o) :- node(_, $n, _, _, _), kind($o, "def").
+            def($n, $f) :- up($n, $f), kind($f, "function_definition").
+            ctor($c) :- up($c, _), kind($c, "call").
+            by_def($f, $n) :- def($n, $f).
+            near($n, $o) :- rr_nearest_ks1($n, $o), !kind($o, "decorator").
+        "#;
+        let prog = super::super::super::super::front::parse(p).unwrap();
+        let placed = Placed::of_program(&prog).unwrap();
+        let rules: Vec<R<'_>> = (0..placed.len()).map(|k| R::of(&placed, k)).collect();
+        let got = per_node_relations(&rules);
+        assert!(got.contains("up") && got.contains("def") && got.contains("near"), "{got:?}");
+        assert!(!got.contains("ctor") && !got.contains("by_def"), "{got:?}");
     }
 
     /// A split whose kept atoms only the demanded read joins is refused: its `pre_<i>` would be their cross product.

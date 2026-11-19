@@ -5164,11 +5164,49 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 
 ### Q242. The data layer's 9,010-file ladder (0364 Scale)
 
-- **Where it stands** (2026-11-19): at 2,410 files a session's edits take 44-59 s, with findings equal to cold
-  (t43 step 20). The whole tree (`tmp/dl-whole`, 9,618 `.py` files; `dl-history.sh` with no scope) is next.
-- **Why not yet:** a cold run there is about 4 times the 2,410-file one (515 s of CPU on the M1 Max), 35-40 min
-  for one step, outside a light share of the machine and a bounded wait. Run it on an idle farm host, cold and as a
-  session over steps 00-03, capped (`CAP_MB` 12000), with step 01 profiled. Check θ there (0.25 against 0.5).
+- **Corrected** (2026-11-19): the ladder measured here (`tmp/dl-mid`, `tmp/dl-whole`, made by `dl-history.sh`) is
+  one policy, `conditional-architecture`, with its `.scope` lines dropped, over trees of every file. It is not the
+  data layer's workload, and its times (515 s of CPU at 2,410 files, "35-40 min" at 9,618) say nothing about it.
+  The workload is the data layer's 50 policies (`docs/rule-syntax/data-layer/*.rr`, scoped) together over the
+  repository at 2b1504adc (9,010 `.py` files), against the data layer's own linters, which take about a minute of
+  wall on the whole repository (t3, "PR full repo 70.6 s wall"). The target is seconds. Q245 is that work.
+- **The maintain-mode ladder** stays a test of 0364 at size: run it with the policies' scopes kept.
+
+### Q245. The data layer's 50 policies together: four structural regressions (2026-11-19)
+
+- **The run** (`tmp/dl9010`, not in git: the tree at 2b1504adc, `run.sh`, `each.sh`, samples `s100` of 91
+  `.py` files and `s10` of 901, each with the root's other files). On the 91 files, each policy alone took 26 s of
+  CPU summed (profiling build), and all 50 together passed 120 s (killed): the program of 50 policies made strata
+  no single policy makes. The 2026-11-17 engine was as slow (its warm run 116 s on the same files).
+- **1. A negation split's `pre_<i>` that was every pair of nodes in a def** (`demand/over.rs`). `reached` took
+  every derived relation as a small anchor, so `pre_292(a, c, f) :- mf_def(c, f), mf_def(a, f)` (52,314 rows,
+  420 a def) was a split's kept body. Also, the pass's `nearest_` tests were dead since the lowering names those
+  relations `rr_nearest_…`: a `nearest` frame read as a derived relation. Now: `front::is_transduced` for both, and
+  a derived relation of a row per node (`per_node_relations`: its key read only at a per-node read's key, through
+  other such relations) is no anchor. 2 policies: 10.98 → 4.05 s CPU; 4: 9.07 → 4.41.
+- **2. An aggregate's demand inlined into the aggregate** (`keeps::refusals`). Priced on the up-front estimates
+  (`p49_need` 9.5×10⁹ rows), the 805-row demand `p49_rr_demand_agg_rr_agg1` was unfolded into `p49_rr_agg1`,
+  which then read the demand's own join (`need ⋈ docof ⋈ reset ⋈ docof ⋈ reset`): 25M rows priced, 14-45 s of one
+  stratum. An aggregate's demand (`Body::demand_first`) is now stored always, as decision 0099 lists demanded
+  relations.
+- **3. The aggregate's cover inlined the same way** (`rr/lower.rs`): `rr_cover<i>` is declared `no_inline` where
+  lowering makes it. After 2 and 3 the 50 policies end: 20.6 s wall, 25.9 s CPU, 53 findings (the 2026-11-17
+  engine's warm run: 53).
+- **4. The factorized store's key of a part that is a join** (`typing/file_local/passes/factorize.rs`): each part's
+  key relation was made from its unreduced body, so `fzk…_vmi_known(a) :- mf_def(c, f), mf_def(a, f)` was every
+  pair in a def again. The keys are chained now, fewest atoms first, each part's keys within the previous key, and
+  each part is reduced by the last (the keys every part holds, as before). `vmi_known`'s strata 3.2 s → 0.004 s;
+  the pair 5.29 → 1.78 s CPU, findings equal to `RERAIL_FACTORIZE=off`.
+- **Fixed on the way:** `retain/frame_tests.rs` called `KeptInput::load` without its `news` argument since t43
+  step 19, so `rerail-logic`'s test target did not build.
+- **Open, in order:**
+  - `bounded-composed-graph-paths`' `bcgp_decorated` (8 s of 10 alone): `count : { … } = 0` becomes a negated
+    read (`existence_as_reads`), but its helper `rr_agg15` keeps the counted `_` as a column and so enumerates every
+    line between each decorator and each later def. An existence helper should drop it, and stop at a pair's first
+    line (a range probe that ends at its first row).
+  - 11,500 strata for 50 policies, about 1 ms each, on 91 files: fixed costs that do not shrink with the files.
+  - 2.4 GB peak on 91 files: to break down before any larger sample.
+  - The rest by policy (`each.sh`), then the 901-file sample, once the per-file cost is known from the 91.
 
 ### Q243. At 2,410 files the mode is priced above a derive for deltas of 0.1% of the rows read
 
