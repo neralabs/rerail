@@ -32,8 +32,8 @@ runs:
         GH_TOKEN: ${{ github.token }}
         NAME: ${{ inputs.name }}
         REF: ${{ inputs.ref }}
-      # A push, schedule or dispatch on the branch in this repository (scripts/check/ci/trusted-artifact.mjs), never a
-      # pull request whose head branch has that name.
+      # A push, schedule or dispatch on the branch in this repository, of a commit in its history
+      # (scripts/check/ci/trusted-artifact.mjs); never a pull request whose head branch, or a tag, has that name.
       run: |
         read -r _ run_id <<< "$(node scripts/check/ci/trusted-artifact.mjs "$NAME" "$REF")" || true
         if [ -z "$run_id" ]; then echo "No $NAME from $REF: a cold build"; fi
@@ -54,6 +54,8 @@ runs:
     - name: Unpack the cargo target
       if: inputs.mode == 'restore' && steps.download.outcome == 'success'
       shell: bash
+      env:
+        REF: ${{ inputs.ref }}
       run: |
         set -uo pipefail
         in="$RUNNER_TEMP/cargo-target-in"
@@ -63,7 +65,7 @@ runs:
           && unpack "$(ls "$in"/cargo-home.tar.*)" | tar -xf - -C "$HOME"; then
           node scripts/build/target-sources.mjs apply target
         else
-          echo "::warning::cargo-target: main's target did not unpack; building cold."
+          echo "::warning::cargo-target: $REF's target did not unpack; building cold."
           rm -rf target "$HOME/.cargo/registry/index" "$HOME/.cargo/registry/cache" "$HOME/.cargo/git/db"
         fi
         rm -rf "$in"

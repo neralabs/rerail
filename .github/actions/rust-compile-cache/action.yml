@@ -2,12 +2,13 @@ name: Rust compile cache
 description: >-
   Puts every rustc compile of the job, and every C and C++ compile a build script makes through the `cc` crate, through
   sccache with a store on the runner's disk, keyed on each compile's inputs (sources, flags, dependencies, compiler).
-  The store starts from the newest one a push, schedule or dispatch on main saved as an artifact
-  (`./.github/actions/rust-compile-cache/save`; never a pull request's, whatever its head branch is named), when one
-  exists: a crate main compiled the same way is fetched, not compiled. Without one the job compiles cold; it
-  never fails for want of it. The Actions cache is not used. cc-rs wraps its C and C++ compiler in RUSTC_WRAPPER when
-  that is sccache, so CC and CXX stay as they are. Use it after the Rust toolchain's set-up and before the first cargo
-  or napi command; the job needs `actions: read` to find main's store. Its post-job step prints the hit statistics.
+  The store starts from the newest one a push, schedule or dispatch on main, of a commit in main's history, saved as an
+  artifact (`./.github/actions/rust-compile-cache/save`; never a pull request's, whatever its head branch is named, nor a
+  tag's named main), when one exists: a crate main compiled the same way is fetched, not compiled. Without one the job
+  compiles cold; it never fails for want of it. The Actions cache is not used. cc-rs wraps its C and C++ compiler
+  in RUSTC_WRAPPER when that is sccache, so CC and CXX stay as they are. Use it after the Rust toolchain's set-up and
+  before the first cargo or napi command; the job needs `actions: read` to find main's store. Its post-job step prints
+  the hit statistics.
 
   Upstream sccache caches what rustc does not link: libraries (rlib, staticlib) and C objects. A crate rustc links
   (the engine's cdylib with its thin LTO, proc macros, build scripts, test harnesses, binaries) compiles every time,

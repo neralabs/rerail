@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { afterAll, expect, it } from "vitest";
-import { cargoInputs, dataMentions, moduleFiles, outputs, select } from "../../../scripts/check/ci/rust-selection.mjs";
+import { cargoInputs, cliArguments, dataMentions, moduleFiles, outputs, select } from "../../../scripts/check/ci/rust-selection.mjs";
 import { removeFolderSync } from "../../support/platform/remove-folder.ts";
 
 const root = mkdtempSync(join(tmpdir(), "rust-selection-"));
@@ -170,4 +170,14 @@ it("outputs: cargo arguments and a nextest filter, everything as --workspace", (
   });
   expect(outputs({ all: true, packages: ["a"] })["rust-cargo-args"]).toBe("--workspace");
   expect(outputs({ all: false, packages: [] })["rust-nextest-filter"]).toBe("none()");
+});
+
+it("cliArguments: the list comes first as ci.yml passes it, with or without the base's package.json", () => {
+  expect(cliArguments(["changed.txt", "--github"])).toEqual({ list: "changed.txt", basePackageJson: undefined, github: true });
+  expect(cliArguments(["changed.txt", "--base-package-json", "base.json", "--github"])).toEqual({
+    list: "changed.txt",
+    basePackageJson: "base.json",
+    github: true,
+  });
+  expect(cliArguments(["--base-package-json", "base.json", "changed.txt"])).toEqual({ list: "changed.txt", basePackageJson: "base.json", github: false });
 });

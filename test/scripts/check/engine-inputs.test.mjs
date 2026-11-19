@@ -111,6 +111,16 @@ describe("engineSources", () => {
     ]);
   });
 
+  it("reads a path in single quotes or with a trailing slash as the same crate", () => {
+    const { dirs } = engineSources(
+      repository({
+        ...CRATES,
+        "native/Cargo.toml": "[package]\nname = \"e\"\n\n[dependencies]\nrerail-accel = { path = '../accel' }\nx = { path = \"../unused/\" }\n",
+      }),
+    );
+    expect(dirs).toEqual(["accel/", "forest/", "languages/", "native/", "patched/x/", "unused/"]);
+  });
+
   it("covers this repository's engine crates outside native/", () => {
     const { dirs } = engineSources(ROOT);
     for (const dir of ["accel/", "forest/", "tools/bitlex/", "languages/", "native/"]) expect(dirs).toContain(dir);

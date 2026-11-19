@@ -490,18 +490,26 @@ export function cargoInputs(packageJson) {
   return JSON.stringify({ napi, scripts: Object.entries(scripts).filter(([, command]) => /cargo|napi|native|rust/u.test(command)) });
 }
 
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const args = process.argv.slice(2);
-  const flag = args.includes("--github") ? "--github" : undefined;
+/**
+ * The command line: the changed-files list, the base's package.json (`--base-package-json <file>`) and `--github`.
+ * The list is the argument that is no flag and not the base's file, wherever it stands.
+ */
+export function cliArguments(args) {
   const base = args.indexOf("--base-package-json");
-  const [list] = args.filter((arg, i) => !arg.startsWith("--") && i !== base + 1);
+  const basePackageJson = base < 0 ? undefined : args[base + 1];
+  const list = args.find((arg, i) => !arg.startsWith("--") && (base < 0 || i !== base + 1));
+  return { list, basePackageJson, github: args.includes("--github") };
+}
+
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const { list, basePackageJson, github } = cliArguments(process.argv.slice(2));
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   let selection;
   try {
     let changed = readFileSync(list, "utf8").split("\n").map((line) => line.trim()).filter(Boolean);
     // package.json reaches every package only when what cargo reads of it changed (`cargoInputs`).
-    if (base >= 0 && changed.includes("package.json")) {
-      const same = cargoInputs(readFileSync(args[base + 1], "utf8")) === cargoInputs(readFileSync(join(root, "package.json"), "utf8"));
+    if (basePackageJson !== undefined && changed.includes("package.json")) {
+      const same = cargoInputs(readFileSync(basePackageJson, "utf8")) === cargoInputs(readFileSync(join(root, "package.json"), "utf8"));
       if (same) changed = changed.filter((path) => path !== "package.json");
     }
     selection = select(root, workspaceMetadata(root), changed);
@@ -516,7 +524,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
     }
   }
   for (const reason of selection.reasons) console.error(`rust-selection: ${reason}`);
-  if (flag === "--github") {
+  if (github) {
     for (const [name, value] of Object.entries(outputs(selection))) console.log(`${name}=${value}`);
   } else {
     console.log(JSON.stringify({ ...selection, outputs: outputs(selection) }, null, 2));
