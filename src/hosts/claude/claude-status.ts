@@ -2,6 +2,7 @@ import type { ChildProcessByStdio } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { endProcessTree, spawn } from "../../engine/child-process.js";
@@ -9,7 +10,7 @@ import { gitBash } from "../../engine/git.js";
 import { fromCurrentDrive, isFullyQualifiedWindowsPath } from "../../engine/system-programs.js";
 import { processState } from "../../engine/process-liveness.js";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
-import { fallbackPresentation, formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
+import { fallbackPresentation, formatTerminalStatus, readPresentation, type SessionPresentation } from "../../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../../engine/catalog/repository-model.js";
 import { ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "../../engine/package-root.js";
 import type * as StartStateReader from "../../runtime/start-state-reader.js";
@@ -34,12 +35,24 @@ const STATUS_TIMEOUT_MS = 2_000;
 const MAX_INPUT_BYTES = 1_048_576;
 // Process ancestry marker, not a presentation preference: stop a user's command recursively invoking this wrapper.
 const PARENT_PROCESS_KEY = "_RERAIL_CLAUDE_STATUS_PARENT";
-/** `cwd` follows `/cd`; `workspace.project_dir` stays the launch root that identifies the session. */
+/**
+ * `cwd` follows `/cd`; `workspace.project_dir` stays the launch root that identifies the session. The session has had
+ * no reply while `cost.total_api_duration_ms` is 0.
+ */
 const statusPayloadSchema = z.object({
   session_id: z.string(),
   cwd: z.string().optional(),
   workspace: z.object({ project_dir: z.string().optional() }).optional(),
+  cost: z.object({ total_api_duration_ms: z.number().optional() }).optional(),
 });
+
+/**
+ * How long a draw waits between reads while the daemon has not recorded the session's start (`starting`), 7 s in all.
+ * Claude Code draws the status line as a session starts, before the session's start hook has run, and draws again
+ * only with the session's first reply, so `starting` would stay until then. Only a session with no reply yet waits.
+ * The status script waits the same for its file (`claude-status.sh`).
+ */
+const STARTING_WAITS_MS: readonly number[] = [200, 300, 500, 1_000, 2_000, 3_000];
 
 async function rerailStatus(chunks: Buffer[], validInput: boolean): Promise<string> {
   // The recorded-first fallback can start this on an older `node` from PATH once the node set-up recorded is gone;
@@ -51,25 +64,45 @@ async function rerailStatus(chunks: Buffer[], validInput: boolean): Promise<stri
   try {
     const session = validInput ? statusSession(chunks) : undefined;
     if (session === undefined) return formatTerminalStatus(fallbackPresentation("session unavailable"));
-    const { sessionId, root } = session;
-    // Nothing autostarts where Rerail is off, so with no daemon answering the checkout's own state decides.
-    const result = await readPresentation({ sessionId, host: "claude-code", cwd: root, startState: () => localStartState(root) });
+    const result = await sessionPresentation(session);
     return result.presence === "silent" ? "" : formatTerminalStatus(result);
   } catch {
     return formatTerminalStatus(fallbackPresentation("unavailable"));
   }
 }
 
+/** The session's footer, read again on `STARTING_WAITS_MS` while the daemon says `starting` and the session has had no reply. */
+async function sessionPresentation({ sessionId, root, unanswered }: StatusSession): Promise<SessionPresentation> {
+  for (const pause of unanswered ? STARTING_WAITS_MS : []) {
+    const result = await readSessionPresentation(sessionId, root);
+    if (result.status !== "starting") return result;
+    await sleep(pause);
+  }
+  return await readSessionPresentation(sessionId, root);
+}
+
+/** Nothing autostarts where Rerail is off, so with no daemon answering the checkout's own state decides. */
+async function readSessionPresentation(sessionId: string, root: string): Promise<SessionPresentation> {
+  return await readPresentation({ sessionId, host: "claude-code", cwd: root, startState: () => localStartState(root) });
+}
+
+/** The session a status line's input names, the checkout it runs in, and whether it has had no reply yet. */
+interface StatusSession {
+  sessionId: string;
+  root: string;
+  unanswered: boolean;
+}
+
 /**
- * The session a status line's input names and the checkout it runs in, its project folder or else its `cwd`;
- * undefined when the input names no session or no absolute folder. Input that is not JSON throws.
+ * The session a status line's input names, the checkout it runs in (its project folder or else its `cwd`) and whether
+ * it has had no reply yet; undefined when the input names no session or no absolute folder. Input that is not JSON throws.
  */
-function statusSession(chunks: Buffer[]): { sessionId: string; root: string } | undefined {
+function statusSession(chunks: Buffer[]): StatusSession | undefined {
   const payload = statusPayloadSchema.safeParse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
   if (!payload.success) return undefined;
-  const { session_id: sessionId, cwd, workspace } = payload.data;
+  const { session_id: sessionId, cwd, workspace, cost } = payload.data;
   const root = [workspace?.project_dir, cwd].find(path => path !== undefined && isAbsolute(path));
-  return root === undefined ? undefined : { sessionId, root };
+  return root === undefined ? undefined : { sessionId, root, unanswered: cost?.total_api_duration_ms === 0 };
 }
 
 /** How the person's previous status line is started: a program, its arguments, and whether Node wraps it in a shell. */

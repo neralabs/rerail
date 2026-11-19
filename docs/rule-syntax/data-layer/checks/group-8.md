@@ -547,7 +547,7 @@ Notes that apply to more than one check:
   - EXISTS annotation-name lowercase tests with `(?i)` regexes; path hints with `doc` path `contains`.
 - **Hard parts:** the `detail` ("calls X") depends on BFS order (`:173-179`). It is message only and not part of the
   key. The candidate needed a native `reference_edges` table and a SQL `relational` clause
-  (Data-layer-rule-expressivity `docs/data-layer-batch-five.md`, "Declared references"). In `.rerail` that is plain
+  (Data-layer-rule-expressivity `docs/data-layer-batch-five.md` (removed; at 7efcac9c67), "Declared references"). In `.rerail` that is plain
   recursive Datalog over `declared_ref`, so no new construct is needed. The batch notes say the graph *deliberately
   ignores* assignment aliases, quoted receiver annotations, positional-only annotations, conditional field annotations
   and indirect module re-exports. `declared_ref` must reproduce those omissions, not resolve more.

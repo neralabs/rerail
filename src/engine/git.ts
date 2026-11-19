@@ -1127,6 +1127,11 @@ export class GitReads {
     return running;
   }
 
+  /** Whether {@link stop} was called: a read starts no Git from then on. */
+  get stopped(): boolean {
+    return this.#stopping.signal.aborted;
+  }
+
   /** Kills every read still running and settles once the Git each started has exited. */
   async stop(): Promise<void> {
     this.#stopping.abort();
