@@ -44,8 +44,9 @@ fn every_grammar_builds() {
     }
 }
 
-/// The automata built with the build (`token_automata`), which a process decodes, are the ones its grammar's JSON
-/// builds: the same kinds, implied tokens, parents and tokens, for every grammar the engine holds.
+/// The automata built with the build (`token_automata`), which a process reads a kind at a time, are the ones its
+/// grammar's JSON builds: the same kinds, every move, implied word and kept token of each kind that leaves a token
+/// out, the same implied tokens, parents and tokens, for every grammar the engine holds.
 #[test]
 fn the_automata_built_with_the_build_are_the_grammars() {
     use GrammarDialect::*;
@@ -55,6 +56,7 @@ fn the_automata_built_with_the_build_are_the_grammars() {
         let fresh = TokenGrammar::from_json(json, &language).unwrap();
         let built = TokenGrammar::of(lang, &language).unwrap_or_else(|| panic!("{lang:?}: no automata built with the build"));
         assert_eq!(built.kind_count(), fresh.kind_count(), "{lang:?}");
+        assert_eq!(built.automata_text(), fresh.automata_text(), "{lang:?}");
         assert_eq!(built.implied_tokens(), fresh.implied_tokens(), "{lang:?}");
         // The census the token tests read, as the build wrote it.
         let census = crate::code_rule_dsl::tape::token_census::Lang::of(lang).unwrap_or_else(|| panic!("{lang:?}: no census"));
