@@ -1285,6 +1285,24 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(gitsRegistry(inner)).toHaveLength(1);
   });
 
+  it("lists as Git does once the Git folder the .git link of the repository above such a checkout names is renamed and the link pointed at its new name, the link's file id kept", async () => {
+    const root = await temporaryRoot();
+    const outer = await gitFolderLinked(join(root, "outer"), join(root, "outer.git"));
+    const inner = join(outer, "a", "inner");
+    mkdirSync(inner, { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+
+    // The same Git folder and objects folder behind the link: only the link's text tells Git's answer has moved.
+    const link = join(outer, ".git");
+    const old = lstatSync(link);
+    const listed = gitsRegistry(inner);
+    await rename(join(root, "outer.git"), join(root, "moved.git"));
+    await relink(link, join(root, "moved.git"));
+    sameFileId(link, old);
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).not.toEqual(listed);
+  });
+
   it("lists the folder between's list once the empty folder a .git link in a folder between such a checkout and the repository above names is made a repository in place", async () => {
     const root = await temporaryRoot();
     const outer = repository(join(root, "outer"));
