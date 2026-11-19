@@ -93,7 +93,7 @@ fn execute(
         Err(e) => return fail(&e.0, pending.len()),
     };
     #[cfg(feature="code-rule-profile")]
-    trace.detail(||serde_json::json!({"relations":pending.len(),"roots":mappings.iter().map(Vec::len).sum::<usize>(),"documents":documents.len(),"sourceBytes":documents.iter().map(|d|d.source.len()).sum::<usize>(),"stages":1,"backend":"cpython-3.13"}));
+    trace.detail(||serde_json::json!({"relations":pending.len(),"roots":mappings.iter().map(Vec::len).sum::<usize>(),"documents":documents.len(),"sourceBytes":documents.iter().map(|d|d.source.len()).sum::<usize>(),"stages":1,"backend":"native-cpython-3.13"}));
     pending
         .into_iter()
         .zip(mappings)

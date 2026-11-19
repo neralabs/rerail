@@ -5330,3 +5330,23 @@ regression of the maintain mode's plans (0328 §4), not a stale test.
   variables in their slots (`join_spec_made`; the executor binds them from the candidate, `join_rule_bound`), the
   recheck's spec is written from the head-bound body, and the spec's cache key says which it is. R7 passes; the 139
   maintain, session, recheck and plan tests pass.
+
+### Q252. CPython ran on the product's path: `value::python_ast` started `python3.13` for each demand batch
+
+Seen 2026-11-19 (Typing-support), on a Linux farm host without CPython 3.13: 9 of `rerail-lang-python`'s tests
+failed, "Canonical Python AST facts require CPython 3.13". The relational producer
+(`residency::admission::relational::python_ast`, installed as the AST producer) ran W's `pythonAst` worker in a
+Python process for every batch, though `code_rule_dsl::cpython` computes the same facts natively and the SQL path
+(`facts/vtab/syntax/cpython.rs`) reads them from there.
+
+- **Fixed**: `batch_with_metrics` computes every field the producer asks (`FIELDS`) and the text fields natively, a
+  node found as the worker found it (`printed::located`, `of_kind`, `by_start`), with the worker's counts of parses
+  and walks and its failures. `dumps_and_signed_fingerprints_match_cpython_3_13` (30 cases recorded from CPython)
+  and the other python_ast tests pass on Linux; 117 of the python AST consumers' tests pass.
+- **Still open**: a module's `syntax_error` field, the whole `SyntaxError` (`offset`, `text`, `end_lineno`,
+  `end_offset` besides `msg` and `lineno`), which only the gate's conformance replay asks for
+  (`batch-nine.ts`, `pythonAstBatch`), still runs the worker: the native verdict is the line and message alone,
+  and CPython's offsets differ by the kind of error. Its test is ignored with that reason.
+- **Done when**: `cpython::syntax` gives the error's span as CPython 3.13 does, checked by `parity` against CPython
+  on a box, and the worker is deleted.
+- **Record**: —
