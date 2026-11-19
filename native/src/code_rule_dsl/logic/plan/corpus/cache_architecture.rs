@@ -38,6 +38,11 @@ const NOT_CACHES: &[&str] = &[
     "source_objects", "source_aliases", "strings", "atom_blocks", "hashes", "paths", "store_state", "store_identity", "object_pins",
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
+    // Each guest's key by its identity (decision 0391): an interning, as `strings` and `hashes` are.
+    "guest_keys",
+    // The paths the observer's own journal saw change since a generation (decision 0399 step 1): a record of what
+    // happened, which nothing recomputes.
+    "observed_changes",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",

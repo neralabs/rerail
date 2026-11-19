@@ -13,7 +13,7 @@
 //! both, and a policy that weighs the host's pressure reads the same ledger.
 
 use rerail_blocks::Block;
-use rerail_blocks::alloc::{Budget, Device, Need, Size};
+use rerail_blocks::alloc::{Device, Need};
 
 /// Installs this policy as the process's (`rerail_blocks::alloc::install`).
 pub fn install() {
@@ -22,28 +22,42 @@ pub fn install() {
 
 /// A block for `need` (module docs).
 pub fn policy(need: &Need) -> Result<Block, String> {
-    let shaped = |b| rerail_blocks::alloc::shaped(b, need);
     match need.device {
-        #[cfg(target_os = "macos")]
-        Device::Must => match (need.size, need.budget) {
-            (Size::Slab, Budget::Metal) => crate::gpu::shared::lease_block_within(need.kind, need.bytes),
-            (Size::Exact, Budget::Join) => crate::gpu::shared::lease_block_for_join(need.kind, need.bytes),
-            (size, budget) => Err(format!("a device block of {} bytes, {size:?} in the {budget:?} budget: no such lease", need.bytes)),
-        }
-        .map(shaped),
-        #[cfg(not(target_os = "macos"))]
-        Device::Must => Err(format!("a device block of {} bytes with no device", need.bytes)),
-        #[cfg(target_os = "macos")]
-        // Half the Metal budget stays the device's own buffers': taking the last room had the residency drop
-        // everything it held 28 times a run (decision 0325 step 3, `lease_block_spare`'s `keep`).
-        Device::May => match crate::gpu::shared::lease_block_spare(need.kind, need.bytes, crate::budget::metal() / 2) {
-            Ok(b) => Ok(shaped(b)),
-            Err(_) => Ok(host(need)),
-        },
-        #[cfg(not(target_os = "macos"))]
-        Device::May => Ok(host(need)),
+        Device::Must => leased(need).map(|b| rerail_blocks::alloc::shaped(b, need)),
+        Device::May => Ok(spare(need).map_or_else(|| host(need), |b| rerail_blocks::alloc::shaped(b, need))),
         Device::No => Ok(host(need)),
     }
+}
+
+/// A device block for `need`, leased from the pool in its budget.
+#[cfg(target_os = "macos")]
+fn leased(need: &Need) -> Result<Block, String> {
+    use rerail_blocks::alloc::{Budget, Size};
+    match (need.size, need.budget) {
+        (Size::Slab, Budget::Metal) => crate::gpu::shared::lease_block_within(need.kind, need.bytes),
+        (Size::Exact, Budget::Join) => crate::gpu::shared::lease_block_for_join(need.kind, need.bytes),
+        (size, budget) => Err(format!("a device block of {} bytes, {size:?} in the {budget:?} budget: no such lease", need.bytes)),
+    }
+}
+
+/// A device block for `need`: none without a device.
+#[cfg(not(target_os = "macos"))]
+fn leased(need: &Need) -> Result<Block, String> {
+    Err(format!("a device block of {} bytes with no device", need.bytes))
+}
+
+/// A device block for `need` where the device has room to spare, else `None` (a host block, then). Half the Metal
+/// budget stays the device's own buffers': taking the last room had the residency drop everything it held 28 times
+/// a run (decision 0325 step 3, `lease_block_spare`'s `keep`).
+#[cfg(target_os = "macos")]
+fn spare(need: &Need) -> Option<Block> {
+    crate::gpu::shared::lease_block_spare(need.kind, need.bytes, crate::budget::metal() / 2).ok()
+}
+
+/// No device: no block of one to spare.
+#[cfg(not(target_os = "macos"))]
+fn spare(_: &Need) -> Option<Block> {
+    None
 }
 
 /// The host blocks made, while they live (their extents; a dropped block's is gone).
@@ -75,7 +89,7 @@ pub fn host_held() -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rerail_blocks::alloc::Writes;
+    use rerail_blocks::alloc::{Budget, Size, Writes};
     use rerail_blocks::block::kind;
 
     fn need(writes: Writes, device: Device) -> Need {

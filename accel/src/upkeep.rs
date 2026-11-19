@@ -420,7 +420,19 @@ pub fn cpu_ticks() -> (u64, u64) {
         libc::vm_deallocate(task, info as libc::vm_address_t, (count as usize * std::mem::size_of::<libc::integer_t>()) as libc::vm_size_t);
         (busy, total)
     }
-    #[cfg(not(target_os = "macos"))]
+    // `/proc/stat`'s first line, every core's ticks: user, nice, system, idle, iowait, irq, softirq, steal (guest
+    // time is in user's already). Idle and waiting on I/O are not busy.
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(stat) = std::fs::read_to_string("/proc/stat") else { return (0, 0) };
+        let Some(cpu) = stat.lines().next().and_then(|l| l.strip_prefix("cpu ")) else { return (0, 0) };
+        let t: Vec<u64> = cpu.split_ascii_whitespace().take(8).filter_map(|n| n.parse().ok()).collect();
+        if t.len() < 8 {
+            return (0, 0);
+        }
+        (t[0] + t[1] + t[2] + t[5] + t[6] + t[7], t.iter().sum())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     (0, 0)
 }
 
@@ -510,7 +522,14 @@ pub fn footprint() -> usize {
         }
         0
     }
-    #[cfg(not(target_os = "macos"))]
+    // The resident pages (`/proc/self/statm`'s second field), the footprint's nearest on Linux.
+    #[cfg(target_os = "linux")]
+    {
+        let pages = std::fs::read_to_string("/proc/self/statm").ok().and_then(|s| s.split_ascii_whitespace().nth(1)?.parse::<usize>().ok());
+        // SAFETY: `sysconf` reads a constant of the system.
+        pages.map_or(0, |p| p * unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(0) as usize)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     0
 }
 
