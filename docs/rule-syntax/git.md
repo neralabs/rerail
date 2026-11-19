@@ -56,6 +56,30 @@ release_scan(id, t) :- analysis_history_of("named", "release", _, _, id, _, _, t
 The store looks up completed runs by scope. Publishing or removing another scope preserves this query's cached result.
 To enumerate every published run, read `analysis_run_record` or its projections such as `analysis_scope_run`.
 
+## Find the Git blob behind a parsed document
+
+Include `git/documents.rr` to join a parsed file to its source in the selected revision.
+
+```rr
+#include "git/documents.rr"
+.language python
+.decl origin(path: symbol, blob: symbol, grammar: symbol, parsed: tape, document: number)
+origin(p, b, g, t, d) :-
+    git_source_view(v, _, _, _, _), git_source_file(v, p, _, b),
+    source_document(v, p, _, g, _, t, d).
+.output origin
+```
+
+`git_source_view(view, repo, tree, prefix, config)` identifies the selected tree, directory within it, and file selection. The root prefix is empty.
+`git_source_file(view, path, mode, blob)` lists the selected regular files, including executables. Paths use Git separators and start at the view's directory.
+The inventory applies the invocation's path filter and the selected tree's ignore rules. Listing files requires their tree entries.
+
+`source_document(view, path, module, grammar, profile, tape, document)` identifies a primary document the policy actually parsed.
+The grammar comes from the parser. The profile identifies the grammar build and tape format.
+A policy's document filter can exclude a file that the Git inventory lists.
+Two paths containing the same bytes can share a blob and a tape while retaining different document IDs.
+Document IDs belong to one evaluation. Use the view and path to identify a file across rules.
+
 ## Read the selected commit
 
 ```rr
