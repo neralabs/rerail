@@ -14,6 +14,9 @@ def counted(author):
         pass
     if Book.objects.exclude(author=author).count() < 1:  # caught
         pass
+
+
+def counted_reversed(author):
     if 0 < Book.objects.filter(author=author).count():  # caught
         pass
     if 1 > Book._default_manager.filter(author=author).count():  # caught
@@ -33,6 +36,9 @@ def loaded(author):
         pass
     if 0 == len(Book.objects.all()):  # caught
         pass
+
+
+def loaded_tested(author):
     if not len(Book.objects.filter(author=author)):  # caught
         pass
     if author and len(Book.objects.filter(author=author)):  # caught
@@ -50,7 +56,7 @@ def truth(author):
     return found, label, [a for a in [author] if Book.objects.filter(author=a)]  # caught
 
 
-def left_alone(author):
+def left_alone_counts(author):
     # A real count: the number matters.
     if Book.objects.filter(author=author).count() > 5:
         pass
@@ -59,6 +65,12 @@ def left_alone(author):
     # A chained comparison is a range, not an emptiness test.
     if 0 < Book.objects.filter(author=author).count() < 10:
         pass
+    # count() with arguments is not QuerySet.count().
+    if "abc".count("a") > 0:
+        pass
+
+
+def left_alone_variable(author):
     # A queryset in a variable may be iterated after the test (the docs' "Don't overuse exists()").
     books = Book.objects.filter(author=author)
     if books:
@@ -69,7 +81,10 @@ def left_alone(author):
     if len(books) == 0:
         pass
     # len() that is not an emptiness test belongs to django-practice-count-not-len.
-    n = len(Book.objects.filter(author=author))
+    return len(Book.objects.filter(author=author))
+
+
+def left_alone_other(author):
     # The manager itself is always true; that is a different bug.
     if Book.objects:
         pass
@@ -78,12 +93,8 @@ def left_alone(author):
         pass
     if len(Book.objects.raw("SELECT * FROM shop_book")) == 0:
         pass
-    # A value, not a test: `or` returns the queryset.
-    shown = Book.objects.filter(author=author) or Book.objects.all()
-    # count() with arguments is not QuerySet.count().
-    if "abc".count("a") > 0:
-        pass
     # Already right.
     if Book.objects.filter(author=author).exists():
         pass
-    return n, shown
+    # A value, not a test: `or` returns the queryset.
+    return Book.objects.filter(author=author) or Book.objects.all()

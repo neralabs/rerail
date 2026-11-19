@@ -27,11 +27,16 @@ const WORKBENCH_SAMPLES = "docs/rule-syntax/site/explorer/scenarios/";
 /** Exemption `rule-cases`. */
 const RULE_CASES = /^docs\/rule-syntax\/packs\/[^/]+\/cases\//;
 
+/** A test file the metric counts: none of the exemptions above covers it. */
+function counted(path) {
+  return isTestFile(path) && !isDataPath(path) && !path.startsWith(WORKBENCH_SAMPLES) && !RULE_CASES.test(path);
+}
+
 export function check(repo) {
   const findings = [];
   const roots = new Set();
   for (const path of repo.files) {
-    if (!isTestFile(path) || isDataPath(path) || path.startsWith(WORKBENCH_SAMPLES) || RULE_CASES.test(path)) continue;
+    if (!counted(path)) continue;
     const root = ROOTS.find((prefix) => path.startsWith(prefix));
     if (root) {
       roots.add(root.slice(0, -1));

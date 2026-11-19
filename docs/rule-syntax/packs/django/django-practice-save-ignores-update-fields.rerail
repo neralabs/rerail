@@ -96,6 +96,6 @@ siuf_new_test("^not +self\\.(pk|id) +or +kwa?r?g?s?\\.get\\(.force_insert.[^)]*\
     .expect _ at "blog/models.py":30
     .expect _ at "blog/models.py":39
     .expect _ at "blog/models.py":48
-    .expect _ at "blog/models.py":145
-    .expect _ at "blog/models.py":180
+    .expect _ at "blog/models.py":152
+    .expect _ at "blog/models.py":187
 .end

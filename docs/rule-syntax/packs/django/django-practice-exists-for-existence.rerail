@@ -59,20 +59,20 @@ ExistsForExistence(x, "Testing the queryset itself loads every matching row") :-
     .expect _ at "shop/views.py":11
     .expect _ at "shop/views.py":13
     .expect _ at "shop/views.py":15
-    .expect _ at "shop/views.py":17
-    .expect _ at "shop/views.py":19
-    .expect _ at "shop/views.py":21
+    .expect _ at "shop/views.py":20
     .expect _ at "shop/views.py":22
     .expect _ at "shop/views.py":24
-    .expect _ at "shop/views.py":30
-    .expect _ at "shop/views.py":32
-    .expect _ at "shop/views.py":34
-    .expect _ at "shop/views.py":36
-    .expect _ at "shop/views.py":38
-    .expect _ at "shop/views.py":43
-    .expect _ at "shop/views.py":45
-    .expect _ at "shop/views.py":47
-    .expect _ at "shop/views.py":48
+    .expect _ at "shop/views.py":25
+    .expect _ at "shop/views.py":27
+    .expect _ at "shop/views.py":33
+    .expect _ at "shop/views.py":35
+    .expect _ at "shop/views.py":37
+    .expect _ at "shop/views.py":42
+    .expect _ at "shop/views.py":44
     .expect _ at "shop/views.py":49
-    .expect _ at "shop/views.py":50
+    .expect _ at "shop/views.py":51
+    .expect _ at "shop/views.py":53
+    .expect _ at "shop/views.py":54
+    .expect _ at "shop/views.py":55
+    .expect _ at "shop/views.py":56
 .end

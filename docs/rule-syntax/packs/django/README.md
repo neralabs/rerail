@@ -487,7 +487,8 @@ same function. The message names the call. A task method needs a receiver that c
 import (resolved or not) or an attribute of one, other than a plain undecorated function of the run, or a call on one
 (`t.s(...)`, `t.using(...)`).
 
-It leaves alone: calls inside a `transaction.on_commit(...)` argument (`partial(...)`, a lambda, `task.s(...).delay`);
+It leaves alone: what a `transaction.on_commit(...)` argument defers (`partial(...)`, a lambda, `task.s(...).delay`;
+a call written as the argument itself, `on_commit(task.delay(1))`, runs at once and is reported);
 `.delay_on_commit()`/`apply_async_on_commit()`; calls after the atomic block; nested defs; signal `.send(...)`; test
 files; and tasks that already wait for the commit: a task declared `@app.task(base=X)` where X's own or inherited
 `apply_async`/`delay` calls `transaction.on_commit` (pretix's `TransactionAwareTask`,
@@ -529,7 +530,7 @@ turns ATOMIC_REQUESTS on with the literal True: a dict entry `"ATOMIC_REQUESTS":
 `DATABASES[...]["ATOMIC_REQUESTS"] = True`, `ATOMIC_REQUESTS=True` as a keyword (`dict(...)`, `.update(...)`), or the
 entry's value a parameter whose default is True (mozilla/addons-server's `get_db_config(..., atomic_requests=True)`).
 Then it matches a dispatch in a view, or in a function a view reaches through the cross-file call graph (not through
-a call written inside `on_commit(...)`). A view is a def whose first parameter is `request` and that is not a method,
+a call in a lambda or def written inside `on_commit(...)`). A view is a def whose first parameter is `request` and that is not a method,
 nor the inner `def middleware(request)` of a function-style middleware `def m(get_response)` (Django wraps only the
 resolved view in the transaction), or any method of a Django or DRF view class; not an async def, and not a view
 marked non-atomic: `@non_atomic_requests` on the def or the class (`method_decorator` included),
@@ -539,7 +540,8 @@ matches: `.delay()`, `.apply_async()`, `.send_task()`, `.enqueue()`/`.aenqueue()
 django-q `async_task()`, `send_mail`/`send_mass_mail`/`mail_admins`/`mail_managers`, and `.send()` on an
 `EmailMessage`. The message names the call.
 
-It leaves alone: calls inside `transaction.on_commit(...)` or `<connection>.on_commit(...)`; `.delay_on_commit()`;
+It leaves alone: calls in a lambda or def written inside `transaction.on_commit(...)` or `<connection>.on_commit(...)`
+(a call that is the argument itself runs at once and is reported); `.delay_on_commit()`;
 calls inside an atomic block (enqueue-on-commit reports those, so no line is reported twice); and, as
 enqueue-on-commit does, tasks that already wait for the commit (`@app.task(base=X)` where X's `apply_async`/`delay`
 calls `transaction.on_commit`, every send of a run whose app is `Celery(..., task_cls=X)` for such an X, as

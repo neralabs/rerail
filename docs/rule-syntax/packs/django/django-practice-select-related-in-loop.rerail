@@ -92,12 +92,12 @@ srl_defines(mc, x) :- dj_model_super(mc, b), kind(f, "function_definition"), nea
     .expect _ at "shop/views.py":6
     .expect _ at "shop/views.py":8
     .expect _ at "shop/views.py":10
-    .expect _ at "shop/views.py":11
-    .expect _ at "shop/views.py":21
+    .expect _ at "shop/views.py":14
     .expect _ at "shop/views.py":23
     .expect _ at "shop/views.py":25
-    .expect _ at "shop/views.py":63
-    .expect _ at "shop/views.py":70
-    .expect _ at "shop/views.py":72
-    .expect _ at "shop/views.py":74
+    .expect _ at "shop/views.py":27
+    .expect _ at "shop/views.py":68
+    .expect _ at "shop/views.py":75
+    .expect _ at "shop/views.py":77
+    .expect _ at "shop/views.py":79
 .end

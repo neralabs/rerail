@@ -21,6 +21,11 @@ def compared(author):
         pass
     if len(Book.objects.filter(author=author)) == 1:  # caught
         pass
+    # A raw() queryset has no count().
+    return len(Book.objects.raw("SELECT * FROM shop_book"))
+
+
+def emptiness_tests(author):
     # Emptiness tests are django-practice-exists-for-existence's: the fix there is exists().
     if len(Book.objects.filter(author=author)) == 0:
         pass
@@ -30,8 +35,6 @@ def compared(author):
         pass
     if author and len(Book.objects.filter(author=author)):
         pass
-    # A raw() queryset has no count().
-    return len(Book.objects.raw("SELECT * FROM shop_book"))
 
 
 def shadowed(len):

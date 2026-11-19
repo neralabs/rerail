@@ -7,14 +7,16 @@ def related_managers():
         print(book.tags.all())
     for book in Book.objects.all():  # caught
         print(book.review_set.count())
-    names = [b.tags.count() for b in Book.objects.order_by("title")]  # caught
+    return [b.tags.count() for b in Book.objects.order_by("title")]  # caught
+
+
+def related_tests():
     for book in Book.objects.all():  # caught
         if book.tags.exists():
             pass
     # Prefetched: the related manager reads the cache.
     for book in Book.objects.prefetch_related("tags"):
         print(book.tags.all())
-    return names
 
 
 def foreign_keys():
@@ -32,7 +34,7 @@ def foreign_keys():
     return titles
 
 
-def left_alone(books, model):
+def left_alone(books):
     # A queryset built elsewhere may be prefetched there.
     for book in books:
         print(book.tags.all(), book.author.name)
@@ -42,6 +44,9 @@ def left_alone(books, model):
     # A JSON field, not a relation.
     for book in Book.objects.all():
         print(book.data.get("a"), book.title.upper())
+
+
+def left_alone_more(model):
     # The model is not known: only related-manager calls are read.
     for obj in model.objects.all():
         print(obj.author.name)

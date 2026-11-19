@@ -124,3 +124,10 @@ def not_a_task(client, order):
         order.save()
         # a parameter's delay() is not known to be Celery's
         client.delay(2.0)
+
+
+def eager_on_commit(order):
+    with transaction.atomic():
+        order.save()
+        # delay() runs now, inside the block: on_commit is handed its result
+        transaction.on_commit(notify_order.delay(order.pk))  # caught

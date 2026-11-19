@@ -119,3 +119,10 @@ def place_throttled(request, client):
     # A task whose base class already sends through transaction.on_commit.
     notify_when_committed.delay(1)
     return HttpResponse("ok")
+
+
+def eager_on_commit(request):
+    order = Order.objects.create(email=request.POST["email"])
+    # delay() runs now, inside the request's transaction: on_commit is handed its result
+    transaction.on_commit(notify_order.delay(order.pk))  # caught
+    return HttpResponse("ok")

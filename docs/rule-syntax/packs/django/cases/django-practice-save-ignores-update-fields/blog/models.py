@@ -119,7 +119,6 @@ class InsertOnlyCall(models.Model):
 class InsertOnlyMore(models.Model):
     key = models.CharField(max_length=10)
     data = models.TextField()
-    airflow = models.CharField(max_length=10)
 
     @property
     def present_in_database(self):
@@ -130,6 +129,14 @@ class InsertOnlyMore(models.Model):
             self.key = "k"
         if kwargs.get("force_insert") and not self.data:
             self.data = "{}"
+        super().save(*args, **kwargs)
+
+
+class InsertOnlyByKey(models.Model):
+    key = models.CharField(max_length=10)
+    airflow = models.CharField(max_length=10)
+
+    def save(self, *args, **kwargs):
         is_new = not bool(self.pk)
         if is_new and not self.airflow:
             self.airflow = "front-to-rear"

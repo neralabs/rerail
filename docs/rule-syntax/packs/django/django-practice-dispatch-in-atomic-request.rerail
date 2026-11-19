@@ -22,6 +22,7 @@
 // setting and turns nothing on.
 //   def place(request): notify.delay(order.pk)                                  reported
 //   def place(request): helpers.notify_later(order)   # which calls .delay()    reported, at the .delay()
+//   def place(request): transaction.on_commit(notify.delay(order.pk))            reported: delay() runs now
 //   def place(request): transaction.on_commit(partial(notify.delay, order.pk))  not reported
 //   def place(request): notify.delay_on_commit(order.pk)                        not reported
 //   def place(request): with transaction.atomic(): notify.delay(1)               not reported: enqueue-on-commit's
@@ -76,12 +77,15 @@ dar_non_atomic_member(k) :- kind(k, "class_definition"), field(k, "body", b), wi
 dar_non_atomic_wrapped(f) :- kind(c, "call"), field(c, "function", n), dar_non_atomic_ref(n), posarg(c, 0, a),
     sym_of(a, q), qualname(f, q).
 // dar_on_commit(oc): oc is `transaction.on_commit(...)`, or `.on_commit(...)` on a connection
-// (`connection.on_commit(...)`, `connections["x"].on_commit(...)`); dar_after_commit(n): n is in its arguments.
+// (`connection.on_commit(...)`, `connections["x"].on_commit(...)`); dar_after_commit(n): n is in a lambda or def
+// written in its arguments, which runs after the commit. A call in the arguments themselves runs at once:
+// `on_commit(notify.delay(1))` enqueues now and hands on_commit the result.
 .decl dar_on_commit(oc: node)
 dar_on_commit(oc) :- kind(oc, "call"), field(oc, "function", f), sym_of(f, "django.db.transaction.on_commit").
 dar_on_commit(oc) :- kind(oc, "call"), field(oc, "function", f), attr_of(f, _, "on_commit").
 .decl dar_after_commit(n: node)
-dar_after_commit(n) :- dar_on_commit(oc), within(n, oc).
+dar_after_commit(n) :- dar_on_commit(oc), within(l, oc), (kind(l, "lambda") ; kind(l, "function_definition")),
+    within(n, l).
 
 // The cases, `cases/django-practice-dispatch-in-atomic-request/`, read as one repository: each line ending in `#
 // caught` is reported, and no other line.
@@ -104,4 +108,5 @@ dar_after_commit(n) :- dar_on_commit(oc), within(n, oc).
     .expect _ at "shop/views.py":60
     .expect _ at "shop/views.py":65
     .expect _ at "shop/views.py":103
+    .expect _ at "shop/views.py":127
 .end
