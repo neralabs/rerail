@@ -47,8 +47,9 @@ runs:
         NAME: ${{ steps.hash.outputs.name }}
         REF: ${{ inputs.ref }}
         OWN: ${{ github.head_ref || github.ref_name }}
-      # A push, schedule or dispatch on `ref`, or any earlier run of this pull request's own branch, in this repository
-      # (scripts/check/ci/trusted-artifact.mjs); never a pull request whose head branch is named `ref`.
+      # A push, schedule or dispatch on `ref` of a commit in its history, or any earlier run of this pull request's own
+      # branch, in this repository (scripts/check/ci/trusted-artifact.mjs); never a pull request whose head branch, or a
+      # tag, is named `ref`.
       run: |
         read -r _ run_id <<< "$(node scripts/check/ci/trusted-artifact.mjs "$NAME" "$REF" "$OWN")" || true
         if [ -n "$run_id" ]; then echo "$NAME from run $run_id"; else echo "No $NAME on $REF or $OWN: building"; fi

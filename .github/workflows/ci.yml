@@ -14,10 +14,10 @@ on:
   workflow_dispatch:
     inputs:
       warm-ref:
-        description: The branch whose saved cargo targets, compile caches and engines this run starts from.
+        description: The branch whose saved cargo targets, compile caches and engines this run starts from (a run on main starts from main's).
         default: main
       save-warm:
-        description: Save this run's cargo targets and compile caches, as a push to main does (on main, only when warm-ref is main).
+        description: Save this run's cargo targets and compile caches, as a push to main does.
         type: boolean
         default: false
 
@@ -27,11 +27,11 @@ permissions:
 # Warm starts: the engine builds and Rust jobs start from the cargo targets and compile caches the latest push to main
 # saved as artifacts (.github/actions/cargo-target, .github/actions/rust-compile-cache), and every engine build reuses
 # an engine built from the same inputs (.github/actions/engine-artifact). Only pushes to main save the targets and
-# caches, unless a manual run asks to (`save-warm`). A manual run on main saves only what it started from main's own:
-# what it saves is main's for every later run, so another branch's targets and caches never become main's.
+# caches, unless a manual run asks to (`save-warm`). A run on main starts from main's own whatever `warm-ref` says:
+# what it saves and the engines it uploads are main's for every later run, so another branch's never become main's.
 env:
-  WARM_REF: ${{ inputs.warm-ref || 'main' }}
-  SAVE_WARM: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.save-warm && (github.ref != 'refs/heads/main' || (inputs.warm-ref || 'main') == 'main')) }}
+  WARM_REF: ${{ github.ref == 'refs/heads/main' && 'main' || inputs.warm-ref || 'main' }}
+  SAVE_WARM: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.save-warm) }}
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
