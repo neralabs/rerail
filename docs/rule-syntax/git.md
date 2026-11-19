@@ -63,6 +63,8 @@ The `git_revision_error` reason is one of these symbols.
 
 The resolver checks the objects it reads during navigation before it follows their IDs.
 A parent step requires a commit. A commit's tree link requires a tree.
+Direct and tagged commit scans check the kind of a locally available root tree before reporting its ID.
+A policy can still inspect commit metadata when the root tree is absent.
 When an expression ends at a tree entry, the resolver compares the entry mode with the local object's kind.
 It can still report the recorded ID for an absent final entry, including a commit in a submodule.
 Revision navigation and object facts use the recorded Git objects, as with `git --no-replace-objects`.
@@ -113,6 +115,7 @@ git_tree_walk_request(r, t) :- git_source_tree(r, t).
 
 `git_tree_directory(repo, root, path, tree)` gives each directory path.
 The root directory has the empty path.
+Each directory fact requires a readable tree at that path. The walk still reports an unreadable or wrong-kind child by its recorded object ID.
 `git_tree_file(repo, root, path, mode, blob)` gives each regular file.
 Paths are relative to the requested tree. Raw `git_tree_entry` facts include
 symlinks and gitlinks. Join on `git_tree_walk_complete(repo, root)` if your rule

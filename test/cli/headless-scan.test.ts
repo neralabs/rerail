@@ -480,6 +480,33 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     );
   }, 30_000);
 
+  it("derives public directory placements only for readable trees while keeping errors on the frontier", async () => {
+    const root = checkout(), head = git(root, "rev-parse", "HEAD"), missing = "1".repeat(40);
+    const blob = git(root, "rev-parse", "HEAD:a.py");
+    const leaf = execFileSync("git", ["mktree"], { cwd: root, input: `100644 blob ${blob}\ta.py\n`, encoding: "utf8" }).trim();
+    const entries = [["absent", missing], ["left", leaf], ["right", leaf], ["wrong", head]];
+    const tree = execFileSync("git", ["hash-object", "--literally", "-t", "tree", "-w", "--stdin"], {
+      cwd: root, input: Buffer.concat(entries.flatMap(([name, id]) => [Buffer.from(`40000 ${name}\0`), Buffer.from(id!, "hex")])), encoding: "utf8",
+    }).trim();
+    const policy = join(root, "directories.rr");
+    writeFileSync(policy, `#include "git.rr"
+.policy "directories" revision 1
+git_revision_request(r,"HEAD") :- git_root_repo(r).
+git_tree_walk_request(r,t) :- git_source_tree(r,t).
+git_tree_walk_request(r,c) :- git_revision(r,"HEAD",c).
+.violation Directory(at: span, root: symbol, path: symbol) "{root}/{path}"
+Directory(@place("git",1), root, p) :- git_tree_directory(_,root,p,_).
+.violation Problem(at: span, root: symbol, id: symbol, reason: symbol) "{root}/{id} {reason}"
+Problem(@place("git",1), root, id, reason) :- git_tree_walk_error(_,root,id,reason).
+`);
+    const result = await scan(root, { revision: tree, analysisScope: "directories", rr: [policy] });
+    expect(result.status, JSON.stringify(result.failures)).toBe("completed");
+    expect(result.violations.map(v => v.message).sort()).toEqual([
+      `${tree}/`, `${tree}/left`, `${tree}/right`, `${tree}/${missing} missing`,
+      `${tree}/${head} not-a-tree`, `${head}/${head} not-a-tree`,
+    ].sort());
+  });
+
   it("identifies duplicate tree entries and rejects malformed commit metadata at selection", async () => {
     const root = checkout();
     const blob = git(root, "rev-parse", "HEAD:a.py");
@@ -510,9 +537,13 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     const head = git(root, "rev-parse", "HEAD");
     const makeCommit = (tree: string, parent: string) => literal("commit",
       `tree ${tree}\nparent ${parent}\nauthor Test <a@b> 123 +0000\ncommitter Test <a@b> 123 +0000\n\nlinks\n`);
+    const wrongRoot = makeCommit(head, head);
+    for (const revision of [wrongRoot, tag(wrongRoot, "commit")]) {
+      await expect(scan(root, { revision, analysisScope: "malformed" })).rejects.toThrow(/is commit, expected tree/u);
+    }
     const singleEntry = (mode: string, id: string) => literal("tree", Buffer.concat([Buffer.from(`${mode} fake\0`), Buffer.from(id, "hex")]));
     const wrongLinks = [
-      `${makeCommit(head, head)}^{tree}`, `${makeCommit(tree, tree)}^1`, `${makeCommit(tree, tree)}~1`,
+      `${wrongRoot}^{tree}`, `${makeCommit(tree, tree)}^1`, `${makeCommit(tree, tree)}~1`,
       `${singleEntry("100644", tree)}:fake`, `${singleEntry("040000", head)}:fake/`, `${singleEntry("120000", tree)}:fake`,
     ];
     for (const expression of wrongLinks) expect(() => open(expression)).toThrow(/expected (tree|commit|blob)/u);

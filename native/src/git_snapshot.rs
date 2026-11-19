@@ -620,6 +620,8 @@ impl Snapshot {
                 gix::object::Kind::Commit => {
                     let commit = object.into_commit();
                     let tree = decoded_commit(&commit).map_err(|e| format!("{revision}: malformed Git commit {id}: {e}"))?.tree();
+                    revision::check_local_kind(&repo, tree, gix::object::Kind::Tree)
+                        .map_err(|e| format!("{revision}: {}", revision::failure_detail(&e)))?;
                     (id, Some(id), tree, selects_path)
                 }
                 gix::object::Kind::Tree => (id, None, id, selects_path),

@@ -105,10 +105,10 @@ git_tree_depth_bound(r, root, n) :-
     git_tree_walk_request(r, root), n = count : { git_tree_member(r, root, tree) } - 1.
 
 .decl git_tree_placement(repo: symbol, root: symbol, path: symbol, tree: symbol, depth: number)
-git_tree_placement(r, root, "", root, 0) :- git_tree_walk_request(r, root).
+git_tree_placement(r, root, "", root, 0) :- git_tree_walk_request(r, root), git_object_kind(r, root, "tree").
 git_tree_placement(r, root, @join(path, name), child, d + 1) :-
     git_tree_placement(r, root, path, t, d), git_tree_entry(r, t, name, 16384, child),
-    git_tree_depth_bound(r, root, bound), d < bound.
+    git_object_kind(r, child, "tree"), git_tree_depth_bound(r, root, bound), d < bound.
 
 .decl git_tree_directory(repo: symbol, root: symbol, path: symbol, tree: symbol)
 git_tree_directory(r, root, path, t) :- git_tree_placement(r, root, path, t, _).

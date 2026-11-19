@@ -55,6 +55,15 @@ fn check_kind(id: ObjectId, actual: Kind, expected: Kind) -> Result<()> {
     Err(lookup_error("wrong-object-kind", format_args!("Git object {id} is {actual}, expected {expected}")))
 }
 
+/// Check a recorded edge without fetching an absent object or inflating its payload.
+pub(super) fn check_local_kind(repo: &Repository, id: ObjectId, expected: Kind) -> Result<()> {
+    if let Some(header) = repo.try_find_header(id)
+        .map_err(|error| lookup_error("unreadable-object", format_args!("Git object {id}: {error}")))? {
+        check_kind(id, header.kind(), expected)?;
+    }
+    Ok(())
+}
+
 /// Check every link as it is followed, including the kind recorded in annotated tags.
 pub(super) fn peel_object<'repo>(
     mut object: Object<'repo>, kind: Option<Kind>, mut read: impl FnMut(ObjectId) -> Result<Object<'repo>>,
@@ -207,15 +216,12 @@ impl<'repo> Revision<'repo> {
             if final_entry {
                 // rev-parse can name an absent blob or foreign gitlink from the recorded tree.
                 // A header suffices to validate a local target without inflating a large blob.
-                if let Some(header) = self.repo.try_find_header(target)
-                    .map_err(|err| lookup_error("unreadable-object", format_args!("Git object {target}: {err}")))? {
-                    let expected = match entry.mode & 0o170000 {
-                        0o040000 => Kind::Tree,
-                        0o160000 => Kind::Commit,
-                        _ => Kind::Blob,
-                    };
-                    check_kind(target, header.kind(), expected)?;
-                }
+                let expected = match entry.mode & 0o170000 {
+                    0o040000 => Kind::Tree,
+                    0o160000 => Kind::Commit,
+                    _ => Kind::Blob,
+                };
+                check_local_kind(self.repo, target, expected)?;
                 return Ok(target);
             }
             let object = self.read(target)?;

@@ -12,6 +12,9 @@ Cases 38 and 39 now pass for both signature roles, including a message search th
 The fixture compares the subject and dates with Git and checks both header positions through the rule library.
 A second experiment populated a store with decoder version 3. Version 4 returned the typed date and the raw signature from that checkout.
 
+Cases 31 and 32 now reject a direct or tagged commit with a local root of the wrong kind.
+The walk reports missing trees and wrong-kind targets. Only verified trees produce directory placements, including both paths to one shared subtree.
+
 ## Status at `8a328d0a0`
 
 Of the twenty cases open at `8a490c35e`, seven now have repairs.
