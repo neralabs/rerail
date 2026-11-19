@@ -587,16 +587,26 @@ impl Observer {
     /// recording run took, so the journal names it: neither the racy rule nor a stat check is needed.
     fn trusted(&mut self, path: &Path) -> Option<Entry> {
         self.watch_above(path);
-        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(&path, &r.path)) {
-            return None;
-        }
+        let Some(listed) = self.trusting_root(path) else { return None };
         let e = self.known(path)?;
-        // Recorded within the journal's settle window: its silence may hide a merged event (Q189).
-        if self.settling(&e) {
+        // Recorded within the journal's settle window: its silence may hide a merged event (Q189). Not under a root
+        // its listings checked (decision 0400): those compared each answer with the directory as it is now.
+        if !listed && self.settling(&e) {
             return None;
         }
         self.counts.trusted += 1;
         Some(e)
+    }
+
+    /// The root asked this run that trusts the answers under `path`: whether its listings checked it (decision 0400),
+    /// not the journal. `None` where none trusts them.
+    fn trusting_root(&self, path: &Path) -> Option<bool> {
+        let mut found = None;
+        for r in self.roots.iter().filter(|r| r.trusted && r.asked == self.flushes && under(&path, &r.path)) {
+            // A root the journal answered for is the stricter: its silence is what the settle window doubts.
+            found = Some(found.unwrap_or(true) && r.listed);
+        }
+        found
     }
 
     /// Whether `e` was recorded within the journal's settle window ([`JOURNAL_SETTLE_NS`]).
@@ -678,11 +688,13 @@ impl Observer {
             return false;
         }
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return false };
-        if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(&dir, &r.path)) || self.known(path).is_some() {
+        let Some(listed) = self.trusting_root(dir) else { return false };
+        if self.known(path).is_some() {
             return false;
         }
-        // A listing recorded within the journal's settle window is not trusted for an absence (Q189): `stat` says.
-        if self.known(dir).is_some_and(|e| self.settling(&e)) {
+        // A listing recorded within the journal's settle window is not trusted for an absence (Q189): `stat` says. Not
+        // under a root its listings checked (decision 0400): there the listing was compared with the directory now.
+        if !listed && self.known(dir).is_some_and(|e| self.settling(&e)) {
             return false;
         }
         let listing = match self.known(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
@@ -2288,7 +2300,7 @@ mod tests {
         // Trust at once: these runs follow each other within the settle window, as no test can wait it out; and the
         // journal's answer whatever it costs.
         o.settle_ns = 0;
-        o.wait_least_ns = 2_000_000_000;
+        o.wait_least_ns = 30_000_000_000;
         o
     }
 
@@ -2362,8 +2374,10 @@ mod tests {
         let store = base.join("store.files");
         let run = |settle: i64| {
             let mut o = Observer::open(Some(&store));
+            // The journal's path (Q189): a root this small is otherwise checked by its listings (decision 0400).
+            o.list_max = 0;
             o.settle_ns = settle;
-            o.wait_least_ns = 2_000_000_000;
+            o.wait_least_ns = 30_000_000_000;
             o.begin();
             o.watch(std::slice::from_ref(&root));
             let digest = o.digest(&file).unwrap();
@@ -2384,6 +2398,9 @@ mod tests {
             let id = super::super::journal::current_id().to_string();
             let db = Connection::open(&store).unwrap();
             db.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![cursor_key(&root, volume), id]).unwrap();
+            // As the next process: its replay starts at the stored cursor. This process's stream saw the edit come,
+            // and answers by when events came (decision 0400), so it would name the edit whatever the cursor.
+            super::super::journal::forget_streams();
         };
         edit_and_hide("x = 22\n");
         let (missed, stale) = run(0);
