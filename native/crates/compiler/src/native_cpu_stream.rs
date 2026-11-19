@@ -4678,6 +4678,11 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     f.switch_to_block(drop);
                     let p = f.ins().iadd_imm(pending, -1);
                     mset(&mut f, Mem::Pending, p);
+                    // None left pending: the nodes closed next end at the token (`Asi::Swallow`).
+                    let le = mget(&mut f, Mem::LastEnd);
+                    let none = f.ins().icmp_imm(IntCC::Equal, p, 0);
+                    let le = f.ins().select(none, start, le);
+                    mset(&mut f, Mem::LastEnd, le);
                     let n = mget(&mut f, Mem::Nodes);
                     let n = f.ins().iadd_imm(n, -1);
                     mset(&mut f, Mem::Nodes, n);

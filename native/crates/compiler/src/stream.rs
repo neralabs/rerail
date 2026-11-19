@@ -560,10 +560,15 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             SETTLE if mode == 1 => {
-                // `drops`: the extra pending last, where the mask holds at the token.
+                // `drops`: the extra pending last, where the mask holds at the token. With none
+                // left pending, the nodes closed next end at the token, where the semicolon of no
+                // width is (the lean lexer's `Asi::Swallow`).
                 if pending > 0 && mask_bit(operand, start) {
                     nodes.pop();
                     pending -= 1;
+                    if pending == 0 {
+                        last_end = start;
+                    }
                 }
             }
             SETTLE => {

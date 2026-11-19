@@ -92,3 +92,27 @@ Before the work (2026-11-18, after the late marks' merge walk, load about 12): t
 1,500 operations a block. Tier 1 ahead of time takes 443M instructions and 88M cycles, against the
 lean lexer's 54M and 15M. Tiers 1 and 2 take 799M instructions and 179M cycles, against the lean
 parser's 299M and 60M.
+
+## The swallowed comments (2026-11-18)
+
+The lean lexer's `asi` swallows a block comment on the line after a line break when two things
+hold: the parser's state takes a semicolon there, and a word with `a`, `e` or `w` follows. The
+grammar's `semi` already dropped it (`drops swallow_at`), and a mark's `drops` applies only where
+the mark is taken. So `swallow_at` no longer asks what ends the line before. The escape's other
+cases are gone:
+- after a header's line (`package`, `import`);
+- after a line that ends with `?`, `>` or an operator;
+- in a call's arguments, where no semicolon comes and the comment is any other.
+
+The masks that made those cases (`ok_lf`, `brace_lf`, `sw_blk`, `br_blk`, `hdr_line`,
+`hdr_gap`) are gone too.
+
+One more change follows the lean parser. With none other pending, a drop now ends the nodes
+closed next at the token after the comment, where the semicolon of no width is (`Asi::Swallow`
+sets `last_end` there). They used to end at the comment's end. A header's node shows it: it
+holds its semicolon, so it ends at the word. The change is the same in the interpreter, the Rust
+stream, Cranelift and Bitlex's reference.
+
+The corpus: 442 the same, 49 refused, 0 differ, from 431 and 60. The CPU form: 1,413 operations
+a block, from 1,500. Measured (load about 16, over the 442 files): tier 1 ahead of time took 416M
+instructions and 85M cycles. The lean lexer took 55M and 16M.

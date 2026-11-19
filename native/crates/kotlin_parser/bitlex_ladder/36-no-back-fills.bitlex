@@ -290,34 +290,21 @@ mask asked_blk  = fill(o_block & prev(fill(lf_end & prev(fill(solid, lf)), solid
 escape "a block comment that starts a line, before a comment" when (o_line | o_block) & prev(fill(block_end & prev(asked_blk), ~ws))
 # Before a word that starts with `a`, `e` or `w` (`abstract`, `external`), and that is not `as`,
 # `else` or `where`, the scanner swallows the comment into the semicolon it inserts after it (the
-# lean lexer's `Asi::Swallow`), and the tree loses it: the semicolon drops it (`drops`). Right
+# lean lexer's `Asi::Swallow`), and the tree loses it: the semicolon drops it (`drops`), and the
+# nodes it closes end at the word, where the semicolon of no width is. It does so wherever the
+# parser's state takes a semicolon, whatever ends the line before: `semi` drops it where it is
+# taken, and elsewhere (a call's arguments, after an operator) the comment is any other. Right
 # after a delegation specifier or a property with no initializer, a word with `b` does the same
 # (open, 0332).
-# Swallowed where a semicolon may come: after a line that ends with a word, `)`, `]`, `}` or a
-# quote (`sw_blk`), and that is no header's (a header holds its semicolon, so its node would end
-# at the word), before no `else` (a `when` entry holds its line break the same way). After a `{`
-# (`br_blk`) none may, and the comment is read as any other. After any other line end, not read
-# yet.
 mask awe_word   = code & word & ~prev(w) & (text("a") | text("e") | text("w")) & ~as_w & ~where_w & ~else_w
-mask hdr_line   = fill(kw_start & (prev(fill(lf & code, solid)) | ~prev(~empty)) & (text("package") | text("import")), lf)
-mask hdr_gap    = fill(prev(hdr_line) & lf, solid)
-# (A fill holds at its start even where that is a stop: `& ~solid`, so that the last solid
-# byte before the line break is the one named.)
-mask ok_lf      = lf & fill(prev(code & (word | text(")") | text("]") | rbrace) | dq | text("'")) & ~solid, solid) & ~hdr_gap
-mask brace_lf   = lf & fill(prev(code & lbrace) & ~solid, solid)
-mask sw_blk     = fill(o_block & prev(fill(lf_end & prev(fill(solid, lf)) & ok_lf, solid)), block_end)
-mask br_blk     = fill(o_block & prev(fill(lf_end & brace_lf, solid)), block_end)
-mask after_odd  = solid & prev(fill(block_end & prev(asked_blk) & ~prev(sw_blk) & ~prev(br_blk), solid))
-mask after_sw   = solid & prev(fill(block_end & prev(sw_blk), solid))
-# A `when` entry's `else ->` after one: the `->`.
-mask else_odd   = else_w & after_odd
-mask else_sw    = else_w & after_sw
-mask arrow_odd  = code & text("->") & (prev(else_odd, 4) | prev(fill(prev(else_odd, 4) & ~solid, solid)))
-mask arrow_sw   = code & text("->") & (prev(else_sw, 4) | prev(fill(prev(else_sw, 4) & ~solid, solid)))
-escape "a block comment before a word with `a`, `e` or `w`" when awe_word & after_odd | arrow_odd
-escape "a block comment before `else`" when arrow_sw
+mask after_asked = solid & prev(fill(block_end & prev(asked_blk), solid))
+# A `when` entry's `else ->` after one: the scanner swallows the comment there too, which the
+# grammar does not say yet (the `->`).
+mask else_asked = else_w & after_asked
+mask arrow_asked = code & text("->") & (prev(else_asked, 4) | prev(fill(prev(else_asked, 4) & ~solid, solid)))
+escape "a block comment before `else ->`" when arrow_asked
 # The word after a swallowed comment, where the semicolon drops it.
-mask swallow_at = awe_word & after_sw
+mask swallow_at = awe_word & after_asked
 # The first token of each line, and the bytes of a line from an `@` or a visibility modifier
 # that starts it: `constructor` there may be a primary constructor's (the scanner's
 # `check_modifier_then_constructor`), not read yet.

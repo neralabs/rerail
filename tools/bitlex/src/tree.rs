@@ -17,8 +17,8 @@
 //! - **A settling mark** (`mark … , settles`) taken: the extras before its bit, since the token
 //!   before, are the nodes' it is taken in (they end at them, and hold them), as a leaf taken
 //!   after them would; with `drops W`, where `W` holds at its token, the extra before that token
-//!   goes into the mark, as the lean lexer's semicolon swallows it: no node, and the nodes end past
-//!   it (decision 0406, Q220).
+//!   goes into the mark, as the lean lexer's semicolon swallows it: no node, and the nodes end at
+//!   the token after it, where the semicolon of no width is (decision 0406, Q220, 0429).
 //!
 //! - **A whole root** (`node K whole`) spans the file from byte 0 to its end, and may hold no
 //!   token: an empty file, or one of extras alone, is its root.
@@ -800,8 +800,8 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
     let extra_at = extras.iter().map(|e| e.1.start).collect();
     // A settling mark's extras (`Token::settle`): those since the token before it that start
     // before its bit, the last's end kept; with `drops`, the extra before its token, after them,
-    // which goes into the semicolon: where no other extra is left between, the nodes end past it
-    // too, as the machine's (a node closed with none pending ends at the last node made).
+    // which goes into the semicolon: where no other extra is left between, the nodes end at the
+    // token after it, the semicolon's place (the lean lexer's `Asi::Swallow`), as the machine's.
     let mut keeps = vec![None; plain.len()];
     let mut drops: HashMap<usize, usize> = HashMap::new();
     for (i, t) in plain.iter().enumerate() {
@@ -814,7 +814,8 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
             let last = pending[pending.len() - 1];
             drops.insert(i, last);
             if pending.len() == settled + 1 {
-                keeps[i] = Some(extras[last].1.end);
+                let at = plain[i..].iter().find(|t| !t.mark).map_or(t.start, |t| t.start);
+                keeps[i] = Some(at);
             }
         }
     }

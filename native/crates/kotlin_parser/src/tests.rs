@@ -540,12 +540,8 @@ fn what_step_34_does_not_read_is_refused() {
 #[test]
 fn what_step_30_does_not_read_is_refused() {
     refused(&[
-        "package a\n\n/* c */\nabstract class A\n",
-        "package a\n/* c */\nabstract class A\n",
         "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
         "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
-        "fun f() {\n    a +\n    /* c */\n    abstract()\n}\n",
-        "fun f() {\n    g(\n        a(),\n        /* c */ eq(false),\n    )\n}\n",
     ]);
 }
 
@@ -1207,4 +1203,26 @@ fn token_level_probe() {
         let rs: Vec<&String> = readers.get(n).map_or(vec![], |r| r.iter().filter(|r| !level.contains(*r)).collect());
         eprintln!("  {k:4} {n}: {}{rs:?}", if bytewise.contains(n) { "a statement, " } else { "" });
     }
+}
+
+/// Block comments the scanner reads after a line break (the lean lexer's `asi`, 0429): swallowed
+/// before a word with `a`, `e` or `w` where the state takes a semicolon (after a header's line
+/// too, whose node then ends at the word), and any other comment where it takes none (a call's
+/// arguments, after an operator). From the corpus's files the escape refused.
+#[test]
+fn asked_comments_are_the_lean_parsers() {
+    same(&[
+        "package a.b\n\n/**\n * Doc\n */\nabstract class X\n",
+        "import a.b\n/** d */\nenum class E { A }\n",
+        "import a.b\n\n/**\n * d\n */\nabstract class X\n",
+        "package a\n\n/* c */\nabstract class A\n",
+        "package a\n/* c */\nabstract class A\n",
+        "class C {\n    fun f() {\n    }\n\n    /*\n     * c\n     */\n    external fun g(): String?\n}\n",
+        "fun f() {\n    g(\n        /* a = */ x,\n        /* b = */ eq(false),\n    )\n}\n",
+        "fun f() {\n    g(\n        a(),\n        /* c */ eq(false),\n    )\n}\n",
+        "abstract class A {\n    abstract val x: Int\n\n    /**\n     * c\n     */\n    abstract fun g()\n}\n",
+        "val x = 1\n/* c */\nabstract class X\n",
+        "fun f() = g()\n\n/* c */\nwhen (x) {}\n",
+        "fun f() {\n    a +\n    /* c */\n    abstract()\n}\n",
+    ]);
 }
