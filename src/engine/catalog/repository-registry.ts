@@ -3,9 +3,9 @@
  * physical git top-level, and belongs to one repository: the repository of another checkout of the same clone, else
  * the one its `origin` (or sole) remote names, else a repository of its own keyed by its clone id.
  */
-import { statSync } from "node:fs";
+import { lstatSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, parse } from "node:path";
+import { dirname, join, parse } from "node:path";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
@@ -15,6 +15,7 @@ import {
   checkoutIdentity,
   legacyBareCloneId,
   normalizeRemoteAddress,
+  readCloneIdAt,
   readRemoteAddress,
   repositoryFolderName,
   repositoryIdentityLocation,
@@ -218,6 +219,18 @@ function lookupAt(db: Reader, location: RepositoryIdentityLocation): CheckoutCon
 function recordedRepositoryAt(db: Reader, checkoutPath: string, cloneId: string): RepositoryKey | undefined {
   return db.select({ key: checkouts.repositoryKey }).from(checkouts)
     .where(and(eq(checkouts.checkoutPath, checkoutPath), eq(checkouts.cloneId, cloneId))).get()?.key;
+}
+
+/** Find the nearest physically enclosing plain directory with its own matching registration. */
+export function recordedPlainRoot(db: Reader, real: string): string | undefined {
+  const ancestors = [real];
+  for (let dir = real; dirname(dir) !== dir; dir = dirname(dir)) ancestors.push(dirname(dir));
+  const rows = db.select({ path: checkouts.checkoutPath, id: checkouts.cloneId }).from(checkouts)
+    .where(inArray(checkouts.checkoutPath, ancestors)).orderBy(sql`length(${checkouts.checkoutPath}) DESC`).all();
+  return rows.find(row => {
+    const directory = join(row.path, ".rerail");
+    return readCloneIdAt(join(directory, "repository-id")) === row.id && lstatSync(directory, { throwIfNoEntry: false })?.isDirectory();
+  })?.path;
 }
 
 /** Check the effective remote for an unrecorded Git checkout. Git includes and branch configuration can change between calls. */

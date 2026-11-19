@@ -4,6 +4,12 @@ The original [twenty cases and their regression tests](audit-c1b588f91.md) cover
 
 At `65e24db1d`, six of the 28 follow-up findings have verified repairs. The Windows checks for cases 21 and 22 also passed.
 
+## Live checkout ownership
+
+Case 97 passed with two registered directories outside Git. Moving the first and pruning its registration released its files in the same resolver.
+The second directory kept its files. Restoring the first marker alone left the path unowned.
+Recording it again restored ownership. [Owner regression](../../../../test/engine/catalog/checkout-owner.test.ts)
+
 ## Windows results at `65e24db1d`
 
 Both checks ran under Parallels on Windows 11 Pro ARM64, build 26200. The fixtures used NTFS.

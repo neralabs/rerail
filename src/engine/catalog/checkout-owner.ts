@@ -6,6 +6,8 @@
 import { lstatSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
+import type { RerailDatabase } from "../storage/database.js";
+import { recordedCheckoutsVersion, recordedPlainRoot } from "./repository-registry.js";
 import { runGit } from "../git.js";
 import { repositoryIdentityLocation } from "./repository-identity.js";
 
@@ -34,11 +36,11 @@ function within(root: string, candidate: string): boolean {
 /**
  * Resolves owning checkouts for one runtime. Each folder's `.git` entry is looked at once, and each candidate root
  * is confirmed once with Git, so a lookup costs a map access per file once its folders are known. When
- * `recordedVersion` is given, every answer is forgotten once it changes: a checkout Rerail records later (a folder that
+ * a catalog is given, every answer is forgotten once it changes: a checkout Rerail records later (a folder that
  * became a checkout) then owns its files from the next lookup, without a restart.
  */
 export class CheckoutOwners {
-  readonly #recordedVersion: (() => string) | undefined;
+  readonly #database: RerailDatabase | undefined;
   #version: string | undefined;
   /** Lexical folder → physical root of the checkout that owns it (undefined: no Git checkout above it). */
   readonly #roots = new Map<string, string | undefined>();
@@ -46,17 +48,8 @@ export class CheckoutOwners {
   readonly #confirmed = new Map<string, string | undefined>();
   /** Physical checkout root → whether the checkout around it declares it as a submodule (a gitlink). */
   readonly #submodules = new Map<string, boolean>();
-  /** Recorded checkouts outside Git (identity under `.rerail`), physical. */
-  readonly #plainRoots = new Set<string>();
-
-  /** `recordedVersion` changes whenever the set of recorded checkouts does (see `CheckoutCatalogs.recordedCheckoutsVersion`). */
-  constructor(recordedVersion?: () => string) {
-    this.#recordedVersion = recordedVersion;
-  }
-
-  /** A recorded checkout outside Git owns the files below it that no Git checkout owns. */
-  addPlainRoot(root: string): void {
-    this.#plainRoots.add(physicalPath(root));
+  constructor(database?: RerailDatabase) {
+    this.#database = database;
   }
 
   /**
@@ -109,26 +102,18 @@ export class CheckoutOwners {
   #rootOf(path: string, real: string): string | undefined {
     // Only folders are remembered: the path itself is a checkout root only when it holds `.git`.
     const own = holdsGitEntry(path) ? this.#confirm(path) : undefined;
-    return own ?? this.#gitRoot(dirname(path)) ?? this.#plainRoot(real);
+    return own ?? this.#gitRoot(dirname(path)) ?? (this.#database && recordedPlainRoot(this.#database, real));
   }
 
   /** Forget every cached answer when the recorded checkouts changed since the last lookup. */
   #revalidate(): void {
-    if (this.#recordedVersion === undefined) return;
-    const version = this.#recordedVersion();
+    if (this.#database === undefined) return;
+    const version = recordedCheckoutsVersion(this.#database);
     if (version === this.#version) return;
     this.#version = version;
     this.#roots.clear();
     this.#confirmed.clear();
     this.#submodules.clear();
-  }
-
-  #plainRoot(real: string): string | undefined {
-    let owner: string | undefined;
-    for (const root of this.#plainRoots) {
-      if (within(root, real) && (owner === undefined || root.length > owner.length)) owner = root;
-    }
-    return owner;
   }
 
   #gitRoot(lexical: string): string | undefined {

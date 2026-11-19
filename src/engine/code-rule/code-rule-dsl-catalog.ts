@@ -28,7 +28,7 @@ import {
   type RepositoryStatus,
 } from "../catalog/repository-model.js";
 import { repositoryIdentityLocation, type RepositoryIdentityLocation } from "../catalog/repository-identity.js";
-import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVersion, recordStartedWorktree } from "../catalog/repository-registry.js";
+import { checkoutStatus, followsGitignore, parentCheckouts, recordStartedWorktree } from "../catalog/repository-registry.js";
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
@@ -379,11 +379,6 @@ export class CheckoutCatalogs {
     const entry = this.#entry(root, false);
     this.#read(entry);
     return entry.eligibility;
-  }
-
-  /** See {@link recordedCheckoutsVersion}; `CheckoutOwners` forgets its cached ownership when it changes. */
-  recordedCheckoutsVersion(): string {
-    return recordedCheckoutsVersion(this.database);
   }
 
   /** The recorded checkouts strictly inside `root` (physical paths), at any depth. */

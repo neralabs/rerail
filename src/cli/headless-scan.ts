@@ -482,7 +482,7 @@ async function runScanAudits(
     interrupt() {},
   };
   const catalogs = new CheckoutCatalogs(databasePath, { checkoutRules, database });
-  const owners = new CheckoutOwners();
+  const owners = new CheckoutOwners(catalogs.database);
   const router = new CheckoutCodeRuleRouter({
     sessionRoot: root,
     startingCheckout: startingCheckout(owners, root).checkoutRoot,

@@ -733,7 +733,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
-  readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
+  readonly #owners: CheckoutOwners;
   readonly #sessions = new Map<string, RuntimeSessionState>();
   /** Kept past disposal for late receipts, with the repository each session was attributed to. */
   readonly #closedSessions = new Map<string, { descriptor: AdapterSession; startedAt: number; endedAt: number; repositoryKey: string | null }>();
@@ -789,6 +789,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       audits = new SqliteAuditStore(databasePath);
       controls = new SqliteAuditControlStore(databasePath);
       this.#catalogs = catalogs;
+      this.#owners = new CheckoutOwners(catalogs.database);
       this.#sessionStore = sessionStore;
       this.#audits = audits;
       this.#controls = controls;
@@ -2002,8 +2003,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #startingCheckout(session: AdapterSession): StartingCheckout {
     // A folder that does not exist fails here (ENOENT), before anything is recorded or created for it.
     const cwd = realpathSync(session.cwd);
-    const known = recordCheckout(this.#catalogs.database, cwd);
-    if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
+    recordCheckout(this.#catalogs.database, cwd);
     const start = startingCheckout(this.#owners, cwd);
     this.#catalogs.refresh(start.checkoutRoot);
     return { root: start.checkoutRoot, folder: start.path, cwd };
