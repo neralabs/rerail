@@ -1101,7 +1101,7 @@ fn the_corpus_on_metal_timed() {
     eprintln!("ON_METAL_TIMED GPU {:.1} ms; CPU words {:.1} M instructions, {:.1} M cycles, {:.1} ms; the whole pass {:.0} ms", t.gpu * 1e3, i as f64 / 1e6, c as f64 / 1e6, w.as_secs_f64() * 1e3, wall.as_secs_f64() * 1e3);
 }
 
-/// A run that asks (`Env::asks`, decision 0422) records each name a lookup did not find, by
+/// A run that asks (`Env::asks`, decision 0430) records each name a lookup did not find, by
 /// `LOOKUP` and by `defined`, and starts `__COUNTER__` from `Env::counter`: on the interpreter
 /// and the compiled words alike. A run that does not ask records none.
 #[test]

@@ -1148,6 +1148,17 @@ pub struct DeviceStats {
     pub syncs: usize,
     /// Elements whose calls the host answered.
     pub calls: usize,
+    /// The syncs by what read (`DeviceRun::syncs_by`).
+    pub syncs_by: std::collections::BTreeMap<&'static str, usize>,
+}
+
+impl DeviceStats {
+    pub fn add(&mut self, o: &DeviceStats) {
+        (self.runs, self.gpu_seconds, self.dispatches, self.syncs, self.calls) = (self.runs + o.runs, self.gpu_seconds + o.gpu_seconds, self.dispatches + o.dispatches, self.syncs + o.syncs, self.calls + o.calls);
+        for (k, n) in &o.syncs_by {
+            *self.syncs_by.entry(k).or_default() += n;
+        }
+    }
 }
 
 /// The executor of a unit's runs, and its account.
@@ -1165,8 +1176,7 @@ impl Prog {
             #[cfg(target_os = "macos")]
             Exec::Metal => match rerail_metal::array_program::run(&self.p, &inputs, &[], host) {
                 Ok(Ok(r)) => {
-                    let d = &mut runner.device;
-                    (d.runs, d.gpu_seconds, d.dispatches, d.syncs, d.calls) = (d.runs + 1, d.gpu_seconds + r.gpu_seconds, d.dispatches + r.dispatches, d.syncs + r.syncs, d.calls + r.calls);
+                    runner.device.add(&DeviceStats { runs: 1, gpu_seconds: r.gpu_seconds, dispatches: r.dispatches, syncs: r.syncs, calls: r.calls, syncs_by: r.syncs_by });
                     Ok(r.outputs)
                 }
                 Ok(Err(e)) => Err(e),
@@ -1215,7 +1225,7 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
     (out, stats)
 }
 
-/// `run`, its tests and expansions on the words (decision 0422), run by `run_words`
+/// `run`, its tests and expansions on the words (decision 0430), run by `run_words`
 /// (`expand::native`, or the interpreter).
 pub fn run_words(cfg: Config, io: &mut dyn Files, path: &str, run_words: words::Run) -> (Outcome, Stats, words::WordStats) {
     let (out, stats, w, _) = run_on(cfg, io, path, run_words, Exec::Interpreter);

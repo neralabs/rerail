@@ -1,4 +1,4 @@
-//! The passes' per-element calls on the words (decision 0422): an arm's test (`F_TEST`) and an
+//! The passes' per-element calls on the words (decision 0430): an arm's test (`F_TEST`) and an
 //! invocation's expansion (`F_EXPAND`), each one run of the preprocessing words (0348) over a
 //! file made for it. A run of one element is what 0408's lockstep batch runs a thread of.
 //!

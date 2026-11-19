@@ -1,4 +1,4 @@
-//! Array programs on the device (decision 0422): `rerail_compiler::array`'s operations as
+//! Array programs on the device (decision 0430): `rerail_compiler::array`'s operations as
 //! launches of `array_program.metal`'s kernels, in program order, one command buffer between
 //! the host's reads. The interpreter (`ArrayProgram::values_at`) is the meaning: a run here
 //! gives its outputs, and its refusal at the same operation.
@@ -69,6 +69,8 @@ pub struct DeviceRun {
     pub syncs: usize,
     /// Elements the host answered (`call`).
     pub calls: usize,
+    /// The syncs by what read: a sort's varying bytes, a count, a call's elements, the rounds' verdict.
+    pub syncs_by: std::collections::BTreeMap<&'static str, usize>,
 }
 
 struct Gpu {
@@ -104,7 +106,7 @@ impl Gpu {
         let pipeline = self.pipeline(name)?;
         if self.launched == crate::launch_budget::KERNEL_LAUNCH_LIMIT {
             // A command buffer is an execution: one at the ledger's bound is run, and the next begun.
-            self.sync()?;
+            self.sync("bound")?;
         }
         if self.command.is_none() {
             self.guard = Some(crate::runtime::metal_execution_guard()?);
@@ -129,8 +131,9 @@ impl Gpu {
     }
 
     /// The launches so far run; the first error they found.
-    fn sync(&mut self) -> Result<Option<(usize, &'static str)>, Error> {
+    fn sync(&mut self, why: &'static str) -> Result<Option<(usize, &'static str)>, Error> {
         if let (Some(command), Some(encoder)) = (self.command.take(), self.encoder.take()) {
+            *self.run.syncs_by.entry(why).or_default() += 1;
             encoder.end_encoding();
             if let Err(e) = crate::launch::commit_checked(&command) {
                 crate::launch::release_refused(&command);
@@ -206,7 +209,7 @@ impl Gpu {
     fn varying_bytes(&mut self, key: &Arr) -> Result<Vec<u32>, Error> {
         let bits = self.words(2)?;
         self.launch("a_differs", &[&key.block, &bits], Launch { n: key.len as u32, ..Launch::default() }, key.len)?;
-        self.sync()?;
+        self.sync("sort bytes")?;
         let w = bits.read::<u32>(2);
         let x = u64::from(w[0]) | (u64::from(w[1]) << 32);
         Ok((0..8).filter(|b| (x >> (8 * b)) & 255 != 0).collect())
@@ -247,7 +250,7 @@ impl Gpu {
         if let Some(v) = a.known {
             return Ok(Ok(v));
         }
-        if let Some(e) = self.sync()? {
+        if let Some(e) = self.sync("scalar")? {
             return Ok(Err(e));
         }
         Ok(Ok(self.read(a)[0]))
@@ -306,7 +309,7 @@ fn run_in(p: &ArrayProgram, inputs: &[&[i64]], params: &[i64], calls: &mut dyn C
             next_end += 1;
         }
     }
-    if let Some(e) = g.sync()? {
+    if let Some(e) = g.sync("end")? {
         return Ok(Err(e));
     }
     g.run.outputs = p.outputs.iter().map(|&o| g.read(v[usize::from(o)].as_ref().unwrap())).collect();
@@ -315,7 +318,7 @@ fn run_in(p: &ArrayProgram, inputs: &[&[i64]], params: &[i64], calls: &mut dyn C
 
 /// A refusal the host found, or an earlier one the device did.
 fn first(g: &mut Gpu, e: (usize, &'static str)) -> Result<(usize, &'static str), Error> {
-    Ok(match g.sync()? {
+    Ok(match g.sync("refusal")? {
         Some(d) if d.0 <= e.0 => d,
         _ => e,
     })
@@ -346,7 +349,7 @@ fn settle(g: &mut Gpu, p: &ArrayProgram, group: &[(u16, u16)], v: &mut [Option<A
             }
             g.launch("a_differ", &[&c.block, &x.block, &flag], Launch { n: c.len as u32, ..Launch::default() }, c.len)?;
         }
-        if let Some(e) = g.sync()? {
+        if let Some(e) = g.sync("rounds")? {
             return Ok(Err(e));
         }
         if same && flag.read::<u32>(1)[0] == 0 {
@@ -476,7 +479,7 @@ fn step(g: &mut Gpu, p: &ArrayProgram, i: usize, v: &mut [Option<Arr>], parts: &
             let count = if m.len == 0 {
                 0
             } else {
-                if let Some(e) = g.sync()? {
+                if let Some(e) = g.sync("compact")? {
                     return Ok(Err(e));
                 }
                 incl.block.read::<i64>(m.len)[m.len - 1] as usize
@@ -493,7 +496,7 @@ fn step(g: &mut Gpu, p: &ArrayProgram, i: usize, v: &mut [Option<Arr>], parts: &
             let total = if c.len == 0 {
                 0
             } else {
-                if let Some(e) = g.sync()? {
+                if let Some(e) = g.sync("expand")? {
                     return Ok(Err(e));
                 }
                 incl.block.read::<i64>(c.len)[c.len - 1] as usize
@@ -511,7 +514,7 @@ fn step(g: &mut Gpu, p: &ArrayProgram, i: usize, v: &mut [Option<Arr>], parts: &
         }
         ArrayOp::Call { f, args, env } => {
             // The host's: the elements read, each answered, the rows sent.
-            if let Some(e) = g.sync()? {
+            if let Some(e) = g.sync("call")? {
                 return Ok(Err(e));
             }
             let fun = &p.funs[usize::from(*f)];

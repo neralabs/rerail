@@ -1,0 +1,148 @@
+# 0430: The preprocessor as array programs: a transducer side program, on the interpreter and Metal
+
+Status: draft (2026-11-18). Follows 0421 (the spike of the shape) and the user's choice of its
+placement (a): the passes become a transducer side program, and the directives' rounds are
+written in the same operations. Numbered 0430 because other worktrees had reached 0429; the
+code's first commits said 0422.
+
+## Intro
+
+0421 showed that a C or C++ preprocessor can read a translation unit (TU) as passes over
+arrays. Each pass is a map, a scan, a sort, a search, a gather or a scatter. Only two pieces
+stay serial: one `#if` test, and one macro invocation's expansion. Both are small and
+independent of each other.
+
+This decision makes the passes a program in the transducer's own format, so that the same
+executors that run the rest of the transducer run them: an interpreter (the meaning), Metal,
+and later Cranelift. The two serial pieces become *calls*. Each call runs the preprocessing
+words of 0348 on one element (one test, one invocation), as 0408 runs them on the device.
+
+## The format: array programs
+
+An array program (`rerail_compiler::array`) is held in `Words.array_programs`, beside the
+block programs (0066). It is covered by the program digest, `validate`, and the `rir` text and
+assembler. Operation `i` defines the value `%i`, a column of `i64`.
+
+| Operation | Meaning |
+|---|---|
+| `input k`, `param k`, `const c`, `iota %a`, `len %a` | the run's columns and scalars |
+| `map OP %a %b`, `select %m %a %b` | element by element; a length-1 operand is broadcast |
+| `scan add\|max\|min [excl] %a [seg %f]` | a prefix scan; a flag resets it |
+| `sort %k1 %k2 …` | the stable permutation that sorts by the keys |
+| `gather %s %i`, `scatter HOW %src %i %n %init` | moves; a scatter skips an index outside `0..n` |
+| `search le\|lt %sorted %q` | each query's place in a sorted array |
+| `compact %m`, `expand %c`, `concat %a %b` | lengths made by data |
+| `call f %args… [env %e…]`, `part %c k` | function `f` on each element; its result rows |
+| `carry %init`, `rounds %c %n …` | a local fixed point over a span of operations |
+
+A run is refused, with the operation and the reason, where its operands do not fit: unequal
+lengths, an index outside its array, two writes of a `set` scatter to one element, a search of
+an array not sorted, a negative count, a fixed point past 1,000 rounds.
+
+The structural guard: no operation loops over elements serially except `call`, whose work per
+element is bounded by the words' bounds.
+
+## The passes as two programs
+
+`rerail_c_directives::passes` holds two programs, built in Rust as rows:
+
+- **ROUND** (P1 of 0421): one round of the directives' fixpoint. The layout of the include
+  tree, the definitions sorted by (name, position) and searched per use, push/pop matched by
+  depth, each test called at its position, a chain's first true arm by a segmented scan, a
+  group's activity by gathers, includes called on the host.
+- **TEXT** (P2–P4): the active stretches, the candidates, the outermost invocations (a max
+  scan and a compact), each invocation called alone, and the output assembled by counts, a scan
+  and a scatter.
+
+The host runs ROUND until the state it returns is the state it read, then TEXT once.
+
+**The memo.** A test is called again only if it is new or a definition it looked at has
+changed. A test is called only where its group is active in the last round's state (a mask).
+On the heaviest C++ unit, tests fell from 231,776 to 40,450; rounds rose from 24 to 38.
+
+## The calls on the words
+
+A call reads one element with the words of 0348, on a file made for it
+(`passes/words.rs`):
+
+- the definitions it can reach (the closure, by name, through the position's table), as
+  `#define` lines in the unit's own tokens;
+- `#undef` for a built-in undefined at the position;
+- then the element: a test as `#if … 1 #else 0 #endif`, or an invocation's tokens with the
+  token after it (when it is `(`) and a sentinel `)`;
+- inside one synthesized file for each file of the include chain, so `__FILE__`,
+  `__INCLUDE_LEVEL__` and `__has_include_next` read as they do in place.
+
+A name the words did not find is reported back (`Env::asks`). If it is defined at the
+position, the host adds it and reads again. An output without the sentinel or the follower
+asked past the element: a merge, which refuses the unit for now (the corpus had none).
+
+## On the device
+
+`rerail_metal::array_program` runs a program's operations as kernels
+(`array_program.metal`) over `i64` columns in shared memory:
+
+- maps, selects and gathers: a thread an element;
+- scans: a tile of 256 scanned in threadgroup memory, segment flags as pairs, the tiles'
+  totals scanned the same way;
+- sorts: a stable radix sort, a byte a pass, only the bytes where keys differ; each tile
+  sorted by eight one-bit splits;
+- searches: a binary search a query;
+- scatters: a stable sort by index, a segmented scan, each index's last write;
+- compact and expand: inclusive counts.
+
+The first failing operation's error is kept by an atomic minimum, so a refusal names the same
+operation the interpreter names.
+
+**What the host still does** (counted in `DeviceRun`):
+- reads a count where a length is made by data (compact, expand, a scatter's `n`);
+- reads which bytes of a sort key vary;
+- reads each local fixed point's verdict;
+- answers calls: reads the elements, runs the words on the CPU, sends the rows back.
+
+**The launch ledger.** Each command buffer is one execution under the launch ledger (200
+launches, the user's bound of 2026-11-03). An array program runs many command buffers, with
+the host's reads between them. The executor takes the execution lock and the ledger's scope
+per command buffer, and ends a buffer at the ledger's bound. The bound itself is unchanged.
+
+## Measured
+
+**Correct, the interpreter, the lean calls** (the serial pass's own expansion per element),
+both corpora under clang's profile:
+- C: 1,572 of 1,574 the same, 2 refused (`#line`; a call past its stretch), 0 differ.
+- C++: the first 750 units the same, 0 differ (the rest running).
+
+**Correct, the calls on the words:** the passes' unit tests, 10 C units and 2 C++ units the
+same. The heaviest C++ unit: 38 rounds, 40,450 tests, 18,763 expansions; under 13 s on the
+interpreter, down from 106 s.
+
+**Correct, on Metal:** every operation equals the interpreter over lengths 0 to 70,001 (two
+levels of tiles), and the refusals are at the interpreter's operation. The passes' 10 unit
+tests equal the interpreter. The first C corpus unit reads the same.
+
+**The shape on Metal**, the first C unit (8,674 tokens out, 29 rounds):
+
+| | |
+|---|---:|
+| Program runs | 30 |
+| Dispatches | 35,618 |
+| Syncs | 2,534 |
+| GPU time | 0.25 s |
+| Elements the host called | 9,401 |
+
+The syncs by cause: sort-key bytes 904, local fixed points 869, compact 409, expand 203,
+calls 89, the rest 60.
+
+This is not yet the gate's shape. One unit pays every launch alone, and the GPU time is the
+launches' own cost. 0408's gate is about 0.15 s for the whole corpus on one core.
+
+## What is left
+
+1. **Every unit of a batch in the same launches.** The program lowered over a unit column, so
+   a launch serves the whole batch, and a sync is paid once a batch.
+2. **Fewer syncs:** a sort's varying bytes and a fixed point's verdict kept on the device.
+3. **The calls on the device**, through 0408's lockstep batch, once the element's file is made
+   by array operations.
+4. **Cranelift**, the CPU path.
+5. **Timing** through `quiet-run`, warm, against rustc's build of the serial pass.
+6. P0 (each file's tables) on the device; merges; an expansion cache.

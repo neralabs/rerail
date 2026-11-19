@@ -202,7 +202,7 @@ fn the_corpus_by_the_programs() {
             if each {
                 println!("{p}: {} ms; {}; {st:?} {ws:?} {d:?}", t0.elapsed().as_millis(), out.as_ref().map_or_else(|w| w.to_string(), |o| if *o == settled.tokens { "same".into() } else { "DIFFERS".into() }));
             }
-            (device.runs, device.gpu_seconds, device.dispatches, device.syncs, device.calls) = (device.runs + d.runs, device.gpu_seconds + d.gpu_seconds, device.dispatches + d.dispatches, device.syncs + d.syncs, device.calls + d.calls);
+            device.add(&d);
             if prof {
                 // The operations by time: program, operation, steps, ms, elements.
                 let mut rows: Vec<_> = rerail_compiler::array::profile(false).into_iter().collect();

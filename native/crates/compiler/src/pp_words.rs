@@ -136,7 +136,7 @@ pub struct Env<'a> {
     pub time: &'a [u8],
     pub timestamp: &'a [u8],
     pub features: &'a [(&'a [u8], &'a [u8], i64)],
-    /// `__COUNTER__`'s first value: a reading of one element (decision 0422) starts from the
+    /// `__COUNTER__`'s first value: a reading of one element (decision 0430) starts from the
     /// count of the uses before it.
     pub counter: u32,
     /// Record each name a lookup does not find (`Expanded::missed`): an element read alone is

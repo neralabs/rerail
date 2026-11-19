@@ -14,7 +14,7 @@ pub mod block_program;
 pub mod buffer_observation;
 pub mod launch;
 pub mod launch_budget;
-/// Array programs on the device (decision 0422): their operations as launches.
+/// Array programs on the device (decision 0430): their operations as launches.
 pub mod array_program;
 /// The preprocessing words on the device (decision 0348, stage 5).
 pub mod pp_on;

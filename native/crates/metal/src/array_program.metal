@@ -1,4 +1,4 @@
-// Array programs on the device (decision 0422): each operation of `rerail_compiler::array` as
+// Array programs on the device (decision 0430): each operation of `rerail_compiler::array` as
 // data-parallel kernels over columns of 64-bit integers. `array_program.rs` lays the program out
 // as launches; the interpreter (`ArrayProgram::values`) is the meaning each kernel keeps.
 //

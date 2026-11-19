@@ -1031,7 +1031,11 @@ pass.
   is at most 8,000 tokens out.
 - **Open:** the example `pp_oracle` (now including `src/oracle_profile.rs`) is compiled by no
   Relax run; a cargo check on the farm when a host is free.
-- **Waits on the user:** the placement (question 4).
+- **Placement chosen** (the user, 2026-11-18): (a), the passes as a transducer side program.
+  Decision 0430: the array-program format, the passes as ROUND and TEXT, the calls on the
+  words, the operations on Metal (equal to the interpreter).
+- **Next (0430, "What is left"):** every unit of a batch in the same launches; fewer syncs;
+  the calls on the device through 0408's batch; Cranelift; timing through `quiet-run`.
 
 ## Questions for the user
 
