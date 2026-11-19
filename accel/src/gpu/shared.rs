@@ -57,14 +57,10 @@ fn other() -> usize {
     OTHER_RESERVED.get().map_or(0, |f| f())
 }
 
-/// The bytes idle buffers may hold, with `need` more about to be leased and `idle` held now: what the budget leaves
-/// past everything else the device holds. That is the ledger and the live leases, or the driver's count less the
-/// idle buffers when it is more: the driver counts buffers no ledger does (Q260), and a buffer refused by its count
-/// (`rerail_metal::runtime`) stopped a run while idle buffers held the room.
-fn idle_room(need: usize, idle: usize) -> usize {
-    let ledger = other() + LIVE.load(std::sync::atomic::Ordering::Relaxed);
-    let driver = get().map_or(0, |s| s.device.current_allocated_size() as usize).saturating_sub(idle);
-    crate::budget::metal().saturating_sub(ledger.max(driver) + need)
+/// The bytes idle buffers may hold, with `need` more about to be leased: what the budget leaves past the ledger and
+/// the live leases. Never the driver's count, which counts every no-copy wrap of host memory again (decision 0435 §2).
+fn idle_room(need: usize) -> usize {
+    crate::budget::metal().saturating_sub(other() + LIVE.load(std::sync::atomic::Ordering::Relaxed) + need)
 }
 /// The bytes leased now (and not yet dropped): what relational work holds on the device, for the profile.
 static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -198,7 +194,7 @@ impl Pool {
     /// leased (and the slab cap, when set).
     fn trim(&mut self, need: usize) {
         let slab_limit = slab_idle_limit();
-        let room = idle_room(need, self.held);
+        let room = idle_room(need);
         while self.held > room || self.held_slabs > slab_limit {
             if !self.release_oldest(self.held <= room) {
                 break;
@@ -317,22 +313,6 @@ pub fn lease_block_within(kind: u32, bytes: usize) -> Result<rerail_blocks::Bloc
 /// alone (`Size::Exact` in `Budget::Join`, Q205): every block is leased through it.
 pub(crate) fn lease_block_for_join(kind: u32, bytes: usize) -> Result<rerail_blocks::Block, String> {
     let slab = lease_for_join(bytes.max(rerail_blocks::alloc::EXACT_MIN), false)?;
-    Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
-}
-
-/// `lease_block`, only when the Metal budget holds it with no more than idle buffers released and `keep` bytes of it
-/// still free after: nothing the evictor holds (the tape residency's slabs) is retired for it, and the device's own
-/// buffers keep their room. For a block that has a home without the pool (anonymous memory, which the device reads
-/// through a no-copy wrap): the FACTS blocks of a run's relations (decision 0325). Their leases retiring the
-/// residency's tapes made a run admit them again (20-35 s runs on posthog/hogql); taking the budget's last room
-/// left the device's joins 6-48 MB, and its resident relations were dropped 28 times a run.
-pub fn lease_block_spare(kind: u32, bytes: usize, keep: usize) -> Result<rerail_blocks::Block, String> {
-    let need = class(bytes.max(SLAB_MIN));
-    pool().lock().expect("the pool").trim(need);
-    if other() + LIVE.load(std::sync::atomic::Ordering::Relaxed) + need + keep > crate::budget::metal() {
-        return Err(format!("device budget: no spare room for a block of {} MB", need >> 20));
-    }
-    let slab = lease(bytes.max(SLAB_MIN))?;
     Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
 }
 
@@ -519,27 +499,6 @@ pub fn make_room(need: usize) -> bool {
     }
 }
 
-/// Makes room on the device for `need` more bytes by the driver's own count (`allocated`: every buffer the device
-/// holds, among them this pool's idle ones and what no ledger counts, such as kernels' constant buffers): the same
-/// order as `make_room`, idle buffers released least recently returned first, then the evictor's holdings, until
-/// `allocated() + need` fits the Metal budget. Whether it fits now. The ledger's count (`make_room`) can leave the
-/// idle buffers room that the driver's count no longer has; a buffer the budget refused then, though idle buffers
-/// held the room, stopped the run once a failed Metal wave stopped it (decision 0382 §6).
-pub fn make_device_room(need: usize, allocated: impl Fn() -> usize) -> bool {
-    let fits = || allocated().saturating_add(need) <= crate::budget::metal();
-    loop {
-        if fits() {
-            return true;
-        }
-        if pool().lock().expect("the pool").release_oldest(false) {
-            continue;
-        }
-        if !EVICTOR.get().is_some_and(|f| f()) {
-            return false;
-        }
-    }
-}
-
 /// A lease that keeps within the Metal budget (`crate::budget::metal`, decision 0126): refused, as a capacity
 /// refusal its caller runs on the CPU (or splits its batch), when the leases and the ledger's reservations would
 /// pass it after room is made (`make_room`). The device joins' buffers are leased so: without it, their waves and
@@ -669,52 +628,29 @@ mod tests {
         crate::budget::METAL_TEST.with(|m| m.set(0));
     }
 
-    /// Room by the driver's count, which holds bytes no ledger does: the idle buffers give way until a buffer fits,
-    /// though the ledger's count (`make_room`) left them room; with none left to give, it does not fit.
+    /// A no-copy wrap of host memory is not the device's memory (decision 0435 R2): the budget's checks weigh the
+    /// pool's leases and idle buffers and the ledger, so a lease that fitted before a large wrap fits after it, and the
+    /// idle buffers the budget leaves room for stay.
     #[test]
-    fn the_driver_count_makes_room_from_idle_buffers() {
-        if get().is_none() {
-            return;
-        }
-        let _big = big_leases();
-        drop(lease(64 << 20).unwrap());
-        let idle = || held_bytes().1;
-        assert!(idle() >= 64 << 20, "the dropped 64 MB lease is idle");
-        let (live, _) = held_bytes();
-        // 80 MB the driver counts and no ledger does; the budget 100 MB past what idles.
-        let budget = idle() + (100 << 20);
-        crate::budget::METAL_TEST.with(|m| m.set(budget.max(live + other() + (1 << 20))));
-        let unledgered = 80 << 20;
-        let need = 48 << 20;
-        let allocated = || idle() + unledgered;
-        assert!(allocated() + need > crate::budget::metal(), "the driver's count is past the budget");
-        assert!(make_device_room(need, allocated), "the idle buffers give way");
-        assert!(allocated() + need <= crate::budget::metal());
-        // Nothing to give: the driver's count is the budget, past every idle buffer.
-        assert!(!make_device_room(need, || crate::budget::metal()), "no room made from nothing");
-        crate::budget::METAL_TEST.with(|m| m.set(0));
-    }
-
-    /// The trim counts what the driver holds beside the idle buffers (Q260): a device buffer no ledger counts takes
-    /// its room from the idle buffers, though the ledger's count leaves them room.
-    #[test]
-    fn idle_buffers_give_way_to_buffers_no_ledger_counts() {
+    fn a_wrap_of_host_memory_leaves_the_metal_budget_unchanged() {
         let Some(s) = get() else { return };
         let _big = big_leases();
         drop(lease(64 << 20).unwrap());
         let idle = || held_bytes().1;
-        assert!(idle() >= 64 << 20, "the dropped 64 MB lease is idle");
-        let unledgered = s.device.new_buffer(96 << 20, MTLResourceOptions::StorageModeShared);
-        let driver = s.device.current_allocated_size() as usize;
-        // The budget: the driver's count less 32 MB. The ledger leaves the idle buffers room; the driver does not.
-        let budget = driver - (32 << 20);
+        let idle_before = idle();
+        assert!(idle_before >= 64 << 20, "the dropped 64 MB lease is idle");
         let (live, _) = held_bytes();
-        assert!(other() + live + idle() <= budget, "the ledger's count leaves the idle buffers room");
-        crate::budget::METAL_TEST.with(|m| m.set(budget));
+        // Room for the idle buffers and one 32 MB lease more, by the ledger.
+        crate::budget::METAL_TEST.with(|m| m.set(other() + live + idle_before + (40 << 20)));
+        let host = rerail_blocks::block::Block::anon(rerail_blocks::block::kind::FACTS, 512 << 20);
+        host.try_alloc_chunk(256 << 20, 1 << 14).unwrap();
+        let wrap = host.gpu_buffer(&s.device);
+        assert!(wrap.length() >= 256 << 20, "a wrap of the host block's used extent");
         trim_idle();
-        assert!(s.device.current_allocated_size() as usize <= budget, "the idle buffers gave way to the driver's count");
+        assert_eq!(idle(), idle_before, "the idle buffers keep their room");
+        assert!(lease_within(32 << 20).is_ok(), "a lease that fitted still fits");
         crate::budget::METAL_TEST.with(|m| m.set(0));
-        drop(unledgered);
+        drop((wrap, host));
     }
 
     #[test]
