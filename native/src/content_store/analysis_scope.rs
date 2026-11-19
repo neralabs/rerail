@@ -74,6 +74,19 @@ pub struct AnalysisRun {
     scan_id: String,
     scope_value: String,
     source: Option<RunSource>,
+    pub publication: Option<Publication>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Publication { Published, Released, Aborted, Unavailable }
+
+impl Publication {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Published => "published", Self::Released => "released",
+            Self::Aborted => "aborted", Self::Unavailable => "unavailable",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,6 +118,11 @@ impl AnalysisRun {
 
     pub fn is_open(&self) -> bool { self.lease.is_some() }
 
+    pub fn publication_warning(&self) -> Option<String> {
+        self.owner.cache_warning().or_else(|| (self.publication == Some(Publication::Released))
+            .then(|| "The analysis scope was released before publication.".to_owned()))
+    }
+
     pub fn set_directory_scope(&mut self, path: &Path) {
         self.scope_value = directory(path)["cwd:".len()..].to_owned();
     }
@@ -133,7 +151,7 @@ impl AnalysisRun {
         owner.pending = Some(pending);
         owner.warning = Some(Default::default());
         let value = scope.strip_prefix("named:").or_else(|| scope.strip_prefix("cwd:")).unwrap_or(scope);
-        Ok(Self { owner, store, lease: Some(lease), scan_id: id.to_owned(), scope_value: value.to_owned(), source: None })
+        Ok(Self { owner, store, lease: Some(lease), scan_id: id.to_owned(), scope_value: value.to_owned(), source: None, publication: None })
     }
 
     pub fn finish(&mut self, succeeded: bool) -> StoreResult<()> {
@@ -142,9 +160,13 @@ impl AnalysisRun {
         }
         let owner = &self.owner;
         let pending = owner.membership();
-        self.store.immediate_transaction(|tx| {
+        let publication = self.store.immediate_transaction(|tx| {
             self.store.check_scope_store(tx)?;
-            if succeeded && owner.cache_warning().is_none() && owner.current(tx)? {
+            let outcome = if owner.cache_warning().is_some() { Publication::Unavailable }
+                else if !succeeded { Publication::Aborted }
+                else if !owner.current(tx)? { Publication::Released }
+                else { Publication::Published };
+            if outcome == Publication::Published {
                 if let Some(source) = &self.source {
                     let (directory, repo, tree, commit) = match source {
                         RunSource::Directory(path) => (Some(path), None, None, None),
@@ -174,8 +196,9 @@ impl AnalysisRun {
             }
             release_memberships(tx, "scope=?1", [pending])?;
             tx.execute_cached("DELETE FROM analysis_scope_pending WHERE id=?1", [pending])?;
-            Ok(())
+            Ok(outcome)
         })?;
+        self.publication = Some(publication);
         self.lease.take();
         Ok(())
     }

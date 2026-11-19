@@ -219,7 +219,12 @@ impl AnalysisScopeRun {
     pub fn finish(&self, succeeded: bool) -> Result<Option<String>> {
         let mut run = self.0.lock().unwrap_or_else(|err| err.into_inner());
         run.finish(succeeded).map_err(|e| invalid(e.to_string()))?;
-        Ok(run.owner.cache_warning())
+        Ok(run.publication_warning())
+    }
+
+    #[napi(getter)]
+    pub fn publication(&self) -> Option<String> {
+        self.0.lock().unwrap_or_else(|err| err.into_inner()).publication.map(|p| p.as_str().to_owned())
     }
 
     #[napi]

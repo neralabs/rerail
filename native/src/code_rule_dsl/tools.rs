@@ -374,7 +374,7 @@ impl PolicyInvocation {
             if let Err(error) = run.finish(succeeded && self.warning.is_none()) {
                 self.warning.get_or_insert_with(|| error.to_string());
             }
-            if let Some(warning) = run.owner.cache_warning() {
+            if let Some(warning) = run.publication_warning() {
                 self.warning.get_or_insert(warning);
             }
         }

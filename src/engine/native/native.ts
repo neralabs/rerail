@@ -414,6 +414,7 @@ export interface NativeCodeRuleDslExecution {
 }
 
 export interface NativeAnalysisScopeRun {
+  readonly publication: "published" | "released" | "aborted" | "unavailable" | null;
   selectSource(root: string, source?: NativeGitRevisionSource): void;
   finish(succeeded: boolean): string | null;
   warn(message: string): void;

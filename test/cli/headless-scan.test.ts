@@ -8,7 +8,7 @@ import Database from "better-sqlite3";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
-import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
+import { describeScan, runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
 import { acquireDirectoryAnalysisGeneration, analysisScopeHome, collectAnalysisCaches, queueAnalysisScopeReleases, readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import * as builds from "../../src/engine/native/rerail-build.js";
@@ -1276,10 +1276,12 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
       for (const analysisScope of ["review", "release"]) {
         const report = await scan(root, { revision: "HEAD", analysisScope, databasePath });
         expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+        expect(report.analysisScope).toEqual({ kind: "named", name: analysisScope });
       }
       const subdirectory = join(root, "subdirectory");
       mkdirSync(subdirectory);
-      await scan(subdirectory, { databasePath });
+      const local = await scan(subdirectory, { databasePath });
+      expect(local.analysisScope).toEqual({ kind: "directory", path: "subdirectory" });
       const owners = () => queryContentStore<{ scope: string; snapshot_id: number }>(storePath,
         "SELECT scope, snapshot_id FROM analysis_scope_snapshot UNION SELECT scope, snapshot_id FROM analysis_scope_workspace_snapshot ORDER BY scope");
       expect(owners().map(owner => owner.scope)).toEqual([`cwd:${analysisScopeHome(databasePath)}:${subdirectory}`, "named:release", "named:review"]);
@@ -1304,10 +1306,34 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
       expect(report.status).toBe("completed");
       expect(report.violations.map(row => row.path)).toEqual(["a.py"]);
       expect(report.cacheWarnings).toContain("Analysis cache collection failed: collector unavailable");
+      expect(report.cache).toEqual({ publication: "published", collection: "failed" });
+      expect(describeScan(report)).toContain("Analysis cache collection failed");
+      expect(describeScan(report)).not.toMatch(/not retained|could not be published/u);
     } finally {
       failure.mockRestore();
     }
   });
+
+  it("reports a release between evaluation and publication and preserves the findings", async () => {
+    const root = checkout(), home = root + "-home", databasePath = join(home, "rerail.sqlite"), store = join(home, "scope.sqlite");
+    const engine = loadNativeBinding(), prototype = engine.AnalysisScopeRun.prototype, finish = prototype.finish;
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    const stop = vi.spyOn(prototype, "finish").mockImplementationOnce(function(this: InstanceType<typeof engine.AnalysisScopeRun>, success) {
+      engine.deleteAnalysisScope(store, "release-during-scan", false);
+      const warning = finish.call(this, success);
+      expect(warning).toMatch(/released before publication/u);
+      return warning;
+    });
+    try {
+      const report = await scan(root, { revision: "HEAD", analysisScope: "release-during-scan", databasePath });
+      expect(report.status).toBe("completed");
+      expect(report.violations.map(v => v.path)).toEqual(["a.py"]);
+      expect(report.cache).toEqual({ publication: "released", collection: "completed" });
+      expect(describeScan(report)).toContain("released before publication");
+      expect(queryContentStore(store, "SELECT scope FROM analysis_scope_run")).toEqual([]);
+      expect(queryContentStore(store, "SELECT scope FROM analysis_scope_manifest")).toEqual([]);
+    } finally { stop.mockRestore(); vi.unstubAllEnvs(); }
+  }, 30_000);
 
   it("joins published scan IDs to their actual directory, commit, tree and retained snapshot", async () => {
     const root = checkout(), home = root + "-home", store = join(home, "runs.sqlite"), databasePath = join(home, "rerail.sqlite");
@@ -1639,6 +1665,8 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
       expect(report.violations.map(finding => finding.ruleId).sort()).toEqual(["needle", "relational"]);
       expect(report.cacheWarnings).toEqual(["test ownership write failed"]);
+      expect(report.cache.publication).toBe("unavailable");
+      expect(describeScan(report)).toContain("Cache results could not be published");
       const store = scanContentStore(databasePath);
       expect(queryContentStore(store, "SELECT scope FROM analysis_scope_manifest WHERE scope = 'named:atomic' OR scope GLOB 'pending:*'")).toEqual([]);
       expect(queryContentStore(store, "SELECT scope FROM analysis_scope_snapshot WHERE scope = 'named:atomic'")).toEqual([]);

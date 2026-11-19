@@ -233,7 +233,14 @@ A detached HEAD has a null ref and no `refHex`.
   violation without a source span. An explicit `.rr` `@place` gives a line, column 1, and a null `end`.
 - **`payloadHash`**: `sha256:` of the rule's canonical JSON, the same digest approvals and audits use.
   For a `.rr` policy, it hashes the list of file digests for the policy and its includes.
-- **`cacheWarnings`** lists failures in cache retention or collection.
+- **`analysisScope`** identifies the owner requested by this scan. A named scope has a `name`.
+  A directory scope has a checkout-relative `path`. The checkout root uses `.`.
+- **`cache.publication`** records the result of the ownership transaction.
+  `published` means the store accepted ownership. `released` means a stop or scope deletion invalidated the run before publication.
+  A failed analysis uses `aborted`. A store error uses `unavailable`.
+- **`cache.collection`** records the separate collection call. Its values are `completed`, `failed`, and `skipped`.
+  Collection can fail after a successful publication.
+- **`cacheWarnings`** lists errors from either operation. A concurrent stop leaves successful findings available.
   The report keeps the findings and scan status.
   If the durable cache fails, the scan can retry in memory.
   The retry uses the same Git source and policy. Git read failures still fail the scan.

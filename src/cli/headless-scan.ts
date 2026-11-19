@@ -14,7 +14,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { dirname, join, parse, posix, resolve, sep } from "node:path";
+import { dirname, join, parse, posix, relative, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from "../engine/audit/audit.js";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
@@ -97,6 +97,8 @@ export interface ScanReport {
   checkout: { path: string; head: string | null; ref: string | null; refHex?: string };
   source?: { revision: string; tree: string; commit: string | null };
   scope: "repository" | "git-diff";
+  analysisScope: { kind: "named"; name: string } | { kind: "directory"; path: string };
+  cache: { publication: NonNullable<NativeAnalysisScopeRun["publication"]>; collection: "completed" | "failed" | "skipped" };
   base: { ref: string; mergeBase: string } | null;
   paths: string[] | null;
   requestedPaths?: string[];
@@ -406,7 +408,7 @@ function position(line: number, column: number): ScanPosition {
 }
 
 /** The checkout `options.repo` is in, once the options that depend on the scope are checked. */
-function scanRoot(options: HeadlessScanOptions): string {
+function scanRoot(options: HeadlessScanOptions): { root: string; requested: string } {
   if (options.revision !== undefined && !options.analysisScope?.trim()) {
     throw new Error("--revision requires --analysis-scope <name>");
   }
@@ -421,7 +423,7 @@ function scanRoot(options: HeadlessScanOptions): string {
   const root = top === null ? requested : realpathSync(top);
   if (options.base !== undefined && options.scope !== "git-diff") throw new Error("--base applies only to --scope git-diff");
   if (options.paths !== undefined && options.scope !== "repository") throw new Error("--path and --paths-from apply only to --scope repository");
-  return root;
+  return { root, requested };
 }
 
 function homeIsScanConfiguration(options: HeadlessScanOptions, home: RerailDatabase | undefined, root: string, packs: readonly string[]): boolean {
@@ -617,7 +619,7 @@ async function scanReport(
     analysisStore: string;
     analysisRun: NativeAnalysisScopeRun | undefined;
   },
-): Promise<ScanReport> {
+): Promise<Omit<ScanReport, "analysisScope" | "cache">> {
   const databasePath = options.databasePath ?? defaultRerailDatabasePath();
   const explicitRr = (options.rr?.length ?? 0) > 0;
   const loadedRr = new (loadNativeBinding().LoadedRrPolicies)(analysisStore);
@@ -741,7 +743,11 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const homeDatabase = options.databasePath ?? defaultRerailDatabasePath();
   const directory = options.revision === undefined;
   const scanId = randomUUID();
-  const root = scanRoot(options);
+  const { root, requested } = scanRoot(options);
+  const analysisScope: ScanReport["analysisScope"] = options.analysisScope === undefined
+    ? { kind: "directory", path: relative(root, requested).split(sep).join("/") || "." }
+    : { kind: "named", name: options.analysisScope };
+  const cache: ScanReport["cache"] = { publication: "unavailable", collection: "skipped" };
   const durableStore = scanContentStore(homeDatabase);
   assertContentStoreOwner(durableStore);
   const packs = installedPackIds(options.packs);
@@ -749,15 +755,15 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   let cacheWarning: string | undefined;
   try {
     mkdirSync(dirname(homeDatabase), { recursive: true, mode: 0o700 });
-    const registration = directory ? await acquireDirectoryAnalysisRegistration(homeDatabase, resolve(options.repo), durableStore) : undefined;
-    analysisRun = new binding.AnalysisScopeRun(durableStore, options.analysisScope ?? resolve(options.repo), directory, scanId, registration?.generation ?? 0, directory ? analysisScopeHome(homeDatabase) : undefined, registration?.identity);
+    const registration = directory ? await acquireDirectoryAnalysisRegistration(homeDatabase, requested, durableStore) : undefined;
+    analysisRun = new binding.AnalysisScopeRun(durableStore, options.analysisScope ?? requested, directory, scanId, registration?.generation ?? 0, directory ? analysisScopeHome(homeDatabase) : undefined, registration?.identity);
   } catch (error) {
     cacheWarning = error instanceof Error ? error.message : String(error);
   }
   const analysisStore = analysisRun === undefined ? ":memory:" : durableStore;
   let report: ScanReport | undefined;
   try {
-    const source = options.revision === undefined ? undefined : new binding.GitRevisionSource(root, options.revision, options.analysisScope!, resolve(options.repo));
+    const source = options.revision === undefined ? undefined : new binding.GitRevisionSource(root, options.revision, options.analysisScope!, requested);
     analysisRun?.selectSource(root, source);
     if (source !== undefined)
       source.setSourceLanguages(JSON.stringify({ suffixes: Object.fromEntries(SOURCE_LANGUAGES), names: Object.fromEntries(SOURCE_NAMES) }));
@@ -766,7 +772,8 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     let configuration: RerailDatabase | undefined;
     try {
       configuration = openRerailDatabase(":memory:");
-      report = await scanReport(configuration, options, { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun });
+      const findings = await scanReport(configuration, options, { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun });
+      report = { ...findings, analysisScope, cache };
     } finally {
       configuration?.$client.close();
       if (home?.$client.open) home.$client.close();
@@ -774,7 +781,8 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     if (cacheWarning !== undefined) report.cacheWarnings = [cacheWarning];
     try {
       const warning = analysisRun?.finish(report.status === "completed");
-      if (warning !== null && warning !== undefined) report.cacheWarnings = [warning];
+      cache.publication = analysisRun?.publication ?? "unavailable";
+      if (warning != null && cache.publication !== "released") report.cacheWarnings = [warning];
     } catch (error) {
       (report.cacheWarnings ??= []).push(error instanceof Error ? error.message : String(error));
       try { analysisRun?.finish(false); } catch { /* Collection can release any abandoned ownership. */ }
@@ -788,11 +796,15 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     }
     throw error;
   } finally {
-    if (analysisRun !== undefined) await binding.collectAnalysisCacheAsync(durableStore).catch(error => {
+    if (analysisRun !== undefined) try {
+      await binding.collectAnalysisCacheAsync(durableStore);
+      cache.collection = "completed";
+    } catch (error) {
+      cache.collection = "failed";
       const message = `Analysis cache collection failed: ${error instanceof Error ? error.message : String(error)}`;
       if (report !== undefined) (report.cacheWarnings ??= []).push(message);
       else process.stderr.write(`rerail: ${message}\n`);
-    });
+    }
   }
 }
 
@@ -803,7 +815,9 @@ export function describeScan(report: ScanReport): string {
     return `${at}[${violation.ruleId}] ${violation.message}`;
   });
   for (const failure of report.failures) lines.push(`failure ${failure.code}${failure.path === null ? "" : ` ${failure.path}`}: ${failure.message}`);
-  for (const warning of report.cacheWarnings ?? []) lines.push(`Cache was not retained. ${warning}`);
+  if (report.cache?.publication === "released") lines.push("The analysis scope was released before publication.");
+  if (report.cache?.publication === "unavailable") lines.push("Cache results could not be published.");
+  for (const warning of report.cacheWarnings ?? []) lines.push(warning);
   const scope = report.scope === "git-diff" ? `git-diff${report.base === null ? "" : ` against ${report.base.ref}`}` : "repository";
   if (report.source !== undefined) {
     lines.push(`Source ${report.source.commit === null ? "tree " + report.source.tree : "commit " + report.source.commit}`);
