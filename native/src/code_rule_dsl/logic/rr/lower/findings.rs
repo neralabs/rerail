@@ -129,13 +129,6 @@ impl Lowerer {
     pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation) -> Result<(), Error> {
         let cols: Vec<Term> = (0..finding.arity).map(|i| v(&format!("rr_v{i}"))).collect();
         let mut body = vec![atom(&finding.name, cols.clone())];
-        if finding.call() {
-            // At a tool call (`.scope tool_calls`): no path, line 0, and the call's id its `at`.
-            body.push(atom(TOOL_CALLS[0], vec![cols[0].clone(), Term::Wild]));
-            body.push(Literal::Cmp { l: v("rr_p"), op: "=", r: s("") });
-            body.push(Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(0) });
-            return self.diagnostic_rule(policy, finding, &cols, cols[0].clone(), body, false);
-        }
         if finding.node {
             body.push(atom("node", vec![v("rr_d"), cols[0].clone(), Term::Wild, Term::Wild, Term::Wild]));
         } else {
@@ -171,7 +164,7 @@ impl Lowerer {
                     "line" if i == 0 => number(v("rr_l")),
                     "line" => { body.push(atom("line", vec![cols[i].clone(), v(&value)])); number(v(&value)) }
                     "name" => {
-                        if i == 0 && (place || finding.call()) { return Err(Error::Syntax(format!(".violation {} message: a place or a tool call has no name", finding.name))); }
+                        if i == 0 && place { return Err(Error::Syntax(format!(".violation {} message: a place has no name", finding.name))); }
                         let child = self.fresh("message_name");
                         body.push(atom("field", vec![cols[i].clone(), s("name"), v(&child)]));
                         body.push(atom("text", vec![v(&child), v(&value)]));
@@ -236,5 +229,90 @@ impl Lowerer {
         }
         self.prog.rules.push(Rule { head: Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }, body: body.into() });
         Ok(())
+    }
+}
+
+/// A `.scope tool_calls` policy's findings (`docs/rule-syntax/tool-calls.md`): each at a tool call, its `at` the call's
+/// id (`at: symbol`), with no path and line 0. `findings` lowers the rest, those in files.
+impl Lowerer {
+    /// Refuses a policy that reads tool calls without `.scope tool_calls` (as `rules.rs` refuses a JSON rule that reads
+    /// `input` and samples no tool call), and lowers a tool-call policy's findings, taking them out of `violations`.
+    pub(super) fn tool_call_findings(&mut self) -> Result<(), Error> {
+        self.refuse_misread_tool_calls()?;
+        if !reads_tool_calls(&self.prog.settings) {
+            return Ok(());
+        }
+        let policy = self.policy_name();
+        let calls = std::mem::take(&mut self.violations);
+        for f in &calls {
+            self.call_finding(&policy, f)?;
+        }
+        Ok(())
+    }
+
+    /// A tool call's relations read without `.scope tool_calls`, another `.scope` beside it (it reads no file), or a
+    /// finding at a tool call (`at: symbol`) in one policy and not the other.
+    fn refuse_misread_tool_calls(&self) -> Result<(), Error> {
+        let scoped = reads_tool_calls(&self.prog.settings);
+        let read = self.prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.as_str()).find(|r| TOOL_CALLS.contains(r));
+        let other_scope = self.prog.settings.iter().find(|(k, t)| k == "scope" && t.trim() != "tool_calls");
+        match (read, other_scope, self.violations.iter().find(|v| v.call() != scoped)) {
+            (Some(rel), _, _) if !scoped => Err(Error::Syntax(format!("{rel} is a tool call's relation: a policy that reads tool calls says `.scope tool_calls`"))),
+            (_, Some((_, other)), _) if scoped => Err(Error::Syntax(format!("`.scope tool_calls` reads no file: no `.scope {}` beside it", other.trim()))),
+            (_, _, Some(v)) => Err(Error::Syntax(format!(".violation {}: {}", v.name, call_at(scoped)))),
+            _ => Ok(()),
+        }
+    }
+
+    /// The finding of a `.violation` at a tool call: its row (`diagnostic_rule`) at no path and line 0, its `at` the
+    /// call's id, and its `violation` row. The message names the call's id as `{at}`: a call has no line or name.
+    fn call_finding(&mut self, policy: &str, f: &Violation) -> Result<(), Error> {
+        let (_, keys) = message_parts(&f.message).map_err(|e| Error::Syntax(format!(".violation {} message: {e}", f.name)))?;
+        if let Some(key) = keys.iter().find(|k| k.strip_prefix(f.columns[0].0.as_str()).is_some_and(|p| p.starts_with('.'))) {
+            return Err(Error::Syntax(format!(".violation {} message: {{{key}}}: a tool call has only its id", f.name)));
+        }
+        let cols: Vec<Term> = (0..f.arity).map(|i| v(&format!("rr_v{i}"))).collect();
+        let at_call = atom(TOOL_CALLS[0], vec![cols[0].clone(), Term::Wild]);
+        let place = [Literal::Cmp { l: v("rr_p"), op: "=", r: s("") }, Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(0) }];
+        let body = [atom(&f.name, cols.clone()), at_call.clone()].into_iter().chain(place).collect();
+        self.diagnostic_rule(policy, f, &cols, cols[0].clone(), body, false)?;
+        self.declare_violation_index();
+        let args = [s(policy), s(&f.name), finding_code(f), s(""), Term::Int(0), Term::Int(0)];
+        self.prog.rules.push(Rule { head: Atom { rel: "violation".into(), args: args.into(), neg: false, gated: false }, body: [atom(&f.name, cols), at_call].into() });
+        Ok(())
+    }
+
+    /// The `violation(rule, clause, code, path, line, col)` index of the findings, an output (`findings` declares it
+    /// the same way for those in files).
+    fn declare_violation_index(&mut self) {
+        let cols = [("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int"), ("col", "int")];
+        self.prog.decls.insert("violation".to_owned().into(), cols.iter().map(|(c, t)| ((*c).to_owned().into(), (*t).to_owned().into())).collect());
+        if !self.prog.outputs.iter().any(|o| o == "violation") {
+            self.prog.outputs.push("violation".to_owned());
+        }
+    }
+
+    /// The policy's id, its `.policy` setting's string.
+    fn policy_name(&self) -> String {
+        self.prog.settings.iter().find(|(k, _)| k == "policy").and_then(|(_, text)| text.split('"').nth(1)).unwrap_or_default().to_owned()
+    }
+}
+
+/// Why a `.violation`'s `at` does not fit its policy: a tool call's in a `.scope tool_calls` policy, a node, span or loc
+/// in any other.
+fn call_at(scoped: bool) -> &'static str {
+    if scoped {
+        "a `.scope tool_calls` policy's findings are at a tool call, `at: symbol`"
+    } else {
+        "`at` is a tool call (a symbol) only in a `.scope tool_calls` policy"
+    }
+}
+
+/// A finding's code as its row holds it: the violation's name, a constant, or the column's value (`rr_v<i>`).
+fn finding_code(f: &Violation) -> Term {
+    match &f.code {
+        FindingCode::Name => s(&f.name),
+        FindingCode::Column(i) => v(&format!("rr_v{i}")),
+        FindingCode::Constant(c) => s(c),
     }
 }

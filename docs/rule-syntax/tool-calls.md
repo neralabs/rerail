@@ -32,7 +32,8 @@ A policy that reads tool calls says so:
 ```
 
 - Its run reads no file: its documents are none (`doc_scopes` with no entry), whatever the root holds.
-- Its `.violation`s are at a call: `at: symbol`, the call's id. A finding has path `""`, line 0, and `at` the id.
+- Its `.violation`s are at a call: `at: symbol`, the call's id. A finding has path `""`, line 0, and `at` the id. Its
+  message may name the id (`{at}`), and no property of it: a call has no line or name.
 - Lowering refuses a policy that reads `tool_call` or `tool_input` without it (a JSON rule that reads `input` must
   sample `tool:*` or `tool:<name>` at `tool-call`), an `at: symbol` without it, a node or span `at` with it, and
   another `.scope` beside it.
@@ -66,7 +67,9 @@ no_force_push(c) :-
   array of `{"id": "…", "tool": "Bash", "input": {"command": "…"}}`, a call as the product samples it (the tool's
   name and its arguments, `host-runtime.ts`). Each finding is `{"policy", "clause", "code", "path": "", "line": 0,
   "at": "<id>", "message", …}`. File policies in the same run read their files as before.
-- The `toolCalls` option is the same array, for a caller that runs programs itself (`tools::run_program`).
+- The `toolCalls` option is the same array, for a caller that runs programs itself (`tools::run_program`). An option
+  of another shape is an error where a run is first given its options (`corpus::run_with_options`, `run_read`), before
+  any run reads it.
 - In a test, `.tool_call "<tool>" <fenced JSON object>`: the test's calls, ids `"1"`, `"2"`, … in order; a fixture
   set may hold them too. `.expect CODE` and `.expect no CODE` check the findings; one at a call prints as
   `CODE at call "2"`. `rerail rules test <file>.rerail` runs them.

@@ -21,44 +21,61 @@ pub struct Added(BTreeMap<String, Vec<Vec<Value>>>, Option<String>);
 /// is no string is no row, and a key with a dot in it is none either, for no path names it. An error says what is
 /// not of that shape.
 pub fn tool_call_rows(calls: &serde_json::Value) -> Result<[Vec<Vec<Value>>; 2], String> {
-    fn strings(prefix: &str, input: &serde_json::Map<String, serde_json::Value>, id: &str, out: &mut Vec<Vec<Value>>) {
-        for (key, value) in input.iter().filter(|(key, _)| !key.contains('.')) {
-            let path = if prefix.is_empty() { key.clone() } else { format!("{prefix}.{key}") };
-            match value {
-                serde_json::Value::String(text) => out.push(vec![Value::Str(id.into()), Value::Str(path.as_str().into()), Value::Str(text.as_str().into())]),
-                serde_json::Value::Object(nested) => strings(&path, nested, id, out),
-                _ => {}
-            }
-        }
-    }
-    let shape = "toolCalls: a JSON array of {\"id\": string, \"tool\": string, \"input\": object}";
     let (mut calls_rows, mut inputs) = (Vec::new(), Vec::new());
     let mut ids = std::collections::BTreeSet::new();
-    for (k, call) in calls.as_array().ok_or(shape)?.iter().enumerate() {
-        let field = |name: &str| call.get(name).ok_or_else(|| format!("{shape}; call {k} has no {name}"));
-        let (Some(id), Some(tool), Some(input)) = (field("id")?.as_str(), field("tool")?.as_str(), field("input")?.as_object()) else {
-            return Err(format!("{shape}; call {k} is not"));
-        };
+    for (k, call) in calls.as_array().ok_or(SHAPE)?.iter().enumerate() {
+        let (id, tool, input) = call_fields(k, call)?;
         if !ids.insert(id) {
-            return Err(format!("{shape}; two calls have the id {id:?}"));
+            return Err(format!("{SHAPE}; two calls have the id {id:?}"));
         }
         calls_rows.push(vec![Value::Str(id.into()), Value::Str(tool.into())]);
-        strings("", input, id, &mut inputs);
+        string_rows("", input, id, &mut inputs);
     }
     Ok([calls_rows, inputs])
 }
 
+/// The shape of the `toolCalls` option, as its errors name it.
+const SHAPE: &str = "toolCalls: a JSON array of {\"id\": string, \"tool\": string, \"input\": object}";
+
+/// The `k`-th call's id, tool and arguments, or what it lacks of them.
+fn call_fields(k: usize, call: &serde_json::Value) -> Result<(&str, &str, &serde_json::Map<String, serde_json::Value>), String> {
+    let field = |name: &str| call.get(name).ok_or_else(|| format!("{SHAPE}; call {k} has no {name}"));
+    match (field("id")?.as_str(), field("tool")?.as_str(), field("input")?.as_object()) {
+        (Some(id), Some(tool), Some(input)) => Ok((id, tool, input)),
+        _ => Err(format!("{SHAPE}; call {k} is not")),
+    }
+}
+
+/// A `tool_input(id, path, value)` row for each string of `input`, its path under `prefix`.
+fn string_rows(prefix: &str, input: &serde_json::Map<String, serde_json::Value>, id: &str, out: &mut Vec<Vec<Value>>) {
+    for (key, value) in input.iter().filter(|(key, _)| !key.contains('.')) {
+        let path = if prefix.is_empty() { key.clone() } else { format!("{prefix}.{key}") };
+        match value {
+            serde_json::Value::String(text) => out.push(vec![Value::Str(id.into()), Value::Str(path.as_str().into()), Value::Str(text.as_str().into())]),
+            serde_json::Value::Object(nested) => string_rows(&path, nested, id, out),
+            _ => {}
+        }
+    }
+}
+
+/// The run's `toolCalls` option is of its shape (`tool_call_rows`), or the error that says how not: checked where a run
+/// is first given its options (`corpus::run_with_options`, `corpus::run_read_handing`), so that every run reads it whole
+/// (`Added::of`).
+pub fn check_tool_calls(options: &serde_json::Value) -> Result<(), String> {
+    options.get("toolCalls").map_or(Ok(()), |calls| tool_call_rows(calls).map(|_| ()))
+}
+
 impl Added {
     /// What a run of `options` over the root of `settings` adds: the settings' rows, the `toolCalls` option's rows
-    /// (`tool_call_rows`, an error where it is not of their shape), the `dialect` option.
-    pub fn of(settings: &[(String, String)], options: &serde_json::Value) -> Result<Added, String> {
+    /// (`tool_call_rows`; the run's entry checked its shape, `check_tool_calls`), the `dialect` option.
+    pub fn of(settings: &[(String, String)], options: &serde_json::Value) -> Added {
         let mut added = Added::settings(settings);
         if let Some(calls) = options.get("toolCalls") {
-            let [calls, inputs] = tool_call_rows(calls)?;
+            let [calls, inputs] = tool_call_rows(calls).expect("the run's entry checked its toolCalls option (`check_tool_calls`)");
             added = added.with(TOOL_CALLS[0], calls).with(TOOL_CALLS[1], inputs);
         }
         added.1 = options.get("dialect").and_then(|v| v.as_str()).map(str::to_owned);
-        Ok(added)
+        added
     }
 
     /// The run's settings, as `env(key, value)` rows.
@@ -163,7 +180,7 @@ mod tests {
         assert_ne!(Added::default().with("r", [vec![Value::Int(1)]]).digest(), Added::default().with("r", [vec![Value::Str("1".into())]]).digest());
         assert_eq!(added.digest(), Added::settings(&[("a".into(), "1".into()), ("b".into(), "x\ty".into())]).digest());
         // The dialect: a program's language, and part of the key.
-        let tsx = Added::of(&[], &serde_json::json!({"dialect": "tsx"})).unwrap();
+        let tsx = Added::of(&[], &serde_json::json!({"dialect": "tsx"}));
         assert!(!tsx.is_empty());
         let mut named = front::Program { settings: vec![("language".into(), "typescript".into()), ("policy".into(), "\"p\"".into())], ..Default::default() };
         tsx.add_to(&mut named);
@@ -172,11 +189,12 @@ mod tests {
         tsx.add_to(&mut unnamed);
         assert!(unnamed.settings.is_empty());
         assert_ne!(tsx.digest(), Added::default().digest());
-        assert_eq!(Added::of(&[], &serde_json::json!({})).unwrap(), Added::default());
+        assert_eq!(Added::of(&[], &serde_json::json!({})), Added::default());
     }
 
     /// A run's tool calls are the rows of `tool_call` and `tool_input` (`docs/rule-syntax/tool-calls.md`): each string
-    /// argument by its dotted path, as a JSON rule's `input.<path>` reads it; anything else is an error.
+    /// argument by its dotted path, as a JSON rule's `input.<path>` reads it; an option of any other shape is an error
+    /// where the run is first given it (`check_tool_calls`), and no run.
     #[test]
     fn tool_calls_are_rows_of_their_relations() {
         let s = |t: &str| Value::Str(t.into());
@@ -184,7 +202,9 @@ mod tests {
             {"id": "e1", "tool": "Bash", "input": {"command": "npm run fixtures:push", "timeout": 10, "env": {"CI": "1"}, "argv": ["a"], "a.b": "x"}},
             {"id": "e2", "tool": "Read", "input": {}}
         ]);
-        let added = Added::of(&[], &serde_json::json!({ "toolCalls": calls })).unwrap();
+        let options = serde_json::json!({ "toolCalls": calls });
+        assert_eq!(check_tool_calls(&options), Ok(()));
+        let added = Added::of(&[], &options);
         let mut prog = front::Program::default();
         for rel in TOOL_CALLS {
             prog.decls.insert(rel.into(), Default::default());
@@ -196,7 +216,13 @@ mod tests {
         // The calls are part of the run's key.
         assert_ne!(added.digest(), Added::default().digest());
         for bad in [serde_json::json!({}), serde_json::json!([{"id": "e1", "tool": "Bash"}]), serde_json::json!([{"id": 1, "tool": "Bash", "input": {}}]), serde_json::json!([{"id": "e", "tool": "Bash", "input": {}}, {"id": "e", "tool": "Bash", "input": {}}])] {
-            assert!(Added::of(&[], &serde_json::json!({ "toolCalls": bad })).is_err(), "{bad}");
+            assert!(check_tool_calls(&serde_json::json!({ "toolCalls": bad })).is_err(), "{bad}");
         }
+        assert_eq!(check_tool_calls(&serde_json::json!({})), Ok(()));
+        // The run's entry refuses a malformed option, before any run reads it (nothing is made at `dir`).
+        let dir = std::env::temp_dir().join(format!("rerail-tool-calls-refused-{}", std::process::id()));
+        let refused = super::super::run_with_options(&[".decl r(x: symbol)\n"], &dir, None, &dir.join("out"), "program", super::super::Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({ "toolCalls": {} }));
+        assert!(matches!(&refused, Err(super::super::Error::Plan(e)) if e.contains("toolCalls: a JSON array")), "{:?}", refused.err());
+        assert!(!dir.exists());
     }
 }

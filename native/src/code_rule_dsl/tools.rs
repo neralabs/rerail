@@ -797,12 +797,12 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
 //   rerail-engine sql <store.sqlite> <request.json>
 //   rerail-engine flatten [--lowered] <program.rerail>
 //   rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]
-//   rerail-engine run-policies <corpus root> <out dir> <policy.rerail>...
+//   rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...
 //   rerail-engine check-rr <rule>... | convert-rr <rule>...
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rerail>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -847,108 +847,156 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
     match args.first().map(String::as_str) {
         #[cfg(feature = "dump-cli")]
         Some("dump") => dump_command(&args[1..]),
-        Some("asm") => match &args[1..] {
-            [file] => crate::tools::assemble(&read(file)?),
-            _ => Err(USAGE.into()),
-        },
-        Some("sql") => match &args[1..] {
-            [store, request] => crate::tools::sql(Path::new(store), &read(request)?),
-            _ => Err("usage: rerail-engine sql <store.sqlite> <request.json>".into()),
-        },
+        Some("asm") => asm_command(&args[1..]),
+        Some("sql") => sql_command(&args[1..]),
         Some("logic") => logic_command(&args[1..]),
-        Some("repeat") => match &args[1..] {
-            [script] => repeat_command(&read(script)?),
-            _ => Err("usage: rerail-engine repeat <script>".into()),
-        },
+        Some("repeat") => repeat_script_command(&args[1..]),
         Some("facts-stamp") => facts_stamp_command(&args[1..]),
         Some("capture-tapes") => capture_tapes_command(&args[1..]),
         Some("kind-names") => kind_names_command(&args[1..]),
-        Some("run-rr") if args.len() == 4 || args.len() == 5 => {
-            let options = if args.len() == 5 { serde_json::from_str(&read(&args[4])?).map_err(|e| e.to_string())? } else { serde_json::Value::Null };
-            serde_json::to_string(&crate::tools::run_rr(Path::new(&args[1]), Path::new(&args[2]), Path::new(&args[3]), &options)?).map_err(|e| e.to_string())
-        }
-        // Several policies over one repository, each over its own language's files (O105). `--tool-calls <calls.json>`:
-        // the tool calls the run is given (`[{"id", "tool", "input"}]`, the `toolCalls` option: `corpus::added`), which
-        // `.scope tool_calls` policies read.
-        Some("run-policies") => {
-            let usage = "usage: rerail-engine run-policies [--tool-calls <calls.json>] <root> <out> <policy.rerail>...";
-            let (mut positional, mut options) = (Vec::new(), serde_json::Value::Null);
-            let mut rest = args[1..].iter();
-            while let Some(a) = rest.next() {
-                if a == "--tool-calls" {
-                    let file = rest.next().ok_or(usage)?;
-                    let calls: serde_json::Value = serde_json::from_str(&read(file)?).map_err(|e| format!("{file}: {e}"))?;
-                    crate::code_rule_dsl::logic::plan::corpus::added::tool_call_rows(&calls).map_err(|e| format!("{file}: {e}"))?;
-                    options = serde_json::json!({ "toolCalls": calls });
-                } else {
-                    positional.push(a);
-                }
-            }
-            let [root, out, policies @ ..] = positional.as_slice() else { return Err(usage.into()) };
-            if policies.is_empty() {
-                return Err(usage.into());
-            }
-            let paths = policies.iter().map(|p| std::path::PathBuf::from(p.as_str())).collect::<Vec<_>>();
-            serde_json::to_string(&crate::tools::run_policies(&paths, Path::new(root), Path::new(out), &options)?).map_err(|e| e.to_string())
-        }
-        Some("check-rr") if args.len() > 1 => {
-            let paths = args[1..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
-            let report = crate::tools::check_rr(&paths);
-            let failures = report.as_array().expect("rule reports").iter().filter(|row| row["status"] == "reader-failed").count();
-            let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
-            if failures > 0 {
-                println!("{text}");
-                Err(format!("{failures} rules failed the .rerail reader"))
-            } else { Ok(text) }
-        }
+        Some("run-rr") => run_rr_command(&args[1..]),
+        // Several policies over one repository, each over its own language's files (O105), and the tool calls it is
+        // given.
+        Some("run-policies") => run_policies_command(&args[1..]),
+        Some("check-rr") => check_rr_command(&args[1..]),
         // Main's JSON rules as the engine reads them: each `<id>.json` to `<out>/<id>.rerail` (decision 0175).
         Some("translate-json") => translate_json_command(&args[1..]),
         // Each test the files carry (decision 0130).
         Some("test-rr") => crate::code_rule_dsl::logic::rr::testing::command(&args[1..]),
-        // `--cases <file>` gives the next rule its cases (decision 0130).
-        Some("convert-rr") if args.len() > 1 => {
-            let (mut rules, mut cases) = (Vec::new(), None);
-            let mut rest = args[1..].iter();
-            while let Some(a) = rest.next() {
-                if a == "--cases" {
-                    cases = Some(std::path::PathBuf::from(rest.next().ok_or("--cases <cases.json> <rule>")?));
-                } else {
-                    rules.push((std::path::PathBuf::from(a), cases.take()));
-                }
-            }
-            serde_json::to_string_pretty(&crate::tools::convert_rr_with(&rules)).map_err(|e| e.to_string())
-        }
-        // The program `logic` runs for a file: `core.rerail` and its includes resolved, as `.rerail` text; with `--lowered`,
-        // the program `run-rr` runs, lowered and printed as `.rerail`.
-        Some("flatten") => match &args[1..] {
-            [file] => crate::tools::flatten(Path::new(file.as_str())),
-            [flag, file] if flag == "--lowered" => crate::tools::flatten_lowered(Path::new(file.as_str())),
-            _ => Err(USAGE.into()),
-        },
-        // The rule images shipped with the engine (decision 0264): packed from those a run exported
-        // (`RERAIL_EXPORT_IMAGES=<dir>`), into the bundle placed beside the engine (`rerail-library.images`).
-        Some("images") => match &args[1..] {
-            [pack, dir, out] if pack == "pack" => crate::code_rule_dsl::logic::rr::images::pack(Path::new(dir.as_str()), Path::new(out.as_str()))
-                .map(|n| format!("{n} images packed into {out}"))
-                .map_err(|e| e.to_string()),
-            _ => Err("usage: rerail-engine images pack <exported dir> <bundle>".into()),
-        },
-        // A run's outputs (`out/outputs.rro`, decision 0239) as `.csv` files, one per relation, in `to` (`out` itself
-        // when not given): for scripts that read them.
-        Some("csv") => match &args[1..] {
-            [out] | [out, _] => {
-                let to = Path::new(args.get(2).unwrap_or(out).as_str());
-                let n = crate::code_rule_dsl::logic::plan::output::to_csv(Path::new(out.as_str()), to).map_err(|e| e.to_string())?;
-                Ok(format!("{n} relations written to {}\n", to.display()))
-            }
-            _ => Err(USAGE.into()),
-        },
+        Some("convert-rr") => convert_rr_command(&args[1..]),
+        Some("flatten") => flatten_command(&args[1..]),
+        Some("images") => images_command(&args[1..]),
+        Some("csv") => csv_command(&args[1..]),
         #[cfg(feature = "tape-cache")]
         Some("gc") => gc_command(&args[1..]),
         #[cfg(feature = "tape-cache")]
         Some("upkeep") => upkeep_command(&args[1..]),
         #[cfg(not(all(feature = "dump-cli", feature = "tape-cache")))]
         Some(command @ ("dump" | "gc" | "upkeep")) => Err(format!("{command} is not in this build (its feature, `dump-cli` or `tape-cache`, is off)")),
+        _ => Err(USAGE.into()),
+    }
+}
+
+/// `asm <file.rir>`.
+fn asm_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [file] => crate::tools::assemble(&read(file)?),
+        _ => Err(USAGE.into()),
+    }
+}
+
+/// `sql <store.sqlite> <request.json>`.
+fn sql_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [store, request] => crate::tools::sql(Path::new(store), &read(request)?),
+        _ => Err("usage: rerail-engine sql <store.sqlite> <request.json>".into()),
+    }
+}
+
+/// `repeat <script>` (`repeat_command`).
+fn repeat_script_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [script] => repeat_command(&read(script)?),
+        _ => Err("usage: rerail-engine repeat <script>".into()),
+    }
+}
+
+/// `run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]`.
+fn run_rr_command(args: &[String]) -> Result<String, String> {
+    let options = match args {
+        [_, _, _] => serde_json::Value::Null,
+        [_, _, _, file] => serde_json::from_str(&read(file)?).map_err(|e| e.to_string())?,
+        _ => return Err(USAGE.into()),
+    };
+    serde_json::to_string(&crate::tools::run_rr(Path::new(&args[0]), Path::new(&args[1]), Path::new(&args[2]), &options)?).map_err(|e| e.to_string())
+}
+
+/// `run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...`: several policies over one
+/// repository, each over its own language's files (O105). `--tool-calls`: the tool calls the run is given (`[{"id",
+/// "tool", "input"}]`, the `toolCalls` option: `corpus::added`), which `.scope tool_calls` policies read.
+fn run_policies_command(args: &[String]) -> Result<String, String> {
+    let usage = "usage: rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...";
+    let (mut positional, mut options) = (Vec::new(), serde_json::Value::Null);
+    let mut rest = args.iter();
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--tool-calls" => options = tool_calls_option(rest.next().ok_or(usage)?)?,
+            _ => positional.push(a),
+        }
+    }
+    let [root, out, first, more @ ..] = positional.as_slice() else { return Err(usage.into()) };
+    let paths: Vec<std::path::PathBuf> = std::iter::once(first).chain(more).map(|p| std::path::PathBuf::from(p.as_str())).collect();
+    serde_json::to_string(&crate::tools::run_policies(&paths, Path::new(root.as_str()), Path::new(out.as_str()), &options)?).map_err(|e| e.to_string())
+}
+
+/// The run's options of the tool calls in `file`, once they are of their shape (`added::tool_call_rows`).
+fn tool_calls_option(file: &str) -> Result<serde_json::Value, String> {
+    let calls: serde_json::Value = serde_json::from_str(&read(file)?).map_err(|e| format!("{file}: {e}"))?;
+    crate::code_rule_dsl::logic::plan::corpus::added::tool_call_rows(&calls).map_err(|e| format!("{file}: {e}"))?;
+    Ok(serde_json::json!({ "toolCalls": calls }))
+}
+
+/// `check-rr <rule>...`: the rules as the `.rerail` reader reads them; an error when any fails.
+fn check_rr_command(args: &[String]) -> Result<String, String> {
+    if args.is_empty() {
+        return Err(USAGE.into());
+    }
+    let report = crate::tools::check_rr(&args.iter().map(std::path::PathBuf::from).collect::<Vec<_>>());
+    let failures = report.as_array().expect("rule reports").iter().filter(|row| row["status"] == "reader-failed").count();
+    let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+    if failures > 0 {
+        println!("{text}");
+        return Err(format!("{failures} rules failed the .rerail reader"));
+    }
+    Ok(text)
+}
+
+/// `convert-rr [--cases <cases.json>] <rule>...`: `--cases <file>` gives the next rule its cases (decision 0130).
+fn convert_rr_command(args: &[String]) -> Result<String, String> {
+    if args.is_empty() {
+        return Err(USAGE.into());
+    }
+    let (mut rules, mut cases) = (Vec::new(), None);
+    let mut rest = args.iter();
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--cases" => cases = Some(std::path::PathBuf::from(rest.next().ok_or("--cases <cases.json> <rule>")?)),
+            _ => rules.push((std::path::PathBuf::from(a), cases.take())),
+        }
+    }
+    serde_json::to_string_pretty(&crate::tools::convert_rr_with(&rules)).map_err(|e| e.to_string())
+}
+
+/// `flatten [--lowered] <program.rerail>`: the program `logic` runs for a file, `core.rerail` and its includes
+/// resolved, as `.rerail` text; with `--lowered`, the program `run-rr` runs, lowered and printed as `.rerail`.
+fn flatten_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [file] => crate::tools::flatten(Path::new(file.as_str())),
+        [flag, file] if flag == "--lowered" => crate::tools::flatten_lowered(Path::new(file.as_str())),
+        _ => Err(USAGE.into()),
+    }
+}
+
+/// `images pack <exported dir> <bundle>`: the rule images shipped with the engine (decision 0264), packed from those
+/// a run exported (`RERAIL_EXPORT_IMAGES=<dir>`), into the bundle placed beside the engine (`rerail-library.images`).
+fn images_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [pack, dir, out] if pack == "pack" => crate::code_rule_dsl::logic::rr::images::pack(Path::new(dir.as_str()), Path::new(out.as_str()))
+            .map(|n| format!("{n} images packed into {out}"))
+            .map_err(|e| e.to_string()),
+        _ => Err("usage: rerail-engine images pack <exported dir> <bundle>".into()),
+    }
+}
+
+/// `csv <out dir> [<to dir>]`: a run's outputs (`out/outputs.rro`, decision 0239) as `.csv` files, one per relation,
+/// in `to` (`out` itself when not given), for scripts that read them.
+fn csv_command(args: &[String]) -> Result<String, String> {
+    match args {
+        [out] | [out, _] => {
+            let to = Path::new(args.get(1).unwrap_or(out).as_str());
+            let n = crate::code_rule_dsl::logic::plan::output::to_csv(Path::new(out.as_str()), to).map_err(|e| e.to_string())?;
+            Ok(format!("{n} relations written to {}\n", to.display()))
+        }
         _ => Err(USAGE.into()),
     }
 }
@@ -1549,5 +1597,31 @@ mod settings_tests {
         assert_eq!(super::with_reuse(&serde_json::Value::Null), json!({"reuse": true}));
         assert_eq!(super::with_reuse(&json!({"x": 1})), json!({"x": 1, "reuse": true}));
         assert_eq!(super::with_reuse(&json!({"reuse": false})), json!({"reuse": false}));
+    }
+
+    /// `run-policies --tool-calls <calls.json>` gives the run its tool calls (`docs/rule-syntax/tool-calls.md`): a
+    /// `.scope tool_calls` policy's finding is at the call. A file not of their shape, or no policy, is an error, and
+    /// the form with no calls runs as before.
+    #[test]
+    fn run_policies_takes_its_tool_calls_from_the_command_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str| dir.path().join(name).display().to_string();
+        std::fs::create_dir_all(at("root")).unwrap();
+        std::fs::write(at("p.rerail"), ".policy \"t:cli-calls\" revision 1\n.scope tool_calls\n.violation Push(at: symbol) code \"no-push\" \"a push\"\nPush(c) :- tool_input(c, \"command\", s), match(\"(?s:.*)(?:git push)(?s:.*)\", s).\n").unwrap();
+        std::fs::write(at("calls.json"), r#"[{"id": "e1", "tool": "Bash", "input": {"command": "git push"}}]"#).unwrap();
+        std::fs::write(at("bad.json"), "{}").unwrap();
+        let run = |args: &[String]| super::cli_in(&[vec!["run-policies".to_owned()], args.to_vec()].concat(), &mut Default::default());
+        let at_of = |out: String| -> Vec<serde_json::Value> {
+            let report: serde_json::Value = serde_json::from_str(&out).unwrap();
+            report["diagnostics"].as_array().unwrap().iter().map(|d| d["at"].clone()).collect()
+        };
+        assert_eq!(at_of(run(&["--tool-calls".into(), at("calls.json"), at("root"), at("out1"), at("p.rerail")]).unwrap()), [serde_json::json!("e1")]);
+        assert_eq!(at_of(run(&[at("root"), at("out2"), at("p.rerail")]).unwrap()), Vec::<serde_json::Value>::new());
+        let shape = run(&["--tool-calls".into(), at("bad.json"), at("root"), at("out3"), at("p.rerail")]).unwrap_err();
+        assert!(shape.contains("toolCalls: a JSON array"), "{shape}");
+        for args in [vec![at("root"), at("out4")], vec![at("root"), at("out4"), at("p.rerail"), "--tool-calls".into()]] {
+            let usage = run(&args).unwrap_err();
+            assert!(usage.starts_with("usage: rerail-engine run-policies [--tool-calls <calls.json>]"), "{args:?}: {usage}");
+        }
     }
 }
