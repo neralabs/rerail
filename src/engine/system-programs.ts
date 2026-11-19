@@ -1,5 +1,5 @@
 import { accessSync, constants, existsSync } from "node:fs";
-import { delimiter, isAbsolute, join, win32 } from "node:path";
+import { delimiter, isAbsolute, join, posix, win32 } from "node:path";
 
 /**
  * Where Rerail finds the programs it starts, by absolute path. Windows looks for a bare program name in the current
@@ -29,11 +29,11 @@ export function isFullyQualifiedWindowsPath(path: string): boolean {
 }
 
 /**
- * Whether `path` names one file from any current folder on this machine: on Windows a fully qualified path
- * ({@link isFullyQualifiedWindowsPath}), elsewhere an absolute one.
+ * Whether `path` names one file from any current folder, as `platform` reads it (this machine's by default): on Windows
+ * a fully qualified path ({@link isFullyQualifiedWindowsPath}), elsewhere an absolute one.
  */
-export function namesOneFile(path: string): boolean {
-  return process.platform === "win32" ? isFullyQualifiedWindowsPath(path) : isAbsolute(path);
+export function namesOneFile(path: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "win32" ? isFullyQualifiedWindowsPath(path) : posix.isAbsolute(path);
 }
 
 /** Windows PowerShell 5.1, which every Windows 10 and 11 install carries, by absolute path. */
@@ -44,6 +44,12 @@ export function windowsPowerShell(env: NodeJS.ProcessEnv = process.env): string 
 /** Where {@link programOnPath} looks: the environment whose PATH (and on Windows PATHEXT) it reads, and the platform. */
 export interface ProgramSearch {
   env?: NodeJS.ProcessEnv;
+  /**
+   * The platform whose program start takes the answer: how PATH is split and unquoted, and which files count (a `.exe`
+   * or `.com` in PATHEXT's order on Windows, a file this process may execute elsewhere). What a name or a PATH entry
+   * written from a root names is read by this machine's rule ({@link namesOneFile}, {@link fromCurrentDrive}), since
+   * the search reads this machine's disk: a test that plays Windows on Linux keeps its Linux folders on PATH.
+   */
   platform?: NodeJS.Platform;
 }
 
@@ -108,15 +114,16 @@ function onThisMachine(path: string): string | undefined {
 
 /**
  * `path`, written from the root of the current drive (`\tools`, `/Git/bin/bash.exe`), named with the drive (or server
- * share) of this process's current folder, where Windows and Node read it on a Windows machine. Undefined elsewhere,
- * where such a path has no drive to take; for a path that does not start at a root; and where the path lies in the
+ * share) of this process's current folder, where Windows and Node read it on a Windows machine. Undefined where
+ * `platform` (this machine's by default) is not Windows, where such a path has no drive to take; for a path that does
+ * not start at a root; and where the path lies in the
  * repository nearest the current folder, as for a repository cloned to a drive's root: its files are the repository's,
  * not the person's programs, and Git's own search skips such a folder too. Only the nearest repository counts, as in
  * Git's search: from a submodule or a nested clone of a repository at a drive's root, the outer repository's files are
  * read as before.
  */
-export function fromCurrentDrive(path: string): string | undefined {
-  if (process.platform !== "win32" || !/^[\\/]/u.test(path)) return undefined;
+export function fromCurrentDrive(path: string, platform: NodeJS.Platform = process.platform): string | undefined {
+  if (platform !== "win32" || !/^[\\/]/u.test(path)) return undefined;
   const here = process.cwd();
   const named = win32.resolve(here, path);
   const repository = enclosingRepository(here);

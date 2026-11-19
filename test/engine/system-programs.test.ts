@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { programOnPath } from "../../src/engine/system-programs.js";
+import { fromCurrentDrive, namesOneFile, programOnPath } from "../../src/engine/system-programs.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
@@ -155,5 +155,18 @@ describe("programOnPath", () => {
     expect(searchFrom(`${drive}\\src`, "", "/tools/node.exe")).toBe(`${drive}\\tools\\node.exe`);
     await mkdir(join(root, ".git"));
     expect(searchFrom(`${drive}\\src`, "", String.raw`\tools\node.exe`)).toBeUndefined();
+  });
+});
+
+describe("namesOneFile and fromCurrentDrive", () => {
+  it("read a path by the platform they are given, on any machine", () => {
+    expect(namesOneFile(String.raw`C:\tools\git.exe`, "win32")).toBe(true);
+    expect(namesOneFile(String.raw`\\server\share\git.exe`, "win32")).toBe(true);
+    expect(namesOneFile(String.raw`\tools\git.exe`, "win32")).toBe(false);
+    expect(namesOneFile("/usr/bin/git", "win32")).toBe(false);
+    expect(namesOneFile("/usr/bin/git", "linux")).toBe(true);
+    expect(namesOneFile(String.raw`C:\tools\git.exe`, "darwin")).toBe(false);
+    expect(fromCurrentDrive(String.raw`\tools`, "linux")).toBeUndefined();
+    expect(fromCurrentDrive("/usr/bin", "darwin")).toBeUndefined();
   });
 });
