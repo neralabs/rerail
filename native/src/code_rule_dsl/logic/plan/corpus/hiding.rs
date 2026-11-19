@@ -510,9 +510,10 @@ fn asking(prog: &Program) -> BTreeSet<String> {
 /// guest whose grammar's label is the run's: `guests::key`) and its kinds are the run's (`python:x` resolves as `x`),
 /// so a copy specialized to it holds its original's rows: its rules differ only by the seeded column's bound, which
 /// those documents are under, and by the qualified kinds. Its readers read the original, its rules go, and a
-/// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
-/// `merge_and_drop_repeats`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the copies folded.
-/// `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
+/// qualified kind of `label` is written plainly; a copied kind set goes with its readers, `nearest`'s and the tree
+/// axes' (`rr_inside_rr_in_<g>_<set>` reads `rr_inside_<set>`); a clone (O110) is then its rule again, dropped as a
+/// repeat by `merge_and_drop_repeats`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the
+/// copies folded. `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
 pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
     if bound != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {
@@ -550,6 +551,14 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
             grammars.iter().find_map(|g| tail.strip_prefix(*g).and_then(|r| r.strip_prefix('_'))).filter(|set| prog.kindsets.contains_key(*set)).map(|set| (k.clone(), set.to_owned()))
         })
         .collect();
+    // A tree axis over a copied set (`hide`'s `rr_inside_rr_in_<g>_<set>`, `rr_has_…`) reads the original set's axis:
+    // the copied set goes below, and an axis left on it names no set, so the transducer made it with no rows and its
+    // negation held for every node (`!inside(t, _, S)` and `within_stop` in a clone over an annotation's node).
+    let axis_of = |rel: &str| -> Option<String> {
+        use crate::code_rule_dsl::logic::front::{axis, AXIS, DESCENDANTS};
+        let (set, has) = axis(rel)?;
+        sets.get(set).map(|orig| format!("{}{orig}", if has { DESCENDANTS } else { AXIS }))
+    };
     if folded.is_empty() && sets.is_empty() {
         return 0;
     }
@@ -588,6 +597,8 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
                 Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
                     if let Some(orig) = folded.get(a.rel.as_str()) {
                         a.rel = orig.clone().into();
+                    } else if let Some(orig) = axis_of(&a.rel) {
+                        a.rel = orig.into();
                     }
                     unqualify(a);
                 }
@@ -607,10 +618,27 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
     for k in sets.keys() {
         prog.kindsets.remove(k);
     }
+    // The axes the copied sets name: `hide` lists each as an input, and declares it where its original was declared.
+    let copied_axes: BTreeMap<String, String> = prog.decls.keys().map(|r| r.as_str()).chain(prog.inputs.iter().map(String::as_str)).filter_map(|rel| axis_of(rel).map(|orig| (rel.to_owned(), orig))).collect();
+    for (copy, orig) in &copied_axes {
+        if let Some(d) = prog.decls.remove(copy.as_str()) {
+            prog.decls.entry(orig.as_str().into()).or_insert(d);
+        }
+    }
     for list in [&mut prog.inputs, &mut prog.outputs, &mut prog.demand] {
         for rel in list.iter_mut() {
             if let Some(orig) = folded.get(rel.as_str()) {
                 *rel = orig.clone();
+            }
+        }
+        // An axis copy's place is its original's, unless the original is listed already.
+        for (copy, orig) in &copied_axes {
+            if let Some(i) = list.iter().position(|r| r == copy) {
+                if list.contains(orig) {
+                    list.remove(i);
+                } else {
+                    list[i] = orig.clone();
+                }
             }
         }
     }
@@ -1091,5 +1119,35 @@ pub mod tests {
         let rules: Vec<String> = p.rules.iter().map(|r| r.to_string()).collect();
         assert!(rules.iter().any(|r| r.starts_with("asg(") && r.contains(&wide)), "{rules:#?}");
         assert!(rules.iter().any(|r| r.starts_with("out(") && r.contains(&narrow)) || rules.iter().filter(|r| r.starts_with("out(")).all(|r| !r.contains(&wide)), "{rules:#?}");
+    }
+
+    /// A tree axis read over a node that may be an annotation's is the clone's copy of the axis, over a copy of its kind
+    /// set (`rr_inside_rr_in_annotation_<set>`). Folding the copied set folds the axis too: before, the set went and
+    /// the axis stayed, naming no set, so the transducer made it with no rows, and the clone's `!inside(t, _, S)` held
+    /// for every node, below S too (the Django rules' `within_stop` over a block found through `sym_of`).
+    #[test]
+    fn an_axis_over_a_folded_kind_set_reads_the_original_set() {
+        let mut p = crate::code_rule_dsl::logic::rr::parse(concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+            ".decl body(b: node)\nbody(b) :- e(b).\nbody(r) :- parsed(_, \"annotation\", r).\n",
+            ".decl attempt(t: node)\nattempt(t) :- e(t).\n",
+            ".decl out(t: node)\n.output out\n",
+            "out(t) :- attempt(t), body(b), within(t, b), !inside(t, _, \"function_definition\").\n",
+        ))
+        .unwrap();
+        let shown = crate::code_rule_dsl::facts::vtab::syntax::ANNOTATION_KEYS;
+        hide(&mut p, shown);
+        let axes = |p: &Program| -> Vec<String> {
+            p.rules.iter().flat_map(|r| r.body.iter()).filter_map(Literal::atom).map(|a| a.rel.to_string()).filter(|r| crate::code_rule_dsl::logic::front::is_axis(r)).collect()
+        };
+        assert!(axes(&p).iter().any(|r| r.contains("rr_in_annotation_")), "the clone reads the annotation's axis: {:?}", axes(&p));
+        assert!(fold_own(&mut p, "python", shown) > 0);
+        super::super::merge_and_drop_repeats(&mut p);
+        for rel in axes(&p).iter().chain(p.inputs.iter().filter(|r| crate::code_rule_dsl::logic::front::is_axis(r))) {
+            let (set, _) = crate::code_rule_dsl::logic::front::axis(rel).unwrap();
+            assert!(p.kindsets.contains_key(set), "{rel} names no kind set of the program: {:?}", p.kindsets);
+        }
+        let outs: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "out").map(|r| r.to_string()).collect();
+        assert!(!outs.is_empty() && outs.iter().all(|r| r.contains("!rr_inside_rr_kind_function_definition(") && !r.contains("rr_in_")), "{outs:#?}");
     }
 }

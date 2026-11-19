@@ -2711,6 +2711,39 @@ names(t) :- kind(s, "string"), parsed(s, "braceFormat", r), within(x, r), kind(x
     assert_eq!(names, [["a"], ["b"], ["w"]], "`inside` climbs to a guest's field");
 }
 
+/// The `try` statements in a `with` block's body, read through a relation an annotation's root may fill too (as
+/// `sym_of` is), with `negated` (`!inside` or `within_stop`) excluding those in a nested def. Hiding clones the rule
+/// for annotation nodes, its axis over a copy of the kind set; folding that set into its original left the clone's axis
+/// on a set that no longer was, with no rows, so the negation held for the `try` inside `later` too (line 7).
+fn tries_in_the_block_not_in_a_def(name: &str, negated: &str) -> Vec<Vec<String>> {
+    let py = "with lock:\n    try:\n        pass\n    except E:\n        pass\n    def later():\n        try:\n            pass\n        except E:\n            pass\n";
+    let rule = format!(
+        r#"
+.decl body(b: node)
+body(b) :- kind(w, "with_statement"), field(w, "body", b).
+body(r) :- kind(s, "string"), parsed(s, "annotation", r).
+.decl attempt(t: node)
+attempt(t) :- kind(t, "try_statement").
+.decl found(l: number)
+found(l) :- attempt(t), body(b), {negated}, line(t, l).
+.output found
+"#
+    );
+    guests_run(name, &[("a.py", py)], &rule, &["found"]).remove(0)
+}
+
+/// `!inside(t, _, S)` over a node of a relation an annotation may fill holds only where no ancestor is in S.
+#[test]
+fn a_negated_inside_over_a_maybe_annotation_node_reads_its_kind_set() {
+    assert_eq!(tries_in_the_block_not_in_a_def("negatedinside", "within(t, b), !inside(t, _, \"function_definition\")"), [["2"]]);
+}
+
+/// `within_stop(t, b, S)` from a node of a relation an annotation may fill stops at S.
+#[test]
+fn within_stop_over_a_maybe_annotation_node_stops_at_its_kind_set() {
+    assert_eq!(tries_in_the_block_not_in_a_def("withinstop", "within_stop(t, b, \"function_definition\")"), [["2"]]);
+}
+
 /// `.scope` selects a repository's files (`core.rerail`): a finding in a document outside `dirs`, or under a `tests`
 /// part with `tests false`, is dropped; `.scope given` (files a test gives) keeps them all.
 #[test]
