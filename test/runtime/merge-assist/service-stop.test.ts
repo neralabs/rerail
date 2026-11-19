@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { mergeAssistState, type MergeAssistStatus, openRerailDatabase, type RerailDatabase } from "../../../src/engine/index.js";
+import { mergeAssistState, type MergeAssistStatus, openRerailDatabase, recordCheckout, type RerailDatabase } from "../../../src/engine/index.js";
 import { createMergeAssistService, type GithubClient, type MergeAssistRuntime, type PullRequestSummary } from "../../../src/runtime/index.js";
 import { readConflicts, writeConflicts } from "../../../src/runtime/merge-assist/conflict-store.js";
 import { withExperiments } from "../../support/environment/experiments.js";
@@ -352,15 +352,15 @@ async function conflictsStored(ws: Workspace): Promise<{ pullRequests: PullReque
 }
 
 /**
- * A session's scan in a new service, stopped as it is `at` a point: "gh", its listing of open pull requests, which
- * answers once the stop has begun; else its first Git read whose arguments hold `at`. The stop's wait lasts until the
- * scan ends. Answers the Git reads left running at the stop and started after it.
+ * A session's scan of `checkout` in a new service, stopped as it is `at` a point: "gh", its listing of open pull
+ * requests, which answers once the stop has begun; else its first Git read whose arguments hold `at`. The stop's wait
+ * lasts until the scan ends. Answers the Git reads left running at the stop and started after it.
  */
-async function scanEndingWithinStop(ws: Workspace, at: string, pullRequests: PullRequestSummary[]): Promise<{ runningAtStop: string[]; startedAfter: string[] }> {
+async function scanEndingWithinStop(ws: Workspace, at: string, pullRequests: PullRequestSummary[], checkout = ws.repo): Promise<{ runningAtStop: string[]; startedAfter: string[] }> {
   const github = new HeldGithub({ pullRequests });
   if (at !== "gh") github.release();
   const service = ws.service({ github });
-  return await stopDuring(service, () => service.openSession(ws.repo, "claude-code", "session-1"), {
+  return await stopDuring(service, () => service.openSession(checkout, "claude-code", "session-1"), {
     ...(at === "gh" ? {} : { at }),
     trigger: stop => {
       if (at !== "gh") return;
@@ -374,10 +374,10 @@ async function scanEndingWithinStop(ws: Workspace, at: string, pullRequests: Pul
   });
 }
 
-/** A detection after an edit in a new service, and its hook's handlers settled. */
-async function nextPass(ws: Workspace, pullRequests: PullRequestSummary[]): Promise<void> {
+/** A detection after an edit in `checkout` in a new service, and its hook's handlers settled. */
+async function nextPass(ws: Workspace, pullRequests: PullRequestSummary[], checkout = ws.repo): Promise<void> {
   const next = ws.service({ github: new FakeGithub({ pullRequests }) });
-  expect(await next.detectAfterEdit(ws.repo)).toBe(true);
+  expect(await next.detectAfterEdit(checkout)).toBe(true);
   await next.settled();
 }
 
@@ -399,8 +399,9 @@ async function stopWhileScanWaits(ws: Workspace, github: HeldGithub): Promise<{ 
   return { service, scan, stopped: service.stop(UNREACHED_MS) };
 }
 
-/** How many rows hold the checkout's kept conflict events: none once a change has taken them. */
-const keptRows = (ws: Workspace): number => ws.database.select().from(mergeAssistState).where(eq(mergeAssistState.key, `unheard:${ws.repo}`)).all().length;
+/** How many rows hold the kept conflict events of `checkout`: none once a change has taken them. */
+const keptRows = (ws: Workspace, checkout = ws.repo): number =>
+  ws.database.select().from(mergeAssistState).where(eq(mergeAssistState.key, `unheard:${checkout}`)).all().length;
 
 /** The checkout's kept conflict events as stored, each entry as it is. */
 function keptEntries(ws: Workspace): Array<{ event?: unknown; conflict?: unknown }> {
@@ -421,6 +422,12 @@ function keepUnreadable(ws: Workspace, alone = false): void {
 
 /** `count` times `event`. */
 const times = (count: number, event: string): string[] => Array.from({ length: count }, () => event);
+
+/** A checkout of the repository at `<folder>/<name>` on a new branch from `from`, recorded as a session start does. */
+function addCheckout(ws: Workspace, name: string, from: string): string {
+  git(ws.repo, "worktree", "add", "-q", "-b", name, join(ws.folder, name), from);
+  return recordCheckout(ws.database, join(ws.folder, name)).checkoutPath;
+}
 
 /** The checkout's last scan, scan mark and conflicts as a new service reads them. */
 async function stored(ws: Workspace): Promise<Pick<MergeAssistStatus, "lastScan" | "scanning" | "conflicts">> {
@@ -704,6 +711,83 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     const events = byConflict(heard());
     expect(events.size).toBe(PEERS);
     for (const [id, sequence] of events) expect(sequence).toEqual(change === "turn-off" || id === dismissed ? ["detected", "closed"] : ["detected"]);
+  });
+
+  it.each([
+    ["the `closed` events of scans that found the conflicts gone within the stop's wait", true],
+    ["the `closed` of each conflict still open", false],
+  ] as const)("keeps in two checkouts %s when a stop lands while turning Merge Assist off reads their branches, and the next turn-off hands them to the hook", async (_, gone) => {
+    const ws = await workspace();
+    // A second checkout with the main checkout's work: every peer conflicts with it too.
+    const checkouts = [ws.repo, addCheckout(ws, "mine-too", "mine")];
+    const heard = await loggedHook(ws);
+    addPeers(ws);
+    const first = ws.service();
+    await first.setEnabled(ws.repo, true);
+    for (const checkout of checkouts) expect((await first.scan(checkout)).conflicts).toHaveLength(PEERS);
+    await first.settled();
+    if (gone) {
+      peersElsewhere(ws);
+      for (const checkout of checkouts) await scanEndingWithinStop(ws, "--name-only", [], checkout);
+    }
+    const service = ws.service();
+
+    // The first branch read answers only once the stop has resolved.
+    await stopDuring(service, () => service.setEnabled(ws.repo, false), { at: "symbolic-ref", waitMs: 0, held: true });
+
+    const kept = (): number[] => checkouts.map(checkout => keptRows(ws, checkout));
+    expect({ heard: heard().length, kept: kept() }).toEqual({ heard: 2 * PEERS, kept: [1, 1] });
+    const next = ws.service();
+    await next.setEnabled(ws.repo, true);
+    await next.setEnabled(ws.repo, false);
+    await next.settled();
+    expect({ closed: heard().filter(({ event }) => event === "closed").length, kept: kept() }).toEqual({ closed: 2 * PEERS, kept: [0, 0] });
+  });
+
+  it("keeps for the next change there the `closed` of conflicts another pass stores in a checkout while turning Merge Assist off reads the branches of the others", async () => {
+    const ws = await workspace();
+    const heard = await loggedHook(ws);
+    await conflictsStored(ws);
+    const other = addCheckout(ws, "other", "main");
+    const service = ws.service();
+    // As another process's pass would, once the turn-off has chosen whose branches it reads.
+    vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
+      if (commandLine(args).includes("symbolic-ref") && keptRows(ws, other) === 0 && readConflicts(ws.database, other).length === 0) {
+        writeConflicts(ws.database, other, readConflicts(ws.database, ws.repo), Date.now());
+      }
+      return actualSpawn(...args);
+    });
+    try {
+      await service.setEnabled(ws.repo, false);
+      await service.settled();
+    } finally {
+      vi.mocked(spawn).mockImplementation(actualSpawn);
+    }
+
+    expect({ closed: heard().filter(({ event }) => event === "closed").length, other: readConflicts(ws.database, other), kept: keptRows(ws, other) })
+      .toEqual({ closed: PEERS, other: [], kept: 1 });
+  });
+
+  it("reads the branches only of the checkouts it hands events in when Merge Assist is turned on or off", async () => {
+    const ws = await workspace();
+    await conflictsStored(ws);
+    const idle = addCheckout(ws, "idle", "main");
+    const reads = { on: [] as string[], off: [] as string[] };
+    let turn: "on" | "off" = "on";
+    vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
+      if (isGit(args)) reads[turn].push(commandLine(args));
+      return actualSpawn(...args);
+    });
+    try {
+      // Already on, asked from the checkout with nothing stored: no event to hand.
+      await ws.service().setEnabled(idle, true);
+      turn = "off";
+      await ws.service().setEnabled(ws.repo, false);
+    } finally {
+      vi.mocked(spawn).mockImplementation(actualSpawn);
+    }
+
+    expect({ on: reads.on.filter(line => line.includes(ws.repo)), off: reads.off.filter(line => line.includes(idle)) }).toEqual({ on: [], off: [] });
   });
 
   it("resolves a stop with no wait whose release of a scan's mark meets another process's write lock without waiting for the lock, and leaves the mark to go stale, as when its process ends", async () => {
