@@ -46,11 +46,12 @@ pub use portable::Pattern as MessagePattern;
 
 #[cfg(any(windows, all(test, unix)))]
 mod portable {
-    use onig::{EncodedBytes, MatchParam, Regex, RegexOptions, SearchOptions, Syntax, SyntaxOperator};
+    use onig::{EncodedBytes, MatchParam, Regex, RegexOptions, SearchOptions, Syntax, SyntaxBehavior, SyntaxOperator};
 
     static SYNTAX: std::sync::LazyLock<Syntax> = std::sync::LazyLock::new(|| {
         use SyntaxOperator as Op;
         let mut syntax = *Syntax::posix_extended();
+        syntax.enable_behavior(SyntaxBehavior::SYNTAX_BEHAVIOR_BACKSLASH_ESCAPE_IN_CC);
         syntax.disable_operators(Op::SYNTAX_OPERATOR_ESC_CONTROL_CHARS);
         syntax.enable_operators(Op::SYNTAX_OPERATOR_ESC_AZ_BUF_ANCHOR | Op::SYNTAX_OPERATOR_ESC_W_WORD |
             Op::SYNTAX_OPERATOR_ESC_B_WORD_BOUND | Op::SYNTAX_OPERATOR_ESC_LTGT_WORD_BEGIN_END |
@@ -58,33 +59,57 @@ mod portable {
         syntax
     });
 
-    /// Copy a bracket expression verbatim. Its first member can be ']', and a class such as
-    /// [[:digit:]] has its own closing bracket. The compiler diagnoses incomplete expressions.
-    fn bracket_len(pattern: &[u8]) -> usize {
+    /// Git for Windows uses single-byte collating elements. Quote those bytes in the
+    /// destination class and keep character classes such as [[:digit:]] intact.
+    fn bracket(pattern: &[u8], out: &mut Vec<u8>) -> Result<usize, String> {
         let mut at = 1 + usize::from(pattern.get(1) == Some(&b'^'));
         at += usize::from(pattern.get(at) == Some(&b']'));
+        out.extend_from_slice(&pattern[..at]);
         while let Some(&byte) = pattern.get(at) {
             at += 1;
-            if byte == b']' { break; }
             if byte == b'[' && let Some(&mark @ (b':' | b'.' | b'=')) = pattern.get(at) {
-                if let Some(end) = pattern[at + 1..].windows(2).position(|pair| pair == [mark, b']']) {
-                    at += end + 3;
+                let name = &pattern[at + 1..];
+                let end = name.windows(2).position(|pair| pair == [mark, b']'])
+                    .ok_or("unterminated bracket element")?;
+                if mark == b':' {
+                    out.extend_from_slice(&pattern[at - 1..at + end + 3]);
+                } else {
+                    let [literal] = name[..end] else { return Err("invalid collating element".into()) };
+                    if b"[]-^\\".contains(&literal) { out.push(b'\\'); }
+                    out.push(literal);
                 }
+                at += end + 3;
+                continue;
             }
+            if byte == b'\\' { out.push(b'\\'); } // A literal backslash in Git's bracket expressions.
+            out.push(byte);
+            if byte == b']' { break; }
         }
-        at
+        Ok(at)
     }
 
-    fn anchors(mut pattern: &[u8]) -> Vec<u8> {
+    fn interval_bounds(rest: &[u8]) -> Result<(), String> {
+        let mut count = 0u32;
+        for &byte in rest {
+            if byte == b',' { count = 0; continue; }
+            if !byte.is_ascii_digit() { break; }
+            count = count * 10 + u32::from(byte - b'0');
+            if count > 32767 { return Err("Git repetition count exceeds 32767".into()); }
+        }
+        Ok(())
+    }
+
+    fn extended_pattern(mut pattern: &[u8]) -> Result<Vec<u8>, String> {
+        if pattern.contains(&0) { return Err("Git message pattern contains a NUL byte".into()); }
         let mut out = Vec::with_capacity(pattern.len());
         while let Some((&byte, rest)) = pattern.split_first() {
             match byte {
                 b'[' => {
-                    let end = bracket_len(pattern);
-                    out.extend_from_slice(&pattern[..end]);
+                    let end = bracket(pattern, &mut out)?;
                     pattern = &pattern[end..];
                     continue;
                 }
+                b'{' => { interval_bounds(rest)?; out.push(byte); }
                 b'$' => out.extend_from_slice(br"\z"), // Git requires the actual end, even after a final newline.
                 b'\\' if !rest.is_empty() => {
                     let escaped = rest[0];
@@ -101,14 +126,14 @@ mod portable {
             }
             pattern = rest;
         }
-        out
+        Ok(out)
     }
 
     pub struct Pattern(Regex);
 
     impl Pattern {
         pub fn new(pattern: &[u8]) -> Result<Self, String> {
-            Regex::with_options_and_encoding(EncodedBytes::ascii(&anchors(pattern)), RegexOptions::REGEX_OPTION_NONE, &SYNTAX)
+            Regex::with_options_and_encoding(EncodedBytes::ascii(&extended_pattern(pattern)?), RegexOptions::REGEX_OPTION_NONE, &SYNTAX)
                 .map(Self).map_err(|error| error.to_string())
         }
 
@@ -132,6 +157,21 @@ fn windows_message_patterns_match_git_extended_expressions() {
             for message in messages {
                 assert_eq!(native.matches(message).unwrap(), portable.matches(message).unwrap(), "{pattern:?} in {message:?}");
             }
+        }
+    }
+    assert!(portable::Pattern::new(b"a{99999}").is_err());
+    // Expected answers from Git for Windows v2.50.1.windows.1's bundled matcher.
+    for (pattern, answers) in [
+        (br"(echo) \1".as_slice(), [false, true, false]),
+        (br"\bcode\s+dd", [false, false, true]),
+        (br"[]$]", [false, false, false]),
+        (br"[[:alpha:]$]", [true, true, true]),
+        (br"[[.e.]]", [true, true, true]),
+        (br"[[=e=]]", [true, true, true]),
+    ] {
+        let regex = portable::Pattern::new(pattern).unwrap();
+        for (message, answer) in messages.iter().zip(answers) {
+            assert_eq!(regex.matches(message).unwrap(), answer, "{pattern:?} in {message:?}");
         }
     }
 }

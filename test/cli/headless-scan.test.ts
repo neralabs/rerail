@@ -666,6 +666,7 @@ Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
     const Source = loadNativeBinding().GitRevisionSource;
     const patterns = ["^(seed|code)", "^seed$", "[[:digit:]]{2}", "echo.*paragraph", "^second paragraph",
       String.raw`\bcode\s+dd`, String.raw`^code \w+`, String.raw`\$seed`, "[]$]", "[[:alpha:]$]",
+      "[[.e.]]", "[[=e=]]", "a{99999}",
       "missing", "café", "(?i)SEED", String.raw`\d+`, String.raw`(echo) \1`, "["];
     for (const pattern of patterns) {
       for (const selector of [`:/${pattern}`, `HEAD^{/${pattern}}`]) {
