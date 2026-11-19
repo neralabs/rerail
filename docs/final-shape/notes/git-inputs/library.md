@@ -81,7 +81,8 @@ A rule can query a parent independently of the source snapshot.
 `git_message` exposes the full message, including its final newline, after the selected text-decoding policy succeeds.
 Raw message bytes remain available through the decoded content handle.
 `git_subject` and `git_trailer` are library rules over message content.
-Trailer syntax, normalization, and continuation handling need examples before their rules are implemented.
+The trailer relation preserves ordered duplicates and unfolds continuation lines from the final trailer block.
+The [rule reference](../../../rule-syntax/git.md#read-commit-trailers) shows how to inspect it.
 
 Signatures preserve name, email, epoch seconds, and timezone offset separately.
 Header content preserves unknown headers and signature payloads without introducing a builtin for every header name.

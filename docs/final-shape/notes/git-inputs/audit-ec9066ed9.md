@@ -2,7 +2,7 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Seventeen of the 28 follow-up findings have verified results. Eleven remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Eighteen of the 28 follow-up findings have verified results. Ten remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
 | Open finding | What still needs to pass |
 | --- | --- |
@@ -13,10 +13,17 @@ Seventeen of the 28 follow-up findings have verified results. Eleven remain open
 | 61. History by scope | Read only the requested scope's records. Check reuse after an unrelated publication and invalidation after a relevant one. |
 | 101. Constant relations | Reuse a derivation across revisions and scopes while its observed inputs match. Collect it after the last owner releases it. |
 | Bound commit metadata | Request the bound commit when a rule reads its metadata. Verify root commits, non-root commits and unavailable objects under negation. |
-| Commit trailers | Compare ordered trailer facts with Git for duplicate keys, continuation lines and ordinary message text. |
 | Commit diagnostic locations | Identify the repository, commit and optional field in the report. Distinguish a commit finding from a finding in a file named `git`. |
 | Content handles | Read verified content through a rule-visible handle. Check reuse across revisions and the result for a missing object. |
 | Selected document provenance | Join the selected path, blob, grammar, tape and document. Test two paths with identical bytes and a scan that excludes one. |
+
+## Ordered commit trailers
+
+The standalone CLI exported every trailer from 14 fixture commits with its name, unfolded value and zero-based position.
+The regression compares its rows with the installed Git. It covers exact duplicates, empty values, mixed prose and the end of the trailer block.
+An additional comparison with Git 2.50.1 found the same rows for all 530 distinct messages. An earlier run exposed a difference for `Conflicts:` followed by spaces.
+The permanent regression includes that case. All ten Git revision CLI tests passed together.
+The relation uses the cached Git message and a Datalog cache key for the trailer rules. [Implementation](../../../rule-syntax/lib/git/messages.rr) · [CLI regression](../../../../native/tests/git_revision_cli.rs)
 
 ## Windows test execution and store lifetime
 

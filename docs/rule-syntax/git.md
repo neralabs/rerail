@@ -68,6 +68,26 @@ parentless_commit(r, c) :- git_source_commit(r, c), git_commit(r, c, _), !git_pa
 The `git_commit` join checks that decoding succeeded. A failed object request has a `git_object_error` row.
 Without an object request, the parent relation can be empty even for a commit with parents.
 
+### Read commit trailers
+
+`git_trailer(repo, commit, position, name, value)` returns one row per trailer in a decoded UTF-8 commit message.
+Positions start at zero. Repeated trailers retain their own positions, including duplicates with the same value. Names preserve their case.
+
+```rr
+#include "git.rr"
+git_object_request(r, c) :- git_source_commit(r, c).
+.decl reviewer(commit: symbol, position: number, person: symbol)
+reviewer(c, i, who) :- git_source_commit(r, c), git_trailer(r, c, i, "Reviewed-by", who).
+.output reviewer
+```
+
+For example, two `Reviewed-by` lines after a blank line give two rows. An indented continuation contributes to the preceding value.
+The library trims the value and replaces each continuation newline and its indentation with one space.
+The subject and earlier body paragraphs cannot supply trailers. A final paragraph containing only ordinary text has zero rows.
+
+The library uses Git's default colon separator and comment character. It reads the stored message independently of local trailer aliases and commands.
+Compare the rows with `git interpret-trailers --parse --no-divider` on the same message using default configuration. [Git trailer syntax](https://git-scm.com/docs/git-interpret-trailers)
+
 ### Standalone command results
 
 `rerail-engine logic` exports every row of each declared output. A literal fact remains present even when the selected tree contains no documents.

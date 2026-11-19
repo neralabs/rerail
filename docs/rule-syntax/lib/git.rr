@@ -2,6 +2,8 @@
 // Example: git_revision_request(r, "HEAD") :- git_root_repo(r).
 //          git_object_request(r, c) :- git_revision(r, "HEAD", c).
 // See docs/rule-syntax/git.md.
+#include "git/messages.rr"
+
 .decl git_location_of(repo: symbol, view: symbol, role: symbol, encoding: symbol, value: symbol)
 .input git_location_of
 .decl git_repository_dir(repo: symbol, path: symbol)

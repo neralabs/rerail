@@ -263,6 +263,56 @@ fn standalone_logic_publishes_each_source_after_its_history_query_finishes() {
 }
 
 #[test]
+fn ordered_commit_trailers_match_git_for_each_requested_message() {
+    let f = Checkout::new();
+    let message = f.area.path().join("message.txt");
+    let policy = f.area.path().join("trailers.rr");
+    let out = f.area.path().join("trailers");
+    let mut source = String::from(r#"#include "git.rr"
+.decl requested(commit: symbol)
+git_object_request(r, c) :- git_root_repo(r), requested(c).
+.decl result(commit: symbol, i: number, name: symbol, value: symbol)
+result(c, i, k, v) :- git_root_repo(r), requested(c), git_trailer(r, c, i, k, v).
+.output result
+"#);
+    let mut expected = Vec::new();
+    for body in [
+        "Key: title only\n",
+        "Subject\nKey: still in the title\n",
+        "Subject\n\nLabel: in the body\n\nThis is the last paragraph.\n",
+        "Subject\n\nKey: earlier\n\nReview : first\n\tpart two\n   part three\nReview: first\nReview: first\nEmpty:\n",
+        "Subject\n\nOrdinary prose\nReview: no trailer block\n",
+        "Subject\n\nline one\nline two\nline three\nSigned-off-by: Alice\n",
+        "Subject\n\nline one\nline two\nline three\nline four\nSigned-off-by: Alice\n",
+        "Subject\n\nReview: before comment\n# internal comment\nCase: \u{03bb}\n\n# trailing comment\n",
+        "Subject\n\nfolded-text: caf\u{e9}  \n  suite\nlast: value: with colon",
+        "Subject\n\nReview: before scissors\n# ------------------------ >8 ------------------------\nFake: after scissors\n",
+        "Subject\n\nKey: before conflicts\n\nConflicts:\n\ta.py\n",
+        "Subject\n\n(cherry picked from commit abcd)\nordinary\nConflicts:\n   \n",
+        "Subject\n\n---\n\nKey: after divider\n",
+        "Subject\n\nnoise\nReview: via cherry-pick\n(cherry picked from commit abcd)\n",
+    ] {
+        fs::write(&message, body).unwrap();
+        let commit = f.git(&["commit-tree", "HEAD^{tree}", "-F", message.to_str().unwrap()]);
+        source.push_str(&format!("requested(\"{commit}\").\n"));
+        let parsed = f.git(&["interpret-trailers", "--parse", "--no-divider", message.to_str().unwrap()]);
+        for (i, line) in parsed.lines().enumerate() {
+            let (name, value) = line.split_once(':').unwrap();
+            expected.push(format!("{commit}\t{i}\t{name}\t{}", value.strip_prefix(' ').unwrap_or(value)));
+        }
+    }
+    expected.sort();
+    fs::write(&policy, source).unwrap();
+    let run = f.run("logic", &[&policy, &f.repo, &out], Some("trailers"));
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert!(f.run("csv", &[&out], None).status.success());
+    let csv = fs::read_to_string(out.join("result.csv")).unwrap();
+    let mut actual: Vec<_> = csv.lines().collect();
+    actual.sort_unstable();
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn git_location_rules_identify_the_common_directory_and_each_open_worktree() {
     let f = Checkout::new();
     let first = f.area.path().join("first link");
