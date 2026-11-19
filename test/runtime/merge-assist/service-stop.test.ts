@@ -262,6 +262,17 @@ async function conflictsGone(ws: Workspace): Promise<PullRequestSummary[]> {
 
 const CHANGES = { new: conflictsNew, gone: conflictsGone };
 
+/** Merge Assist on, and every peer's conflict stored by a scan. Answers the open pull requests and the conflicts' ids. */
+async function conflictsStored(ws: Workspace): Promise<{ pullRequests: PullRequestSummary[]; ids: string[] }> {
+  const pullRequests = addPeers(ws).map(pullOf);
+  const first = ws.service({ github: new FakeGithub({ pullRequests }) });
+  await first.setEnabled(ws.repo, true);
+  const ids = (await first.scan(ws.repo)).conflicts.map(conflict => conflict.id);
+  expect(ids).toHaveLength(PEERS);
+  await first.settled();
+  return { pullRequests, ids };
+}
+
 /**
  * A session's scan in a new service, stopped as it is `at` a point: "gh", its listing of open pull requests, which
  * answers once the stop has begun; else its first Git read whose arguments hold `at`. The stop's wait lasts until the
@@ -295,6 +306,19 @@ async function nextPass(ws: Workspace, pullRequests: PullRequestSummary[]): Prom
 /** The open conflicts of the checkout as a new service reads them. */
 async function openConflicts(ws: Workspace): Promise<number> {
   return (await stored(ws)).conflicts.filter(conflict => conflict.status === "open").length;
+}
+
+/**
+ * A session's scan in a new service over `github`, waiting for its listing of open pull requests, and that service's
+ * stop begun with a wait the scan ends within once `github` answers. Answers the service, the scan and the stop.
+ */
+async function stopWhileScanWaits(ws: Workspace, github: HeldGithub): Promise<{ service: MergeAssistRuntime; scan: Promise<void>; stopped: Promise<void> }> {
+  const asked = Promise.withResolvers<void>();
+  github.onHeld = () => asked.resolve();
+  const service = ws.service({ github });
+  const scan = service.openSession(ws.repo, "claude-code", "session-1");
+  await asked.promise;
+  return { service, scan, stopped: service.stop(UNREACHED_MS) };
 }
 
 /** The checkout's last scan, scan mark and conflicts as a new service reads them. */
@@ -364,11 +388,11 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
   });
 
   it.each([
-    ["whose `gh` listing answers within the stop's wait", "gh", "new"],
-    ["already comparing the checkout's work with other branches when the stop came", "--name-only", "new"],
-    ["whose `gh` listing answers within the stop's wait", "gh", "gone"],
-    ["already comparing the checkout's work with other branches when the stop came", "--name-only", "gone"],
-  ] as const)("stores what a scan %s finds %s, as a scan that ends before the stop does, and a service opened after hands its hook each event the stopped hook did not hear", async (_, at, change) => {
+    ["whose `gh` listing answers within the stop's wait", "new", "gh"],
+    ["already comparing the checkout's work with other branches when the stop came", "new", "--name-only"],
+    ["whose `gh` listing answers within the stop's wait", "gone", "gh"],
+    ["already comparing the checkout's work with other branches when the stop came", "gone", "--name-only"],
+  ] as const)("stores what a scan %s finds %s, as a scan that ends before the stop does, and a service opened after hands its hook each event the stopped hook did not hear", async (_, change, at) => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     const pullRequests = await CHANGES[change](ws);
     const heard = await loggedHook(ws);
@@ -436,6 +460,43 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     await nextPass(ws, []);
 
     expect(heard()).toEqual([]);
+  });
+
+  it("keeps the `closed` of a conflict dismissed during the stop's wait, and a service opened after hands it to its hook", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    const { pullRequests, ids } = await conflictsStored(ws);
+    const heard = await loggedHook(ws);
+    const github = new HeldGithub({ pullRequests });
+    const { service, scan, stopped } = await stopWhileScanWaits(ws, github);
+
+    await service.dismissConflict(ws.repo, ids[0] ?? "");
+    github.release();
+    await scan;
+    await stopped;
+
+    expect(heard()).toEqual([]);
+    await nextPass(ws, pullRequests);
+    expect(heard()).toEqual([{ event: "closed", id: ids[0] }]);
+  });
+
+  it("keeps the `closed` of each conflict open when Merge Assist is turned off during the stop's wait, and the first pass once it is on again hands each to its hook before its own `detected`", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    const { pullRequests } = await conflictsStored(ws);
+    const heard = await loggedHook(ws);
+    const github = new HeldGithub({ pullRequests });
+    const { service, scan, stopped } = await stopWhileScanWaits(ws, github);
+
+    await service.setEnabled(ws.repo, false);
+    github.release();
+    await scan;
+    await stopped;
+
+    expect(heard()).toEqual([]);
+    await ws.service().setEnabled(ws.repo, true);
+    await nextPass(ws, pullRequests);
+    const events = byConflict(heard());
+    expect(events.size).toBe(PEERS);
+    for (const sequence of events.values()) expect(sequence).toEqual(["closed", "detected"]);
   });
 
   it("returns once the Git it ended has exited while a scan waits for a file call that never answers, and the scan then writes nothing to the closed database and starts no Git", async () => {

@@ -26,7 +26,7 @@ import { processAlive } from "../daemon-control.js";
 import { detectConflicts, STALE_BRANCH_DAYS } from "./conflict-detect.js";
 import { deliveryHandler, readSettings, settingsAt, writeSettings } from "./conflict-delivery.js";
 import { ConflictHook, conflictEvents, handedEvents, type ConflictFire, type ConflictHandlerContext } from "./conflict-hook.js";
-import { dismissedConflict, readConflicts, recordHandlerResult, replaceConflict, type StoredConflict } from "./conflict-store.js";
+import { dismissedConflict, readConflicts, recordHandlerResult, replaceConflict } from "./conflict-store.js";
 import { createGithubClient, PULL_REQUEST_LIMIT, type GithubClient, type GithubRepository, type PullRequestSummary } from "./github.js";
 import { commandHandler, RunningCommands } from "./hook-command.js";
 import { currentNotice, forgetDelivered, markNotesDelivered, pendingNotes, type ConflictNoteOptions, type PendingNote } from "./notes.js";
@@ -106,11 +106,12 @@ export interface MergeAssistRuntime extends MergeAssistService {
    * Stop: no conflict event is handed to the hook any more, and a handler that answers later records nothing. Every
    * hook command still running gets SIGTERM on its process group, then SIGKILL after a short grace. Waits at most
    * `waitMs` in all for the handlers, scans and detection passes running now: a pass that ends meanwhile stores what it
-   * found, as one that ended before the stop did. The events of what a pass stores from the stop on are kept in the
-   * database, and the next pass in that checkout, in this process or another, hands them to the hook before its own. A
-   * pass still running after the wait ends at its next Git read and stores nothing, and the stop resolves once the Git
-   * it ended has exited, so none runs on in the checkout. It does not wait for a pass's other work, such as a file read
-   * on a drive that stopped answering: that pass ends by itself later, and stores nothing and starts no Git.
+   * found, as one that ended before the stop did. The events of what is stored from the stop on (a pass, a dismissal,
+   * Merge Assist turned off) are kept in the database, and the next change in that checkout, in this process or
+   * another, hands them to the hook before its own. A pass still running after the wait ends at its next Git read and
+   * stores nothing, and the stop resolves once the Git it ended has exited, so none runs on in the checkout. It does not
+   * wait for a pass's other work, such as a file read on a drive that stopped answering: that pass ends by itself later,
+   * and stores nothing and starts no Git.
    */
   stop(waitMs?: number): Promise<void>;
 }
@@ -489,9 +490,9 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   /**
    * Clear what Merge Assist found in every checkout of the repository, dismissals included, which sessions were handed
    * those conflicts' notes (so one found again is told again), and its `gh` readiness; the person's settings stay.
-   * Returns each checkout's conflicts that were open.
+   * Returns each checkout's events to hand the hook: `closed` for each conflict that was open (`#handed`).
    */
-  #clearRepository(tx: StateQueries, repositoryKey: string): Array<{ path: string; open: StoredConflict[] }> {
+  #clearRepository(tx: StateQueries, repositoryKey: string): Array<{ path: string; fires: ConflictFire[] }> {
     deleteState(tx, STATE_KEYS.github(repositoryKey));
     const cleared = tx.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, repositoryKey)).all().map(({ path }) => {
       const stored = readConflicts(tx, path);
@@ -500,7 +501,9 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       return { path, stored };
     });
     forgetDelivered(tx, new Set(cleared.flatMap(({ stored }) => stored.map(entry => entry.conflict.id))), this.#now());
-    return cleared.map(({ path, stored }) => ({ path, open: stored.filter(entry => entry.conflict.status === "open") }));
+    return cleared.map(({ path, stored }) => ({
+      path, fires: this.#handed(tx, path, stored.filter(entry => entry.conflict.status === "open").map(conflict => ({ event: "closed", conflict }))),
+    }));
   }
 
   async setEnabled(checkoutPath: string, enabled: boolean): Promise<MergeAssistStatus> {
@@ -513,9 +516,9 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     }, { behavior: "immediate" });
     this.#pulls.delete(repositoryKey);
     // Every conflict open when Merge Assist went off is closed: the hook hears it once, as for one no longer found.
-    for (const { path, open } of cleared) {
-      if (open.length === 0) continue;
-      this.#fire({ checkoutPath: path, repositoryKey }, open.map(conflict => ({ event: "closed", conflict })), null, await this.#branches(path));
+    for (const { path, fires } of cleared) {
+      if (fires.length === 0) continue;
+      this.#fire({ checkoutPath: path, repositoryKey }, fires, null, await this.#branches(path));
     }
     return await this.status(checkout.checkoutPath);
   }
@@ -532,15 +535,15 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     const [name, branches] = await Promise.all([personName(root), this.#branches(root)]);
     // Found, checked and replaced in one transaction: of two dismissals at once, one changes the conflict and fires
     // `closed`; the other finds it dismissed.
-    const dismissed = this.#db.transaction(tx => {
+    const fires = this.#db.transaction(tx => {
       const stored = readConflicts(tx, root).find(entry => entry.conflict.id === conflictId);
       if (stored === undefined) throw new MergeAssistError("not-found", `This checkout has no conflict ${conflictId}.`);
       if (stored.conflict.status !== "open") throw new MergeAssistError("invalid-state", `Conflict ${conflictId} is already dismissed.`);
       const entry = dismissedConflict(stored, name, this.#now());
       replaceConflict(tx, root, entry, this.#now());
-      return entry;
+      return this.#handed(tx, root, [{ event: "closed", conflict: entry }]);
     }, { behavior: "immediate" });
-    this.#fire(checkout, [{ event: "closed", conflict: dismissed }], null, branches);
+    this.#fire(checkout, fires, null, branches);
     return await this.status(root);
   }
 
