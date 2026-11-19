@@ -992,6 +992,42 @@ export function engineWorktreeWalks(): RepositoryWorktreeWalks {
   return new RepositoryWorktreeWalks({ treeWatch });
 }
 
+/** Answers the challenge a hook sends to learn the engine holds the daemon's token (`ENGINE_PROOF_PATH`); false for any other request. */
+function answeredProof(incoming: IncomingMessage, response: ServerResponse, accessToken: string | undefined): boolean {
+  if (incoming.method !== "POST" || incoming.url !== ENGINE_PROOF_PATH || accessToken === undefined) return false;
+  answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], accessToken, response);
+  incoming.resume();
+  return true;
+}
+
+/**
+ * Refuses, before its body is read, a request that is no event (404) or an event without the daemon's access token
+ * (401), so nothing of it reaches a runtime; false for an event the service takes.
+ */
+function refusedEventRequest(incoming: IncomingMessage, response: ServerResponse, accessToken: string | undefined): boolean {
+  if (incoming.method !== "POST" || incoming.url !== "/events") {
+    response.writeHead(404).end();
+    return true;
+  }
+  const presented = incoming.headers[DAEMON_ACCESS_HEADER];
+  if (accessToken === undefined || sameSecret(typeof presented === "string" ? presented : undefined, accessToken)) return false;
+  response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
+  return true;
+}
+
+/** An event request's body as text; it fails past the frame limit (`RERAIL_EVENT_MAX_FRAME_BYTES`). */
+async function engineRequestBody(incoming: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of incoming) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
   if (!isNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const databasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
@@ -1018,31 +1054,9 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
-    if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
-      answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], options.accessToken, response);
-      incoming.resume();
-      return;
-    }
-    if (incoming.method !== "POST" || incoming.url !== "/events") {
-      response.writeHead(404).end();
-      return;
-    }
-    const presented = incoming.headers[DAEMON_ACCESS_HEADER];
-    if (options.accessToken !== undefined && !sameSecret(typeof presented === "string" ? presented : undefined, options.accessToken)) {
-      // Refused before the body is read: nothing of the request reaches a runtime.
-      response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
-      return;
-    }
+    if (answeredProof(incoming, response, options.accessToken) || refusedEventRequest(incoming, response, options.accessToken)) return;
     try {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const chunk of incoming) {
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        size += bytes.length;
-        if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
-        chunks.push(bytes);
-      }
-      const { event, configuration } = parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      const { event, configuration } = parseEngineRequest(JSON.parse(await engineRequestBody(incoming)));
       await routeEngineEvent(event, configuration, options, routing, async deliveries =>
         await answered(response, encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] })));
     } catch (error) {
