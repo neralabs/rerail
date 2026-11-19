@@ -2,6 +2,102 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Status at `f0a2f43c9`
+
+Twenty implementation findings remain. Five of the previous 21 have verified repairs. Four more have new reproductions below.
+The case numbers in this report refer to the follow-up audit. The original audit has its own numbering.
+
+### Scope ownership after a failed native batch (74)
+
+I ran the same two local policies against the same Git commit with the Node addon's `scanRrPoliciesAsync`.
+The first policy reported one Python identifier. The second returned `.references: unknown key unknownParameter`.
+I queried the store after each call.
+
+| Native call | Published manifest memberships | Completed runs |
+| --- | ---: | ---: |
+| Supply an `AnalysisScopeRun` and finish it with `false` | 0 | 0 |
+| Supply a named `GitRevisionSource` and omit the optional run | 6 | 0 |
+
+The second call makes the failed batch's name visible to later rules that ask which scopes own cache entries.
+Stage a durable native batch under one acquisition even when the caller omits the run handle.
+Publish after all policies and required source reads succeed. An explicit handle must still let a caller group evaluations.
+Test a new name, a name with earlier successful memberships, both policy orders, and a successful batch.
+[Native batch entry point](../../../../native/src/lib.rs) · [Scope publication](../../../../native/src/content_store/analysis_scope.rs)
+
+### One report path identifies two different Git entries (75)
+
+I used `git mktree -z` to put the four filename bytes `ff 2e 70 79` and the literal text filename `[hex:ff2e7079]` in one tree.
+The native directory listing distinguished them. Reading the text filename returned its blob.
+A metadata policy reported a finding on the text filename. A Python policy in the same batch required the source inventory.
+The JSON report used `[hex:ff2e7079]` for both the finding's path and the invalid-UTF-8 failure's path.
+A consumer that joins the two arrays by path associates the failure with the readable file.
+
+Give byte paths a distinct representation in the machine-readable report. Keep the hex label for display.
+Check that a consumer can join each entry back to the raw directory listing. Cover an invalid component below a valid parent as well.
+[Inventory path reporting](../../../../native/src/git_snapshot.rs) · [Scan report](../../../../src/cli/headless-scan.ts)
+
+### Two revision expressions give different answers from Git (76 and 77)
+
+The comparisons used Git 2.50.1, the native source constructor, and a policy reading `git_revision` and `git_revision_error`.
+All refs and objects were local. I created two commits with the same committer timestamp and different IDs.
+Branch `aaa-match` pointed at commit A with message `equal audit alpha`. The checked-out `bbb-match` pointed at commit B with message `equal audit beta`.
+I configured its upstream as `origin/bbb-match` (A), its push remote as `fork`, and `fork/bbb-match` as B.
+
+| Expression | Git | Rerail rule |
+| --- | --- | --- |
+| `@{u}` | A | A |
+| `@{push}` with `push.default=simple` | Exit 128, cannot resolve a single destination | B |
+| `:/equal audit` | B | A |
+| `:/equal audit beta` | B | B |
+| `HEAD^{/equal audit}` | B | B |
+
+* **76. Push destination.** Apply Git's single-destination check to the configured push mode and tracking refs before returning a commit.
+  Exercise `simple` in triangular and single-remote configurations. Compare `current`, `upstream`, `matching` and `nothing` with Git as controls.
+* **77. Message search order.** Match Git's ordering of starting refs, HEAD, and equal-time candidates. Test identical timestamps with matching branch and tag tips, attached and detached HEAD, and a uniquely matching message.
+
+[Revision resolver](../../../../native/src/git_snapshot_revision.rs)
+
+### Earlier findings that remain open
+
+| Case | Observable problem | Repair and check |
+| --- | --- | --- |
+| 65 | A history join found the seed commit in the original checkout. It lost the row after a rename. An unrelated checkout at the old path returned the seed commit. A linked worktree at **the very same commit** also returned zero rows. | Use a durable clone identity for stored object history and retain a separate identity for worktree-local HEAD and index requests. Repeat all four queries. Old path-only records need evidence before assigning them to a clone. |
+| 23 | Restoring an older control database lost a committed directory stop. Three memberships survived. | Preserve the commit decision, store routes and acquisition cutoff through restore. Test a rollback and crashes before and after delivery. |
+| 46 | On a case-insensitive volume the filesystem accepted a selected path, then the policy missed the file under its stored spelling. | Match filesystem selections to inventory spelling. Test wrong-case names on both kinds of volume and preserve Git's exact tree names. |
+| 11 | A 32,000,001-byte binary failed a revision scan. The same working-tree scan skipped it. | Classify from a bounded blob prefix. Exercise large binary, large text and missing Git objects with the same policy. |
+| 28 | The native `readSource` returned the same empty result for an absent path and an unavailable tracked blob. It also drops the size-limit error. | Give consumers distinct read outcomes. Remove and restore a blob on the same view and check the byte limit. |
+| 47 | A historical path report groups excluded entry modes with missing names. | Preserve mode and reason. Request a symlink, a gitlink and a missing path together. |
+| 44 | A first scan cannot assign an identity to a readable clone whose Git directory is read-only. | Record an initial identity in the Rerail home when needed. Check a restart and a later writable scan. |
+| 45 | A bare repository and its linked checkout receive different clone IDs. | Resolve Git's common directory in both cases. Test discovery in both orders and reconcile earlier IDs. |
+| 67 | Three invalid revisions created three routes and three generations. Reusing one name in another store made deletion ambiguous. | Resolve the revision before acquiring the scope. Retire an aborted acquisition's unused route while preserving concurrent acquisitions. |
+| 68 | One parent stop removed 30 directory runs and left 30 generation rows. | Compact generations once the stop cutoff fences old writers. Test a pending writer, a new watch and repeated one-time directories. |
+| 61 | A query for one scope read and hashed 65 records after 64 unrelated publications. | Add a scope-keyed request and cache observation. Keep enumeration available. Check a cache hit after an unrelated scope changes. |
+| 17 | A failed probe of a legacy store retries after five seconds without a stored reason. | Record the cause and retry count. Use capped backoff. After recovery, apply the original cutoff. |
+| 42 | A permanently removed store has no maintenance retirement operation. | Retire its route after resolving ownership and outstanding deliveries. Check that an offline store can return. |
+| 18 | A long-lived view keeps decoded entries from every visited subtree. | Bound retained decoded bytes and measure repeated disjoint selections, including one tree larger than the bound. |
+| 52 | Repeated inspection of a Git-backed policy reads and lowers its include graph again. | Persist the compiled program by policy blob, resolved includes and engine version. Measure an unchanged restart and a changed include. |
+| 53 | In the paired measurement, the median inspection took 1.677 ms with a fresh catalog and 0.073 ms with the existing catalog. | Measure store opening, validation and query time separately. Test alternating stores and collection before changing the reuse path. |
+
+### Repairs checked in this pass
+
+| Case | Commit | Evidence |
+| --- | --- | --- |
+| 66 | `769ee8124` | Switching rule libraries now selects the requested include and diagnostic in both orders, including a fresh process with a warm store. An already inspected policy retains its original include. |
+| 73 | `bee6fbc44` | A collector rejects a missing or replacement lock after its directory moves. Restoring the original directory still prevents collection until its reader releases the shared lease. |
+| 70 | `323273c75` | A warning before publication still prevents publication. A late worker warning cannot change the committed result returned by a second finish. |
+| 69 | `cd7eac26a` | With zero and 1,000 unrelated scopes, the stop trigger executed 208 and 209 SQLite VM instructions. Before indexing it took 141 and 5,142 for the same deletion. |
+| 71 | `f0a2f43c9` | A store produced by the older addon had five manifest memberships and zero recorded runs. The upgraded rule found its owner. A second fixture tested directory and named owners, pending writes, and retraction on deletion. |
+
+### Verification gaps
+
+* The same-size rewrite with restored modification time still needs an NTFS run. Compare warm and cold diagnostics for the damaged and restored object.
+* Git message selectors still need a comparison with the installed Git for Windows. Compare the returned IDs and rejections.
+* The macOS volume rejected the invalid-byte directory name during setup. On a byte-preserving Unix volume, publish through two directory aliases and check that deleting one leaves the other's ownership intact.
+* The first checkout scan again exceeded its five-second test timeout after rebuilding the addon. Measure native loading and first scan execution separately in fresh processes.
+
+The repeated headless, CLI usage and Git suites passed all 160 tests with the same addon and timeout. The first run passed 159.
+The store gate passed 263 tests and skipped four. Six cache architecture and combined-program tests and four standalone revision CLI tests passed. TypeScript checking passed.
+
 ## Status at `183e7f6b1`
 
 Twenty-one implementation findings remain. Eight have new reproductions below. Thirteen have earlier reproductions or measurements and still have open repairs.
