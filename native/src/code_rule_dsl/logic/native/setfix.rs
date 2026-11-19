@@ -8400,6 +8400,9 @@ pub mod posted_tests {
         let mut batches = Vec::new();
         assert!(r.each_live_batch(1, 9, |b| batches.push(b.to_vec())).is_some());
         assert_eq!(batches, [vec![2, 4, 5, 0]], "rows 1.. in one batch, bounded by its rows");
+        // Its rows read, it still has no frame digest of its own: a view is named by its reads (`held_digest`).
+        let cells = crate::code_rule_dsl::logic::plan::Cells::plain(2);
+        assert_eq!(crate::code_rule_dsl::logic::plan::corpus::retain::held_digest(&cells, &r), None, "a view has no rows' digest");
     }
 
     /// Statistics read from a kept relation's postings are those measured from its rows, with dead rows left out.

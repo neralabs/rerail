@@ -3265,7 +3265,7 @@ pub(in crate::code_rule_dsl) struct Handed {
 
 impl Handed {
     /// `held`'s frame as `write_frames` makes one written whole, encoded into the part's write (`placer`, which
-    /// `write_frames` queues), a view's read through it. `was`: its stored frame's digest.
+    /// `write_frames` queues); `None` for a relation of no rows of its own (a view, `held_digest`). `was`: its stored frame's digest.
     /// Its kept entry (decision 0417) is queued here, its rows lent to the store's writer until packed; the part's
     /// write puts its reads (`kept_reads`).
     pub(in crate::code_rule_dsl) fn of(store: &ContentStore, prog: &Placed, domains: &lower::Domains, rel: &str, held: &Arc<InRel>, was_frames: Option<&InFrames>, placer: &crate::content_store::FramePlacer) -> Option<Handed> {
@@ -3339,8 +3339,15 @@ mod kept_stats;
 pub mod frame_tests;
 
 /// The frame digest of `held`'s live rows (`rows_digest`), read where they lie a batch at a time: no copy of the
-/// relation (it was copied whole for each frame written, 460 MB of a 300-file run's peak); a view's through it.
+/// relation (it was copied whole for each frame written, 460 MB of a 300-file run's peak). `None` for a view: a
+/// relation over a source (a kept relation bound in place) is named by its reads' digests (`unkept_digest`), not its
+/// rows', so derived again from the same reads its readers' frames stay current. Given its rows' digest, every warm
+/// ep2 run after 4e3d12466 handed off and re-kept the relations bound in place, and lost findings: 462 rows of 1,334
+/// differed from the cold run's in the first, 1,140 in the second (0 at f04af745d).
 pub(in crate::code_rule_dsl) fn held_digest(cells: &Cells, held: &InRel) -> Option<u64> {
+    if held.view_kind().is_some() {
+        return None;
+    }
     Some(cells.digest_batches(held.len(), held.rows(), &|lo, hi, f| {
         held.each_live_batch(lo, hi, |rows| f(rows));
     }))
