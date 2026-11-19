@@ -11,6 +11,12 @@ interface ToolCallWindow extends RunningCall {
   readonly ended: number;
 }
 
+/** The calls that ended once `after` calls had ended, up to the `through`th (`ToolCallWindows.ends`). */
+export interface EndedCalls {
+  readonly after: number;
+  readonly through: number;
+}
+
 /**
  * The most finished calls a session keeps. Its walks drop the calls they have answered for (`answered`); one whose walks
  * never finish cleanly would otherwise keep every call for the session's life. Past this the oldest go, and a change
@@ -67,10 +73,12 @@ export class ToolCallWindows {
   /**
    * A walk that began once `ends` calls had ended (`ends` as it began) has seen every write of those calls: they go. A
    * call that ended since stays, though it ended before the walk read the clock: the walk may have left what it was
-   * writing to the walk after it (`commandSince`), which takes that write as the call's.
+   * writing to the walk after it (`commandSince`), which takes that write as the call's. So do the calls in `held`: they
+   * may have written a file the walk could not read.
    */
-  answered(ends: number): void {
-    this.#finished = this.#finished.filter(window => window.ended > ends);
+  answered(ends: number, held: readonly EndedCalls[] = []): void {
+    const kept = (ended: number): boolean => ended > ends || held.some(calls => ended > calls.after && ended <= calls.through);
+    this.#finished = this.#finished.filter(window => kept(window.ended));
   }
 
   /** Whether a call ran at some point from `from` to `to`; `from` equal to `to` asks about one stamp. */
