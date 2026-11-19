@@ -1,4 +1,4 @@
-//! The checkout this engine runs from: where it reads its own `.rr` files as it runs (the builtin
+//! The checkout this engine runs from: where it reads its own `.rerail` files as it runs (the builtin
 //! typing programs under `native/src/code_rule_dsl/typing/programs`, the rule library under
 //! `docs/rule-syntax/lib`).
 //!
@@ -36,7 +36,7 @@ fn find() -> Option<PathBuf> {
     }
     let starts = [image(), std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from), std::env::current_dir().ok()];
     starts.into_iter().flatten().find_map(|start| {
-        let start = start.canonicalize().unwrap_or(start);
+        let start = dunce::canonicalize(&start).unwrap_or(start);
         start.ancestors().find(|dir| is_root(dir)).map(Path::to_owned)
     })
 }
@@ -150,7 +150,7 @@ mod tests {
         let found = super::loaded_from(super::image as *const u8 as usize).expect("the image");
         let took = t.elapsed();
         let exe = std::env::current_exe().unwrap();
-        assert_eq!(found.canonicalize().unwrap(), exe.canonicalize().unwrap());
+        assert_eq!(dunce::canonicalize(&found).unwrap(), dunce::canonicalize(&exe).unwrap());
         assert!(took < std::time::Duration::from_millis(5), "{took:?}");
         assert_eq!(super::loaded_from(0), None, "an address no image holds");
     }

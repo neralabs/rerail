@@ -146,7 +146,7 @@ pub fn demand_negated_tests(prog: Program) -> (Program, Vec<String>) {
         let Some(Term::Var(key)) = rule.head.args.first() else { return false };
         rule.body.iter().any(|l| match l {
             Literal::Nearest { n, .. } => n == key,
-            Literal::Atom(a) => !a.neg && a.rel.starts_with(super::front::AXIS) && a.args.first() == Some(&Term::Var(key.clone().into())),
+            Literal::Atom(a) => !a.neg && a.rel.starts_with(super::front::AXIS) && a.args.first() == Some(&Term::Var(key.clone())),
             _ => false,
         })
     };
@@ -984,8 +984,8 @@ impl Adorn<'_> {
             rules.push(Rule { head: r.head, body: nb.into() });
         }
         let names: BTreeSet<String> = gates.iter().map(|(n, _)| n.clone()).collect();
-        for i in 0..gates.len() {
-            let (done, g) = gates[i].clone();
+        for gate in &mut gates {
+            let (done, g) = gate.clone();
             if let Some(src) = &g.src {
                 let cols = self.prog.decls[src.as_str()].clone();
                 let vs: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("_g{i}").into())).collect();
@@ -1014,8 +1014,8 @@ impl Adorn<'_> {
                 .filter(|rel| names.contains((*rel).as_str()) && **rel != done)
                 .map(|rel| rel.to_string())
                 .collect();
-            gates[i].1.quiet = quiet.into_iter().collect();
-            gates[i].1.deps = deps.into_iter().collect();
+            gate.1.quiet = quiet.into_iter().collect();
+            gate.1.deps = deps.into_iter().collect();
         }
         self.prog.rules = rules;
         self.prog.gates = gates;

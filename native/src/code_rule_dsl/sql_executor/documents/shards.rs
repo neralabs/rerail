@@ -348,8 +348,8 @@ impl Source for Family {
             let mut rows = vec![];
             for &v in values {
                 let encoded = if location { v >> 32 } else { v };
-                if let Ok(key) = u32::try_from(encoded) {
-                    if let Some((p, base)) = self.get(key) {
+                if let Ok(key) = u32::try_from(encoded)
+                    && let Some((p, base)) = self.get(key) {
                         rows.extend(
                             p.source
                                 .lookup(c, &[v])?
@@ -357,7 +357,6 @@ impl Source for Family {
                                 .map(|r| self.probe(key, p, base, r)),
                         )
                     }
-                }
             }
             Some(rows)
         } else {

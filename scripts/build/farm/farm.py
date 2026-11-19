@@ -39,7 +39,9 @@ if sys.argv and os.path.basename(sys.argv[0]) == "quiet-run" and os.path.isfile(
 SCCACHE_CONF = os.path.join(CONFIG, "sccache.toml")
 HOSTS = os.path.join(CONFIG, "hosts.json")
 PORT = "4227"
-CACHE_SIZE_GB = 60
+# The cache's size; a machine with less disk to spare sets RERAIL_FARM_CACHE_GB (read when a new
+# checkout joins and the configuration is written).
+CACHE_SIZE_GB = int(os.environ.get("RERAIL_FARM_CACHE_GB") or 60)
 # A workspace crate that missed this recently is being edited here: it compiles incrementally, uncached.
 HOT_SECONDS = 2 * 3600
 # A host nobody has touched for this long is idle: it takes a compile per core.
@@ -225,10 +227,11 @@ def remote_eligible(args):
 
 
 def checkout_of(path):
-    """The checkout (worktree) holding `path`: the nearest directory above it with a `.git`."""
+    """The checkout (worktree) holding `path`: the nearest directory above it with a `.git`, or that is
+    Rerail's root (a copy synced without its `.git`, as on the build boxes)."""
     path = os.path.abspath(path)
     while path != "/":
-        if os.path.exists(os.path.join(path, ".git")):
+        if os.path.exists(os.path.join(path, ".git")) or is_rerail(path):
             return path
         path = os.path.dirname(path)
     return None
@@ -280,7 +283,10 @@ class Lock:
 
 
 def sccache_env(env):
+    # Either one in the environment replaces the configuration's whole disk cache (its directory
+    # becomes sccache's default, another server's): the farm's cache is the configuration's.
     env.pop("SCCACHE_DIR", None)
+    env.pop("SCCACHE_CACHE_SIZE", None)
     env.update(
         SCCACHE_SERVER_PORT=PORT,
         SCCACHE_CONF=SCCACHE_CONF,
@@ -479,7 +485,7 @@ def variant_hint(plus, minus):
         return ("build the CLI with the tests' features: `nice -n 19 cargo build --bin rerail-engine --features "
                 "test-hooks` (AGENTS.md)")
     if "default" in changed:
-        return ("a crate's `default` differs from what the engine gives it: scripts/check/check-dev-features.py names "
+        return ("a crate's `default` differs from what the engine gives it: scripts/check/check_dev_features.py names "
                 "the manifest to fix")
     return (f"a build with other features ({', '.join(sorted(changed))}) compiles every crate below again: run it on "
             "a farm host (scripts/dev/test-remote), not in this worktree's target directory")
@@ -735,6 +741,12 @@ def wrapper(rustc, args):
         if os.path.exists(plain):
             os.execv(plain, [plain, rustc] + args)
         os.execv(rustc, [rustc] + args)
+    # Linux: a program cargo runs (a build script, a binary) is compiled here, never written by the
+    # farm's sccache. Its server writes a hit's files while its other threads start compilers, each of
+    # which holds the file open until it execs, and running the program then fails with "Text file
+    # busy" (ETXTBSY; twice in an hour on the build boxes, 2026-11-18). macOS has no such error.
+    if sys.platform != "darwin" and "bin" in ",".join(values(args, "--crate-type")).split(","):
+        os.execv(rustc, [rustc] + args)
     # Not cargo's probes (`--print`, crate `___`): cargo keeps their output, a failure included, in
     # `target/.rustc_info.json`, and would replay a refusal after its cause was gone.
     if crate != "___" and not any(a == "--print" or a.startswith("--print=") for a in args):
@@ -804,7 +816,14 @@ def cc(argv0, args):
     """`farm-cc` and `farm-c++`, the C and C++ compilers of build scripts (`CC`, `CXX`): clang through
     the farm's sccache, so a build script's C (SQLite, tree-sitter's grammars, simdjson) is compiled
     once for every target directory and worktree, not once per target directory."""
-    compiler = "/usr/bin/clang++" if os.path.basename(argv0).endswith("++") else "/usr/bin/clang"
+    if sys.platform == "darwin":
+        compiler = "/usr/bin/clang++" if os.path.basename(argv0).endswith("++") else "/usr/bin/clang"
+    else:
+        # What the `cc` crate runs without `CC`: the system's compiler for this machine's target;
+        # clang, which cross-compiles, for another (one with no `CC_<target>` or `TARGET_CC`: wasm).
+        cross = os.environ.get("TARGET", os.environ.get("HOST")) != os.environ.get("HOST")
+        cxx = os.path.basename(argv0).endswith("++")
+        compiler = ("/usr/bin/clang++" if cxx else "/usr/bin/clang") if cross else ("/usr/bin/c++" if cxx else "/usr/bin/cc")
     if not os.path.exists(SCCACHE):
         os.execv(compiler, [compiler] + args)
     checkout = checkout_of(os.environ.get("OUT_DIR") or os.getcwd()) or checkout_of(os.getcwd())

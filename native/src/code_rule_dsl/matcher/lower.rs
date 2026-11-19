@@ -8,7 +8,7 @@ use super::relation::StopBy;
 use super::{AstMatcher, GrammarMatcher};
 use ast_grep_core::MatchStrictness;
 use ast_grep_core::matcher::{Matcher, Pattern};
-use regex::Regex;
+use crate::code_rule_dsl::regexes::Regex;
 use std::sync::Arc;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -658,6 +658,9 @@ impl Lowering {
     fn count(&mut self, count: &super::count::Count, shares: bool) -> Result<MatchTree, Unsupported> {
         if count.binding.is_some() {
             return Err(Unsupported("count as"));
+        }
+        if count.gap.is_some() {
+            return Err(Unsupported("count of implied tokens"));
         }
         let (axis, related, stop) = match &count.relation {
             AstMatcher::Inside(related, stop) => (Axis::Inside, related, stop),

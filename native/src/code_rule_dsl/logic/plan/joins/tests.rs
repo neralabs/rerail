@@ -755,12 +755,12 @@ fn a_maintenance_rule_starts_from_its_source_rules_order() {
     let src_id = placed.id(0);
     let mut b = Builder::under(&placed.v);
     let (x, y) = (T::Var("x"), T::Var("y"));
-    b.rule().head("h__del", &[x.clone(), y.clone()]).atom("q", &[y.clone()]).atom("e__minus", &[x.clone(), y.clone()]).not("h__old", &[x.clone(), y.clone()]).source(src_id).finish().unwrap();
+    b.rule().head("h__del", &[x.clone(), y.clone()]).atom("q", std::slice::from_ref(&y)).atom("e__minus", &[x.clone(), y.clone()]).not("h__old", &[x.clone(), y.clone()]).source(src_id).finish().unwrap();
     // A rule written with no source has no origin.
-    b.rule().head("h__ins", &[x.clone(), y.clone()]).atom("e__plus", &[x.clone(), y.clone()]).atom("q", &[y.clone()]).finish().unwrap();
+    b.rule().head("h__ins", &[x.clone(), y.clone()]).atom("e__plus", &[x.clone(), y.clone()]).atom("q", std::slice::from_ref(&y)).finish().unwrap();
     // An insert of `g`'s first position, its delta `a__plus`.
     let z = T::Var("z");
-    b.rule().head("g__ins", &[x.clone(), z.clone()]).atom("a__plus", &[x.clone()]).atom("e", &[x.clone(), y.clone()]).atom("c", &[y.clone(), z.clone()]).source(placed.id(1)).finish().unwrap();
+    b.rule().head("g__ins", &[x.clone(), z.clone()]).atom("a__plus", std::slice::from_ref(&x)).atom("e", &[x.clone(), y.clone()]).atom("c", &[y.clone(), z.clone()]).source(placed.id(1)).finish().unwrap();
     let (form, _) = b.finish().unwrap();
     let mut vs = Versions::of_placed(placed);
     let k = vs.push(Placed::whole(form));

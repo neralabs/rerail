@@ -160,10 +160,9 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
             if !(dynamic || function.kind() == "identifier" && function.text() == "require") {
                 continue;
             }
-            let first = call.field("arguments").and_then(|arguments| {
-                arguments
-                    .first_code()
-            });
+            let first = call
+                .field("arguments")
+                .and_then(|arguments| arguments.first_code());
             specifiers.extend(
                 first
                     .filter(|first| first.kind() == "string")
@@ -177,12 +176,10 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
 
 /// A directive's text: an expression statement that is only a string literal (comments aside).
 fn directive<D: Doc>(statement: &Node<'_, D>) -> Option<String> {
-    let mut named = statement
-        .named_code();
+    let mut named = statement.named_code();
     let string = named.next().filter(|child| child.kind() == "string")?;
     named.next().is_none().then(|| literal(&string)).flatten()
 }
-
 
 /// A string literal's text between its quotes.
 fn literal<D: Doc>(string: &Node<'_, D>) -> Option<String> {
@@ -742,7 +739,7 @@ pub(crate) fn summarize_bounded(path: &str, source: &str) -> Option<Summary> {
 /// canonical path lies below the root's, so a symlink on the way leads nowhere outside the
 /// workspace.
 pub fn config_on_disk(root: &Path, folder: &str) -> Config {
-    let Ok(canonical_root) = root.canonicalize() else {
+    let Ok(canonical_root) = dunce::canonicalize(root) else {
         return Config::default();
     };
     let read = |path: &str| {
@@ -759,7 +756,7 @@ pub fn config_on_disk(root: &Path, folder: &str) -> Config {
         if !metadata.is_file() || metadata.len() > MAX_SOURCE_BYTES {
             return None;
         }
-        let file = file.canonicalize().ok()?;
+        let file = dunce::canonicalize(file).ok()?;
         file.starts_with(&canonical_root)
             .then(|| std::fs::read_to_string(file).ok())
             .flatten()

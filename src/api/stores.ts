@@ -10,6 +10,7 @@ import { workspaceStartState, startStateReader } from "../runtime/repository-sta
 import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
+import { createMergeAssistService, type MergeAssistRuntime, type MergeAssistService } from "../runtime/merge-assist/service.js";
 import type { RerailApiStores } from "./operation.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
 
@@ -19,6 +20,10 @@ export interface DatabaseApiStoresOptions {
   readonly origin: () => string;
   /** The coding agent check set-up provides (`codingAgentStates`); the API answers 503 without it. */
   readonly codingAgents?: () => Promise<CodingAgentState[]>;
+  /** The daemon's engine service, which starts opening again a session it suspended (`RerailApiStores.resumeSession`). */
+  readonly resumeSession?: (sessionId: string) => void;
+  /** The Merge Assist service sessions share (the runtime's); without one, a service over this database. */
+  readonly mergeAssist?: MergeAssistService;
 }
 
 /**
@@ -34,8 +39,11 @@ export class DatabaseApiStores implements RerailApiStores {
   #preferences: SqlitePresentationPreferenceStore | undefined;
   #auditControls: SqliteAuditControlStore | undefined;
   #database: RerailDatabase | undefined;
-  #startStates: ((workspace: string) => RepositoryStartState) | undefined;
+  #startStates: ((workspace: string, spelling?: string) => RepositoryStartState) | undefined;
   #checkouts: ((workspace: string) => CheckoutContext | undefined) | undefined;
+  #mergeAssist: MergeAssistService | undefined;
+  /** The Merge Assist this instance made itself (none was given), which {@link close} stops. */
+  #ownMergeAssist: MergeAssistRuntime | undefined;
   /** Writes through this instance; `PRAGMA data_version` only counts other connections' commits. */
   #localRevision = 0;
   /** {@link installedAt} once known; it never changes. */
@@ -56,6 +64,10 @@ export class DatabaseApiStores implements RerailApiStores {
 
   codingAgents(): Promise<CodingAgentState[]> | undefined {
     return this.#options.codingAgents?.();
+  }
+
+  resumeSession(sessionId: string): void {
+    this.#options.resumeSession?.(sessionId);
   }
 
   dashboardOrigin(): string {
@@ -86,6 +98,17 @@ export class DatabaseApiStores implements RerailApiStores {
     return loadRuleCatalog();
   }
 
+  mergeAssist(): MergeAssistService {
+    if (this.#mergeAssist !== undefined) return this.#mergeAssist;
+    if (this.#options.mergeAssist !== undefined) {
+      this.#mergeAssist = this.#options.mergeAssist;
+      return this.#mergeAssist;
+    }
+    this.#ownMergeAssist = createMergeAssistService({ database: this.database() });
+    this.#mergeAssist = this.#ownMergeAssist;
+    return this.#mergeAssist;
+  }
+
   checkouts(): (workspace: string) => CheckoutContext | undefined {
     // Nothing is recorded before the database exists, and a passive lookup must not create it.
     if (this.#checkouts === undefined && !existsSync(this.#path)) return () => undefined;
@@ -113,14 +136,16 @@ export class DatabaseApiStores implements RerailApiStores {
     this.#localRevision += 1;
   }
 
-  repositoryState(workspace: string): RepositoryStartState {
+  repositoryState(workspace: string, spelling?: string): RepositoryStartState {
     // A daemon with no sessions yet must not create the database to answer that nothing is started.
     if (!existsSync(this.#path)) return workspaceStartState(workspace, this.#path);
     this.#startStates ??= startStateReader(this.database());
-    return this.#startStates(workspace);
+    return this.#startStates(workspace, spelling);
   }
 
   close(): void {
+    // Its hook commands get SIGTERM and its late answers record nothing, before the database closes under them.
+    void this.#ownMergeAssist?.stop(0);
     this.reader.close();
     this.#sessionStore?.close();
     this.#auditControls?.close();

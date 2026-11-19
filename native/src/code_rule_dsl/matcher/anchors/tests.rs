@@ -139,7 +139,6 @@ fn tape_doc(source: &str, language: GrammarDialect) -> AstGrep<TapeDoc> {
     AstGrep::doc(TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap())
 }
 
-
 /// Each matcher (named for its failures) selects, from the anchor index of the restored tape, the
 /// nodes a full walk of that tape matches, visiting each stored node once. A tape is named-only
 /// (RER-131), and so is every tree the engine reads: tree-sitter's own tree is no oracle here.
@@ -512,8 +511,9 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             }
         }
     }
-    // The t31 rewrites ask the operation a token stood for: six more queries (RER-131).
-    assert_eq!(queries.len(), 1674, "pinned catalog query inventory");
+    // The t31 rewrites ask the operation a token stood for: six more queries (RER-131); main's #740 adds four and
+    // #743 one.
+    assert_eq!(queries.len(), 1680, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (
@@ -553,6 +553,11 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             "vue",
             GrammarDialect::TypeScript,
             "function route(a: any, b: any, c: any): number {\n  if (a) return 1;\n  if (b) return 2;\n  if (c) return 3;\n  for (const x of a) { if (x) return 4; }\n  while (b) { if (c) break; }\n  return a && b ? 5 : 6;\n}\n",
+        ),
+        (
+            "java",
+            GrammarDialect::Java,
+            "class Router {\n    int route(boolean a, boolean b, boolean c, int[] v) {\n        if (a) return 1;\n        if (b) return 2;\n        if (c) return 3;\n        for (int x : v) { if (x > 0) return 4; }\n        return a && b ? 5 : 6;\n    }\n}\n",
         ),
     ];
     for (query, _) in &queries {
@@ -772,7 +777,11 @@ where
             for ordinal in 0..index.len() {
                 let found = matcher.match_node(index.node(ordinal)).is_some();
                 assert!(
-                    if plan.exact { selection.contains(ordinal) == found } else { !found || selection.contains(ordinal) },
+                    if plan.exact {
+                        selection.contains(ordinal) == found
+                    } else {
+                        !found || selection.contains(ordinal)
+                    },
                     "{source:?} {rule} node {ordinal} {:?}",
                     index.node(ordinal).range()
                 );
@@ -829,7 +838,8 @@ fn sibling_projections_are_exact_in_both_blade_documents() {
     ];
     for source in sources {
         let grammar = Grammar::new(GrammarDialect::Blade).unwrap();
-        let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false).unwrap();
+        let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false)
+            .unwrap();
         let host =
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
         let guests = host.guests().unwrap();
@@ -848,7 +858,12 @@ fn sibling_projections_are_exact_in_both_blade_documents() {
 fn tape_sibling_walks_match_native_around_zero_width_nodes() {
     type Walks = Vec<[Vec<Range<usize>>; 4]>;
     fn tape_walks<D: Doc>(root: &AstGrep<D>) -> Walks {
-        let ranges = |nodes: Vec<Node<'_, D>>| nodes.into_iter().map(|node| node.range()).collect::<Vec<_>>();
+        let ranges = |nodes: Vec<Node<'_, D>>| {
+            nodes
+                .into_iter()
+                .map(|node| node.range())
+                .collect::<Vec<_>>()
+        };
         root.root()
             .dfs()
             .map(|node| {
@@ -861,9 +876,24 @@ fn tape_sibling_walks_match_native_around_zero_width_nodes() {
             })
             .collect()
     }
-    fn stored_walks<D: Doc>(root: &AstGrep<D>, stored: &std::collections::BTreeSet<(String, usize, usize)>) -> Walks {
-        let kept = |node: &Node<'_, D>| stored.contains(&(node.kind().to_string(), node.range().start, node.range().end));
-        let ranges = |nodes: Vec<Node<'_, D>>| nodes.into_iter().filter(|node| kept(node)).map(|node| node.range()).collect::<Vec<_>>();
+    fn stored_walks<D: Doc>(
+        root: &AstGrep<D>,
+        stored: &std::collections::BTreeSet<(String, usize, usize)>,
+    ) -> Walks {
+        let kept = |node: &Node<'_, D>| {
+            stored.contains(&(
+                node.kind().to_string(),
+                node.range().start,
+                node.range().end,
+            ))
+        };
+        let ranges = |nodes: Vec<Node<'_, D>>| {
+            nodes
+                .into_iter()
+                .filter(|node| kept(node))
+                .map(|node| node.range())
+                .collect::<Vec<_>>()
+        };
         root.root()
             .dfs()
             .filter(|node| kept(node))
@@ -878,7 +908,12 @@ fn tape_sibling_walks_match_native_around_zero_width_nodes() {
                     }
                     at.map(|node| node.range()).into_iter().collect()
                 };
-                [step(node.next(), true), step(node.prev(), false), next_all, prev_all]
+                [
+                    step(node.next(), true),
+                    step(node.prev(), false),
+                    next_all,
+                    prev_all,
+                ]
             })
             .collect()
     }
@@ -897,8 +932,22 @@ fn tape_sibling_walks_match_native_around_zero_width_nodes() {
         let tape = AstGrep::doc(
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(),
         );
-        let stored = tape.root().dfs().map(|node| (node.kind().to_string(), node.range().start, node.range().end)).collect();
-        assert_eq!(stored_walks(&AstGrep::doc(native), &stored), tape_walks(&tape), "{source:?}");
+        let stored = tape
+            .root()
+            .dfs()
+            .map(|node| {
+                (
+                    node.kind().to_string(),
+                    node.range().start,
+                    node.range().end,
+                )
+            })
+            .collect();
+        assert_eq!(
+            stored_walks(&AstGrep::doc(native), &stored),
+            tape_walks(&tape),
+            "{source:?}"
+        );
     }
 }
 
@@ -915,7 +964,9 @@ fn zero_width_end_sibling_selection_is_linear_in_the_run() {
     let parsed = StrDoc::new(&source, GrammarDialect::TypeScript);
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(parsed.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    let native = AstGrep::doc(TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap());
+    let native = AstGrep::doc(
+        TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap(),
+    );
     let mut rules = Vec::new();
     for relation in ["precedes", "follows"] {
         for target in ["^\\{$", "^$"] {
@@ -1229,10 +1280,7 @@ fn utility_diamonds_select_in_linear_visits() {
         linear_walk, reset_walks, walks,
     };
     let bound = linear_walk(DIAMOND_DEPTH);
-    let native = tape_doc(
-        "foo(x);\nbar(y, z);\n",
-        GrammarDialect::TypeScript,
-    );
+    let native = tape_doc("foo(x);\nbar(y, z);\n", GrammarDialect::TypeScript);
     for compiled in [
         compiled_utility_diamonds(DIAMOND_DEPTH),
         compiled_parameterized_utility_diamonds(DIAMOND_DEPTH),

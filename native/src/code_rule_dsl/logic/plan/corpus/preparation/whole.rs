@@ -17,7 +17,7 @@ fn edit_misses(cx: &Cx<'_>, last: &Last<'_>, heads: impl Fn(&str) -> bool) -> bo
         && last.delta.added.iter().all(|&id| v.rule(id).is_some_and(|r| !of(v, r)))
 }
 
-/// core.rr's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
+/// core.rerail's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
 /// `projections`) and inputs in one that does not: once one part projects them, they are no inputs of the combined
 /// program. Both would give `kind` two domains.
 #[derive(Default)]

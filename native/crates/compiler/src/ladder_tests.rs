@@ -8,7 +8,7 @@ use crate::ladder::*;
 /// and why the reference refused each sentence it refused.
 #[test]
 fn every_step_parses_as_the_reference() {
-    let differ = check_ladder(&steps_in(DIR), b"<>();=#^ \nav9~,eE-{}", &[], &[], &|_, _, _, _| None);
+    let differ = check_ladder(&steps_in(&dir()), b"<>();=#^ \nav9~,eE-{}", &[], &[], &|_, _, _, _| None);
     assert!(differ.is_empty(), "{} steps differ:\n{}", differ.len(), differ.join("\n"));
 }
 

@@ -403,11 +403,10 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
         let var_type = |var: &str| -> Option<String> {
             // The own demand's atom first: its relation is declared only once demanded (`split_with`), so a type is
             // taken from it only where the program declares it already.
-            if let Some((_, Some((rel, c)))) = own_atom.iter().find(|(v, _)| v.as_deref() == Some(var)) {
-                if let Some(t) = f.v.decl_of(rel).and_then(|d| d.cols().nth(*c)).map(|(_, t)| f.v.text(t).to_owned()) {
+            if let Some((_, Some((rel, c)))) = own_atom.iter().find(|(v, _)| v.as_deref() == Some(var))
+                && let Some(t) = f.v.decl_of(rel).and_then(|d| d.cols().nth(*c)).map(|(_, t)| f.v.text(t).to_owned()) {
                     return Some(t);
                 }
-            }
             kept.iter().find_map(|&i| match r.lits[i].view() {
                 Lit::Atom(a) if !a.neg() => {
                     let c = a.args().position(|t| t.var().is_some_and(|s| r.name(s) == var))?;

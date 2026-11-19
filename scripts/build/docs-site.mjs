@@ -70,7 +70,7 @@ const SCHEMA = "rerail.policy.v1.schema.json";
 
 /**
  * The paths under `docs/` the site leaves out, a trailing `/` naming a directory: maintainers' engine design notes,
- * spikes and measurement journals, and the rule-syntax workbench (the engine compiles docs/rule-syntax/lib/core.rr, so
+ * spikes and measurement journals, and the rule-syntax workbench (the engine compiles docs/rule-syntax/lib/core.rerail, so
  * it stays where it is). Each must exist, so the list cannot outlive what it names.
  */
 const UNPUBLISHED = [

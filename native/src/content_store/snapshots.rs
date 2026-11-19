@@ -14,6 +14,8 @@ use super::{
     STRING_PATH_COMPONENT, SnapshotFilePublication, SnapshotId, SourceId, StoreError, StoreResult,
     StoredFile, TapeId, WorkspaceId, WorkspaceRegistration,
 };
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 #[cfg(any(test, feature = "test-hooks"))]
@@ -360,7 +362,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = intern_path(&transaction, path)?;
         transaction.execute_cached(
             "INSERT INTO snapshot_files(snapshot_id,path_id,source_id,tape_id) VALUES (?1,?2,?3,?4)\

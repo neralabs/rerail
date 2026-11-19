@@ -255,6 +255,11 @@ mod compile {
         #[allow(unused_imports)]
         use std::sync::{Arc, Weak};
     }
+    pub mod shared {
+        pub use rerail_w::code_rule_dsl::compile::shared::*;
+        #[cfg(all(test, not(windows)))]
+        pub mod tests;
+    }
     pub mod order {
         pub use rerail_w::code_rule_dsl::compile::order::*;
         #[cfg(test)]
@@ -1578,7 +1583,7 @@ mod literal {
 #[path = "logic"]
 pub(crate) mod logic {
     pub use rerail_logic::code_rule_dsl::logic::*;
-    // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+    // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
     pub mod program_image {
         // Its items, beside its tests here; the engine reads it through `logic`'s own re-export.
         #[allow(unused_imports)]
@@ -1593,7 +1598,7 @@ pub(crate) mod logic {
         #[cfg(test)]
         pub mod tests;
     }
-    // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+    // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
     pub mod liveness {
         #[cfg(test)]
         pub use rerail_logic::code_rule_dsl::logic::liveness::*;
@@ -1737,14 +1742,14 @@ pub(crate) mod logic {
     #[path = "plan"]
     pub mod plan {
         pub use rerail_logic::code_rule_dsl::logic::plan::*;
-        // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+        // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
         pub mod compose {
             #[cfg(test)]
             pub use rerail_logic::code_rule_dsl::logic::plan::compose::*;
             #[cfg(test)]
             pub mod engine_tests;
         }
-        // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+        // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
         pub mod native_demand {
             #[cfg(test)]
             pub mod engine_tests;
@@ -1766,19 +1771,19 @@ pub(crate) mod logic {
             pub mod cross_views_tests;
             #[cfg(test)]
             pub mod cache_tests;
-            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
             pub mod phase0 {
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::phase0::*;
                 #[cfg(test)]
                 pub mod tests;
             }
-            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
             pub mod phases {
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::phases::*;
                 #[cfg(test)]
                 pub mod tests;
             }
-            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
             pub mod prepared {
                 #[cfg(test)]
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::prepared::*;
@@ -1787,14 +1792,14 @@ pub(crate) mod logic {
                 #[cfg(test)]
                 pub mod identity_tests;
             }
-            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
             pub mod reuse {
                 #[cfg(test)]
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::reuse::*;
                 #[cfg(test)]
                 pub mod tests;
             }
-            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
             pub mod session {
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::session::*;
                 #[cfg(test)]
@@ -1883,7 +1888,7 @@ pub(crate) mod logic {
         // The profile's account of every thread's CPU, under its spans and between them (3af4e92a3, 2f9181e59).
         #[cfg(test)]
         mod threads_tests;
-        // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+        // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
         pub mod report {
             pub use rerail_logic::code_rule_dsl::logic::profile::report::*;
             #[cfg(test)]
@@ -3462,6 +3467,13 @@ mod scope {
     #[allow(unused_imports)]
     use crate::code_rule_dsl::identifier::{name_in};
 }
+pub mod regexes {
+    pub use rerail_lang::code_rule_dsl::regexes::*;
+    #[cfg(test)]
+    pub mod tests;
+    #[allow(unused_imports)]
+    use std::sync::Arc;
+}
 pub use rerail_lang::code_rule_dsl::semver;
 // The first slice's entry points (06 S6), called by hosts through `slice::napi::CodeRuleSlice`.
 mod slice;
@@ -3947,7 +3959,7 @@ mod transducer {
 mod typing {
     #[allow(unused_imports)]
     pub use rerail_logic::code_rule_dsl::typing::*;
-    // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+    // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
     #[cfg(test)]
     pub mod phase_tests;
     #[cfg_attr(test, path = "file_local")]
@@ -4358,13 +4370,28 @@ impl CodeRuleDslRuntime {
         serde_json::to_string(&response).map_err(json_error)
     }
 
-    /// The tests the `.rr` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
+    /// The tests the `.rerail` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
     /// 0130, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
-    /// calls it for a `.rr` file.
+    /// calls it for a `.rerail` file. The runs read the engine's own `.rerail` programs (`typing/programs`) and the rule
+    /// library (`logic::rr::library`) from a checkout (`source_tree`), which the package does not ship: without them,
+    /// an error that says so.
     #[napi(catch_unwind)]
     pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
-        let paths: Vec<std::path::PathBuf> = serde_json::from_str(&paths_json).map_err(json::json_error)?;
-        let report = logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
+        let paths: Vec<std::path::PathBuf> =
+            serde_json::from_str(&paths_json).map_err(json::json_error)?;
+        let programs =
+            rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs");
+        if !programs.join("sources.rerail").is_file() || !logic::rr::library().join("core.rerail").is_file()
+        {
+            return Err(json::invalid(
+                "a .rerail file's tests read the engine's .rerail programs and rule library from a Rerail checkout \
+                 (native/src/code_rule_dsl/typing/programs, docs/rule-syntax/lib), which Rerail's package does not \
+                 ship: run them from a Rerail checkout, or set RERAIL_SOURCE_ROOT to one"
+                    .to_owned(),
+            ));
+        }
+        let report =
+            logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
         serde_json::to_string(&report).map_err(json::json_error)
     }
 
@@ -4379,6 +4406,8 @@ impl CodeRuleDslRuntime {
         let canonical_value = canonicalize_value(document);
         let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
         let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
+        // The regexes only validation took, or a rejected document's, go as this ends (`regexes`).
+        let _compiling = regexes::compiling();
         let (id, rule_mode, scope, clauses, required, report_count_gt) =
             compile_document(&canonical_value, &capabilities)?;
         Ok(CompiledCodeRuleDsl {
@@ -4707,7 +4736,7 @@ pub(crate) fn install_languages() {
     facts::vtab::install_node_tables(vec![facts::vtab::python::register]);
     // The semantic facts a program's native steps demand (Python's).
     facts::vtab::syntax::install_semantic_producer(&facts::vtab::syntax::python_demand::Semantic);
-    // What each family reads of its own core.rr facts.
+    // What each family reads of its own core.rerail facts.
     {
         use crate::code_rule_dsl::facts::vtab::syntax::core_rr::{self, Family};
         use crate::code_rule_dsl::facts::vtab::syntax::{ecma_core, python_core, rr_core};
@@ -4754,11 +4783,11 @@ pub(crate) fn install_languages() {
     // What a chunk's jobs allocated less freed (Q203 item 3): the allocator's own per-thread counters.
     #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
     facts::rows::install_heap_net(heap_net);
-    // `core.rr`'s names, as the rule language reads them.
+    // `core.rerail`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
     // What the evaluator keeps per connection, dropped with it.
     facts::vtab::install_forget(facts::vtab::Forget { scope: logic::native::forget_scope, engine: logic::native::forget_engine });
-    // core.rr's functors whose meaning is W's or a language's.
+    // core.rerail's functors whose meaning is W's or a language's.
     logic::strings::install_functors(functors::register_functors);
     // The run's executors, by binding.
     facts::core::install_executors(logic::lanes::executor_for);

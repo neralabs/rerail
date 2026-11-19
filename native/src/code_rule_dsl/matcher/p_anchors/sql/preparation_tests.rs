@@ -24,8 +24,8 @@ fn streaming_structural_columns_match_scalar_decoding() {
         while let Some(row) = rows.next().unwrap() {
             let packed: Vec<u8> = row.get(6).unwrap();
             let words: Vec<_> = packed
-                .chunks_exact(4)
-                .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as i64)
+                .as_chunks::<4>().0.iter()
+                .map(|b| u32::from_le_bytes(*b) as i64)
                 .collect();
             assert_eq!(row.get::<_, i64>(1).unwrap(), words[0] - 1);
             for (i, value) in words.iter().enumerate().skip(1) {
@@ -433,7 +433,7 @@ fn file_scoped_values_do_not_scan_unrelated_files() {
     let dialect = GrammarDialect::TypeScript;
     let doc = tests::document("target(value);", dialect);
     let fid = store.put("requested.ts", &doc).unwrap();
-    let regex = regex::Regex::new("^target$").unwrap();
+    let regex = crate::code_rule_dsl::regexes::Regex::new("^target$").unwrap();
     let plan = AnchorPlan {
         root_kinds: Some(std::collections::BTreeSet::from([dialect
             .kinds()

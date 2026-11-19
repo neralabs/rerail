@@ -57,7 +57,7 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize)>, Error> {
         }
         let start = pos;
         let rest = &src[pos..];
-        // An `#include` (a `.rr` program's, passed through by `rr::translate`) is a directive the files it names
+        // An `#include` (a `.rerail` program's, passed through by `rr::translate`) is a directive the files it names
         // resolve: the text parse reads past it, as `rr::parse` does.
         if rest.starts_with("//") || rest.starts_with("#include") {
             pos += rest.find('\n').unwrap_or(rest.len());
@@ -149,11 +149,11 @@ pub enum Error {
     /// A component creates values (`@cat`, …) the data does not bound (`cycles`): `rule` is one it could not
     /// bound.
     UnboundedValueCycle { component: BTreeSet<String>, rule: String },
-    /// `.input r` where no `.decl` gives `r`'s columns (nor core.rr's, for `.rr`).
+    /// `.input r` where no `.decl` gives `r`'s columns (nor core.rerail's, for `.rerail`).
     UndeclaredInput { relation: String },
 }
 
-/// The `.rr` parser's error (`rerail_rr_syntax`) is a syntax error.
+/// The `.rerail` parser's error (`rerail_rr_syntax`) is a syntax error.
 impl From<rerail_rr_syntax::Error> for Error {
     fn from(e: rerail_rr_syntax::Error) -> Self {
         match e {
@@ -673,7 +673,7 @@ fn order_nodes(prog: &mut Program) {
     }
 }
 
-/// The checks and additions every program gets once parsed, whatever its syntax (this one or `.rr`, `logic::rr`):
+/// The checks and additions every program gets once parsed, whatever its syntax (this one or `.rerail`, `logic::rr`):
 /// no computed term in a body atom, bounded lattices, the tree axes' input relations, bounded value cycles.
 pub fn finish(mut prog: Program) -> Result<Program, Error> {
     order_nodes(&mut prog);

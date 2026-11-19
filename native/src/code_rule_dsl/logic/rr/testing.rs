@@ -1,4 +1,4 @@
-//! Testing mode (decision 0130): the tests a `.rr` file carries, each run as the file's program over its fixtures.
+//! Testing mode (decision 0130): the tests a `.rerail` file carries, each run as the file's program over its fixtures.
 //!
 //! A test is `.test name [exactly] [uses a, b]` … `.end` (`syntax::Item::Test`); a fixture set, `.fixtures name` …
 //! `.end` (`syntax::Item::Fixtures`), is what the tests that name it in `uses` read too. Lowering never reads either,
@@ -119,15 +119,15 @@ fn block(path: &Path, items: Vec<Statement>, test: bool) -> Result<Block, String
     Ok(b)
 }
 
-/// The tests of the `.rr` file at `path`, in order, each with the fixture sets it uses merged in (theirs first).
+/// The tests of the `.rerail` file at `path`, in order, each with the fixture sets it uses merged in (theirs first).
 pub fn tests(path: &Path) -> Result<Vec<Test>, String> {
     let (statements, _) = super::read(path).map_err(|e| e.to_string())?;
     let mut sets: BTreeMap<String, Block> = BTreeMap::new();
     for (item, line) in &statements {
-        if let Item::Fixtures { name, items } = item {
-            if sets.insert(name.clone(), block(path, items.clone(), false)?).is_some() {
-                return bad(path, *line, format!("a second fixture set named {name}"));
-            }
+        if let Item::Fixtures { name, items } = item
+            && sets.insert(name.clone(), block(path, items.clone(), false)?).is_some()
+        {
+            return bad(path, *line, format!("a second fixture set named {name}"));
         }
     }
     let mut out: Vec<Test> = Vec::new();
@@ -159,7 +159,7 @@ pub fn tests(path: &Path) -> Result<Vec<Test>, String> {
     Ok(out)
 }
 
-/// `.fixture "path" <fenced text>` or `.fixture "path" from "file"` (beside the `.rr` file).
+/// `.fixture "path" <fenced text>` or `.fixture "path" from "file"` (beside the `.rerail` file).
 fn fixture(path: &Path, dir: &Path, line: usize, text: &str) -> Result<(String, Vec<u8>), String> {
     let spanned = syntax::tokens(text).map_err(|e| format!("{}:{line}: {e:?}", path.display()))?;
     let toks: Vec<&Tok> = spanned.iter().map(|(t, _, _)| t).collect();
@@ -361,7 +361,7 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
     for (_, statements) in &mut modules {
         statements.retain(|(item, _)| !matches!(item, Item::Clause { heads, .. } if heads.iter().any(|h| given.contains(h.rel.as_str()))));
     }
-    let own = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
+    let own = dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let Some((_, statements)) = modules.iter_mut().find(|(p, _)| *p == own) else {
         return Err(format!("{}: not among its program's modules", path.display()));
     };
@@ -486,7 +486,7 @@ pub fn blocks(src: &str) -> Vec<String> {
         .collect()
 }
 
-/// A test as `.rr` text: its fixtures as fenced texts (each fence longer than any run of backticks it holds), then
+/// A test as `.rerail` text: its fixtures as fenced texts (each fence longer than any run of backticks it holds), then
 /// its `.expect` lines (as written after `.expect`).
 pub fn print_test(name: &str, exactly: bool, fixtures: &[(String, String)], expects: &[String]) -> String {
     let mut out = format!(".test {name}{}\n", if exactly { " exactly" } else { "" });
@@ -542,7 +542,7 @@ pub fn tests_of_cases(cases: &serde_json::Value) -> Result<String, String> {
 
 // ---------------------------------------------------------------- the command
 
-/// Every `.rr` file under each of `paths` (a file, or a directory read recursively), sorted.
+/// Every `.rerail` file under each of `paths` (a file, or a directory read recursively), sorted.
 pub fn rule_files(paths: &[PathBuf]) -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
@@ -550,7 +550,7 @@ pub fn rule_files(paths: &[PathBuf]) -> Vec<PathBuf> {
             let p = entry.path();
             if p.is_dir() {
                 walk(&p, out);
-            } else if p.extension().is_some_and(|e| e == "rr") {
+            } else if p.extension().is_some_and(|e| e == "rerail") {
                 out.push(p);
             }
         }
@@ -568,7 +568,7 @@ pub fn may_hold_tests(text: &str) -> bool {
     text.lines().any(|l| l.trim_start().starts_with(".test "))
 }
 
-/// Each test of each `.rr` file under `paths` whose `<file>::<name>` contains `filter`: `[{file, test, line, status:
+/// Each test of each `.rerail` file under `paths` whose `<file>::<name>` contains `filter`: `[{file, test, line, status:
 /// "pass" | "fail", failures, findings}]`.
 pub fn report(paths: &[PathBuf], filter: Option<&str>) -> Result<serde_json::Value, String> {
     // The runs' directories, removed when the report is made.

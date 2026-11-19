@@ -208,7 +208,7 @@ impl<'v> Body<'v> {
             (TermRef::Branded(a), TermRef::Branded(b)) => a == b,
             (TermRef::Str(a), TermRef::Str(b)) => self.v.text(a) == o.v.text(b),
             (TermRef::Call(f, xs), TermRef::Call(g, ys)) => {
-                self.v.text(f) == o.v.text(g) && xs.clone().count() == ys.clone().count() && xs.zip(ys).all(|(x, y)| self.same_term(x, o, y))
+                self.v.text(f) == o.v.text(g) && xs.count() == ys.count() && xs.zip(ys).all(|(x, y)| self.same_term(x, o, y))
             }
             _ => false,
         }

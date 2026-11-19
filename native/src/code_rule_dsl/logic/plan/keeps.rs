@@ -560,7 +560,7 @@ fn weigh(own: &[(f64, Option<f64>)], copies: &[(f64, Option<f64>)], build: (f64,
 /// `base`'s, `rules_of` by head); a relation absent may be inlined.
 /// Whether `ks` are the lowering's projection of an input: `kind(n, k) :- node(_, n, k, _, _)`, and `docof` over nodes
 /// (decision 0141). One rule of one positive input atom, each head variable once in it: priced as any candidate, not
-/// refused as core.rr's. Inlined, a reader reads the input in place (`node`'s view, by kind). Inlined unpriced in every
+/// refused as core.rerail's. Inlined, a reader reads the input in place (`node`'s view, by kind). Inlined unpriced in every
 /// module of a cold PostHog run, instructions went 2,558 -> 4,734 G (a reader probing `node` by node, not `kind`'s
 /// hash index), so the pricing and its copies' bound decide.
 fn input_projection(f: &Fields<'_>, base: &Placed, ks: &[usize]) -> bool {
@@ -601,7 +601,7 @@ fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, V
         } else if f.answer(rel) || f.nullary(rel) {
             Some("an answer or nullary")
         } else if super::corpus::guests::REQUESTS.contains(&rel) || (core.contains(rel) && !input_projection(f, base, ks)) || rel.contains("__") {
-            Some("the engine's (a request, core.rr's, or a session's copy)")
+            Some("the engine's (a request, core.rerail's, or a session's copy)")
         } else if recursive.contains(rel) || rules().any(|r| reads(r).contains(&rel)) {
             Some("recursive")
         } else if rules().any(|r| r.body().any(|l| !matches!(l.view(), Lit::Atom(_) | Lit::Cmp { .. } | Lit::Nearest { .. }))) {

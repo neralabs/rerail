@@ -11,6 +11,9 @@
 //! The index holds, in order, the offset of each structural byte (`{ } [ ] : ,`) and of each
 //! scalar's first byte (a string's opening quote, a number's or a literal's first byte). Each
 //! thread parses with a parser of its own.
+//!
+//! Nothing on MSVC, as `rerail-simdjson-native` (its C++ does not build there).
+#![cfg(not(all(windows, target_env = "msvc")))]
 
 pub use rerail_simdjson_native::{Error, Kernel, implementation, structurals};
 use rerail_simdjson_native::{KEEP, Sink, release_above};
@@ -364,7 +367,7 @@ impl Writer<'_> {
             self.tape.codes.push((kind, field_id, slot >= OBJECT && field != KEY));
         }
         self.tape.code.extend_from_slice(&id.to_le_bytes());
-        if ord as usize % STRIDE == 0 {
+        if (ord as usize).is_multiple_of(STRIDE) {
             self.base = start;
             self.tape.base.extend_from_slice(&start.to_le_bytes());
         }
@@ -524,6 +527,7 @@ mod tests {
 
     /// The kernel a measurement runs: `RERAIL_SIMDJSON_KERNEL` (its `Kernel` name, as `Haswell`), else the
     /// fastest this CPU runs.
+    #[allow(dead_code, reason = "the kernel choice of the measurements, which run by hand (none is in the suite now)")]
     fn kernel_under_test() -> Kernel {
         match std::env::var("RERAIL_SIMDJSON_KERNEL") {
             Ok(name) => *Kernel::ALL.iter().find(|k| format!("{k:?}") == name).expect("a kernel's name"),
@@ -542,6 +546,7 @@ mod tests {
 
     /// The tape's cost alone, for `/usr/bin/time -l`: `RERAIL_TAPE_RUN` is `none` (read the files), `index`
     /// (parse and index) or `tape`, 10 rounds over the repository's `.json` files up to 1 MB.
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with RERAIL_TAPE_RUN"]
     fn tape_cost() {
@@ -699,10 +704,11 @@ mod tests {
                 let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
                 if p.is_dir() && !skip {
                     work.push(p);
-                } else if p.extension().is_some_and(|x| x == "json") && e.metadata().is_ok_and(|m| m.len() <= 4 << 20) {
-                    if let Ok(f) = std::fs::read(&p) {
-                        checked += usize::from(same(&f));
-                    }
+                } else if p.extension().is_some_and(|x| x == "json")
+                    && e.metadata().is_ok_and(|m| m.len() <= 4 << 20)
+                    && let Ok(f) = std::fs::read(&p)
+                {
+                    checked += usize::from(same(&f));
                 }
             }
         }
@@ -710,6 +716,7 @@ mod tests {
     }
 
     /// Instructions a node by the document's shape: simdjson's DOM parse, stage 1, and the v9np stage 2.
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with --nocapture"]
     fn shape_costs() {

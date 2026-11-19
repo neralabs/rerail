@@ -1034,7 +1034,7 @@ pub struct KindSets {
 /// The kinds of a unary relation of kinds: its facts, and the kinds of `s` for each rule `set(k) :- s(k)`, rules gone
 /// by head left out. A relation of the linked `library` of a module lowered in its scope (declared here, its facts and
 /// rules not held) has its kinds there first, as the whole program read alone has them: its kind set, else its facts
-/// and rules (python/names.rr's `scope`; eslint-a-control.rr's `breakable_kind(k) :- loop_kind(k)`; a program's own
+/// and rules (python/names.rerail's `scope`; eslint-a-control.rerail's `breakable_kind(k) :- loop_kind(k)`; a program's own
 /// `fn_stop(k) :- function_kind(k)` over one: PR #508's afeb076e5 and 4146acbd9, t47).
 fn kinds_of(v: &Version, head: &(impl ProgramFields + ?Sized), library: Option<(&Version, &BTreeMap<String, Vec<String>>)>, gone: &BTreeSet<String>, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
     use crate::code_rule_dsl::logic::front::Value;
@@ -1289,9 +1289,9 @@ impl ProgramPass for GrammarNames {
 }
 
 /// The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
-/// does not derive them (`rewritten`, its settings: `next_sibling`, `precedes`) are declared in `core.rr` for the
+/// does not derive them (`rewritten`, its settings: `next_sibling`, `precedes`) are declared in `core.rerail` for the
 /// checker; they are no relations of the program. `within` stays declared where a rule reads it: the lowering made it
-/// the engine's relation (decision 0050); a program lowered without `core.rr` (its own part, `parse_own`) still
+/// the engine's relation (decision 0050); a program lowered without `core.rerail` (its own part, `parse_own`) still
 /// declares it.
 pub struct BuiltinsOut {
     pub rewritten: Vec<String>,
@@ -1390,9 +1390,9 @@ impl ProgramPass for SpanPatterns {
     }
 }
 
-/// core.rr's declarations of what the rules read, then `node`'s projections (`lower::core_and_projections`) on the
+/// core.rerail's declarations of what the rules read, then `node`'s projections (`lower::core_and_projections`) on the
 /// version: the header's declarations and inputs, and the projections' rules written first, where the tree puts them.
-/// Its setting: whether the program's `docof` is core.rr's, over spans, as the lowerer found it.
+/// Its setting: whether the program's `docof` is core.rerail's, over spans, as the lowerer found it.
 pub struct CoreDecls {
     pub docof_of_locs: bool,
 }
@@ -1518,7 +1518,7 @@ impl ProgramPass for Findings {
     }
 }
 
-/// `.decl r(…) must, may` (core.rr 3): r is computed twice. Its may side, which keeps the name, holds what is proven
+/// `.decl r(…) must, may` (core.rerail 3): r is computed twice. Its may side, which keeps the name, holds what is proven
 /// or unknown: every rule of r. Its must side (`rr_must_r`) holds what is proven: the rules with no prefix or `must`.
 /// A relation that reads a three-valued one is three-valued too (`lower::three_closure`), with every rule on both
 /// sides. In a must side's rule a positive atom of a three-valued relation reads its must side and a negated one its

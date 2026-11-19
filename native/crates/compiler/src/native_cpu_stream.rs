@@ -399,11 +399,11 @@ pub const ENDED: u64 = 1 << 63;
 
 /// Native calls nested at most this deep (`Cut::calls`): past it, the file is refused (to the
 /// fallback), as the machine's stack is the calls'. A rule's frame is at most about 350 bytes
-/// on `.rr`: some 360 KB at the most.
+/// on `.rerail`: some 360 KB at the most.
 pub const DEPTH: i64 = 1024;
 
 /// With the calls open counted by the machine's stack (`calls_on_stack`): the most of it a run
-/// takes, about `DEPTH` calls of `.rr`'s largest frames. Past it, a rule function refuses the
+/// takes, about `DEPTH` calls of `.rerail`'s largest frames. Past it, a rule function refuses the
 /// file where it is entered (to the fallback), as a stack check in a prologue does.
 pub const STACK_BYTES: i64 = 384 << 10;
 
@@ -643,7 +643,7 @@ pub(crate) const STATE_SLOTS: usize = Mem::COUNT as usize;
 /// written where used, as the lean parser's `&mut self` fields are: it reloads `self.i` and the
 /// token where it tests them, and keeps nothing live across a rule. Held and passed, the
 /// token's code, start, end and end flag were live through every block and spilled (15,133
-/// stack loads over `.rr`'s tier 2, against 161 in the lean parser).
+/// stack loads over `.rerail`'s tier 2, against 161 in the lean parser).
 pub const HELD_IN_RULES: [u32; 0] = [];
 
 /// A compare tree over a byte (or a place), as rustc lowers a `match` (LLVM's switch lowering):
@@ -3429,7 +3429,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     // `self` fields are: no value of them lives across a call. Passed as an argument, one value
     // through a whole function, given to each call and to the code of other rules it goes
     // into, was a value regalloc2 split twice at most and then cut into a piece a use, each
-    // reloaded from the stack (1,148 loads over `.rr`'s tier 2, against 17 so).
+    // reloaded from the stack (1,148 loads over `.rerail`'s tier 2, against 17 so).
     // A cluster's function: (ctx, the entry's index), the `tail` convention.
     let csig = if clustered {
         let mut c = module.make_signature();
@@ -3676,7 +3676,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
         // after the clusters are lowered, where the jump is kept). A block that only jumps costs
         // nothing: emission folds it (`CompiledStream::code_bytes`). Resolving the jumps here
         // instead made the code larger and slower (594 KB from 590 KB, 500M instructions from
-        // 484M over the `.rr` corpus).
+        // 484M over the `.rerail` corpus).
         let goto = |pc: usize| -> Block {
             match wb.get(pc) {
                 None => off_end,
@@ -6039,7 +6039,7 @@ impl CompiledStream {
     }
 
     /// Room for a stream of `n` starts: from the token count, as the lean parser sizes its
-    /// tape (half again as many nodes as tokens; on the `.rr` corpus, 0.76 a token), and a
+    /// tape (half again as many nodes as tokens; on the `.rerail` corpus, 0.76 a token), and a
     /// token's path past it. A run that could pass it stops at a token word (`OVERFLOW`) and
     /// `call` runs it again on `full_tape`.
     pub fn tape(&self, n: usize) -> Tape {

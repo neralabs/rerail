@@ -1,4 +1,4 @@
-//! The simplifier's passes (decision 0038) on versions: each program read from `.rr` text, run through `passes`, and
+//! The simplifier's passes (decision 0038) on versions: each program read from `.rerail` text, run through `passes`, and
 //! its rules compared as `show_rule` prints them.
 
 use super::{Report, passes};
@@ -563,7 +563,7 @@ fn an_existence_count_reads_the_projection() {
 }
 
 /// A relation whose readers read no location column keeps its first one: the split partitions a file-local
-/// relation's rows by it, and a load hands on a document's rows by it (python/modules.rr's `py_docmod`).
+/// relation's rows by it, and a load hands on a document's rows by it (python/modules.rerail's `py_docmod`).
 #[test]
 fn a_projection_keeps_a_location_column() {
     let (report, v) = simplified(
@@ -626,7 +626,7 @@ fn an_existence_count_is_a_negation() {
         some(n) :- node(_, n, "call", _, _), count : { pair(n, _, _) } > 0.
         many(n) :- node(_, n, "call", _, _), count : { pair(n, _, _) } > 1.
     "#;
-    // The `.rr` reader reads `count : {…} = 0` as the negation already (`none`'s rule): only `> 0` is left.
+    // The `.rerail` reader reads `count : {…} = 0` as the negation already (`none`'s rule): only `> 0` is left.
     let read = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
     assert!(rules_of(&read, "none").iter().all(|r| !r.contains("count")), "{:?}", rules(&read));
     let (report, v) = simplified(text);

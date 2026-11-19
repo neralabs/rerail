@@ -767,7 +767,7 @@ fn corpus_publishes_once_across_partitions_and_updates_only_changed_files() {
             .prepared_file(
                 "b.ts",
                 u32::from(language::tape_tag(GrammarDialect::TypeScript).unwrap()),
-                &b.index_source_digest()
+                b.index_source_digest()
             )
             .is_none()
     );

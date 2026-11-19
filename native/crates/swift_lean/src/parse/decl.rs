@@ -233,11 +233,10 @@ impl<'a> P<'a> {
                             // A modifier only before more modifiers or a declaration.
                             k += 1;
                             if self.kind_at(k) == T::LParen && self.adjacent(k - 1) {
-                                if !matches!(self.word_at(k + 1), w::SET | w::UNSAFE | w::NONSENDING) || self.kind_at(k + 2) != T::RParen {
-                                    if !matches!(&self.src[self.peek_at(k + 1).start as usize..self.peek_at(k + 1).end as usize], b"safe") {
+                                if (!matches!(self.word_at(k + 1), w::SET | w::UNSAFE | w::NONSENDING) || self.kind_at(k + 2) != T::RParen)
+                                    && !matches!(&self.src[self.peek_at(k + 1).start as usize..self.peek_at(k + 1).end as usize], b"safe") {
                                         return None;
                                     }
-                                }
                                 k += 3;
                             }
                             let n = self.peek_at(k);
@@ -444,11 +443,10 @@ impl<'a> P<'a> {
             w::FUNC => Some(K::TFunc),
             _ => None,
         };
-        if let Some(k) = k {
-            if self.kind_at(1) == T::Name {
+        if let Some(k) = k
+            && self.kind_at(1) == T::Name {
                 self.tk(k)?;
             }
-        }
         self.identifier(f::NONE)?;
         Ok(())
     }

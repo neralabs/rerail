@@ -29,7 +29,7 @@ impl Builder {
             ));
         }
         let mut builder = Self::default();
-        for (pre, rec) in records.chunks_exact(6).enumerate() {
+        for (pre, rec) in records.as_chunks::<6>().0.iter().enumerate() {
             let pre = u32::try_from(pre)
                 .map_err(|_| rusqlite::Error::UserFunctionError("kind posting capacity".into()))?;
             builder.push(u16::from_le_bytes([rec[0], rec[1]]) & 1023, pre);

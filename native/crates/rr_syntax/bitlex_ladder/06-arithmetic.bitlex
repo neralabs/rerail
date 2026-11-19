@@ -1,4 +1,4 @@
-# `.rr`, step 6: arithmetic, `r(x) :- s(y), x = y * 2 + -1, z = -(y - @f(x)) % 3.`
+# `.rerail`, step 6: arithmetic, `r(x) :- s(y), x = y * 2 + -1, z = -(y - @f(x)) % 3.`
 #
 # The engine's parser (logic/rr/syntax.rs) is the reference. What this step adds:
 #   - A term: products joined by `+` and `-`; a product: primaries joined by `*`, `/` and `%`.

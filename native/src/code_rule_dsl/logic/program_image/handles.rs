@@ -116,6 +116,7 @@ impl<'v> AtomRef<'v> {
     pub fn rel(self) -> RelId {
         RelId(self.im.node(self.at).2)
     }
+    #[allow(clippy::should_implement_trait, reason = "whether the literal is negated, not `ops::Neg`")]
     pub fn neg(self) -> bool {
         self.im.node(self.at).0 & kind::NEG != 0
     }

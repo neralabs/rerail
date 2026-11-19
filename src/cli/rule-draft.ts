@@ -12,7 +12,6 @@ import { RULE_PACK_RULE_ID } from "../engine/catalog/rule-packs.js";
 import {
   AUDIT_MAX_FILES,
   AUDIT_MAX_SOURCE_BYTES,
-  IGNORED_DIRECTORIES,
   MAX_SOURCE_BYTES,
   languageFor,
   sourceFactsCache,
@@ -20,6 +19,7 @@ import {
   type SourceFactsCache,
   type SourceFileFacts,
 } from "../engine/code-rule/code-rule-enforcer.js";
+import { IGNORED_DIRECTORIES } from "../engine/code-rule/ignored-directories.js";
 import {
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
@@ -29,6 +29,7 @@ import {
   type NativeCompiledCodeRuleDsl,
   type NativeGitIgnoreMatcher,
 } from "../engine/native/native.js";
+import { nativeGitAccess } from "../engine/native/git-access.js";
 import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import { CODE_RULE_FORMAT, codeRuleSchema, type CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
@@ -36,6 +37,7 @@ import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/re
 import { folderContains, normalizeFolder, type CheckoutContext, type EffectiveRule, type LibraryRule, type RuleCatalog } from "../engine/catalog/repository-model.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
+import { blockModeEnabled, conversationRulesEnabled, experimentOffMessage } from "../engine/experimental-features.js";
 import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { addAttachment, listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import {
@@ -233,6 +235,24 @@ export function parseRuleDraft(value: unknown): RuleDraft {
 function asDraft(value: unknown): unknown {
   if (typeof value !== "object" || value === null || Array.isArray(value) || "kind" in value || "rule" in value) return value;
   return { kind: "format" in value && value.format === CODE_RULE_FORMAT ? "code" : "conversation", rule: value };
+}
+
+/**
+ * Internal testing: `rules test` and `rules add` take a conversation rule, or a rule on Block, only while its experiment
+ * is on in this process. A rule of yours already on Block keeps it, so a draft that edits one may stay on Block. Tools
+ * that check a pack's own rules parse drafts without this.
+ */
+function refuseExperimentsOff(draft: RuleDraft): RuleDraft {
+  if (draft.kind === "conversation" && !conversationRulesEnabled()) throw new RuleDraftError(experimentOffMessage("CONVERSATION_RULES"));
+  if (draft.rule.mode === "block" && !blockModeEnabled() && storedLibraryMode(draft.rule.id) !== "block") {
+    throw new RuleDraftError(`${experimentOffMessage("BLOCK_MODE")} ${BLOCK_STEERS_NOTE} Set its mode to steer.`);
+  }
+  return draft;
+}
+
+/** The mode of the library rule stored as `id`, read without recording anything; undefined where none is. */
+function storedLibraryMode(id: string): RuleMode | undefined {
+  return readRecorded(database => getLibraryRule(database, id)?.document.rule.mode, () => undefined);
 }
 
 /** The draft in `file`; with `bareRule`, a rule document on its own is read as a draft with no cases (`asDraft`). */
@@ -491,7 +511,7 @@ function repositoryBoundary(binding: NativeBinding, root: string): (path: string
   if (repositoryFollowsGitignore(root)) {
     let matcher: NativeGitIgnoreMatcher | null;
     try {
-      matcher = binding.openGitIgnoreMatcher(root);
+      matcher = nativeGitAccess(binding).openGitIgnoreMatcher(root);
     } catch (error) {
       throw new RuleDraftError(`Git's ignore rules for ${root} could not be read, so the repository pass was not run: ${errorMessage(error)}`);
     }
@@ -670,7 +690,7 @@ export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<Rul
  */
 export async function testRuleDraftFile(file: string, repo: string): Promise<RuleDraftReport> {
   try {
-    return await testRuleDraft(readRuleDraft(file, { bareRule: true }), repo);
+    return await testRuleDraft(refuseExperimentsOff(readRuleDraft(file, { bareRule: true })), repo);
   } catch (error) {
     if (!(error instanceof RuleDraftError)) throw error;
     return { ok: false, valid: false, error: error.message, cases: [], repository: null };
@@ -994,16 +1014,17 @@ function ruleDraftHelp(): string {
   return [
     "Usage:",
     "  rerail rules show <rule id> [--repo <dir>]",
-    "  rerail rules test <draft.json | rule.json | rule.rr> [--repo <dir>] [--json]",
+    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "",
     "rules show prints a rule as a draft: one of yours, or a By Rerail rule from an installed pack.",
     "rules test checks a draft without storing it: it validates the rule, runs its cases, and for a code rule lists the",
     "places it matches in the repository, in the folders rules add would add it at, and says where rules add would",
     "refuse the draft. It also takes a rule document on its own (a worktree's .rerail/rules/<name>.json), which has no",
-    "cases, and a .rr rule file, whose own tests (.test ... .end) it runs. rules add stores the rule in your library",
-    "and adds it to the repository. A draft that keeps a By Rerail rule's id is stored as your copy of it, added where",
-    "the original is; approving the copy turns the original off there.",
+    "cases, and a .rerail rule file, whose own tests (.test ... .end) it runs from a Rerail checkout, which holds the .rerail",
+    "programs they read (or with RERAIL_SOURCE_ROOT naming one). rules add stores the rule in your library and adds",
+    "it to the repository. A draft that keeps a By Rerail rule's id is stored as your copy of it, added where the",
+    "original is; approving the copy turns the original off there.",
     "",
     "A draft is one JSON file:",
     "  {",
@@ -1091,7 +1112,7 @@ function addedLines(added: AddedRule): string[] {
 async function runAdd(file: string, repo: string, stdout: CommandOutput, stderr: CommandOutput): Promise<number> {
   let added: AddedRule;
   try {
-    added = addRuleDraft(readRuleDraft(file), repo);
+    added = addRuleDraft(refuseExperimentsOff(readRuleDraft(file)), repo);
   } catch (error) {
     if (!(error instanceof RuleDraftError)) throw error;
     stderr.write(`● The rule was not added: ${error.message}\n`);
@@ -1109,7 +1130,7 @@ async function runAdd(file: string, repo: string, stdout: CommandOutput, stderr:
 }
 
 /**
- * The tests a `.rr` rule file carries (`.test` … `.end`), each run by the Engine as `rerail-engine test-rr` runs them:
+ * The tests a `.rerail` rule file carries (`.test` … `.end`), each run by the Engine as `rerail-engine test-rr` runs them:
  * one line a test, and each failed expectation under it.
  */
 export function testRrFile(file: string): NativeRrTestResult[] {
@@ -1129,7 +1150,7 @@ export function formatRrTestReport(results: readonly NativeRrTestResult[]): stri
 }
 
 async function runTest(file: string, repo: string, json: boolean, stdout: CommandOutput): Promise<number> {
-  if (file.endsWith(".rr")) {
+  if (file.endsWith(".rerail")) {
     const results = testRrFile(file);
     stdout.write(`${json ? JSON.stringify(results) : formatRrTestReport(results)}\n`);
     return results.every(result => result.status === "pass") ? 0 : 1;
@@ -1140,8 +1161,8 @@ async function runTest(file: string, repo: string, json: boolean, stdout: Comman
 }
 
 /**
- * `rerail rules show <id>`, `rerail rules test <draft.json | rule.json>` and `rerail rules add <draft.json>`; with
- * `--help`, the draft format.
+ * `rerail rules show <id>`, `rerail rules test <draft.json | rule.json | rule.rerail>` and `rerail rules add <draft.json>`;
+ * with `--help`, the draft format.
  */
 export async function runRuleDraftCommand(
   action: RuleDraftAction,

@@ -1,4 +1,4 @@
-//! The import closure (`components.rr`): each Python document's imports, the edges between documents, and each
+//! The import closure (`components.rerail`): each Python document's imports, the edges between documents, and each
 //! document's closure (`rr_cx_reach`) and the modules it sees (`rr_cx_sees`). A program that reads an `rr_cx_`
 //! relation has these rules added (`corpus.rs`, `reads_components`): a lookup by name kept to what the reader
 //! imports. They were the cross-file memo's (decision 0076); the memo is removed and they stay (decision 0450 §3).
@@ -8,17 +8,17 @@ use crate::code_rule_dsl::logic::program_image::{Builder, Version};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-/// `components.rr`, parsed.
+/// `components.rerail`, parsed.
 fn parsed() -> Result<front::Program> {
-    let path = crate::code_rule_dsl::logic::rr::library().join("components.rr");
+    let path = crate::code_rule_dsl::logic::rr::library().join("components.rerail");
     crate::code_rule_dsl::logic::rr::parse_file(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))
 }
 
-/// Adds `components.rr` to the program's version: the rules `taken` gives, and the natives, declarations,
+/// Adds `components.rerail` to the program's version: the rules `taken` gives, and the natives, declarations,
 /// qualifiers, facts and inputs they need that the program lacks, its rules copied from its image, each one the
 /// program does not hold already. A program that declares a base relation itself keeps its own declaration, and what
 /// it keeps (`.decl rr_cx_edge(…) no_inline`, decision 0099). A view the program held as an input it did not read
-/// (`kind`, core.rr's) is a rule now: no longer an input, as its lowering would have made it.
+/// (`kind`, core.rerail's) is a rule now: no longer an input, as its lowering would have made it.
 pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
     use crate::code_rule_dsl::logic::program_facts::Field;
     let mut components = parsed()?;
@@ -84,10 +84,10 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
     b.finish().map(|(v, _)| v).map_err(Error::Plan)
 }
 
-/// The rules taken from `components.rr`: its own (`rr_cx_*` heads), and those its lowering made of core.rr's views for
+/// The rules taken from `components.rerail`: its own (`rr_cx_*` heads), and those its lowering made of core.rerail's views for
 /// what they read (`kind` over `node`, `lower::projections`) where the program derives none: the program is pruned
 /// before the closure is added, so a program that reads only `rr_cx_reach` holds no `kind` rule. Not what else
-/// `core.rr` brings, and not a relation the program declares otherwise (`declared`: its columns): it keeps its own
+/// `core.rerail` brings, and not a relation the program declares otherwise (`declared`: its columns): it keeps its own
 /// declaration, and its input or rule as its lowering made it.
 fn taken(
     components: &mut front::Program,

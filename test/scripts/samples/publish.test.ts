@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, relative, sep } from "node:path";
 
@@ -10,11 +10,12 @@ import { publishSamplesDirectory, writeSampleSet } from "../../../scripts/sample
 import { recordedLicences } from "../../../scripts/samples/licences.js";
 import { checkLicenceTexts, licenceCache, publishedSamples } from "../../../scripts/samples/publish.js";
 import { cacheLicence, writeSamplesTree } from "../../support/samples.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 function tempRoot(): string {
@@ -182,7 +183,8 @@ describe("checkLicenceTexts", () => {
     expect(message).toContain("someone/unknown: scripts/samples/licences.ts records no licence files for it");
   });
 
-  it("says which recorded licence file GitHub does not have at the commit", () => {
+  it("says which recorded licence file GitHub does not have at the commit", ({ skip }) => {
+    skip(process.platform === "win32", "a fake gh is a script with a #! line, which Windows does not start as a program");
     const root = tempRoot();
     const bin = join(root, "bin");
     mkdirSync(bin);

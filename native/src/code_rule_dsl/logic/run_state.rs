@@ -25,7 +25,7 @@
 //! in a test file) are left out: a test sets them on its own thread.
 //!
 //! The tests below read the source: every thread-local is listed, every listed one exists, and every **Carried**
-//! one is taken by [`Carry::here`]. `scripts/check/check-thread-state.py` refuses a commit that adds an unlisted
+//! one is taken by [`Carry::here`]. `scripts/check/check_thread_state.py` refuses a commit that adds an unlisted
 //! thread-local, before it is made.
 
 use std::any::Any;
@@ -94,6 +94,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/lanes.rs", "SUSPENDABLE", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "GROWN", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "MIXED", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
+    ("src/code_rule_dsl/logic/native.rs", "OWN_LATTICES", Carried, ""),
     ("src/code_rule_dsl/logic/native/setfix.rs", "WALKS_WHOLE", Carried, ""),
     ("src/code_rule_dsl/facts/rows.rs", "CHUNK", Carried, ""),
     ("src/code_rule_dsl/facts/rows.rs", "GIVEN", Thread, "what this thread's chunk scopes gave their chunks of its own allocation"),
@@ -188,6 +189,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/profile/sql.rs", "EXPLAINING", Thread, "this thread's statement being explained"),
     ("src/code_rule_dsl/profile/sql.rs", "FRAME", Thread, "this thread's statement counters"),
     ("src/code_rule_dsl/profile/trace.rs", "CONTEXT", Call, "the attribution of the work this thread does for one call"),
+    ("src/code_rule_dsl/regexes/mod.rs", "LET_GO", Call, "the regexes a document's compilation let go of, kept by the table until that compilation ends"),
     ("src/code_rule_dsl/residency/admission/relational/producer.rs", "READERS", Call, "the state of one call in progress on this thread"),
     ("src/code_rule_dsl/residency/admission/relational/syntax.rs", "POOL", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/semver/mod.rs", "KEY_COMPARISONS", Thread, "a count of this thread's work, read by tests and the profile"),
@@ -302,6 +304,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
     super::plan::corpus::switches::carried,
     super::plan::corpus::session::carried,
     super::native::setfix::carried,
+    super::native::carried,
     #[cfg(any(test, feature = "test-hooks"))]
     super::plan::corpus::test_store::carried,
     carried_elsewhere,

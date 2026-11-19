@@ -269,6 +269,7 @@ impl Relation {
     }
 
     #[inline]
+    #[allow(clippy::should_implement_trait, reason = "the relation's index `i` of its sorted orders, by number: not `ops::Index`")]
     pub fn index(&self, i: usize) -> &Index {
         &self.indexes.as_slice()[i]
     }
@@ -730,8 +731,8 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     // Decided against the kills alone: a duplicate dropped here is one of its own rows, never a base row.
     let order: &mut [u32] = scratch.take(m);
     let mut live = 0;
-    for p in 0..m {
-        let i = ids[p] as usize;
+    for (p, &id) in ids.iter().enumerate().take(m) {
+        let i = id as usize;
         if (p > 0 && same(p)) || base_live(i) {
             continue;
         }

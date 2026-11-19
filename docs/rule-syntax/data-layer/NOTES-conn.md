@@ -1,10 +1,10 @@
 # Group `conn`: connection and graph-path checks
 
-Seven data-layer checks, hand-written in `.rr`. They are scored with `tools/rrlab/rrlab dl <check>` on the
+Seven data-layer checks, hand-written in `.rerail`. They are scored with `tools/rrlab/rrlab dl <check>` on the
 data-layer port's recorded linter calls. The reader column is the final-shape engine's reader
 (`rr-census` with `CLAUSES=1`).
 
-| Check | Python lines | `.rr` lines | rrlab dl (exact / events) | Reader lowers |
+| Check | Python lines | `.rerail` lines | rrlab dl (exact / events) | Reader lowers |
 |---|---:|---:|---|---|
 | connection_mode_split | 390 | 92 | 12 / 13 | yes |
 | legacy_callback_quarantine | 515 | 92 | 11 / 11 | yes |
@@ -15,7 +15,7 @@ data-layer port's recorded linter calls. The reader column is the final-shape en
 | graph_lazy_sql_plan | 862 | 162 | 115 / 115 | yes |
 | **total** | 4,397 | 1,131 | 300 / 302 | |
 
-The JSON port of bounded_composed_graph_paths is 380 KB. The `.rr` is 213 lines: it reads physical lines
+The JSON port of bounded_composed_graph_paths is 380 KB. The `.rerail` is 213 lines: it reads physical lines
 (`src_line`), as the linter's `(?m)^` regexes do, and keeps its text shapes (class blocks, four-space methods and
 decorators, field lines).
 
@@ -75,7 +75,7 @@ One requested and done: `deco_word`, at the end. I added no library file. Each l
 Name or Attribute, through calls or not), of "a class's methods" (first or last of a name, top-level classes
 only, merged across same-named classes) and of "a docstring-free body". So the rules keep short local helpers,
 with prefixes `cms_`, `lcb_`, `csb_`, `csa_`, `gpo_`, `bcgp_` and `glsp_`. If a later group needs the same
-variants, these are candidates for a `lib/data-layer/conn-classes.rr`: `top_class`, `direct_method_last`,
+variants, these are candidates for a `lib/data-layer/conn-classes.rerail`: `top_class`, `direct_method_last`,
 `decorator_last_name`.
 
 ## Not expressible
@@ -85,7 +85,7 @@ Nothing. All seven checks are written in full.
 ## Review fixes (connection_service_architecture)
 
 - CONN601 became `.mode log` (above).
-- Positional arguments come from `python/security.rr`'s `pos_arg`. The raw child index counted comments, so
+- Positional arguments come from `python/security.rerail`'s `pos_arg`. The raw child index counted comments, so
   `getattr(  # why\n self, "_current_schema_transaction")` and `vars(self).get(# c\n "…")` were missed.
 - An expression statement is one expression only (`!child(s, _, 1)`): `f(), g()` is a Tuple, not a delegate call,
   so two such `table_exists` bodies give CONN300 and CONN301.
@@ -103,11 +103,11 @@ because of `pos_arg`'s aggregate.
 ## Second review (connection_structural_boundaries, graph_lazy_sql_plan)
 
 - CSB013 reads bases through parentheses (`unparen`): `_SqlConnectionCore((A), B, C, D, E, F, G)` has 7.
-- graph_lazy_sql_plan uses `deco_word` and `def_walk` from `lib/data-layer/boot-python.rr`. A top-level
+- graph_lazy_sql_plan uses `deco_word` and `def_walk` from `lib/data-layer/boot-python.rerail`. A top-level
   `type X[T] = …` is now a binding of X. The tree has no node for X inside the `generic_type`, so X is read off
   its text.
 
-## Library change request: `lib/data-layer/boot-python.rr`, `deco_word`
+## Library change request: `lib/data-layer/boot-python.rerail`, `deco_word`
 
 Done (coordinator): `deco_word` sees through parentheses, and graph_lazy_sql_plan's local `glsp_dec` is gone (115 / 115;
 schema_bootstrap_contracts 16 / 16 and bootstrap_engine_invariants' file scan 74 / 75 unchanged). Before, `@(pure_lazy)`

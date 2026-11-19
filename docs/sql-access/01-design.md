@@ -21,7 +21,7 @@ the rules.
 ## What exists
 
 - **`CodeRuleSqlExecutor`** (`native/src/code_rule_dsl/sql_executor.rs`, `docs/sql-executor.md`).
-  - It binds core facts as virtual tables and runs `.rr` through the wave scheduler.
+  - It binds core facts as virtual tables and runs `.rerail` through the wave scheduler.
   - It answers read-only queries over the derived relations, which last as long as the session.
   - The product audit path does not use it.
 - **Base facts are virtual tables** over Rust columns (`facts/vtab.rs`), one per relation, rebound

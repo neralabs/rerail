@@ -1,4 +1,4 @@
-"""Checks that eslint-no-irregular-whitespace.chars.rr says what the policy JSON says: the same code points in the
+"""Checks that eslint-no-irregular-whitespace.chars.rerail says what the policy JSON says: the same code points in the
 same two classes. python3 docs/rule-syntax/packs/javascript/check-eslint-no-irregular-whitespace.py"""
 import os, re, sys
 sys.dont_write_bytecode = True  # importing the generator leaves no __pycache__ beside the rules
@@ -7,7 +7,7 @@ gen = __import__("gen-eslint-no-irregular-whitespace")
 
 table = []
 for m in re.finditer(r'^irregular\((\d+), "(.*)", "(\w+)"\)\.  // U\+[0-9A-F]+$', open(os.path.join(gen.HERE,
-        "eslint-no-irregular-whitespace.chars.rr"), encoding="utf-8").read(), re.M):
+        "eslint-no-irregular-whitespace.chars.rerail"), encoding="utf-8").read(), re.M):
     cp, fr, what = int(m[1]), m[2], m[3]
     ch = chr(int(fr[4:], 16)) if fr.startswith("\\\\x") else fr
     assert ord(ch) == cp, (cp, fr)
@@ -17,7 +17,7 @@ if sorted(table) != sorted(want):
     sys.exit(f"differs: table only {sorted(set(table) - set(want))}, JSON only {sorted(set(want) - set(table))}")
 # The rule writes the two classes out as one regex literal (match_all needs its group name there): read the
 # code points of each bracket back, ranges expanded, and compare them with the table.
-rule = open(os.path.join(gen.HERE, "eslint-no-irregular-whitespace.rr"), encoding="utf-8").read()
+rule = open(os.path.join(gen.HERE, "eslint-no-irregular-whitespace.rerail"), encoding="utf-8").read()
 m = re.search(r'"\(\?<W>\[(.*?)\]\+\|\[(.*?)\]\)"', rule)
 assert m, "the rule's match_all regex was not found"
 def cps(cls):

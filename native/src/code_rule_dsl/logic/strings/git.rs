@@ -33,7 +33,7 @@ struct State {
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
 /// The root of a run, for the run's length: calls answer from the repository that holds it. A run inside another
-/// (phase 0's `bootstrap.rr` run, a phase) sets its own and puts the outer run's back when it ends.
+/// (phase 0's `bootstrap.rerail` run, a phase) sets its own and puts the outer run's back when it ends.
 pub struct Scope(Option<PathBuf>);
 
 pub fn scope(root: &Path) -> Scope {
@@ -88,8 +88,8 @@ fn tracked(state: &mut State, path: &str) -> Option<bool> {
 
 fn open(root: &Path) -> Option<Repo> {
     let repo = gix::discover(root).ok()?;
-    let workdir = repo.workdir()?.canonicalize().ok()?;
-    let prefix = root.canonicalize().ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
+    let workdir = dunce::canonicalize(repo.workdir()?).ok()?;
+    let prefix = dunce::canonicalize(root).ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
     Some(Repo { repo, prefix })
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes lib/vue/elements.rr: the well-known HTML, SVG and MathML element names and the SVG attributes with
+"""Writes lib/vue/elements.rerail: the well-known HTML, SVG and MathML element names and the SVG attributes with
 mixed case, as eslint-plugin-vue 10.11.1 lists them, read from the vue pack's JSON policies (attribute-hyphenation's
 `custom-tag` util and its `static` clause).
 
@@ -11,7 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 RR = os.path.normpath(os.path.join(HERE, "..", ".."))
 REPO = os.path.normpath(os.path.join(RR, "..", ".."))
 JSON = os.path.join(REPO, "packs", "vue", "rules", "eslint-plugin-vue-attribute-hyphenation.json")
-OUT = os.path.join(RR, "lib", "vue", "elements.rr")
+OUT = os.path.join(RR, "lib", "vue", "elements.rerail")
 
 
 def walk(x):

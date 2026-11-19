@@ -30,7 +30,7 @@ fn preparation_work(e: &mut CodeRuleSqlExecutor, program: &str) -> (Result<Strin
     let code = unsafe {
         ffi::sqlite3_trace_v2(
             db,
-            ffi::SQLITE_TRACE_PROFILE as u32,
+            ffi::SQLITE_TRACE_PROFILE,
             Some(trace),
             (&mut *count as *mut std::cell::Cell<u64>).cast(),
         )

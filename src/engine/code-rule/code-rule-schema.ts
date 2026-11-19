@@ -148,6 +148,9 @@ export type CodeRuleAstRule = CodeRuleDslAstRule;
 export type CodeRuleAstRelation = CodeRuleDslAstRelation;
 
 const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "filePath", "host", "embedded", "calls", "importTarget"] as const;
+/** `stored` says why the token a `regex` tests is stored where the rule looks (the engine's `compile::token_tests`). */
+const storedHasRegex = (rule: { stored?: string | undefined; regex?: string | undefined }): boolean => rule.stored === undefined || rule.regex !== undefined;
+const STORED_NEEDS_REGEX = { message: "stored says why a token a regex tests is stored: it needs a regex.", path: ["stored"] };
 /** The grammars `parse` applies and their kinds (the engine's `literal::Grammar`). */
 export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat", "identifierWords", "pythonFString"] as const;
 export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[number], readonly string[]> = {
@@ -831,6 +834,7 @@ export const codeRuleAstRuleSchema: z.ZodType<CodeRuleDslAstRule> = z.lazy(() =>
       pattern: z.union([nonEmptyString, z.object({ context: nonEmptyString, selector: nonEmptyString }).strict()]).optional(),
       kind: nonEmptyString.optional(),
       regex: nonEmptyString.optional(),
+      stored: nonEmptyString.optional(),
       nthChild: codeRuleNthChildSchema.optional(),
       all: z.array(codeRuleAstRuleSchema).min(1).optional(),
       any: z.array(codeRuleAstRuleSchema).min(1).optional(),
@@ -859,6 +863,7 @@ export const codeRuleAstRuleSchema: z.ZodType<CodeRuleDslAstRule> = z.lazy(() =>
       }),
     })
     .strict()
+    .refine(storedHasRegex, STORED_NEEDS_REGEX)
     .refine(rule => AST_RULE_KEYS.some(key => rule[key] !== undefined), "An ast rule must contain at least one matcher.") as unknown as z.ZodType<CodeRuleDslAstRule>,
 );
 export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.lazy(() =>
@@ -869,6 +874,7 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
       pattern: z.union([nonEmptyString, z.object({ context: nonEmptyString, selector: nonEmptyString }).strict()]).optional(),
       kind: nonEmptyString.optional(),
       regex: nonEmptyString.optional(),
+      stored: nonEmptyString.optional(),
       nthChild: codeRuleNthChildSchema.optional(),
       all: z.array(codeRuleAstRuleSchema).min(1).optional(),
       any: z.array(codeRuleAstRuleSchema).min(1).optional(),
@@ -897,6 +903,7 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
       }),
     })
     .strict()
+    .refine(storedHasRegex, STORED_NEEDS_REGEX)
     .refine(rule => AST_RULE_KEYS.some(key => rule[key] !== undefined), "An ast relation must contain at least one matcher.") as unknown as z.ZodType<CodeRuleDslAstRelation>,
 );
 /** `calls`: its inner rule's keys, and how chains pass and what they bind. */
@@ -944,6 +951,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
       pattern: z.union([nonEmptyString, z.object({ context: nonEmptyString, selector: nonEmptyString }).strict()]).optional(),
       kind: nonEmptyString.optional(),
       regex: nonEmptyString.optional(),
+      stored: nonEmptyString.optional(),
       nthChild: codeRuleNthChildSchema.optional(),
       all: z.array(codeRuleAstRuleSchema).min(1).optional(),
       any: z.array(codeRuleAstRuleSchema).min(1).optional(),
@@ -977,6 +985,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
       path: ["grammar"],
     })
     .refine(rule => rule.interpolation === undefined || rule.grammar === "pythonFString", "interpolation requires pythonFString.")
+    .refine(storedHasRegex, STORED_NEEDS_REGEX)
     .refine(rule => AST_RULE_KEYS.some(key => key !== "filePath" && rule[key] !== undefined), "parse must hold a rule over the parsed tree.") as unknown as z.ZodType<CodeRuleDslParse>,
 );
 export const codeRuleAstCountSchema: z.ZodType<CodeRuleDslAstCount> = z.lazy(() =>

@@ -141,11 +141,11 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
 
     /// The findings of the `.violation`s: `violation(policy, V, code, path, line)` for each row of V, at its first
     /// column's line (the engine's findings relation, as the converter's programs give it). A node's document is
-    /// `node`'s column; a span's is `docof` (`core.rr`), and so is its line. A `@place(path, line)` row is read from
+    /// `node`'s column; a span's is `docof` (`core.rerail`), and so is its line. A `@place(path, line)` row is read from
     /// V's place relation; a span or loc `at` that holds a `@place` value made elsewhere (`PLACE`) is found at its
     /// path and line.
     fn findings(&mut self, mut violations: Vec<Violation>, seen: RulesSeen) -> Result<bool, Error> {
-        // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rr`).
+        // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rerail`).
         let on: Vec<(String, String, bool)> = self
             .prog
             .settings()
@@ -269,7 +269,7 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
         Ok(true)
     }
 
-    /// The `.scope` settings as a test of a finding's path `$rr_p` (`core.rr`): a document's path is in scope in one
+    /// The `.scope` settings as a test of a finding's path `$rr_p` (`core.rerail`): a document's path is in scope in one
     /// of `dirs` (each a directory or a glob of one, at the root) or `include`'s globs when there are any, in none
     /// of `exclude`'s, and with `tests false` under no `test` or `tests` path part. Findings in other documents are
     /// dropped; one at a path that is no document (a budget file) is kept. Facts still come from every file. A
@@ -351,7 +351,7 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
         vec![atom("rr_scope_drop", vec![v("rr_p")], true)]
     }
 
-    /// `guest(g, host, at, grammar)` as an input (`core.rr` declares it; a program without it has it here).
+    /// `guest(g, host, at, grammar)` as an input (`core.rerail` declares it; a program without it has it here).
     fn guest_input(&mut self) {
         self.prog.declare_absent("guest", &[("g", "int"), ("host", "int"), ("at", "node"), ("grammar", "sym")]);
         self.prog.add_input("guest");
@@ -376,7 +376,7 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
                 }
                 continue;
             }
-            // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rr`).
+            // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rerail`).
             if key == "scope" {
                 if let ["embedded", v @ ("true" | "false")] = words.as_slice() {
                     facts.push(("library".to_owned(), if *v == "true" { "on" } else { "off" }.to_owned()));

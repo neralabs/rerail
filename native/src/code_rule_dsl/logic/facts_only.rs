@@ -283,7 +283,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "LOG"),
     ("code_rule_dsl/logic/plan.rs", "PATH"),
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
-    // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
+    // core.rerail's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
     // This thread's zstd decompression context (RER-131): an open thing, not a result.
     ("content_store/compression.rs", "DECODER"),
@@ -316,6 +316,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "STACK"),
     ("code_rule_dsl/logic/profile.rs", "STATE"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
+    // The accounts and gaps of threads that have ended, read by the report: profiling, as `THREADS`.
+    ("code_rule_dsl/logic/profile.rs", "EXITED"),
+    ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
     // Debugging aids, each under its switch, and the switches read once: `RERAIL_HEAP_AT`'s text; the trees a thread
@@ -335,7 +338,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/rr.rs", "READS"),
     // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
     ("code_rule_dsl/logic/rr.rs", "SHAPE"),
-    // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rr, no result.
+    // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rerail, no result.
     ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),
     // The rule files' entries a thread read before its run (0275), taken by the run's manifest: a queue.
     ("code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE"),
@@ -395,6 +398,18 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
     ("content_store/write_back.rs", "WRITERS"),
+    // The record kinds (decision 0306): each kind's apply, registered once a process, a registry of code; and a
+    // test's log of the records it applied.
+    ("content_store/record.rs", "KINDS"),
+    // The lattices a run declared (`native::declare`, its `shortlex_min<>` over its store's atoms): the run's own
+    // functions, as LATTICES holds the process's; no result kept.
+    ("code_rule_dsl/logic/native.rs", "OWN_LATTICES"),
+    ("content_store/record.rs", "LOG"),
+    // The component's own columns whose values are arena texts (decision 0307), set while its plans compile: state
+    // of the compilation, not a result kept.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
+    // A count of the trees this thread decoded from versions, and where the last was (0281's measure): a counter.
+    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
     // A run's changed reads' given versions (decision 0364 step 3), by the run's scope, removed with its tables.
@@ -407,6 +422,22 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/record.rs", "KINDS"),
     // The stores forgotten in this process (a test's store removed), by path and file: a registry of closed things.
     ("content_store/upkeep.rs", "GONE"),
+    // The rule files' entries read on this thread before its run, which the outermost run names in its manifest
+    // (decision 0275): the run's own record, taken by it.
+    ("code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE"),
+    // Profiling: the command's start and its run's end (`command_begins`, `run_ends`), the run thread's phases by span
+    // (decision 0288), the open steps' decisions on this thread (decision 0269) and the process's start (0257). Records
+    // for the report, no result kept.
+    ("code_rule_dsl/logic/profile.rs", "COMMAND"),
+    ("code_rule_dsl/logic/profile.rs", "RUN_PHASES"),
+    ("code_rule_dsl/logic/profile.rs", "DECIDING"),
+    ("code_rule_dsl/logic/profile/life.rs", "ENTERED"),
+    // `core.rerail`'s shape less what decision 0174's rewrite adds, read once from the engine's own library, as `DECLS`.
+    ("code_rule_dsl/logic/rr.rs", "SHAPE"),
+    // The rule images shipped with the engine (decision 0264), opened once: an open thing, not a result kept.
+    ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),
+    // rerail's own files the process names, which the observer leaves out (decisions 0246, 0284): a registry.
+    ("content_store/observe.rs", "OWN"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[

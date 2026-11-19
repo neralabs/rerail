@@ -1396,13 +1396,13 @@ fn lay_out(words: &[(&'static str, u8, Arg)], switches: &[Switch], rules: &[u16]
     // The runs, and the references into each from the runs that are reached.
     let mut run_of = vec![0usize; n];
     let mut runs: Vec<(usize, usize)> = Vec::new();
-    for pc in 0..n {
+    for (pc, of) in run_of.iter_mut().enumerate() {
         if starts_run(pc) {
             runs.push((pc, pc));
         }
         let last = runs.len() - 1;
         runs[last].1 = pc;
-        run_of[pc] = last;
+        *of = last;
     }
     let targets_of = |words: &[(&'static str, u8, Arg)], switches: &[Switch], pc: usize| -> Vec<Place> {
         match words[pc] {
@@ -1414,9 +1414,9 @@ fn lay_out(words: &[(&'static str, u8, Arg)], switches: &[Switch], rules: &[u16]
     // Kept from the start, and from each rule's first run (a call enters there).
     let mut reached = vec![false; runs.len()];
     let mut work: Vec<usize> = vec![0];
-    for pc in 1..n {
+    for (pc, &r) in run_of.iter().enumerate().skip(1) {
         if rule(pc) != rule(pc - 1) {
-            work.push(run_of[pc]);
+            work.push(r);
         }
     }
     let firsts: HashSet<usize> = work.iter().copied().collect();
@@ -1490,8 +1490,8 @@ fn lay_out(words: &[(&'static str, u8, Arg)], switches: &[Switch], rules: &[u16]
     let mut k: Place = 0;
     for (i, &r) in order.iter().enumerate() {
         let (a, b) = runs[r];
-        for pc in a..=b {
-            new_at[pc] = k;
+        for (pc, at) in (a..).zip(&mut new_at[a..=b]) {
+            *at = k;
             if !(pc == b && drops[i]) {
                 k += 1;
             }
@@ -1502,11 +1502,10 @@ fn lay_out(words: &[(&'static str, u8, Arg)], switches: &[Switch], rules: &[u16]
     let mut out_rules = Vec::with_capacity(k as usize);
     for (i, &r) in order.iter().enumerate() {
         let (a, b) = runs[r];
-        for pc in a..=b {
+        for (pc, &(op, mode, arg)) in (a..).zip(&words[a..=b]) {
             if pc == b && drops[i] {
                 continue;
             }
-            let (op, mode, arg) = words[pc];
             out.push((op, mode, if let Arg::Pc(t) = arg { Arg::Pc(to(t)) } else { arg }));
             out_rules.push(rule(pc));
         }

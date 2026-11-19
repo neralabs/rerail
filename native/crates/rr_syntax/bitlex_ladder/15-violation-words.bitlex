@@ -1,4 +1,4 @@
-# `.rr`, step 15: a `.violation`'s continuation words, read as the engine reads them.
+# `.rerail`, step 15: a `.violation`'s continuation words, read as the engine reads them.
 #
 #   .violation v(c: symbol) "m"
 #   fix(a) :- b(a).

@@ -78,7 +78,7 @@ pub fn host_held() -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rerail_blocks::alloc::Writes;
+    use rerail_blocks::alloc::{Budget, Size, Writes};
     use rerail_blocks::block::kind;
 
     fn need(writes: Writes, device: Device) -> Need {

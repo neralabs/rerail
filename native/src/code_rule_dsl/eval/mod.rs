@@ -33,10 +33,7 @@ use std::sync::Arc;
 /// files read the same modules and manifests. With `server_graph`, a derived manifest naming
 /// `next` carries the server graph the snapshot's files give. Also returns what the derivation
 /// read, so an editor's edit derives again only what it changes (`DerivedPackages::edited`).
-pub fn parse_snapshot(
-    source: &str,
-    server_graph: bool,
-) -> Result<(Snapshot, DerivedPackages)> {
+pub fn parse_snapshot(source: &str, server_graph: bool) -> Result<(Snapshot, DerivedPackages)> {
     let value: Value = serde_json::from_str(source).map_err(json_error)?;
     let revision = value.get("revision").and_then(Value::as_u64).unwrap_or(0) as u32;
     let files = value
@@ -116,7 +113,11 @@ impl SnapshotContext for NoContext {
 /// The snapshot's derived context (`SnapshotContext`).
 pub(crate) type DerivedPackages = Box<dyn SnapshotContext>;
 
-fn derive_context(snapshot: &mut Snapshot, files: Vec<usize>, server_graph: bool) -> DerivedPackages {
+fn derive_context(
+    snapshot: &mut Snapshot,
+    files: Vec<usize>,
+    server_graph: bool,
+) -> DerivedPackages {
     match SNAPSHOT_CONTEXT.get() {
         Some(derive) => derive(snapshot, files, server_graph),
         None => Box::new(NoContext),

@@ -1529,7 +1529,7 @@ impl TapeImage {
                 Err(TemplateError::Encode(error)) => Some(Err(error)),
             };
         }
-        // A `.rr` file: the rule engine's own parser builds its tree (decision 0061).
+        // A `.rerail` file: the rule engine's own parser builds its tree (decision 0061).
         if grammar.lang == GrammarDialect::Rr {
             return Some(Self::encode_rr(grammar, source, budget).map(|image| FileImage::single(image, source)));
         }
@@ -1602,13 +1602,13 @@ impl TapeImage {
         Self::walked(grammar, source, root.descendant_count(), budget, |out| encode_tree(out, root, language, filter.as_deref(), omitted, budget))
     }
 
-    /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
+    /// The tape of a `.rerail` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
     /// extras and each statement that does not parse an ERROR leaf (decision 0061). The lean parser writes it as
     /// the image's bytes as it parses (decision 0140), so nothing here packs a node: the image is read as stored.
     pub fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
         checked(budget)?;
         if grammar.lang != GrammarDialect::Rr {
-            return Err("only a .rr file is encoded from its rule tree".into());
+            return Err("only a .rerail file is encoded from its rule tree".into());
         }
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".into());
@@ -2366,7 +2366,7 @@ pub struct HostLink {
 /// The tape stores no implied token (RER-131, `tokens`): `echo` and `;` a Blade echo is written as,
 /// the `;` marker Vue's script and template programs start with. Their text is in the gaps a node's
 /// stored children leave in its span, the source `structural_before` and `structural_after` hold
-/// (core.rr): comments are nodes, so a gap is implied tokens and white space only, and each run of
+/// (core.rerail): comments are nodes, so a gap is implied tokens and white space only, and each run of
 /// it that is not white space (`implied`) is read as a leaf. Which tokens a run holds does not
 /// matter here (`TokenGrammar::gaps` would say): only whether its bytes stand for the file's.
 fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {

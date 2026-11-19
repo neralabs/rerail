@@ -2594,7 +2594,7 @@ mod tests {
             base.join("root")
         })
         .unwrap();
-        let file = root.join("lib/a.rr");
+        let file = root.join("lib/a.rerail");
         std::fs::write(&file, "x.\n").unwrap();
         aged(&file);
         let store = base.join("store.files");
@@ -2655,11 +2655,11 @@ mod tests {
             base.join("root")
         })
         .unwrap();
-        let file = root.join("lib/a.rr");
+        let file = root.join("lib/a.rerail");
         std::fs::write(&file, "x.\n").unwrap();
         aged(&file);
         let store = base.join("store.files");
-        let other = root.join("b.rr");
+        let other = root.join("b.rerail");
         std::fs::write(&other, "y.\n").unwrap();
         aged(&other);
         let mut o = journal_observer(&store);
@@ -2696,7 +2696,7 @@ mod tests {
             base.join("root")
         })
         .unwrap();
-        let file = root.join("lib/a.rr");
+        let file = root.join("lib/a.rerail");
         std::fs::write(&file, "x.\n").unwrap();
         aged(&file);
         let store = base.join("store.files");
@@ -2921,16 +2921,16 @@ mod tests {
         git(&repo, &["config", "user.email", "t@example.com"]);
         git(&repo, &["config", "user.name", "t"]);
         std::fs::write(repo.join("a.py"), "x = 1\n").unwrap();
-        std::fs::write(repo.join("pkg/b.rr"), "r(1).\n").unwrap();
+        std::fs::write(repo.join("pkg/b.rerail"), "r(1).\n").unwrap();
         std::fs::write(repo.join("gone.py"), "").unwrap();
         std::fs::write(repo.join(".gitignore"), "*.log\n").unwrap();
-        git(&repo, &["add", "--", "a.py", "pkg/b.rr", "gone.py", ".gitignore"]);
+        git(&repo, &["add", "--", "a.py", "pkg/b.rerail", "gone.py", ".gitignore"]);
         git(&repo, &["commit", "-m", "one"]);
         std::fs::remove_file(repo.join("gone.py")).unwrap();
         std::fs::write(repo.join("new.py"), "").unwrap();
         std::fs::write(repo.join("noise.log"), "").unwrap();
         let g = crate::git_workspace::discover(&repo).unwrap();
-        assert_eq!(g.worktree_files(), vec![".gitignore", "a.py", "new.py", "pkg/b.rr"]);
+        assert_eq!(g.worktree_files(), vec![".gitignore", "a.py", "new.py", "pkg/b.rerail"]);
 
         // A clone whose index stats are settled (mtimes before the index): its clean files are proven by stat.
         let clone = dir.path().join("clone");
@@ -3180,9 +3180,9 @@ mod tests {
         let cutoff = |key: &str, flat: &[&str]| db.execute("INSERT INTO run_record VALUES (?1, ?2, x'')", params![key, encode_lists(&[flat])]).unwrap();
         record(&format!("{CANONICAL}{}", s(&root.join("a.py"))), "");
         record(&format!("{CANONICAL}{}", s(&real.join("elsewhere"))), "");
-        cutoff("cutoff:kept", &["rule", "x.rr", "ab", "plan", "", &hex(&dead), "plan", "", &hex(&live)]);
+        cutoff("cutoff:kept", &["rule", "x.rerail", "ab", "plan", "", &hex(&dead), "plan", "", &hex(&live)]);
         cutoff("cutoff:dead", &["plan", "", &hex(&dead)]);
-        cutoff(&"ab".repeat(32), &["rule", "x.rr", "ab"]);
+        cutoff(&"ab".repeat(32), &["rule", "x.rerail", "ab"]);
         // The constants' and the cone's rounds' records go with their plans too; one naming none is from before.
         cutoff("constants:k", &[]);
         cutoff("constants:live", &["doc", "a.py", "ab", "plan", "", &hex(&live)]);

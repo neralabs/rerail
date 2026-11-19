@@ -6,21 +6,33 @@
   "excludeFolders": ["packs/**/upstream", "packs/**/licenses", "packs/**/candidates", "skills/**/examples"],
   "excludeFiles": [
     "CHANGELOG.md",
-    "CODE_OF_CONDUCT.md",
-    "REVIEW.md",
-    "UPSTREAM.md",
+    "blade-parser.md",
     "content-addressed-workspace-store.md",
-    "transducer-design.md"
+    "data-layer-batch-four-root-causes.md",
+    "data-layer-batch-four.md",
+    "data-layer-batch-three.md",
+    "data-layer-batch-two.md",
+    "data-layer-engine-gaps.md",
+    "data-layer-port-execution-plan.md",
+    "data-layer-rule-port.md",
+    "merge-assist-v1-build.md",
+    "repository-packs.md",
+    "sql-executor.md",
+    "transducer-design.md",
+    "windows.md"
   ],
   "rules": [
     "Install with `npx @neralabs/rerail setup` in the repository. A coding agent runs `npx @neralabs/rerail setup --relay` and asks the person each question it prints, as written.",
     "Rerail is off in a repository until it is started there: `/rerail-start`, or `rerail start` in a terminal.",
     "Codex invokes Rerail commands as `$rerail-…`; every other coding agent as `/rerail-…`. `/rerail` lists them all.",
     "Rules belong to one repository. Create one with `/rerail-create`: test the draft with `rerail rules test <draft.json>` and run `rerail rules add <draft.json>` only after the person confirms it.",
-    "To change only where a rule applies, a Rerail pack's rule included, `rerail rules show <id>` prints it as a draft: change its `scope` alone, test it, and after the person confirms run `rerail rules add <draft.json>` and `rerail rules approve <id it printed>`. A pack rule is saved as the person's copy, which turns the original off once approved.",
+    "To change only where a rule applies, a Rerail pack's rule included, `rerail rules show <id>` prints it as a draft: change its `scope` alone and test it with `rerail rules test <draft.json>`.",
+    "After the person confirms a draft that `rerail rules show <id>` printed, run `rerail rules add <draft.json>` and `rerail rules approve <id it printed>`. A pack rule is saved as the person's copy, which turns the original off once approved.",
     "A rule's mode is `log` (recorded only) or `steer` (its guidance is sent to the agent).",
     "When Rerail reports violations of your last edit, fix them, or tell the user in one line why you won't and record that line with `rerail feedback <rule-id> '<that line>'`.",
     "Rule packs are npm packages named `@neralabs/rerail-pack-<id>`; manage them with `rerail packs list`, `add`, `remove` and `recommend`.",
-    "A rule for one worktree only is a rule document in that worktree's `.rerail/rules/<name>.json`: it runs there and in no other checkout, needs no install or add, and `rerail packs list` run there shows whether it loaded."
+    "Packs that port a linter are linter-equivalent to it, and set-up turns their rules on and off to match the repository's own linter config; after that config changes, `rerail packs calibrate` reads it again.",
+    "A rule for one worktree only is a rule document in that worktree's `.rerail/rules/<name>.json`: it runs there and in no other checkout, needs no install or add, and `rerail packs list` run there shows whether it loaded.",
+    "The features in docs/internal-testing.md, `rerail scan`, conversation rules and `block` mode among them, are unsupported and off until their `RERAIL_EXPERIMENTAL_<FEATURE>` variable is set. Suggest one only when the person asks for it."
   ]
 }

@@ -1,5 +1,5 @@
 //! With the `generated` feature, writes Kotlin's parser's code as Rust into `OUT_DIR`, as
-//! `rerail-rr-aot`'s build script does for `.rr`: tier 1's through `clif_rust` (the JIT's
+//! `rerail-rr-aot`'s build script does for `.rerail`: tier 1's through `clif_rust` (the JIT's
 //! functions' IR) as `tier1_aot.rs`, tier 2's through `rust_stream` (the native IR, the structured
 //! backend) as `tier2_aot.rs`. Each carries its fingerprint, which `aot` checks against the program
 //! the JIT compiles when it runs.

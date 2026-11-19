@@ -19,7 +19,8 @@ use crate::block::Backing;
 use std::cell::{Cell, RefCell};
 
 /// Address space an anonymous scratch region reserves (nothing resident until written). Without a mapping
-/// (`crate::mem`) the reservation is allocated whole, so it is a working size there.
+/// (`crate::mem`) the reservation is allocated whole, and on Windows it is committed whole (counted against the
+/// commit limit), so it is a working size there.
 #[cfg(unix)]
 const ANON: usize = 1 << 36;
 #[cfg(not(unix))]

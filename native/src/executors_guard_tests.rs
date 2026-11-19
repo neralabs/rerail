@@ -25,12 +25,16 @@ const MADE: [(&str, &str); 7] = [
 ];
 
 /// The sites allowed besides the owners, each with why: a file, the pattern, and how many times it may appear.
-const EXCEPTIONS: [(&str, &str, usize, &str); 5] = [
+const EXCEPTIONS: [(&str, &str, usize, &str); 9] = [
     ("native/src/code_rule_dsl/logic/costs.rs", "ThreadPoolBuilder::new(", 1, "the cost model trains at background QoS on two threads, beside the run; the one pool runs at the user's"),
     ("forest/src/mldb/plugins/jml/randomforest_procedure.rs", "ThreadPoolBuilder::new(", 2, "the forest's training bounds the bags trained at once; it runs inside the cost model's background pool"),
     ("accel/src/price_bench.rs", "ThreadPoolBuilder::new(", 1, "the price benchmark measures one core alone"),
     ("native/src/build_grammars.rs", "thread::scope(", 1, "the build script's grammars build a thread each; it runs in cargo, not in the engine's process, and links no rerail crate"),
     ("native/src/content_store/journal.rs", "dispatch_queue_create(", 2, "the journal's file events come on a GCD queue (FSEvents delivers to one): its declaration and its one call"),
+    ("native/src/tree_watch/fsevents.rs", "dispatch_queue_create(", 2, "the tree watch's FSEvents stream delivers on a GCD queue, as the journal's does: its declaration and its one call"),
+    ("native/src/tree_watch/inotify.rs", "thread::Builder::new(", 1, "the tree watch's one thread blocks in the OS (poll on the inotify descriptor) for the life of the watch, no pool work"),
+    ("native/src/tree_watch/windows.rs", "thread::Builder::new(", 1, "the tree watch's one thread waits on its completion port for the life of the watch, no pool work"),
+    ("native/src/git_access/pool.rs", "thread::Builder::new(", 1, "a Git repository opens on a thread of its own under a time limit, so a disk that stops answering strands that thread and no pool's; opens are rare, no pool work"),
 ];
 
 /// Files that are test code as a whole (their parent declares them under `cfg(test)`).

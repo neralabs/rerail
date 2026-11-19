@@ -678,7 +678,7 @@ pub struct Open {
 /// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
 pub struct Thread {
     name: String,
-    /// Its Mach port (macOS), for its CPU read from another thread; 0 elsewhere.
+    /// Its Mach port (macOS) or its thread id (Linux), for its CPU read from another thread; 0 elsewhere.
     port: u32,
     counters: memory::Counters,
     opens: Vec<Open>,
@@ -1071,7 +1071,7 @@ pub fn process_cpu() -> f64 {
     }
 }
 
-/// The live threads' Mach ports and names (macOS; none elsewhere).
+/// The live threads' Mach ports (macOS) or thread ids (Linux), and names; none elsewhere.
 fn live_threads() -> Vec<(u32, String)> {
     #[cfg(target_os = "macos")]
     {
@@ -1108,7 +1108,21 @@ fn live_threads() -> Vec<(u32, String)> {
         unsafe { libc::vm_deallocate(task, list as libc::vm_address_t, (count as usize * std::mem::size_of::<libc::thread_act_t>()) as libc::vm_size_t) };
         named
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(tasks) = std::fs::read_dir("/proc/self/task") else { return Vec::new() };
+        tasks
+            .flatten()
+            .filter_map(|task| {
+                let id: u32 = task.file_name().to_str()?.parse().ok()?;
+                // A thread that ended meanwhile has no `comm`.
+                let name = std::fs::read_to_string(task.path().join("comm")).ok()?;
+                let name = name.trim_end();
+                Some((id, if name.is_empty() { "unnamed".to_owned() } else { name.to_owned() }))
+            })
+            .collect()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Vec::new()
     }
@@ -1157,7 +1171,11 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
     #[cfg(target_os = "macos")]
     // SAFETY: the calling thread's own port; no right is taken.
     let port = unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) };
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    // SAFETY: no arguments; the calling thread's id. The system call, not glibc's `gettid` (2.30): the Linux engine
+    // links against 2.17.
+    let port = unsafe { libc::syscall(libc::SYS_gettid) } as u32;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let port = 0;
     let me = std::sync::Arc::new(parking_lot::Mutex::new(Thread {
         name: std::thread::current().name().unwrap_or("unnamed").to_owned(),
@@ -1397,7 +1415,8 @@ pub fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64)
     t.autoindex += autoindex;
 }
 
-/// Waves under way in this process (`waves`): SQL from a wave's thread meanwhile is a hazard.
+/// Waves under way in this process (`waves`): what a run did not read before its first wave it does not read from
+/// SQLite, and under the strict mode SQL meanwhile ends the process.
 static WAVES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 thread_local! {
@@ -1520,7 +1539,7 @@ pub fn warm() -> bool {
 /// `what`), and why each is allowed: locks against another process's collection, the timestamps by which
 /// collection judges recency, and the cost statistics. Nothing else is exempt from the warm check.
 ///
-/// Changing this list needs the user's approval (decision 0211). `scripts/check/check-warm-mode.py` holds a copy
+/// Changing this list needs the user's approval (decision 0211). `scripts/check/check_warm_mode.py` holds a copy
 /// and refuses a commit that changes one without the other.
 pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
     ("the combined program's pins released", "a lock: the release of the combined program's leases"),
@@ -1690,7 +1709,7 @@ pub unsafe fn warm_commit(db: *mut rusqlite::ffi::sqlite3) {
 pub fn strict_on_every_connection() {
     use rusqlite::ffi;
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> std::ffi::c_int {
-        if event == ffi::SQLITE_TRACE_STMT as u32 {
+        if event == ffi::SQLITE_TRACE_STMT {
             // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
             let text = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())) }.to_string_lossy();
             strict_statement("sqlite", &text);
@@ -1706,7 +1725,7 @@ pub fn strict_on_every_connection() {
         // SAFETY: SQLite calls this with a connection it has just opened.
         unsafe {
             if strict() {
-                ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut());
+                ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT, Some(trace), std::ptr::null_mut());
             }
             // A connection that sets a commit hook of its own (the store's, for its atoms) calls `warm_commit` there.
             if warm() {
@@ -2109,7 +2128,9 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
             format!("{}/{}", g.runs, t.runs), format!("{}/{}", si(t.gpu_work), si(t.work - t.gpu_work)), g.rules, g.submissions, g.rows, short(key, 60));
     }
     if !refused.is_empty() {
-        let mut by: BTreeMap<&str, (u64, f64, Vec<(f64, &str)>)> = BTreeMap::new();
+        // A reason's strata, their CPU, and each stratum's CPU and key.
+        type ByReason<'k> = (u64, f64, Vec<(f64, &'k str)>);
+        let mut by: BTreeMap<&str, ByReason<'_>> = BTreeMap::new();
         for (key, t) in &refused {
             let e = by.entry(t.refused.as_deref().unwrap_or("")).or_default();
             e.0 += 1;
@@ -2571,7 +2592,8 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     memory::sampled_report(r);
 }
 
-/// CPU (user + system) of the thread with Mach port `port` (macOS), read from another thread; `None` elsewhere.
+/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux) `port`, read from another thread;
+/// `None` for a thread that has ended, and elsewhere.
 fn thread_cpu(port: u32) -> Option<f64> {
     #[cfg(target_os = "macos")]
     {
@@ -2585,7 +2607,23 @@ fn thread_cpu(port: u32) -> Option<f64> {
         let t = |v: libc::time_value_t| f64::from(v.seconds) + f64::from(v.microseconds) / 1e6;
         Some(t(info.user_time) + t(info.system_time))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        // Thread id 0 would name the calling thread's clock.
+        if port == 0 {
+            return None;
+        }
+        // The thread's CPU clock as glibc's `pthread_getcpuclockid` makes it (`CPUCLOCK_SCHED | CPUCLOCK_PERTHREAD`):
+        // any thread of the process may read it; one that has ended gives EINVAL.
+        let clock = (!(port as libc::clockid_t) << 3) | 6;
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: fills `t` with that clock's time.
+        if unsafe { libc::clock_gettime(clock, &mut t) } != 0 {
+            return None;
+        }
+        Some(t.tv_sec as f64 + t.tv_nsec as f64 / 1e9)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = port;
         None

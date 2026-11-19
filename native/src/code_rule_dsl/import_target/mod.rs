@@ -223,7 +223,7 @@ fn remove_trail_wildcard(text: &str) -> &str {
 }
 
 /// `getTSConfigAliases`: each `compilerOptions.paths` key, wildcard trimmed, to its targets,
-/// resolved against the configuration's folder.
+/// resolved against the configuration's folder as `path.resolve` resolves them where Rerail runs.
 fn tsconfig_aliases(tsconfig: Option<&Tsconfig>) -> Vec<Alias> {
     let Some(tsconfig) = tsconfig else {
         return Vec::new();
@@ -243,7 +243,9 @@ fn tsconfig_aliases(tsconfig: Option<&Tsconfig>) -> Vec<Alias> {
                         targets
                             .iter()
                             .filter_map(Json::as_str)
-                            .map(|target| path::resolve(folder, remove_trail_wildcard(target)))
+                            .map(|target| {
+                                path::platform_resolve(folder, remove_trail_wildcard(target))
+                            })
                             .collect()
                     })
                     .unwrap_or_default(),
@@ -459,7 +461,7 @@ fn resolve_target(
         Err(message) => error = Some(message),
     }
     let fallback = matches!(module_type, ModuleType::Relative | ModuleType::Absolute)
-        .then(|| path::resolve(base, name));
+        .then(|| path::platform_resolve(base, name));
     target(fallback, error)
 }
 

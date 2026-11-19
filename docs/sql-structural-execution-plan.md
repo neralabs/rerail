@@ -20,9 +20,9 @@ These counters measure work. They do not provide exclusive CPU attribution.
 
 Sources:
 
-- [Measured suffix experiment](../benchmark/python-import-suffix-guard-spike.json).
-- [Current qualification](../benchmark/sql-native-capture-cohort-rejected.json).
-- [Transition journal](sql-matcher-fragment-transition.md).
+- Measured suffix experiment: `benchmark/python-import-suffix-guard-spike.json` (a sibling record, not in this repository).
+- Current qualification: `benchmark/sql-native-capture-cohort-rejected.json` (a sibling record, not in this repository).
+- Transition journal: `sql-matcher-fragment-transition.md` (a sibling document, not in this repository).
 - Sibling `docs/rule-engine-direction/findings-contract.md`, especially sections 3 and 7.
 - Sibling decisions 0005, 0006, and 0007, plus `spec-transducer.md` section 0 and `spec.md` sections 9 and 21.
 - Sibling `prior-work/ast-index-spike-design-index.md`, topics 5, 6, 7, and 10.

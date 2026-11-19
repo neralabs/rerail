@@ -16,8 +16,8 @@ Seven directives configure it. None of them is a rule; each says what to do with
 | `.mode`, `.severity` | which findings block, and how they are shown |
 
 This page gives their semantics and what the engine needs for each. The policies that use them are worked
-examples: [file-length.rr](file-length.rr), [noqa-sec-ratchet.rr](noqa-sec-ratchet.rr),
-[test-budget.rr](test-budget.rr). Facts that come from a CI run are in [RUN-FACTS.md](RUN-FACTS.md).
+examples: [file-length.rerail](file-length.rerail), [noqa-sec-ratchet.rerail](noqa-sec-ratchet.rerail),
+[test-budget.rerail](test-budget.rerail). Facts that come from a CI run are in [RUN-FACTS.md](RUN-FACTS.md).
 
 ## 1. The stages
 
@@ -72,7 +72,7 @@ over them matches anything. That over-approximates where the rule could land, wh
 
 The extra evaluation runs only when something is incomplete, which on a clean CI run is never.
 
-The granularity is the rule, not the relation. In [test-budget.rr](test-budget.rr), `budget_exceeded` has a rule
+The granularity is the rule, not the relation. In [test-budget.rerail](test-budget.rerail), `budget_exceeded` has a rule
 that reads the static count and two that read pytest's count. Without the artifact, the first still reports.
 
 This follows what the engine already does for its budget clause: a count that is within its limit but only a
@@ -205,7 +205,7 @@ over_budget(@place(BASE, 1), k, n, m) :- annotations(k, n), base(k, m), n > m.
 ```
 
 A budget over findings cannot do this, because a finding count is a count of keys. In
-[noqa-sec-ratchet.rr](noqa-sec-ratchet.rr) two SEC codes on one line are two annotations, but one key per code.
+[noqa-sec-ratchet.rerail](noqa-sec-ratchet.rerail) two SEC codes on one line are two annotations, but one key per code.
 The earlier `.budget M by k from base` form over a metric relation is therefore dropped. Section 2 covers the
 incomplete case: a metric is an aggregate, so a rule over it is withheld when its inputs are incomplete.
 

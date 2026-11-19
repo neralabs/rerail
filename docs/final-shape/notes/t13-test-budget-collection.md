@@ -293,7 +293,7 @@ already produces.
 
 ## Sources
 
-- The rule: `gate/data-layer/packs/data-layer/candidates/rr/test-budget.rr`
+- The rule: `packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rr/test-budget.rr`
 - The original check: `scripts/check_test_budget.py` in the corpus
   (sharded `pytest --collect-only -q`, `by_directory` keyed by
   `conform/<dir>/`)

@@ -113,7 +113,7 @@ fn regexes_and_their_rewrites_agree() {
     }
 }
 
-/// `core.rr`'s text functors give the values its comments give as examples.
+/// `core.rerail`'s text functors give the values its comments give as examples.
 #[test]
 fn text_functors_follow_core_rr() {
     use super::functions::*;
@@ -130,11 +130,11 @@ fn text_functors_follow_core_rr() {
     assert_eq!(convert("max-age", "camelCase", "dash"), "maxAge");
     assert_eq!(convert("maxAge", "snakeCase", ""), "max_age");
     assert_eq!(convert("max_age", "pascalCase", "underscore"), "MaxAge");
-    // W's json_group_array: non-ASCII kept, controls escaped (core.rr's @json_str).
+    // W's json_group_array: non-ASCII kept, controls escaped (core.rerail's @json_str).
     assert_eq!(json_str("a\"b\u{e9}\u{1f600}\u{1}\n"), "\"a\\\"b\u{e9}\u{1f600}\\u0001\\n\"");
 }
 
-/// Nested alternatives, which globset refuses, are expanded to one level (`public-api-triples.rr`'s `hint`).
+/// Nested alternatives, which globset refuses, are expanded to one level (`public-api-triples.rerail`'s `hint`).
 #[test]
 fn globs_nest_alternatives() {
     let p = "{{versioned,}{databaseconnection,readtransaction},{lazyresult,lazyseq}}";

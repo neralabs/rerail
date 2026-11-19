@@ -1,14 +1,14 @@
 //! Capacity limits, object pins, and collection of unreachable rows.
 
-#[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
 use super::connection::{BusyRetries, retry_busy};
 use super::rows::{generation, intern_string};
 use super::snapshots::GIT_TREE_BATCH_ENTRIES;
 use super::{
-    CapacityState, CollectionReport, ContentStore, HashKey, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId,
-    StoreCapacity, StoreError, StoreResult, TapeId,
+    CapacityState, CollectionReport, ContentStore, HashKey, MAX_COLLECTION_BATCH, STRING_OWNER,
+    SourceId, StoreCapacity, StoreError, StoreResult, TapeId,
 };
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use rusqlite::{Connection, OptionalExtension, Params, TransactionBehavior, params};
 use std::fs;
 
@@ -86,7 +86,10 @@ impl ContentStore {
     /// When `owner`'s pin of `source_id` ends (unix seconds), where it has one: a reader renews a lease only once it
     /// has run down, so a run that reads what an earlier run kept writes nothing (decision 0250).
     pub fn source_lease(&self, source_id: SourceId, owner: &str) -> StoreResult<Option<i64>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
         connection
             .query_row_cached(
                 "SELECT p.lease_until FROM object_pins p JOIN strings s ON s.string_id=p.owner_string_id \
@@ -126,7 +129,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let owner_id = intern_string(&transaction, STRING_OWNER, owner)?;
         transaction.execute_cached(
             "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
@@ -146,7 +150,10 @@ impl ContentStore {
     /// The stored source of each of `hashes`, in their order: one read, nothing written. A run holds what it finds by
     /// its collection lease (`hold_collection`, decision 0306 step 4).
     pub fn sources_by_hashes(&self, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
         sources_by_hashes(&connection, hashes)
     }
 
@@ -223,13 +230,18 @@ impl ContentStore {
     /// vacuum (a write too), wait out other writers as every store write does (`retry_busy`): one attempt each, with
     /// SQLite's busy timeout alone, failed the pass while parallel writers held the store (O-collector-busy-flake).
     pub(super) fn collect_held(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
-        let report = retry_busy(&mut BusyRetries::default(), || self.collect_held_once(now, batch))?;
+        let report = retry_busy(&mut BusyRetries::default(), || {
+            self.collect_held_once(now, batch)
+        })?;
         // Free pages back to the file system, a write of its own after the pass committed: a writer holding the
         // store past the retries leaves them to the next pass. Failing the pass for it failed a collector whose rows
         // were already collected. A file mostly free is the upkeep job's, vacuumed whole: an incremental vacuum's
         // cost grows with the free list (ep2: 8.1 s for these 4,096 pages with 1.8M free, behind every run).
         match retry_busy(&mut BusyRetries::default(), || {
-            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let connection = self
+                .connection
+                .lock()
+                .expect("content store mutex poisoned");
             connection.query_row_cached("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
             if super::upkeep::leaves_to_whole_vacuum(&connection, self.database_path())? {
                 return Ok(());
@@ -621,19 +633,30 @@ pub(super) fn capacity_state(bytes: u64) -> CapacityState {
 }
 
 /// The stored source of each of `hashes`, in their order, read on `connection` in one statement.
-fn sources_by_hashes(connection: &rusqlite::Connection, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
+fn sources_by_hashes(
+    connection: &rusqlite::Connection,
+    hashes: &[HashKey],
+) -> StoreResult<Vec<Option<SourceId>>> {
     let mut out = vec![None; hashes.len()];
     if hashes.is_empty() {
         return Ok(out);
     }
-    let list = serde_json::to_string(&hashes.iter().map(|h| super::rows::hash_params(*h)).collect::<Vec<_>>()).expect("integers");
+    let list = serde_json::to_string(
+        &hashes
+            .iter()
+            .map(|h| super::rows::hash_params(*h))
+            .collect::<Vec<_>>(),
+    )
+    .expect("integers");
     let mut statement = connection.prepare_cached(
         "SELECT j.key, s.source_id FROM json_each(?1) j JOIN hashes h INDEXED BY hashes_by_prefix \
          ON h.algorithm_id=json_extract(j.value,'$[0]') AND h.lane0=json_extract(j.value,'$[1]') \
          AND h.lane1=json_extract(j.value,'$[2]') AND h.lane2=json_extract(j.value,'$[3]') AND h.lane3=json_extract(j.value,'$[4]') \
          JOIN source_objects s ON s.canonical_hash_id=h.hash_id",
     )?;
-    for row in statement.query_map([&list], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))? {
+    for row in statement.query_map([&list], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })? {
         let (at, id) = row?;
         out[at as usize] = Some(SourceId(id));
     }

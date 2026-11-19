@@ -12,9 +12,9 @@ something Ruff does not on its fixtures or Rerail's probes, 14 miss something Ru
 outside any declared divergence; 11 (B911, B912, FA100, FA102, RUF053, UP017, UP040, UP042, UP044, UP046 and UP047)
 have no fixture finding to show they catch anything; four (B024, B027, E741 and INP001) do not apply to a file type
 `gates.yaml` says Ruff lints; and four (RET503, SIM110, SIM114 and SIM911) fail the compact check. Three rules #326
-promoted went back because they disagree with Ruff on this port's larger fixture set; their sections say where. Of the 26
-Bandit candidates, 22 disagree with Bandit on its tests and four miss a labelled line on its real-code samples. A pull
-request's Conformance comment names the check each candidate stops at.
+promoted went back because they disagree with Ruff on this port's larger fixture set; their sections say where. Of the 25
+Bandit candidates, 19 disagree with Bandit on its tests, four miss a labelled line on its real-code samples, and two
+(B202 and B607) pass every check. A pull request's Conformance comment names the check each candidate stops at.
 
 ### `bandit-b104-hardcoded-bind-all-interfaces`
 
@@ -22,11 +22,11 @@ Matches any Python string constant whose decoded value is exactly `0.0.0.0`, reg
 
 ### `bandit-b108-hardcoded-tmp-directory`
 
-Matches string constants (and implicitly concatenated strings as a whole) whose decoded value starts with `/tmp`, `/var/tmp` or `/dev/shm`; strings that are bare expression statements (docstrings) are skipped.
+Matches string constants (and implicitly concatenated strings as a whole) whose decoded value starts with `/tmp`, `/var/tmp` or `/dev/shm`; strings that are bare expression statements (docstrings) are skipped. In an f-string it checks each literal run as Bandit 1.9.4 sees it under CPython 3.12 and later, where a run is a constant of its own: the text at the start of the f-string or right after a replacement field, reported where that text starts, bare f-string statements included. In an implicit concatenation with a replacement field, a piece whose previous piece ends in literal text continues that piece's run; a plain piece that starts a run is reported at its quote. Not covered: the text of a format spec (`f"{x:/tmp}"`), escapes that spell a temp directory, and a run whose temp directory is split across pieces (`"/tm" f"p{x}"`). An f-string concatenation without a replacement field is still matched as a whole, at its first piece.
 
 ### `bandit-b202-tarfile-unsafe-members`
 
-Old description claimed: allow `filter="data"`, otherwise classify missing members, members supplied by a call, and other members expressions separately. The current clause does none of that — it flags every `extractall` on a value bound from `tarfile.open`.
+Port of Bandit 1.9.4's B202, which does not trace the receiver: a call whose function name contains `extractall` (`tar.extractall()`, `tarfile.extractall(...)`, a bare `extractall()`), after an `import tarfile` (aliased or not, anywhere earlier in the file) or a `from . import tarfile` (any number of dots, no module name), unless it passes `filter="data"` as a string literal. So an archive bound by `with tarfile.open(...) as tar` or `tarfile.TarFile.open` is reported, and so is any other `extractall`, `zipfile`'s included, in a file that imports `tarfile`, as Bandit does. `from tarfile import open` alone is not `import tarfile` to Bandit, and neither is `from .pkg import tarfile`, so they do not count. Bandit's severity levels for `members=` are not modelled; every reported call has one message. Bandit stops with an internal error on `members=` given a call whose callee is not a plain name (`members=self.pick(tar)`) and reports nothing there; the port reports it.
 
 ### `bandit-b324-hashlib-insecure-functions`
 

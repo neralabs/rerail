@@ -6,11 +6,11 @@
 //! compared as espree's `Identifier.name` holds them, their `\uXXXX` and `\u{X}` escapes decoded
 //! (`ecma_name`), code unit by code unit; PHP names as written (bytes).
 
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfkc_quick};
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// `text` under NFKC; borrowed, without allocating, where it is already normal (any ASCII text).
 pub fn nfkc(text: &str) -> Cow<'_, str> {
@@ -74,7 +74,10 @@ pub fn ecma_name(text: Cow<'_, str>) -> Cow<'_, str> {
 
 /// An identifier's text as `dialect`'s family compares names (`Adapter::name`).
 pub fn name_in(dialect: GrammarDialect, text: Cow<'_, str>) -> Cow<'_, str> {
-    { let pack = language_pack::pack(Family::of(dialect)); pack.name(text) }
+    {
+        let pack = language_pack::pack(Family::of(dialect));
+        pack.name(text)
+    }
 }
 
 /// A PHP label: a letter, `_` or a byte from 0x80, then those or digits.

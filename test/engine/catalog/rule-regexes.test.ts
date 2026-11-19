@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
 import { listLibraryRules, upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
 import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
 import { EngineUnavailableError } from "../../../src/engine/code-rule/code-rule-compile.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** Set to make the native binding fail to load, as on a machine without the engine. */
 const engine = vi.hoisted(() => ({ missing: false }));
@@ -44,7 +45,7 @@ function structural(match: unknown): ConversationRule {
 const directories: string[] = [];
 afterEach(async () => {
   engine.missing = false;
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(path => removeFolder(path)));
 });
 
 async function directory(): Promise<string> {

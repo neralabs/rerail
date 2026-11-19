@@ -16,7 +16,7 @@ use crate::code_rule_dsl::logic::front::Error;
 /// The types a tape is not: a variable in one of these and in a tape column is refused.
 const OTHER: [&str; 8] = ["symbol", "sym", "number", "int", "unsigned", "float", "node", "span"];
 
-/// The relations of `core.rr` with a tape column, and their columns' types.
+/// The relations of `core.rerail` with a tape column, and their columns' types.
 const BUILT_IN: &[(&str, &[&str])] = &[
     ("sub_tape", &["node", "symbol", "tape"]),
     ("tape_of", &["number", "tape"]),
@@ -25,7 +25,7 @@ const BUILT_IN: &[(&str, &[&str])] = &[
     ("splice_of", &["tape", "node", "tape", "tape"]),
 ];
 
-/// A relation of `core.rr`'s tape columns.
+/// A relation of `core.rerail`'s tape columns.
 pub(super) fn tape_columns(rel: &str) -> Vec<usize> {
     BUILT_IN.iter().filter(|(r, _)| *r == rel).flat_map(|(_, cols)| cols.iter().enumerate().filter(|(_, t)| **t == "tape").map(|(i, _)| i)).collect()
 }
@@ -95,7 +95,7 @@ pub(super) fn check_in(statements: &[Statement], given: &BTreeMap<String, Vec<St
             decls.insert(name.clone(), cols.iter().map(|(_, t)| t.clone()).collect());
         }
     }
-    // The guest relations' tapes (`core.rr`), for a program read without it.
+    // The guest relations' tapes (`core.rerail`), for a program read without it.
     for (rel, cols) in BUILT_IN {
         decls.entry((*rel).to_owned()).or_insert_with(|| cols.iter().map(|t| (*t).to_owned()).collect());
     }

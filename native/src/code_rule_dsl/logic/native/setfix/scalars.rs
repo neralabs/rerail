@@ -590,7 +590,7 @@ pub mod tests {
         assert!(
             fresh[0]
                 .data
-                .chunks_exact(5)
+                .as_chunks::<5>().0.iter()
                 .all(|row| row[1..] == [3, 17, 3, 7])
         );
         let Step::Scalar {

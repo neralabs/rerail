@@ -411,7 +411,7 @@ fn a_climb_over_the_tapes_parent_column_is_file_local() {
     assert!(split.locations["up"].contains(&0), "{:?}", split.locations);
 }
 
-/// `boot-python.rr`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
+/// `boot-python.rerail`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
 /// The equality names one value, so the pieces are one join, pushed into the chunks whole; apart, the split pushed each
 /// and left their join to the cross-file part (decision 0093 §4, O140).
 #[test]

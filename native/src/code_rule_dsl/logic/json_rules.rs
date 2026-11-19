@@ -1,6 +1,6 @@
 //! Main's JSON rules (`rerail.policy/v1`), read by the engine (decision 0175).
 //!
-//! A rule file whose top-level `format` is `rerail.policy/v1` is translated on read into `.rr` text, which then
+//! A rule file whose top-level `format` is `rerail.policy/v1` is translated on read into `.rerail` text, which then
 //! goes through the ordinary reader and lowering. The translator writes the display dialect, and the engine pass
 //! (engine_dialect.rs) rewrites it into the dialect the reader takes. It began as a port of a Python translator in
 //! the docs, retired in decision 0182; this is now the only one. Its parts:
@@ -67,7 +67,7 @@ impl Translator {
         Translator { reserved: fold::reserved(&super::rr::library()), px: patterns::Patterns::new() }
     }
 
-    /// One JSON policy's text as engine `.rr` text. `id` names the rule (the file's stem), as the Python takes it.
+    /// One JSON policy's text as engine `.rerail` text. `id` names the rule (the file's stem), as the Python takes it.
     pub fn translate_text(&self, json: &str, id: &str) -> Result<String, String> {
         let doc = value::parse(json).map_err(|e| format!("{id}: not JSON: {e}"))?;
         let (rr, _) = translate::translate(&self.px, &doc, &self.reserved).map_err(|e| format!("{id}: {e}"))?;
@@ -83,7 +83,7 @@ impl Translator {
         Ok(Display { text, untranslated, ungrounded })
     }
 
-    /// The JSON policy at `path` as engine `.rr` text, named by the file's stem.
+    /// The JSON policy at `path` as engine `.rerail` text, named by the file's stem.
     pub fn translate_file(&self, path: &Path) -> Result<String, String> {
         let json = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let id = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();

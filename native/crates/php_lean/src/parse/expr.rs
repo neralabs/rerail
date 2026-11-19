@@ -142,8 +142,8 @@ impl<'a> P<'a> {
                     left = n;
                     continue;
                 }
-                if left.kind != K::ListLiteral {
-                    if let Some(op) = self.augmented_op() {
+                if left.kind != K::ListLiteral
+                    && let Some(op) = self.augmented_op() {
                         let n = self.wrap(left, K::AugmentedAssignmentExpression, s, slot(f::LEFT, Ctx::Bare));
                         self.tk_field(K::AugmentedAssignmentExpression, op, f::OPERATOR)?;
                         self.binary(slot(f::RIGHT, Ctx::Expr), P_ASSIGN)?;
@@ -151,7 +151,6 @@ impl<'a> P<'a> {
                         left = n;
                         continue;
                     }
-                }
             }
             if left.kind == K::ListLiteral {
                 return self.refuse();

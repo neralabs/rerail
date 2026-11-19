@@ -13,8 +13,11 @@ fn sweep() {
         let name = e.file_name();
         let Some(rest) = name.to_str().and_then(|n| n.strip_prefix("rerail-prefilter-")) else { continue };
         let Some(pid) = rest.split('-').next().and_then(|p| p.parse::<i32>().ok()) else { continue };
-        // SAFETY: signal 0 sends nothing; it only asks whether the process exists.
+        // SAFETY: signal 0 sends nothing; it only asks whether the process exists. Windows: never known gone.
+        #[cfg(unix)]
         let alive = pid as u32 == me || unsafe { libc::kill(pid, 0) } == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+        #[cfg(not(unix))]
+        let alive = { let _ = (pid, me); true };
         if alive {
             continue;
         }
@@ -193,7 +196,8 @@ fn no_relation_stores_a_row_per_node() {
         let (_, doc) = put(&store, &std::fs::read_to_string(path).unwrap(), GrammarDialect::Rust);
         nodes += doc.transducer_len();
     }
-    for source in ["import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n"] {
+    {
+        let source = "import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n";
         nodes += put(&store, &source.repeat(300), GrammarDialect::Python).1.transducer_len();
     }
     assert!(nodes > 50_000, "{nodes}");

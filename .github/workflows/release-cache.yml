@@ -56,7 +56,9 @@ jobs:
           - runner: windows-2025
             target: aarch64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    # The same cold build as package.yml's native job, under the same cap: 45 minutes cut the Intel Mac and Windows x64
+    # engines off after the rule engine grew.
+    timeout-minutes: 120
     steps:
       - name: Allow long paths in Git on Windows
         if: runner.os == 'Windows'
@@ -106,7 +108,7 @@ jobs:
 
       - name: Build native engine
         if: steps.lookup.outputs.cache-hit != 'true'
-        run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} ${{ matrix.napi_cross && '--use-napi-cross --strip' || '' }} --manifest-path native/Cargo.toml --output-dir native
+        run: node scripts/build/release-engine.mjs ${{ matrix.target }}
 
       - name: Save the cargo cache
         if: steps.lookup.outputs.cache-hit != 'true'

@@ -15,10 +15,10 @@ use crate::code_rule_dsl::matcher::{
     Related, Semantic, StopBy, UtilCall, UtilRef, parse_exported,
 };
 use crate::code_rule_dsl::model::Limits;
+use crate::code_rule_dsl::regexes::Regex;
 use ast_grep_core::Language;
 use ast_grep_core::matcher::{KindMatcher, Pattern, PatternNode};
 use napi::Result;
-use regex::Regex;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
@@ -827,11 +827,18 @@ pub fn compile_ast_rule(
             .iter()
             .find_map(|(name, constructor)| (*name == spec.key).then_some(*constructor))
             .expect("count_bounds returns a relation key");
+        // A count of a token regex to the end also counts the implied tokens it matches (t31's gaps): the tape's walk
+        // finds the stored ones alone.
+        let gap = gap_test(spec.key, spec.relation, language, None).filter(|gap| {
+            use crate::code_rule_dsl::matcher::gap::Place;
+            matches!(gap.place, Place::Earlier | Place::Later) && gap.token.is_empty()
+        });
         terms.push(AstMatcher::Count(Box::new(Count {
             relation: constructor(Related::new(inner), stop),
             min: spec.min,
             max: spec.max,
             binding: spec.binding,
+            gap,
         })));
     }
     if let Some(compare) = rule.get("compare") {
@@ -988,7 +995,7 @@ fn compile_relation<'a>(
 /// somewhere, and the relation is `has` (a neighbour, or a field), or `follows`/`precedes`.
 /// `has` to the end and `inside` are left as written; the guard refuses what they cannot reach.
 pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: GrammarDialect, past: Option<Box<AstMatcher>>) -> Option<crate::code_rule_dsl::matcher::gap::GapTest> {
-    use crate::code_rule_dsl::matcher::gap::{GapTest, Place};
+    use crate::code_rule_dsl::matcher::gap::{GapTest, Place, TokenCondition};
     let object = relation.as_object()?;
     // `stopBy: {not: X}` walks past X; the test holds only where X names kinds and tokens.
     let past_extras = object.get("stopBy").and_then(Value::as_object).is_some_and(|stop| stop.len() == 1 && stop.contains_key("not"));
@@ -1032,7 +1039,45 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
         }
         Some(format!("(?:{regex})"))
     };
-    let target: serde_json::Map<String, Value> = object.iter().filter(|(key, _)| !matches!(key.as_str(), "stopBy" | "field")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut target: serde_json::Map<String, Value> = object.iter().filter(|(key, _)| !matches!(key.as_str(), "stopBy" | "field")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    // What the target says of the token beside its text: a relation from it to a bare token regex, or the `not` of
+    // one (`not: {follows: {stopBy: end, regex: "^,$"}}`), asked of the parent's tokens (`GapTest::token`). A token
+    // right before or after the node alone: no other place finds one token to ask it of.
+    let condition = |rule: &Value, negated: bool| -> Option<TokenCondition> {
+        let rule = rule.as_object().filter(|rule| rule.len() == 1)?;
+        let (key, relation) = rule.iter().next()?;
+        let relation = relation.as_object()?;
+        if !relation.keys().all(|key| key == "regex" || key == "stopBy") {
+            return None;
+        }
+        let end = match relation.get("stopBy").map(Value::as_str) {
+            None | Some(Some("neighbor")) => false,
+            Some(Some("end")) => true,
+            _ => return None,
+        };
+        let place = match (key.as_str(), end) {
+            ("follows", false) => Place::Before,
+            ("follows", true) => Place::Earlier,
+            ("precedes", false) => Place::After,
+            ("precedes", true) => Place::Later,
+            _ => return None,
+        };
+        Some(TokenCondition { negated, place, regex: Regex::new(relation.get("regex")?.as_str()?).ok()? })
+    };
+    let mut token = Vec::new();
+    if matches!(place, Place::Before | Place::After) && target.contains_key("regex") {
+        for key in ["follows", "precedes", "not"] {
+            let Some(value) = target.get(key) else { continue };
+            let found = match key {
+                "not" => condition(value, true),
+                _ => condition(&Value::Object([(key.to_owned(), value.clone())].into_iter().collect()), false),
+            };
+            if let Some(found) = found {
+                token.push(found);
+                target.remove(key);
+            }
+        }
+    }
     // `{not: {kind: comment}}` beside the regex holds on every implied token: none is an extra.
     let not_extra = |rule: &Value| {
         rule.as_object().filter(|rule| rule.len() == 1).and_then(|rule| rule.get("not")?.as_object()).filter(|not| not.len() == 1).and_then(|not| not.get("kind")?.as_str()).is_some_and(|kind| grammar.is_extra(kind))
@@ -1080,7 +1125,7 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
     if past.is_some() && !object.get("stopBy").and_then(|stop| stop.get("not")).is_some_and(passable) {
         return None;
     }
-    Some(GapTest { place, regex, dialect: language, past })
+    Some(GapTest { place, regex, dialect: language, past, token })
 }
 
 /// A relation's term, or it or the gap test.

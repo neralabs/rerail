@@ -94,7 +94,7 @@ fn every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved() {
             seen.insert(name);
         }
     }
-    assert!(unknown.is_empty(), "a stored table outside decision 0103 (a cache is two rules in the program's .rr): {unknown:?}");
+    assert!(unknown.is_empty(), "a stored table outside decision 0103 (a cache is two rules in the program's .rerail): {unknown:?}");
     // A cache moved: its entry goes, so the list only shrinks.
     let gone: Vec<&&str> = NOT_YET_MOVED.iter().filter(|t| !seen.contains(**t)).collect();
     assert!(gone.is_empty(), "moved to the two rules, so off NOT_YET_MOVED: {gone:?}");

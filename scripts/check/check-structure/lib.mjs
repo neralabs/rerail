@@ -54,9 +54,18 @@ export function isDataPath(path) {
   return path.startsWith("fixtures/") || /^packs\/[^/]+\/upstream\//.test(path);
 }
 
-/** Third-party code vendored byte-identical (REUSE.toml): never restyled or re-laid-out. */
+/**
+ * Third-party code vendored byte-identical (REUSE.toml): never restyled or re-laid-out. `native/grammars/` (the
+ * tree-sitter grammars), `native/vendor/` (the crates and C++ sources the engine builds from a copy) and
+ * `forest/src/mldb/` (MLDB's random forest, copied at its upstream paths).
+ */
 export function isVendored(path) {
-  return path.startsWith("native/grammars/") || path.split("/").includes("node_modules");
+  return (
+    path.startsWith("native/grammars/") ||
+    path.startsWith("native/vendor/") ||
+    path.startsWith("forest/src/mldb/") ||
+    path.split("/").includes("node_modules")
+  );
 }
 
 /** A test file by name: `*.test.*` / `*.spec.*` scripts, pytest `test_*.py` / `*_test.py`, PHPUnit `*Test.php`. */

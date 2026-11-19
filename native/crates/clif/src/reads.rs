@@ -117,7 +117,7 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_field", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::field },
     Read { family: Family::View, name: "view_core", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::core },
     Read { family: Family::View, name: "view_line", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::line },
-    // core.rr's lines' (`core_rr::Lines`' words, in the batch's block): a relation's family, its base the entry's run.
+    // core.rerail's lines' (`core_rr::Lines`' words, in the batch's block): a relation's family, its base the entry's run.
     Read { family: Family::Relation, name: "loc_line", params: &[I32], ret: I32, hot: true, body: crate::view_reads::lines_line },
     Read { family: Family::View, name: "view_loc_line", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_line },
     Read { family: Family::View, name: "view_loc_end", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_end },
@@ -332,7 +332,7 @@ fn numbering(read: &Read) -> bool {
 
 /// The relation's reads (decision 0325), each built and named by its place in `READS`, with whether it is hot.
 fn relation_funcs() -> Vec<(u32, Function, &'static Read)> {
-    // `loc_line` is the view reads' (`view_msl_source`): over core.rr's lines, not a relation.
+    // `loc_line` is the view reads' (`view_msl_source`): over core.rerail's lines, not a relation.
     family_funcs(|read| !numbering(read) && read.name != "loc_line")
 }
 

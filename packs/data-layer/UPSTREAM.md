@@ -1,13 +1,13 @@
 # Behavior reference
 
-Repository: https://github.com/neralabs/nera-data-layer
+Repository: Nera's private data-layer repository
 
 Commit: `2b1504adc4291daaf080b2e932962b134da1a69a`
 
 The candidate policies implement behavior from `scripts/lint_*.py` at this revision.
 The original test modules run in a separate checkout.
 The recorder preserves their fixtures and assertions, then records analyzer inputs and results.
-The generated replay corpora are in `fixtures/host/data-layer-port/batch-01-recording.json`, `batch-02-recording.json`, and `batch-03-recording.json`.
+The generated replay corpora are in `packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-01-recording.json`, `batch-02-recording.json`, and `batch-03-recording.json`.
 `batch-02-probes.json` adds source cases evaluated by the pinned analyzers and actual plugin reporters.
 These probes are separate from the original pytest corpus.
 They contain test-generated inputs and oracle results, with pinned provenance.

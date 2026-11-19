@@ -2,7 +2,7 @@
 //! read over a program's node.
 //!
 //! A file that embeds a program (a Vue component's view: its scripts and template expressions as one ECMAScript
-//! program) has it as a guest document (`vue/view.rr` asks for it; `corpus::guests` builds it with main's view
+//! program) has it as a guest document (`vue/view.rerail` asks for it; `corpus::guests` builds it with main's view
 //! builder). The program is parsed in the dialect its file chose (a `<script lang="ts">`'s TypeScript), so a rule over
 //! it is written once per dialect the embedding may give, as main compiles an `embedded` rule once per dialect: each
 //! copy enters the program through `guest` with its dialect named, and its kinds are that grammar's (decision 0058

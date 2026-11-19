@@ -3002,7 +3002,8 @@ impl<'a> Builder<'a> {
                 self.strings.push(regex.as_str().as_bytes().to_vec());
                 self.predicates.push(TextPredicate::Regex {
                     source: u16::try_from(source).map_err(|_| Error::InvalidOperand(source))?,
-                    compiled: regex.clone(),
+                    // The packed predicate owns a plain regex: the shared one's (`regexes`) automata.
+                    compiled: regex::Regex::clone(regex),
                 });
                 let predicate = (self.predicates.len() - 1) as u16;
                 self.push(TEXT, 0, predicate);

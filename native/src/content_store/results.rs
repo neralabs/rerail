@@ -1,7 +1,5 @@
 //! Persisted local/context check results, their process-local cache, and completion markers.
 
-#[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
 use super::rows::{hash_params, intern_hash};
 use super::object_segments::{object_dir, row_frame};
 use super::segments::SegmentMaps;
@@ -9,6 +7,8 @@ use super::{
     CandidateCatalogIdentity, CandidateClause, ContentStore, DirectoryReuse, HashKey, ObjectBytes,
     SourceId, StoreError, StoreResult, StoredLocalResult, WorkspaceCompletion, WorkspaceId,
 };
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use rusqlite::{OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

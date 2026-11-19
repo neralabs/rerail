@@ -5,7 +5,7 @@
 #       docs/rule-syntax/site/run_main_pack.sh [ids...]
 #
 # With no ids, every rule that passes the reader (reader-check.txt) is run. Each run is the engine's `logic`
-# command on a fresh store, with the repo's .rr library (docs/rule-syntax/lib) and RERAIL_SQL_STRICT=1. One line per
+# command on a fresh store, with the repo's .rerail library (docs/rule-syntax/lib) and RERAIL_SQL_STRICT=1. One line per
 # rule goes to OUT (default: run-check.txt next to the pack): `<id> <status> rc cpu wall peak findings  <error>`,
 # where status is `ok`, `failed` (a non-zero exit) or `killed` (past the caps). Run dirs are made under ./tmp of
 # the worktree and moved to /tmp/ai-trash when a run ends.
@@ -23,7 +23,7 @@ mkdir -p "$root/tmp" /tmp/ai-trash
 : > "$OUT.part"
 for id in $ids; do
   d=$(mktemp -d "$root/tmp/pack-run.XXXXXX")
-  mkdir "$d/r"; cp "$pack/$id.rr" "$d/r/"
+  mkdir "$d/r"; cp "$pack/$id.rerail" "$d/r/"
   sum=$(RERAIL_TAPE_CACHE="$d/store.sqlite" "$here/capped.sh" "$SECS" "$MB" "$d/log" "$ENGINE" logic "$d/r" "$CORPUS" "$d/o")
   "$ENGINE" csv "$d/o" > /dev/null 2>&1  # the outputs' image (decision 0239) as .csv files
   n=$( [ -f "$d/o/violation.csv" ] && wc -l < "$d/o/violation.csv" | tr -d ' ' || echo -)

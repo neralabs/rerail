@@ -13,6 +13,7 @@
 use super::api::{WORKSPACE_BUSY, WorkspaceApplyTask, close_poisoned, cpu_slot};
 use super::crossfile::CrossFileScheduler;
 use super::global::record_evidence;
+use super::ingest::{RepositoryContext, repository_context};
 use super::ingest::{Request, WireFile, make_file};
 use super::persisted::{candidate_catalog, file_context, restore_complete_results};
 use super::storage::StorageContext;
@@ -22,7 +23,6 @@ use super::{
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::adapter::{module_path, package_manifests};
 use crate::code_rule_dsl::model::FileInput;
-use super::ingest::{RepositoryContext, repository_context};
 use crate::content_store::{
     CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredPathObjects,
 };
@@ -355,7 +355,16 @@ impl WorkspaceIndexTask {
             .collect::<HashSet<_>>();
         let max_files = self.options.max_files as usize;
         let mut git_ignore = if self.options.follow_gitignore {
-            crate::git_ignore::GitIgnore::open(&repository.worktree_root).map_err(invalid)?
+            // Under the Git read time limit, as every engine open of a repository.
+            let root = repository.worktree_root.clone();
+            crate::git_access::pool::run(
+                "opening Git's ignore rules",
+                &repository.worktree_root,
+                crate::git_access::pool::GIT_READ_TIME_LIMIT,
+                move || crate::git_ignore::GitIgnore::open(&root),
+            )
+            .map_err(|error| invalid(error.message))?
+            .map_err(invalid)?
         } else {
             None
         };

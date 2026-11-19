@@ -83,7 +83,7 @@ AGG = re.compile(r'\b(count|sum|min|max|mean)\s*:')
 ATOM = re.compile(r'^(!?)\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(')
 
 CORE_INPUTS = set()
-for _s in parse(os.path.join(LIB, 'core.rr'))[1]:
+for _s in parse(os.path.join(LIB, 'core.rerail'))[1]:
     if _s.startswith('.input'):
         CORE_INPUTS.update(x for x in re.split(r'[\s,]+', _s[len('.input'):].strip()) if x)
 
@@ -154,11 +154,11 @@ def analyse(rule):
     stat['files'] = len(files)
     return stat, lits
 
-rules = sorted(f for f in os.listdir(RULES) if f.endswith('.rr'))
+rules = sorted(f for f in os.listdir(RULES) if f.endswith('.rerail'))
 rows, total_lits, per_rule_use = [], collections.Counter(), collections.Counter()
 for r in rules:
     st, lits = analyse(os.path.join(RULES, r))
-    rows.append((r[:-3], st))
+    rows.append((r.removesuffix('.rerail'), st))
     total_lits.update(lits)
     for key in lits: per_rule_use[key] += 1
 

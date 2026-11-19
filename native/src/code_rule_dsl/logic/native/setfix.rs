@@ -3608,7 +3608,7 @@ unsafe impl VTabCursor for RelCursor {
 // An input relation is read once per process (`INPUTS`) with a hash index per key-column set, built on first use.
 // T's `near`/`down` steps (ancestor climbs over a loaded tape) are not kept: tree axes run in the transducer.
 
-/// `@dot(a, b)` (`core.rr`): `a.b`, and `b` when `a` is "".
+/// `@dot(a, b)` (`core.rerail`): `a.b`, and `b` when `a` is "".
 /// `cat(a, b)` as a rule's head computes it, with `conn`'s symbols (the recursive-maintenance spike's evaluator).
 pub fn cat_symbols(conn: &Connection, a: i64, b: i64) -> i64 {
     let syms = symbols(conn).expect("the connection's symbols");
@@ -8853,7 +8853,7 @@ pub mod probe_tests {
     use crate::code_rule_dsl::logic::strings::functions::Kind;
 
     /// A slot a later step tests its result against (`bind: false`) is read by that step: a split's part so tested
-    /// is no unread part (held as 0, the test would fail on every row), nor only a probe's key. `types.rr`'s `hexpr`,
+    /// is no unread part (held as 0, the test would fail on every row), nor only a probe's key. `types.rerail`'s `hexpr`,
     /// planned from `res($t, $d)`: `$t = @cat($d0, $r)` split `"pkg.m.B"`, then `$r = @substr($h, …)` tested the
     /// part, and the dotted annotation resolved to nothing.
     #[test]

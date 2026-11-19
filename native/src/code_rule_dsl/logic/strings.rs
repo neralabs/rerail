@@ -187,14 +187,14 @@ pub fn test(op: &str, s: &str, pattern: &str) -> bool {
 
 static GROUP_REGEXES: LazyLock<Mutex<HashMap<String, Option<Arc<regex::Regex>>>>> = LazyLock::new(Default::default);
 
-/// The text of named group `name` of regex `re`'s match of `s` (`.rr`'s `match("(?<x>…)", s)`); none when `re`
+/// The text of named group `name` of regex `re`'s match of `s` (`.rerail`'s `match("(?<x>…)", s)`); none when `re`
 /// does not match, the group took no part, or `re` is invalid.
 pub(in crate::code_rule_dsl) fn group(s: &str, re: &str, name: &str) -> Option<String> {
     let rx = GROUP_REGEXES.lock().unwrap().entry(re.to_owned()).or_insert_with(|| regex::Regex::new(re).ok().map(Arc::new)).clone()?;
     rx.captures(s)?.name(name).map(|m| m.as_str().to_owned())
 }
 
-/// `str_test(op, s, patterns)`: 1 or 0; and `core.rr`'s text functors (`functions`, `rx_group` among them, and
+/// `str_test(op, s, patterns)`: 1 or 0; and `core.rerail`'s text functors (`functions`, `rx_group` among them, and
 /// `functors::register_functors`'s: `rr_join`, `@rx_replace`, `@nfkc`, …). NULL gives NULL.
 pub fn register(db: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
@@ -211,7 +211,7 @@ pub fn register(db: &Connection) -> rusqlite::Result<()> {
     }
 }
 
-/// What registers core.rr's functors whose meaning is W's or a language's (`functors::register_functors`).
+/// What registers core.rerail's functors whose meaning is W's or a language's (`functors::register_functors`).
 static FUNCTORS: std::sync::OnceLock<fn(&Connection) -> rusqlite::Result<()>> = std::sync::OnceLock::new();
 
 /// Registers what adds those functors to a connection (once, at load).
@@ -617,7 +617,7 @@ pub fn node_subject_tests(prog: &mut Program) {
 /// the input relation `strtest_<k>(s)`, negated where the test is: rules then join on symbols, and the run fills
 /// each relation from the vocabulary (decision 0037). Equal tests share one relation. The others stay per row.
 ///
-/// And each `match_all("re", sp, m)` (core.rr's built-in: `m` is each match of `re` in span `sp`'s text, as Rust's
+/// And each `match_all("re", sp, m)` (core.rerail's built-in: `m` is each match of `re` in span `sp`'s text, as Rust's
 /// `find_iter` finds them) into an atom over the input relation `matchall_<k>(sp, m)`, and each
 /// `match_group("re", sp, m, g, gsp)` (`gsp` the span of named group `g` in match `m`) into one over
 /// `matchgroup_<k>(sp, m, g, gsp)`, `k` the regex's (one per distinct regex, so the two agree on `m`), which the
