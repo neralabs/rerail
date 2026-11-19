@@ -40,8 +40,10 @@ This replaces two tapes, the directive tape (`06-raw.bitlex`, 0327 mode (a)) and
 
 ## The tape
 
-The tape is a v9np document (`rerail_tape_format`, format 15). There is no new format and no
-side column, so every tape reader works on it. Its root holds the file's items in order. An item
+The tape is a format 16 document (`rerail_tape_format`), with its language table and its newline
+index (decision 0460 §1; it was a v9np document, format 15, until 0460 step 2a). There is no new
+format and no side column, so every tape reader works on it: the evaluator reads it through the
+CLIF reads, and `__LINE__` comes from its newline index. Its root holds the file's items in order. An item
 is a directive, a conditional group, or a text line.
 
 ```
@@ -148,7 +150,7 @@ passes' arrays (user, 2026-11-18). The serial pass is the reference for the outp
 
 | | Requirement | Test |
 |---|---|---|
-| R1 | The tape is a v9np image every reader reads; no new format version. | `the_pp_tape_is_a_v9np_image`; over the corpus, `the_corpus_pp_tapes_lean` (ignored) |
+| R1 | The tape is a format 16 image with its newline index, which every reader reads; no new format version (0460 §1; a v9np image until 0460 step 2a). | `the_pp_tape_is_a_format_16_image`; over the corpus, `the_corpus_pp_tapes_lean` (ignored) |
 | R2 | The tape's tokens, their bytes and their flags are the lean lexer's, in every part of the file. | `the_pp_tape_has_the_lexers_tokens` |
 | R3 | The tape's directives, operands and groups give mode (a)'s rows, equal to the lean scan's. | `the_pp_tape_gives_mode_a_rows` |
 | R4 | The Bitlex parser's tape equals the lean parser's, or the file is refused; on the corpus, 0 differ (interpreter, Cranelift, Metal tier 1). | `the_corpus_pp_tapes` (ignored) |

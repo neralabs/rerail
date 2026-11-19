@@ -662,6 +662,7 @@ fn the_corpus_expands_on_the_device() {
         (X_BARRIER, "a grid barrier"),
     ];
     let (mut same_units, mut tokens, mut launches) = (0, 0, 0);
+    let mut gpu: Vec<f64> = Vec::new();
     let mut refused = std::collections::BTreeMap::<&str, usize>::new();
     let mut named = std::collections::BTreeMap::<String, usize>::new();
     let stub = |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new));
@@ -694,6 +695,7 @@ fn the_corpus_expands_on_the_device() {
                 }
             };
             launches = launches.max(x.launches);
+            gpu.push(x.gpu_seconds);
             // Room counts only alone: with another refusal the unit is not rerun, and the other is why.
             let refused_by = if x.refused & !X_ROOM != 0 { x.refused & !X_ROOM } else { x.refused };
             if refused_by & X_ROOM != 0 {
@@ -742,6 +744,11 @@ fn the_corpus_expands_on_the_device() {
         }
     }
     eprintln!("{same_units} units the serial pass's ({tokens} tokens), at most {launches} launches; refused {refused:?}");
+    gpu.sort_by(f64::total_cmp);
+    if let Some(&most) = gpu.last() {
+        let all: f64 = gpu.iter().sum();
+        eprintln!("GPU time: {:.1} ms in all, median {:.3} ms, most {:.3} ms a unit", all * 1e3, gpu[gpu.len() / 2] * 1e3, most * 1e3);
+    }
     eprintln!("the built-ins in units refused for them: {named:?}");
 }
 

@@ -306,6 +306,11 @@ impl Front {
 
 /// Encodes `f`'s passes in one command buffer, commits it and waits: the launches it made.
 pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error> {
+    run_timed(f).map(|(launches, _)| launches)
+}
+
+/// `run`, and the command buffer's time on the GPU, in seconds.
+pub fn run_timed(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
     let device = crate::device()?;
     let scope = crate::launch::LaunchScope::enter();
     let queue = crate::pool::queue(&device)?;
@@ -329,7 +334,7 @@ pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error
     if records.iter().any(|r| r.command != records[0].command) {
         return Err(Error::BackendFailure);
     }
-    Ok(records.len())
+    Ok((records.len(), crate::launch::gpu_seconds(command)))
 }
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
@@ -351,12 +356,12 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
 
 /// Runs the persistent grid over the arena at `groups` groups, laid out as `l`, in one command
 /// buffer: `pp_setup` to the stage `l` names, and for the whole setup (`TO_ALL`) the expansion
-/// too: `px_expand` twice and `pp_check`. The launches it made, or `None` where a barrier failed
-/// (the grid's groups were not resident together).
-pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<usize>, Error> {
+/// too: `px_expand` twice and `pp_check`. The launches it made and its GPU time in seconds, or
+/// `None` where a barrier failed (the grid's groups were not resident together).
+pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<(usize, f64)>, Error> {
     l.write(&front.lay);
     let all = l.get("LAST") == TO_ALL;
-    let launches = run(|enc| {
+    let ran = run_timed(|enc| {
         front.setup(enc, arena, unit, groups)?;
         if all {
             for _ in 0..2 {
@@ -366,7 +371,7 @@ pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) 
         }
         Ok(())
     })?;
-    Ok(if front.barrier_failed() { None } else { Some(launches) })
+    Ok(if front.barrier_failed() { None } else { Some(ran) })
 }
 
 /// The groups of the next run after a barrier failed: half, and none past one.

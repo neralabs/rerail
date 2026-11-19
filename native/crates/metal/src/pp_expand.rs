@@ -550,6 +550,8 @@ pub struct Expanded {
     pub launches: usize,
     /// The groups of the grid it ran on, after any halving.
     pub groups: u64,
+    /// The command buffer's time on the GPU (its last run's), in seconds.
+    pub gpu_seconds: f64,
     /// The scratch tokens (a ref with `SCRATCH` set): their bytes, and each one's (start, end,
     /// kind).
     pub scratch: Vec<u8>,
@@ -585,7 +587,7 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
         defs.lay(&mut l);
         vis.lay(&mut l);
         exp.lay(&mut l);
-        let Some(launches) = on_grid(&arena, unit, &front, &l, groups)? else {
+        let Some((launches, gpu_seconds)) = on_grid(&arena, unit, &front, &l, groups)? else {
             groups = fewer(groups)?;
             continue;
         };
@@ -604,7 +606,7 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
             continue;
         }
         let (scratch, stoks) = exp.scratch();
-        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches, groups, scratch, stoks, room: exp.room() });
+        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches, groups, gpu_seconds, scratch, stoks, room: exp.room() });
     }
 }
 

@@ -273,4 +273,8 @@ with the unit, because each primitive's number of levels was chosen by its capac
       (an M5), so 32 is conservative. The count from IORegistry's `gpu-core-count` is still to
       come.
     - `pp_expand` is still MSL, not UKL (step 5b).
-    - The setup's GPU time has not yet been measured against step 4's.
+    - The GPU time, first slice (999 units, 2.34 M tokens), from the command buffers' GPU
+      intervals (`Expanded::gpu_seconds`), on an M5 at load average 32 to 40: 2.24 s in all,
+      a median of 1.67 ms a unit, and 16.8 ms for the slowest. A small unit's time is mostly
+      its barriers: about 100 a run, at 32 groups. Step 4's code was not timed, so there is
+      no comparison against it; that would take a second build of step 4.
