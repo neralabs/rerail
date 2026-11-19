@@ -255,6 +255,13 @@ now writes the code and each word's ranges):
   by parsing, and the number check is a second pass over the same bytes.
 - A string's parts, as in step 2.
 
+**A string's content takes no word table.** A part's code was its bytes' word looked up in the
+word table (a hash, about 30 instructions), though only the escapes' words are read after.
+The compiler now finds which kinds' words the words after a `TOKEN` read, up to the next
+`TOKEN` (`words_read`: a switch's named words, by kind; `WORD`, a mark or a keyword's leaf
+read every token's). A part of another kind takes its first byte's kind alone: two loads and
+a compare (`ldrb`, `ldrb`, `cmp #2`, `b.ne`). An escape still takes the table.
+
 Tests: the trees equal `14-json`'s on the 75 documents; the ladder, `tier2_tests`, the parser
 tests' JSON and block tests, rr_parser's JSON and CPU tests pass.
 

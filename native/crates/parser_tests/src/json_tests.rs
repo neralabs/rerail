@@ -81,6 +81,15 @@ fn simdjson_forms_trees_are_14_jsons() {
         br#"[01]"#.to_vec(),
         br#"  "s"  "#.to_vec(),
         b"\xef\xbb\xbf[1]".to_vec(),
+        // Atoms as simdjson tests them (page 40, step 3): at the file's end, a run longer than
+        // the word, a word cut short, before a structural and before whitespace.
+        br#"true"#.to_vec(),
+        br#"null"#.to_vec(),
+        br#"[truex]"#.to_vec(),
+        br#"[nul]"#.to_vec(),
+        br#"{"k":false,"t":true}"#.to_vec(),
+        br#"[null ,true	]"#.to_vec(),
+        br#"["\u0041true", "null\n", "fals"]"#.to_vec(),
     ];
     for pad in [0usize, 1, 61, 62, 63, 64, 65, 127] {
         for n in [0usize, 1, 62, 63, 64, 130] {
