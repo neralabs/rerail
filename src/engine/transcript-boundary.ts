@@ -124,11 +124,13 @@ const namesAnotherMachine = (path: string): boolean =>
   SHARE.test(path) && onAnotherMachine(hostReached(openedOnWindows(path)));
 
 /**
- * A Windows drive letter at the end of the token before a lone `:`, with no ASCII letter or digit before it, read from
- * the token's last two characters: `C` in `"C:\\Users\\me"` written in JSON, in `**C`, in `[C` and in the escaped
- * long-path prefix `\\\\?\\C`.
+ * A Windows drive letter at the end of the token before a lone `:`, read from the token's last two characters: `C` in
+ * `"C:\\Users\\me"` written in JSON, in `**C`, in `[C` and in the escaped long-path prefix `\\\\?\\C`. A letter after
+ * an ASCII letter or digit is part of a word, and one after a dash or a slash is a switch's: `-P` in PowerShell's
+ * `-P:\\host\share` (which also takes an en dash, an em dash or a horizontal bar for the dash) and `/G` in findstr's
+ * `/G:\\host\share\words.txt`.
  */
-const DRIVE_AT_END = /(?:^|[^a-z\d])[a-z]$/iu;
+const DRIVE_AT_END = /(?:^|[^-a-z\d/\u2013-\u2015])[a-z]$/iu;
 
 /** A run of path separators, which Windows reads as one. */
 const SEPARATOR_RUN = /([\\/])[\\/]+/gu;

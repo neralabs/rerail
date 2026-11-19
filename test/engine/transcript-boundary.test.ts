@@ -75,12 +75,15 @@ const URL_INPUTS = [
 
 /**
  * Calls that name another machine's share right after a `:` where it is no URL's host and path, written with
- * backslashes, or in an `smb:` URL, which names a share outright as a `file:` URL does; each with the share as the
- * lookup opens it.
+ * backslashes after a switch, one-letter switches too, whose letter is no drive's; or in an `smb:` URL, which names a
+ * share outright as a `file:` URL does; each with the share as the lookup opens it.
  */
 const SHARES_AFTER_A_COLON = [
   { form: "robocopy's log switch", command: "robocopy src dst /LOG:\\\\192.0.2.1\\logs\\run.txt", share: "\\\\192.0.2.1\\logs\\run.txt" },
   { form: "a PowerShell parameter", command: "Get-ChildItem -Path:\\\\192.0.2.1\\data\\cfg", share: "\\\\192.0.2.1\\data\\cfg" },
+  { form: "a PowerShell parameter's one letter", command: "Get-ChildItem -P:\\\\192.0.2.1\\data\\cfg", share: "\\\\192.0.2.1\\data\\cfg" },
+  { form: "a one-letter parameter after an en dash", command: "Get-ChildItem \u2013P:\\\\192.0.2.1\\data\\cfg", share: "\\\\192.0.2.1\\data\\cfg" },
+  { form: "findstr's one-letter switch", command: "findstr /G:\\\\192.0.2.1\\data\\cfg notes.txt", share: "\\\\192.0.2.1\\data\\cfg" },
   { form: "an smb: URL", command: "curl -s smb://192.0.2.1/share/cfg", share: "\\\\192.0.2.1\\share\\cfg" },
 ];
 
@@ -421,6 +424,13 @@ describe("the transcript boundary for coding agents", () => {
       [`${other}://data/a.txt`, `${other}:\\data\\a.txt`],
     ] as const) {
       expect(lookedUp(spelled), spelled).toEqual(lookedUp(single));
+    }
+    // A letter is read as a drive at a word's start, after a space, a quote or an equals sign: each spelling is looked up
+    // as the single-backslash one, never as a share.
+    for (const before of ["", "type ", "\"", "path="]) {
+      for (const [spelled, single] of [["C:\\\\x\\\\a.txt", "C:\\x\\a.txt"], ["D://x/a.txt", "D:\\x\\a.txt"]] as const) {
+        expect(lookedUp(`${before}${spelled}`), `${before}${spelled}`).toEqual(lookedUp(`${before}${single}`));
+      }
     }
   });
 
