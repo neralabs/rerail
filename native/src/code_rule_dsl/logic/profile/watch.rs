@@ -9,10 +9,11 @@
 //! - **`RERAIL_DEADLINE=<seconds>`:** at that wall time after start, a snapshot (`<dir>/deadline`), and go on: for a
 //!   run stopped by SIGKILL, which cannot be caught.
 //!
-//! - **The memory ceiling** (decision 0394): the process's resident memory is read every 50 ms. Past
-//!   `RERAIL_MEMORY_MAX_MB` (default: three quarters of the machine's memory; `off` for none), the run is dumped as at
-//!   a deadline, then stopped with exit code 3 and a message naming the widest relations it held
-//!   (`native::width::widest`). A runaway cannot take the machine, on any path.
+//! - **The memory ceiling's backstop** (decision 0394): each run watches its own ceiling and stops itself, naming the
+//!   relations it held (`native::width`). A path that does not stop when told (a SQL stratum, the device) is stopped
+//!   here: the process's resident memory is read every 50 ms, and once it has stayed past `RERAIL_MEMORY_MAX_MB`
+//!   (`memory_ceiling`) for `GRACE`, the run is dumped as at a deadline and the process exits with code 3. A runaway
+//!   cannot take the machine, on any path.
 //!
 //! `<dir>` is the profile's directory (`RERAIL_PROFILE`), else `RERAIL_DUMP`. With neither, a signal stops the run as
 //! before, saying so. The dump is the profile report of everything recorded so far (spans that closed, SQL
@@ -131,17 +132,28 @@ pub fn watch() {
         });
         if let Some(max) = memory_ceiling() {
             let _ = rerail_accel::exec::service("rerail-memory", None, move || {
+                // The run stops itself first, naming its relations: this stops what did not.
+                const GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+                let mut past: Option<std::time::Instant> = None;
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(50));
                     let Some(now) = resident_bytes() else { return };
                     if now <= max {
+                        past = None;
+                        continue;
+                    }
+                    if past.get_or_insert_with(std::time::Instant::now).elapsed() < GRACE {
                         continue;
                     }
                     let why = format!("RERAIL_MEMORY_MAX_MB={}: {} MB resident", max >> 20, now >> 20);
                     if let Some(dir) = destination() {
                         let _ = dump(&dir.join("memory"), &why, started);
                     }
-                    eprintln!("rerail-engine: stopped at the memory ceiling ({why}).\n{}", ceiling_message());
+                    eprintln!(
+                        "rerail-engine: stopped at the memory ceiling ({why}), {} s after the run was told to stop: the path \
+                         that held the memory does not stop when told (a SQL stratum, the device, a cache).",
+                        GRACE.as_secs()
+                    );
                     std::process::exit(3);
                 }
             });
@@ -159,26 +171,6 @@ pub fn watch() {
             });
         }
     }
-}
-
-/// The memory ceiling's message: the widest relations the run held, and what to do.
-fn ceiling_message() -> String {
-    let widest = crate::code_rule_dsl::logic::native::width::widest(5);
-    let mut out = String::new();
-    if widest.is_empty() {
-        out.push_str("No derived relation had passed a million rows: the memory went elsewhere (inputs, a cache, the device).");
-    } else {
-        out.push_str("The widest derived relations, by rows:");
-        for (table, rows) in &widest {
-            out.push_str(&format!("\n  `{table}`: {rows}"));
-        }
-    }
-    out.push_str(&format!(
-        "\nA relation's rows are capped at {} (RERAIL_WIDEST_ROWS); lower it to stop at the relation, naming its rules, before \
-         the process reaches the ceiling. Raise RERAIL_MEMORY_MAX_MB if the memory is expected.",
-        crate::code_rule_dsl::logic::native::width::cap()
-    ));
-    out
 }
 
 /// The memory ceiling in bytes: `RERAIL_MEMORY_MAX_MB`, else three quarters of the machine's memory; `None` with

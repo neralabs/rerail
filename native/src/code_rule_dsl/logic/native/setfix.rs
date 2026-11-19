@@ -2089,6 +2089,8 @@ pub fn close(conn: impl Scoped, name: &str) -> Result<()> {
 pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     let conn = conn.db();
     let t0 = Instant::now();
+    // The run's limits (decision 0394): its cap, whether it cuts, its memory stop, and its record.
+    let limits = super::width::Limits::here();
     let comp = component(conn, name)?;
     let mut comp = comp.lock().unwrap();
     let (nrels, symbols) = { let s = comp.store.read().unwrap(); (s.rels.len(), Arc::clone(&s.syms)) };
@@ -2435,9 +2437,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             let n = match ran {
                 Ok(n) => n,
                 Err(e) if super::width::as_too_wide(&e).is_some() => {
-                    if !super::width::cutting() { return Err(super::width::with_rules(e, |t| vec![format!("probe {pi} of {name} (head `{t}`)")])); }
+                    if !limits.cutting() { return Err(super::width::with_rules(e, |t| vec![format!("probe {pi} of {name} (head `{t}`)")])); }
                     p.full.set(true);
-                    super::width::note_cut(&store.rels[p.head].table, &name, pi);
+                    limits.note_cut(&store.rels[p.head].table, &name, pi);
                     0
                 }
                 Err(e) => return Err(e),
@@ -2502,7 +2504,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                         Term::Const(c) => *c,
                         Term::Cat(a, b) => cat(syms, slots[*a], slots[*b]),
                     }));
-                    if fresh[rule.head].n + store.rels[rule.head].n >= super::width::cap() { edge_full = Some(rule.head); return; }
+                    if fresh[rule.head].n + store.rels[rule.head].n >= limits.cap { edge_full = Some(rule.head); return; }
                     fresh[rule.head].emitted += 1;
                     fresh[rule.head].offer(&row, &store.rels[rule.head]);
                 };
@@ -2519,8 +2521,12 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
         if let Some(h) = edge_full {
             let table = &store.rels[h].table;
-            if !super::width::cutting() { return Err(super::width::with_rules(super::width::too_wide(table, super::width::cap()), |t| vec![format!("an edge rule of {name} (head `{t}`)")])); }
-            super::width::note_cut_by(table, format!("an edge rule of {name}"));
+            if !limits.cutting() { return Err(super::width::with_rules(super::width::too_wide(table, limits.cap), |t| vec![format!("an edge rule of {name} (head `{t}`)")])); }
+            limits.note_cut_by(table, format!("an edge rule of {name}"));
+        }
+        // The run's memory watch said stop (decision 0394): the wave's rows are dropped and the run stops.
+        if let Some(e) = limits.stop_error() {
+            return Err(e);
         }
         waves += 1;
         seeded = true;
@@ -2533,7 +2539,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             let emitted = f.emitted;
             let big = f.n >= SPANNED_ROWS;
             any |= { let _s = big.then(|| crate::code_rule_dsl::logic::profile::span(|| "a wave's rows settled (Fresh::settle)".into())); rel.push_fresh(f, gates_done.contains(&r)) };
-            super::width::note_rows(&rel.table, rel.n);
+            limits.note_rows(&rel.table, rel.n);
             if counting && emitted > 0 {
                 let mut all = DERIVATIONS.lock().unwrap();
                 let e = all.entry(rel.table.clone()).or_default();
@@ -6536,6 +6542,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     }
     struct Ctx<'a, 'c> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
                      key: Vec<i64>, row: Vec<i64>, error: Option<Error>, pending: Vec<(usize,i128)>, scratch: Vec<rowcode::Scratch>,
+                     /// The run's cap on a derived relation's rows (decision 0394, `width::Limits`).
+                     cap: usize,
                      /// The texts the branch being walked holds as text alone (`TEXT_OUT`), by `value - SCRATCH`: each
                      /// dropped as its step's branch returns.
                      texts: Vec<String>,
@@ -6789,7 +6797,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             // Decision 0394: no relation past the width cap. Its rows and those this walk made (an upper bound: some
             // may repeat) stop at it; the run stops or cuts the probe (`width`), never fills memory.
             let rel = &store.rels[cx.head];
-            if cx.fresh[cx.head].n + rel.n >= super::width::cap() { cx.error = Some(super::width::too_wide(&rel.table, super::width::cap())); return; }
+            if cx.fresh[cx.head].n + rel.n >= cx.cap { cx.error = Some(super::width::too_wide(&rel.table, cx.cap)); return; }
             cx.fresh[cx.head].emitted += 1;
             cx.fresh[cx.head].offer(&cx.row, rel);
             return;
@@ -7299,7 +7307,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         }).collect();
         struct Out { n: u64, fresh: Fresh, rows: Vec<i64>, counts: Vec<[u64; 2]>, skipped: u64, work: u64, failed: Option<String>, error: Option<Error>,
                      left: Option<Vec<u32>>, texts: Vec<String> }
-        let (head, collecting, cut_from) = (cx.head, cx.collect.is_some(), cx.cut_from);
+        let (head, collecting, cut_from, cap) = (cx.head, cx.collect.is_some(), cx.cut_from, cx.cap);
         let atoms = Arc::clone(&cx.syms.atoms);
         let mut outs: Vec<Option<Out>> = (0..parts).map(|_| None).collect();
         crate::threads::scope(|jobs| {
@@ -7311,7 +7319,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let mut rows = Vec::new();
                     let factor = factored(j);
                     let failed = factor.iter().map(|_| Default::default()).collect();
-                    let mut w = Ctx { j, head, store, syms: &mut syms, fresh: &mut fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(),
+                    let mut w = Ctx { j, head, store, syms: &mut syms, fresh: &mut fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, cap, pending: Vec::new(),
                                       scratch: j.steps.iter().map(|_| rowcode::Scratch::default()).collect(), texts: Vec::new(),
                                       collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
                                       factor, failed, snap: Vec::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
@@ -7367,7 +7375,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     cx.fresh[head].absorb(out.fresh);
                     // Each morsel checked the cap on its own rows (decision 0394): together they are checked again.
                     let rel = &cx.store.rels[head];
-                    if cx.error.is_none() && cx.fresh[head].n + rel.n > super::width::cap() { cx.error = Some(super::width::too_wide(&rel.table, super::width::cap())); }
+                    if cx.error.is_none() && cx.fresh[head].n + rel.n > cx.cap { cx.error = Some(super::width::too_wide(&rel.table, cx.cap)); }
                 }
             }
         }
@@ -7510,7 +7518,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let scratch = j.steps.iter().map(|_| rowcode::Scratch::default()).collect();
     let factor = factored(j);
     let failed = factor.iter().map(|_| Default::default()).collect();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
                        factor, failed, snap: Vec::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,

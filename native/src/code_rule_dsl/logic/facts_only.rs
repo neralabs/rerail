@@ -194,10 +194,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
     // The rule being compiled: the step that first bound each slot, for a refusal's message.
     ("code_rule_dsl/logic/native/setfix/device.rs", "BINDER"),
-    // Decision 0394: the relations a run cut at the width cap, for the failure it ends with, and the widest relations
-    // seen, for the memory ceiling's message (read by its watch thread). Messages only: no result reads them.
-    ("code_rule_dsl/logic/native/width.rs", "CUT"),
-    ("code_rule_dsl/logic/native/width.rs", "WIDEST"),
     // Settings and measurement or debugging aids, read once or written as a run goes: a file appended to
     // (`RERAIL_PREPARED_WHY`), the heap's span (`RERAIL_HEAP_AT`), the exports a debugging run counts by document
     // (`RERAIL_KEPT_DOCS`), and the trees a thread decoded (a count, for the check that a run decodes none).
@@ -403,6 +399,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANNED"),
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
+    // The run under way on the thread: its limits and what it met of them (decision 0394), carried to its jobs.
+    ("code_rule_dsl/logic/native/width.rs", "RUN"),
     // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
     ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
     // Measurement aids under `RERAIL_PLAN_GREEDY_PROBE`: its switches, and the probe's counts and sums.

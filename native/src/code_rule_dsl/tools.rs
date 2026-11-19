@@ -2,7 +2,6 @@
 //! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
 
 pub use super::logic::profile::watch::watch;
-pub use super::logic::native::width::cut_report as width_cut_report;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings};
 pub use super::logic::settings::process_counters;
@@ -790,14 +789,17 @@ const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine du
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
 /// `RERAIL_SESSION` (a directory) keeps a corpus session across them (decision 0063): `cli_in`, with the session
 /// it keeps.
-pub fn cli(args: &[String]) -> Result<String, String> {
+///
+/// Returns the command's result, and where it cut a relation at the width cap (decision 0394, `RERAIL_WIDEST=cut`) the
+/// message that its results are incomplete: the caller fails the process with it.
+pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
     // Decision 0272 (O167): the process ends with its command, before any idle time, so each run serves its waiting
     // join searches at its end, within a share of its CPU (decision 0243). A long-lived caller of `cli_in` leaves
     // them to the idle job.
     crate::code_rule_dsl::logic::plan::joins::drain_at_end(true);
     // Decision 0288: the command's clocks, for its time before its run and after it.
     crate::code_rule_dsl::logic::profile::command_begins();
-    let out = cli_in(args, &mut Default::default());
+    let (out, incomplete) = cli_in(args, &mut Default::default());
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
     // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
     if let (Ok(_), Some(c)) = (&out, after) {
@@ -806,11 +808,23 @@ pub fn cli(args: &[String]) -> Result<String, String> {
             c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
         );
     }
-    out
+    (out, incomplete)
 }
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
-pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
+///
+/// The command is one run for its limits (decision 0394): its settings are read as it starts, its runs share them and
+/// one record, and nothing of them outlives it. Beside the result: the message that it cut a relation, if it did.
+pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> (Result<String, String>, Option<String>) {
+    use crate::code_rule_dsl::logic::native::width;
+    let limits = width::scope(width::Settings::from_env);
+    let out = command(args, kept);
+    let incomplete = limits.finish().and_then(|r| r.incomplete());
+    (out, incomplete)
+}
+
+/// A command of `cli_in`, within its limits.
+fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
     // Done as the library loaded, except where nothing runs then (the browser's build).
     crate::install_store_functions();
     let budgets = budget_options(args)?;
@@ -962,7 +976,7 @@ fn repeat_command(script: &str) -> Result<String, String> {
             _ => {
                 let args: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
                 let (u0, s0) = cpu();
-                let result = cli_in(&args, &mut kept);
+                let result = command(&args, &mut kept);
                 let (u1, s1) = cpu();
                 eprintln!(
                     "repeat line {n}: {:.2} s CPU ({:.2} user + {:.2} sys); footprint {} MB, at most {} MB; {}",

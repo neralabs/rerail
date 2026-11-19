@@ -14,8 +14,8 @@
 //!
 //! Runaways (decision 0394): a derived relation holds at most `RERAIL_WIDEST_ROWS` rows (50 M by default). Past it the
 //! run stops naming the relation's rules, or with `RERAIL_WIDEST=cut` keeps the rows so far, goes on, and exits 3.
-//! The process stops with exit code 3 past `RERAIL_MEMORY_MAX_MB` resident (three quarters of the machine's memory
-//! by default).
+//! A run past `RERAIL_MEMORY_MAX_MB` resident (three quarters of the machine's memory by default) is stopped, naming
+//! its widest relations; a path that does not stop by then, the process stops, exit code 3.
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -29,13 +29,15 @@ fn main() -> ExitCode {
     // one of them.
     rerail_engine::threads::configure(true);
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match rerail_engine::tools::cli(&args) {
+    let (out, incomplete) = rerail_engine::tools::cli(&args);
+    match out {
         Ok(text) => {
             print!("{text}");
-            // Decision 0394: a relation cut at the width cap (`RERAIL_WIDEST=cut`) left the results incomplete.
-            match rerail_engine::tools::width_cut_report() {
-                Some(report) => {
-                    eprintln!("rerail-engine: {report}");
+            // Decision 0394: the command cut a relation at the width cap (`RERAIL_WIDEST=cut`): its results are
+            // incomplete.
+            match incomplete {
+                Some(message) => {
+                    eprintln!("rerail-engine: {message}");
                     ExitCode::from(3)
                 }
                 None => ExitCode::SUCCESS,

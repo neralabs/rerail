@@ -47,10 +47,18 @@ pub unsafe extern "C" fn rerail_command(at: *const u8, len: usize) -> i32 {
     thread_local! {
         static KEPT: std::cell::RefCell<crate::code_rule_dsl::logic::plan::corpus::session::Kept> = Default::default();
     }
-    let code = match KEPT.with(|kept| crate::tools::cli_in(&args, &mut kept.borrow_mut())) {
+    let (out, incomplete) = KEPT.with(|kept| crate::tools::cli_in(&args, &mut kept.borrow_mut()));
+    let code = match out {
         Ok(text) => {
             print!("{text}");
-            0
+            // Decision 0394: a relation cut at the width cap left the results incomplete.
+            match incomplete {
+                Some(message) => {
+                    eprintln!("rerail-engine: {message}");
+                    3
+                }
+                None => 0,
+            }
         }
         Err(error) => {
             eprintln!("rerail-engine: {error}");
