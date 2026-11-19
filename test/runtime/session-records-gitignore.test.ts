@@ -104,8 +104,10 @@ async function openToThisAccount(file: string): Promise<void> {
  */
 async function letMakeFoldersOnly(folder: string, inner: string): Promise<void> {
   if (process.platform === "win32") {
-    // `whoami /user /fo csv /nh` prints "<domain>\<name>","<SID>".
-    const me = /"(S-1-[\d-]+)"\s*$/u.exec(execFileSync("whoami.exe", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" }))?.[1] ?? "";
+    // Windows' own whoami by its path, as Git Bash puts a whoami of its own first on PATH; it prints
+    // "<domain>\<name>","<SID>".
+    const whoami = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "whoami.exe");
+    const me = /"(S-1-[\d-]+)"\s*$/u.exec(execFileSync(whoami, ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" }))?.[1] ?? "";
     execFileSync("icacls.exe", [folder, "/inheritance:r", "/grant:r", `*${me}:(X,AD,RA,RC,S)`, "*S-1-3-0:(OI)(CI)(IO)F", "*S-1-5-18:(OI)(CI)F", "/q"]);
   } else {
     await mkdir(inner, { recursive: true, mode: 0o700 });
