@@ -97,7 +97,7 @@ simdjson_warn_unused error_code index_and_hash(dom_parser_implementation& parser
       const uint64_t slash = b.non_quote_outside_string(in.eq('/'));
       if (simdjson_unlikely(slash != 0) && !unreadable) {
         scanner = before;
-        if (blank(reader.block_index() + size_t(__builtin_ctzll(slash)))) {
+        if (blank(reader.block_index() + size_t(trailing_zeroes(slash)))) {
           if (block == last) { reader.get_remainder(last); }
         } else {
           unreadable = true;
@@ -311,7 +311,7 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
       const uint64_t bits = backslash_quote<simd::simd8<uint8_t>>(p);
       const uint32_t bs = uint32_t(bits), quote = uint32_t(bits >> 32);
       if (((bs - 1) & quote) != 0) {
-        const uint8_t* q = p + __builtin_ctz(quote);
+        const uint8_t* q = p + trailing_zeroes(quote);
         if (q > from) { leaf(CONTENT, NO_FIELD, at(from), at(q)); }
         const uint32_t end = at(q) + 1;
         close(ord, end);
@@ -321,7 +321,7 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
         p += 32;
         continue;
       }
-      const uint8_t* e = p + __builtin_ctz(bs);
+      const uint8_t* e = p + trailing_zeroes(bs);
       const uint8_t c = e[1];
       if (c == 'u') {
         if (e == low_checked) {
@@ -350,7 +350,7 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
     const uint64_t bits = backslash_quote<simd::simd8<uint8_t>>(v + 1);
     const uint32_t bs = uint32_t(bits), quote = uint32_t(bits >> 32);
     if (simdjson_likely(((bs - 1) & quote) != 0)) {
-      const uint32_t q = __builtin_ctz(quote);
+      const uint32_t q = trailing_zeroes(quote);
       if (q == 0) {
         leaf(STRING, field, s, s + 2);
         return s + 2;

@@ -425,6 +425,7 @@ mod tests {
 
     /// The kernel a measurement runs: `RERAIL_SIMDJSON_KERNEL` (its `Kernel` name, as `Haswell`), else the
     /// fastest this CPU runs.
+    #[cfg(target_os = "macos")]
     fn kernel_under_test() -> Kernel {
         match std::env::var("RERAIL_SIMDJSON_KERNEL") {
             Ok(name) => *Kernel::ALL.iter().find(|k| format!("{k:?}") == name).expect("a kernel's name"),
@@ -445,6 +446,7 @@ mod tests {
     /// (parse and index) or `tape`, 10 rounds over the repository's `.json` files up to 1 MB.
     #[test]
     #[ignore = "a measurement: run by name with RERAIL_TAPE_RUN"]
+    #[cfg(target_os = "macos")]
     fn tape_cost() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
@@ -613,6 +615,7 @@ mod tests {
     /// Instructions a node by the document's shape: simdjson's DOM parse, stage 1, and the v9np stage 2.
     #[test]
     #[ignore = "a measurement: run by name with --nocapture"]
+    #[cfg(target_os = "macos")]
     fn shape_costs() {
         let retired = || {
             let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
