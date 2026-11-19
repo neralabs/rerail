@@ -88,6 +88,11 @@ The stored result contains only the requested constant relations.
 Several evaluations can request Git facts at the same time. Each evaluation keeps its own repository and answers.
 While a worker waits for an answer, it must allow queued work that produces that answer to run.
 This applies even when simultaneous evaluations outnumber the CPU workers.
+A revision scan can run its Git inventory and the policy's typing rules at the same time.
+Each nested evaluation can run queued parser jobs while it waits for its next batch of documents.
+An evaluator that exchanges requests and replies with its caller needs a separate stack.
+It first offers that work to the CPU pool. If no worker claims it within one millisecond, a service thread takes it.
+The caller can then run queued work while it waits for a request.
 
 A policy can read a Git revision and a later policy can use that same answer to request a commit.
 When the engine saves an answer for reuse, it saves the rows even if the first policy uses them only in its output.

@@ -56,7 +56,7 @@ impl Checkout {
             .to_owned()
     }
 
-    fn run(&self, name: &str, paths: &[&Path], scope: Option<&str>) -> Output {
+    fn command(&self, name: &str, paths: &[&Path], scope: Option<&str>) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_rerail-engine"));
         command
             .env("RERAIL_TAPE_CACHE", self.area.path().join("store.sqlite"))
@@ -65,7 +65,11 @@ impl Checkout {
         if let Some(scope) = scope {
             command.args(["--revision", "HEAD", "--analysis-scope", scope]);
         }
-        command.output().unwrap()
+        command
+    }
+
+    fn run(&self, name: &str, paths: &[&Path], scope: Option<&str>) -> Output {
+        self.command(name, paths, scope).output().unwrap()
     }
 
     fn settled_store(&self) -> rusqlite::Connection {
@@ -183,7 +187,7 @@ label(s) :- file_line("a.py", _, s).
 found(s) :- label(s), call_open(n).
 .output found
 "#).unwrap();
-    let result = f.run("logic", &[&rule, &f.repo, &out], Some("constants"));
+    let result = f.command("logic", &[&rule, &f.repo, &out], Some("constants")).env("RERAIL_THREADS", "2").output().unwrap();
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     assert_eq!(fs::read_to_string(sentinel).unwrap(), "user file");
     assert_eq!(fs::read_to_string(typing.join("keep.txt")).unwrap(), "typing file");

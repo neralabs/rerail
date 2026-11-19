@@ -5438,8 +5438,7 @@ fn run_observed(
         target: &'a std::sync::atomic::AtomicUsize,
         keep_docs: bool,
         doing: &'a crate::code_rule_dsl::logic::profile::Activity,
-        /// Rung when the builder may have handed on a chunk, and when a chunk's evaluation ends: the main thread, which
-        /// begins and files the chunks in order, waits on it running no job (`Bell`).
+        /// Signals progress to the outer sequencer, which begins and files the chunks in order.
         bell: rerail_accel::exec::Bell,
     }
     impl<'a, B, P, R> Builder<'a, B, P, R>
@@ -5458,22 +5457,27 @@ fn run_observed(
             self.dirty.store(true, SeqCst);
             while self.dirty.load(SeqCst) {
                 let Some(mut c) = self.cut.try_lock() else { return };
+                let mut progress = false;
                 while self.dirty.swap(false, SeqCst) {
                     let from = thread_usage();
-                    while self.step(&mut c, jobs) {}
+                    while self.step(&mut c, jobs) {
+                        progress = true;
+                    }
                     let now = thread_usage();
                     c.parse.0 += now.0 - from.0;
                     c.parse.1 += now.1 - from.1;
                 }
                 drop(c);
-                self.bell.ring();
+                if progress {
+                    self.bell.ring();
+                }
             }
         }
 
-        /// The main thread's wait for `poll`, under `site`: on the bell, running no job, while the pool has other
-        /// threads to take the jobs; with one thread, running them itself (none else would).
+        /// An outer sequencer leaves parser jobs to the pool. Nested sequencers can occupy every
+        /// worker simultaneously, so each helps the pool while waiting for its own chunk.
         fn main_wait<T>(&self, site: &'static str, poll: impl FnMut() -> Option<T>) -> T {
-            if crate::threads::max() >= 2 {
+            if crate::threads::max() >= 2 && RUNS_UNDER_WAY.with(std::cell::Cell::get) <= 1 {
                 self.bell.wait_as(site, poll)
             } else {
                 rerail_accel::exec::help_until_as(site, poll)
@@ -5481,8 +5485,7 @@ fn run_observed(
         }
 
         /// The main thread's next message: a chunk, a batch's end (`None`) or an error; `Err` once the builder has
-        /// ended. Meanwhile the main thread waits on the bell ([`Builder::main_wait`]): the documents' and chunks' jobs
-        /// are the pool's other threads'.
+        /// ended. [`Builder::main_wait`] lets nested callers advance queued document work.
         fn next<'s>(&'s self, jobs: &crate::threads::Jobs<'s, '_>) -> std::result::Result<Result<Option<Chunk>>, ()>
         where
             'a: 's,
@@ -6979,7 +6982,7 @@ fn run_observed(
         let kept_git_reads: Arc<std::sync::Mutex<Vec<(String, String, String)>>> = Arc::default();
         let kept_git_reads_in = Arc::clone(&kept_git_reads);
         let rounds_journal_in = rounds_journal.clone();
-        // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
+        // The cone and the caller take turns on separate stacks. This caller answers the cone's requests.
         let modes = modes.to_owned();
         // Each relation's column types (`retain::types_of`): the cone's kept inputs are digested by content (decision 0212).
         // Read from the run's cross part's version (`run_placed`): no tree is decoded.

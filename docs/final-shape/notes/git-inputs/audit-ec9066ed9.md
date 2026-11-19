@@ -49,6 +49,15 @@ The full standalone CLI suite exposed a missing finding for `sub/b.py`. The inve
 On Windows, a native path join used a backslash for a grammar lookup. The Git inventory had stored the same path with a slash.
 Using Git's path spelling for this lookup restored the second finding. All 11 standalone Git revision tests passed on NTFS, including trailer parsing and scope collection.
 
+With two CPU workers, the nested typing and Git inventory regression then hung on Windows, macOS and Linux.
+Both workers waited for a queued parser job. After that wait could run jobs, the workers reached a second wait.
+Each caller needed a separate stack to start the evaluator that sends it requests.
+The caller now gives a pool worker first claim and starts a service thread if the job is still queued.
+The repaired Linux regression finished in 4.2 seconds. All 11 CLI tests passed there.
+On macOS the policy returned the expected row with one, two and four workers.
+On Windows the complete 11-test revision suite passed with two CPU workers in 46.98 seconds.
+The nested regression sets the worker count itself and checks both the result and the caller's existing files. [CLI regression](../../../../native/tests/git_revision_cli.rs)
+
 The Windows 11 ARM64 guest in Parallels built the native store tests and the Node addon with test hooks.
 Four NTFS tests passed for tree eviction, symlink retargeting, cross-process leases and reclamation after a process exits.
 The tree cache retained 1,964 bytes after each oversized directory read. The Windows process check distinguished a live child from the same child after termination.
