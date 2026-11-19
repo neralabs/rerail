@@ -221,6 +221,27 @@ impl WorktreeStat {
     }
 }
 
+/// Whether a read failed because this process may not read the file now: its permissions refuse
+/// it, or another process holds the file without sharing it or locks it.
+fn unreadable(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::PermissionDenied || held_elsewhere(error)
+}
+
+/// Whether a read failed on another process's hold of the file: a sharing or a lock violation.
+#[cfg(windows)]
+fn held_elsewhere(error: &std::io::Error) -> bool {
+    use windows_sys::Win32::Foundation::{ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION};
+    [ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION]
+        .iter()
+        .any(|&code| error.raw_os_error() == Some(code as i32))
+}
+
+/// Unix keeps no lock that refuses a read.
+#[cfg(not(windows))]
+fn held_elsewhere(_error: &std::io::Error) -> bool {
+    false
+}
+
 /// Whether `file`'s NTFS change time equals its modification time: false once anything wrote the
 /// file or set one of its times after that modification time, and where the volume keeps no
 /// change time.
@@ -712,8 +733,9 @@ impl GitWorkspace {
     /// are `blob_length` long, now. One `lstat` decides while the file's stat equals the stat of
     /// its index entry (`BaseFile::checkout`); otherwise the file is hashed. The file may have
     /// changed since discovery, and a checkout conversion (`core.autocrlf`, a filter driver) keeps
-    /// a file clean in Git while its bytes differ from the blob's. A file whose permissions refuse
-    /// this process its bytes cannot be hashed: its stat alone decides, as it does for Git.
+    /// a file clean in Git while its bytes differ from the blob's. A file this process cannot read,
+    /// for its permissions or for another process holding it (`unreadable`), cannot be hashed: its
+    /// stat alone decides, as it does for Git.
     pub fn holds_blob_bytes(&self, relative_path: &str, blob_length: u64) -> bool {
         let Ok(index) = self
             .base_files
@@ -733,8 +755,7 @@ impl GitWorkspace {
         }
         self.read_source(relative_path, blob_length).map_or_else(
             |error| {
-                error.kind() == std::io::ErrorKind::PermissionDenied
-                    && recorded.is_some_and(|recorded| current.matches(&recorded))
+                unreadable(&error) && recorded.is_some_and(|recorded| current.matches(&recorded))
             },
             |bytes| self.source_alias(relative_path, &bytes).is_some(),
         )
@@ -1231,6 +1252,45 @@ mod tests {
                 !workspace.holds_blob_bytes("a.py", 10),
                 "a stat of another size proves nothing"
             );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A clean file another process holds without sharing it, or locks, cannot be hashed while it
+    /// does: its stat alone decides, as it does for Git, once its change time moved.
+    #[cfg(windows)]
+    #[test]
+    fn a_clean_file_held_by_another_handle_is_proven_by_its_stat_alone() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = fixture_directory("stat-held");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("a.py");
+        std::fs::write(&path, b"print(1)\n").unwrap();
+        let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800);
+        backdate(&path, written);
+        initialize_repository(&root, &[]);
+        let workspace = discover(&root).unwrap();
+        // Setting the same time again moves the change time alone.
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(written)
+            .unwrap();
+        {
+            let _held = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&path)
+                .unwrap();
+            assert!(workspace.read_source("a.py", 9).is_err(), "the file is held");
+            assert!(workspace.holds_blob_bytes("a.py", 9));
+        }
+        {
+            let locked = std::fs::File::open(&path).unwrap();
+            locked.lock().unwrap();
+            assert!(workspace.read_source("a.py", 9).is_err(), "the file is locked");
+            assert!(workspace.holds_blob_bytes("a.py", 9));
         }
         std::fs::remove_dir_all(root).unwrap();
     }
