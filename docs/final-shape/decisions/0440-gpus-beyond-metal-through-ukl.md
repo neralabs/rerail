@@ -1026,6 +1026,21 @@ stands on:
   thread's deferrable leases now); the device layer gained a device's largest buffer (OpenCL's
   `CL_DEVICE_MAX_MEM_ALLOC_SIZE`).
 
+**C: the lattice, the set steps, and the scans retired (2026-11-19).**
+- **The lattice fixpoint** (`lattice.uglykl`, was `metal_lattice.metal`) runs on the device work queue of the
+  library (`<ukl/workqueue.h>`), its coherent 64-bit words through `<ukl/memory.h>`; its host and the queue's
+  (`metal_work_queue.rs`) are on the lane. Metal's compare-and-swap may fail without a rival (a weak exchange): the
+  claims and the publish retry until the word is seen to differ. `ukl_atomic_and` is a primitive on every backend
+  now. A conformance test (`the_device_reaches_the_lattices_least_fixpoint`, against the host's fixpoint by rounds)
+  passes on Metal, the CPU and OpenCL.
+- **The set steps** (`set_steps.uglykl`, was `metal_set_steps.metal`): a threadgroup a file, its lanes over the
+  steps, the threadgroup's barriers `ukl_tg_barrier` and `ukl_tg_barrier_device`. Its test against the CPU's sets
+  passes on Metal, the CPU and OpenCL.
+- **The saturating scans** (`metal_parallel.metal`) had no caller since the grid machine went (0324): removed, with
+  their tests. Their one live helper, a checked dispatch, moved to `metal_rows`, its only user (it goes with the
+  row programs' generator in D).
+- Kernel files are `.uglykl` (the user's choice): easy to find and tell from Metal's.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
