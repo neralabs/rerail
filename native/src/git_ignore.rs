@@ -470,7 +470,7 @@ fn time_step(time: std::time::SystemTime) -> std::time::Duration {
         return std::time::Duration::from_secs(2);
     }
     let mut step = 1;
-    while nanos % (step * 10) == 0 {
+    while nanos.is_multiple_of(step * 10) {
         step *= 10;
     }
     std::time::Duration::from_nanos(u64::from(step))
@@ -503,7 +503,10 @@ impl FileStamp {
                 u64::try_from(seconds).unwrap_or(0),
                 u32::try_from(nanos).unwrap_or(0),
             );
-        past_step(changed, now) && self.modified.is_some_and(|modified| past_step(modified, now))
+        past_step(changed, now)
+            && self
+                .modified
+                .is_some_and(|modified| past_step(modified, now))
     }
 
     /// Whether this stamp tells its file from every later one: the identity alone does here.
@@ -1402,7 +1405,11 @@ mod tests {
         assert!(ignore.ignored("e.py", false).unwrap());
         let reads = index_reads();
         assert!(ignore.ignored("e.py", false).unwrap());
-        assert_eq!(index_reads(), reads, "times the clock has left: the stamp is kept");
+        assert_eq!(
+            index_reads(),
+            reads,
+            "times the clock has left: the stamp is kept"
+        );
 
         set_modified(&index, file_clock() + Duration::from_millis(3_600_500));
         assert!(ignore.ignored("e.py", false).unwrap());
@@ -1475,6 +1482,33 @@ mod tests {
             ignore.ignored("gen/t.py", false).unwrap(),
             "with no index Git tracks nothing"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A stamp read while the file clock still reads the time its file last changed is not kept,
+    /// however long ago its modification time is: a write within that step can get the same change
+    /// time. A time set back is a change, so each try reads the stamp right after one and checks it
+    /// whenever the clock has not left that step by the end of the check.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn keeps_no_stamp_while_the_file_clock_reads_its_change_time() {
+        let root = fixture("change-step", &[("f", "")]);
+        let file = root.join("f");
+        let checked = (0..100).any(|_| {
+            set_modified(&file, file_clock() - Duration::from_secs(5));
+            let stamp = FileStamp::of(&file).expect("a file");
+            let tells = stamp.tells();
+            let (seconds, nanos) = stamp.changed;
+            let changed = std::time::UNIX_EPOCH
+                + Duration::new(
+                    u64::try_from(seconds).unwrap(),
+                    u32::try_from(nanos).unwrap(),
+                );
+            let within = !past_step(changed, file_clock());
+            assert!(!(within && tells), "a stamp read within its change time's step is kept");
+            within
+        });
+        assert!(checked, "the file clock left every change time's step before its check");
         std::fs::remove_dir_all(root).unwrap();
     }
 
