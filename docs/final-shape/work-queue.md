@@ -4432,6 +4432,29 @@ after the phases went on the run path (0083).
     rules run in 60 s (profiled) instead of past 180 s. All 57 rules run over the 50 files.
   - `RERAIL_KEEPS_TRACE=<text>` prints the pricing's estimates for relations whose names hold the text.
 
+### Q244. A one-file edit of the data-layer pack costs 1.4–1.5 s: the cross part's fixed costs and the frames (open)
+
+Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the profiling build (6dd9b1466), load
+13–22 on the M5. Cold 8.6 s (a fresh store; 9.7 s on a new binary's first run), warm 0.05 s, a comment edit of an
+87-line file 1.5 s and 29 G instructions (an edit adding a function 1.7 s before 0432, 2.2 s profiled now).
+- **Fixed on the way** (2026-11-18): the writer's per-put blocks (Q243, 49 s cold to 13.6 s), the cost fit over
+  every sample (2.5 s stall, `FIT_HELD`), phase exports keyed into every file's memo entry (0432, the edit adding a
+  function 5.3 s to 1.7 s), the listings naming a directory (0433), the warm run's kept-plan writes, R7.
+- **Where the edit's 1.42 s go** (main thread, profiled): combine 0.38 s (phases 0–2, their waits), prepare 0.18 s
+  (kept program read; the memo's program 0.03, statistics 0.03), wait 0.30 s (the edited file's chunk: 0.45 s of
+  the pool's CPU for 87 lines, every file-local stratum run for one file), cross 0.38 s, stats 0.08 s, and 0.06–0.12
+  s on the store's collection at the end.
+- **The cross part:** 550 of 1,194 strata run, 226 maintained from deltas: a comment's node changes the tape views'
+  rows (`child`, `node`, `text`, `col`, `docof`, `ast_depth`), which are framed as cross inputs. Each run pays per
+  stratum: an input's frames (2,331 jobs, 0.03 s), an index of a base input (1,090, 0.04 s), a line's join spec
+  (2,902, 0.014 s); and the frames' reads: `retain::load` (0.065 s) decodes a frame into columns, turns them into rows
+  (`frames::rows_of`) and copies them back into columns (`columns_source`), an unlisted copy of 0353; the store's
+  frames read once a process (0.03 s), the cross part's space by identity (0.034 s). The keep writes frames and kept
+  blocks both (0401 step 6).
+- **Next:** 0401 step 7, the reads bind the kept blocks where they lie (`preload_frames_live`, `kept_inputs`, the
+  clean relations), then step 9 retires the frames: the decode, the two transposes and the second write go. Then the
+  tape views as reads of the tape, not framed inputs (0353), and the per-chunk fixed cost of a one-file chunk.
+
 ### Q243. A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 
 Found 2026-11-18, the data-layer rules (56, Q242's rule left out) over corpus0's first 300 files, strict.
