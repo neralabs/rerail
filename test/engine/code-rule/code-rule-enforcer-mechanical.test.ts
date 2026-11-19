@@ -601,7 +601,10 @@ describe("mechanical code rule regressions", () => {
   });
 
   describe("a steer is asked for as its audit is recorded", () => {
-    /** An enforcer whose audit records and steer requests go, in the order they happen, to `order`. */
+    /**
+     * An enforcer whose audit records and steer requests go, in the order they happen, to `order`. An audit keeps its
+     * first result, as the audit store does.
+     */
     async function ordered() {
       const order: string[] = [];
       const { recorder, audits } = recordingAudits();
@@ -609,6 +612,7 @@ describe("mechanical code rule regressions", () => {
         audits: {
           ...recorder,
           finish(auditId, result) {
+            if (audits.get(auditId)!.result !== undefined) return;
             recorder.finish(auditId, result);
             order.push(`recorded ${audits.get(auditId)!.paths.join(",")}`);
           },
@@ -618,7 +622,7 @@ describe("mechanical code rule regressions", () => {
         order.push(`steered ${metadata?.scope?.join(",") ?? ""}`);
         return undefined;
       });
-      return { ...made, order };
+      return { ...made, order, audits };
     }
 
     it("while another tool call's edit still waits for its check", async () => {
@@ -640,7 +644,7 @@ describe("mechanical code rule regressions", () => {
     });
 
     /** A tool call of a.py and b.py, then another call's c.py, all queued before the evaluator takes a.py on the host's next turn. */
-    async function twoCalls(enforcer: NativeCodeRuleEnforcer, sessionId: string, b: CodeRuleEdit) {
+    async function queueTwoCalls(enforcer: NativeCodeRuleEnforcer, sessionId: string, b: CodeRuleEdit) {
       await enforcer.openWorkspace(sessionId);
       await enforcer.auditGeneratedEdits(sessionId, {
         revision: 1,
@@ -652,6 +656,10 @@ describe("mechanical code rule regressions", () => {
         checkpoints: ["edit"],
         edits: [{ path: "api/c.py", language: "python", generatedText: "NEEDLE\n" }],
       });
+    }
+
+    async function twoCalls(enforcer: NativeCodeRuleEnforcer, sessionId: string, b: CodeRuleEdit) {
+      await queueTwoCalls(enforcer, sessionId, b);
       await settled(enforcer);
     }
 
@@ -672,9 +680,62 @@ describe("mechanical code rule regressions", () => {
         for (const name of ["a", "b", "c"]) await writeFile(join(root, "api", `${name}.py`), "NEEDLE\n");
         await twoCalls(enforcer, "evaluation-error-then-steered", { path: "api/b.py", language: "python", generatedText: "NEEDLE\n" });
 
-        expect(order).toEqual(["recorded api/a.py", "steered api/a.py", "recorded api/b.py", "recorded api/c.py", "steered api/c.py"]);
+        expect(order).toEqual(["recorded api/a.py", "recorded api/b.py", "steered api/a.py", "recorded api/c.py", "steered api/c.py"]);
       } finally {
         binding.mockRestore();
+        await enforcer.close();
+      }
+    });
+
+    /** How b.py's audit ends in the two cases below, and the status it is recorded with. */
+    const ends = [
+      { id: "check", end: "its check", b: { path: "api/b.py", language: "python", generatedText: "NEEDLE\n" }, failing: false, status: "completed" },
+      { id: "read-failure", end: "a read failure", b: { path: "api/b.py", language: "python", readError: "unreadable" }, failing: false, status: "failed" },
+      { id: "evaluation-error", end: "an evaluation error", b: { path: "api/b.py", language: "python", generatedText: "NEEDLE\n" }, failing: true, status: "failed" },
+    ] as const;
+
+    it.each(ends)("records b.py's audit, ended by $end, before the steer it releases is answered", async ({ id, b, failing, status }) => {
+      const { root, enforcer, order, requestSteer } = await ordered();
+      const asked = Promise.withResolvers<void>();
+      const answered = Promise.withResolvers<void>();
+      // The runtime holds the first steer asked for, a.py's, until the test answers it.
+      requestSteer.mockImplementationOnce(async (_sessionId, _delivery, _content, metadata) => {
+        order.push(`steered ${metadata?.scope?.join(",") ?? ""}`);
+        asked.resolve();
+        await answered.promise;
+        return undefined;
+      });
+      const binding = failing ? failingApply("api/b.py") : undefined;
+      try {
+        for (const name of ["a", "b", "c"]) await writeFile(join(root, "api", `${name}.py`), "NEEDLE\n");
+        await queueTwoCalls(enforcer, `held-steer-${id}`, b);
+        await asked.promise;
+        const atRequest = { order: [...order], failed: enforcer.snapshotStatus().failures.some(item => item.path === "api/b.py") };
+        answered.resolve();
+        await settled(enforcer);
+
+        expect(atRequest).toEqual({
+          order: ["recorded api/a.py", "recorded api/b.py", expect.stringMatching(/^steered api\/a\.py/u)],
+          failed: status === "failed",
+        });
+      } finally {
+        answered.resolve();
+        binding?.mockRestore();
+        await enforcer.close();
+      }
+    });
+
+    it.each(ends)("finishes b.py's audit, ended by $end, when the steer it releases fails", async ({ id, b, failing, status }) => {
+      const { root, enforcer, requestSteer, audits } = await ordered();
+      requestSteer.mockRejectedValueOnce(new Error("injected steer failure"));
+      const binding = failing ? failingApply("api/b.py") : undefined;
+      try {
+        for (const name of ["a", "b", "c"]) await writeFile(join(root, "api", `${name}.py`), "NEEDLE\n");
+        await twoCalls(enforcer, `failed-steer-${id}`, b);
+
+        expect(auditForPath(audits, "api/b.py")?.result?.status).toBe(status);
+      } finally {
+        binding?.mockRestore();
         await enforcer.close();
       }
     });

@@ -1375,9 +1375,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   async #recordPendingEvaluationError(path: string, stored: StoredEdit, error: unknown): Promise<void> {
     if (this.#closing) return;
     const problem = failure("worker", "adapter-error", errorMessage(error), path, "evaluate");
-    await this.#publishReady();
+    // Recorded before the publish, which waits for the runtime and may throw, so neither holds this audit open.
     this.#readFailures.set(path, problem);
     this.#finishAudit(stored.auditId, "failed", [], [problem]);
+    await this.#publishReady();
   }
   /**
    * Where the edit of `path` measures what it generated: from the preimage of the source's oldest edit whose lines may
