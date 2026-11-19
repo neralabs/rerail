@@ -1320,7 +1320,7 @@ describe("a record whose live pid is not the home's daemon", () => {
   /** A change to the stop's world: to daemon.json, to the process daemon.json named, or to the home's lock. */
   type WorldChange =
     | "record-gone" | "record-other" | "record-dead" | "record-unreadable"
-    | "exits" | "lets-go" | "reused" | "start-unread" | "another-holds";
+    | "exits" | "lets-go" | "reused" | "start-unread" | "another-holds" | "another-lets-go" | "dead-recorded";
   /**
    * One state a stop can meet between its proof and its answer: how it proved `LIVE_PID` the home's daemon, what changes
    * and when, what it sends, what it answers and what daemon.json holds after. The stop proved the daemon by its answer to
@@ -1405,6 +1405,18 @@ describe("a record whose live pid is not the home's daemon", () => {
       rule: 2, proof: "lock", request: true, signal: ["lets-go"], sent: ["SIGTERM", "SIGKILL"], answer: "stopped", record: "none" },
     { cell: "the daemon, too busy to answer, lets go of the lock after the stop proved it, its start cannot be read, and its exit runs on, as a second stop meets it",
       rule: 2, proof: "lock", again: ["lets-go"], sent: ["SIGTERM", "SIGKILL"], answer: "stopped", record: "none" },
+    { cell: "a start's daemon takes the lock the daemon let go of at its SIGTERM and records itself while that exit runs on, the daemon's start unread",
+      rule: 3, proof: "answer", before: ["start-unread"], signal: ["lets-go"], wait: ["another-holds", "record-other"], sent: ["SIGTERM"],
+      answer: "stopped", record: "another live process's" },
+    { cell: "the daemon exits at its SIGTERM and a start's daemon records itself, then lets go of the lock, before the stop's cleanup",
+      rule: 3, proof: "lock", signal: ["lets-go", "exits", "another-holds", "record-other", "another-lets-go"], sent: ["SIGTERM"],
+      answer: "stopped", record: "none" },
+    { cell: "the daemon exits at its SIGTERM and daemon.json and the record beside the lock name a gone process at the stop's cleanup",
+      rule: 3, proof: "lock", signal: ["lets-go", "exits", "record-dead", "dead-recorded"], sent: ["SIGTERM"], answer: "stopped",
+      record: "none" },
+    { cell: "the daemon exits at its SIGTERM and daemon.json names a gone process while a start's daemon holds the lock at the stop's cleanup",
+      rule: 3, proof: "lock", signal: ["lets-go", "exits", "another-holds", "record-dead"], sent: ["SIGTERM"], answer: "stopped",
+      record: "none" },
   ];
 
   /** The process daemon.json named, its start, and who holds the home's lock, as a {@link StopCell} changes them. */
@@ -1447,6 +1459,15 @@ describe("a record whose live pid is not the home's daemon", () => {
         world.started = undefined;
       },
       "another-holds": () => holdBy(OTHER_PID),
+      // A start's daemon closes: it lets go of the lock while its record beside it stays, as one another program holds open.
+      "another-lets-go": () => {
+        world.holder = undefined;
+      },
+      // The record beside the lock names a process that is gone, and no one holds the lock.
+      "dead-recorded": () => {
+        holdBy(DEAD_PID);
+        world.holder = undefined;
+      },
     };
     changes[change]();
   }
