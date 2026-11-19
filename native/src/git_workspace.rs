@@ -1283,13 +1283,19 @@ mod tests {
                 .share_mode(0)
                 .open(&path)
                 .unwrap();
-            assert!(workspace.read_source("a.py", 9).is_err(), "the file is held");
+            assert!(
+                workspace.read_source("a.py", 9).is_err(),
+                "the file is held"
+            );
             assert!(workspace.holds_blob_bytes("a.py", 9));
         }
         {
             let locked = std::fs::File::open(&path).unwrap();
             locked.lock().unwrap();
-            assert!(workspace.read_source("a.py", 9).is_err(), "the file is locked");
+            assert!(
+                workspace.read_source("a.py", 9).is_err(),
+                "the file is locked"
+            );
             assert!(workspace.holds_blob_bytes("a.py", 9));
         }
         std::fs::remove_dir_all(root).unwrap();
