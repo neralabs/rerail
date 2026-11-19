@@ -357,3 +357,15 @@ with the unit, because each primitive's number of levels was chosen by its capac
 
   `the_directives_pass_gives_the_spikes_tables` and every evaluator test pass. The corpus:
   3,132 units equal, the same 3 refused. GPU time for the three slices: 52, 42 and 45 ms.
+- **Step 5e: fewer barriers.** The files' first nodes and the node total are the views' counts,
+  which the host holds, so the front's count pass, its barrier and its scan go: the bases are
+  written into the block with the layout. Independent scans share their barriers through
+  `ukl_grid_scans`: the front's row, group and depth scans (one), its text and arm scans (one), and
+  the top level's `pscan` with `bscan` (one). Measured warm on the M5, load average 14 to 38:
+  - a small unit takes 182 µs of GPU time (it was 188 µs after step 5d, 1,368 µs before 5c);
+  - a large unit at 32 groups takes 2.20 ms (it was 2.21 ms after 5d, about 4.0 ms before);
+  - the corpus slices take 36, 41 and 44 ms (52, 42 and 45 ms after 5d; 2,242 ms for the first
+    slice before batching).
+
+  The large unit's time is now mostly two phases of the top level (phase 32 at 265 µs, phase 21
+  at 72 µs), not barriers.

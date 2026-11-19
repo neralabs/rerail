@@ -51,11 +51,6 @@ inline uint tape_line_of(Tape t, uint x) { return clif_tape_line(t.d, (device co
 
 // --- The unit's nodes: a count a file, a prefix sum, a node's file --------------------------------
 
-// Each file's node count (its view's).
-inline void pp_counts(device const PpFile* files, device const uchar* data, device uint* counts, device atomic_uint* bad, uint n_files, uint f) {
-    if (f >= n_files) return;
-    counts[f] = files[f].nodes;
-}
 
 // The file of the unit's node `g`: the last whose first node is at or before it.
 inline uint file_of(device const uint* bases, uint n_files, uint g) {

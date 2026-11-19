@@ -207,7 +207,6 @@ pub struct Front {
     pub grid: Buf,
     sums: Buf,
     pub lay: Buf,
-    counts: Buf,
     pub bases: Buf,
     pub dir_bases: Buf,
     // The directives, a word a node: the row, group and arm flags, the depth events, their scans.
@@ -263,6 +262,17 @@ impl Front {
         let n = unit.len();
         let per_file = || arena.zeroed::<u32>(n);
         let per_node = || arena.zeroed::<u32>(unit.node_bound);
+        // Each file's first node and the nodes in all: the views' counts, which the host holds
+        // (decision 0460: no scan on the device for what the layout says).
+        let mut bases = Vec::with_capacity(n.max(1));
+        let mut total = 0u32;
+        for &k in &unit.file_nodes {
+            bases.push(total);
+            total += k;
+        }
+        if bases.is_empty() {
+            bases.push(0);
+        }
         Ok(Front {
             n,
             nodes,
@@ -270,8 +280,7 @@ impl Front {
             grid: arena.zeroed::<u32>(8)?,
             sums: arena.zeroed::<u32>(4 * groups as usize + 4)?,
             lay: arena.zeroed::<u32>(crate::pp_blocks::SLOTS.len())?,
-            counts: per_file()?,
-            bases: per_file()?,
+            bases: arena.from_slice(&bases)?,
             dir_bases: per_file()?,
             dflag: per_node()?,
             gflag: per_node()?,
@@ -305,14 +314,14 @@ impl Front {
             out: arena.zeroed::<[u32; 4]>(if nodes { unit.node_bound } else { 1 })?,
             rows: arena.zeroed::<PpDir>(unit.dir_bound)?,
             dir_keys: arena.zeroed::<u64>(unit.dir_bound)?,
-            scan: Scan::new(arena)?,
+            scan: Scan { total: arena.from_slice(&[total])? },
             dir_scan: Scan::new(arena)?,
         })
     }
 
     /// The front's slots of the layout, and the run's words: the stage it ends after.
     pub fn lay(&self, l: &mut Lay, last: u32) {
-        l.at("GRID", &self.grid).at("SUMS", &self.sums).at("FILES", &self.files).at("COUNTS", &self.counts).at("BASES", &self.bases);
+        l.at("GRID", &self.grid).at("SUMS", &self.sums).at("FILES", &self.files).at("BASES", &self.bases);
         l.at("TOTAL", &self.scan.total).at("DIR_BASES", &self.dir_bases).at("DIR_TOTAL", &self.dir_scan.total);
         l.at("DFLAG", &self.dflag).at("GFLAG", &self.gflag).at("AFLAG", &self.aflag).at("DEV", &self.dev).at("DRANK", &self.drank);
         l.at("GRANK", &self.grank).at("ARANK", &self.arank).at("NDEPTH", &self.depth).at("DEV_TOTAL", &self.dev_scan.total);

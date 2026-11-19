@@ -75,9 +75,6 @@ kernel void pp_setup(PP_GRID_PARAMS) {
     uint last = W(LAST);
     // --- The front: the nodes, the names, the directives, the text map, the guards ----------
     // A node a thread, and a scan or a sort between: no thread walks a file (decision 0460).
-    EACH(f, nf) pp_counts(files, data, AT(uint, COUNTS), AT(atomic_uint, BAD), nf, f);
-    BARRIER();
-    SCAN(nf, COUNTS, BASES, TOTAL);
     uint nn = N(TOTAL);
     EACH(n, nn) {
         pp_names(files, data, AT(const uint, BASES), AT(const uint, TOTAL), AT(ulong, KEYS), nf, n);
@@ -115,8 +112,9 @@ kernel void pp_setup(PP_GRID_PARAMS) {
     // --- The definitions --------------------------------------------------------------------
     EACH(r, N(DIR_TOTAL)) pd_defs(files, data, AT(const uint, BASES), AT(const uint, DIR_BASES), AT(const uint, DIR_TOTAL), AT(const PpDir, ROWS), AT(PpDef, DEFS), AT(uint, PCOUNT), AT(uint, BCOUNT), nf, r);
     BARRIER();
-    SCAN(N(DIR_TOTAL), PCOUNT, PFIRST, PTOTAL);
-    SCAN(N(DIR_TOTAL), BCOUNT, IFIRST, ITOTAL);
+    JOB(0, N(DIR_TOTAL), PCOUNT, PFIRST, PTOTAL);
+    JOB(1, N(DIR_TOTAL), BCOUNT, IFIRST, ITOTAL);
+    SCANS(2);
     EACH(s, N(PTOTAL)) pd_params(files, data, AT(const uint, BASES), AT(const ulong, KEYS), AT(const uint, DIR_BASES), AT(const uint, DIR_TOTAL), AT(PpDef, DEFS), AT(const uint, PFIRST), AT(const uint, PTOTAL), AT(ulong, PKEYS), AT(atomic_uint, ROOM), nf, W(VA_LO), W(VA_HI), W(CAP), s);
     BARRIER();
     EACH(s, N(ITOTAL)) pd_items(files, data, AT(const uint, BASES), AT(const ulong, KEYS), AT(const uint, DIR_BASES), AT(const uint, DIR_TOTAL), AT(PpDef, DEFS), AT(const uint, IFIRST), AT(const uint, ITOTAL), AT(const ulong, PKEYS), AT(uint, ITEMS), AT(atomic_uint, ROOM), nf, W(CAP), s);
