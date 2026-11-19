@@ -3208,6 +3208,7 @@ version = "0.1.0"
 dependencies = [
  "rerail-c-lean",
  "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
