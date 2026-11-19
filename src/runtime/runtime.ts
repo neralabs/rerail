@@ -2160,7 +2160,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
   async #openLedger(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
-    await makeLedgerFolder(directory);
+    await makeLedgerFolder(directory, { repair: true });
     keepFolderPrivate(directory);
     if (this.#storageRootIsDefault) await ignoreInGit(this.#storageRoot);
     const path = join(directory, "events.jsonl");

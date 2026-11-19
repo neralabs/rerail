@@ -59,6 +59,29 @@ export function keepFolderPrivate(folder: string, options: KeepFolderPrivate = {
   }
 }
 
+/**
+ * Keeps a folder that another program may have made its owner's alone. Elsewhere than Windows, as
+ * {@link keepFolderPrivate} does. On Windows, outside the profile folder, it reads the folder's ACL (one `icacls`) and,
+ * when the folder still takes entries from its parent's, as one Git, `mkdir` or an earlier release made does, gives it
+ * the owner-only ACL, which everything already in it then inherits; a folder with an ACL of its own is left as it is.
+ * A folder it cannot read or change (another account's, or one on a file system with no ACLs) is named on stderr,
+ * which a daemon writes to its log, and never fails the caller.
+ */
+export function keepFoundFolderPrivate(folder: string, machine: PrivateMachine = {}): void {
+  const { acl = WINDOWS_ACL, platform = process.platform, profile = homedir() } = machine;
+  if (platform !== "win32") {
+    keepPrivate(folder);
+    return;
+  }
+  if (insideProfile(folder, profile)) return;
+  try {
+    if (acl.inherits(folder)) acl.restrictToOwner(folder, true);
+  } catch (error) {
+    process.stderr.write(`rerail: could not keep ${folder} to this user alone, so other accounts may read what Rerail writes there: ${
+      error instanceof Error ? error.message : String(error)}\n`);
+  }
+}
+
 /** What {@link openToOthers} reads a path's access with; tests pass their own. */
 export interface AccessReader {
   readonly platform?: NodeJS.Platform;

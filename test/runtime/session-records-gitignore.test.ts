@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { lstat, mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { RerailRuntime } from "../../src/runtime/index.js";
@@ -30,6 +30,28 @@ async function openOneSession(checkout: string, storageRoot: string, databasePat
   } finally {
     await runtime.dispose();
   }
+}
+
+/**
+ * Lets other accounts read `folder` and what is later made in it, as Git or `mkdir` leave a folder under `C:\` or with
+ * a loose umask: on Windows an entry for Users that everything in it inherits, elsewhere mode 0755. The test's user home
+ * is a folder of its own, so Rerail counts a checkout here as outside the profile folder.
+ */
+async function openToOtherAccounts(folder: string): Promise<void> {
+  if (process.platform === "win32") execFileSync("icacls.exe", [folder, "/grant", "*S-1-5-32-545:(OI)(CI)RX", "/q"]);
+  else await chmod(folder, 0o755);
+}
+
+/**
+ * Whether accounts beyond the owner may read `path`: elsewhere than Windows, any group or other bit; on Windows, an
+ * entry of its ACL, read in SDDL, that lets Users (BU), Authenticated Users (AU) or Everyone (WD) read it itself.
+ */
+async function readableByOthers(path: string): Promise<boolean> {
+  if (process.platform !== "win32") return ((await stat(path)).mode & 0o077) !== 0;
+  const sddl = execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:ACL_PATH).Sddl"], {
+    encoding: "utf8", env: { ...process.env, ACL_PATH: path },
+  });
+  return /\(A;(?![^;]*IO)[^)]*;(?:BU|AU|WD)\)/u.test(sddl);
 }
 
 describe("session records in a checkout", () => {
@@ -65,6 +87,22 @@ describe("session records in a checkout", () => {
     await openOneSession(checkout, storageRoot, databasePath);
     expect((await stat(join(storageRoot, ".gitignore"))).mode & 0o777).toBe(0o600);
   });
+
+  it("are kept private once a session opens in a records folder Git, a person or an earlier release made, earlier ones included", async () => {
+    const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
+    await openToOtherAccounts(checkout);
+    const earlier = join(storageRoot, "0".repeat(64), "events.jsonl");
+    await mkdir(dirname(earlier), { recursive: true });
+    await writeFile(earlier, "{}\n");
+    await openToOtherAccounts(storageRoot);
+    expect(await readableByOthers(storageRoot)).toBe(true);
+    await openOneSession(checkout, storageRoot, databasePath);
+    expect(await readableByOthers(storageRoot)).toBe(false);
+    // Elsewhere than Windows the folder's 0700 keeps other users from reaching a record in it; on Windows the record
+    // takes the folder's new ACL.
+    if (process.platform === "win32") expect(await readableByOthers(earlier)).toBe(false);
+    // Windows PowerShell's Get-Acl, which reads each ACL, can take seconds to start on a cold machine.
+  }, 60_000);
 
   it("leave a custom storage root outside a .rerail folder without a .gitignore, since it may hold the person's files", async () => {
     const { checkout, databasePath } = await checkoutWithSessionStorage();

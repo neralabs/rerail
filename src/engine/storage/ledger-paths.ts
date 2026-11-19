@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { type FileHandle, lstat, mkdir, open, rm } from "node:fs/promises";
 import { renameWithRetry } from "../file-replace.js";
 import { openNoFollow } from "../no-follow.js";
-import { keepFolderPrivate, type PrivateMachine } from "./private-files.js";
+import { keepFolderPrivate, keepFoundFolderPrivate, type PrivateMachine } from "./private-files.js";
 import { resolve, sep } from "node:path";
 
 /**
@@ -73,14 +73,43 @@ async function ledgerFolder(directory: string, create: boolean, machine: Private
   }
 }
 
+/** What {@link makeLedgerFolder} is given: the system the folder is kept private on, and whether it repairs. */
+export interface LedgerFolderOptions extends PrivateMachine {
+  /** The daemon opening a session: the session records folder is kept private whoever made it ({@link keepRecordsFolderPrivate}). */
+  readonly repair?: boolean;
+}
+
+/** The session records folders this process kept private, each with the file id it had then. */
+const keptRecordsFolders = new Map<string, bigint>();
+
+/**
+ * Keeps the session records folder on `directory`, the one just below the innermost `.rerail`, its owner's alone
+ * whoever made it ({@link keepFoundFolderPrivate}), once per folder in this process: again only when a folder with
+ * another file id has taken its place. Git makes that folder for a repository that commits a file in it, and a person
+ * or a release before 0.1.5 may have made it, each with its parent's ACL on Windows, which every record in it took.
+ */
+async function keepRecordsFolderPrivate(directory: string, machine: PrivateMachine): Promise<void> {
+  const segments = resolve(directory).split(sep);
+  const start = segments.lastIndexOf(LEDGER_FOLDER);
+  if (start <= 0 || segments.length < start + 2) return;
+  const folder = segments.slice(0, start + 2).join(sep);
+  const { ino } = await lstat(folder, { bigint: true });
+  if (keptRecordsFolders.get(folder) === ino) return;
+  keepFoundFolderPrivate(folder, machine);
+  keptRecordsFolders.set(folder, ino);
+}
+
 /**
  * Creates the session record folder `directory`, refusing a symlink below `.rerail` (see {@link LEDGER_FOLDER}). On
  * Windows, which ignores `0700`, the folder it makes just below `.rerail` (`sessions`) gets an owner-only ACL when it is
  * outside the profile folder: a checkout under `C:\` would otherwise let every local user read prompts and preimages,
- * and change held steers.
+ * and change held steers. With `repair`, as the daemon opens a session, that folder gets it too when another program
+ * made it, before anything of the session is written there.
  */
-export async function makeLedgerFolder(directory: string, machine: PrivateMachine = {}): Promise<void> {
+export async function makeLedgerFolder(directory: string, options: LedgerFolderOptions = {}): Promise<void> {
+  const { repair = false, ...machine } = options;
   await ledgerFolder(directory, true, machine);
+  if (repair) await keepRecordsFolderPrivate(directory, machine);
 }
 
 /**

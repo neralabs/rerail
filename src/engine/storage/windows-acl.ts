@@ -5,9 +5,9 @@
  * Authenticated Users) read, and often change, what is in it. Rerail keeps private data in its home and in each
  * checkout's `.rerail\sessions`, and reads a daemon's TLS private key, wherever the person points them.
  *
- * Both work through programs Windows ships, by absolute path and with no window: `icacls` sets an ACL, Windows
- * PowerShell's `Get-Acl` reads one in SDDL, which names every account by SID whatever the system's language. This is
- * the Windows half of `private-files.ts`, which callers use.
+ * Both work through programs Windows ships, by absolute path and with no window: `icacls` sets an ACL and tells
+ * whether one is inherited, Windows PowerShell's `Get-Acl` reads one in SDDL, which names every account by SID whatever
+ * the system's language. This is the Windows half of `private-files.ts`, which callers use.
  */
 import { win32 } from "node:path";
 import { execFileSync } from "../child-process.js";
@@ -27,6 +27,11 @@ export interface WindowsAcl {
   restrictToOwner(path: string, folder: boolean): void;
   /** The accounts, by SID or SDDL short name, besides this user, SYSTEM and Administrators, that may read `path`. */
   otherReaders(path: string): string[];
+  /**
+   * Whether `path`'s ACL takes entries from its parent's, as the ACL of a folder Git or `mkdir` made does until it is
+   * given one of its own.
+   */
+  inherits(path: string): boolean;
 }
 
 let userSid: string | undefined;
@@ -96,14 +101,24 @@ export function sddlOtherReaders(sddl: string, user: string): string[] {
   return [...new Set(readers)];
 }
 
+/**
+ * Whether what `icacls <path>` prints marks an entry inherited. Each entry is a line ending in `<account>:` and the
+ * entry's codes in brackets, which `icacls` prints alike in every language: `(I)` for an inherited one. Only the text
+ * after a line's last colon is read, so neither the path, which starts the first line, nor an account name counts.
+ */
+export function icaclsInherits(output: string): boolean {
+  return output.split(/\r?\n/u).some(line => line.slice(line.lastIndexOf(":") + 1).includes("(I)"));
+}
+
 /** Windows' own access control, through `icacls` and `Get-Acl`. */
 export const WINDOWS_ACL: WindowsAcl = {
   restrictToOwner(path, folder) {
     const inherit = folder ? "(OI)(CI)" : "";
+    // `icacls` says why it failed ("Access is denied.") on stderr, which the thrown error's message then carries.
     execFileSync(windowsSystemProgram("icacls.exe"), [
       path, "/inheritance:r", "/grant:r",
       `*${currentUserSid()}:${inherit}F`, `*${SYSTEM_SID}:${inherit}F`, `*${ADMINISTRATORS_SID}:${inherit}F`, "/q",
-    ], { stdio: "ignore", timeout: 30_000 });
+    ], { stdio: ["ignore", "ignore", "pipe"], timeout: 30_000 });
   },
   otherReaders(path) {
     // The path goes in the environment, so no quoting of it reaches PowerShell's parser.
@@ -111,6 +126,12 @@ export const WINDOWS_ACL: WindowsAcl = {
       "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:RERAIL_ACL_PATH).Sddl",
     ], { encoding: "utf8", env: { ...process.env, RERAIL_ACL_PATH: path }, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 });
     return sddlOtherReaders(sddl.trim(), currentUserSid());
+  },
+  inherits(path) {
+    // `icacls` starts in milliseconds where Windows PowerShell's `Get-Acl` takes up to seconds.
+    return icaclsInherits(execFileSync(windowsSystemProgram("icacls.exe"), [path], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000,
+    }));
   },
 };
 
