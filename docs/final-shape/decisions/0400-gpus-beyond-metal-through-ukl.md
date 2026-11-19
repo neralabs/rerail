@@ -901,6 +901,27 @@ Progress (2026-11-18):
 Steps 1, 2 and E1 are small and settle the bets the rest rests on: the preprocessor, the shim, and in-place
 bandwidth. Step 3 can run beside them.
 
+### The next set of work (agreed 2026-11-19)
+
+Steps 1, 2, 5 and 6, the CPU backend and OpenCL are done. What is left moves the engine's own GPU code onto UKL
+and the device layer, then runs it on CUDA. In the tree at the start: about 2,700 lines of hand-written Metal in the
+product path (the label passes, 1,077 of them, with the sweep, set steps, nearest and lattice; the batch runtime,
+work queue and parallel files, 500; the block programs' carry, program and sinks, 480; the tape reads and the 16z
+decoder, 220; `accel`'s join kernels, 315), and about 50 Rust files that name Metal, several of which write Metal
+source (the label patterns, the program backend, `metal_backend`, `block_program.rs`, `accel`'s join and tile).
+
+| # | Work | Done when |
+|---|---|---|
+| A | Merge `Native-and-GPU-strata` at a pinned commit; carry its emitter changes into `ukl.rs`; its reads (block-major format 16, 16z through a cache, reads proven within the tape) generated again as `<ukl/reads/*.h>`, its writer as `<ukl/writer.h>` | the reads' gate on Metal, the CPU, OpenCL and CUDA (a GB10 and the V100); the branch's own tests on Metal |
+| B | Step 3 proper: the engine's GPU lane on `rerail-gpu`'s device types, not Metal's | no behaviour change on Metal: `rerail-device-metal`'s tests and each family's |
+| C | Step 7: the hand-written Metal to UKL, file by file, copied into place first, in the product path's order: tape reads, label passes, views and ids, the batch runtime with the work queue (to its SIMD-group form), block programs, joins | each file's Metal tests pass; then the file runs on the CPU (with OpenCL's SIMD-group rule checked) and on OpenCL |
+| D | Step 8: the generators write UKL (label patterns, program backend, block programs, `accel`'s joins); `accel`'s scan, sort and histogram are the library's calls | as C |
+| E | Step 9: `rerail-accel` builds on Linux; the data layer's 142 checks with the GPU lane on CUDA | native's findings, on a GB10 (speed judged there) and on the V100 (correctness only: it reads pinned host memory over PCIe until step 10) |
+
+A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
+backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
+width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
+
 ## 9. Questions for the user, and the answers (2026-11-18)
 
 - **Q1. Blocks on a partitioned GPU.** Answer: "blocks will need to be copied to and from devices, and for us to
