@@ -19,7 +19,7 @@ The last column is each bug on main after the final-shape engine landed (2026-11
 | 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Present (probe fails as described) |
 | 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Present (probe fails as described) |
 | 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Observed; not profiled | Not re-measured; the typing program is unchanged |
-| 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Present; worked around in `python/django` |
+| 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Present; fixed at its root in its own pull request. Until then three rules fail their cases |
 
 ---
 
@@ -395,10 +395,10 @@ commits after that merge do not build or do not run the probe on their own, and 
 alone, so the commit inside the hub is not found. Not confirmed: whether the negated axis atom gets no rows for an n
 bound late (a demand or negation split that never asks for n's ancestors) or is lowered without them.
 
-**Workaround used.** `python/django` writes "n runs when b's code runs" without a negation:
-`within(n, b), nearest(n, s, dj_scope_stop), within(b, s)`, where `dj_scope_stop` is the def, lambda and class kinds
-and the module, so every node has a nearest one (`dj_in_atomic`, `dj_in_transaction`, and the rules that walked a
-loop's or a try's body with `within_stop`).
+**Workaround used.** None: the rules keep `within_stop` as written, and the engine is fixed at its root in its own
+pull request. Until it merges, atomic-around-caught-db-error, enqueue-on-commit and select-for-update-outside-atomic
+fail their cases (`.test cases`). Writing the region without a negation, `within(n, b), nearest(n, s, S'),
+within(b, s)` with S' the def, lambda and class kinds and the module, gives the right answer on today's engine.
 
 **Suggested fix.** Find which pass drops the negated axis's rows for a late-bound node: run the probe with the
 lowered program and plan printed (`rerail-engine dump --rule probe.rerail`) on both engines and compare how
