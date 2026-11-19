@@ -50,6 +50,7 @@ import {
 } from "../engine/catalog/rule-library.js";
 import { configureBundledCodeRule } from "../engine/catalog/rule-config.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
+import { untitledRuleRefusal } from "../engine/catalog/rule-schema.js";
 import { blockModeEnabled, conversationRulesEnabled, experimentOffMessage, type ExperimentalFeature } from "../engine/experimental-features.js";
 import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
 import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
@@ -790,6 +791,8 @@ export const repositoryOperations: readonly Operation[] = [
       if (input.rule.id !== input.id) throw new ApiError(400, "rule-id-mismatch", `path id ${input.id} does not match rule.id ${input.rule.id}`);
       const db = stores.database();
       refuseExperimentsOff([{ mode: input.rule.mode, stored: getLibraryRule(db, input.id)?.document.rule.mode }], input.kind);
+      const untitled = untitledRuleRefusal(input.rule);
+      if (untitled !== undefined) throw new ApiError(400, "rule-title-required", untitled);
       const ruleCatalog = stores.ruleCatalog();
       const existing = db.select({ copiedFrom: libraryRules.copiedFromRuleId }).from(libraryRules).where(eq(libraryRules.ruleId, input.id)).get();
       // A library rule a later release bundled the id of wins over the By Rerail rule, so writing it edits it.

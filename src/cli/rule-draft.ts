@@ -52,7 +52,7 @@ import {
   type CopiedRule,
 } from "../engine/catalog/rule-library.js";
 import { isApproved, ruleSubject } from "../engine/catalog/rule-approval.js";
-import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, type ConversationRule } from "../engine/catalog/rule-schema.js";
+import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, untitledRuleRefusal, type ConversationRule } from "../engine/catalog/rule-schema.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
 import { deniedByPathBoundary } from "../engine/path-boundary.js";
 import { stableJsonText } from "../engine/stable-json.js";
@@ -671,14 +671,17 @@ export async function testRuleDraftCases(draft: RuleDraft, root: string): Promis
  * it ({@link draftPlacement}). Nothing is written to the catalog or the content store.
  */
 export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<RuleDraftReport> {
+  const untitled = untitledRuleRefusal(draft.rule);
   if (draft.kind === "conversation") {
     const cases = conversationCaseResults(draft.rule, draft.cases);
-    return { ok: cases.every(result => result.ok), valid: true, cases, repository: null };
+    return { ok: cases.every(result => result.ok), valid: true, ...(untitled === undefined ? {} : { refusal: untitled }), cases, repository: null };
   }
   const { binding, compiled } = compileCodeRule(draft.rule);
   const root = repositoryIdentityLocation(repo).workspaceRoot;
   const cases = await policyCaseResults(binding, compiled, root, draft.cases);
-  const { folders, refusal, unread } = draftPlacement(draft, root);
+  const placement = draftPlacement(draft, root);
+  const { folders, unread } = placement;
+  const refusal = untitled ?? placement.refusal;
   const pass = await repositoryPass(binding, compiled, root, passFolders(folders));
   const repository = unread === undefined ? pass : { ...pass, notNarrowed: unread };
   return { ok: cases.every(result => result.ok), valid: true, ...(refusal === undefined ? {} : { refusal }), cases, repository };
@@ -804,6 +807,8 @@ function attachLibraryRule(database: RerailDatabase, checkout: CheckoutContext, 
  * as your copy ({@link addRerailRuleCopy}).
  */
 export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defaultRerailDatabasePath()): AddedRule {
+  const untitled = untitledRuleRefusal(draft.rule);
+  if (untitled !== undefined) throw new RuleDraftError(untitled);
   const database = openRerailDatabase(databasePath);
   try {
     const checkout = recordCheckout(database, repo);
@@ -885,6 +890,18 @@ function rerailRuleShown(database: RerailDatabase, ruleCatalog: RuleCatalog, bun
 }
 
 /**
+ * `document` with its pack's title for the By Rerail rule, from the pack's manifest, where the document has none: a
+ * copy keeps the name the dashboard shows, and `rules add` takes it.
+ */
+function withPackTitle(document: RuleDocument, ruleCatalog: RuleCatalog): RuleDocument {
+  if (document.rule.title !== undefined) return document;
+  const id = document.rule.id;
+  const packId = ruleCatalog.packOf.get(id);
+  const title = packId === undefined ? undefined : ruleCatalog.packs.get(packId)?.rules.find(rule => rule.id === id)?.title;
+  return title === undefined ? document : { ...document, rule: { ...document.rule, title } } as RuleDocument;
+}
+
+/**
  * The rule `id` as a draft for `rules test` and `rules add`: one of yours, or a By Rerail rule as it runs in `repo`'s
  * repository, which `rules add` stores as your copy. Reading records nothing.
  */
@@ -894,7 +911,9 @@ export function showRule(id: string, repo: string, databasePath = defaultRerailD
     const own = getLibraryRule(database, id);
     if (own !== undefined) {
       const checkout = lookupCheckout(database, repo);
-      return { draft: own.document, notes: [ownRuleNote(database, own, repositoryName(checkout?.checkoutPath ?? repo), checkout?.repositoryKey)] };
+      const note = ownRuleNote(database, own, repositoryName(checkout?.checkoutPath ?? repo), checkout?.repositoryKey);
+      const untitled = own.document.rule.title === undefined ? [`${id} has no title, and rules add needs one: add rule.title, the rule in plain words.`] : [];
+      return { draft: own.document, notes: [note, ...untitled] };
     }
     if (libraryHoldsId(database, id)) throw new RuleDraftError(`your rule ${id} could not be read; the dashboard shows why`);
     const ruleCatalog = loadRuleCatalog();
@@ -902,7 +921,8 @@ export function showRule(id: string, repo: string, databasePath = defaultRerailD
     if (bundled === undefined) {
       throw new RuleDraftError(`there is no rule ${id}: it is neither yours nor in an installed pack. A worktree's own rules are files in its .rerail/rules/`);
     }
-    return rerailRuleShown(database, ruleCatalog, bundled, repo, id);
+    const shown = rerailRuleShown(database, ruleCatalog, bundled, repo, id);
+    return { ...shown, draft: withPackTitle(shown.draft, ruleCatalog) };
   } finally {
     database.$client.close();
   }
@@ -995,6 +1015,7 @@ const EXAMPLE_DRAFT = {
     id: "acme:no-console-log",
     revision: 1,
     mode: "steer",
+    title: "No console.log in src",
     description: "Use the logger, not console.log.",
     scope: { include: ["src/**/*.ts"], exclude: [] },
     clauses: [{
@@ -1038,7 +1059,8 @@ function ruleDraftHelp(): string {
     "  }",
     "",
     "  kind    code for a code rule (a rerail.policy/v1 document), conversation for a conversation rule.",
-    "  rule    the rule, as your library stores it.",
+    "  rule    the rule, as your library stores it. rules add needs its title: the rule in plain words, which the",
+    "          dashboard shows. The agent never reads it.",
     "  folder  optional: the repository folder the rule is added at, \"\" for the whole repository. Absent, a new rule is",
     "          added to the whole repository and one already added stays where it is. A copy of a By Rerail rule",
     "          takes none: it is added where the original is.",

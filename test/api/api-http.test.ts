@@ -423,6 +423,7 @@ describe("Rerail API over HTTP", () => {
     const rule = (regex: string) => ({
       id,
       mode: "steer",
+      title: "No force-push",
       match: { all: [{ field: "tool.name", eq: "Bash" }, { field: "input.command", regex }] },
       sample: { source: "tool:Bash", boundary: "tool-call" },
       action: { content: "Do not force-push." },

@@ -61,6 +61,7 @@ function noConsolePolicy(pattern = String.raw`console\.log`) {
     id: "acme:no-console-log",
     revision: 1,
     mode: "steer",
+    title: "No console.log in src",
     description: "Use the logger, not console.log.",
     scope: { include: ["src/**/*.ts"], exclude: [] },
     clauses: [{
@@ -804,6 +805,21 @@ describe("rerail rules add", () => {
     });
   });
 
+  it("refuses a rule without a title, which rules test reports as what rules add would refuse", async () => {
+    const repo = await repository();
+    setUpEmpty(repo);
+    const { title: _title, ...untitled } = noConsolePolicy();
+    const rule = { ...untitled, id: "acme:untitled" };
+    const file = writeDraft(repo, { kind: "code", rule, cases: { caught: [{ path: "src/a.ts", content: "console.log(1);\n" }], passed: [] } });
+
+    const report = JSON.parse((await run("test", [file, "--repo", repo, "--json"])).stdout) as RuleDraftReport;
+    const added = await run("add", [file, "--repo", repo]);
+
+    expect(report).toMatchObject({ ok: true, valid: true, refusal: expect.stringMatching(/^rule\.title is required/) });
+    expect(added).toMatchObject({ exit: 1, stderr: `● The rule was not added: ${report.refusal}\n` });
+    expect(rulesOf(repo).library).not.toContain("acme:untitled");
+  });
+
   it("adds the rule at the folder the draft names", async () => {
     const repo = await repository();
     setUpEmpty(repo);
@@ -936,6 +952,12 @@ describe("rerail rules add", () => {
       return { exit, draft: JSON.parse(stdout === "" ? "null" : stdout) as { kind: string; rule: Record<string, unknown> }, stderr };
     }
 
+    /** The title the rule's pack lists for it, which `rules show` gives the draft. */
+    function packTitle(id: string): string | undefined {
+      const catalog = loadRuleCatalog();
+      return catalog.packs.get(catalog.packOf.get(id) ?? "")?.rules.find(rule => rule.id === id)?.title;
+    }
+
     /** The rules `repo` runs whose id starts with `prefix`, by rule id, with where they come from. */
     function rulesNamed(repo: string, prefix: string) {
       const database = openRerailDatabase(defaultRerailDatabasePath());
@@ -1055,7 +1077,7 @@ describe("rerail rules add", () => {
 
       const shown = await show(repo, id);
 
-      expect(shown.draft.rule).toEqual({ ...loadRuleCatalog().documents.get(id)?.rule, mode: "log" });
+      expect(shown.draft.rule).toEqual({ ...loadRuleCatalog().documents.get(id)?.rule, title: packTitle(id), mode: "log" });
     });
 
     it("is shown with the option values the repository sets, which the copy keeps, and as shipped when they no longer apply", async () => {
@@ -1074,7 +1096,7 @@ describe("rerail rules add", () => {
       const shipped = loadRuleCatalog().documents.get(id)?.rule;
 
       configure({ retired: true });
-      expect((await show(repo, id)).draft.rule).toEqual(shipped);
+      expect((await show(repo, id)).draft.rule).toEqual({ ...shipped, title: packTitle(id) });
 
       configure({ option: "type" });
       const configured = (await show(repo, id)).draft;

@@ -168,6 +168,9 @@ plain `eslint-config-expo`, with no design checks).
 ## Files
 
 - `dashboard-rule-titles.jpg`: the product owner's screenshot of the rule list and panel
+- `dashboard-rule-titles-after-list.jpg`, `dashboard-rule-titles-after-panel.jpg`: the same list and panel once rules carry
+  a `title`, in a scratch repository with three of these drafts titled in the person's words and one rule added before
+  titles, which still shows its first message
 - `drafts/*.json`: each draft as tested, with its cases
 - `drafts/generate-drafts.mjs`: the script that generated the drafts
 - `drafts/probe-title-field.json`: the `title` probe that was refused

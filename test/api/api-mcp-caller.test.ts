@@ -231,7 +231,7 @@ describe("MCP callers and the agent guard", () => {
     const [ruleId, packId] = [...ruleCatalog.packOf].find(([id]) => ruleCatalog.documents.get(id)?.kind === "code")!;
     addAttachment(stores.database(), { repositoryKey: parentKey, folder: "web", sourceKind: "pack", sourceId: packId });
     const original = ruleCatalog.documents.get(ruleId)!.rule as CodeRule;
-    const copied = await call("library_rules_upsert", { id: ruleId, kind: "code", rule: { ...original, revision: original.revision + 1 } }, caller);
+    const copied = await call("library_rules_upsert", { id: ruleId, kind: "code", rule: { ...original, title: "Our copy", revision: original.revision + 1 } }, caller);
     expect(copied.result).toMatchObject({ copiedFromRuleId: ruleId, attached: { repositoryKey: parentKey, folders: ["web"] } });
     expect(stores.database().select().from(ruleSettings).where(eq(ruleSettings.targetId, ruleId)).all()).toEqual([]);
     // Editing its own copy later is allowed, as making it was.
@@ -280,7 +280,7 @@ describe("MCP callers and the agent guard", () => {
     const response = await app.request(`/api/library-rules/${bundledId}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "code", rule: { ...(document.rule as CodeRule), mode: "steer" } }),
+      body: JSON.stringify({ kind: "code", rule: { ...(document.rule as CodeRule), title: "Ours, from before the release", mode: "steer" } }),
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ copiedFromRuleId: null, rule: { rule: { id: bundledId, mode: "steer" } } });

@@ -62,13 +62,13 @@ export const categoryLabel = category => CATEGORY_LABEL[category] ?? "";
 export const isRunning = stored => stored.enabled && !stored.configError;
 
 const titles = new WeakMap();
-/** Sentence the row leads with: conversation rule → reference; file rule → first clause's message, else its id. */
+/** Sentence the row leads with: the rule's title; else a conversation rule's reference, a file rule's first clause's message, else its id. */
 export function ruleTitle(stored) {
   let title = titles.get(stored);
   if (title === undefined) {
     const rule = stored.rule;
     const clause = stored.kind === "conversation" ? undefined : rule.clauses[0];
-    title = collapse(stored.kind === "conversation" ? rule.reference : clause?.violation?.message) || rule.id;
+    title = collapse(rule.title) || collapse(stored.kind === "conversation" ? rule.reference : clause?.violation?.message) || rule.id;
     titles.set(stored, title);
   }
   return title;
