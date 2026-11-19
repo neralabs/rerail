@@ -1076,6 +1076,11 @@ async function writtenThisSession(discovery: SourceDiscovery, walk: WalkStart, p
     return false;
   }
 }
+/** When the file at `absolute` was last written, on the filesystem's clock, as a walk reads its stamp; undefined when it cannot be read. */
+async function writtenAt(absolute: string): Promise<number | undefined> {
+  const info = await lstat(absolute).catch(() => undefined);
+  return info === undefined ? undefined : Math.max(info.mtimeMs, info.ctimeMs);
+}
 /** The stamp of the nearest folder under `root` that holds, or held, `path`, on the filesystem's clock; undefined only when `root` itself cannot be read. */
 async function folderStamp(root: string, path: string): Promise<number | undefined> {
   for (let folder = dirname(path); ; folder = dirname(folder)) {
@@ -1127,8 +1132,10 @@ function sessionRelativePath(root: string, configuredPath: string): string | und
   const path = sessionPath(root, isAbsolute(configuredPath) ? configuredPath : resolve(root, configuredPath));
   return path === "" || isAbsolute(path) ? undefined : path;
 }
+/** Why an edit of a source changed while the session's first walk was still to take it is read over its whole file. */
+const CHANGED_IN_INITIAL_DISCOVERY = "Source changed during initial discovery without a captured preimage";
 function uncapturedPreimage(baselinePath: boolean, before: ObservedSource | undefined): Pick<CodeRuleEdit, "previousReadError"> {
-  if (baselinePath) return { previousReadError: "Source changed during initial discovery without a captured preimage" };
+  if (baselinePath) return { previousReadError: CHANGED_IN_INITIAL_DISCOVERY };
   if (before === undefined) return {};
   return { previousReadError: "Source changed outside a tool with a captured preimage" };
 }
@@ -1526,7 +1533,7 @@ export class CodeRuleBridge {
     return await this.#enqueue(async () => {
       this.#assertDiscovery(discovery);
       const preimages = restoredPreimages === undefined
-        ? await this.#capturePreimages(paths)
+        ? await this.#capturePreimages(discovery, paths)
         : new Map(Object.entries(restoredPreimages));
       for (const path of preimages.keys()) this.#touchSource(discovery, path);
       this.#pending.set(toolCallId, { paths, preimages });
@@ -1539,10 +1546,22 @@ export class CodeRuleBridge {
    * is captured, but what it writes is the session's own. Its window is taken by the workspace as it opens, so the walk
    * credits what was stamped while it ran; its result reconciles nothing, and what it wrote is the next walk's. A host
    * whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no call. `toolName`
-   * names the call's tool, none for a turn's window.
+   * names the call's tool, none for a turn's window; `input` is its tool input, whose files the window names, so a later
+   * call's capture of one of them knows it holds an edit no walk has checked yet (`#unobservedOpeningEdit`).
    */
-  async unwatchedCall(toolCallId: string, toolName?: string): Promise<void> {
-    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, await filesystemClock(), toolName !== undefined && isCommandTool(toolName));
+  async unwatchedCall(toolCallId: string, toolName?: string, input?: unknown): Promise<void> {
+    const at = await filesystemClock();
+    const named = toolName === undefined ? [] : await this.#sessionPaths(generatedEditPaths(toolName, input));
+    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, at, toolName !== undefined && isCommandTool(toolName), named);
+  }
+
+  /**
+   * `configuredPaths` as the session names its sources, whatever the auditor reads, which it cannot say before it opens;
+   * none where the session's folder cannot be resolved.
+   */
+  async #sessionPaths(configuredPaths: readonly string[]): Promise<string[]> {
+    const root = await realpath(this.#cwd).catch(() => undefined);
+    return root === undefined ? [] : configuredPaths.flatMap(path => sessionRelativePath(root, path) ?? []);
   }
 
   /** Ends the window `unwatchedCall` opened for the call, at its result. */
@@ -1913,17 +1932,36 @@ export class CodeRuleBridge {
     this.#observations?.set(this.#cwd, own);
   }
 
-  async #capturePreimages(paths: readonly string[]): Promise<ReadonlyMap<string, Preimage>> {
+  /**
+   * Each source's text as the call begins, its preimage, which the session takes as what it observed of the source. A
+   * source holding an edit made while the evaluator opened that no walk has checked yet (`#unobservedOpeningEdit`) gives
+   * no text to read the call's edit against: the edit is read over its whole file, as the evaluator's first walk reads a
+   * change it finds, so the earlier edit's lines are checked once, here, rather than taken as the source's earlier
+   * state and never checked.
+   */
+  async #capturePreimages(discovery: SourceDiscovery, paths: readonly string[]): Promise<ReadonlyMap<string, Preimage>> {
     const root = await realpath(this.#cwd);
     const preimages = new Map<string, Preimage>();
     for (const configuredPath of [...paths].sort(compareDeterministicStrings)) {
       const source = await this.#readSource(root, configuredPath);
       if (source === undefined) continue;
+      const preimage = await this.#unobservedOpeningEdit(discovery, source) ? { readError: CHANGED_IN_INITIAL_DISCOVERY } : preimageOf(source);
       this.#updateObservedSource(source);
-      const preimage = preimageOf(source);
       if (preimage !== undefined) preimages.set(source.path, preimage);
     }
     return preimages;
+  }
+
+  /**
+   * Whether `source` holds an edit of a call answered while the evaluator opened, never begun, that no walk or call of
+   * the session has observed: the call named the file and ran when it was last written (`ToolCallWindows.namedAt`), and
+   * the session holds no observation of it. The evaluator's first walk would find the file changed during initial
+   * discovery and check it whole; a capture taken as the file's earlier state would leave that walk nothing to find.
+   */
+  async #unobservedOpeningEdit(discovery: SourceDiscovery, source: Source): Promise<boolean> {
+    if (this.#observedSource(source.path) !== undefined) return false;
+    const stamp = await writtenAt(resolve(discovery.root, source.path));
+    return stamp !== undefined && discovery.toolCalls.namedAt(source.path, stamp);
   }
 
   /**

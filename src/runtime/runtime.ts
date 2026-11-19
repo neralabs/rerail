@@ -1413,7 +1413,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * Begins a tool call on the open evaluator. One answered while the evaluator opens is never begun, but what it writes
-   * is the session's own, so it opens only its window (`CodeRuleBridge.unwatchedCall`).
+   * is the session's own, so it opens only its window, which names the files its tool names (`CodeRuleBridge.unwatchedCall`).
    */
   async #beginCall(
     state: RuntimeSessionState,
@@ -1421,7 +1421,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     event: Extract<AdapterEvent, { kind: "call" }>,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
     if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
-    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.toolName);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.toolName, event.input);
     return undefined;
   }
 
