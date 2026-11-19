@@ -243,7 +243,7 @@
           "FTS index redesign"
         ]
       },
-      "specification": "docs/sql-execution-chunk-c.md",
+      "specification": "docs/sql-execution-chunk-c.md (removed; at 7efcac9c67)",
       "evidencePlan": "sql-execution-chunk-c-20261024.json",
       "measuredResult": {
         "engineSubmissions": 975,

@@ -1,2 +1,0 @@
-^(?:wtxn|vtxn|rtxn|vrtxn|txn|tx)$
-^async\b
