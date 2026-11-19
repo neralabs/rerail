@@ -1,0 +1,514 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-up006-non-pep585-annotation",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use built-in and collections generics such as list[int] instead of typing aliases such as List[int]; the aliases are deprecated since Python 3.9.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "generic-ref": {
+      "any": [
+       {
+        "any": [
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "attribute"
+         }
+        ],
+        "resolves": {
+         "import": [
+          "typing.List",
+          "typing.Dict",
+          "typing.Set",
+          "typing.FrozenSet",
+          "typing.Tuple",
+          "typing.Type",
+          "typing.Deque",
+          "typing.DefaultDict",
+          "typing_extensions.Type",
+          "typing_extensions.Deque",
+          "typing_extensions.DefaultDict"
+         ]
+        }
+       },
+       {
+        "kind": "dotted_name",
+        "inside": {
+         "stopBy": "end",
+         "kind": "case_pattern"
+        },
+        "regex": "^[^.\\s]+\\s*\\.\\s*(?:List|Dict|Set|FrozenSet|Tuple|Type|Deque|DefaultDict)$",
+        "has": {
+         "stopBy": "neighbor",
+         "kind": "identifier",
+         "nthChild": 1,
+         "resolves": {
+          "import": [
+           "typing",
+           "typing_extensions"
+          ]
+         }
+        }
+       }
+      ]
+     },
+     "annotated": {
+      "any": [
+       {
+        "kind": "identifier"
+       },
+       {
+        "kind": "attribute"
+       }
+      ],
+      "resolves": {
+       "import": [
+        "typing.Annotated",
+        "typing_extensions.Annotated"
+       ]
+      }
+     },
+     "string-content": {
+      "any": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "concatenated_string"
+       }
+      ],
+      "not": {
+       "matches": "annotated-metadata"
+      }
+     },
+     "direct-ref": {
+      "matches": "string-content",
+      "parse": {
+       "grammar": "annotation",
+       "has": {
+        "stopBy": "end",
+        "matches": "generic-ref",
+        "capture": "T"
+       }
+      }
+     },
+     "nested-ref": {
+      "matches": "string-content",
+      "parse": {
+       "grammar": "annotation",
+       "has": {
+        "stopBy": "end",
+        "any": [
+         {
+          "matches": "direct-ref"
+         },
+         {
+          "matches": "nested-ref"
+         }
+        ]
+       }
+      }
+     },
+     "annotated-metadata": {
+      "any": [
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "subscript",
+         "has": {
+          "stopBy": "neighbor",
+          "field": "value",
+          "matches": "annotated"
+         }
+        },
+        "not": {
+         "nthChild": 2
+        }
+       },
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "type",
+         "not": {
+          "nthChild": 1
+         },
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "type_parameter",
+          "inside": {
+           "stopBy": "neighbor",
+           "kind": "generic_type",
+           "has": {
+            "stopBy": "neighbor",
+            "matches": "annotated"
+           }
+          }
+         }
+        }
+       },
+       {
+        "not": {
+         "nthChild": 1
+        },
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "tuple",
+         "nthChild": 2,
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "subscript",
+          "has": {
+           "stopBy": "neighbor",
+           "field": "value",
+           "matches": "annotated"
+          },
+          "not": {
+           "has": {
+            "stopBy": "neighbor",
+            "nthChild": 3
+           }
+          }
+         }
+        }
+       },
+       {
+        "not": {
+         "nthChild": 1
+        },
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "tuple",
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "type",
+          "nthChild": 1,
+          "inside": {
+           "stopBy": "neighbor",
+           "kind": "type_parameter",
+           "not": {
+            "has": {
+             "stopBy": "neighbor",
+             "nthChild": 2
+            }
+           },
+           "inside": {
+            "stopBy": "neighbor",
+            "kind": "generic_type",
+            "has": {
+             "stopBy": "neighbor",
+             "matches": "annotated"
+            }
+           }
+          }
+         }
+        }
+       }
+      ]
+     },
+     "annotation-root": {
+      "kind": "type",
+      "any": [
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "field": "type",
+         "any": [
+          {
+           "kind": "typed_parameter"
+          },
+          {
+           "kind": "typed_default_parameter"
+          },
+          {
+           "kind": "assignment"
+          }
+         ]
+        }
+       },
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "field": "return_type",
+         "kind": "function_definition"
+        }
+       }
+      ]
+     },
+     "future-stmt": {
+      "kind": "future_import_statement",
+      "has": {
+       "stopBy": "end",
+       "kind": "identifier",
+       "regex": "^annotations$",
+       "not": {
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "aliased_import",
+         "field": "alias"
+        }
+       }
+      }
+     },
+     "future-annotations": {
+      "inside": {
+       "stopBy": "end",
+       "follows": {
+        "stopBy": "end",
+        "matches": "future-stmt"
+       }
+      }
+     },
+     "in-future-annotation": {
+      "matches": "future-annotations",
+      "inside": {
+       "stopBy": "end",
+       "matches": "annotation-root"
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-alias",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "any": [
+       {
+        "matches": "generic-ref",
+        "pattern": "$T"
+       },
+       {
+        "matches": "direct-ref"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.T",
+    "each": "T",
+    "code": "UP006",
+    "message": "Replace `$T` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP006"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-alias-nested-string",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "matches": "nested-ref"
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.T",
+    "each": "T",
+    "code": "UP006",
+    "message": "Replace `$T` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP006"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-alias-stub",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "max": "3.8"
+      }
+     },
+     "file": {
+      "path": {
+       "regex": "\\.pyi$"
+      }
+     },
+     "rule": {
+      "any": [
+       {
+        "matches": "generic-ref",
+        "pattern": "$T"
+       },
+       {
+        "matches": "direct-ref"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.T",
+    "each": "T",
+    "code": "UP006",
+    "message": "Replace `$T` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP006"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-alias-stub-nested-string",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "max": "3.8"
+      }
+     },
+     "file": {
+      "path": {
+       "regex": "\\.pyi$"
+      }
+     },
+     "rule": {
+      "matches": "nested-ref"
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.T",
+    "each": "T",
+    "code": "UP006",
+    "message": "Replace `$T` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP006"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-alias-future-annotations",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "max": "3.8"
+      }
+     },
+     "rule": {
+      "all": [
+       {
+        "any": [
+         {
+          "matches": "generic-ref",
+          "pattern": "$T"
+         },
+         {
+          "matches": "direct-ref"
+         }
+        ]
+       },
+       {
+        "matches": "in-future-annotation"
+       }
+      ]
+     },
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.T",
+    "each": "T",
+    "code": "UP006",
+    "message": "Replace `$T` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP006"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-alias-future-annotations-nested-string",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "max": "3.8"
+      }
+     },
+     "rule": {
+      "matches": "nested-ref",
+      "all": [
+       {
+        "matches": "in-future-annotation"
+       }
+      ]
+     },
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.T",
+    "each": "T",
+    "code": "UP006",
+    "message": "Replace `$T` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP006"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

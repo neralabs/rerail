@@ -255,8 +255,14 @@ export function coreTagRefusal(version, tags) {
 /** The first core release that reads a rule's `heldOff` in `pack.json`: an older core refuses a `pack.json` naming it. */
 export const HELD_OFF_SINCE = "0.1.5";
 
-/** The first core release that reads each language added after 0.1.0: an older core refuses a rule document naming it. */
-export const LANGUAGE_SINCE = new Map([["java", "0.1.5"]]);
+/**
+ * The first core release that reads each language added after 0.1.0: an older core refuses a rule document naming it.
+ * Java shipped in 0.1.5; the rest come with the final-shape engine, which no release reads before 0.1.6.
+ */
+export const LANGUAGE_SINCE = new Map([
+  ["java", "0.1.5"],
+  ...["c", "cpp", "csharp", "css", "eslint-directive", "go", "html", "json", "markdown", "python-format", "rr"].map((id) => [id, "0.1.6"]),
+]);
 
 /** The ids of the rules a parsed `pack.json` holds off. */
 export function heldOffRules(packJson) {

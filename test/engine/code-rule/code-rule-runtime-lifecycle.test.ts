@@ -568,6 +568,14 @@ describe("source-scoped steers", () => {
   it("starts a session before its evaluator opens, and answers a tool call at once without code rules", async () => {
     const root = await realpath(await temporaryDirectory());
     const databasePath = join(root, "rerail.sqlite");
+    // The evaluator's first walk lists the folder only once the result has answered. Run before it, the walk could find
+    // the write inside the call's window, take it as the session's own and check it, and the result would carry that steer.
+    const walk = Promise.withResolvers<void>();
+    const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+    vi.mocked(opendir).mockImplementation(async (...args) => {
+      if (args[0] === root) await walk.promise;
+      return actual.opendir(...args);
+    });
     const attachments = gateStorageAttachments();
     const runtime = new RerailRuntime({
       storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
@@ -592,9 +600,11 @@ describe("source-scoped steers", () => {
         toolCallId: "write", toolName: "write", output: "written",
       })).toEqual([]);
     } finally {
+      walk.resolve();
       for (const workspace of attachments.workspaces) workspace.release();
       attachments.restore();
       await runtime.dispose();
+      vi.mocked(opendir).mockRestore();
     }
   });
 
@@ -819,13 +829,25 @@ describe("source-scoped steers", () => {
 
     it("does not check at its result the edit of a call it answered while indexing, even once the evaluator has opened", async () => {
       const test = await openingFixture();
+      // The evaluator's first walk lists the folder only once the result has answered: run before it, the walk could
+      // find the write inside the call's window and check it as the session's own, and the result would carry that steer.
+      const walk = Promise.withResolvers<void>();
+      const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+      vi.mocked(opendir).mockImplementation(async (...args) => {
+        if (args[0] === test.root) await walk.promise;
+        return actual.opendir(...args);
+      });
       try {
         expect(await test.call("write")).toEqual([]);
         test.attachments.workspaces[0]!.release();
         await test.runtime.codeRulesOpened(test.session.sessionId);
         await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
         expect(await test.result("write")).toEqual([]);
-      } finally { await test.close(); }
+      } finally {
+        walk.resolve();
+        await test.close();
+        vi.mocked(opendir).mockRestore();
+      }
     });
   });
 

@@ -16,6 +16,8 @@ impl TempDir {
             std::process::id()
         ));
         std::fs::create_dir_all(&path).unwrap();
+        // std's canonical form on purpose: on Windows it is the `\\?\` verbatim path, and the Windows tests below
+        // resolve against both it and its drive form.
         Self(path.canonicalize().unwrap())
     }
 
