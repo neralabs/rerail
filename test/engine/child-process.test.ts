@@ -68,6 +68,10 @@ describe("assertProgramPath", () => {
     for (const command of ["git", "node.exe", String.raw`.\node.exe`, String.raw`bin\git.exe`, "rundll32"]) {
       expect(() => assertProgramPath([command, []], "win32"), command).toThrow(/absolute path/u);
     }
+    // A drive with no separator after it names a file in that drive's current folder.
+    for (const command of ["C:git.exe", String.raw`C:tools\git.exe`]) {
+      expect(() => assertProgramPath([command, []], "win32"), command).toThrow(/absolute path/u);
+    }
     expect(() => assertProgramPath([String.raw`C:\Program Files\Git\cmd\git.exe`, ["status"]], "win32")).not.toThrow();
     expect(() => assertProgramPath([String.raw`\\server\share\tool.exe`], "win32")).not.toThrow();
     expect(() => assertProgramPath(["bash ~/.claude/statusline.sh", { shell: true }], "win32")).not.toThrow();
