@@ -8319,13 +8319,12 @@ pub mod posted_tests {
     }
 
     /// Statistics counted from a relation's postings are those counted from its live rows.
-    /// A frame made from a relation's rows where they lie (`retain::held_digest`, `held_bytes`) is the frame made
-    /// from a copy of its live rows (`rows_digest`, `encode_rows`), dead rows and batch edges included.
+    /// A relation's digest taken from its rows where they lie (`retain::held_digest`) is the digest of a copy of its
+    /// live rows (`rows_digest`), dead rows and batch edges included.
     #[test]
-    fn a_frame_read_in_place_is_the_frame_of_the_copied_rows() {
+    fn a_digest_read_in_place_is_the_digest_of_the_copied_rows() {
         use crate::code_rule_dsl::logic::plan::{Cells, rows_digest};
-        use crate::code_rule_dsl::logic::plan::corpus::retain::{held_bytes, held_digest};
-        use crate::content_store::{FramePut, FrameRows};
+        use crate::code_rule_dsl::logic::plan::corpus::retain::held_digest;
         let n = 3 * LIVE_BATCH + 17;
         let mut rel = Rel::new("t", b"iii");
         for i in 0..n as i64 {
@@ -8342,7 +8341,6 @@ pub mod posted_tests {
             let live = held.live_rows().expect("flat");
             let cells = Cells::plain(3);
             assert_eq!(held_digest(&cells, held), Some(rows_digest(&cells, &live, held.rows())), "{} dead", held.ndead);
-            assert_eq!(held_bytes(held), FramePut::encode_rows(&FrameRows { types: b"iii".to_vec(), rows: live, n: held.rows() }), "{} dead", held.ndead);
         }
     }
 

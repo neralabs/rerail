@@ -492,6 +492,15 @@ impl ContentStore {
         self.preload_frames_live(None)
     }
 
+    /// What a run reads of the store before its first wave (decision 0104), once a process: the kept blocks' rows
+    /// (`preload_kept`), held in the store's snapshot, which this process's writes keep current, and with it the
+    /// memo's admissions (`admit_memo_entries`). No frame: the engine writes none (decision 0401 step 9). Returns the
+    /// spaces read now.
+    pub fn preload_kept_state(&self) -> StoreResult<usize> {
+        snapshots().lock().expect("the frames' snapshots").entry(super::atoms::key(&self.database_path)).or_default();
+        self.preload_kept()
+    }
+
     /// The frames a run reads before its first wave (decision 0104, Q19), the first run of a process installing the
     /// snapshot. The memo's entries are not frames (decision 0240 §4); a run admits its plan's
     /// (`admit_memo_entries`).
