@@ -467,6 +467,17 @@ Progress (2026-11-18):
       check reads the finished version's rules. The holders of written trees go (`Out::Before`, `Written::kept`).
       Left: the lowering still builds each rule as a `front::Rule` and puts it (`put_rule`); each literal's lowering
       moves to its own `put_*` writes, then `put_rule` goes.
+    - *A3.3's mechanics (decided 2026-11-18).* The sink is the lowerer's mode. Deciding: no rule is open; each
+      value a run makes that a later run must see again is appended to a log in the order made: a fresh name, the
+      name `helper_once` returns, a literal's count of alternatives. Writing: one rule is open; the same run reads
+      those values back from the log at a cursor (set to the run's start, so a clause's combinations, and an
+      outlined literal's alternatives, each replay the same segment); a literal writes only the alternative it is
+      told to (`pick`), and its helper, demand and declaration writes do nothing. A conjunction's combination is a
+      pick per literal, by the counts the log holds. Two rewrites of a whole body become writes: `unset` (a variable
+      bound empty, written as the empty value in the head and body) by a scanning run per combination before the
+      rule opens, which collects the chosen alternatives' `unset(v)` variables, then applied as each term is put;
+      and the merge of consecutive negated tests of one subject (`merge_negated_tests`) by holding one pending
+      negated test (its operation, its subject's position and its patterns) until the next literal is written.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,
