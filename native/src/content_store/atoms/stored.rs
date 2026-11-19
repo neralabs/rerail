@@ -192,14 +192,14 @@ impl Stored {
 
     /// The ids read, as a directory's runs (decision 0450 step 2b): each view's from its first id to the next's, at
     /// most to the end below which ids are read here.
-    pub(crate) fn runs(&self, below: Sym) -> Vec<rerail_blocks::atoms::Run> {
+    pub(crate) fn runs(&self, below: Sym) -> Vec<(rerail_blocks::atoms::Run, std::sync::Arc<rerail_blocks::block::Block>)> {
         let end = self.end.min(below);
         (0..self.views.len())
             .map(|k| {
                 let next = self.views.get(k + 1).map_or(end, |(_, v)| v.first().min(end));
-                self.views[k].1.run_upto(next)
+                (self.views[k].1.run_upto(next), std::sync::Arc::clone(self.views[k].1.block()))
             })
-            .filter(|r| r.first < r.end)
+            .filter(|(r, _)| r.first < r.end)
             .collect()
     }
 

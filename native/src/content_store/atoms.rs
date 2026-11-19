@@ -93,14 +93,19 @@ impl Interner {
         self.pending.iter().map(rerail_blocks::atoms::AtomsW::region).collect()
     }
 
-    /// Every atom this process holds as a directory of runs where their blocks hold them (decision 0450 step 2b):
-    /// the store's chain below `base`, then the pending blocks. `at` gives a host address in the reader's address
-    /// space (`|p| p as u64` for the host). The atoms reads written once in CLIF (`atoms_at`, `atoms_len`) read an
-    /// id's string through it, on the host and the device alike. A directory is good until the next intern or store.
-    pub fn dir(&self, at: &dyn Fn(*const u8) -> u64) -> rerail_blocks::atoms::AtomsDir {
+    /// Every atom this process holds as runs where their blocks hold them, with the blocks (decision 0450 step 2b):
+    /// the store's chain below `base`, then the pending blocks. A directory of them (`AtomsDir`) is read by the atoms
+    /// reads written once in CLIF (`atoms_at`, `atoms_len`), on the host and the device alike. The runs hold the ids
+    /// held now: a reader that keeps the blocks reads them while atoms are interned and stored after.
+    pub fn runs(&self) -> Vec<(rerail_blocks::atoms::Run, Arc<rerail_blocks::block::Block>)> {
         let mut runs = self.stored.runs(self.base);
-        runs.extend(self.pending.iter().map(|w| w.run_from(self.base)).filter(|r| r.first < r.end));
-        rerail_blocks::atoms::AtomsDir::new(&runs, at)
+        runs.extend(self.pending.iter().filter_map(|w| Some((w.run_from(self.base), Arc::clone(w.block()))).filter(|(r, _)| r.first < r.end)));
+        runs
+    }
+
+    /// `runs` as a directory for the host.
+    pub fn dir(&self) -> rerail_blocks::atoms::AtomsDir {
+        rerail_blocks::atoms::AtomsDir::host(&self.runs().into_iter().map(|(r, _)| r).collect::<Vec<_>>())
     }
 
     /// The string of `s`, if this process holds it: the store's (mapped), or pending.
@@ -566,6 +571,11 @@ impl Atoms {
     /// again, by this process or another: it has another identity). A store has atoms of its own; another database
     /// (a run's scratch) may borrow a store's (`share`).
     /// The store's guest keys as this process holds them (decision 0391).
+    /// Every atom held now as runs where their blocks hold them, with the blocks (`Interner::runs`).
+    pub fn runs(&self) -> Vec<(rerail_blocks::atoms::Run, Arc<rerail_blocks::block::Block>)> {
+        self.state.read().atoms.runs()
+    }
+
     /// The text tests' verdicts for these atoms (decision 0450 step 2d), made when a test first asks.
     pub fn verdicts(&self) -> &Verdicts {
         self.verdicts.get_or_init(Verdicts::new)

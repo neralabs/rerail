@@ -141,7 +141,8 @@ impl Interner {
     fn held(&self, s: &str) -> Option<i64> {
         self.atoms.existing(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(*self.deferred.as_ref()?.at.get(s)?)))
     }
-    fn id(&mut self, s: &str) -> i64 {
+    /// The value of text `s`: its atom (interned when new), or a morsel's deferred value.
+    pub fn id(&mut self, s: &str) -> i64 {
         if self.deferred.is_some() {
             if let Some(v) = self.held(s) {
                 return v;

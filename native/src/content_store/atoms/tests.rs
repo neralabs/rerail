@@ -394,7 +394,7 @@ fn a_commit_past_a_blocks_room_starts_the_next() {
     let more_ids = store.intern_atoms(&more.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
     {
         let state = store.atoms.state.read();
-        let dir = state.atoms.dir(&|p| p as u64);
+        let dir = state.atoms.dir();
         let last = *more_ids.last().unwrap();
         for id in (0..=last).step_by(97).chain([1, cap, cap + 1, 70_001 + cap, more_ids[0], last]) {
             // SAFETY: a host directory over blocks this process maps.

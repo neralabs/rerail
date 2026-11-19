@@ -1,6 +1,8 @@
-//! A test's plans as one dense automaton table, for the device's text tests (`metal_join`'s `text_verdicts`).
+//! A test's plans as one dense automaton table, for the device's text tests (`metal_join`'s `row_text`, its
+//! `ROW_VERDICT` and `ROW_TEST` ops).
 //!
-//! The device answers a text test once per distinct term, a SIMD group per term, by composing each byte's
+//! The device answers a text test once per symbol not yet in the verdict cache (decision 0450 step 2d), and once
+//! per row for a made text, a SIMD group per text, by composing each byte's
 //! transition function over a chunk of 32 bytes at a time (decision 0038's chunked matching). So it needs the plans
 //! as one deterministic automaton with few states (each a byte, at most 255), whose final state alone says whether
 //! any plan matched anywhere: a match state is made absorbing (every byte, and the end of the text, keep it), and

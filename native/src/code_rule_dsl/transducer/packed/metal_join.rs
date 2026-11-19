@@ -64,9 +64,6 @@ pub(in crate::code_rule_dsl) const AGG_COUNT: u32 = 0;
 pub(in crate::code_rule_dsl) const AGG_SUM: u32 = 1;
 pub(in crate::code_rule_dsl) const AGG_MIN: u32 = 2;
 pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
-/// A text test of a slot (`Stage::agg`: `[slot, want]`): a binding passes when its symbol's verdict bit (the right
-/// relation, a bitset of 64 bits a row, by symbol) is `want`.
-pub(in crate::code_rule_dsl) const TEXT: u32 = 5;
 /// A function of symbols' names, each a slot or a constant (keys 0 and 1), their texts the right relation's (a
 /// `DevText`), its value into `bind_slot[0]`: by `agg[0]`, `NAMES_CMP` (`str_cmp`) or `NAMES_LEN` (`strlen`).
 pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
@@ -115,6 +112,9 @@ pub(in crate::code_rule_dsl) const ROW_TEST: u32 = 3;
 /// Text function `TEXTFN_*` (agg[0] >> 16) of X: of numbers keys 5 and 6; a literal replacement's pattern key 2's
 /// symbol, its replacement key 4's.
 pub(in crate::code_rule_dsl) const ROW_MAP: u32 = 4;
+/// A text test of a symbol (key 0) by its table, its verdict read from and kept in the one rolling cache (decision
+/// 0450 step 2d): the symbol's bytes read through the atoms directory where a verdict is not kept yet.
+pub(in crate::code_rule_dsl) const ROW_VERDICT: u32 = 5;
 pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
 pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;
@@ -131,6 +131,8 @@ pub(in crate::code_rule_dsl) const TEXTFN_COPY: u32 = 10;
 pub(in crate::code_rule_dsl) const TEXTFN_ZERO_PAD: u32 = 11;
 pub(in crate::code_rule_dsl) const TEXTFN_FULL: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
+/// A `ROW_VERDICT` stage met a symbol the atoms directory does not hold: the stratum runs on the host.
+pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;
 /// An operand that is an arena text (a text function's value).
 pub(in crate::code_rule_dsl) const OPND_ARENA: u32 = 3;
 /// An arena text's value: the sign bit, its offset from bit 24, its length in the low 24 bits.
@@ -960,13 +962,6 @@ static inline long strcmp_value(constant Stage& s, device const long* L, uint t,
     return lx == ly ? 0 : (lx < ly ? -1 : 1);
 }
 
-// Whether binding t's symbol in slot agg[0] has its verdict bit (mode 5), as agg[1] wants.
-static inline bool text_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
-    long v = L[ulong(s.agg[0]) * s.cap_in + t];
-    bool bit = v >= 0 && ulong(v >> 6) < ulong(s.nr) && ((R[v >> 6] >> (v & 63)) & 1) != 0;
-    return bit == (s.agg[1] != 0);
-}
-
 kernel void stage_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]],
                         device const uint* totals [[buffer(2)]], device atomic_uint* counters [[buffer(3)]], device uint* counts [[buffer(4)]],
                         device atomic_uint* A [[buffer(5)]], constant Stage& s [[buffer(6)]], uint t [[thread_position_in_grid]]) {
@@ -975,7 +970,6 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     if (t >= n) { counts[t] = 0; return; }
     long kv[8];
     uint lo, hi, how;
-    if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
     if (s.mode == 6) { counts[t] = 1; return; }
     if (s.mode == 7) { counts[t] = uint(textop_pass(s, L, t, R, A)); return; }
     candidates(s, L, t, R, kv, lo, hi, how);
@@ -1033,7 +1027,7 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     if (at >= s.cap_out) return;
     long kv[8];
     uint lo, hi, how;
-    if (s.mode == 5 || s.mode == 7) {
+    if (s.mode == 7) {
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
@@ -1114,61 +1108,6 @@ kernel void witness_count(device const long* L [[buffer(0)]], device const long*
         if (all) { found = 1; break; }
     }
     counts[t] = found;
-}
-
-// A text test's verdicts, once per distinct term (decision 0038's chunked matching): a SIMD group per term walks it
-// 32 bytes at a time, each lane one byte's transition function (a row of the table), the group composing them (a
-// reduction of compositions, its scratch in device memory: 32 rows of `states` bytes a group); the chunk's function
-// takes the state on. A term whose final state, after the end of text, accepts sets its symbol's bit. The groups are
-// persistent: `groups` of them over the terms.
-struct TextParams { uint nterms; uint states; uint classes; uint start; uint groups; uint pad0; uint pad1; uint pad2; };
-
-kernel void text_verdicts(device const long* T [[buffer(0)]], device const uchar* table [[buffer(1)]], device atomic_uint* bits [[buffer(2)]],
-                          device uchar* scratch [[buffer(3)]], constant TextParams& p [[buffer(4)]], uint t [[thread_position_in_grid]],
-                          uint lane [[thread_index_in_simdgroup]]) {
-    device const long* ids = T + 1;
-    device const uint* offs = text_offs(T);
-    device const uchar* bytes = text_chars(T);
-    uint sg = t / 32;
-    if (sg >= p.groups) return;
-    uint S = p.states, C = p.classes;
-    device const uchar* cls = table;
-    device const uchar* next = table + 256;
-    device const uchar* eoi = next + S * C;
-    device const uchar* acc = eoi + S;
-    device uchar* f = scratch + ulong(sg) * 32 * S;
-    for (uint term = sg; term < p.nterms; term += p.groups) {
-        uint lo = offs[term], hi = offs[term + 1];
-        uint state = p.start;
-        for (uint base = lo; base < hi; base += 32) {
-            uint at = base + lane;
-            bool has = at < hi;
-            uint c = has ? uint(cls[bytes[at]]) : 0;
-            for (uint q = 0; q < S; q++) f[lane * S + q] = has ? next[q * C + c] : uchar(q);
-            simdgroup_barrier(mem_flags::mem_device);
-            for (uint d = 1; d < 32; d <<= 1) {
-                uint tasks = (32 / (2 * d)) * S;
-                // The earlier block's function, then the later's, into the earlier's row; then copied to the later's.
-                for (uint k = lane; k < tasks; k += 32) {
-                    uint right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
-                    f[left * S + q] = f[right * S + f[left * S + q]];
-                }
-                simdgroup_barrier(mem_flags::mem_device);
-                for (uint k = lane; k < tasks; k += 32) {
-                    uint right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
-                    f[right * S + q] = f[left * S + q];
-                }
-                simdgroup_barrier(mem_flags::mem_device);
-            }
-            state = f[31 * S + state];
-            simdgroup_barrier(mem_flags::mem_device);
-        }
-        state = eoi[state];
-        if (lane == 0 && acc[state] != 0) {
-            long id = ids[term];
-            if (id >= 0) atomic_fetch_or_explicit(&bits[ulong(id) >> 5], 1u << uint(id & 31), memory_order_relaxed);
-        }
-    }
 }
 
 // The states after each of m (at most 32) bytes of x, lane l's after byte `first + step * l`, from state `st`: the
@@ -1424,8 +1363,8 @@ constant ulong POW10[20] = {1ul, 10ul, 100ul, 1000ul, 10000ul, 100000ul, 1000000
 kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device atomic_uint* A [[buffer(2)]],
                      device const uint* totals [[buffer(3)]], device atomic_uint* counters [[buffer(4)]], device uint* counts [[buffer(5)]],
                      device long* V [[buffer(6)]], device const uchar* G [[buffer(7)]], device uchar* scratch [[buffer(8)]],
-                     device const uint* P [[buffer(9)]], constant Stage& s [[buffer(10)]], uint t [[thread_position_in_grid]],
-                     uint lane [[thread_index_in_simdgroup]]) {
+                     device const uint* P [[buffer(9)]], device const uchar* D [[buffer(10)]], device const uchar* VC [[buffer(11)]],
+                     constant Stage& s [[buffer(12)]], uint t [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
     uint n = min(totals[s.in_slot], s.cap_in);
     uint groups = P[0];
     for (uint r = n + t; r <= s.cap_in; r += groups * 32) counts[r] = 0;
@@ -1434,6 +1373,36 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
     device uchar* fs = scratch + ulong(sg) * 64 * P[1];
     uint op = s.agg[0] & 15;
     bool want = ((s.agg[0] >> 8) & 1) != 0;
+    if (op == 5) {
+        // A text test of a symbol, its verdict in the one rolling cache VC (decision 0450 step 2d): each lane looks
+        // up a row's, 32 rows at once; then the group walks table G over each missed symbol's bytes (read through
+        // the atoms directory D), 32 bytes at a time, and keeps the verdict. A value no atom holds (negative) fails.
+        uint test = P[5];
+        for (uint base = sg * 32; base < n; base += groups * 32) {
+            uint row = base + lane;
+            bool has = row < n;
+            long v = has ? key_value(s, L, row, 0) : -1;
+            bool sym = has && v >= 0 && v <= long(0xffffffffu);
+            uint got = sym ? clif_verdict_get(VC, 0ul, test, uint(v)) : 1u;
+            uint miss = simd_or(sym && got == 0u ? (1u << lane) : 0u);
+            while (miss != 0u) {
+                uint l = ctz(miss);
+                miss &= miss - 1u;
+                // A missed symbol is an atom's id (below 2^32): shuffled as a uint (no 64-bit shuffle).
+                uint id = simd_shuffle(uint(v), ushort(l));
+                uint len = clif_atoms_len(D, 0ul, id);
+                bool held = len != 0xffffffffu;
+                Txt x = txt_raw(D + clif_atoms_at(D, 0ul, id), held ? len : 0u);
+                bool ok = held && txt_verdict(G, P[2], P[3], P[4], x, fs, lane);
+                if (lane == 0 && held) clif_verdict_put(VC, 0ul, test, id, ok ? 2u : 1u);
+                if (lane == l) got = held ? (ok ? 2u : 1u) : 3u;
+            }
+            if (has) counts[row] = uint((got == 2u) == want);
+            // An atom the directory does not hold: the stage's counter's bit 2, and the stratum runs on the host.
+            if (simd_any(got == 3u) && lane == 0 && s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 4u, memory_order_relaxed);
+        }
+        return;
+    }
     for (uint row = sg; row < n; row += groups) {
         Txt x = txt_of(s, L, row, R, A, 0, s.agg[1] & 15);
         if (op == 3) {
@@ -1527,7 +1496,9 @@ kernel void row_scatter(device const long* L [[buffer(0)]], device const long* V
     uint at = offsets[t];
     if (offsets[t + 1] <= at || at >= s.cap_out) return;
     for (uint k = 0; k < s.nslots; k++) O[ulong(k) * s.cap_out + at] = L[ulong(k) * s.cap_in + t];
-    if ((s.agg[0] & 15) != 3) O[ulong(s.bind_slot[0]) * s.cap_out + at] = V[t];
+    // A test (a made text's, `ROW_TEST`; a symbol's, `ROW_VERDICT`) binds nothing: its rows pass as they are.
+    uint op = s.agg[0] & 15;
+    if (op != 3 && op != 5) O[ulong(s.bind_slot[0]) * s.cap_out + at] = V[t];
 }
 
 // A text function of constant arguments (`TEXTFN_*`: f), once per distinct term (decision 0038's chunked matching):
@@ -2280,17 +2251,45 @@ impl DevText {
 }
 
 /// A text test's automaton on the device (`text::table`).
-pub(in crate::code_rule_dsl) struct DevTable {
-    table: DevBytes,
-    states: u32,
-    classes: u32,
-    start: u32,
+/// A text test's verdicts on the device (decision 0450 step 2d): the one rolling cache (the store's atoms', its block's
+/// wrap and the cache's offset), the atoms directory made for the device's addresses (its block's wrap, the root's
+/// offset), the wraps of the atoms blocks it reaches, and the test's id. `keep` holds the directory and the blocks
+/// until the batch's work completes.
+pub(in crate::code_rule_dsl) struct DevVerdicts {
+    pub(in crate::code_rule_dsl) cache: (metal::Buffer, u64),
+    pub(in crate::code_rule_dsl) dir: (metal::Buffer, u64),
+    pub(in crate::code_rule_dsl) reads: Vec<metal::Buffer>,
+    pub(in crate::code_rule_dsl) test: u32,
+    pub(in crate::code_rule_dsl) keep: std::sync::Arc<dyn std::any::Any + Send + Sync>,
 }
 
-impl DevTable {
-    /// Test table `t` where the automata block holds it (decision 0450 step 2c): nothing uploaded.
-    pub(in crate::code_rule_dsl) fn of(t: &crate::code_rule_dsl::text::table::Table) -> Result<DevTable, Error> {
-        Ok(DevTable { table: DevBytes::of(&t.automaton)?, states: t.states, classes: t.classes, start: t.start })
+impl DevVerdicts {
+    /// Test `test`'s verdicts in `cache` (a store's atoms' `Verdicts`) for the atoms of `runs` (`Atoms::runs`).
+    pub(in crate::code_rule_dsl) fn new(cache: &crate::content_store::atoms::Verdicts, runs: Vec<(rerail_blocks::atoms::Run, std::sync::Arc<rerail_blocks::block::Block>)>, test: u32) -> Result<DevVerdicts, Error> {
+        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let mut blocks: Vec<std::sync::Arc<rerail_blocks::block::Block>> = Vec::new();
+        for (_, b) in &runs {
+            if !blocks.iter().any(|k| std::sync::Arc::ptr_eq(k, b)) {
+                blocks.push(b.clone());
+            }
+        }
+        let reads: Vec<metal::Buffer> = blocks.iter().map(|b| b.gpu_buffer(device)).collect();
+        // A host address in a block, as the device's: its wrap's GPU address plus its offset.
+        let at = |p: *const u8| {
+            let k = blocks.iter().position(|b| (b.base_ptr() as usize..b.base_ptr() as usize + b.reserved()).contains(&(p as usize))).expect("an address in an atoms block");
+            reads[k].gpu_address() + (p as u64 - blocks[k].base_ptr() as u64)
+        };
+        let only: Vec<rerail_blocks::atoms::Run> = runs.iter().map(|(r, _)| *r).collect();
+        let dir = rerail_blocks::atoms::AtomsDir::new(&only, &at, &|b| b.gpu_buffer(device).gpu_address());
+        let dir_buf = dir.block().gpu_buffer(device);
+        let dir_at = dir.root_at() as u64;
+        Ok(DevVerdicts {
+            cache: (cache.block().gpu_buffer(device), cache.at() as u64),
+            dir: (dir_buf, dir_at),
+            reads,
+            test,
+            keep: std::sync::Arc::new((dir, blocks)),
+        })
     }
 }
 
@@ -3050,8 +3049,8 @@ impl Batch {
     /// with automaton `auto`: a replacement's automata, or a test's table and its states, classes and start) gives
     /// each row its keep bit and value, then a scan and `row_scatter`.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, names: &DevRel, auto: Option<(&DevBytes, [u32; 4])>, in_slot: usize, out_slot: usize,
-                                              totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
+    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, names: Option<&DevRel>, auto: Option<(&DevBytes, [u32; 4])>, verdicts: Option<&DevVerdicts>,
+                                              in_slot: usize, out_slot: usize, totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
         let text = pipeline("join", "row_text", || SOURCE.to_owned())?;
         let scatter = pipeline("join", "row_scatter", || SOURCE.to_owned())?;
         stage.cap_in = left.cap as u32;
@@ -3065,19 +3064,30 @@ impl Batch {
         // [scratch states, states, classes, start]: a replacement's scratch holds its larger automaton's states.
         let [kept, states, classes, start] = auto.map_or([1, 0, 0, 0], |a| a.1);
         let work = Held::new(ngroups * 64 * kept.max(1) as usize)?;
-        let p = Held::of([ngroups as u32, kept, states, classes, start, 0, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
+        let test = verdicts.map_or(0, |v| v.test);
+        let p = Held::of([ngroups as u32, kept, states, classes, start, test, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
         let counts = scratch(FREE, 4 * n)?;
         let values = Held::new(8 * n)?;
         let scan = Scan::new(n)?;
         let arena = self.arena()?.buffer.buffer.to_owned();
         let (g, g_at): (metal::Buffer, u64) = auto.map_or_else(|| (self.dummy.buffer.to_owned(), 0), |a| (a.0.buffer.to_owned(), a.0.at));
+        let dummy = self.dummy.buffer.to_owned();
         let pass = self.pass(4)?;
         let lbuf: &BufferRef = &left.buffer.buffer;
-        pass.run_bytes_at(&text, &[(lbuf, 0), (&names.buffer.buffer, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0)],
+        let names_buf: &BufferRef = names.map_or(&dummy, |r| &r.buffer.buffer);
+        let ((d, d_at), (vc, vc_at)) = verdicts.map_or(((&*dummy, 0), (&*dummy, 0)), |v| ((&*v.dir.0, v.dir.1), (&*v.cache.0, v.cache.1)));
+        if let Some(v) = verdicts {
+            // The atoms blocks the directory's spans reach, by address.
+            pass.use_read(&v.reads.iter().map(|b| &**b).collect::<Vec<&BufferRef>>());
+        }
+        pass.run_bytes_at(&text, &[(lbuf, 0), (names_buf, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0), (d, d_at), (vc, vc_at)],
                        stage.bytes(), (ngroups * 32).div_ceil(256));
         scan.encode(pass, &counts)?;
         pass.run_bytes(&scatter, &[lbuf, &values.buffer, &totals.buffer.buffer, &counts, &out.buffer.buffer], stage.bytes(), groups(n));
         self.keep.extend([work, p, values]);
+        if let Some(v) = verdicts {
+            self.keep.push(Held::kept(v.dir.0.clone(), Box::new(v.keep.clone())));
+        }
         Ok(())
     }
 
@@ -3176,24 +3186,6 @@ impl Batch {
             r.resident_in(pass);
         }
         pass.run_bytes(&copy, &[&s, &d, &totals], bytes, groups(n));
-        Ok(())
-    }
-
-    /// The verdicts of `table` for `text`'s terms, as bits by symbol into `bits` (zeroed, at least `text.span` bits).
-    pub(in crate::code_rule_dsl) fn verdicts(&mut self, text: &DevText, table: &DevTable, bits: &DevRel) -> Result<(), Error> {
-        if text.terms == 0 {
-            return Ok(());
-        }
-        assert!(bits.rows * 64 >= text.span);
-        let kernel = pipeline("join", "text_verdicts", || SOURCE.to_owned())?;
-        let groups = text.terms.min(1024);
-        let scratch = Held::new(groups * 32 * table.states as usize)?;
-        let p: [u32; 8] = [text.terms as u32, table.states, table.classes, table.start, groups as u32, 0, 0, 0];
-        // SAFETY: plain integers.
-        let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 32) };
-        let pass = self.pass(1)?;
-        pass.run_bytes_at(&kernel, &[(&text.packed.buffer.buffer, 0), (&table.table.buffer, table.table.at), (&bits.buffer.buffer, 0), (&scratch.buffer, 0)], bytes, (groups * 32).div_ceil(256));
-        self.keep.push(scratch);
         Ok(())
     }
 

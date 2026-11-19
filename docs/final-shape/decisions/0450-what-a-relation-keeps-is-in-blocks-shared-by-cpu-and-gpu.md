@@ -70,7 +70,7 @@ Asked why the device caches relations at all, the user set the rule (2026-11-19)
 |---|---|---|---|
 | `RESIDENT` entry, a relation read in place (`DevRel::in_block`) | the relation's place and the block's GPU mapping, and its `Part` | none: made at each stratum from the block, whose mapping the block keeps (`Block::gpu_buffer`) | 1 |
 | `RESIDENT` entry's sorts of such a relation | an index's number and the mapping | none: the index is in the block (`find_index`) | 1 |
-| `RESIDENT` `verdicts`, `mapped` | text tests' and text functions' results for each symbol of a column | the rolling cache, by (test or functions, symbol) | 2 |
+| `RESIDENT` `verdicts`, `mapped` | text tests' and text functions' results for each symbol of a column | the rolling cache, by (test or functions, symbol); `verdicts` gone in 2d | 2 |
 | `RESIDENT` `texts`, `unions` | symbols' names copied for the device (0353 row 5) | none: the kernels read the strings block (0353 step 6) | 2 |
 | `RESIDENT` entry of a view read in place (`DevRel::view`) and its sorts | indexes the view's probes built | the chunk block, or a probe through the tape (0353 step 4) | 3 |
 | `RESIDENT` entry of rows uploaded or a view made (`upload`, `expand_view`) | copies (0353 rows 4, 5) | none: removed by 0353 steps 4, 6; until then made at each stratum, never cached | 3 |
@@ -192,3 +192,28 @@ pending into a new buffer.
   rule takes). The 16 setfix device tests pass on a Mac with the regenerated kernel sources.
 - hogql cold, CPU, profiling, format 15, load 36-42, interleaved with 2c: 83.9 and 84.4 B against 83.9 and 84.3 B,
   peak 382 and 397 MB against 380 and 389 MB; 1,629 findings.
+
+## Built (2026-11-19, step 2d, the device)
+
+- A text test of constant patterns, of a symbol an input column bound, is a `row_text` stage of op `ROW_VERDICT`:
+  each lane looks up a row's verdict in the store's cache, 32 rows a SIMD group; the group then walks the test's
+  table over each missed symbol's bytes, read through an atoms directory made for the device's addresses (`mj::
+  DevVerdicts`: its spans GPU addresses, the atoms blocks made resident by `use_resource`), and keeps the verdict
+  with `verdict_put`. A symbol the directory does not hold sets the stage's counter's bit (`TEXTFN_UNHELD`) and the
+  stratum runs on the host.
+- The atoms blocks are `Arc<Block>` (`AtomsW`, `AtomsV`), so a batch keeps the blocks its directory reaches until
+  its work completes, though the store lets a pending block go meanwhile.
+- Gone: `Kind::Text`, mode `TEXT` (5) and its `text_pass`, the `text_verdicts` kernel, `Batch::verdicts`,
+  `DevTable`, `setfix::device::verdicts` and the entries' `verdicts`. The column's names for a text test are no longer
+  uploaded (`column_text` stays for the text functions, 2e).
+- `row_scatter` binds no value for a verdict stage, as for `ROW_TEST`: a first build wrote the stage's (unwritten)
+  value into slot 0, so a later join on that slot, or a head reading it, saw 0 (`text_tests_on_the_device_are_the_
+  cpus` and `a_stratum_run_apart_beside_an_open_wave_reads_what_the_wave_made` caught it).
+- Tests: `a_text_test_on_the_device_shares_its_verdicts_with_the_cpu` (a verdict the CPU kept is the one the device
+  takes; the device's verdicts, a long name's among them, are there for the CPU after; the rows keep their names);
+  `every_verdict_the_device_keeps_is_the_cpus` (2,000 names read through SQL: every symbol's verdict in the cache
+  is the CPU matcher's, and the head's names are the matching rows').
+- hogql cold, Metal, profiling, format 15, at load 57-69, after the fix: four runs of 74.8-77.4 B, peak 1,297-1,353
+  MB, against step 2c's three runs at the same load of 76.6-82.4 B, peak 1,228-1,399 MB; 1,629 findings in each (the
+  new binary's first launch, 100 B and 35 s, left out). The build before the fix stopped once in five runs at the ast
+  matcher wave's `BackendCapacity` (work queue, Q261 "Found"); none of the five after it did.

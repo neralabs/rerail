@@ -416,6 +416,112 @@
         assert_eq!(got[1].1, got[0].1, "the device's counts per step are the CPU's");
     }
 
+    /// Decision 0450 R3: a text test on the device reads and keeps its verdicts in the store's one rolling cache, the
+    /// CPU's too. A verdict the CPU put there before the run (that `zzz` passes `@prefix(_, "foo")`) is the one the
+    /// device takes; each other symbol's verdict the device made is there for the CPU after, a long name's (past a
+    /// chunk of 32 bytes) among them.
+    #[test]
+    fn a_text_test_on_the_device_shares_its_verdicts_with_the_cpu() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let long = format!("foo{}", "x".repeat(70));
+        db.execute_batch(&format!("CREATE TEMP TABLE n (c0, c1); INSERT INTO n VALUES ('foo1', 1), ('{long}', 2), ('bar', 3), ('zzz', 4);")).unwrap();
+        let syms = super::super::symbols(&db).unwrap();
+        let sym = |s: &str| u32::try_from(syms.write().unwrap().id(s)).unwrap();
+        let (foo1, longs, bar, zzz) = (sym("foo1"), sym(&long), sym("bar"), sym("zzz"));
+        let m = crate::code_rule_dsl::logic::strings::Matcher::new("prefix", &["foo".to_owned()]).unwrap();
+        let test = crate::code_rule_dsl::text::table::test_id(&m.plans).unwrap();
+        let atoms = std::sync::Arc::clone(syms.read().unwrap().atoms());
+        let verdicts = atoms.verdicts();
+        assert!(verdicts.put(test, zzz, true));
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let rule = format!("pos {n} v0 v1\ntest prefix v0 x:{} 1\nhead v0 v1", hex("foo"));
+        db.execute_batch("CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+        let spec = ["name dev_verdict".to_owned(), "device".into(), "rel h0 si empty".into(), format!("seed 0 {}", hex(&rule))].join("\n");
+        super::super::open(&db, &spec).unwrap();
+        super::super::run(&db, "dev_verdict", 0).unwrap();
+        let report = super::take_report();
+        assert!(report.as_ref().is_some_and(|r| r.refused.is_none()), "the stratum ran on the device: {report:?}");
+        super::super::close(&db, "dev_verdict").unwrap();
+        let mut got: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+        got.sort_unstable_by_key(|g| g.1);
+        assert_eq!(got, [(i64::from(foo1), 1), (i64::from(longs), 2), (i64::from(zzz), 4)], "foo1, the long name, and zzz by the verdict the CPU kept, their symbols kept");
+        use crate::content_store::atoms::{FAILS, PASSES};
+        assert_eq!((verdicts.get(test, foo1), verdicts.get(test, longs), verdicts.get(test, bar)), (PASSES, PASSES, FAILS), "the device's verdicts, kept for the CPU");
+    }
+
+    /// Every symbol's verdict the device keeps is the CPU's matcher's, for 2,000 names read through SQL (the atoms
+    /// in more than one block): a symbol it got wrong is named with the run and the block that hold it.
+    #[test]
+    fn every_verdict_the_device_keeps_is_the_cpus() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let parts = ["foo", "bar", "Src", "_", ".ts", "x9", "a_b", "/"];
+        let mut x = 7u64;
+        let mut next = |m: u64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (x >> 33) % m
+        };
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1);").unwrap();
+        let mut names = Vec::new();
+        for k in 0..2000 {
+            let len = 1 + next(if k % 50 == 0 { 30 } else { 5 });
+            let name: String = (0..len).map(|_| parts[next(parts.len() as u64) as usize]).collect();
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![name, k]).unwrap();
+            names.push(name);
+        }
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let rule = format!("pos {n} v0 v1\ntest prefix v0 x:{} 1\nhead v0 v1", hex("foo"));
+        db.execute_batch("CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+        let spec = ["name dev_verdicts".to_owned(), "device".into(), "rel h0 si empty".into(), format!("seed 0 {}", hex(&rule))].join("\n");
+        super::super::open(&db, &spec).unwrap();
+        super::super::run(&db, "dev_verdicts", 0).unwrap();
+        let report = super::take_report();
+        assert!(report.as_ref().is_some_and(|r| r.refused.is_none()), "the stratum ran on the device: {report:?}");
+        super::super::close(&db, "dev_verdicts").unwrap();
+        let m = crate::code_rule_dsl::logic::strings::Matcher::new("prefix", &["foo".to_owned()]).unwrap();
+        let test = crate::code_rule_dsl::text::table::test_id(&m.plans).unwrap();
+        let syms = super::super::symbols(&db).unwrap();
+        let atoms = std::sync::Arc::clone(syms.read().unwrap().atoms());
+        let runs = atoms.runs();
+        let verdicts = atoms.verdicts();
+        use crate::content_store::atoms::{FAILS, PASSES, UNKNOWN};
+        let mut wrong = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for name in &names {
+            let id = u32::try_from(syms.write().unwrap().id(name)).unwrap();
+            if !seen.insert(id) {
+                continue;
+            }
+            let want = if m.is_match(name) { PASSES } else { FAILS };
+            let got = verdicts.get(test, id);
+            if got != want {
+                let run = runs.iter().position(|(r, _)| r.first <= id && id < r.end);
+                let block = run.map(|k| (runs[k].0.first, runs[k].0.end, runs[k].0.from, runs[k].1.reserved(), runs[k].1.in_slab(), runs[k].1.mapped_file().is_some()));
+                wrong.push(format!("{name:?} id {id} got {got} (UNKNOWN {UNKNOWN}) want {want}, run {run:?} {block:?}"));
+            }
+        }
+        // The rows that pass keep their symbol (a test binds nothing): the head's symbols are the matching rows'.
+        let mut heads: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+        heads.sort_unstable_by_key(|h| h.1);
+        let want: Vec<(i64, i64)> = names.iter().enumerate().filter(|(_, s)| m.is_match(s)).map(|(k, s)| (syms.write().unwrap().id(s), k as i64)).collect();
+        assert_eq!(heads, want, "the rows that pass, their names kept");
+        let all: Vec<_> = runs.iter().map(|(r, b)| (r.first, r.end, r.from, b.reserved(), b.in_slab(), b.mapped_file().is_some())).collect();
+        assert!(wrong.is_empty(), "{} of {} symbols wrong; runs {all:?}; first: {:#?}", wrong.len(), seen.len(), &wrong[..wrong.len().min(12)]);
+    }
+
     /// Strata placed on the device, when their driver can wait, go out in one wave: each encodes its joins into the
     /// level's one command buffer and returns `3`; one flush commits it; each then finishes, with the rows it makes
     /// on its own.

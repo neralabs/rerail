@@ -72,9 +72,8 @@ enum Kind {
     /// An atom over the component's own relation `rel` (recursion, `fixpoint`): its last round's new rows
     /// (`delta`) or all of them, kept on the device by the rounds (`Own`).
     Own { rel: usize, delta: bool, cols: Vec<usize> },
-    /// A text test of a slot bound from column `col` of `rel`: the verdicts of `table` (keyed `key`) for the
-    /// column's distinct symbols, made on the device and kept with the relation.
-    Text { rel: Arc<InRel>, col: usize, table: Arc<crate::code_rule_dsl::text::table::Table>, key: String },
+    /// A text test of a symbol by its table, its verdicts in the store's one rolling cache (decision 0450 step 2d).
+    Verdict { table: Arc<crate::code_rule_dsl::text::table::Table>, test: u32 },
     /// A stage that reads names (`str_cmp`, a cat compared): the texts of the columns that bound its slots and of its
     /// constants, on the device together.
     Names { cols: Vec<(Arc<InRel>, usize)>, consts: Vec<i64> },
@@ -596,18 +595,22 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 i += 1;
             }
             Step::Test { op, s, matcher, want, .. } => {
-                // A text test with constant patterns, of a slot an input relation's column bound: its verdicts per
-                // distinct symbol of the column, made on the device by the test's automaton (`text::table`).
+                // A text test with constant patterns, of a slot an input relation's column bound (a symbol): its
+                // verdict read from the store's one rolling cache, else made by the test's automaton over the symbol's
+                // bytes where the atoms blocks hold them, and kept there (decision 0450 step 2d).
                 let Some(m) = matcher else { return Err(format!("the text test @{op} of a pattern that is not a constant has no device form")) };
                 let Key::Slot(x) = *s else { return Err(format!("the text test @{op} of a constant has no device form")) };
-                let Some((rel, col)) = origin.get(x).cloned().flatten() else {
+                if origin.get(x).cloned().flatten().is_none() {
                     return Err(format!("the text test @{op} of a slot no input relation's column bound has no device form"));
-                };
+                }
                 let table = crate::code_rule_dsl::text::table::table(&m.plans).map_err(|e| format!("the text test @{op} has no device form: {e}"))?;
-                let key = m.plans.iter().map(|p| p.key.0.as_str()).collect::<Vec<_>>().join(",");
-                let mut d = mj::Stage { mode: mj::TEXT, ..mj::Stage::default() };
-                d.agg = [x as u32, u32::from(*want)];
-                stages.push(PStage { first: i, span: 1, kind: Kind::Text { rel, col, table, key }, desc: d, npassed: 0 });
+                let test = crate::code_rule_dsl::text::table::test_id(&m.plans).ok_or("the automata block's index is full")?;
+                let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
+                d.agg = [mj::ROW_VERDICT | u32::from(*want) << 8, 0];
+                d.nkeys = 1;
+                d.key_kind[0] = 1;
+                d.key_slot[0] = x as u32;
+                stages.push(PStage { first: i, span: 1, kind: Kind::Verdict { table, test }, desc: d, npassed: 0 });
                 i += 1;
             }
             Step::Let { .. } | Step::DocOf { bind: true, .. } => {
@@ -1189,10 +1192,8 @@ struct Entry {
     dev: Option<Rc<mj::DevRel>>,
     /// Its sorts, by the owner's key columns.
     indexes: Vec<(Vec<usize>, Rc<mj::DevIndex>)>,
-    /// Per column a text test read, its distinct symbols' names; per (column, test), the test's verdicts (the
-    /// owner's columns).
+    /// Per column a text function read, its distinct symbols' names (the owner's columns).
     texts: Vec<(usize, Rc<mj::DevText>)>,
-    verdicts: Vec<((usize, String), Rc<mj::DevRel>)>,
     /// Per (column, text functions), the column's symbols' texts made (`mapped_text`), with `lower`'s check.
     mapped: Vec<((usize, String), (Rc<mj::DevText>, Option<Rc<mj::Words>>))>,
     bytes: usize,
@@ -1336,7 +1337,7 @@ fn texts_entry<'r>(res: &'r mut Resident, rel: &Arc<InRel>) -> &'r mut Entry {
         None => {
             res.clock += 1;
             let used = res.clock;
-            res.entries.push(Entry { owner, cols: (0..rel.k).map(|c| owner_col(rel, c)).collect(), dev: None, indexes: Vec::new(), texts: Vec::new(), verdicts: Vec::new(), mapped: Vec::new(), bytes: 0, used });
+            res.entries.push(Entry { owner, cols: (0..rel.k).map(|c| owner_col(rel, c)).collect(), dev: None, indexes: Vec::new(), texts: Vec::new(), mapped: Vec::new(), bytes: 0, used });
             res.entries.len() - 1
         }
     };
@@ -1379,7 +1380,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
             }
             found => {
                 let c0 = thread_cpu();
-                // The columns held already stay held: the entry's texts and verdicts carry over to the new copy.
+                // The columns held already stay held: the entry's texts carry over to the new copy.
                 let old = found.map(|at| res.entries.swap_remove(at));
                 if let Some(o) = &old {
                     want.extend(o.cols.iter().copied());
@@ -1414,9 +1415,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     rep.in_place += 1;
                     // By the view's device code (`device_chunk::VIEW_*`), as `view_made` counts them.
                     crate::code_rule_dsl::prof::count(["device.view_read.node", "device.view_read.child", "device.view_read.field", "device.view_read.core", "device.view_read.axis", "device.view_read.line", "device.view_read.end_line", "device.view_read.col", "device.view_read.docof", "device.view_read.tline"].get(view as usize).copied().unwrap_or("device.view_read.other"), n);
-                    let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
-                    let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
-                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                    let (texts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.mapped));
+                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, mapped, bytes, used: clock });
                     res.bytes = res.bytes();
                     res.entries.len() - 1
                 } else if let Some(d) = made {
@@ -1431,9 +1432,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     crate::code_rule_dsl::prof::count(["device.view_made.node", "device.view_made.child", "device.view_made.field", "device.view_made.core", "device.view_made.axis", "device.view_made.line", "device.view_made.end_line", "device.view_made.col", "device.view_made.docof", "device.view_made.tline"].get(d.view as usize).copied().unwrap_or("device.view_made.other"), dev.bytes());
                     by.0 += dev.bytes() as u64;
                     by.1 += thread_cpu() - c0;
-                    let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
-                    let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
-                    res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                    let (texts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.mapped));
+                    res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, mapped, bytes, used: clock });
                     res.bytes = res.bytes();
                     res.entries.len() - 1
                 } else {
@@ -1478,9 +1479,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 let by = &mut rep.upload_by[if rel.view.is_some() { profile::UPLOAD_VIEW } else { profile::UPLOAD_FLAT }];
                 by.0 += dev.bytes() as u64;
                 by.1 += thread_cpu() - c0;
-                let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
-                let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
-                res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                let (texts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.mapped));
+                res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, mapped, bytes, used: clock });
                 res.bytes = res.bytes();
                 res.entries.len() - 1
                 }
@@ -1680,33 +1681,6 @@ fn mapped_text(rel: &Arc<InRel>, col: usize, ops: &[TextOp], batch: &mut mj::Bat
     })
 }
 
-/// The verdicts of text test `table` (keyed `key`) for the distinct symbols of column `col` of `rel`: a bitset by
-/// symbol, 64 a row, made on the device (`Batch::verdicts`) the first time a stage asks and kept with the relation.
-/// The column's symbols' names are copied to the device once (the host evaluates nothing).
-fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text::table::Table>, key: &str, batch: &mut mj::Batch, rep: &mut Report, names: &Interner)
-    -> Result<Rc<mj::DevRel>, String> {
-    // The relation resident first (its entry holds the verdicts).
-    // The relation's entry holds its texts (no column of it need be uploaded for them).
-    resident(rel, &[], &[], batch, rep)?;
-    RESIDENT.with_borrow_mut(|res| {
-        let e = texts_entry(res, rel);
-        let oc = owner_col(rel, col);
-        if let Some((_, v)) = e.verdicts.iter().find(|((c, k), _)| *c == oc && k == key) {
-            rep.sort_hits += 1;
-            return Ok(v.clone());
-        }
-        let text = column_text(e, rel, col, rep, names)?;
-        let dt = mj::DevTable::of(table).map_err(|e| format!("{e:?}"))?;
-        let words = text.span.div_ceil(64).max(1);
-        let bits = Rc::new(mj::DevRel::words(words, |v| v.fill(0)).map_err(|e| format!("{e:?}: verdicts of {} symbols", text.span))?);
-        batch.verdicts(&text, &dt, &bits).map_err(|e| format!("{e:?}"))?;
-        rep.sorts += 1;
-        e.bytes += bits.bytes();
-        e.verdicts.push(((oc, key.to_owned()), bits.clone()));
-        Ok(bits)
-    })
-}
-
 /// Column `col`'s distinct values, of its live rows.
 fn column_symbols(rel: &InRel, col: usize) -> Vec<i64> {
     let mut seen = std::collections::HashSet::new();
@@ -1763,7 +1737,7 @@ impl<'p> Run<'p> {
         for s in &plan.stages {
             match s.kind {
                 Kind::Pass | Kind::Map => io.push((slot, slot)),
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } | Kind::Witness { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Verdict { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } | Kind::Witness { .. } => {
                     io.push((slot, slot + 1));
                     slot += 1;
                 }
@@ -1826,7 +1800,7 @@ impl<'p> Run<'p> {
                     let t = self.tables[i].as_ref().expect("the map's table");
                     batch.map(s.desc, t, i, &self.totals).map_err(|e| format!("{e:?}"))?;
                 }
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } | Kind::Witness { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Verdict { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } | Kind::Witness { .. } => {
                     match (&s.kind, &self.rels[k]) {
                         (Kind::Names { cols, consts }, None) => {
                             let t = texts(cols, consts, rep, names)?;
@@ -1862,7 +1836,6 @@ impl<'p> Run<'p> {
                             self.places[k] = Some(place);
                             self.probes[k] = Some(probes);
                         }
-                        (Kind::Text { rel, col, table, key }, None) => self.rels[k] = Some((verdicts(rel, *col, table, key, batch, rep, names)?, None)),
                         (Kind::RowText { cols, consts, .. }, None) => self.rels[k] = Some((texts(cols, consts, rep, names)?.rel(), None)),
                         (Kind::Mapped { rel, col, ops }, None) => {
                             let (t, flag) = mapped_text(rel, *col, ops, batch, rep, names)?;
@@ -1895,12 +1868,20 @@ impl<'p> Run<'p> {
                     }
                     let left = self.tables[i].as_ref().expect("the stage's input");
                     if s.desc.mode == mj::ROWTEXT {
-                        let auto = match &s.kind {
-                            Kind::RowText { auto, .. } => row_automaton(auto, names)?,
-                            _ => None,
+                        let (auto, verdicts) = match &s.kind {
+                            Kind::RowText { auto, .. } => (row_automaton(auto, names)?, None),
+                            Kind::Verdict { table, test } => {
+                                let a = Rc::new(mj::DevBytes::of(&table.automaton).map_err(|e| format!("{e:?}"))?);
+                                let v = mj::DevVerdicts::new(names.atoms.verdicts(), names.atoms.runs(), *test).map_err(|e| format!("{e:?}: a text test's verdicts"))?;
+                                (Some((a, [table.states, table.states, table.classes, table.start])), Some(v))
+                            }
+                            _ => (None, None),
                         };
-                        let names_rel = right.map(|r| r.0).ok_or("a made text's stage with no names")?;
-                        batch.row_stage(s.desc, left, names_rel, auto.as_ref().map(|(b, p)| (&**b, *p)), i, o, &self.totals, &self.counters, self.counter[k], &out)
+                        let names_rel = right.map(|r| r.0);
+                        if names_rel.is_none() && verdicts.is_none() {
+                            return Err("a made text's stage with no names".into());
+                        }
+                        batch.row_stage(s.desc, left, names_rel, auto.as_ref().map(|(b, p)| (&**b, *p)), verdicts.as_ref(), i, o, &self.totals, &self.counters, self.counter[k], &out)
                     } else {
                         let desc = self.places[k].as_deref().map_or(s.desc, |at| narrowed(s.desc, at));
                         if let Some(probes) = &self.probes[k] {
@@ -1948,6 +1929,9 @@ impl<'p> Run<'p> {
         }
         if self.arena_full() {
             return Some(format!("its texts past the device's text arena of {} bytes", arena_max()));
+        }
+        if self.plan.stages.iter().zip(&self.counter).any(|(s, c)| makes_text(s.desc.mode) && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_UNHELD != 0)) {
+            return Some("a text test of a symbol the atoms directory does not hold".to_owned());
         }
         // A 16z view's blocks: a read that found no room in its batch's cache read the dead entry (0353 step 4b).
         #[cfg(target_os = "macos")]

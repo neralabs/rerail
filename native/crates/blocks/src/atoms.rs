@@ -145,7 +145,7 @@ fn slots(cap: u64) -> u64 {
 /// An open atoms block: its one writer. In a file, the store's atoms lease holder's; in anonymous memory, a process's
 /// pending atoms (decision 0450 step 2a), never written to a file.
 pub struct AtomsW {
-    block: Block,
+    block: std::sync::Arc<Block>,
     raw: Raw,
     /// Where it writes back without a shared mapping (WASI): the block lives in memory there. `None` for a block in
     /// anonymous memory.
@@ -167,7 +167,7 @@ impl AtomsW {
         let block = Block::anon(kind::ATOMS, need);
         let w = AtomsW {
             raw: Self::lay_out(&block, first, tag, cap, bytes_cap),
-            block,
+            block: std::sync::Arc::new(block),
             #[cfg(not(unix))]
             file: Some(std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?),
         };
@@ -181,7 +181,7 @@ impl AtomsW {
         let block = Block::anon(kind::ATOMS, Self::need(cap, bytes_cap));
         AtomsW {
             raw: Self::lay_out(&block, first, 0, cap, bytes_cap),
-            block,
+            block: std::sync::Arc::new(block),
             #[cfg(not(unix))]
             file: None,
         }
@@ -229,7 +229,7 @@ impl AtomsW {
         }
         let raw = Raw::of(&block);
         let mut w = AtomsW {
-            block,
+            block: std::sync::Arc::new(block),
             raw,
             #[cfg(not(unix))]
             file: Some(std::fs::OpenOptions::new().read(true).write(true).open(path)?),
@@ -405,7 +405,7 @@ impl AtomRead for AtomsW {
 
 /// An atoms block mapped read-only, read up to an end it is told (the store's committed end within it).
 pub struct AtomsV {
-    _block: Block,
+    _block: std::sync::Arc<Block>,
     raw: Raw,
     end: u32,
 }
@@ -419,7 +419,7 @@ impl AtomsV {
     pub fn open(path: &Path, end: u32) -> io::Result<AtomsV> {
         let block = Block::map_file(path, kind::ATOMS, false)?;
         let raw = Raw::of(&block);
-        let mut v = AtomsV { _block: block, raw, end: raw.first };
+        let mut v = AtomsV { _block: std::sync::Arc::new(block), raw, end: raw.first };
         v.extend(end)?;
         Ok(v)
     }
@@ -497,8 +497,8 @@ impl AtomsW {
     pub fn run_from(&self, first: u32) -> Run {
         self.raw.run(first.max(self.raw.first), self.end())
     }
-    /// Its block (for a device's wrap of it).
-    pub fn block(&self) -> &Block {
+    /// Its block, shared (a command buffer that reads it keeps it).
+    pub fn block(&self) -> &std::sync::Arc<Block> {
         &self.block
     }
 }
@@ -508,8 +508,8 @@ impl AtomsV {
     pub fn run_upto(&self, end: u32) -> Run {
         self.raw.run(self.raw.first, end.min(self.end))
     }
-    /// Its block (for a device's wrap of it).
-    pub fn block(&self) -> &Block {
+    /// Its block, shared (a command buffer that reads it keeps it).
+    pub fn block(&self) -> &std::sync::Arc<Block> {
         &self._block
     }
 }
@@ -549,32 +549,40 @@ unsafe impl Send for AtomsDir {}
 unsafe impl Sync for AtomsDir {}
 
 impl AtomsDir {
-    /// `runs` (sorted by first id, not overlapping) as a directory. `at` gives a host address's value in the reader's
-    /// address space: the identity for the host, a device buffer's GPU address plus the offset for the device. The
-    /// directory's own address is the block's first byte's, given by `at` too.
-    pub fn new(runs: &[Run], at: &dyn Fn(*const u8) -> u64) -> AtomsDir {
+    /// `runs` (sorted by first id, not overlapping) as a directory, for the host. Its spans' offsets are host
+    /// addresses' differences.
+    pub fn host(runs: &[Run]) -> AtomsDir {
+        AtomsDir::new(runs, &|p| p as u64, &|b| b.base_ptr() as u64)
+    }
+
+    /// `runs` (sorted by first id, not overlapping) as a directory. `at` gives a run's host address's value in the
+    /// reader's address space: the identity for the host, its block's GPU address plus the offset for the device.
+    /// `own` gives the directory's block's first byte's, once the block is made.
+    pub fn new(runs: &[Run], at: &dyn Fn(*const u8) -> u64, own: &dyn Fn(&Block) -> u64) -> AtomsDir {
         assert!(runs.windows(2).all(|w| w[0].end <= w[1].first), "a directory's runs sorted and apart");
         let block = Block::anon(kind::ATOMS, 4 * PAGE + std::mem::size_of_val(runs) * 2 + 256);
         let root: *mut AtomsDirRoot = block.alloc_t(1);
         let entries: *mut DirEntry = block.alloc_t(runs.len().max(1));
+        let (base, base_at) = (block.base_ptr() as u64, own(&block));
+        let here = |p: *const u8| (p as u64).wrapping_sub(base).wrapping_add(base_at);
         // A span's offset: from the span's own address to its target's, both in the reader's space.
-        let set = |span: *const u8, off: &AtomicI64Ref, len: &AtomicU64Ref, target: *const u8, n: u64| {
-            off.store((at(target) as i64).wrapping_sub(at(span) as i64), Relaxed);
+        let set = |span: *const u8, off: &AtomicI64Ref, len: &AtomicU64Ref, target: u64, n: u64| {
+            off.store((target as i64).wrapping_sub(here(span) as i64), Relaxed);
             len.store(n, Relaxed);
         };
         // SAFETY: the pointers are into this block, which no reader has yet.
         unsafe {
             let r = &mut *root;
             r.n = runs.len() as u64;
-            set(std::ptr::from_ref(&r.entries).cast(), &r.entries.off, &r.entries.len, entries.cast(), runs.len() as u64);
+            set(std::ptr::from_ref(&r.entries).cast(), &r.entries.off, &r.entries.len, here(entries.cast()), runs.len() as u64);
             for (k, run) in runs.iter().enumerate() {
                 let e = &mut *entries.add(k);
                 e.first = run.first;
                 e.end = run.end;
                 e.from = run.from;
                 e.pad = 0;
-                set(std::ptr::from_ref(&e.ends).cast(), &e.ends.off, &e.ends.len, run.ends.cast(), u64::from(run.cap));
-                set(std::ptr::from_ref(&e.strings).cast(), &e.strings.off, &e.strings.len, run.strings, run.bytes_cap);
+                set(std::ptr::from_ref(&e.ends).cast(), &e.ends.off, &e.ends.len, at(run.ends.cast()), u64::from(run.cap));
+                set(std::ptr::from_ref(&e.strings).cast(), &e.strings.off, &e.strings.len, at(run.strings), run.bytes_cap);
             }
         }
         block.set_root(root);
@@ -586,9 +594,14 @@ impl AtomsDir {
         std::ptr::from_ref(self.block.root::<AtomsDirRoot>()).cast()
     }
 
-    /// Its block (for a device's wrap of it).
+    /// Its block (a device binds its wrap at `root`'s offset).
     pub fn block(&self) -> &Block {
         &self.block
+    }
+
+    /// The root's offset in its block.
+    pub fn root_at(&self) -> usize {
+        self.block.offset_of(self.root())
     }
 }
 
@@ -632,7 +645,7 @@ mod tests {
         }
         // The second block's first three atoms stored since: its run begins at 12, the store's run covers them.
         let runs = [a.run_from(1), b.run_from(12)];
-        let dir = AtomsDir::new(&runs, &|p| p as u64);
+        let dir = AtomsDir::host(&runs);
         for id in 1..=20u32 {
             // SAFETY: a host directory over blocks that live here.
             let got = unsafe { str_in(dir.root(), id) };

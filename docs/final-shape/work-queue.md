@@ -5385,6 +5385,13 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   not compiling: two of its calls lacked the `settle` argument the other side added; given `SETTLE`, as the calls
   beside them (0450 step 2a's commit). It and `an_answer_recorded_within_the_settle_window_is_checked_though_the_
   journal_names_nothing` then fail: each expects `since_within`'s `wait` bound to act, and nothing reads it.
+- **Found** (2026-11-19, 0450 step 2d's device runs): one hogql Metal run in five of that build stopped with
+  `the ast matcher wave failed on Metal: BackendCapacity` (0382 §6 stops the run; peak 1,539 MB against 1,474-1,497 MB
+  in the others); none in five interleaved runs of step 2c's build. The ast wave does not run text tests; the verdict
+  stage's device memory is a few KB a stage (a directory block, wraps of blocks the run holds). Not yet known whether
+  it is the change or the device's room at that moment; next: run the two builds ten times each and read the wave's
+  refusal (what it asked, what the count held). That build also wrote a zero into slot 0 after each verdict stage
+  (fixed in the same commit); five runs after the fix, at load 57-69, had no stop.
 - **Partly done** (fa53bc6a6): a chunk's held bytes leave out a device run's own blocks, and the chunk drops the
   device's copies of its dead relations on its thread as it ends; `FLUSHED` no longer keeps every wave.
 - **Open**: on Metal, a chunk's held bytes still differ between runs (one chunk 19-50 MB): a chunk's device strata
