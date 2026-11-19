@@ -82,6 +82,8 @@ pub fn host_held() -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "macos"))]
+    use rerail_blocks::alloc::{Budget, Size};
     use rerail_blocks::alloc::Writes;
     use rerail_blocks::block::kind;
 

@@ -43,6 +43,48 @@ pub use crate::code_rule_dsl::logic::device::{Report};
 
 /// The most rows a table is given before its stage has run once (a guess; an overflow runs it again exactly).
 const GUESS_MAX: usize = 1 << 21;
+impl Plan {
+    /// The bytes its tables are expected to take and the rows its stages are expected to make (its planned work),
+    /// from the planner's estimates (`est`, sized as `table_rows` sizes them): what its stratum reserves before it
+    /// encodes (`admit`). A stage without an estimate counts none.
+    fn expected(&self) -> (usize, f64) {
+        let row = 8 * self.nslots.max(1);
+        let most = table_max() / row;
+        self.est.iter().flatten().fold((0, 0.0), |(bytes, work), &e| (bytes + row * (((e * EST_MARGIN).ceil() as usize).max(16)).min(most), work + e))
+    }
+}
+
+/// The reservation for `rules`' tables (`admit`), waited for while waiting is worth what the CPU would take over
+/// them (`placement::worth_waiting`); its wait counted in `rep`.
+fn admitted(rules: &[(&Plan, &JoinRule, usize)], rep: &mut Report) -> Result<rerail_accel::gpu::shared::Admitted, String> {
+    let (bytes, work) = rules.iter().map(|r| r.0.expected()).fold((0, 0.0), |(b, w), (pb, pw)| (b + pb, w + pw));
+    let patience = crate::code_rule_dsl::logic::plan::placement::admission_patience(work);
+    let got = rerail_accel::gpu::shared::admit(bytes, patience)?;
+    if got.waited > 0.0 {
+        rep.admit_waits += 1;
+        rep.admit_seconds += got.waited;
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "strata that waited for the device's memory", 1);
+    }
+    Ok(got)
+}
+
+/// A join stage's table, in rows, before it runs: the growth the stage was seen to have (`seen`, rows out a row in);
+/// else the planner's estimate of its rows (`est`, `JoinRule::est`) with a margin; else twice its input (`cap_in`).
+/// Q203: doubling each stage's input compounded down a plan, and a cold run's tables were a hundred times their rows,
+/// refused past the device's budget. A `scan` (no keys, one binding in) holds its relation's rows (`nr`) at most. An
+/// overflow runs the stage again exactly.
+fn table_rows(cap_in: usize, nr: usize, scan: bool, seen: Option<f64>, est: Option<f64>) -> usize {
+    let seen = seen.map(|r| ((cap_in as f64 * r * 1.25).ceil() as usize).max(16));
+    let est = est.filter(|_| !rerail_accel::gpu::shared::q180_off("est")).map(|e| ((e * EST_MARGIN).ceil() as usize).max(16));
+    if scan {
+        return seen.or(est).map_or(nr, |e| e.min(nr)).max(1);
+    }
+    seen.or(est).unwrap_or(cap_in.saturating_mul(2)).min(cap_in.saturating_mul(nr.max(1))).clamp(1, GUESS_MAX.max(cap_in))
+}
+
+/// A table sized by the planner's estimate holds this many times it: the estimates miss by about that (rr_token_req's
+/// first step: 2,848 expected, 7,453 made), and an overflow runs the stage again exactly.
+const EST_MARGIN: f64 = 2.0;
 /// The device's buffers share the Metal budget (`metal_buffer_limit`, 512 MB by default; decision 0126) with the
 /// buffer pool and the other lanes. The device joins keep within about a quarter of it at the default (their sizes
 /// below are those at 512 MB, scaled with the budget, `metal_share`):
@@ -216,6 +258,9 @@ pub(in crate::code_rule_dsl) struct Plan {
     nsteps: usize,
     /// The rule's spec, hashed: its stages' observed fanouts are kept by it (`GROWTH`), for the next chunk's guesses.
     key: u64,
+    /// Per stage, the rows the planner expects out of it (its last step's, `JoinRule::est`): its table's size before
+    /// a growth has been seen.
+    est: Vec<Option<f64>>,
 }
 
 fn step_name(s: &Step) -> &'static str {
@@ -963,7 +1008,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
         spec.hash(&mut h);
         h.finish()
     };
-    Ok(Plan { stages, head, head_slots, arena, nslots, nsteps: j.steps.len(), key })
+    let est = stages.iter().map(|s| j.from.get(s.first + s.span.max(1) - 1).and_then(|&p| j.est.get(p)).copied().filter(|e| e.is_finite() && *e >= 0.0)).collect();
+    Ok(Plan { stages, head, head_slots, arena, nslots, nsteps: j.steps.len(), key, est })
 }
 
 /// Whether `step` binds slot `x`.
@@ -1745,13 +1791,8 @@ impl<'p> Run<'p> {
         let s = &self.plan.stages[k];
         match &s.kind {
             Kind::Atom { .. } | Kind::Own { .. } if s.desc.mode == mj::JOIN => {
-                let most = cap_in.saturating_mul(nr.max(1));
-                if s.desc.nkeys == 0 && cap_in == 1 {
-                    return nr.max(1);
-                }
                 let seen = GROWTH.with_borrow(|g| g.get(&(self.plan.key, k)).copied());
-                let want = seen.map_or(cap_in.saturating_mul(2), |r| ((cap_in as f64 * r * 1.25).ceil() as usize).max(16));
-                want.min(most).clamp(1, GUESS_MAX.max(cap_in))
+                table_rows(cap_in, nr, s.desc.nkeys == 0 && cap_in == 1, seen, self.plan.est.get(k).copied().flatten())
             }
             _ => cap_in,
         }
@@ -2068,6 +2109,8 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
     let rules = &some[..];
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
+    // Its tables' room, reserved whole before anything is encoded: a wait for it holds no command buffer (0386).
+    let _room = admitted(rules, &mut rep)?;
     use crate::code_rule_dsl::logic::lanes::wave::with_open;
     // A process that did not make the pool (`threads::configure`: a test's) gets the job scopes at its first wave.
     crate::code_rule_dsl::logic::lanes::wave::install_job_scope();
@@ -2145,8 +2188,10 @@ fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, name
 
 /// The first rules of `rules` that fit one submission's space, run: their head rows as `run`'s.
 fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vec<u64>, String> {
+    let room = admitted(rules, rep)?;
     let mut batch = direct_batch(None)?;
     let runs = encode_runs(rules, &mut batch, rep, names)?;
+    drop(room);
     finish_timed(&mut batch, rep)?;
     complete(runs, &rules[..], store, names, fresh, rep)
 }

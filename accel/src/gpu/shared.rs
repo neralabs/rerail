@@ -15,8 +15,8 @@
 //!   rest leaves, no more: past it, the least recently returned are released first. `set_slab_idle_limit` caps idle
 //!   slabs further, when set.
 //! - **One eviction order.** Room for a buffer (`make_room`) is made by releasing idle buffers, least recently
-//!   returned first, then by retiring what the evictor holds (`set_evictor`: the residency's least recently used
-//!   slab), whose memory comes back as idle buffers once its last reader lets go.
+//!   returned first, then by retiring what the evictors hold that no batch reads (`set_evictor`: the residency's
+//!   least recently used slab, a matcher wave's kept workspace), whose memory comes back once its last reader lets go.
 //! - **Returning.** A lease goes back when it is dropped. Its holder drops it once every command buffer that reads
 //!   it has completed (the host's next write into it is not ordered after a GPU read), or hands it to a command
 //!   buffer (`Pooled::after`), which returns it when the command buffer completes.
@@ -47,6 +47,10 @@ pub(crate) struct Memory {
     live: std::sync::atomic::AtomicUsize,
     pipelines: Mutex<HashMap<String, Slot>>,
     pool: Mutex<Pool>,
+    /// The admissions' bytes reserved and not yet leased (`reserve`, Q203): counted with the leases.
+    reserved: std::sync::atomic::AtomicUsize,
+    /// Per thread: the bytes its bounded leases hold, and how many admissions on it wait now (`holder`).
+    holders: Mutex<HashMap<u64, (usize, u32)>>,
 }
 
 fn dev() -> std::sync::Arc<Memory> {
@@ -73,7 +77,7 @@ fn other() -> usize {
 /// The bytes idle buffers may hold, with `need` more about to be leased: what the budget leaves past the ledger and
 /// the live leases.
 fn idle_room(need: usize) -> usize {
-    crate::budget::metal().saturating_sub(other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + need)
+    crate::budget::metal().saturating_sub(other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need)
 }
 
 /// A profiler's hook (`set_lease_hook`): told each lease's buffer address and length when it is leased, and its address
@@ -90,6 +94,19 @@ fn leased(b: &Buffer) {
     if let Some(hook) = LEASE_HOOK.get() {
         hook(b.contents() as usize, b.length() as usize);
     }
+}
+
+/// What the device holds: the pool's leases and idle buffers and the ledger's reservations, all inside the Metal
+/// budget (decision 0126), which is on top of the overall one.
+pub fn device_held() -> usize {
+    let (live, idle) = held_bytes();
+    live + idle + other()
+}
+
+/// The bytes no other lease can have until they come back: the pool's leases and the reservations not yet leased
+/// (`admit`). Its idle buffers are not counted: room is made of them on demand (`make_room`).
+pub fn bound_bytes() -> usize {
+    dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved()
 }
 
 /// The bytes leased now, and the bytes the pool keeps idle: relational work's share of the device's memory.
@@ -221,6 +238,9 @@ pub struct Pooled {
     keep: bool,
     /// Made for this lease (zero, never written), else recycled (another lease's bytes).
     fresh: bool,
+    /// The thread whose bounded lease it is (`lease_within`, `holder`), 0 for another: its bytes are that thread's in
+    /// the admission's count of what each thread holds.
+    owner: u64,
 }
 
 impl Pooled {
@@ -310,7 +330,7 @@ pub(crate) fn lease_block_for_join(kind: u32, bytes: usize) -> Result<rerail_blo
 pub fn lease_block_spare(kind: u32, bytes: usize, keep: usize) -> Result<rerail_blocks::Block, String> {
     let need = class(bytes.max(SLAB_MIN));
     dev().pool.lock().expect("the pool").trim(need);
-    if other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + need + keep > crate::budget::metal() {
+    if other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need + keep > crate::budget::metal() {
         return Err(format!("device budget: no spare room for a block of {} MB", need >> 20));
     }
     let slab = lease(bytes.max(SLAB_MIN))?;
@@ -423,6 +443,9 @@ impl Drop for Pooled {
     fn drop(&mut self) {
         let Some(b) = self.buffer.take() else { return };
         self.on.live.fetch_sub(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
+        if self.owner != 0 {
+            released(self.owner, b.length() as usize);
+        }
         if let Some(hook) = LEASE_HOOK.get() {
             hook(b.contents() as usize, 0);
         }
@@ -460,14 +483,14 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
         traced_new(bytes);
         let b = objc::rc::autoreleasepool(|| shared.device.new_buffer(bytes as u64, MTLResourceOptions::StorageModeShared));
         leased(&b);
-        return Ok(Pooled { on: dev(), buffer: Some(b), keep: false, fresh: true });
+        return Ok(Pooled { on: dev(), buffer: Some(b), keep: false, fresh: true, owner: 0 });
     }
     let st_ = dev();
     let mut p = st_.pool.lock().expect("the pool");
     if let Some(b) = p.take(class) {
         p.reused += 1;
         leased(&b);
-        return Ok(Pooled { on: dev(), buffer: Some(b), keep: true, fresh: false });
+        return Ok(Pooled { on: dev(), buffer: Some(b), keep: true, fresh: false, owner: 0 });
     }
     p.made += 1;
     // A new buffer: idle ones give way to it first, so the budget holds both.
@@ -476,7 +499,7 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
     traced_new(class);
     let b = crate::score::phase("new buffer", || objc::rc::autoreleasepool(|| shared.device.new_buffer(class as u64, MTLResourceOptions::StorageModeShared)));
     leased(&b);
-    Ok(Pooled { on: dev(), buffer: Some(b), keep: true, fresh: true })
+    Ok(Pooled { on: dev(), buffer: Some(b), keep: true, fresh: true, owner: 0 })
 }
 
 /// What else holds the device's budget beside relational work (the buffer pool's reservations, `rerail-metal`'s
@@ -488,27 +511,37 @@ pub fn set_other_reserved(reader: fn() -> usize) {
     let _ = OTHER_RESERVED.set(reader);
 }
 
-/// What gives way when the budget is short, after the idle buffers (`set_evictor`): it retires one thing it holds
-/// (the residency's least recently used slab) and says whether it did. It must not wait for a lock (it is called
-/// from inside allocations): a holder it cannot reach now is skipped.
-static EVICTOR: OnceLock<fn() -> bool> = OnceLock::new();
+/// What gives way when the budget is short, after the idle buffers (`set_evictor`), in the order they were set: each
+/// retires one thing it holds that no batch reads (the residency's least recently used slab, a matcher wave's kept
+/// workspace) and says whether it did. None may wait for a lock (they are called from inside allocations): a holder
+/// one cannot reach now is skipped.
+static EVICTORS: Mutex<Vec<fn() -> bool>> = Mutex::new(Vec::new());
 
-/// Sets the evictor (once per process; a second call is ignored).
+/// Adds an evictor (each once; a second call with the same one is ignored).
 pub fn set_evictor(f: fn() -> bool) {
-    let _ = EVICTOR.set(f);
+    let mut e = EVICTORS.lock().expect("the evictors");
+    if !e.iter().any(|g| std::ptr::fn_addr_eq(*g, f)) {
+        e.push(f);
+    }
+}
+
+/// Retires one holding of the first evictor that has one; whether one did.
+fn evict_one() -> bool {
+    let evictors: Vec<fn() -> bool> = EVICTORS.lock().expect("the evictors").clone();
+    evictors.iter().any(|f| f())
 }
 
 /// Makes room in the Metal budget for `need` more bytes: idle buffers released, least recently returned first, then
-/// the evictor's holdings retired one at a time while it has any. Whether the ledger's reservations, the live leases
+/// the evictors' holdings retired one at a time while they have any. Whether the ledger's reservations, the live leases
 /// and `need` fit the budget now. A retired holding reached by a batch still running comes back later.
 pub fn make_room(need: usize) -> bool {
-    let fits = || other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + need <= crate::budget::metal();
+    let fits = || other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need <= crate::budget::metal();
     loop {
         dev().pool.lock().expect("the pool").trim(need);
         if fits() {
             return true;
         }
-        if !EVICTOR.get().is_some_and(|f| f()) {
+        if !evict_one() {
             return false;
         }
     }
@@ -520,6 +553,12 @@ pub fn make_room(need: usize) -> bool {
 /// the strata run apart from them held up to 600 MB of a 512 MB budget.
 pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
     let need = class(bytes);
+    // Out of this thread's reservation (`admit`), where it has one: its room was made when it was taken.
+    if RESERVE_LEFT.with(|r| r.get()) >= need {
+        RESERVE_LEFT.with(|r| r.set(r.get() - need));
+        dev().reserved.fetch_sub(need, std::sync::atomic::Ordering::Relaxed);
+        return lease(bytes).map(held_here);
+    }
     if !make_room(need) {
         let (live, idle) = held_bytes();
         return Err(format!(
@@ -527,7 +566,145 @@ pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
             need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20
         ));
     }
-    lease(bytes)
+    lease(bytes).map(held_here)
+}
+
+/// Takes `bytes` out of this thread's reservation (`admit`) where it holds that much, and says whether it did: for a
+/// buffer another ledger reserves (`rerail-metal`'s: a matcher wave's workspace), whose room the admission made. The
+/// bytes are then that ledger's, no longer the reservation's: counted once.
+pub fn draw_reserved(bytes: usize) -> bool {
+    RESERVE_LEFT.with(|r| {
+        if bytes == 0 || r.get() < bytes {
+            return false;
+        }
+        r.set(r.get() - bytes);
+        dev().reserved.fetch_sub(bytes, std::sync::atomic::Ordering::Relaxed);
+        true
+    })
+}
+
+/// Admission (Q203): a stratum placed on the device reserves the bytes its tables are expected to take, whole, before
+/// it encodes anything (decision 0386: a wait holds no uncommitted command buffer); its bounded leases are then drawn
+/// from the reservation (`lease_within`). A reservation that does not fit waits for the leases other threads hold to
+/// come back, running the pool's jobs meanwhile (`exec::help_until_as`), instead of the stratum going to the CPU at
+/// once while the room it needs is about to be freed. It does not wait, and the stratum runs on the CPU:
+/// - when it is past the whole budget, which no lease coming back makes room for;
+/// - when the threads not waiting themselves hold less than it lacks (what a waiting thread holds comes back only
+///   when it stops waiting, and its own thread's only when it goes on: waiting for either is a deadlock);
+/// - past `patience`, the seconds waiting is worth (`placement::worth_waiting`: the CPU's price over the device's).
+pub fn admit(bytes: usize, patience: f64) -> Result<Admitted, String> {
+    let budget = crate::budget::metal();
+    if bytes == 0 || q180_off("admit") {
+        return Ok(Admitted { waited: 0.0 });
+    }
+    if bytes > budget {
+        return Err(format!("device admission: {} MB past the Metal budget of {} MB", bytes >> 20, budget >> 20));
+    }
+    let take = || {
+        let fits = make_room(bytes);
+        if fits {
+            dev().reserved.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
+            RESERVE_LEFT.with(|r| r.set(r.get() + bytes));
+        }
+        fits
+    };
+    if take() {
+        return Ok(Admitted { waited: 0.0 });
+    }
+    let me = holder();
+    let t0 = std::time::Instant::now();
+    dev().holders.lock().expect("the holders").entry(me).or_default().1 += 1;
+    let got = crate::exec::help_until_as("device admission", || {
+        if take() {
+            return Some(Ok(()));
+        }
+        let lacks = (other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + bytes).saturating_sub(budget);
+        let freeable: usize = dev().holders.lock().expect("the holders").iter().filter(|(t, (_, waiting))| **t != me && *waiting == 0).map(|(_, (held, _))| *held).sum::<usize>()
+            // Another stratum's reservation: leased as it encodes, and back when its run ends.
+            + reserved();
+        if freeable < lacks {
+            return Some(Err(format!("device admission: {} MB short, {} MB held by threads that go on", lacks >> 20, freeable >> 20)));
+        }
+        if t0.elapsed().as_secs_f64() > patience {
+            return Some(Err(format!("device admission: {} MB short after {:.0} ms, what waiting is worth", lacks >> 20, patience * 1e3)));
+        }
+        None
+    });
+    let st_ = dev();
+    let mut h = st_.holders.lock().expect("the holders");
+    if let Some(e) = h.get_mut(&me) {
+        e.1 -= 1;
+    }
+    drop(h);
+    got.map(|()| Admitted { waited: t0.elapsed().as_secs_f64() })
+}
+
+/// A measurement aid (Q203): `RERAIL_Q180_OFF`, a comma list of `est` (tables sized by the planner's estimates),
+/// `admit` (admission), and `chunk` (chunks sized by host memory), turns those off,
+/// so one binary measures each against the run without it in one job.
+pub fn q180_off(what: &str) -> bool {
+    // The run's setting (decision 0442).
+    let off: Vec<String> = rerail_context::setting(|| std::env::var("RERAIL_Q180_OFF").map(|v| v.split(',').map(|s| s.trim().to_owned()).collect()).unwrap_or_default());
+    off.iter().any(|s| s == what)
+}
+
+/// The device's memory now, for a refusal's message: the pool's leases (those of threads that go on), its idle
+/// buffers, the reservations not yet leased, and the buffer pool's ledger, of the Metal budget.
+pub fn describe() -> String {
+    let (live, idle) = held_bytes();
+    let me = holder();
+    let going: usize = dev().holders.lock().expect("the holders").iter().filter(|(t, (_, waiting))| **t != me && *waiting == 0).map(|(_, (held, _))| *held).sum();
+    format!(
+        "{} MB leased ({} MB by threads that go on), {} MB idle, {} MB reserved, {} MB in the buffer pool's ledger, of {} MB",
+        live >> 20, going >> 20, idle >> 20, reserved() >> 20, other() >> 20, crate::budget::metal() >> 20
+    )
+}
+
+/// A stratum's reservation (`admit`): what its leases did not take goes back when it is dropped, after it encoded.
+#[must_use]
+pub struct Admitted {
+    /// The seconds it waited for room.
+    pub waited: f64,
+}
+
+impl Drop for Admitted {
+    fn drop(&mut self) {
+        let left = RESERVE_LEFT.with(|r| r.replace(0));
+        dev().reserved.fetch_sub(left, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// The bytes reserved and not yet leased (`admit`).
+fn reserved() -> usize {
+    dev().reserved.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+thread_local! {
+    /// This thread's reservation not yet leased.
+    static RESERVE_LEFT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// This thread's number in the holders' count (`holder`).
+    static HOLDER: u64 = {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    };
+}
+
+fn holder() -> u64 {
+    HOLDER.with(|h| *h)
+}
+
+/// `p`, counted as this thread's.
+fn held_here(mut p: Pooled) -> Pooled {
+    let me = holder();
+    dev().holders.lock().expect("the holders").entry(me).or_default().0 += p.buffer().length() as usize;
+    p.owner = me;
+    p
+}
+
+fn released(owner: u64, bytes: usize) {
+    if let Some(e) = dev().holders.lock().expect("the holders").get_mut(&owner) {
+        e.0 = e.0.saturating_sub(bytes);
+    }
 }
 
 /// Releases idle buffers until they fit what the budget leaves: for a reservation made outside the pool (the
@@ -643,6 +820,82 @@ mod tests {
         drop(first);
         drop(refused);
         assert!(lease_within(64 << 20).is_ok(), "fits again once the first is dropped");
+        crate::budget::METAL_TEST.with(|m| m.set(0));
+    }
+
+    /// Q203's admission: a reservation that does not fit waits for another thread's leases to come back, and is
+    /// taken then; it does not wait for what its own thread holds, nor past its patience, nor for more than the
+    /// budget; and its leases are drawn from it.
+    #[test]
+    fn a_stratum_waits_for_room_others_hold_and_only_that() {
+        if get().is_none() {
+            return;
+        }
+        let _big = big_leases();
+        let (live, _) = held_bytes();
+        let budget = live + (96 << 20);
+        crate::budget::METAL_TEST.with(|m| m.set(budget));
+        assert!(admit(budget + 1, 10.0).is_err_and(|e| e.contains("past the Metal budget")), "past the whole budget: no wait");
+        // Another thread holds 64 MB for 200 ms: 48 MB waits for it, and is taken once it is back.
+        let (held, go) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        let other = std::thread::spawn(move || {
+            let lease = lease_within(64 << 20).expect("64 MB, the other thread's");
+            held.0.send(()).unwrap();
+            go.1.recv().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(lease);
+        });
+        held.1.recv().unwrap();
+        // Past its patience: it gives up, and the 64 MB is still held.
+        let t0 = std::time::Instant::now();
+        assert!(admit(48 << 20, 0.05).is_err_and(|e| e.contains("what waiting is worth")), "past its patience");
+        assert!(t0.elapsed().as_secs_f64() < 1.0);
+        go.0.send(()).unwrap();
+        let room = admit(48 << 20, 10.0).expect("room once the other thread's lease is back");
+        assert!(room.waited > 0.1, "it waited for the other thread: {} s", room.waited);
+        other.join().unwrap();
+        // Its lease is drawn from the reservation, which goes back whole once dropped.
+        let mine = lease_within(48 << 20).expect("out of the reservation");
+        assert_eq!(reserved(), 0, "the reservation leased");
+        drop(room);
+        // What this thread holds itself never comes back while it waits: no wait.
+        let t0 = std::time::Instant::now();
+        assert!(admit(64 << 20, 10.0).is_err_and(|e| e.contains("held by threads that go on")), "its own leases: no wait");
+        assert!(t0.elapsed().as_secs_f64() < 1.0, "refused at once, not at its patience");
+        drop(mine);
+        assert!(admit(64 << 20, 0.0).is_ok(), "fits once its own lease is back");
+        crate::budget::METAL_TEST.with(|m| m.set(0));
+    }
+
+    /// Q203: two works that together pass the budget both run on the device, in turn: the second (a matcher wave's
+    /// workspace, which another ledger reserves) is admitted once the first's lease is back, and its buffers are drawn
+    /// from the reservation, counted once.
+    #[test]
+    fn two_works_past_the_budget_together_both_run_on_the_device_in_turn() {
+        if get().is_none() {
+            return;
+        }
+        let _big = big_leases();
+        let (live, _) = held_bytes();
+        crate::budget::METAL_TEST.with(|m| m.set(live + (96 << 20)));
+        let (held, go) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        let first = std::thread::spawn(move || {
+            let lease = lease_within(64 << 20).expect("64 MB, the first work's");
+            held.0.send(()).unwrap();
+            go.1.recv().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(lease);
+        });
+        held.1.recv().unwrap();
+        go.0.send(()).unwrap();
+        let room = admit(64 << 20, 10.0).expect("the second, once the first's lease is back");
+        assert!(room.waited > 0.1, "it waited for the first: {} s", room.waited);
+        first.join().unwrap();
+        assert!(draw_reserved(48 << 20), "a buffer of another ledger drawn from the reservation");
+        assert_eq!(reserved(), 16 << 20, "counted once: the drawn part is the other ledger's");
+        assert!(!draw_reserved(32 << 20), "no more than is left");
+        drop(room);
+        assert_eq!(reserved(), 0, "what was not drawn goes back");
         crate::budget::METAL_TEST.with(|m| m.set(0));
     }
 

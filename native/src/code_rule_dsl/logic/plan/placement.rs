@@ -196,6 +196,25 @@ const GPU_PER_SUBMISSION: f64 = 0.15e-3;
 /// the GPU had to be twice the cheaper (`MARGIN`, 2), against estimates 8 times off (decision 0320).
 pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
 
+/// How long a stratum placed on the device may wait for the device's memory before it runs on the CPU instead (Q203):
+/// the CPU's price for its `work` units of planned work less the device's, at the prices it was placed by. Never
+/// negative.
+pub fn worth_waiting(work: f64) -> f64 {
+    ((CPU_PER_STRATUM + CPU_PER_WORK * work) - (GPU_PER_SUBMISSION + GPU_PER_WORK * work)).max(0.0)
+}
+
+/// The most work placed on the device waits for the device's memory (`gpu::shared::admit`), whatever the CPU's price
+/// for it: a wait past it is a wave held up, not a choice of the work's.
+const ADMIT_MAX: f64 = 0.5;
+
+/// How long work placed on the device (a stratum's tables, a matcher wave's workspace) waits for the device's memory to
+/// be admitted, for `work` units of its planned work: what waiting is worth (`worth_waiting`), at most `ADMIT_MAX`.
+/// Past it the work runs on the CPU, the price having chosen it (0334); the admission refuses at once where no lease
+/// coming back makes the room.
+pub fn admission_patience(work: f64) -> f64 {
+    worth_waiting(work).min(ADMIT_MAX)
+}
+
 /// `GPU_BIAS`, or `RERAIL_GPU_BIAS` when set: a measurement aid only, to refit the bias over runs at several.
 pub(in crate::code_rule_dsl) fn gpu_bias() -> f64 {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_GPU_BIAS").ok().and_then(|v| v.parse().ok()).filter(|b: &f64| *b > 0.0).unwrap_or(GPU_BIAS))

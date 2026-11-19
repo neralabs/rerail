@@ -701,6 +701,6 @@ impl<'a> Run<'a, '_> {
         }
         from.resize(lines.len(), steps.len() as u32);
         lines.push(JoinItem::Head(head));
-        Some(JoinSpec { items: lines, from, plan_steps: steps.len() as u32 })
+        Some(JoinSpec { items: lines, from, plan_steps: steps.len() as u32, est: Default::default() })
     }
 }

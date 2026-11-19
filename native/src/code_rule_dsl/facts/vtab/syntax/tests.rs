@@ -250,6 +250,35 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
     assert!(tried >= 4 * 3, "the four views were tried");
 }
 
+/// Q220: a lookup of `node` by kind (`lookup_read`, a join's `kind($c, #k)` read where the view lies) gives every row
+/// of that kind, each with the values a per-row read gives, from the batch's index by kind (`Batch::by_kind`), for
+/// every kind of four documents, common and rare; and `lookup` gives the same rows.
+#[test]
+fn a_kind_lookup_reads_the_rows_a_per_row_read_finds() {
+    let store = ContentStore::open(&temp("kind-read")).unwrap();
+    let (_, node) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let (n, width) = (node.len(), node.columns().len());
+    let cols: Vec<usize> = (0..width).collect();
+    let mut kinds: BTreeMap<i64, usize> = BTreeMap::new();
+    for r in 0..n {
+        *kinds.entry(node.value(r, 2)).or_default() += 1;
+    }
+    assert!(kinds.values().any(|&k| k * 16 >= n) && kinds.values().any(|&k| k == 1), "the documents have common kinds and single ones");
+    for &kind in kinds.keys() {
+        let per_row: BTreeSet<(usize, Vec<i64>)> = (0..n).filter(|&r| node.value(r, 2) == kind).map(|r| (r, cols.iter().map(|&c| node.value(r, c)).collect())).collect();
+        let mut read = BTreeSet::new();
+        let mut rows = 0;
+        assert!(node.lookup_read(2, kind, &cols, &mut |r, vals| {
+            rows += 1;
+            read.insert((r, vals.to_vec()));
+        }), "kind {kind}: the view reads its lookup");
+        assert_eq!(rows, per_row.len(), "kind {kind}: each row once");
+        assert_eq!(read, per_row, "kind {kind}");
+        let found: Vec<usize> = node.lookup(2, &[kind]).expect("the view looks up by kind");
+        assert_eq!(found, per_row.iter().map(|(r, _)| *r).collect::<Vec<_>>(), "kind {kind}: lookup's rows, in order");
+    }
+}
+
 /// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
 /// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
 /// fields, and for a field it lacks.
@@ -1861,18 +1890,22 @@ fn the_view_reads_are_the_hosts_rows() {
 struct Tapes { device const uchar* tt; device const uchar* ll; };
 kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[buffer(1)]], constant uint& n [[buffer(2)]],
                        constant Tapes& tapes [[buffer(3)]], constant uint* tv [[buffer(4)]], device long* out [[buffer(5)]],
-                       constant uint& nf [[buffer(6)]], uint l [[thread_position_in_grid]]) {
-    if (l >= n) return;
+                       constant uint& nf [[buffer(6)]], uint2 g [[thread_position_in_grid]]) {
+    // A thread a (local, slot): each read is called once with its column a value, so the compiler makes one copy of
+    // each (a column a constant, unrolled, had it make sixteen, each with 16z's decoder: minutes of compile on an M3).
+    uint l = g.x, k = g.y;
+    if (l >= n || k >= 16u) return;
     device const uchar* tt = tapes.tt;
     device const uchar* ll = tapes.ll;
     uint v[29];
-    for (uint k = 0u; k < 29u; k++) v[k] = tv[k];
-    device long* o = out + l * 16u;
-    for (uint c = 0u; c < 5u; c++) o[c] = long(clif_view_node(b, d, tt, v, ll, l, c));
-    for (uint c = 0u; c < 3u; c++) o[5u + c] = l + 1u < n ? long(clif_view_child(b, d, tt, v, ll, l, c)) : 0;
-    for (uint c = 0u; c < 3u; c++) o[8u + c] = l < nf ? long(clif_view_field(b, d, tt, v, ll, l, c)) : 0;
-    for (uint c = 0u; c < 3u; c++) o[11u + c] = long(clif_view_core(b, d, tt, v, ll, l, c));
-    for (uint c = 0u; c < 2u; c++) o[14u + c] = long(clif_view_line(b, d, tt, v, ll, l, c));
+    for (uint q = 0u; q < 29u; q++) v[q] = tv[q];
+    long r = 0;
+    if (k < 5u) r = long(clif_view_node(b, d, tt, v, ll, l, k));
+    else if (k < 8u) r = l + 1u < n ? long(clif_view_child(b, d, tt, v, ll, l, k - 5u)) : 0;
+    else if (k < 11u) r = l < nf ? long(clif_view_field(b, d, tt, v, ll, l, k - 8u)) : 0;
+    else if (k < 14u) r = long(clif_view_core(b, d, tt, v, ll, l, k - 11u));
+    else r = long(clif_view_line(b, d, tt, v, ll, l, k - 14u));
+    out[l * 16u + k] = r;
 }
 "#;
     const _: () = assert!(std::mem::size_of::<TapeView>() == 29 * 4);
@@ -1993,7 +2026,7 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     enc.set_bytes(4, std::mem::size_of::<TapeView>() as u64, (&raw const view).cast());
                     enc.set_buffer(5, Some(&out), 0);
                     enc.set_bytes(6, 4, (&raw const nf).cast());
-                    enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(64, 1, 1));
+                    enc.dispatch_threads(MTLSize::new(u64::from(n), WIDE as u64, 1), MTLSize::new(16, WIDE as u64, 1));
                     enc.end_encoding();
                     cmd.commit();
                     cmd.wait_until_completed();

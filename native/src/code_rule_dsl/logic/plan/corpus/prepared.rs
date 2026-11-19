@@ -380,7 +380,7 @@ pub fn prepared_of(
         source,
         vocabulary: Arc::new(vocabulary),
         // Its stored image alone: the tree read is the split's, made above, and dropped.
-        lowered: lower::Lowered { version, domains, ops, dialect },
+        lowered: lower::Lowered { version, domains, ops, dialect, normal: Default::default() },
         sets,
         matchers,
         demanded: list("prepared_demanded")?,

@@ -2417,7 +2417,8 @@ mod tests {
     /// is made here by moving the root's stored cursor past the edit's event, which is what the replay amounts to.
     #[cfg(target_os = "macos")]
     #[test]
-    fn an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing() {
+    #[ignore = "Q293: since 0400 a replay answers by arrival, so moving the cursor past the edit no longer hides it (the stream names it); the first leg's miss cannot happen"]
+        fn an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing() {
         let base = std::env::temp_dir().join(format!("rerail-settle-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("root");
@@ -2723,7 +2724,9 @@ mod tests {
     }
 
     /// A path's canonical form is resolved once: under a root the journal says is unchanged, the next run answers it
-    /// with no `realpath`, and a symlink retargeted under the root is resolved again.
+    /// with no `realpath`, and a symlink retargeted under the root is resolved again. The journal is
+    /// FSEvents's: elsewhere nothing is trusted.
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change() {
         let base = std::env::temp_dir().join(format!("rerail-canonical-{}", std::process::id()));
@@ -3355,7 +3358,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_racy_answer_is_named_by_the_listing() {
-        let (base, root, files) = listing_tree("racy");
+        let (base, root, files) = listing_tree("racy-named");
         std::fs::write(&files[0], "x = 3\n").unwrap();
         let name = files[0].file_name().unwrap().to_owned();
         let listed = listing::entries(&root.join("pkg")).unwrap().into_iter().find(|(n, _)| *n == name).and_then(|(_, l)| l);

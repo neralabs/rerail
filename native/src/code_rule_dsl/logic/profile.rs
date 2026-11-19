@@ -1233,9 +1233,12 @@ pub fn here() -> Option<String> {
     STACK.with(|s| s.lock().opens.last().map(|o| o.path.clone()))
 }
 
-/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape): on a thread with no span
-/// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
-/// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
+/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape, a piece of `par_pieces`):
+/// on a thread whose innermost open span is not the one open where `carried` was called, under `name` in that one;
+/// on the caller's thread, inside its span, as it is. A thread that took the item while it waited inside another
+/// span (rayon's join runs any queued piece) so counts it apart: as that span's own, the piece's CPU and
+/// allocation were charged to whatever the thread waited in (Q203 item 3: a chunk's joins seemed to allocate
+/// 3.7 GB more at the same rows).
 pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> impl Fn(A) -> R + Sync + Send {
     let carry = carry();
     move |a| {
@@ -1269,7 +1272,10 @@ impl Carry {
             }
         }
         let run = InRun::enter(&self.run, self.on);
-        let span = (self.under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(self.under.as_deref(), || name.to_owned()));
+        // A span when the item runs where the innermost open span is not the carried one: another thread, or one
+        // that took it while waiting inside another span (Q203 item 3), so its CPU is counted apart.
+        let elsewhere = self.under.as_deref().is_some_and(|u| STACK.with(|s| s.lock().opens.last().is_none_or(|o| o.path != u)));
+        let span = elsewhere.then(|| span_at(self.under.as_deref(), || name.to_owned()));
         In(Some(run), span)
     }
 }
@@ -1301,6 +1307,19 @@ impl Drop for InRun {
             ON.with(|o| o.set(on));
         }
     }
+}
+
+/// `f` over `items` on the pool in pieces (about `PIECES_PER_THREAD` a thread, at least `min` items each), each
+/// piece through [`carried`] (a span when another thread, or one waiting in another span, takes it): `f` maps a
+/// piece to its items' results, in order, so a piece's state (a pattern set) is made once a piece.
+pub fn par_pieces<T: Sync, R: Send>(name: &'static str, items: &[T], min: usize, f: impl Fn(&[T]) -> Vec<R> + Sync + Send) -> Vec<R> {
+    use rayon::prelude::*;
+    const PIECES_PER_THREAD: usize = 4;
+    let size = items.len().div_ceil(rayon::current_num_threads() * PIECES_PER_THREAD).max(min).max(1);
+    let pieces: Vec<Vec<R>> = items.par_chunks(size).map(carried(name, f)).collect();
+    let mut out = Vec::with_capacity(items.len());
+    pieces.into_iter().for_each(|p| out.extend(p));
+    out
 }
 
 /// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
@@ -2911,6 +2930,42 @@ pub mod tests {
         set(false);
     }
 
+    /// A carried piece taken by a thread waiting inside another span is that piece's, under the span it was made
+    /// in, not the other span's own (Q203 item 3); the caller's thread runs its own pieces as its own.
+    #[test]
+    fn a_piece_taken_inside_another_span_is_charged_apart() {
+        let _serial = one_run();
+        set(true);
+        reset();
+        let spin = |ms: u64| {
+            let t = cpu();
+            while cpu() - t < ms as f64 / 1e3 {
+                std::hint::black_box(0u64);
+            }
+        };
+        let piece = {
+            let _made = span(|| "made".into());
+            let piece = carried("a piece", move |ms: u64| spin(ms));
+            // The caller's own thread, in the span it was made in: as it is, no span of its own.
+            piece(1);
+            piece
+        };
+        std::thread::scope(|t| {
+            t.spawn(|| {
+                let _waiting = span(|| "waiting".into());
+                piece(30);
+            });
+        });
+        let got: Vec<i64> = par_pieces("pieces", &(0..1000).collect::<Vec<i64>>(), 10, |p: &[i64]| p.iter().map(|x| x * 2).collect());
+        let s = spans();
+        set(false);
+        assert_eq!(got, (0..1000).map(|x| x * 2).collect::<Vec<_>>(), "in order");
+        assert!(s.contains_key("made/a piece"), "{:?}", s.keys().collect::<Vec<_>>());
+        assert!(!s.keys().any(|k| k.starts_with("made/a piece") && s[k].calls > 1), "the caller's own piece opened none");
+        assert!(s["made/a piece"].own >= 0.025, "{}", s["made/a piece"].own);
+        assert!(s["waiting"].own < 0.015, "the waiting span's own holds none of the piece: {}", s["waiting"].own);
+    }
+
     #[test]
     fn spans_charge_memory_and_a_dump_lists_what_is_open() {
         let _serial = test_run();
@@ -2984,6 +3039,9 @@ pub struct Report {
     pub dispatches: u32,
     /// Runs again from an overflowing stage.
     pub reruns: u32,
+    /// Times it waited for the device's memory before it encoded (`gpu::shared::admit`, Q203), and the seconds.
+    pub admit_waits: u32,
+    pub admit_seconds: f64,
     pub gpu_seconds: f64,
     /// This thread's CPU: encoding (uploads and sorts' encoding included), waiting, and reading the rows back into
     /// the store.

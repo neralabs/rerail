@@ -1187,3 +1187,36 @@
         assert!(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu).device_view().is_none());
         let _ = std::fs::remove_file(&store_path);
     }
+
+    /// Q203: a stage's table before it runs is the planner's estimate of its rows with a margin, not its input
+    /// doubled: rr_token_req's tables were 730,304 rows for 7,453 made, and refused past the device's budget. The
+    /// growth a stage was seen to have still sizes it first, a scan holds its relation's rows at most, and a rule the
+    /// planner did not price keeps doubling.
+    #[test]
+    fn a_stages_table_is_sized_by_the_plans_estimate_before_it_runs() {
+        use super::{EST_MARGIN, table_rows};
+        // A keyed join, cold: the estimate with its margin, not twice the input.
+        assert_eq!(table_rows(7_453, 2_800, false, None, Some(1_515.0)), (1_515.0 * EST_MARGIN) as usize);
+        assert_eq!(table_rows(7_453, 2_800, false, None, None), 2 * 7_453, "unpriced: twice the input, as before");
+        // Seen: the growth measured wins over the estimate.
+        assert_eq!(table_rows(1_000, 2_800, false, Some(0.5), Some(90_000.0)), 625);
+        // A scan by a constant over a 730,304-row relation the plan expects 2,848 of: the estimate's room.
+        assert_eq!(table_rows(1, 730_304, true, None, Some(2_848.0)), (2_848.0 * EST_MARGIN) as usize);
+        assert_eq!(table_rows(1, 730_304, true, None, None), 730_304, "unpriced: the whole relation, as before");
+        assert_eq!(table_rows(1, 100, true, None, Some(2_848.0)), 100, "never more than the relation holds");
+        // Never past every pairing, never empty.
+        assert_eq!(table_rows(10, 3, false, None, Some(1e9)), 30);
+        assert_eq!(table_rows(10, 3, false, None, Some(0.0)), 16.min(30));
+    }
+
+    /// A spec's estimates are not the rule: two specs that differ in them alone are one rule (the same digest, under
+    /// which the stages' growth is kept), and the rule takes them.
+    #[test]
+    fn a_specs_estimates_leave_its_identity() {
+        use super::super::spec::{Est, JoinSpec};
+        let text = format!("pos t:x:{}:{}:ii v0 v1\nhead v0 v1", hex("temp.a"), hex("c0, c1"));
+        let plain = JoinSpec::parse(&text).unwrap();
+        let priced = JoinSpec { est: Est(vec![12.0, 3.0]), ..plain.clone() };
+        assert_eq!(plain, priced);
+        assert_eq!(super::super::level::digest(&plain), super::super::level::digest(&priced));
+    }

@@ -241,6 +241,12 @@ impl<'a, 'v> Order<'a, 'v> {
     }
 }
 
+/// A plan's rows after each of its steps, every row walked (`StepPlan::all`): what the device sizes its stages' tables
+/// by before they have run (`JoinSpec::est`).
+fn step_estimates(x: &super::profile::RulePlan) -> super::native::setfix::spec::Est {
+    super::native::setfix::spec::Est(x.steps.iter().map(|s| s.all).collect())
+}
+
 /// Tells each kind-set axis a planned order reads by its `n` how many keys come into that step (the rows the planner
 /// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0143).
 fn expect_axis_lookups(db: impl crate::code_rule_dsl::facts::vtab::Scoped, plan: &super::profile::RulePlan) {
@@ -3692,6 +3698,12 @@ impl Model {
             }
         }
         let constant_of = |t: TermRef<'_>| b.constant(t).or_else(|| t.var().and_then(|v| consts.get(&v).cloned()));
+        // Those variables: bound, each is a constant, so it joins nothing. An atom that shares only such a variable
+        // with what is joined is a cross product (Q220: `p299_attempt`'s `kind($m, $k)` after `$k = #k1249` read
+        // every node of the kind for each of 15 k texts, 1.16 M rows for none kept, where `text($n, $t)` joined).
+        let pinned = VarSet::of(consts.keys().copied());
+        let joins_with = |t: TermRef<'_>, bound: &VarSet| matches!(t, TermRef::Var(v) if bound.contains(v) && !pinned.contains(v));
+        let binds_some = |bound: &VarSet| !bound.minus(&pinned).is_empty();
         // var → constant kind, from kind($v, "k") atoms (the kind a constant, or a variable an equality binds to one).
         let mut kinds: HashMap<VarSlot, String> = HashMap::new();
         for l in 0..b.len() {
@@ -3814,7 +3826,7 @@ impl Model {
             // not a property of the join, so it is priced from the relation's own estimate (below). What was
             // observed comes before any rule that estimates: an absence proof from a snapshot was kept over 733,692
             // rows seen (`pfn`'s `pcall__ins`).
-            let crossed = !bound.is_empty() && !args.iter().any(|t| matches!(t, TermRef::Var(v) if bound.contains(*v)));
+            let crossed = binds_some(bound) && !args.iter().any(|t| joins_with(*t, bound));
             // Exact pair statistics measured for a slow line (decision 0203 §3) come first: they were measured on
             // every row, where an observation is of the bindings one order saw.
             if !crossed
@@ -4107,7 +4119,7 @@ impl Model {
             // where the plan was priced is not empty where it is reused. At least one row per binding, so a connected
             // atom of fanout one is never ordered after it.
             let delta_atom = first == Some(i) && b.plain_atom(i).is_some();
-            if !delta_atom && !a.neg() && !bound.is_empty() && !args.iter().any(|t| matches!(t, TermRef::Var(v) if bound.contains(*v))) && rows < 1.0 {
+            if !delta_atom && !a.neg() && binds_some(bound) && !args.iter().any(|t| joins_with(*t, bound)) && rows < 1.0 {
                 rows = 1.0;
                 basis.set("cross product");
             }
@@ -4346,7 +4358,7 @@ impl Model {
         // The greedy order's next step shares a variable with what is joined, while one can (no cross product while a
         // connected step remains, decision 0038). The search prices cross products itself: a cheap one with a tiny
         // relation is T's choice on its programs (`dec1` before `pv`: work 67, not 7,001).
-        let connected = |l: usize, bound: &VarSet| bound.is_empty() || !b.vars(l).is_disjoint(bound);
+        let connected = |l: usize, bound: &VarSet| { let live = bound.minus(&pinned); live.is_empty() || !b.vars(l).is_disjoint(&live) };
         let full_mask: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
         // A gate (`answers::gate`'s `done_N_ad(t)` before `!N(t)`) holds only keys its rule's own literals give
         // (its `ask` is the body before the negation), so it never yields a row they would not: it is a test of a
@@ -4376,7 +4388,7 @@ impl Model {
         // No cross product priced from a default size (O-join-shape-directives, item 4): while a connected step remains,
         // a step sharing no variable with what is joined is not taken where it or a connected step has no size of its
         // own (`card`'s 1,000 rows): `pv__ins` crossed `pv` with `retparam` before an unsized 15-row `posarg__plus`.
-        let jmask: Vec<u128> = joins.iter().map(|&j| b.vars(j).iter().filter_map(|v| var_ids[v.index()]).fold(0u128, |m, k| if k < 128 { m | 1u128 << k } else { m })).collect();
+        let jmask: Vec<u128> = joins.iter().map(|&j| b.vars(j).iter().filter(|&v| !pinned.contains(v)).filter_map(|v| var_ids[v.index()]).fold(0u128, |m, k| if k < 128 { m | 1u128 << k } else { m })).collect();
         // The joins with no size of their own, read from the statistics once per search.
         let no_size: u64 = (0..joins.len()).filter(|&i| matches!(b.view(joins[i]), Lit::Atom(a) if !a.neg() && { let r = b.rel(a); r != "node" && !self.stats.card.contains_key(r) && !self.stats.lazy.0.contains_key(r) && !self.stats.solving.contains(r) })).fold(0, |m, i| m | 1 << i);
         // The joins of a relation with no rows of its own when priced: unsized, or empty (its rows come later, as a
@@ -8908,7 +8920,7 @@ impl<'a> Run<'a, '_> {
             if let Some(x) = &x {
                 shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col), |rel| !self.model.derived.contains(rel));
             }
-            let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
+            let Some(mut spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
                 if answering {
                     let reads: Vec<String> = (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a)).filter(|a| !scc.contains(*a)).map(str::to_owned).collect();
                     self.materialize(&reads)?;
@@ -8924,6 +8936,7 @@ impl<'a> Run<'a, '_> {
             };
             if let Some(x) = &x {
                 expect_axis_lookups(self.db, x);
+                std::sync::Arc::make_mut(&mut spec).est = step_estimates(x);
             }
             explained.push((format!("seed {head}"), rule_no(r), x, took, 0));
             keys.push(Some(self.model.reused_key(b, None)));
@@ -9047,7 +9060,7 @@ impl<'a> Run<'a, '_> {
                     shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col), |rel| !self.model.derived.contains(rel));
                 }
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
-                let Some(spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, &native_rels) else {
+                let Some(mut spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, &native_rels) else {
                     if answering {
                         let reads: Vec<String> = (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a)).filter(|a| !scc.contains(*a)).map(str::to_owned).collect();
                         // SQL reads the views too (`native_stratum` made only those no native join reads in place).
@@ -9071,6 +9084,7 @@ impl<'a> Run<'a, '_> {
                 let x = x.map(|x| delta_sources(x, Order::new(b, &order), at, scc));
                 if let Some(x) = &x {
                     expect_axis_lookups(self.db, x);
+                    std::sync::Arc::make_mut(&mut spec).est = step_estimates(x);
                 }
                 explained.push((format!("join {head} (delta {a})"), rule_no(r), x, took, 0));
                 // The wave whose delta is all of the relation (it was empty before): any order, the atom read in full.
@@ -10774,6 +10788,8 @@ pub struct Hooks<'a> {
     /// tests them with every other test at once, each string once a run, as the batches do. Without it the run
     /// makes its own from the program's tests.
     pub texts: Option<Arc<super::strings::Vocabulary>>,
+    /// The program normalized (`lower::Lowered::normalized`), for `apart` as `run` decides it: read, not made again.
+    pub normalized: Option<Arc<body::Normalized>>,
     /// Posts the requests a component makes, their answers taken as they come (decision 0114 §3); used where the
     /// strata loop retires from a scoreboard, `answer` elsewhere.
     pub asking: Option<&'a mut dyn Asking>,
@@ -11368,6 +11384,12 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, 
     connection::run(db,1,||super::native::register(db))?;
     connection::run(db,2,||super::native::register_symbols(db))?;
     super::native::forget_inputs(db);
+    // The program normalized once (`Lowered::normalized`), for `apart` as `run` decides it.
+    let mut hooks = hooks;
+    let apart = inputs.atoms.is_some() && !inputs.native.is_empty();
+    if hooks.normalized.is_none() {
+        hooks.normalized = Some(lowered.normalized(apart)?);
+    }
     let out = run(&lowered.placed()?, db, inputs, Some(lowered.lowering()), hooks);
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
     // write transaction (decision 0049).
@@ -11601,9 +11623,17 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     // The program's version as the run reads it (t36 item 7, step 2): normalized by the version passes
     // (`passes::normalize`, `stated_apart`), which the planner reads its rules and fields from, and the passes below
     // edit.
-    let body::Normalized { placed: normal_v, sentinels, stated } = {
+    // Normalized once a program (`lower::Lowered::normalized`) where the caller holds it, so every run of it (a
+    // corpus run's chunks) reads one version and the analyses it holds (Q203 item 3 (ii)).
+    let (normal_v, sentinels, stated) = {
         let _span = super::profile::span(|| "the program's version".into());
-        program.normalized(apart)?
+        match hooks.normalized.take() {
+            Some(n) => (n.placed.clone(), n.sentinels.clone(), n.stated.clone()),
+            None => {
+                let body::Normalized { placed, sentinels, stated } = program.normalized(apart)?;
+                (placed, sentinels, stated)
+            }
+        }
     };
     // The normalized program as the tree, decoded only for the version trace (a measurement aid).
     let lists = super::front::Lists::default();

@@ -158,7 +158,7 @@ impl rerail_accel::kernel::Program for MatcherWave {
         if lane == rerail_accel::Lane::Gpu {
             // A Metal run that fails stops the run (decision 0382 §6): no CPU wave in its place. What does not fit is
             // split, and work past its budget replanned, inside the run (0334).
-            let found = self.on(MatcherBackend::MetalInterpreter).unwrap_or_else(|e| panic!("rerail: the ast matcher wave failed on Metal: {e}"));
+            let found = self.on(MatcherBackend::MetalInterpreter).unwrap_or_else(|e| panic!("rerail: the ast matcher wave failed on Metal: {e} ({} tapes; the device: {})", self.tapes.len(), rerail_accel::gpu::shared::describe()));
             // The wave's GPU form is the Metal interpreter: no generated kernel (decision 0202).
             rerail_accel::forms::missing("metal-jit-form", "ast matcher wave", "ast matcher wave", "the wave runs the Metal interpreter: no generated MSL", 1);
             return Ok(Arc::new(Ok(found) as WaveFound));

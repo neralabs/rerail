@@ -7,7 +7,7 @@ accel/src/exec.rs::MADE	stays	rayon's global pool, built once: rayon keeps one p
 accel/src/exec.rs::N	stays	the size of rayon's global pool, read once as it is built (`MADE`)
 accel/src/gpu/join.rs::RATIO	stays	the OS's timebase ratio: a constant of the machine read once
 accel/src/gpu/shared.rs::BIG	stays	a test lock
-accel/src/gpu/shared.rs::EVICTOR	stays	code registered at load (a hook)
+accel/src/gpu/shared.rs::EVICTORS	stays	code registered at load (the pool's evictors, hooks set once each by the crates above)
 accel/src/gpu/shared.rs::GUARD	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::LEASE_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::OTHER_RESERVED	stays	code registered at load (a hook)
@@ -86,6 +86,7 @@ native/src/code_rule_dsl/facts/grammar_shape.rs::KEPT	stays	computed from the en
 native/src/code_rule_dsl/facts/nearest.rs::CHUNK_AXIS	stays	compiled once from the engine's own code
 native/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compiled once from the engine's own code
 native/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
+native/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
 native/src/code_rule_dsl/facts/span_prefilter.rs::SPAN_PREFILTER	stays	compiled once from the engine's own code
 native/src/code_rule_dsl/facts/vtab.rs::CLOSES	stays	a generation counter: append-only
 native/src/code_rule_dsl/facts/vtab.rs::FORGET	stays	code registered at load
@@ -125,6 +126,7 @@ native/src/code_rule_dsl/logic/native/setfix/device.rs::TICKETS	stays	a ticket c
 native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counter: append-only, unique across threads
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/logic/plan.rs::RUNS	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid (RERAIL_REL_ROWS's dumps)
+native/src/code_rule_dsl/logic/plan/body.rs::NORMALIZED	stays	exists only in a test build (cfg test-hooks): a test's count of the programs normalized, never in a product build
 native/src/code_rule_dsl/logic/plan/corpus.rs::CROSS_FILE	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/plan/corpus.rs::OFF	stays	a hook registered once
 native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	stays	the default store's path, from the process's working directory (itself the process's), or a test process's tape cache
@@ -261,6 +263,7 @@ native/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::KINDS	stays	
 native/src/code_rule_dsl/transducer/packed/metal_join.rs::SOURCE	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::SOURCE	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::TAPE_VIEW	stays	computed once from the engine's own source
+native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::EVICTOR	stays	registers the workspaces' evictor once (code registered at load, a hook)
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::RESIDENT_PREFIX	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::TAPE_PREFIX	stays	computed once from the engine's own source
 native/src/code_rule_dsl/value/names.rs::TABLE	stays	computed once from the engine's own files

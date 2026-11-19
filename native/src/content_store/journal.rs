@@ -686,10 +686,10 @@ mod fsevents {
             let t = Instant::now();
             let fresh = all[at].synced.is_none_or(|(e, _)| e != epoch);
             let first = all[at].synced.is_none();
-            // The caller's bound (Q184, Q221: no longer than checking what the journal would save), else as long as
-            // a replay may be started again for its marker (`settle`, decision 0400). `settle` bounds those restarts,
-            // not a sync: taken as the sync's wait, every root of a warm run waited for its cookie again.
-            let r = sync(&mut all[at], epoch, wait.unwrap_or(WAIT.max(settle)));
+            // The caller's bound (Q184, Q221: no longer than checking what the journal would save), within the
+            // settle window the merge of 0400 gave a stream; else that window. `settle` bounds a replay's restarts
+            // for its marker, not a sync: taken as the sync's wait, every root of a warm run waited for its cookie.
+            let r = sync(&mut all[at], epoch, wait.map_or(WAIT.max(settle), |w| w.min(WAIT.max(settle))));
             if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
                 let live = &all[at];
                 let (n, history, cookie) = live.shared.seen.lock().map(|s| (s.events.len(), s.history_at, s.cookie_at)).unwrap_or((0, None, None));

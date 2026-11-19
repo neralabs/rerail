@@ -48,9 +48,31 @@ pub fn pool_peak() -> Arc<AtomicUsize> {
     LEDGERS.with(|ledgers| Arc::clone(&ledgers.peak))
 }
 
-/// Left out in a test build: the driver's figure is the process's, every test's buffers.
-pub fn driver_bytes(_device: &metal::DeviceRef) -> u64 {
-    0
+thread_local! {
+    /// A test of the driver's figure itself (`measure_driver`): this thread reads the device's.
+    static MEASURED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// A test's working set for the device (`set_working_set`).
+    static WORKING_SET: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Left out in a test build: the driver's figure is the process's, every test's buffers. A test of what the driver's
+/// figure decides reads it (`measure_driver`).
+pub fn driver_bytes(device: &metal::DeviceRef) -> u64 {
+    if MEASURED.get() { device.current_allocated_size() } else { 0 }
+}
+
+/// This thread reads the driver's figure (`driver_bytes`), as a production build does.
+pub fn measure_driver() {
+    MEASURED.set(true);
+}
+
+/// This thread's working set for the device, in place of the OS's (`runtime::working_set`).
+pub fn set_working_set(bytes: Option<u64>) {
+    WORKING_SET.set(bytes);
+}
+
+pub fn working_set() -> Option<u64> {
+    WORKING_SET.get()
 }
 
 /// Waits (bounded) until `bytes` fit beside what the other tests hold, then counts them.

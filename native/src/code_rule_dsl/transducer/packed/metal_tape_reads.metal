@@ -40,12 +40,12 @@ inline uint clif_aadd(device const uchar* t,ulong a,uint x){return atomic_fetch_
 inline uint clif_acas(device const uchar* t,ulong a,uint e,uint n){for(uint k=0u;k<64u;k++){uint x=e;if(atomic_compare_exchange_weak_explicit((device atomic_uint*)(t+a),&x,n,memory_order_relaxed,memory_order_relaxed))return e;if(x!=e)return x;}return ~e;}
 inline void clif_fence(){atomic_thread_fence(mem_flags::mem_device,memory_order_seq_cst,thread_scope_device);}
 #endif
-inline ulong clif_tape_f16_side(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
+__attribute__((noinline)) ulong clif_tape_f16_side(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
 inline uint clif_tape_size(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_number(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_start(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_end(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
-inline uint clif_tape_parent(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+__attribute__((noinline)) uint clif_tape_parent(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_end_of(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_next_in(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
 inline uint clif_tape_next(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
@@ -55,10 +55,10 @@ inline uint clif_tape_child(device const uchar* t,CLIF_VIEW_SPACE const uint* v,
 inline uint clif_tape_length(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_start_next(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
 inline ulong clif_tape_slot(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
-inline uint clif_tape_line_select(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
+__attribute__((noinline)) uint clif_tape_line_select(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
 inline uint clif_tape_line(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_line_start(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
-inline ulong clif_tape_f16_side(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
+__attribute__((noinline)) ulong clif_tape_f16_side(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
  uint v0=0;
  uint v1=0;
  uint v2=0;
@@ -598,7 +598,7 @@ inline uint clif_tape_end(device const uchar* t,CLIF_VIEW_SPACE const uint* v,ui
  }
  return v5;
 }
-inline uint clif_tape_parent(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+__attribute__((noinline)) uint clif_tape_parent(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
  uint v0=0;
  uint v1=0;
  uint v2=0;
@@ -1039,7 +1039,7 @@ inline ulong clif_tape_slot(device const uchar* t,CLIF_VIEW_SPACE const uint* v,
  }
  return v23;
 }
-inline uint clif_tape_line_select(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
+__attribute__((noinline)) uint clif_tape_line_select(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
  uint v0=0;
  uint v1=0;
  uint v2=0;
