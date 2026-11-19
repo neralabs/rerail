@@ -42,24 +42,9 @@ pub const MAX_GRAPH_BYTES: u64 = 512 * 1024 * 1024;
 /// included) gets no server graph, as past `MAX_GRAPH_FILES`: the host's audit bound
 /// (`AUDIT_MAX_FILES`).
 pub const MAX_GRAPH_ENTRIES: usize = 100_000;
-/// The folders a server graph does not read, beside hidden ones: the host's
-/// `IGNORED_DIRECTORIES` (code-rule-enforcer.ts), which its repository walk skips.
-const IGNORED_DIRECTORIES: [&str; 14] = [
-    ".git",
-    ".hg",
-    ".svn",
-    ".rerail",
-    ".venv",
-    "__pycache__",
-    "node_modules",
-    "dist",
-    "build",
-    ".next",
-    ".turbo",
-    "coverage",
-    "target",
-    "vendor",
-];
+// The folders a server graph does not read, beside hidden ones: the host's `IGNORED_DIRECTORIES`
+// (src/engine/code-rule/ignored-directories.ts), which its repository walk skips, generated from it.
+include!("ignored_directories.generated.rs");
 /// A source larger than this is not read for imports; it imports nothing.
 pub const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 /// How many `extends` a configuration chain follows.

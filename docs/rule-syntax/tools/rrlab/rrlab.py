@@ -22,7 +22,9 @@ SOUFFLE = shutil.which("souffle") or "/opt/homebrew/bin/souffle"
 FACTS_BIN = os.path.join(HERE, "target", "release", "rrlab-facts")
 FN_DIR = os.path.join(HERE, "target", "functors")
 ECMA = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
-SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "target", "dist", "build"}
+# The folders the engine's walks skip (its `file` facts, the corpus): the host's IGNORED_DIRECTORIES, read from its source.
+with open(os.path.join(REPO, "src", "engine", "code-rule", "ignored-directories.ts")) as _f:
+    SKIP_DIRS = set(re.findall(r'"([^"]+)"', _f.read().split("new Set([", 1)[1].split("]);", 1)[0]))
 csv.field_size_limit(1 << 30)
 
 

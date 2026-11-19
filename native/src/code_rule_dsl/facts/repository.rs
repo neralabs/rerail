@@ -5,8 +5,8 @@
 //!   them: a list gives one `option` row per element and `option_item` rows with positions; booleans are `"true"` and
 //!   `"false"`; nested objects are flattened with `/`. An ESLint-style array (`["all", {…}]`) gives `option`,
 //!   `option2`, … for its strings, and merges its objects.
-//! - `file(path)`: every file under the root, `.git`, `node_modules`, `__pycache__`, `.venv`, `venv`, `target`, `dist`
-//!   and `build` skipped.
+//! - `file(path)`: every file under the root, the host's ignored directories (`IGNORED_DIRECTORIES`: `.git`,
+//!   `node_modules`, `target`, …) skipped.
 //! - `package(dir, name)`, `package_field(dir, key, v)`: each `package.json`'s name and string-valued members, keys
 //!   as paths from the root (`engines/node`); `package_for(path, dir)`: a document's nearest `package.json`.
 //!
@@ -19,7 +19,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-const SKIP: [&str; 8] = [".git", "node_modules", "__pycache__", ".venv", "venv", "target", "dist", "build"];
+// The host's `IGNORED_DIRECTORIES` (src/engine/code-rule/ignored-directories.ts), generated from it.
+include!("../ignored_directories.generated.rs");
 
 /// At most this many files are listed; a larger tree's `file` rows are cut there.
 const MAX_FILES: usize = 200_000;
@@ -136,7 +137,7 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
             let path = e.path();
             let Ok(kind) = e.file_type() else { continue };
             if kind.is_dir() {
-                if !SKIP.contains(&name.as_str()) {
+                if !IGNORED_DIRECTORIES.contains(&name.as_str()) {
                     stack.push(path);
                 }
                 continue;
@@ -239,7 +240,7 @@ pub mod tests {
     #[test]
     fn the_tree_gives_files_and_packages() {
         let root = std::env::temp_dir().join(format!("rerail-repo-{}-{:?}", std::process::id(), std::thread::current().id()));
-        for (p, t) in [("web/package.json", r#"{"name": "@a/web", "engines": {"node": ">=18"}, "n": 1}"#), ("web/src/a.ts", ""), ("node_modules/x/b.js", ""), ("c.py", "")] {
+        for (p, t) in [("web/package.json", r#"{"name": "@a/web", "engines": {"node": ">=18"}, "n": 1}"#), ("web/src/a.ts", ""), ("node_modules/x/b.js", ""), ("vendor/v.php", ""), ("c.py", "")] {
             let p = root.join(p);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, t).unwrap();

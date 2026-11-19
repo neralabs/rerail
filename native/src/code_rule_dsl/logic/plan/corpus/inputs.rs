@@ -274,7 +274,8 @@ fn blob_id(bytes: &[u8]) -> String {
     hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The files of `root` the corpus walk sees (`corpus_files`: no hidden directory, no `target`), relative and sorted.
+/// The files of `root` the corpus walk sees (`corpus_files`: none under a directory `listed_directory` refuses),
+/// relative and sorted.
 fn walk(root: &Path) -> std::io::Result<Vec<String>> {
     let mut out = Vec::new();
     let mut pending = vec![root.to_path_buf()];
@@ -283,7 +284,7 @@ fn walk(root: &Path) -> std::io::Result<Vec<String>> {
             let path = entry?.path();
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if path.is_dir() {
-                if !name.starts_with('.') && name != "target" {
+                if super::listed_directory(name) {
                     pending.push(path);
                 }
             } else if let Ok(relative) = path.strip_prefix(root) {

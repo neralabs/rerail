@@ -10332,8 +10332,18 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
     out
 }
 
+// Generated from the host's list (src/engine/code-rule/ignored-directories.ts), so a run reads the files a host's walk
+// reads: a translation sees what its original sees.
+include!("../../ignored_directories.generated.rs");
+
+/// Whether the corpus lists files under a directory of this name: every one but those the host's walk never enters
+/// (`IGNORED_DIRECTORIES`), hidden ones (`.github`) included.
+fn listed_directory(name: &str) -> bool {
+    !IGNORED_DIRECTORIES.contains(&name)
+}
+
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
-/// (`.rerail`), skipping hidden directories and `target`.
+/// (`.rerail`), skipping the directories `listed_directory` refuses.
 pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
     let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
@@ -10351,7 +10361,7 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
         for relative in &under {
             let relative = relative.as_str();
             let dirs: Vec<&str> = relative.split('/').collect();
-            if dirs[..dirs.len() - 1].iter().any(|d| d.starts_with('.') || *d == "target") {
+            if !dirs[..dirs.len() - 1].iter().all(|d| listed_directory(d)) {
                 continue;
             }
             listed += 1;
@@ -10376,7 +10386,7 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
         for (name, is_dir) in listing.iter() {
             let path = dir.join(name);
             if *is_dir {
-                if !name.starts_with('.') && name != "target" {
+                if listed_directory(name) {
                     pending.push(path);
                 }
                 continue;
@@ -10758,6 +10768,37 @@ impl Own {
 
 #[cfg(test)]
 pub mod tests {
+    /// The corpus lists the files a host's walk reads: under every directory but the host's `IGNORED_DIRECTORIES`
+    /// (at any depth), hidden ones (`.github`) included, from Git's listing and from the walk alike.
+    #[test]
+    fn the_corpus_skips_the_hosts_ignored_directories_only() {
+        let listed = [".github/workflows/a.yml", ".vscode/b.yml", "wf/a.yml"];
+        let skipped: Vec<String> = super::IGNORED_DIRECTORIES.iter().flat_map(|d| [format!("{d}/a.yml"), format!("src/{d}/b.yml")]).collect();
+        let make = |root: &std::path::Path| {
+            for path in listed.iter().copied().chain(skipped.iter().map(String::as_str)) {
+                let path = root.join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, "uses: ./.github/actions/php\n").unwrap();
+            }
+        };
+        let files = |root: &std::path::Path| {
+            let found = super::corpus_files(root).unwrap();
+            let mut all: Vec<String> = found.by_label.into_values().flatten().chain(found.text).collect();
+            all.sort();
+            all
+        };
+        let walked = tempfile::tempdir().unwrap();
+        make(walked.path());
+        assert_eq!(files(walked.path()), listed, "the walk");
+        let work = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(work.path()).args(args).output().unwrap().status.success(), "git {args:?}");
+        git(&["init", "-q"]);
+        make(work.path());
+        git(&["add", "-A"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "every directory committed"]);
+        assert_eq!(files(work.path()), listed, "Git's listing");
+    }
+
     /// A corpus in a directory Git ignores has no file Git sees, and that answer is kept too (`git_files`'s record):
     /// unkept, every run read the work tree's whole status again to find none. In a process of its own, whose store
     /// is named (`RERAIL_TAPE_CACHE`), so the observer asks the journal, as a run's does.
