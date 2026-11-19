@@ -525,6 +525,10 @@ fallback (`fallbackPipe`), and whether a listed pipe is an engine's (`isEnginePi
 - A holder that proves it is this home's engine stops the start: a second daemon must not run beside it. Any other
   holder is a squatter, and the engine listens on the same name with a random hex suffix, recorded in `daemon.json` as
   `kernelSocketPath`, where hooks read it.
+- When the holder made the name with a cap on its instances and has made them all, as a pipe that allows one instance
+  has, libuv reports `EBUSY`. A Node pipe server never caps its instances, so no Rerail engine holds a name that way:
+  the engine listens on the suffixed name at once, without the challenge, which would take the holder's one free
+  instance or wait for one it never frees.
 - Rerail 0.1.3 listened on the name with no check and no fallback, so a pipe another user created first made every
   daemon start fail. A probe that sent the capability to learn who holds the pipe would hand it to that user.
 

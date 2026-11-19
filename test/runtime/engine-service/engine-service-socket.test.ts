@@ -1,9 +1,10 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
-import { createServer } from "node:net";
+import { createServer, type Server } from "node:net";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
@@ -348,5 +349,156 @@ describe("an engine pipe another process holds", () => {
     await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => true, fallback: () => FALLBACK }))
       .rejects.toThrow(/in use by a running daemon/u);
     await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => false, fallback: undefined })).rejects.toBe(held);
+  });
+
+  it("listens on the fallback pipe without asking a holder that capped the name's instances, as no engine does", async () => {
+    const capped = Object.assign(new Error("listen EBUSY"), { code: "EBUSY" });
+    const listened: string[] = [];
+    const asked: string[] = [];
+    const where = await listenBesideHeldPipe(PIPE, capped, {
+      listen: async path => {
+        listened.push(path);
+      },
+      ownEngineAnswers: async path => {
+        asked.push(path);
+        return true;
+      },
+      fallback: () => FALLBACK,
+    });
+    expect({ where, listened, asked }).toEqual({ where: FALLBACK, listened: [FALLBACK], asked: [] });
+    await expect(listenBesideHeldPipe(PIPE, capped, { listen: async () => undefined, ownEngineAnswers: async () => false, fallback: undefined }))
+      .rejects.toBe(capped);
+  });
+
+  it("keeps a failure that says nothing of a holder as the start's own, and neither asks nor moves", async () => {
+    const refused = Object.assign(new Error("listen EPERM"), { code: "EPERM" });
+    const done: string[] = [];
+    await expect(listenBesideHeldPipe(PIPE, refused, {
+      listen: async path => {
+        done.push(`listen ${path}`);
+      },
+      ownEngineAnswers: async path => {
+        done.push(`ask ${path}`);
+        return false;
+      },
+      fallback: () => FALLBACK,
+    })).rejects.toBe(refused);
+    expect(done).toEqual([]);
+  });
+});
+
+/**
+ * A stand-in for a process that holds the Windows pipe `path` with one instance at most and does nothing else: Node
+ * cannot cap a pipe's instances, so PowerShell makes it. Returns once the instance exists; `end` ends the holder.
+ */
+async function oneInstanceHolder(path: string): Promise<{ end: () => Promise<void> }> {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "Add-Type -AssemblyName System.Core",
+    `$pipe = New-Object System.IO.Pipes.NamedPipeServerStream('${pipeNameOf(path)}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)`,
+    "[void]$pipe.BeginWaitForConnection($null, $null)",
+    "[Console]::Out.WriteLine('holding'); [Console]::Out.Flush()",
+    "[void][Console]::In.ReadLine()",
+  ].join("\n");
+  const holder = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    stdio: ["pipe", "pipe", "inherit"],
+    windowsHide: true,
+  });
+  const closed = once(holder, "close");
+  const first = await Promise.race([once(holder.stdout!, "data"), closed]);
+  expect(String(first[0])).toMatch(/^holding/u);
+  return {
+    end: async () => {
+      holder.stdin!.end();
+      await closed;
+    },
+  };
+}
+
+/** Opens the pipe `path` as a client until an open fails, in one turn: the handles it holds, and the code that ended it. */
+function takeEveryInstance(path: string): { taken: number[]; ended: string | undefined } {
+  const taken: number[] = [];
+  for (;;) {
+    try {
+      taken.push(openSync(path, "r+"));
+    } catch (error) {
+      return { taken, ended: (error as NodeJS.ErrnoException).code };
+    }
+  }
+}
+
+/** What a listen of `server` on `path` comes to: `listening`, or the code it failed with; `afterBind` runs once it bound. */
+async function listenOutcome(server: Server, path: string, afterBind: () => void): Promise<string | undefined> {
+  const { promise, resolve } = Promise.withResolvers<string | undefined>();
+  server.once("error", (error: NodeJS.ErrnoException) => resolve(error.code));
+  server.once("listening", () => resolve("listening"));
+  server.listen(path);
+  afterBind();
+  return await promise;
+}
+
+describe.runIf(process.platform === "win32")("starting the engine beside a pipe whose holder allows one instance", () => {
+  const CAPABILITY = "PERSISTENT-DASHBOARD-CAPABILITY";
+  let root: string;
+  let pipeCount = 0;
+  const pipeName = (): string => String.raw`\\.\pipe\rerail-test-${process.pid}-${Date.now().toString(16)}-capped-${pipeCount++}`;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-capped-pipe-"));
+  });
+
+  afterEach(async () => {
+    await removeFolder(root);
+  });
+
+  it("listens on the fallback pipe, and leaves the holder's one instance free", async () => {
+    const pipe = pipeName();
+    const holder = await oneInstanceHolder(pipe);
+    try {
+      const service = await startEngineService({ socketPath: pipe, storageRoot: join(root, "state"), accessToken: CAPABILITY, pipeFallback: () => `${pipe}-fallback` });
+      try {
+        expect(service.socketPath).toBe(`${pipe}-fallback`);
+        // Nothing connected to the holder, the proof included: its one instance still takes a client.
+        closeSync(openSync(pipe, "r+"));
+      } finally {
+        await service.close();
+      }
+    } finally {
+      await holder.end();
+    }
+  });
+
+  it("listens on the fallback pipe while a client holds the holder's one instance", async () => {
+    const pipe = pipeName();
+    const holder = await oneInstanceHolder(pipe);
+    const client = openSync(pipe, "r+");
+    try {
+      const service = await startEngineService({ socketPath: pipe, storageRoot: join(root, "state"), accessToken: CAPABILITY, pipeFallback: () => `${pipe}-fallback` });
+      await service.close();
+      expect(service.socketPath).toBe(`${pipe}-fallback`);
+    } finally {
+      closeSync(client);
+      await holder.end();
+    }
+  });
+
+  // An engine whose loop is busy leaves its pipe with no free instance for a while: a start beside it must still ask
+  // it for the proof, so a listen there must read as held by a holder that may make more instances.
+  it("reads a Node pipe server with every instance taken as EADDRINUSE, never as a capped holder's EBUSY", async () => {
+    const pipe = pipeName();
+    const engine = createServer();
+    await new Promise<void>(resolve => engine.listen(pipe, resolve));
+    const second = createServer();
+    // Node binds a pipe within `listen`, so the bind meets every instance taken in the same turn.
+    const { taken, ended } = takeEveryInstance(pipe);
+    const outcome = listenOutcome(second, pipe, () => {
+      for (const handle of taken) closeSync(handle);
+    });
+    try {
+      expect({ taken: taken.length > 0, ended, outcome: await outcome }).toEqual({ taken: true, ended: "EBUSY", outcome: "EADDRINUSE" });
+    } finally {
+      second.close();
+      await new Promise<void>(resolve => engine.close(() => resolve()));
+    }
   });
 });
