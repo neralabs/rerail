@@ -1198,6 +1198,7 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(gitsProcessesForThreeLists(inner)).toEqual([]);
   });
 
+  // About 45 Git processes, `git gc` among them: 24 s on a busy Windows 11 machine, where the default limit is 30 s.
   it("keeps Git's acceptance of such a checkout with no Git process while a person works in the repository above", async () => {
     const root = await temporaryRoot();
     const outer = repository(join(root, "outer"));
@@ -1215,7 +1216,7 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
       expect(worktreeRegistry(inner)?.worktrees, work).toEqual(gitsRegistry(inner));
     }
     expect(gitProcessesSince(started)).toEqual([]);
-  }, 30_000);
+  }, 90_000);
 
   it("lists as Git does once a folder between such a checkout and the repository above gets a .git link to another repository's Git folder", async () => {
     const root = await temporaryRoot();
