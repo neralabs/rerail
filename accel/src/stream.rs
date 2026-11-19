@@ -95,8 +95,8 @@ impl<'s> State<'s> {
 
     /// The floor: a worker's measured start latency, four times over, and at least the prior.
     fn floor(&self) -> f64 {
-        static PRIOR: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-        let prior = *PRIOR.get_or_init(|| std::env::var("RERAIL_STREAM_FLOOR").ok().and_then(|v| v.parse().ok()).unwrap_or(100e-6));
+        // The run's setting (decision 0442).
+        let prior = rerail_context::setting(|| std::env::var("RERAIL_STREAM_FLOOR").ok().and_then(|v| v.parse().ok()).unwrap_or(100e-6_f64));
         (4.0 * self.latency.load(Ordering::Relaxed) as f64 * 1e-9).max(prior)
     }
 }

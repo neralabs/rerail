@@ -81,8 +81,8 @@ impl<'a> Slice<'a> {
     /// and does not split at the step's time bound: a SQLite progress handler interrupting a transaction that is one
     /// piece (`SQLITE_INTERRUPT`, rolled back), a training given up between its phases.
     pub fn stopper(&self) -> impl Fn() -> bool + Send + Sync + 'static {
-        let (file, yields) = (self.file.clone(), self.yields);
-        move || STOP.load(Ordering::Acquire) || (yields && runs_active(file.as_deref()))
+        let (file, yields, up) = (self.file.clone(), self.yields, upkeep());
+        move || up.stop.load(Ordering::Acquire) || (yields && up.runs.load(Ordering::Acquire) > 0) || (yields && file.as_deref().is_some_and(others_run_over))
     }
 
     /// A slice of `d` from now (tests, and jobs run by hand).
@@ -96,18 +96,35 @@ impl<'a> Slice<'a> {
     }
 }
 
-/// Runs under way in this process ([`run_begins`]).
-static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// The machine's upkeep (decision 0442): its jobs and their scheduler, the runs under way on it, the probes of other
+/// processes' runs, the settings in force.
+#[derive(Default)]
+struct Upkeep {
+    /// Runs under way on the machine ([`run_begins`]).
+    runs: std::sync::atomic::AtomicUsize,
+    probes: Mutex<Vec<(std::path::PathBuf, Option<std::fs::File>, Instant, bool)>>,
+    settings: OnceLock<Mutex<Settings>>,
+    jobs: Mutex<Vec<Entry>>,
+    stop: AtomicBool,
+    /// Held while a step runs: [`finish_soon`] waits for a step the scheduler's thread has taken out.
+    stepping: Mutex<()>,
+    scheduler: OnceLock<Option<std::thread::Thread>>,
+}
+
+fn upkeep() -> std::sync::Arc<Upkeep> {
+    rerail_context::machine::<Upkeep>()
+}
 
 /// A run under way, from [`run_begins`] to its drop. While one is, upkeep yields to it: a step in progress stops at
 /// its next check ([`Slice::over`]), and no step starts. Its work stays due, for after the run.
 pub struct RunGuard {
     _locks: Vec<std::fs::File>,
+    on: std::sync::Arc<Upkeep>,
 }
 
 impl Drop for RunGuard {
     fn drop(&mut self) {
-        RUNS.fetch_sub(1, Ordering::AcqRel);
+        self.on.runs.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -123,7 +140,8 @@ fn runs_lock(file: &std::path::Path) -> std::path::PathBuf {
 /// the cost statistics) yields too, through a shared lock on each one's `.runs.lock`. A file whose directory is
 /// missing is skipped.
 pub fn run_begins(files: &[&std::path::Path]) -> RunGuard {
-    RUNS.fetch_add(1, Ordering::AcqRel);
+    let on = upkeep();
+    on.runs.fetch_add(1, Ordering::AcqRel);
     #[cfg(unix)]
     let locks = files
         .iter()
@@ -139,13 +157,13 @@ pub fn run_begins(files: &[&std::path::Path]) -> RunGuard {
         let _ = files;
         Vec::new()
     };
-    RunGuard { _locks: locks }
+    RunGuard { _locks: locks, on }
 }
 
 /// Whether a run is under way: in this process, or (with `file`) in another over that file. The other processes'
 /// answer is a non-blocking exclusive probe of `file`'s `.runs.lock`, asked at most every 25 ms a file.
 pub fn runs_active(file: Option<&std::path::Path>) -> bool {
-    RUNS.load(Ordering::Acquire) > 0 || file.is_some_and(others_run_over)
+    upkeep().runs.load(Ordering::Acquire) > 0 || file.is_some_and(others_run_over)
 }
 
 /// Whether a run over `file` holds its `.runs.lock` (another process's, or this one's through [`run_begins`]).
@@ -153,8 +171,8 @@ fn others_run_over(file: &std::path::Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::fd::AsRawFd as _;
-        static PROBES: Mutex<Vec<(std::path::PathBuf, Option<std::fs::File>, Instant, bool)>> = Mutex::new(Vec::new());
-        let mut probes = PROBES.lock().unwrap_or_else(|p| p.into_inner());
+        let st_ = upkeep();
+        let mut probes = st_.probes.lock().unwrap_or_else(|p| p.into_inner());
         let at = match probes.iter().position(|(p, ..)| p == file) {
             Some(i) => i,
             None => {
@@ -357,20 +375,16 @@ impl Settings {
     }
 }
 
-static SETTINGS: OnceLock<Mutex<Settings>> = OnceLock::new();
-
-fn settings_cell() -> &'static Mutex<Settings> {
-    SETTINGS.get_or_init(|| Mutex::new(Settings::from_env()))
-}
-
 /// The settings in force.
 pub fn settings() -> Settings {
-    settings_cell().lock().unwrap_or_else(|p| p.into_inner()).clone()
+    let up = upkeep();
+    up.settings.get_or_init(|| Mutex::new(Settings::from_env())).lock().unwrap_or_else(|p| p.into_inner()).clone()
 }
 
 /// Replaces the settings (a command's flags; tests).
 pub fn configure(s: Settings) {
-    *settings_cell().lock().unwrap_or_else(|p| p.into_inner()) = s;
+    let up = upkeep();
+    *up.settings.get_or_init(|| Mutex::new(Settings::from_env())).lock().unwrap_or_else(|p| p.into_inner()) = s;
 }
 
 /// The machine's state, as the scheduler reads it at each poll.
@@ -593,19 +607,14 @@ struct Entry {
     last_ran: Option<Instant>,
 }
 
-static JOBS: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-static STOP: AtomicBool = AtomicBool::new(false);
-/// Held while a step runs: [`finish_soon`] waits for a step the scheduler's thread has taken out.
-static STEPPING: Mutex<()> = Mutex::new(());
-static SCHEDULER: OnceLock<Option<std::thread::Thread>> = OnceLock::new();
 
 /// A registered job; dropping it takes the job out (a store closed).
-pub struct Registered(u64);
+pub struct Registered(u64, std::sync::Arc<Upkeep>);
 
 impl Drop for Registered {
     fn drop(&mut self) {
-        JOBS.lock().unwrap_or_else(|p| p.into_inner()).retain(|e| e.id != self.0);
+        self.1.jobs.lock().unwrap_or_else(|p| p.into_inner()).retain(|e| e.id != self.0);
     }
 }
 
@@ -614,7 +623,7 @@ impl Drop for Registered {
 pub fn register(job: Box<dyn Job>) -> Registered {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let name = job.name();
-    JOBS.lock().unwrap_or_else(|p| p.into_inner()).push(Entry {
+    upkeep().jobs.lock().unwrap_or_else(|p| p.into_inner()).push(Entry {
         id,
         job,
         report: JobReport { name, ..Default::default() },
@@ -623,7 +632,7 @@ pub fn register(job: Box<dyn Job>) -> Registered {
         last_ran: None,
     });
     kick();
-    Registered(id)
+    Registered(id, upkeep())
 }
 
 /// Adds a job for the process's life, unless one of its name over its file is registered already: the runs over a
@@ -631,7 +640,8 @@ pub fn register(job: Box<dyn Job>) -> Registered {
 pub fn register_for_process(job: Box<dyn Job>) {
     let (name, file) = (job.name(), job.file());
     {
-        let jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
+        let st_ = upkeep();
+        let jobs = st_.jobs.lock().unwrap_or_else(|p| p.into_inner());
         if jobs.iter().any(|e| e.report.name == name && e.job.file() == file) {
             return;
         }
@@ -645,9 +655,11 @@ pub fn register_for_process(job: Box<dyn Job>) {
 pub fn forget_file(file: &std::path::Path) {
     let canonical = std::fs::canonicalize(file).ok();
     let over = |f: Option<std::path::PathBuf>| f.is_some_and(|f| f == file || canonical.as_ref().is_some_and(|c| std::fs::canonicalize(&f).is_ok_and(|g| g == *c)));
-    let _stepping = STEPPING.lock().unwrap_or_else(|p| p.into_inner());
+    let st_ = upkeep();
+    let _stepping = st_.stepping.lock().unwrap_or_else(|p| p.into_inner());
     let gone: Vec<Entry> = {
-        let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
+        let st_ = upkeep();
+        let mut jobs = st_.jobs.lock().unwrap_or_else(|p| p.into_inner());
         let (gone, kept) = std::mem::take(&mut *jobs).into_iter().partition(|e| over(e.job.file()));
         *jobs = kept;
         gone
@@ -658,7 +670,7 @@ pub fn forget_file(file: &std::path::Path) {
 
 /// Starts the scheduler's thread, once (when the settings have it on).
 pub fn start() {
-    SCHEDULER.get_or_init(|| {
+    upkeep().scheduler.get_or_init(|| {
         if !settings().on {
             return None;
         }
@@ -668,14 +680,16 @@ pub fn start() {
 
 /// Asks the scheduler to poll now (a job that has just become due).
 pub fn kick() {
-    if let Some(Some(t)) = SCHEDULER.get() {
+    let st_ = upkeep();
+    if let Some(Some(t)) = st_.scheduler.get() {
         t.unpark();
     }
 }
 
 /// Every job's record.
 pub fn report() -> Vec<JobReport> {
-    let jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
+    let st_ = upkeep();
+    let jobs = st_.jobs.lock().unwrap_or_else(|p| p.into_inner());
     jobs.iter().map(|e| JobReport { waiting: e.due_since.map(|t| t.elapsed().as_secs_f64()), ..e.report.clone() }).collect()
 }
 
@@ -693,7 +707,7 @@ fn scheduler() {
     lower_this_thread();
     let mut ticks = cpu_ticks();
     let mut idle_polls = 0u32;
-    while !STOP.load(Ordering::Acquire) {
+    while !upkeep().stop.load(Ordering::Acquire) {
         let s = settings();
         let c = read_conditions(&mut ticks);
         idle_polls = if c.busy < s.idle_busy { idle_polls + 1 } else { 0 };
@@ -722,7 +736,8 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
     // Which jobs to run, oldest run first; the lock is not held while a job steps.
     let mut order: Vec<(Option<Instant>, u64, bool, bool)> = Vec::new();
     {
-        let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
+        let st_ = upkeep();
+        let mut jobs = st_.jobs.lock().unwrap_or_else(|p| p.into_inner());
         for e in jobs.iter_mut() {
             if !s.runs(&e.report.name) || e.held_until.is_some_and(|h| h > now) {
                 continue;
@@ -769,7 +784,7 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
     let pass_end = now + s.poll;
     for (_, id, urgent, yields) in order {
         loop {
-            if STOP.load(Ordering::Acquire) || (!all && Instant::now() >= pass_end) {
+            if upkeep().stop.load(Ordering::Acquire) || (!all && Instant::now() >= pass_end) {
                 return ran;
             }
             // `finish_soon` holds `STEPPING` through its pass.
@@ -794,7 +809,8 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
 /// One step of job `id` (taken out of the list while it runs), at its priority, then the CPU share's pause (with
 /// `pause`). `None`: the job is gone, or failed.
 fn step_job(id: u64, s: &Settings, pause: bool, yields: bool) -> Option<(Step, Option<std::path::PathBuf>)> {
-    let stepping = STEPPING.lock().unwrap_or_else(|p| p.into_inner());
+    let st_ = upkeep();
+    let stepping = st_.stepping.lock().unwrap_or_else(|p| p.into_inner());
     step_job_held(id, s, pause, yields, Some(stepping))
 }
 
@@ -802,21 +818,24 @@ fn step_job(id: u64, s: &Settings, pause: bool, yields: bool) -> Option<(Step, O
 /// let go before the step's pause).
 fn step_job_held(id: u64, s: &Settings, pause: bool, yields: bool, stepping: Option<std::sync::MutexGuard<'_, ()>>) -> Option<(Step, Option<std::path::PathBuf>)> {
     let mut e = {
-        let mut jobs = JOBS.lock().unwrap_or_else(|p| p.into_inner());
+        let st_ = upkeep();
+        let mut jobs = st_.jobs.lock().unwrap_or_else(|p| p.into_inner());
         let i = jobs.iter().position(|e| e.id == id)?;
         jobs.swap_remove(i)
     };
     let threads = e.job.threads().max(1) as f64;
     // The scheduler's thread is background between steps; the caller's ([`run_now`], [`finish_soon`]) is the
     // caller's own.
-    let scheduler = SCHEDULER.get().and_then(Option::as_ref).is_some_and(|t| t.id() == std::thread::current().id());
+    let st_ = upkeep();
+    let scheduler = st_.scheduler.get().and_then(Option::as_ref).is_some_and(|t| t.id() == std::thread::current().id());
     let qos = e.job.qos();
     if scheduler && qos != Qos::Background {
         set_thread_qos(qos);
     }
     let (c0, t0) = (crate::score::thread_cpu(), Instant::now());
     let file = e.job.file();
-    let slice = Slice { until: t0 + s.step, memory: s.memory, stop: &STOP, file: file.clone(), yields };
+    let st_ = upkeep();
+    let slice = Slice { until: t0 + s.step, memory: s.memory, stop: &st_.stop, file: file.clone(), yields };
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.job.step(&slice))).unwrap_or_else(|_| Err("panicked".into()));
     let (wall, cpu) = (t0.elapsed().as_secs_f64(), crate::score::thread_cpu() - c0);
     if scheduler && qos != Qos::Background {
@@ -849,11 +868,11 @@ fn step_job_held(id: u64, s: &Settings, pause: bool, yields: bool, stepping: Opt
     if s.log {
         eprintln!("rerail upkeep: {} step {:.1} ms wall {:.1} ms CPU: {:?}", e.report.name, wall * 1e3, cpu * 1e3, out.as_ref().map_or_else(|| e.report.last_error.clone().unwrap_or_default(), |o| format!("{:?}", o.0)));
     }
-    JOBS.lock().unwrap_or_else(|p| p.into_inner()).push(e);
+    upkeep().jobs.lock().unwrap_or_else(|p| p.into_inner()).push(e);
     drop(stepping);
     // The pause that keeps `threads` busy for `wall` within `cpu` of a core on average.
     let pause = if pause { wall * (threads / s.cpu - 1.0) } else { 0.0 };
-    if pause > 0.0 && !STOP.load(Ordering::Acquire) {
+    if pause > 0.0 && !upkeep().stop.load(Ordering::Acquire) {
         std::thread::park_timeout(Duration::from_secs_f64(pause.min(60.0)));
     }
     out
@@ -884,7 +903,8 @@ pub fn finish_soon() {
     // A step the scheduler's thread is in has its job out of the list: wait for it, and hold the scheduler off
     // through the pass, so a step it takes out next is not one this pass misses either. Not waited for, the process
     // exited under the step, and its work was rolled back (ep2's frames sweep, 31 runs in a row).
-    let _stepping = STEPPING.lock().unwrap_or_else(|p| p.into_inner());
+    let st_ = upkeep();
+    let _stepping = st_.stepping.lock().unwrap_or_else(|p| p.into_inner());
     let mut ticks = cpu_ticks();
     for _ in 0..100 {
         if !run_due(&s, true, &mut ticks, Pass::Utility) {
@@ -1039,7 +1059,7 @@ mod tests {
         assert_eq!(unsafe { libc::flock(other.as_raw_fd(), libc::LOCK_SH) }, 0);
         std::thread::sleep(Duration::from_millis(30));
         assert!(others_run_over(&store), "the other run's shared lock is seen");
-        let slice = Slice { until: Instant::now() + Duration::from_secs(10), memory: 0, stop: &STOP, file: Some(store.clone()), yields: true };
+        let slice = Slice { until: Instant::now() + Duration::from_secs(10), memory: 0, stop: &upkeep().stop, file: Some(store.clone()), yields: true };
         assert!(slice.over() && slice.stopper()(), "a step over the file stops");
         drop(other);
         std::thread::sleep(Duration::from_millis(30));

@@ -1,65 +1,23 @@
 # Decision 0442: every non-constant static in the engine, by where it goes (check-no-global-state.py).
 # path::NAME<TAB>class<TAB>why; classes: stays, run, connection, shared, review. Only shrinks.
 accel/src/ane/mod.rs::INSTANCE	stays	an id counter: append-only, the same meaning in every run
-accel/src/ane/mod.rs::STORE	shared	the host's model store (the content store's compiled models): the store's
-accel/src/blocks.rs::HOST	machine	the host blocks made, for the machine's memory account
-accel/src/budget.rs::MEMORY	machine	the machine's memory budget
-accel/src/budget.rs::METAL	machine	the device's memory budget
-accel/src/cost_model.rs::MODEL	machine	the learned cost model of the machine
-accel/src/cost_model.rs::VERSION	machine	the learned cost model's version
-accel/src/exec.rs::BUSY	machine	the job pool's lanes in use
-accel/src/exec.rs::LAST	machine	the machine's measured slowdown, sampled
-accel/src/exec.rs::MADE	machine	the job pool made once
-accel/src/exec.rs::N	machine	the job pool's width
-accel/src/exec.rs::PIN	machine	the job pool's measured pin
-accel/src/exec.rs::POOL	machine	the job pool
-accel/src/exec.rs::POOLS	machine	the job pool's lanes
-accel/src/exec.rs::SERVICES	machine	the pool's named services
-accel/src/exec.rs::WAITS	machine	the pool's wait accounts
-accel/src/forms.rs::FORMS	machine	the forms' observations, for the cost model
-accel/src/gpu/join.rs::LIBS	machine	the device's compiled libraries
+accel/src/cost_model.rs::NEXT	stays	an id counter: append-only (model versions no two machines share)
+accel/src/exec.rs::MADE	stays	rayon's global pool, built once: rayon keeps one per process, and every parallel loop reaches it; a caller's jobs on it carry their run (decision 0442)
+accel/src/exec.rs::N	stays	the size of rayon's global pool, read once as it is built (`MADE`)
 accel/src/gpu/join.rs::RATIO	stays	the OS's timebase ratio: a constant of the machine read once
-accel/src/gpu/mod.rs::BEGUN	machine	the device's launches begun
-accel/src/gpu/mod.rs::BESIDE	machine	the device's launches beside
-accel/src/gpu/mod.rs::GPU	machine	the device
-accel/src/gpu/mod.rs::ON	run	a setting: read as the run starts
-accel/src/gpu/mod.rs::RUNNING	machine	the device's launches running
-accel/src/gpu/shared.rs::BIG	machine	the device's big-lease lock
+accel/src/gpu/shared.rs::BIG	stays	a test lock
 accel/src/gpu/shared.rs::EVICTOR	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::GUARD	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::LEASE_HOOK	stays	code registered at load (a hook)
-accel/src/gpu/shared.rs::LIVE	machine	the device's bytes leased
 accel/src/gpu/shared.rs::OTHER_RESERVED	stays	code registered at load (a hook)
-accel/src/gpu/shared.rs::PIPELINES	machine	the device's pipelines
-accel/src/gpu/shared.rs::POOL	machine	the device's buffer pool
-accel/src/gpu/shared.rs::SHARED	machine	the device's shared queue and buffers
-accel/src/gpu/shared.rs::SLAB_IDLE	machine	the device's idle-slab cap
+accel/src/gpu/shared.rs::SHARED	stays	the device and its one queue: the forest's, one per process (code registered at load)
 accel/src/price.rs::FIRST_PRICE	stays	code registered at load (a hook)
-accel/src/price.rs::LEARNED	machine	the learned price rates of the machine
-accel/src/price.rs::LEARNED_VERSION	machine	the learned price rates' version
-accel/src/price.rs::PRICED	machine	whether the machine's prices were read
-accel/src/price.rs::RUN	run	this run's warm samples
-accel/src/program_steps.rs::DROPPED	machine	the cost observations' queue: dropped
-accel/src/program_steps.rs::KEEP	machine	whether the cost observations are kept
-accel/src/program_steps.rs::PENDING	machine	the cost observations' queue
-accel/src/program_steps.rs::RATES	machine	the learned program rates
-accel/src/score.rs::DROPPED	machine	the cost samples' queue: dropped
+accel/src/price.rs::VERSIONS	stays	an id counter: append-only (rate versions no two machines share)
 accel/src/score.rs::EPOCH	stays	the process's start: a clock origin, the same for every run
-accel/src/score.rs::KEEP	machine	whether the cost samples are kept
 accel/src/score.rs::NEXT	stays	an id counter: append-only
-accel/src/score.rs::SAMPLES	machine	the cost samples' queue
-accel/src/score.rs::TRACE	run	a setting's log file
 accel/src/sharded.rs::NEXT	stays	an id counter: append-only
-accel/src/stream.rs::PRIOR	machine	the machine's measured floor
-accel/src/upkeep.rs::JOBS	machine	the machine's idle jobs
 accel/src/upkeep.rs::NEXT_ID	stays	an id counter: append-only
-accel/src/upkeep.rs::PROBES	machine	the idle jobs' probes of other processes
-accel/src/upkeep.rs::RUNS	machine	runs under way, for the idle jobs
-accel/src/upkeep.rs::SCHEDULER	machine	the idle jobs' scheduler thread
 accel/src/upkeep.rs::SERIAL	stays	a test lock
-accel/src/upkeep.rs::SETTINGS	machine	the idle jobs' settings
-accel/src/upkeep.rs::STEPPING	machine	the idle jobs' step lock
-accel/src/upkeep.rs::STOP	machine	the idle jobs' stop
 native/crates/blocks/src/alloc.rs::POLICY	machine	the machine's allocation policy, set once by its caller
 native/crates/blocks/src/block.rs::ZEROED	run	a measurement read by a run (two runs at once mix it)
 native/crates/blocks/src/mem.rs::RESERVED	machine	the machine's reserved address space, for the memory account

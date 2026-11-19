@@ -138,8 +138,10 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
 /// The library of a variant's source, compiled the first time (a thread that asks meanwhile waits for it).
 fn library(variant: &str, source: impl FnOnce() -> String) -> Result<metal::Library, String> {
     type Lib = std::sync::Arc<std::sync::Mutex<Option<metal::Library>>>;
-    static LIBS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Lib>>> = std::sync::OnceLock::new();
-    let slot = std::sync::Arc::clone(LIBS.get_or_init(Default::default).lock().expect("the libraries").entry(variant.to_owned()).or_default());
+    // The device's libraries on this machine (decision 0442).
+    #[derive(Default)]
+    struct Libs(std::sync::Mutex<std::collections::HashMap<String, Lib>>);
+    let slot = std::sync::Arc::clone(rerail_context::machine::<Libs>().0.lock().expect("the libraries").entry(variant.to_owned()).or_default());
     let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(l) = &*s {
         return Ok(l.clone());

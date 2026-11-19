@@ -32,10 +32,17 @@ pub struct Form {
     pub missing: Option<String>,
 }
 
-static FORMS: Mutex<Option<HashMap<(&'static str, String), Form>>> = Mutex::new(None);
+/// The record since the last drain: the machine's observations for its cost model (decision 0442).
+#[derive(Default)]
+struct Forms(Mutex<Option<HashMap<(&'static str, String), Form>>>);
+
+fn forms() -> std::sync::Arc<Forms> {
+    rerail_context::machine::<Forms>()
+}
 
 fn with(kind: &'static str, key: &str, name: &str, f: impl FnOnce(&mut Form)) {
-    let mut forms = FORMS.lock().unwrap_or_else(|p| p.into_inner());
+    let held = forms();
+    let mut forms = held.0.lock().unwrap_or_else(|p| p.into_inner());
     let e = forms.get_or_insert_with(HashMap::new).entry((kind, key.to_owned())).or_insert_with(|| Form { kind, key: key.to_owned(), name: name.to_owned(), ..Default::default() });
     if e.name.is_empty() {
         e.name = name.to_owned();
@@ -70,13 +77,15 @@ pub fn missing(kind: &'static str, key: &str, name: &str, reason: &str, batches:
 
 /// The record since the last drain, emptied.
 pub fn drain() -> Vec<Form> {
-    let mut forms = FORMS.lock().unwrap_or_else(|p| p.into_inner());
+    let held = forms();
+    let mut forms = held.0.lock().unwrap_or_else(|p| p.into_inner());
     forms.take().map(|m| m.into_values().collect()).unwrap_or_default()
 }
 
 /// The record since the last drain, kept (a profile's view).
 pub fn peek() -> Vec<Form> {
-    let forms = FORMS.lock().unwrap_or_else(|p| p.into_inner());
+    let held = forms();
+    let forms = held.0.lock().unwrap_or_else(|p| p.into_inner());
     forms.as_ref().map(|m| m.values().cloned().collect()).unwrap_or_default()
 }
 

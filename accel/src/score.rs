@@ -380,21 +380,30 @@ pub struct Sample {
     pub threads: u32,
 }
 
-static KEEP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static SAMPLES: Mutex<Vec<Sample>> = Mutex::new(Vec::new());
+/// The machine's samples for its cost model, kept for the engine to take (decision 0442).
+#[derive(Default)]
+struct Samples {
+    keep: std::sync::atomic::AtomicBool,
+    held: Mutex<Vec<Sample>>,
+    dropped: std::sync::atomic::AtomicU64,
+}
+
+fn samples() -> std::sync::Arc<Samples> {
+    rerail_context::machine::<Samples>()
+}
 /// The most samples held for the engine to take: past it, new ones are dropped (and counted).
 const HELD: usize = 100_000;
-static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Keeps every finished job's sample from now on, for [`take_samples`].
 pub fn keep_samples(on: bool) {
-    KEEP.store(on, Ordering::Relaxed);
+    samples().keep.store(on, Ordering::Relaxed);
 }
 
 /// The samples kept since the last take, and how many were dropped since (more than [`HELD`] waiting).
 pub fn take_samples() -> (Vec<Sample>, u64) {
-    let s = std::mem::take(&mut *SAMPLES.lock().unwrap_or_else(|p| p.into_inner()));
-    (s, DROPPED.swap(0, Ordering::Relaxed))
+    let samples = samples();
+    let s = std::mem::take(&mut *samples.held.lock().unwrap_or_else(|p| p.into_inner()));
+    (s, samples.dropped.swap(0, Ordering::Relaxed))
 }
 
 /// A launch of a job: its form's name, units and estimate.
@@ -476,16 +485,19 @@ static NEXT: AtomicU64 = AtomicU64::new(1);
 const AVG: f64 = 0.2;
 
 /// The trace's file, opened once, its header written (`RERAIL_SCOREBOARD`).
-fn trace() -> Option<&'static Mutex<std::fs::File>> {
-    static TRACE: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
-    TRACE
+/// The run's own (decision 0442): its setting's file.
+fn trace() -> Option<std::sync::Arc<Mutex<std::fs::File>>> {
+    #[derive(Default)]
+    struct Trace(OnceLock<Option<std::sync::Arc<Mutex<std::fs::File>>>>);
+    rerail_context::local::<Trace>()
+        .0
         .get_or_init(|| {
             let path = std::env::var("RERAIL_SCOREBOARD").ok().filter(|p| !p.is_empty())?;
             let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).ok()?;
             let _ = writeln!(f, "job\tlane\tthread\tlaunches\tforms\tunits\testimate\tqueued\tstart\tend\tok\tcpu\tphases");
-            Some(Mutex::new(f))
+            Some(std::sync::Arc::new(Mutex::new(f)))
         })
-        .as_ref()
+        .clone()
 }
 
 fn since(t: Instant) -> f64 {
@@ -621,7 +633,8 @@ impl Scoreboard {
         if units > 0.0 && t.items.windows(2).all(|w| w[0].form == w[1].form) && let Some(first) = t.items.first() {
             crate::price::observe(t.lane, first.form, t.items.len() as u32, units, share, cpu, crate::exec::cores_slowdown(), cold, ok);
         }
-        if KEEP.load(Ordering::Relaxed) && units > 0.0 {
+        let kept = samples();
+        if kept.keep.load(Ordering::Relaxed) && units > 0.0 {
             let sample = Sample {
                 lane: t.lane,
                 forms: t.items.iter().map(|i| i.form).collect::<Vec<_>>().join(","),
@@ -638,11 +651,11 @@ impl Scoreboard {
                 load: crate::exec::cores_slowdown(),
                 threads: crate::exec::threads() as u32,
             };
-            let mut held = SAMPLES.lock().unwrap_or_else(|p| p.into_inner());
+            let mut held = kept.held.lock().unwrap_or_else(|p| p.into_inner());
             if held.len() < HELD {
                 held.push(sample);
             } else {
-                DROPPED.fetch_add(1, Ordering::Relaxed);
+                kept.dropped.fetch_add(1, Ordering::Relaxed);
             }
         }
         if let Some(f) = trace() {
