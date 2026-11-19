@@ -12,8 +12,8 @@ typedef struct Result { uint32_t taskOrdinal,localOrdinal,start,label,captureSta
 typedef struct FinalCapture { uint32_t label,node,start,end,textStart,textLength,propertyStart,propertyCount,retained; } FinalCapture;
 typedef struct Arena { uint32_t start,capacity,cursor; } Arena;
 typedef struct Status { uint32_t error,resultCount,captureCount,programCounter,finalCaptureCount,propertyCount,outputByteCount,reserved; } Status;
-typedef struct Shape { uint32_t nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames; } Shape;
-UKL_REFLECT_STRUCT(Shape, nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames)
+typedef struct Shape { uint32_t nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames,wide; } Shape;
+UKL_REFLECT_STRUCT(Shape, nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames,wide)
 // flags: [0] a task failed (bit 0 an interpreter task, bit 1 a micro walk), [2] the group settled (skip), [3] a group did not settle within its
 // encoded rounds, [4 + round % 2] the round changed a label.
 // How a program's results land: mode 0 roots, 1 captured nodes (into scratch row `slot`), 2 and
@@ -1031,6 +1031,8 @@ DEFINE_KERNEL2(label_passes, label_formula,
   Tree t={chunk,d};
   uint32_t nodes=d.nodes,fw=(nodes+31u)/32u,region=FORMULA_REGION(d,file);
   if(nodes==0u)return;
+  // A dispatch of one size class (`shape.wide`, 0459): a file of the other class is the other dispatch's.
+  if(shape.wide!=0u&&(fw>=(shape.wide>>1u))!=((shape.wide&1u)!=0u))return;
   // Profiling (`shape.profile`): per step kind its members (`stats[op]`), then parent and child reads (16, 17), the
   // (file, formula)s (18), and the steps within a conjunction read down or climbed (19, 20).
   bool profile=shape.profile!=0u;

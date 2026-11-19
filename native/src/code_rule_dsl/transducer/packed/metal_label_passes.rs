@@ -681,6 +681,9 @@ struct Shape {
     lanes: u32,
     /// A walk's frames, its stack in `stacks` (`label_micro`, `label_group`, `root_records`: the tier's).
     frames: u32,
+    /// `label_formula`'s size class (`formula_classes`): 0 every file; else `words << 1 | 1` the files of at least
+    /// `words` words, `words << 1` those of fewer (decision 0459).
+    wide: u32,
 }
 
 /// A walk's steps before it spills a frame, and between spills: well past a short walk's (most take
@@ -1082,6 +1085,20 @@ fn encoder_of<'c>(command: &'c metal::CommandBufferRef, times: &mut Option<Encod
     }
 }
 
+/// `encoder_of`, its dispatches concurrent where `concurrent` (they neither read nor write what another writes).
+fn encoder_concurrent_of<'c>(command: &'c metal::CommandBufferRef, times: &mut Option<EncoderTimes>, label: &str, concurrent: bool) -> &'c metal::ComputeCommandEncoderRef {
+    if !concurrent {
+        return encoder_of(command, times, label);
+    }
+    match times.as_mut().and_then(|times| times.next(label)) {
+        Some(descriptor) => {
+            descriptor.set_dispatch_type(metal::MTLDispatchType::Concurrent);
+            command.compute_command_encoder_with_descriptor(descriptor)
+        }
+        None => command.compute_command_encoder_with_dispatch_type(metal::MTLDispatchType::Concurrent),
+    }
+}
+
 /// Where `label_formula`'s dispatches are noted (`RERAIL_FORMULA_TRACE=<file>`, with `RERAIL_GPU_KERNEL_TIMES`): a
 /// measurement switch, a line a dispatch.
 fn formula_trace() -> Option<&'static std::sync::Mutex<std::fs::File>> {
@@ -1103,6 +1120,32 @@ fn formula_width() -> u64 {
 
 /// `label_formula`'s threads a (file, formula).
 const FORMULA_WIDTH: u64 = 128;
+/// A file of at least this many words a thread of `FORMULA_WIDTH` gets a wide group (0459, `formula_classes`).
+const FORMULA_WIDE_WORDS_A_THREAD: usize = 4;
+
+/// `label_formula`'s dispatches for a batch whose files have `words` words each: `(Shape::wide, width)` each. One
+/// at `narrow` threads a group where every file is small, one at `most` where every file is large, else the large
+/// files' at `most` and then the rest at `narrow` (`RERAIL_FORMULA_WIDE=off`: one at `narrow`).
+fn formula_classes(words: impl Iterator<Item = usize>, narrow: u64, most: u64) -> Vec<(u32, u64)> {
+    static OFF: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_FORMULA_WIDE").is_ok_and(|v| v == "off"));
+    let wide = most.min(1024);
+    let threshold = FORMULA_WIDE_WORDS_A_THREAD * narrow as usize;
+    let (mut large, mut small) = (false, false);
+    for words in words {
+        if words >= threshold {
+            large = true;
+        } else {
+            small = true;
+        }
+    }
+    if *OFF || wide <= narrow || !large {
+        return vec![(0, narrow)];
+    }
+    if !small {
+        return vec![(0, wide)];
+    }
+    vec![((threshold as u32) << 1 | 1, wide), ((threshold as u32) << 1, narrow)]
+}
 /// `RERAIL_FORMULA_FUSED=N` (a measurement switch, Q271): `label_formula` dispatches a level's formulas at once, as many as
 /// its scratch allows, with N groups a file (1: one group evaluates every formula of the file in turn), not one a (file,
 /// formula).
@@ -1523,7 +1566,8 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
             Pass::Formula { .. } => true,
             _ => false,
         });
-        2 * usize::from(programs) + usize::from(patterns) + 1 + 2 * usize::from(formulas)
+        // Formulas: their leaves, and a dispatch a size class (two, 0459).
+        2 * usize::from(programs) + usize::from(patterns) + 1 + 3 * usize::from(formulas)
     };
     let fixed = plan
         .steps
@@ -2870,17 +2914,21 @@ impl Runner<'_> {
         // Profiling (`RERAIL_PROF`): each step kind's members, the parent and child reads, the (file, formula)s.
         let profile = crate::code_rule_dsl::prof::on();
         let stats = MappedBuffer::zeroed::<u32>(self.device, if profile { FORMULA_STATS } else { 1 })?;
+        // A group's width by its file's size (0459): a file's group runs the formula's steps one after another, a pass
+        // over its words each, so a large file's group sets the dispatch's time unless it has the threads to read its
+        // words at once; a small file's group would leave them idle. A batch with both is two dispatches in one
+        // encoder, concurrent: they read and write apart (a file's own scratch region; its rows' words by atomics).
+        let narrow = formula_width().min(state.max_total_threads_per_threadgroup());
+        let classes = formula_classes(self.files.iter().map(|file| file.transducer_len().div_ceil(32)), narrow, state.max_total_threads_per_threadgroup());
         for first in (0..count).step_by(per) {
             let formulas = per.min(count - first);
-            let shape = Shape { item_count: first as u32, target_count: formulas as u32, queue: stride as u32, profile: u32::from(profile), ..base };
-            let encoder = encoder_of(&self.command, &mut self.encoder_times, KERNELS[FORMULA_KERNEL]);
+            let encoder = encoder_concurrent_of(&self.command, &mut self.encoder_times, KERNELS[FORMULA_KERNEL], classes.len() > 1);
             encoder.set_label(KERNELS[FORMULA_KERNEL]);
             crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[FORMULA_KERNEL]), 1);
             encoder.set_compute_pipeline_state(&state);
             for (index, buffer) in [&docs, &head, &headers, &words, rows, &scratch].into_iter().enumerate() {
                 encoder.set_buffer(index as u64, Some(buffer), 0);
             }
-            encoder.set_bytes(6, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
             encoder.set_buffer(7, Some(&leaves), 0);
             encoder.set_buffer(8, Some(&stats.buffer), 0);
             encoder.set_buffer(9, Some(&targets), 0);
@@ -2889,10 +2937,13 @@ impl Runner<'_> {
             encoder.set_buffer(11, Some(&rules), 0);
             encoder.set_buffer(12, Some(texts.unwrap_or(&rules)), 0);
             self.bind_slabs(encoder, chunk);
-            let width = formula_width().min(state.max_total_threads_per_threadgroup());
-            encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, formulas.min(rows_a_file) as u64, 1), MTLSize::new(width, 1, 1));
+            for &(wide, width) in &classes {
+                let shape = Shape { item_count: first as u32, target_count: formulas as u32, queue: stride as u32, profile: u32::from(profile), wide, ..base };
+                encoder.set_bytes(6, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
+                encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, formulas.min(rows_a_file) as u64, 1), MTLSize::new(width, 1, 1));
+                self.outcome.dispatches += 1;
+            }
             encoder.end_encoding();
-            self.outcome.dispatches += 1;
             let us = self.split(KERNELS[FORMULA_KERNEL]);
             if let (Some(us), Some(trace)) = (us, formula_trace()) {
                 // One line a dispatch: its formulas, their words (sum, most), their stack depth, the files, its µs.
@@ -3788,4 +3839,21 @@ fn programs_of<'p>(passes: &'p [Pass<'_>], rows: bool) -> Vec<(&'p Program, &'p 
             _ => None,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod formula_class_tests {
+    use super::formula_classes;
+
+    /// 0459: small files alone are one narrow dispatch, large alone one wide, both two (the large first), and a
+    /// pipeline no wider than the narrow width one narrow.
+    #[test]
+    fn a_batch_is_dispatched_by_its_files_size_classes() {
+        let threshold = super::FORMULA_WIDE_WORDS_A_THREAD * 128;
+        assert_eq!(formula_classes([10, threshold - 1].into_iter(), 128, 1024), vec![(0, 128)]);
+        assert_eq!(formula_classes([threshold, threshold * 4].into_iter(), 128, 1024), vec![(0, 1024)]);
+        let wide = (threshold as u32) << 1;
+        assert_eq!(formula_classes([10, threshold].into_iter(), 128, 1024), vec![(wide | 1, 1024), (wide, 128)]);
+        assert_eq!(formula_classes([10, threshold].into_iter(), 128, 128), vec![(0, 128)]);
+    }
 }
