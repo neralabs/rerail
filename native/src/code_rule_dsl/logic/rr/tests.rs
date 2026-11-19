@@ -2320,7 +2320,6 @@ ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(
 /// file: its nodes are numbered in the file's id space, so `docof` of a script's root is the file's, as the `raw_text`
 /// it stands at is, and its lines are the file's.
 #[test]
-#[ignore = "0431 step 3: a file's programs in its id space"]
 fn a_program_a_file_holds_is_the_files() {
     let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
     let rule = r#"
@@ -2341,7 +2340,6 @@ calls(x, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), ki
 /// Decision 0431 §4: a file's programs are granules of the file, so an edit inside one script renumbers no node of
 /// the other script and none of the file's own.
 #[test]
-#[ignore = "0431 step 3: a file's programs in its id space"]
 fn an_edit_in_one_script_renumbers_no_other_program() {
     let html = |body: &str| format!("<!doctype html>\n<p>hi</p>\n<script>\n{body}\n</script>\n<script>g(2); h(3)</script>\n");
     let rule = r#"

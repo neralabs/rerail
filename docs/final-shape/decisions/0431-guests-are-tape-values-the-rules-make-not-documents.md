@@ -74,6 +74,11 @@ code may be named by which rules asked for it, or in what order.
    choice below; step 4 came first, as the user asked on 2026-11-18). Hiding keeps one comparison on a node's key
    (0058, Tim's 0168), and order keys and the batch are unchanged; the `docof` and `node` views map the program's key
    to its file. The choice was made so:
+   As built (step 3, `docof`): a program's document entry carries its file's key (`Guest::file`, `Projected::file`,
+   `ViewDoc::file`), which `docof` gives for its nodes and spans, on the CPU and the device; its ids keep its own key.
+   `node`'s document column stays the program's own key, the document underneath: it is the column a batch's
+   lookups keep to one document by (0329's `lookup_in`, SQL's shards, T's per-document typing), and no library rule
+   binds it.
    A first scheme put its
    nodes in the file's key, as granules in a reserved slot range. It met 0058's hiding, which shows a node by one
    comparison on its document's key (and on document columns), and Tim's 0168 (PR #508), which keeps that one

@@ -1193,6 +1193,9 @@ pub const HIDDEN_KEYS: u32 = (1 << 30) + (1 << 29);
 #[derive(Clone, Debug)]
 pub struct Guest {
     pub host: u32,
+    /// Its file's key (decision 0431 §4): a program's file (its host's, through a host that is a program too), whose
+    /// `docof`, lines and findings are its own; 0 for a tape value or a value, which are no file's.
+    pub file: u32,
     /// `at`: the host's node or span (`host << 32 | local`).
     pub at: i64,
     pub grammar: String,
@@ -1747,6 +1750,9 @@ impl Dialect {
 pub struct Projected {
     pub module: Option<crate::code_rule_dsl::module_path::ModulePath>,
     pub key: u32,
+    /// The key of the file it is part of (decision 0431 §4): its own, or a program's file's (`Guest::file`). Its
+    /// `docof`; its nodes keep its own key, which hiding reads.
+    pub file: u32,
     pub tag: u8,
     pub facts: Arc<Facts>,
     /// The tape nodes it numbers, its nodes and tokens, as a rank index (`ranks::Ranks`, decision 0353 step 2): a
@@ -1965,9 +1971,11 @@ impl Projected {
             }
         });
         let tokens = ranks.count(Item::Token);
+        let file = guest.as_ref().map(|(g, _)| *g).filter(|g| g.made == Made::Host && g.file != 0).map_or(key, |g| g.file);
         let mut p = Projected {
             module: None,
             key,
+            file,
             tag: f.tag,
             ranks,
             idx: OnceLock::new(),
@@ -2666,6 +2674,8 @@ struct Extra {
     cols: Vec<[i64; 2]>,
     node_texts: Vec<[i64; 2]>,
     docofs: Vec<[i64; 2]>,
+    /// The document's file's key (`Projected::file`), the `docof` of its spans: set per document.
+    file: i64,
     values: Vec<[i64; 2]>,
     value_lits: Vec<[i64; 2]>,
     static_values: Vec<[i64; 2]>,
@@ -2765,7 +2775,7 @@ impl Extra {
     #[allow(clippy::too_many_arguments)]
     fn span(&mut self, sp: i64, first: usize, last: usize, col: usize, body: &str, text_too: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
         if self.docof {
-            self.docofs.push([sp, sp >> 32]);
+            self.docofs.push([sp, self.file]);
         }
         if self.text && text_too {
             text.push([sp, string(body) as i64]);
@@ -2855,7 +2865,7 @@ impl Extra {
             }
         }
         if self.docof {
-            let key = i64::from(p.key);
+            let key = i64::from(p.file);
             self.docofs.extend(p.node_ids().chain(p.token_ids()).map(|(_, _, n)| n).chain(ends.map(|local| p.global(local))).map(|n| [n, key]));
         }
     }
@@ -2936,6 +2946,7 @@ impl Extra {
         let f = &*p.facts;
         self.values(p, d, dialect, string)?;
         self.nodes(p, string);
+        self.file = i64::from(p.file);
         let key = i64::from(p.key);
         use granules::ExtraSpan;
         let span = |kind: ExtraSpan, i: usize| extra_span(key, kind, u32::try_from(i).unwrap_or(u32::MAX));
@@ -4540,14 +4551,14 @@ impl Viewed {
             return g;
         }
         if matches!(place, Place::Docof) {
-            return i64::from(p.key);
+            return i64::from(p.file);
         }
         let (line, last, col) = p.extra.as_ref().expect("core.rr's lines").place(span);
         match place {
             Place::Line => i64::from(line),
             Place::EndLine => i64::from(last),
             Place::Col => i64::from(col),
-            Place::Docof => i64::from(p.key),
+            Place::Docof => i64::from(p.file),
         }
     }
 
@@ -4557,7 +4568,7 @@ impl Viewed {
             let local = i as u32;
             return match (column, place) {
                 (0, _) => p.global(local),
-                (_, Place::Docof) => i64::from(p.key),
+                (_, Place::Docof) => i64::from(p.file),
                 _ => Self::loc_value(p, place, 0, p.span(local), column),
             };
         }

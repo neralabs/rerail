@@ -1967,7 +1967,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
 
 /// Decision 0431 R8: CPU and Metal give the same rows, the device reading the same tapes, with both kinds: tape values
 /// read in the fixpoint (R10's program: values, a value inside one, and a scan that lists none), and a file's programs
-/// (an HTML file's scripts).
+/// (an HTML file's scripts), whose `docof` and lines are the file's (R1).
 #[cfg(target_os = "macos")]
 #[test]
 fn cpu_and_metal_read_the_same_tape_values() {
@@ -2014,8 +2014,8 @@ flat(x) :- kind(m, "identifier"), text(m, x).
     let programs = r#"
 .language html
 #include "html/embeds.rr"
-.decl calls(x: symbol)
-calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x).
+.decl calls(x: symbol, d: number, l: number)
+calls(x, d, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), docof(c, d), line(c, l).
 .output calls
 "#;
     let (_, on_cpu) = batch_run_on("r8-programs-cpu", &[("a.html", html)], programs, "calls", Binding::Cpu);
@@ -2023,6 +2023,7 @@ calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(
     // (Q266), so the uploads here say nothing of the programs' rows.
     let ((_, on_metal), _) = on_device("r8-programs-metal", &[("a.html", html)], programs, "calls");
     assert_eq!(on_cpu.len(), 2, "both scripts' calls: {on_cpu:?}");
+    assert_eq!(on_cpu[0][1], on_cpu[1][1], "both scripts are the file's: {on_cpu:?}");
     assert_eq!(on_metal, on_cpu, "a file's programs: the device's rows are the CPU's");
 }
 

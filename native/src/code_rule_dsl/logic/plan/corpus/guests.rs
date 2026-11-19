@@ -596,7 +596,9 @@ impl Guests {
         }
         let Some((facts, root, digest)) = parse(&host.path, label, wrap, text, parses)? else { return Ok(Got::Not) };
         let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], range, &host.path);
-        self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
+        let file = self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key));
+        self.host_of.insert(i64::from(key), file);
+        let file = file as u32;
         let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
         Ok(Got::New(Document {
             key,
@@ -604,7 +606,7 @@ impl Guests {
             core: format!("{}#guest:{grammar_name}:{at}", host.core),
             digest,
             facts,
-            guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+            guest: Some(Arc::new(Guest { host: host_key, file, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
             tape: None,
         }))
@@ -633,7 +635,7 @@ impl Guests {
             core: format!("#tape:{grammar_name}:{key}"),
             digest,
             facts,
-            guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place: none.clone(), in_file: none, made: Made::Tape { places: vec![here] } })),
+            guest: Some(Arc::new(Guest { host: 0, file: 0, at: 0, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place: none.clone(), in_file: none, made: Made::Tape { places: vec![here] } })),
             // A tape value is no module's: its text is a string's, not a file's.
             module: None,
             tape: None,
@@ -663,7 +665,9 @@ impl Guests {
         let place = Placement::Segments(Arc::new(program.segments));
         let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text)? else { return Ok(None) };
         let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &host.path);
-        self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
+        let file = self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key));
+        self.host_of.insert(i64::from(key), file);
+        let file = file as u32;
         let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
         Ok(Some(Document {
             key,
@@ -671,7 +675,7 @@ impl Guests {
             core: format!("{}#guest:{}:{at}", host.core, via.id()),
             digest,
             facts,
-            guest: Some(Arc::new(Guest { host: host_key, at, grammar: label.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+            guest: Some(Arc::new(Guest { host: host_key, file, at, grammar: label.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
             tape,
         }))
@@ -700,7 +704,7 @@ impl Guests {
             core: format!("#value:{grammar_name}:{key}"),
             digest,
             facts,
-            guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
+            guest: Some(Arc::new(Guest { host: 0, file: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
             // A value is no module's: its text is a rule's, not a file's.
             module: None,
             tape: None,
