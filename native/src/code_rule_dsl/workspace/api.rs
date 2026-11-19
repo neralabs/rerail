@@ -105,8 +105,10 @@ impl GitRevisionSource {
 #[napi]
 impl GitRevisionSource {
     #[napi(constructor)]
-    pub fn new(root: String, revision: String, analysis_scope: String) -> Result<Self> {
-        let snapshot = crate::git_workspace::snapshot::Snapshot::scoped(Path::new(&root), &revision, &analysis_scope)
+    pub fn new(root: String, revision: String, analysis_scope: String, invocation: Option<String>) -> Result<Self> {
+        let snapshot = crate::git_workspace::snapshot::Snapshot::scoped_from(
+            Path::new(&root), &revision, &analysis_scope, Path::new(invocation.as_deref().unwrap_or(&root)),
+        )
             .map_err(invalid)?;
         Ok(Self { snapshot: Arc::new(snapshot) })
     }

@@ -78,7 +78,12 @@ fn decode_tree(tree: gix::Tree<'_>) -> io::Result<Arc<[RawTreeEntry]>> {
         }
         Ok(RawTreeEntry { name: name.to_vec(), mode: entry.mode().value(), target: entry.id().detach() })
     }).collect::<io::Result<Vec<_>>>()?;
-    Ok(sorted_entries(entries))
+    let entries = sorted_entries(entries);
+    if let Some(pair) = entries.windows(2).find(|pair| pair[0].name == pair[1].name) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData,
+            format!("duplicate entry {:?} in Git tree {}", pair[0].name.as_bstr(), tree.id)));
+    }
+    Ok(entries)
 }
 
 fn sorted_entries(mut entries: Vec<RawTreeEntry>) -> Arc<[RawTreeEntry]> {
@@ -168,6 +173,16 @@ pub fn verified_object(repo: &gix::Repository, id: gix::ObjectId) -> io::Result<
 
 fn verified_blob(repo: &gix::Repository, id: gix::ObjectId) -> io::Result<gix::Blob<'_>> {
     verified_object(repo, id)?.try_into_blob().map_err(error)
+}
+
+pub fn decoded_commit<'a>(commit: &'a gix::Commit<'_>) -> io::Result<gix::objs::CommitRef<'a>> {
+    let decoded = commit.decode().map_err(error)?;
+    decoded.author().and_then(|sig| sig.time()).map_err(error)?;
+    decoded.committer().and_then(|sig| sig.time()).map_err(error)?;
+    for (name, _) in &decoded.extra_headers {
+        std::str::from_utf8(name).map_err(error)?;
+    }
+    Ok(decoded)
 }
 
 #[derive(Clone, Copy)]
@@ -512,28 +527,30 @@ impl Snapshot {
     }
 
     pub fn new(source: &Path, revision: &str) -> Result<Self, String> {
-        Self::open(source, revision, None)
+        Self::open(source, revision, None, source)
     }
 
     pub fn scoped(source: &Path, revision: &str, name: &str) -> Result<Self, String> {
-        let scope = crate::content_store::analysis_scope::named(name).ok_or("analysis scope name must not be empty")?;
-        Self::open(source, revision, Some(scope))
+        Self::scoped_from(source, revision, name, source)
     }
 
-    fn open(source: &Path, revision: &str, scope: Option<String>) -> Result<Self, String> {
+    pub fn scoped_from(source: &Path, revision: &str, name: &str, invocation: &Path) -> Result<Self, String> {
+        let scope = crate::content_store::analysis_scope::named(name).ok_or("analysis scope name must not be empty")?;
+        Self::open(source, revision, Some(scope), invocation)
+    }
+
+    fn open(source: &Path, revision: &str, scope: Option<String>, invocation: &Path) -> Result<Self, String> {
         let repo = physical_objects(gix::discover(source).map_err(|e| e.to_string())?);
-        let prefix = if let Some(work) = repo.workdir() {
-            source
-                .canonicalize()
-                .map_err(|e| e.to_string())?
-                .strip_prefix(work.canonicalize().map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?
-                .to_path_buf()
-        } else {
-            PathBuf::new()
+        let work = repo.workdir().map(std::fs::canonicalize).transpose().map_err(|e| e.to_string())?;
+        let relative = |path: &Path| -> Result<PathBuf, String> {
+            let Some(work) = &work else { return Ok(PathBuf::new()); };
+            path.canonicalize().map_err(|e| e.to_string())?.strip_prefix(work)
+                .map(Path::to_owned).map_err(|e| e.to_string())
         };
+        let prefix = relative(source)?;
         let (id, commit, tree, selects_path) = {
-            let base = repo.workdir().map(|_| prefix.as_path());
+            let invocation = relative(invocation)?;
+            let base = work.as_ref().map(|_| invocation.as_path());
             let (mut target, selects_path) = revision::selection(&repo, revision, base)
                 .map_err(|e| format!("{revision}: {}", revision::failure_detail(&e)))?;
             let object = loop {
@@ -544,7 +561,8 @@ impl Snapshot {
             let id = object.id;
             match object.kind {
                 gix::object::Kind::Commit => {
-                    let tree = object.into_commit().tree_id().map_err(|e| e.to_string())?.detach();
+                    let commit = object.into_commit();
+                    let tree = decoded_commit(&commit).map_err(|e| format!("{revision}: malformed Git commit {id}: {e}"))?.tree();
                     (id, Some(id), tree, selects_path)
                 }
                 gix::object::Kind::Tree => (id, None, id, selects_path),

@@ -16,7 +16,7 @@ git_object_error(r, oid, reason) :- git_object_of(r, oid, "error", _, reason, _,
 
 // Successful records are immutable, keyed by authorized repository, object ID and decoder version.
 .decl git_record_key(repo: symbol, oid: symbol, version: symbol)
-git_record_key(r, oid, "git-record-1") :- git_root_repo(r), git_object_request(r, oid).
+git_record_key(r, oid, "git-record-2") :- git_root_repo(r), git_object_request(r, oid).
 
 .decl git_record(repo: symbol, oid: symbol, version: symbol, field: symbol, position: number, first: symbol, second: symbol, value: number, offset: number)
 git_record(r, oid, v, field, pos, a, b, n, o) :-
@@ -75,6 +75,8 @@ git_tree_member(r, t, t) :- git_tree_walk_request(r, t).
 git_object_request(r, t) :- git_tree_member(r, _, t).
 git_tree_member(r, root, child) :-
     git_tree_member(r, root, t), git_tree_entry(r, t, _, 16384, child).
+git_tree_member(r, root, child) :-
+    git_tree_member(r, root, t), git_tree_entry_bytes(r, t, _, 16384, child).
 
 .decl git_tree_walk_error(repo: symbol, root: symbol, tree: symbol, reason: symbol)
 git_tree_walk_error(r, root, t, reason) :-

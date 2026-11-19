@@ -106,7 +106,7 @@ fn commit(repo: &Repo, sha: &str) -> Option<bool> {
     let Some(id) = resolve(&repo.repo, sha) else { return Some(false) };
     let object = verified_object(&repo.repo, id).ok()?;
     if object.kind != gix::object::Kind::Commit { return Some(false); }
-    object.into_commit().decode().ok()?;
+    crate::git_workspace::snapshot::decoded_commit(&object.into_commit()).ok()?;
     Some(true)
 }
 

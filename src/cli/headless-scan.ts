@@ -169,11 +169,11 @@ interface RefRules {
 }
 
 /** Load the ref's policies through the same catalog rules used for a checkout. */
-function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies): RefRules {
+function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies, invocation: string): RefRules {
   const binding = loadNativeBinding();
   let source: NativeGitRevisionSource;
   try {
-    source = new binding.GitRevisionSource(root, ref, "rules-ref");
+    source = new binding.GitRevisionSource(root, ref, "rules-ref", invocation);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot resolve --rules-ref ${ref} in ${root}. ${detail}`, { cause: error });
@@ -603,7 +603,7 @@ async function scanReport(
   const databasePath = join(scratch, "rerail.sqlite");
   const explicitRr = (options.rr?.length ?? 0) > 0;
   const loadedRr = new (loadNativeBinding().LoadedRrPolicies)();
-  const refRules = options.rulesRef === undefined ? undefined : rulesAtRef(root, options.rulesRef, loadedRr);
+  const refRules = options.rulesRef === undefined ? undefined : rulesAtRef(root, options.rulesRef, loadedRr, resolve(options.repo));
   const installed = loadRuleCatalog();
   const catalog = options.rulesRef !== undefined ? refRules?.rr?.catalog
     : explicitRr ? undefined : worktreeScanCatalog(installed, root, undefined, path => loadedRr.load(path));
@@ -736,7 +736,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   }
   const analysisStore = analysisRun === undefined ? ":memory:" : durableStore;
   try {
-    const source = options.revision === undefined ? undefined : new binding.GitRevisionSource(root, options.revision, options.analysisScope!);
+    const source = options.revision === undefined ? undefined : new binding.GitRevisionSource(root, options.revision, options.analysisScope!, resolve(options.repo));
     if (source !== undefined)
       source.setSourceLanguages(JSON.stringify({ suffixes: Object.fromEntries(SOURCE_LANGUAGES), names: Object.fromEntries(SOURCE_NAMES) }));
     const home = openHomeDatabase(homeDatabase);

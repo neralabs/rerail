@@ -47,6 +47,7 @@ pub fn resolve(repo: &Repository, expression: &str, path_base: Option<&Path>) ->
 
 pub(super) fn selection(repo: &Repository, expression: &str, path_base: Option<&Path>) -> Result<(ObjectId, bool)> {
     let mut revision = Revision {
+        anchor_name: expression.split(['^', '~', ':']).next().unwrap_or_default().split("@{").next().unwrap_or_default(),
         selects_path: false,
         repo,
         path_base,
@@ -69,6 +70,7 @@ pub(super) fn selection(repo: &Repository, expression: &str, path_base: Option<&
 }
 
 struct Revision<'repo> {
+    anchor_name: &'repo str,
     selects_path: bool,
     repo: &'repo Repository,
     path_base: Option<&'repo Path>,
@@ -152,6 +154,7 @@ impl<'repo> Revision<'repo> {
     }
 
     fn tree_path(&self, id: ObjectId, path: &BStr) -> Result<ObjectId> {
+        let directory = path.ends_with(b"/") || path.ends_with(b"/.");
         let path = self.path(path)?;
         let mut tree = self.peel(id, Some(Kind::Tree))?.into_tree();
         if path.is_empty() {
@@ -169,6 +172,9 @@ impl<'repo> Revision<'repo> {
             let entry = &entries[index];
             let target = entry.target;
             if segments.peek().is_none() {
+                if directory && !entry.is_tree() {
+                    return Err(lookup_error("wrong-object-kind", format_args!("Git path {path:?} is not a directory")));
+                }
                 return Ok(target);
             }
             if !entry.is_tree() {
@@ -188,7 +194,7 @@ impl<'repo> Revision<'repo> {
 
     fn matching_commit(
         &self,
-        tips: Vec<ObjectId>,
+        tips: Vec<gix::Commit<'repo>>,
         pattern: &BStr,
         matcher: &MessagePattern,
         negated: bool,
@@ -197,19 +203,15 @@ impl<'repo> Revision<'repo> {
         let mut seen = HashSet::new();
         let mut pending = gix::revwalk::PriorityQueue::new();
         let mut order = 0;
-        let mut enqueue = |id, pending: &mut gix::revwalk::PriorityQueue<_, _>| -> Result<()> {
-            if seen.insert(id) {
-                let commit = self.read(id)?.try_into_commit()?;
-                pending.insert((commit.committer()?.time()?.seconds, std::cmp::Reverse(order)), id);
-                order += 1;
-            }
+        let mut enqueue = |commit: gix::Commit<'repo>, pending: &mut gix::revwalk::PriorityQueue<_, _>| -> Result<()> {
+            pending.insert((commit.committer()?.time()?.seconds, std::cmp::Reverse(order)), commit);
+            order += 1;
             Ok(())
         };
-        for id in tips {
-            enqueue(id, &mut pending)?;
+        for commit in tips {
+            if seen.insert(commit.id) { enqueue(commit, &mut pending)?; }
         }
-        while let Some(id) = pending.pop_value() {
-            let commit = self.read(id)?.try_into_commit()?;
+        while let Some(commit) = pending.pop_value() {
             if matcher.matches(commit.message_raw_sloppy()) ^ negated {
                 return Ok(commit.id);
             }
@@ -218,7 +220,8 @@ impl<'repo> Revision<'repo> {
                 .is_none_or(|commits| commits.binary_search(&commit.id).is_err())
             {
                 for parent in commit.parent_ids() {
-                    enqueue(parent.detach(), &mut pending)?;
+                    let id = parent.detach();
+                    if seen.insert(id) { enqueue(self.read(id)?.try_into_commit()?, &mut pending)?; }
                 }
             }
         }
@@ -242,6 +245,18 @@ impl delegate::Revision for Revision<'_> {
     ) -> Result<()> {
         let kind = self.repo.object_hash();
         let len = prefix.hex_len();
+        if self.anchor_name.contains('-') {
+            if let Some(reference) = self.repo.try_find_reference(self.anchor_name)? {
+                self.reference = Some(reference);
+                return Ok(());
+            }
+            let valid = self.anchor_name.rsplit_once("-g").is_some_and(|(base, hex)| {
+                hex.eq_ignore_ascii_case(&prefix.to_string()) && base.rsplit_once('-').is_some_and(|(name, distance)| {
+                    !name.is_empty() && !distance.is_empty() && distance.bytes().all(|b| b.is_ascii_digit())
+                })
+            });
+            if !valid { return Err(lookup_error("missing-revision", self.anchor_name)); }
+        }
         if len < kind.len_in_hex()
             && let Some(reference) = self.repo.try_find_reference(&prefix.to_string())?
         {
@@ -423,8 +438,8 @@ impl delegate::Navigate for Revision<'_> {
         })?;
         if !self.anchor()?.is_empty() {
             return self.navigate(|revision, id| {
-                let id = revision.peel(id, Some(Kind::Commit))?.id;
-                revision.matching_commit(vec![id], pattern, &matcher, negated)
+                let commit = revision.peel(id, Some(Kind::Commit))?.into_commit();
+                revision.matching_commit(vec![commit], pattern, &matcher, negated)
             });
         }
         let references = self.repo.references()?;
@@ -444,13 +459,16 @@ impl delegate::Navigate for Revision<'_> {
                 }
             };
             if object.kind == Kind::Commit {
-                tips.push(object.id);
+                tips.push(object.into_commit());
             }
         }
-        if let Some(id) = self.repo.head()?.id() {
-            let object = self.peel(id.detach(), None)?;
-            if object.kind == Kind::Commit {
-                tips.push(object.id);
+        match self.repo.head().and_then(|head| head.id().map(|id| self.peel(id.detach(), None)).transpose()) {
+            Ok(Some(object)) if object.kind == Kind::Commit => tips.push(object.into_commit()),
+            Ok(_) => {}
+            Err(error) => {
+                let error = self.read_failure.borrow_mut().take().unwrap_or(error);
+                eprintln!("Git message search skipped HEAD: {}", failure_detail(&error));
+                first_error.get_or_insert(error);
             }
         }
         let found = self.matching_commit(tips, pattern, &matcher, negated).map_err(|error| {

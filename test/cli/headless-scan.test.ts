@@ -403,6 +403,30 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     const complete = await scan(root, { revision: "HEAD", analysisScope: "explicit-walk", rr: [policy] });
     expect(complete.status, JSON.stringify(complete.failures)).toBe("completed");
     expect(complete.violations.map(finding => finding.message)).toEqual(["complete tree"]);
+    const rawDirectory = execFileSync("git", ["mktree", "-z", "--missing"], {
+      cwd: root, input: Buffer.concat([Buffer.from(`040000 tree ${missing}\t`), Buffer.from([0xfc, 0])]), encoding: "utf8",
+    }).trim();
+    const raw = await scan(root, { revision: rawDirectory, analysisScope: "explicit-walk", rr: [policy] });
+    expect(raw.violations.map(finding => finding.message).sort()).toEqual(
+      [`unreadable tree ${rawDirectory}`, `unreadable tree ${missing}`].sort(),
+    );
+  }, 30_000);
+
+  it("identifies duplicate tree entries and rejects malformed commit metadata at selection", async () => {
+    const root = checkout();
+    const blob = git(root, "rev-parse", "HEAD:a.py");
+    const entry = Buffer.concat([Buffer.from("100644 same.py\0"), Buffer.from(blob, "hex")]);
+    const literal = (kind: string, input: Buffer | string) => execFileSync("git",
+      ["hash-object", "-t", kind, "--literally", "-w", "--stdin"], { cwd: root, input, encoding: "utf8" }).trim();
+    const duplicate = literal("tree", Buffer.concat([entry, entry]));
+    const source = new (loadNativeBinding().GitRevisionSource)(root, duplicate, "malformed");
+    expect(() => source.readDirectory(".")).toThrow(/duplicate entry.*same\.py/u);
+    const tree = execFileSync("git", ["mktree"], { cwd: root, input: `040000 tree ${duplicate}\tbad\n`, encoding: "utf8" }).trim();
+    const result = await scan(root, { revision: tree, analysisScope: "malformed" });
+    expect(result.status).toBe("failed");
+    expect(result.failures).toContainEqual(expect.objectContaining({ path: "bad", message: expect.stringContaining(duplicate) }));
+    const commit = literal("commit", `tree ${tree}\n\nmissing signatures\n`);
+    await expect(scan(root, { revision: commit, analysisScope: "malformed" })).rejects.toThrow(`malformed Git commit ${commit}`);
   });
 
   it("reports unreadable requested Git paths while scanning the paths it can read", async () => {
@@ -618,16 +642,17 @@ Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
     git(root, "pack-refs", "--all");
     git(root, "checkout", "--quiet", "--detach", "HEAD");
     const short = git(root, "rev-parse", "--short", "HEAD");
+    const invalidExpressions = ["HEAD:./a.py/", `z-g${short}`, `release-1-g${short}-dirty`, `${short}-dirty`];
     const expressions = [
       short, "@", "main", "HEAD@{1}", "@{0}", "@{1}", "HEAD:src/", "HEAD^{/}", "release", "release^{}", ":a.py", ":./a.py",
-      "HEAD:./src", ":/seed", "HEAD^{/^seed}", ":/^(seed|missing)", "HEAD^{/!-^second}",
+      "HEAD:./src", ":/seed", "HEAD^{/^seed}", ":/^(seed|missing)", "HEAD^{/!-^second}", `release-1-g${short}`,
     ];
     const policy = join(root, "refs.rr");
     writeFileSync(policy, `
 #include "git.rr"
 .policy "refs" revision 1
 .violation Resolved(at: span, expression: symbol, oid: symbol) "{expression} {oid}"
-${expressions.map(expr => `git_revision_request(r, "${expr}") :- git_root_repo(r).`).join("\n")}
+${[...expressions, ...invalidExpressions].map(expr => `git_revision_request(r, "${expr}") :- git_root_repo(r).`).join("\n")}
 Resolved(@place("git", 1), e, o) :- git_revision(_, e, o).
 `);
     const report = await scan(root, { rr: [policy] });
@@ -641,11 +666,15 @@ Resolved(@place("git", 1), e, o) :- git_revision(_, e, o).
     }
     const nested = new (loadNativeBinding().GitRevisionSource)(join(root, "src"), "HEAD:./", "expressions");
     expect(nested.readFile("nested.py", 100)?.toString()).toBe("nested = 1\n");
-    for (const [revision, field] of [["HEAD:./src", "tree"], ["HEAD^{/^seed}", "commit"], [":/^seed", "commit"]] as const) {
+    for (const [revision, field] of [["HEAD:./", "tree"], ["HEAD^{/^seed}", "commit"], [":/^seed", "commit"]] as const) {
       const selected = await scan(join(root, "src"), { revision, analysisScope: "expressions" });
-      expect(selected.source?.[field]).toBe(git(root, "rev-parse", "--verify", revision));
+      expect(selected.source?.[field]).toBe(git(join(root, "src"), "rev-parse", "--verify", revision));
     }
-  });
+    const expected = git(root, "rev-parse", "main");
+    writeFileSync(join(root, ".git/HEAD"), "1".repeat(40) + "\n");
+    expect(git(root, "rev-parse", "--verify", ":/second")).toBe(expected);
+    expect(new (loadNativeBinding().GitRevisionSource)(root, ":/second", "expressions").commit).toBe(expected);
+  }, 30_000);
 
   it("reads physical objects and explicitly addresses replacements in both interfaces", async () => {
     const root = checkout();

@@ -135,7 +135,7 @@ impl Git {
         match object.kind {
             gix::object::Kind::Commit => {
                 let commit = object.into_commit();
-                let decoded = commit.decode().map_err(|_| "malformed")?;
+                let decoded = snapshot::decoded_commit(&commit).map_err(|_| "malformed")?;
                 records.push(Record::text(
                     "tree",
                     decoded.tree.to_str().map_err(|_| "malformed")?,
@@ -183,8 +183,14 @@ impl Git {
                 }
             }
             gix::object::Kind::Tree => {
-                let entries = snapshot::decode_verified_tree(self.snapshot_root.as_deref(), observed.as_deref(), object.into_tree())
-                    .map_err(|_| "malformed")?;
+                let entries = match snapshot::decode_verified_tree(self.snapshot_root.as_deref(), observed.as_deref(), object.into_tree()) {
+                    Ok(entries) => entries,
+                    Err(error) => {
+                        let mut record = Record::text("error", "malformed");
+                        record.second = error.to_string();
+                        return Ok(vec![record]);
+                    }
+                };
                 records.extend(entries.iter().map(raw_tree_record));
             }
             gix::object::Kind::Tag => {
