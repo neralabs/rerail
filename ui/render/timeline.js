@@ -370,13 +370,13 @@ export function renderTimeline(tl, rail, sess, turns, cs, page) {
   placeTicks(rail, tl);
 }
 
-/** One rail tick per correction card, at the card's offset within the timeline. */
+/** One rail tick per correction card, at the card's offset within the timeline, in its card's outcome colour. */
 export function placeTicks(rail, tl) {
   if (!rail || !tl || rail.hidden) return;
   const top = tl.getBoundingClientRect().top;
   for (const old of rail.querySelectorAll(".tick")) old.remove();
   for (const card of tl.querySelectorAll(".corr")) {
-    const tick = h("button.tick", { "aria-label": "Jump to violation", "data-act": "jump", "data-i": card.dataset.key });
+    const tick = h("button.tick", { "aria-label": "Jump to violation", "data-act": "jump", "data-i": card.dataset.key, "data-outcome": card.dataset.outcome });
     tick.style.top = `${card.getBoundingClientRect().top - top + 14}px`;
     rail.append(tick);
   }

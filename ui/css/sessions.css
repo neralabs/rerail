@@ -115,6 +115,8 @@ body[data-panel="open"] .sess > aside{display:none}
 .rail .line{position:absolute;left:11px;top:0;bottom:0;width:2px;background:var(--border)}
 .rail .tick{position:absolute;left:6px;width:12px;height:12px;border-radius:50%;background:var(--steer-fg);border:2px solid var(--card);box-shadow:0 0 0 1px var(--steer-fg);cursor:pointer;transform:translateY(-6px)}
 .rail .tick:hover{transform:translateY(-6px) scale(1.25)}
+/* A tick takes its card's outcome: yellow for steered, the quiet grey of a logged card. */
+.rail .tick[data-outcome="logged"]{background:var(--log-fg);box-shadow:0 0 0 1px var(--log-fg)}
 .tl{grid-column:2;padding:6px 16px 16px 8px;display:flex;flex-direction:column;gap:4px;min-width:0;container-type:inline-size}
 .tl .turns{display:flex;flex-direction:column;gap:4px}
 .bound{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.05em;padding:8px 0}

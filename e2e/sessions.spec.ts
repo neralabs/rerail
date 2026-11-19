@@ -90,6 +90,12 @@ test.describe("History by session", () => {
     const cards = page.locator("#content .tl .tbody .corr");
     await expect(cards.first().locator("> .spk")).toHaveText("Rerail");
     await expect(cards.nth(1).locator("> .spk")).toBeHidden();
+    // Each rail dot takes its card's outcome: grey for a logged card, yellow for a steered one.
+    const dots = await page.locator("#content .rail .tick").evaluateAll(ticks => ticks.map(tick => ({
+      dot: (tick as HTMLElement).dataset.outcome, card: document.getElementById(`c-${(tick as HTMLElement).dataset.i}`)?.dataset.outcome,
+    })));
+    expect(new Set(dots.map(d => d.dot))).toEqual(new Set(["logged", "steered"]));
+    expect(dots.every(d => d.dot === d.card)).toBe(true);
 
     await page.locator('#content [data-act="sfilter"][data-i="corr"]').click();
     const lines = await page.locator("#content .daygrp").evaluateAll(groups => groups.map(group => {
