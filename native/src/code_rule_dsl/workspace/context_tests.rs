@@ -2655,6 +2655,40 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
     restarted.close();
 }
 
+/// A clause comparing each integer with every one before it (`follows` to the end, a `compare` of two captures) runs
+/// out of its allowance on a list of 20,000 and fails alone with `budget-exceeded`, its sibling walks reading the
+/// list's gaps made once for the file (`gap::gaps_of`), not once a walk: each walk made them before, 6,125 times
+/// under the full allowance, uncharged (Q134's n² on the workspace's path, where no tape's `GapScope` is).
+#[test]
+fn a_quadratic_compare_over_the_siblings_runs_out_of_its_allowance_making_the_gaps_once() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("compare-allowance");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let costly = json!({
+        "id": "costly", "violation": { "anchor": "witness.span", "code": "LEAST", "message": "least so far" },
+        "forbid": { "ast": { "language": "python", "rule": {
+            "kind": "integer", "pattern": "$A",
+            "not": { "follows": { "stopBy": "end", "kind": "integer", "pattern": "$B",
+                "compare": { "left": "A", "op": "le", "right": "B" } } } } } }
+    });
+    let code_rule = compile("compare-allowance", json!([costly]));
+    let numbers = (0..20_000).map(|n| n.to_string()).collect::<Vec<_>>().join(", ");
+    let file = json!([{ "path": "generated.py", "language": "python", "source": format!("x = [{numbers}]\n") }]);
+    let workspace = stored_workspace(&store, "/compare-allowance", &code_rule);
+    // About 500 walks' worth of the allowance (the full one is 50,000 polls, 6,125 walks).
+    TEST_CLAUSE_WORK_BUDGET.set(Some(4_000));
+    let made = crate::code_rule_dsl::matcher::gap::GAPS_MADE.load(std::sync::atomic::Ordering::Relaxed);
+    let evaluated = apply_json(&workspace, 1, file);
+    let made = crate::code_rule_dsl::matcher::gap::GAPS_MADE.load(std::sync::atomic::Ordering::Relaxed) - made;
+    TEST_CLAUSE_WORK_BUDGET.set(None);
+    let failures = evaluated["evaluation"]["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{evaluated}");
+    assert_eq!(failures[0]["code"], json!("budget-exceeded"), "{evaluated}");
+    // Other tests' files may make theirs meanwhile, on other threads: well under the walks' 500.
+    assert!(made < 100, "the parents' gaps made {made} times");
+    workspace.close();
+}
+
 /// A utility verdict a clause computed while its allowance ran out is not remembered for the
 /// clauses after it: the second clause reads the same utility at the same node and either finds
 /// its violation or fails, never reports nothing. Both share a `define`'s utility, so a verdict

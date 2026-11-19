@@ -44,7 +44,13 @@ pub(in crate::code_rule_dsl) struct ParentGaps {
 
 const NONE: u32 = u32::MAX;
 
+/// The parents' gaps made (`parent_gaps`), on any thread, for tests: a scope makes each parent's once.
+#[cfg(any(test, feature = "test-hooks"))]
+pub static GAPS_MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn parent_gaps<D: Doc>(grammar: &'static TokenGrammar, parent: &Node<'_, D>) -> Option<ParentGaps> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    GAPS_MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (children, gaps) = stored_gaps(grammar, parent)?;
     Some(ParentGaps {
         ids: children.iter().map(Node::node_id).collect(),
@@ -108,12 +114,29 @@ impl Drop for GapScope {
     }
 }
 
-/// `parent`'s gaps: the scope's, made the first time they are asked, else made here.
+/// The parents' gaps of the file being matched (`resolve::file_index`), outside a tape's `GapScope`: a sibling walk
+/// reads its parent's (`relation::charged`) on every path that matches a file, and a parent of n children made once a
+/// walk cost n² (Q134's shape: 6,125 makings of one 20,000-element list's in one clause). Keyed by the tape (its
+/// source), its dialect and the parent: a file's embedded languages are tapes of their own.
+type FileGaps = RefCell<std::collections::HashMap<(usize, GrammarDialect, usize), Option<Rc<ParentGaps>>>>;
+
+/// `parent`'s gaps: the tape scope's or the file's, made the first time they are asked, else made here.
 fn gaps_of<D: Doc>(dialect: GrammarDialect, grammar: &'static TokenGrammar, parent: &Node<'_, D>) -> Option<Rc<ParentGaps>> {
     let id = parent.node_id();
     TAPE_GAPS.with(|gaps| {
         let mut gaps = gaps.borrow_mut();
-        let Some(tape) = gaps.as_mut().filter(|tape| id < tape.nodes) else { return parent_gaps(grammar, parent).map(Rc::new) };
+        let Some(tape) = gaps.as_mut().filter(|tape| id < tape.nodes) else {
+            drop(gaps);
+            let Some(doc) = crate::code_rule_dsl::tape::tape_doc(parent) else { return parent_gaps(grammar, parent).map(Rc::new) };
+            let key = (std::sync::Arc::as_ptr(doc.document_source()) as usize, dialect, id);
+            let file = super::resolve::file_index(FileGaps::default);
+            if let Some(made) = file.borrow().get(&key) {
+                return made.clone();
+            }
+            let made = parent_gaps(grammar, parent).map(Rc::new);
+            file.borrow_mut().insert(key, made.clone());
+            return made;
+        };
         let at = match tape.by.iter().position(|(made, _)| *made == dialect) {
             Some(at) => at,
             None => {
