@@ -104,7 +104,7 @@ impl GitIgnore {
     /// marks skip-worktree by the blob the index holds. The sources are read again first, as an
     /// open reads them, so a check of them compares the files the new stack reads.
     fn refresh(&mut self) -> std::result::Result<(), String> {
-        if FileStamp::of(&self.index.path) == self.index.stamp {
+        if self.index.stamp == Some(FileStamp::of(&self.index.path)) {
             return Ok(());
         }
         let sources = self
@@ -363,7 +363,10 @@ fn exclude_stack(
 /// keeps the first one's time: the stamp tells that new file from the one read.
 struct IndexFile {
     path: PathBuf,
-    stamp: Option<FileStamp>,
+    /// The file's stamp when it was read (`None` inside where there was no file), or `None` where
+    /// that stamp could not tell a later write from it: then the next question reads the index
+    /// again, whatever it finds, an index removed meanwhile among them.
+    stamp: Option<Option<FileStamp>>,
     file: gix::index::File,
 }
 
@@ -374,7 +377,8 @@ impl IndexFile {
         // Stamped before it is read, so a write that lands meanwhile reads as a change at the
         // next question. A stamp that cannot tell a later write is not kept, so the next question
         // reads the index again.
-        let stamp = FileStamp::of(&path).filter(FileStamp::tells);
+        let stamp = FileStamp::of(&path);
+        let stamp = stamp.as_ref().is_none_or(FileStamp::tells).then_some(stamp);
         let file = match repository.open_index() {
             Ok(file) => file,
             Err(_) if !path.exists() => gix::index::File::from_state(
@@ -1387,6 +1391,25 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// An index removed after a read whose stamp was not kept reads as no index, as Git reads it:
+    /// the stamp not kept is not taken for the stamp of no file. The index's time is put an hour
+    /// ahead, which no file clock has left.
+    #[test]
+    fn reads_no_index_once_an_index_read_within_its_clock_step_is_removed() {
+        let root = fixture("removed", &[(".gitignore", "gen/\n"), ("gen/t.py", "")]);
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", "-f", "gen/t.py"]);
+        let index = root.join(".git/index");
+        set_modified(&index, modified(&index) + Duration::from_secs(3_600));
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(!ignore.ignored("gen/t.py", false).unwrap(), "tracked");
+        std::fs::remove_file(&index).unwrap();
+        assert!(
+            ignore.ignored("gen/t.py", false).unwrap(),
+            "with no index Git tracks nothing"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     /// A time is left once the clock has passed it by the step its digits show: a nanosecond time at
     /// the next reading, a time of 100 ns steps (NTFS) or of 10 ms steps (exFAT) a step on, and a
