@@ -125,6 +125,49 @@ fn gaps_of<D: Doc>(dialect: GrammarDialect, grammar: &'static TokenGrammar, pare
     })
 }
 
+/// The implied tokens a sibling walk passes between stored children of one parent, counted as the tree-sitter tree
+/// holds them: the candidates a walk over a full tree tests between two of the tape's (RER-131, PR #508's 7529228ce).
+/// A named-only tape leaves them out, so its walk tests fewer candidates for the same siblings, and its work budget,
+/// spent per candidate, bought more work than a full tree's: the walk charges these (`relation::charged`). Read from
+/// the parent's gaps (`gaps_of`, made once a parent within a tape's call); none for a document that is not a tape,
+/// and where the parent's kind has no automaton or its gaps cannot be read (its tokens are then stored, and walked).
+pub(super) struct ImpliedPassed(Option<Rc<ParentGaps>>);
+
+impl ImpliedPassed {
+    /// The gaps of `node`'s parent.
+    pub(super) fn of<D: Doc>(node: &Node<'_, D>) -> Self {
+        let read = crate::code_rule_dsl::tape::tape_doc(node).and_then(|doc| {
+            let dialect = *doc.get_lang();
+            let grammar = TokenGrammar::of_dialect_static(dialect)?;
+            gaps_of(dialect, grammar, &node.parent()?)
+        });
+        Self(read)
+    }
+
+    /// The implied tokens from the child `from` to the child `to` (node ids), walking `forward` or back; `to`
+    /// `None`: on to the parent's end, or back to its start. A gap's tokens lie before the child they are kept with
+    /// (`Gaps::before`), the last child's after it (`Gaps::end`).
+    pub(super) fn between(&self, from: usize, to: Option<usize>, forward: bool) -> usize {
+        let Some(read) = &self.0 else { return 0 };
+        let Ok(at) = read.ids.binary_search(&from) else { return 0 };
+        let before = |k: usize| read.gaps.before.get(k).map_or(0, Vec::len);
+        let to = match to {
+            Some(to) => match read.ids.binary_search(&to) {
+                Ok(end) => Some(end),
+                Err(_) => return 0,
+            },
+            None => None,
+        };
+        match (forward, to) {
+            (true, Some(end)) if end > at => (at + 1..=end).map(before).sum(),
+            (true, None) => (at + 1..read.ids.len()).map(before).sum::<usize>() + read.gaps.end.len(),
+            (false, Some(end)) if end < at => (end + 1..=at).map(before).sum(),
+            (false, None) => (0..=at).map(before).sum(),
+            _ => 0,
+        }
+    }
+}
+
 /// Where, relative to the node, the token is looked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) enum Place {
