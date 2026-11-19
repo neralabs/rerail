@@ -508,6 +508,13 @@ Progress (2026-11-18):
       combinations in turn; the lowerings not yet converted are bridged (`put_alts`). A clause writes each
       combination from one replay (`body_of`). The tests that took 131 s take 93 s. New test:
       `a_nest_of_disjunctions_is_outlined`.
+    - *Done (A3.4 stage 2, B for helpers).* A negated conjunction's helper is written by replaying the
+      conjunction per combination (`decide_conjunction`, `write_combinations`), its column types read off what the
+      written literals say (`Scan`). A helper's key is read off the image: its rules' templates (`template_of`: the
+      nodes, the head's relation left out, variables by slot, relations named through the renames), with its stem
+      and column types (`once_key`). `helper_once` writes every helper; the walk's end merges each that equals one
+      made before into it (`merge_helpers`, through `relinked`, as `link` merges across modules). `helpers_of`'s
+      decode into trees and `rename_rules` go. New test: `equal_helpers_of_one_walk_are_one`.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,

@@ -1241,6 +1241,21 @@ fn axes_refuse_by_name() {
 /// such helper per alternative; a shared variable the conjunction only tests is bound in the helper by the rule's
 /// other literals; a conjunction sharing none has one constant column. Printed, the program reads back as itself.
 #[test]
+fn equal_helpers_of_one_walk_are_one() {
+    // Two aggregates that only test `x` each need a context of x: the same rule, so one relation (`merge_helpers`).
+    let p = parse(concat!(
+        ".decl e(x: number)\n.decl f(y: number, w: number)\n.input e, f\n",
+        ".decl a(x: number, n: number, m: number)\n",
+        "a(x, n, m) :- e(x), n = count : { f(y, _), y > x }, m = count : { f(z, _), z > x }.\n",
+    ))
+    .unwrap();
+    let ctx: BTreeSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).filter(|h| h.starts_with("rr_ctx")).collect();
+    assert_eq!(ctx.len(), 1, "{:#?}", shown(&p, |_| true));
+    let printed = print_version(&p).and_then(|text| parse(&text)).unwrap();
+    assert_eq!(difference(&p, &printed), None);
+}
+
+#[test]
 fn a_nest_of_disjunctions_is_outlined() {
     // Five choices of two: past 16 combinations, the fifth is a helper relation of its alternatives, a rule each.
     let mut text = String::from(".decl e(x: number)\n.input e\n");
