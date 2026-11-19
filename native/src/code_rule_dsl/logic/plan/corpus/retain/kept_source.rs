@@ -115,7 +115,24 @@ impl Source for KeptSource {
         })
     }
 
+    /// From `at` (`ColDec::equal_range_from`): a probe in the column's order after the last one reads forward.
+    fn sorted_range_at(&self, column: usize, value: i64, at: &mut u32) -> Option<Range<u32>> {
+        if !self.leads(column) {
+            return None;
+        }
+        let (lo, hi) = self.kept.rows().col(column).dec().equal_range_from(*at as usize, value);
+        *at = lo as u32;
+        Some(lo as u32..hi as u32)
+    }
+
     fn sorts_rows(&self, _column: usize) -> bool {
         true
+    }
+
+    /// Its entry's canonical order: the order key's columns, then the rest (an entry put as given records none).
+    fn order(&self) -> Option<Vec<usize>> {
+        let rows = self.kept.rows();
+        let key = &rows.okey[..rows.nokey as usize];
+        (!key.is_empty()).then(|| key.iter().map(|&c| c as usize).chain((0..rows.arity as usize).filter(|c| !key.contains(&(*c as u16)))).collect())
     }
 }

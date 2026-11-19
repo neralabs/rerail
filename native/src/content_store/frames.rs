@@ -225,16 +225,16 @@ impl KeptAt {
         let k = view
             .get(&FactKey { rel: &self.rel.name, ident: &self.rel.ident, part: self.part })
             .ok_or_else(|| super::StoreError::Corrupt(format!("a kept entry its chain no longer holds: {} part {}", self.rel.name, self.part)))?;
-        let read = |c: &rerail_blocks::col::IntCol| {
+        let read = |each: &dyn Fn(&mut dyn FnMut(i64))| {
             let mut col = Vec::with_capacity(self.n);
-            c.for_each(|v| col.push(v));
+            each(&mut |v| col.push(v));
             col
         };
         if self.levels {
             let levels = k.rows.levels().ok_or_else(|| super::StoreError::Corrupt(format!("a kept entry's levels gone: {}", self.rel.name)))?;
-            return Ok(vec![read(levels)]);
+            return Ok(vec![read(&|f| levels.for_each(f))]);
         }
-        Ok((0..self.types.len()).map(|c| read(k.rows.col(c))).collect())
+        Ok((0..self.types.len()).map(|c| read(&|f| k.rows.col(c).for_each(f))).collect())
     }
 }
 

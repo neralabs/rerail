@@ -290,7 +290,7 @@ fn kept_entries_equal_their_frames() {
     let c = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let spaces: Vec<Vec<u8>> = c.prepare("SELECT DISTINCT space FROM facts_chain").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
     let (mut entries, mut rows, mut differ, mut no_frame, mut chain_bytes, mut files) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
-    let mut by_tag: std::collections::BTreeMap<&'static str, (usize, usize, usize)> = Default::default();
+    let mut by_tag: std::collections::BTreeMap<String, (usize, usize, usize)> = Default::default();
     let mut levels_bytes = 0usize;
     for s in &spaces {
         let space: [u8; 32] = s.as_slice().try_into().unwrap();
@@ -302,7 +302,7 @@ fn kept_entries_equal_their_frames() {
             rows += k.rows.len();
             for col in 0..k.rows.arity as usize {
                 let ic = k.rows.col(col);
-                let e = by_tag.entry(ic.tag_name()).or_default();
+                let e = by_tag.entry(ic.form()).or_default();
                 (e.0, e.1, e.2) = (e.0 + 1, e.1 + ic.len(), e.2 + ic.bytes());
             }
             levels_bytes += k.rows.levels().map_or(0, |l| l.bytes());
@@ -353,4 +353,103 @@ fn kept_entries_equal_their_frames() {
     eprintln!("  levels {levels_bytes} bytes");
     eprintln!("differ {differ}  with no frame {no_frame}  frames with no kept entry {no_kept}");
     assert_eq!((differ, no_kept), (0, 0));
+}
+
+/// Decision 0402's open question, over a real store (`RERAIL_KEPT_STORE`): what each column of the chain would take
+/// under the candidate encodings. Leading columns and the rest apart; GROUPS' group widths; sample values. Run with
+/// `--ignored --nocapture`; prints its report.
+#[test]
+#[ignore = "reads the store RERAIL_KEPT_STORE names"]
+fn chain_columns_by_candidate() {
+    use rerail_blocks::col;
+    let path = PathBuf::from(std::env::var("RERAIL_KEPT_STORE").expect("RERAIL_KEPT_STORE: a store's file"));
+    let c = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let spaces: Vec<Vec<u8>> = c.prepare("SELECT DISTINCT space FROM facts_chain").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+    let bits = |r: u64| 64 - r.leading_zeros() as usize;
+    // A group of 128 on a line of its own: its first value and slope, then each residual at the group's width.
+    let gline = |v: &[i64]| -> usize {
+        let (lo, hi) = v.iter().fold((i64::MAX, i64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+        let mut data = 0usize;
+        let (mut slo, mut shi) = (i64::MAX, i64::MIN);
+        for g in v.chunks(128) {
+            let n = g.len();
+            let slope = if n > 1 { (((g[n - 1] as i128 - g[0] as i128) << 16) / (n as i128 - 1)) as i64 } else { 0 };
+            (slo, shi) = (slo.min(slope), shi.max(slope));
+            let r: Vec<i128> = g.iter().enumerate().map(|(i, &x)| x as i128 - (g[0] as i128 + ((i as i128 * slope as i128) >> 16))).collect();
+            let (a, b) = r.iter().fold((i128::MAX, i128::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+            data += n * bits((b - a) as u64);
+        }
+        let ng = v.len().div_ceil(128);
+        let entry = bits((hi as i128 - lo as i128) as u64) + bits((shi as i128 - slo as i128) as u64) + 7 + bits(data as u64) + 16;
+        (data + ng * entry).div_ceil(64) * 8 + 16
+    };
+    // Each value's delta from the one before, in its own bits (a delta varint's floor; not random access).
+    let deltas = |v: &[i64]| -> usize { v.windows(2).map(|w| bits((w[1] as i128 - w[0] as i128).unsigned_abs() as u64) + 1).sum::<usize>().div_ceil(8) };
+    #[derive(Default)]
+    struct Sum { cols: usize, values: usize, now: usize, gline: usize, rel0: usize, split: usize, s18: usize, r18: usize, best: usize, deltas: usize }
+    let mut by: std::collections::BTreeMap<String, Sum> = Default::default();
+    let mut widths = [0usize; 65];
+    let mut by_rel: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+    let mut shown = [0usize; 2];
+    for s in &spaces {
+        let space: [u8; 32] = s.as_slice().try_into().unwrap();
+        let kept = KeptSpace::open(&path, &space, &chain_rows(&c, &space).unwrap()).unwrap();
+        for k in kept.view().all() {
+            let cols: Vec<Vec<i64>> = (0..k.rows.arity as usize).map(|i| { let mut v = Vec::with_capacity(k.rows.len()); k.rows.col(i).for_each(|x| v.push(x)); v }).collect();
+            for (i, v) in cols.iter().enumerate() {
+                let ic = k.rows.col(i);
+                let now = ic.bytes();
+                let g = if v.len() > 1 { gline(v) } else { now };
+                let rel0 = if i > 0 { col::choose(&v.iter().zip(&cols[0]).map(|(a, b)| a.wrapping_sub(*b)).collect::<Vec<_>>()).bytes() } else { now };
+                let split = col::choose(&v.iter().map(|x| x >> 32).collect::<Vec<_>>()).bytes() + col::choose(&v.iter().map(|x| x & 0xffff_ffff).collect::<Vec<_>>()).bytes() + 64;
+                let ch = |x: Vec<i64>| col::choose(&x).bytes();
+                let s18 = ch(v.iter().map(|x| x >> 18).collect()) + ch(v.iter().map(|x| x & 0x3ffff).collect()) + 64;
+                let r18 = if i > 0 { ch(v.iter().zip(&cols[0]).map(|(a, b)| (a >> 18).wrapping_sub(b >> 18)).collect()) + ch(v.iter().zip(&cols[0]).map(|(a, b)| (a & 0x3ffff) - (b & 0x3ffff)).collect()) + 64 } else { s18 };
+                let key = format!("{} {}", ic.form(), if k.rows.leads(i) { "lead" } else if i == 0 { "first" } else { "rest" });
+                let e = by.entry(key).or_default();
+                e.cols += 1;
+                e.values += v.len();
+                e.now += now;
+                e.gline += g.min(now);
+                e.rel0 += rel0.min(now);
+                e.split += split.min(now);
+                e.s18 += s18.min(now);
+                e.r18 += r18.min(rel0).min(s18).min(now);
+                e.best += now.min(g).min(rel0).min(split).min(s18).min(r18);
+                e.deltas += deltas(v);
+                let r = by_rel.entry(format!("{} c{i}", k.key.rel)).or_default();
+                (r.0, r.1) = (r.0 + v.len(), r.1 + now);
+                if ic.form() == "groups" {
+                    for gr in v.chunks(128) {
+                        let (a, b) = gr.iter().fold((i64::MAX, i64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+                        widths[bits((b as i128 - a as i128) as u64)] += gr.len();
+                    }
+                    for (gi, gr) in v.chunks(128).enumerate() {
+                        let (a, b) = gr.iter().fold((i64::MAX, i64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+                        let w = bits((b as i128 - a as i128) as u64);
+                        let slot = if w >= 50 { 1 } else if w >= 30 { 0 } else { continue };
+                        if shown[slot] < 6 {
+                            shown[slot] += 1;
+                            let show: Vec<String> = gr.iter().step_by(8).map(|x| format!("{x:x}")).collect();
+                            eprintln!("wide {w} {} c{i} of {} group {gi} ({} rows, leads {}): {}", k.key.rel, k.rows.arity, v.len(), k.rows.leads(i), show.join(" "));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("{:14} {:>7} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11}", "tag place", "cols", "values", "now", "gline", "rel c0", "split", "s18", "r18", "best", "deltas");
+    let mut t = Sum::default();
+    for (key, e) in &by {
+        eprintln!("{key:14} {:7} {:11} {:11} {:11} {:11} {:11} {:11} {:11} {:11} {:11}   now {:.1} best {:.1} deltas {:.1} bits", e.cols, e.values, e.now, e.gline, e.rel0, e.split, e.s18, e.r18, e.best, e.deltas, e.now as f64 * 8.0 / e.values.max(1) as f64, e.best as f64 * 8.0 / e.values.max(1) as f64, e.deltas as f64 * 8.0 / e.values.max(1) as f64);
+        (t.values, t.now, t.gline, t.rel0, t.split, t.s18, t.r18, t.best, t.deltas) = (t.values + e.values, t.now + e.now, t.gline + e.gline, t.rel0 + e.rel0, t.split + e.split, t.s18 + e.s18, t.r18 + e.r18, t.best + e.best, t.deltas + e.deltas);
+    }
+    eprintln!("all: now {} gline {} rel c0 {} split {} s18 {} r18 (with rel c0, s18) {} best {} deltas {}", t.now, t.gline, t.rel0, t.split, t.s18, t.r18, t.best, t.deltas);
+    eprintln!("GROUPS' values by their group's width: {}", widths.iter().enumerate().filter(|x| *x.1 > 0).map(|(w, n)| format!("{w}:{n}")).collect::<Vec<_>>().join(" "));
+    let mut top: Vec<_> = by_rel.into_iter().collect();
+    top.sort_by_key(|x| std::cmp::Reverse(x.1.1));
+    for (name, (values, bytes)) in top.iter().take(25) {
+        eprintln!("  {name:40} {values:10} values {bytes:11} bytes {:.1} bits", *bytes as f64 * 8.0 / (*values).max(1) as f64);
+    }
 }

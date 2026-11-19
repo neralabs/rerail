@@ -227,6 +227,13 @@ fn implies_key(have: &[usize], k: usize, tag: Option<usize>, cols: &[usize]) -> 
 }
 
 impl Sorted {
+    /// Rows `0..n` of `k` columns, all in the order on `cols` (a source whose rows lie in an order,
+    /// `Source::order`), noted on its columns but the last where they are all `k`: an order on every column is the
+    /// dedup order, which leads with a hash (`tagged`), and these lead with the values.
+    pub(super) fn whole(n: u32, k: usize, cols: &[usize]) -> Sorted {
+        let cols = if tagged(cols, k) { &cols[..k - 1] } else { cols };
+        Sorted(if n > 0 && !cols.is_empty() { vec![(0, n, cols.into())] } else { Vec::new() })
+    }
     /// Rows `lo..hi` of `data` are in the order on `cols`: joined to the range before when it ends at `lo` in the
     /// same order and its last row is not past row `lo`.
     pub(super) fn note<D: RowData + ?Sized>(&mut self, data: &D, k: usize, cols: &[usize], lo: u32, hi: u32) {

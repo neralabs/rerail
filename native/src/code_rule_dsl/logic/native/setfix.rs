@@ -5330,8 +5330,11 @@ impl InRel {
     /// A relation read in place from every row of `src`, its columns in order (`hold_source`).
     pub fn over_source(src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, types: Vec<u8>) -> Arc<InRel> {
         let k = types.len();
+        // Rows that lie in an order (a kept relation's canonical one) are known sorted: a scan of them for the next
+        // step's probes is not sorted again (decision 0187).
+        let sorted = src.order().map_or_else(runs::Sorted::default, |cols| runs::Sorted::whole(src.len() as u32, k, &cols));
         let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
-        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
+        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted, sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
     }
     pub fn in_block(&self) -> Option<InBlock> {
         if self.view.is_some() || self.k == 0 {
@@ -6908,8 +6911,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         (Rows::Source(v), Cands::Owned(rows.into_iter().map(|r| r as u32).collect()))
                     }
                     else if ix.sorted && let Some(v) = &rel.view {
+                        // From where the last probe of this step was (`hints`, unused by a source otherwise): probes
+                        // in the column's order are a merge over it (decision 0402 K7).
                         let (c, k) = (v.cols[ix.cols[ix.lead]], key[ix.lead]);
-                        (Rows::Source(v), match v.src.sorted_range(c, k) { Some(r) => Cands::Range(r.start, r.end), None => Cands::Slice(v.src.sorted_rows(c, k).unwrap_or(&[])) })
+                        (Rows::Source(v), match v.src.sorted_range_at(c, k, &mut hints[0]) { Some(r) => Cands::Range(r.start, r.end), None => Cands::Slice(v.src.sorted_rows(c, k).unwrap_or(&[])) })
                     }
                     else if ix.source && let Some(v) = &rel.view {
                         let probed = match last {
@@ -8042,6 +8047,31 @@ pub mod posted_tests {
         let rows: Vec<[i64; 2]> = (0..r.n).map(|i| [r.at(i).at(0), r.at(i).at(1)]).collect();
         assert_eq!(rows, [[1, 1], [2, 3], [5, 0], [5, 1]]);
         assert_eq!((r.ndead, r.sorted.within(&[0], 2, 0, r.n as u32)), (0, vec![(0, 4)]));
+    }
+
+    /// Decision 0402 K7: a source whose rows lie in an order (`Source::order`, a kept relation read in place) is known
+    /// sorted over every row on its order's columns but the last (as a relation laid out in order is), so a scan of
+    /// it for the next step's probes is not sorted again; one with no order is known in none.
+    #[test]
+    fn a_source_in_order_is_known_sorted() {
+        struct InOrder(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>);
+        impl crate::code_rule_dsl::facts::vtab::Source for InOrder {
+            fn columns(&self) -> Vec<String> { self.0.columns() }
+            fn len(&self) -> usize { self.0.len() }
+            fn estimated_matches(&self, c: usize, batch: bool) -> usize { self.0.estimated_matches(c, batch) }
+            fn indexed(&self, _: usize) -> bool { false }
+            fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> { None }
+            fn value(&self, row: usize, c: usize) -> i64 { self.0.value(row, c) }
+            fn order(&self) -> Option<Vec<usize>> { Some(vec![0, 1]) }
+        }
+        let cols = vec![Some(vec![1, 1, 2, 5]), Some(vec![3, 4, 0, 9])];
+        let src = super::columns_source(vec!["a".into(), "b".into()], cols);
+        let r = InRel::over_source(Arc::new(InOrder(src.clone())), b"ii".to_vec());
+        assert_eq!(r.sorted.within_key(2, None, &[0], 0, 4), vec![(0, 4)], "a scan by its first column");
+        // Not in the dedup order on both columns, which leads with a hash (`runs::tagged`).
+        assert!(r.sorted.within_key(2, Some(0), &[0, 1], 0, 4).is_empty(), "not in the dedup order");
+        assert!(r.sorted.within_key(2, None, &[1], 0, 4).is_empty(), "not by its second alone");
+        assert!(InRel::over_source(src, b"ii".to_vec()).sorted.within_key(2, None, &[0], 0, 4).is_empty(), "a source with no order");
     }
 
     /// Statistics read from a kept relation's postings are those measured from its rows, with dead rows left out.

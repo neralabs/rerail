@@ -23,16 +23,18 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 6;
+pub(super) const SCHEMA_VERSION: i64 = 7;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v6.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 6: the atoms are blocks in files beside the store (decision 0401:
+pub const STORE_FILE_NAME: &str = "content-v7.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 7: a space's kept facts are a chain of packed files (decision 0402):
+/// frames hold no rows, and a kept column may be a node id split at its granule, which an older binary would read as
+/// empty frames and wrong values; 6: the atoms are blocks in files beside the store (decision 0401:
 /// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
 /// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
 /// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 6;
+const STORE_FILE_FLOOR: i64 = 7;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"

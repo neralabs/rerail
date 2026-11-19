@@ -65,6 +65,26 @@ a small range, so its width is near the varint's bits; a group that crosses a do
 Value `i` is: group `i >> 7`'s base and its (width, bit offset) entry, then one packed read: a fixed number of
 loads, no branch on the data.
 
+**A column's form** (2026-11-18, from ep2's columns, below): a column of a `Packed` is a `PCol`, one of four forms,
+the smallest by exact size:
+
+| form | holds | for |
+|---|---|---|
+| whole | one `IntCol` of the values | most columns |
+| split | `v >> 18` and `v & (2^18 - 1)`, each an `IntCol` | node ids: `document << 32 \| slot << 18 \| index` (0083 §3) |
+| whole, relative | `v - c0` (column 0's value at the row) | a column near column 0's, as a child is its parent's |
+| split, relative | each part less column 0's same part | ids in the row's first id's granule |
+
+A node id's high part is its granule (its document, a digest-like number, and its slot), its low part its index
+there. A group of 128 ids that crosses documents spans 2^32 to 2^63, since documents are numbered as digests are;
+its granules are a few runs and its indexes 18 bits at most. Column 0 is never relative. A probe of the order
+searches its columns in turn, each within the range of the ones before (`Packed::probe`; `ColDec::equal_range`,
+the high part's range then the low part's), so where column 0 leads the order (a kept entry's order is its columns
+in turn) a later order column is searched where column 0 is one value: there it is the column less a constant, in
+the column's order, and searched as such (`ColDec::held`). A whole relative column searched so is taken only where
+no difference wraps. An order that column 0 does not lead keeps its columns absolute. The bit is the engine's `granules::INDEX_BITS`, which asserts it equals `packed::ID_SPLIT`. Every value
+reads at the same cost: one or two packed reads, and column 0's where relative.
+
 ### K3. Freezing is encoding, at the keep
 
 While a run runs, its relations keep their writable form (8-byte cells in doubling chunks, 0266 §4): appends are
@@ -183,7 +203,36 @@ layout, not a promise the rules must keep: the engine makes it true.
 - The engine is told by its component's spec (`sorted <rels>`), from the `.decl`'s qualifier (decision 0099's
   list, `front::QUALIFIERS`).
 
-Not built: merge joins over two sorted relations, which the planner may choose once both sides are known sorted.
+**Merge joins** (2026-11-18, Q217). A join of two relations in order on the join key is a merge: the outer side
+scanned in order and the inner side read forward from where the last key's rows began. The engine had both
+halves: a scan whose rows are known sorted on the next probe's key is not sorted again (`scan_order`, decision
+0187), and a probe of a sorted order keeps a cursor (`candidates()`' hints, `Index::find_at`). Two gaps stopped a
+kept relation read in place from taking part:
+
+- it recorded no order, so the run knew nothing of it as sorted. `Source::order` gives a source's order (a kept
+  entry's: its order key, then the rest), and `InRel::over_source` notes the source known sorted on it
+  (`runs::Sorted::whole`; on its columns but the last, as a relation laid out in order is: an order on every
+  column is the dedup order, which leads with a hash);
+- a probe of its leading column searched the whole column every time. `Source::sorted_range_at` searches from the
+  last probe's start (`ColDec::equal_range_from`: a gallop forward, then a search of that stretch), so keys in the
+  column's order read it once.
+
+A merge is then what the plan does when both sides are sorted on the key, and nothing chooses it apart: the
+cursor costs a probe out of order no more than one whole search.
+
+**Which relations declare it** (2026-11-18, from ep2's traces, `RERAIL_SPIKE_INDEX`, `RERAIL_SPIKE_PRESORTED`,
+profiling build): none of ep2's yet. A whole run (k0, 191 s wall, 213 s CPU) builds 4,985 orders over 30.1 M rows
+in 1.5 s; the most costly are on a second column (`rr_up107`, `rr_up108`, `unparen`, `type_bare` and others
+probed by `[1]`, 0.9 s), which a canonical layout does not serve. Orders on a leading column take 0.2 s. Every
+sort the run makes (orders, wave batches, scans for the next probe) is under 4.1 s of its CPU, 2%. The runs after
+an edit (k1–k3) build no order and sort nothing. A declaration earns its sort where a relation is probed on its
+leading columns by many later strata or runs; ep2 has no such relation.
+
+**An order nobody declared** (2026-11-18): not kept beyond what the engine keeps now. A wave's batch is written in
+its dedup order, which leads with a hash (`runs::tagged`), so a relation rarely ends in canonical order unless
+declared; what the run already takes as known sorted (75.5 M rows of component orders and 20.7 M of wave batches
+in k0) is taken without a sort. What is left is the 2% above, none of it after an edit. The trace that decides
+it again is the presorted report: its sorts' rows wholly in order, and their time against the run's.
 
 ### K8. The kept facts in SQL
 
@@ -232,12 +281,20 @@ Columns `space`, `rel`, `ident`, `part`, `level` (or NULL), then `c0` to `c15` (
   whole, and a failed input reads 0 within its count.
 - K-R11 `a_relation_declared_sorted_is_laid_out_in_order` (engine): a relation declared sorted is in canonical
   order when done, dead rows left out, known sorted on its leading column.
+- K-R12 `a_source_in_order_is_known_sorted` (engine): a source that records its order is known sorted on its
+  leading columns over every row; one that records none is not.
+- K-R13 `node_ids_split_at_their_granule` (blocks): each column form reads every value; a probe from a cursor
+  answers as a whole search for keys in order, out of order, repeated and absent; an order column after column 0
+  is relative and searched within column 0's range, a key past every value included.
 - K-R8 ep2's rows are h1's (0 differ) with kept relations bound from the chain (step 5); K-R7 also finds no frame
   of a space with a chain that has no kept entry.
 
-An open question for step 4: `GROUPS` costs a sorted id column about 9–11 bits a value (a group's 128 ids span
-about 256); a line per group (its first value and slope, as `LINE` per column) would take it to a few bits, where
-a delta varint takes 8. Whether it pays is for ep2's columns to say.
+An open question for step 4 (answered 2026-11-18, K2's column forms): `GROUPS` costs a sorted id column about
+9–11 bits a value; a line per group, or an id split into its document and local parts, might take it near a delta
+varint's. ep2's columns (`chain_columns_by_candidate`, over the 183 MB store) said: of 170.0 MB of columns, a line
+per group saves 1.4%; a split at 32 (document, index) 10%; a split at 18 (granule, index) 30%; that split with each
+part less column 0's 43% (97.6 MB), against a delta varint's floor of 90.8 MB, which has no random access. GROUPS'
+widths showed why: 15.0 M of its 40.4 M values in groups 32 bits wide, 5.5 M in groups 52–63 bits wide.
 
 ## Measured (ep2, 2026-11-18)
 
@@ -253,7 +310,8 @@ Four runs (k0 cold, k1–k3 one edit each), profiling build:
 | cross space | 3 files after 1,604 writes (tiered merging) |
 
 The chain is 1.18× the frames: GROUPS holds ids at 25.6 bits where the frames' delta varints take about 8–16.
-The open question below (a line per group, or splitting an id into document and local parts) is where the rest is.
+The open question below (a line per group, or splitting an id into document and local parts) is where the rest is;
+K2's column forms answered it (below).
 
 Steps 6–7 (a fresh state, the same four runs):
 
@@ -267,6 +325,19 @@ Steps 6–7 (a fresh state, the same four runs):
 | bound from the chain | 28,938 of 29,732 | 29,304 of 29,732 (the rest levels and delta parts); none unbound with an entry |
 
 The edit runs' peak fell by 60%: their kept relations are views of the mapped chain, not rows copied in.
+
+K2's column forms and K7's merge joins (2026-11-18, a fresh state, the same four runs; the store's format 7):
+
+| | steps 6–7 | ids split at their granule | and order columns relative, sources known sorted |
+|---|---|---|---|
+| rows against h1 | 0 differ | 0 differ, every run | 0 differ, every run |
+| k0 | 1,256 G | 1,225 G | 1,228 G, 1,606 MB peak |
+| k1, k2, k3 | 21.2, 20.5, 20.7 G | 21.1, 20.5, 20.6 G | 21.1, 20.7, 20.6 G; 227, 233, 230 MB |
+| facts file | 183 MB | 140 MB | 120 MB |
+| its columns | 170.0 MB | 117.8 MB | 97.1 MB (the best form for each, 94.6 MB; delta varints 89.9 MB) |
+
+The edit runs' instructions do not move: they sort nothing and build no order (K7's traces), so a source known
+sorted or a cursor's probe has no work to save there.
 
 ## Steps
 

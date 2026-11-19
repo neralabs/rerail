@@ -4531,5 +4531,13 @@ native join it falls back to the planner's whole-rule order.
   order when its component is done and knows them sorted on its leading columns, so later strata probe them in
   place; the keep finds them in order and sorts nothing; the next run reads them in place, the leading column a
   range (step 6b: every canonical entry records its order, `Packed::leads`, K-R10). K-R11.
-- **Open**: merge joins over two sorted relations; an order a rule's plan makes without a declaration (a scan of
-  a sorted relation emitting in its order); which ep2 relations to declare sorted, by their probes.
+- **Done** (2026-11-18, 0402 K7): merge joins. The engine had a scan in order and a probe with a cursor; a kept
+  relation read in place now records its order (`Source::order`, known sorted over every row) and a probe of its
+  leading column reads forward from the last one's start (`sorted_range_at`, `equal_range_from`). K-R12, K-R13.
+- **Decided** (2026-11-18, 0402 K7, from ep2's traces): no ep2 relation declares `sorted`. k0 builds 4,985 orders
+  in 1.5 s of 191 s, the costly ones on a second column; every sort is under 2% of its CPU; k1–k3 sort nothing.
+  An order nobody declared is not kept past what the run takes as known sorted now, for the same numbers.
+- **Found on the way** (0402 K2): order columns were never relative to column 0, so a kept entry (ordered on
+  every column) kept none relative; the split store's columns took 117.8 MB against 94.7 MB best. An order column
+  after column 0 is now relative and searched within column 0's range (`ColDec::held`): ep2's facts file 140 →
+  120 MB, rows 0 differ.

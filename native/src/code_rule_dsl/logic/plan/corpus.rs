@@ -9976,6 +9976,10 @@ fn run_observed(
                             eprintln!("{}", next.index_report(&crate::code_rule_dsl::logic::native::component::probed::take()));
                         }
                     }
+                    // `RERAIL_SPIKE_PRESORTED`: the run's sorts, and the rows of them already in order (decision 0187).
+                    if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() {
+                        eprintln!("presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report());
+                    }
                     // A session's run reports its strata here; a new process's, as `cross_kept` (above, or here when kept
                     // in the frames).
                     if from_frames.is_some() {
