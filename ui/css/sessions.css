@@ -70,7 +70,11 @@ body[data-panel="open"] .sess > aside{display:none}
 .shead{padding:16px 18px 8px}
 /* Three lines: the title and its one action; when the session ran; what Rerail saw. One muted colour below the title,
  * the state's dot its only mark. */
-.shead .l1{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px}
+/* The button stays beside the title, which takes two lines before it clamps; once the title would get less than 240px
+ * (a phone), the button wraps under it instead of squeezing it. */
+.shead .l1{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:8px 16px}
+.shead .l1 h2{flex:1 1 240px}
+.shead .l1 h2.clamp2{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
 .shead .l1 .acts{flex:none;display:inline-flex;gap:8px}
 .shead .l1 h2{margin:0;font-size:16px;line-height:1.35;font-weight:600;min-width:0;color:var(--header)}
 .shead .l1 h2[hidden]{display:none}
@@ -82,10 +86,12 @@ body[data-panel="open"] .sess > aside{display:none}
 .hpick select{grid-area:1/1;width:100%;min-width:0;appearance:none;-webkit-appearance:none;border:0;background:transparent;font:inherit;color:var(--header);padding:3px 34px 3px 9px;border-radius:999px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hpick select:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 .hpick .sel svg{position:absolute;right:11px;top:50%;margin-top:-6px;transform:rotate(90deg);opacity:.7;pointer-events:none}
-.shead .l2{display:flex;flex-wrap:wrap;align-items:center;gap:2px 0;margin-top:4px;font-size:12.5px;color:var(--muted-foreground)}
+/* Each item after the first has its "·" in the gap before it; the line's first 17px are clipped, so a line the row
+ * wraps onto never starts with a stray dot. */
+.shead .l2{display:flex;flex-wrap:wrap;align-items:center;gap:2px 0;margin:4px 0 0 -17px;clip-path:inset(0 0 0 17px);font-size:12.5px;color:var(--muted-foreground)}
 .shead .l2.when{margin-top:6px}
-.shead .l2 > span{white-space:nowrap}
-.shead .l2 > span + span::before{content:"·";margin:0 8px;opacity:.6}
+.shead .l2 > span{white-space:nowrap;margin-left:17px}
+.shead .l2 > span::before{content:"·";display:inline-block;width:17px;margin-left:-17px;text-align:center;opacity:.6}
 /* The state keeps the list's dot (live green, silent grey; none once ended) but not its green text. */
 .shead .when .state .dot{display:inline-block;width:7px;height:7px;margin-right:6px;border-radius:50%;vertical-align:1px}
 .shead .when .state[data-state="live"] .dot{background:var(--success)}
@@ -139,7 +145,8 @@ body[data-panel="open"] .sess > aside{display:none}
 /* A call's or card's speaker, in the 40px column "You" and "Agent" sit in, left of its 8px gap. */
 .evt > .spk,.corr > .spk{position:absolute;right:calc(100% + 8px);width:40px;font-size:12px;font-weight:600;line-height:22px;color:var(--muted-foreground);white-space:nowrap}
 .evt > .spk{top:3px}
-.corr > .spk{top:11px}
+/* On the card's first title line (its 13px padding, a 20px line), where the rail's tick centres too. */
+.corr > .spk{top:13px;line-height:20px}
 .corr{position:relative;margin:6px 0 6px 48px;border-radius:var(--radius-xl);background:var(--card);padding:13px 15px;scroll-margin-top:90px}
 .corr[data-outcome="logged"]{background:var(--log-bg)}
 .corr[data-outcome="steered"]{background:var(--steer-bg)}
@@ -147,7 +154,7 @@ body[data-panel="open"] .sess > aside{display:none}
 @keyframes hit{0%{box-shadow:0 0 0 6px var(--brand-subtle-hover)}100%{box-shadow:0 0 0 0 transparent}}
 /* Title, then the rule id, then the badges, each on its own line. The title opens the rule, underlined on hover. */
 .corr .ch{display:flex;flex-direction:column;align-items:flex-start;gap:3px;font-size:12px;color:var(--muted-foreground)}
-.corr .ch .ctitle{color:var(--foreground);font-weight:600;font-size:13px;text-align:left;text-underline-offset:2px}
+.corr .ch .ctitle{color:var(--foreground);font-weight:600;font-size:13px;line-height:20px;text-align:left;text-underline-offset:2px}
 .corr .ch .ctitle:not(:disabled):hover{text-decoration:underline}
 .corr .ch .ctitle:disabled{cursor:text}
 .corr .ch .mono,.corr .ch .ctitle{max-width:100%;overflow-wrap:anywhere}
@@ -199,6 +206,11 @@ body[data-panel="open"] .out .tn,body[data-panel="open"] .out .sq{display:none}
   .out .sq,.out .tn{display:none}
   .msgrow{grid-template-columns:40px minmax(0,1fr)}
   .msgrow .mt{grid-column:2;line-height:18px;padding-right:0}
+}
+/* A phone-width timeline: a call's outcome and time take a second line under it, so a long label never pushes them out. */
+@container (max-width:440px){
+  .evt .eh{grid-template-columns:20px auto minmax(0,1fr);row-gap:2px}
+  .evt .eh .out{grid-column:2 / -1;justify-self:start}
 }
 .ok{color:var(--success-foreground)}
 .bad{color:var(--danger-foreground);font-weight:600}

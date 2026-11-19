@@ -370,14 +370,39 @@ export function renderTimeline(tl, rail, sess, turns, cs, page) {
   placeTicks(rail, tl);
 }
 
-/** One rail tick per correction card, at the card's offset within the timeline, in its card's outcome colour. */
+/**
+ * How far `el` sits below the top of `root`, an ancestor it is laid out in, by offsets: unlike two viewport rects,
+ * this cannot change between reads when the browser re-anchors the scroll as the timeline shrinks (Show all events
+ * off, under a scrolled view), which left every tick displaced by the scroll and the timeline padded with empty space.
+ */
+function offsetWithin(el, root) {
+  let y = 0;
+  for (let node = el; node !== root; node = node.offsetParent) {
+    if (node === null) return el.getBoundingClientRect().top - root.getBoundingClientRect().top;
+    y += node.offsetTop;
+  }
+  return y;
+}
+
+/**
+ * One rail tick per correction card, in its card's outcome colour, centred on the card's first title line: the line
+ * the "Rerail" speaker label sits on. Every position is read before any tick moves, so placing ticks changes no layout
+ * the next one is read from.
+ */
 export function placeTicks(rail, tl) {
   if (!rail || !tl || rail.hidden) return;
-  const top = tl.getBoundingClientRect().top;
+  // The rail and the timeline share the positioned wrapper the ticks' offsets are taken in.
+  const root = rail.offsetParent ?? rail.parentElement;
+  const railTop = offsetWithin(rail, root);
+  const placed = [...tl.querySelectorAll(".corr")].map(card => {
+    const title = card.querySelector(".ctitle");
+    const line = parseFloat(getComputedStyle(title).lineHeight) || 20;
+    return { card, top: offsetWithin(title, root) - railTop + line / 2 };
+  });
   for (const old of rail.querySelectorAll(".tick")) old.remove();
-  for (const card of tl.querySelectorAll(".corr")) {
+  for (const { card, top } of placed) {
     const tick = h("button.tick", { "aria-label": "Jump to violation", "data-act": "jump", "data-i": card.dataset.key, "data-outcome": card.dataset.outcome });
-    tick.style.top = `${card.getBoundingClientRect().top - top + 14}px`;
+    tick.style.top = `${top}px`;
     rail.append(tick);
   }
 }

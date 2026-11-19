@@ -106,6 +106,44 @@ test.describe("History by session", () => {
     expect(lines.every(line => line.sameLine && !line.cut)).toBe(true);
   });
 
+  test("mature: turning Show all events off in a scrolled transcript keeps every rail dot on its card and no empty space", async ({ page, rerail }) => {
+    await page.setViewportSize({ width: 1280, height: 520 });
+    await page.goto(await rerail.dashboard("mature", { hash: "sessions" }));
+    await page.locator("#content .tl .corr").first().waitFor();
+    const showAll = page.locator("#showAll");
+    await showAll.check();
+    await page.locator("#sscroll").evaluate(scroll => { scroll.scrollTop = scroll.scrollHeight; });
+    await showAll.uncheck();
+    // Each dot is centred on its card's first title line, and the scroll area is the timeline, not stale dots below it.
+    const layout = await page.evaluate(() => {
+      const tl = document.getElementById("tl")!, scroll = document.getElementById("sscroll")!, rail = document.getElementById("rail")!;
+      const top = tl.getBoundingClientRect().top;
+      const lines = [...tl.querySelectorAll(".corr .ctitle")].map(title => title.getBoundingClientRect().top - top + 10);
+      const dots = [...rail.querySelectorAll<HTMLElement>(".tick")].map(tick => parseFloat(tick.style.top));
+      return { lines, dots, overflow: scroll.scrollHeight - (tl.getBoundingClientRect().height + (tl.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop)) };
+    });
+    expect(layout.dots).toHaveLength(layout.lines.length);
+    layout.dots.forEach((dot, i) => expect(Math.abs(dot - layout.lines[i]!)).toBeLessThanOrEqual(1));
+    expect(layout.overflow).toBeLessThanOrEqual(1);
+  });
+
+  test("mature: on a phone the header's button goes under a two-line title, and no wrapped line starts with a dot", async ({ page, rerail }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(await rerail.dashboard("mature", { hash: "sessions" }));
+    const head = page.locator("#content .shead");
+    await head.locator(".stats").waitFor();
+    const header = await head.evaluate(node => {
+      const title = node.querySelector("h2.clamp2")!.getBoundingClientRect(), button = node.querySelector(".acts")!.getBoundingClientRect();
+      const lineHeight = parseFloat(getComputedStyle(node.querySelector("h2.clamp2")!).lineHeight);
+      // Each meta row clips the 17px strip a line-starting item's "·" falls in.
+      const rows = [...node.querySelectorAll(".l2")].map(row => getComputedStyle(row).clipPath.startsWith("inset(0px 0px 0px 17px"));
+      return { buttonUnder: button.top >= title.bottom - 1, titleLines: Math.round(title.height / lineHeight), rows };
+    });
+    expect(header.buttonUnder).toBe(true);
+    expect(header.titleLines).toBeLessThanOrEqual(2);
+    expect(header.rows.every(Boolean)).toBe(true);
+  });
+
   test("mature: a session from Overview's recent sessions opens selected in History by session", async ({ page, rerail }) => {
     await page.goto(await rerail.dashboard("mature"));
     const link = page.locator('#content [data-act="session"]').last();
