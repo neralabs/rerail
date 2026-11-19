@@ -420,10 +420,25 @@ impl ContentStore {
     pub fn begin_analysis_scope_at(&self, scope: &str, acquired_at: i64) -> StoreResult<AnalysisOwner> {
         self.immediate_transaction(|tx| {
             self.check_scope_store(tx)?;
-            tx.execute_cached("INSERT OR IGNORE INTO analysis_scope_generation VALUES (?1,0)", [scope])?;
-            let generation = tx.query_row_cached(
-                "SELECT generation FROM analysis_scope_generation WHERE scope=?1", [scope], |row| row.get(0),
-            )?;
+            if scope.starts_with("cwd:") {
+                // A legacy INSERT OR IGNORE clears the known bound even on conflict. Current
+                // acquisitions insert only when a new generation is actually required.
+                let inserted = tx.execute_cached("INSERT INTO analysis_scope_generation
+                    SELECT ?1,0 WHERE NOT EXISTS (SELECT 1 FROM analysis_scope_generation WHERE scope=?1)
+                    AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE scope IN (SELECT value FROM json_each(?2)) AND before>=?3)",
+                    (scope, receipt_scopes(scope), acquired_at))?;
+                if inserted != 0 {
+                    tx.execute_cached("INSERT INTO analysis_directory_acquisition VALUES (?1,?2)", (scope, acquired_at))?;
+                } else {
+                    tx.execute_cached("UPDATE analysis_directory_acquisition SET max_control_generation=?2 WHERE scope=?1 AND max_control_generation<?2",
+                        (scope, acquired_at))?;
+                }
+            } else {
+                tx.execute_cached("INSERT OR IGNORE INTO analysis_scope_generation VALUES (?1,0)", [scope])?;
+            }
+            // A delayed directory acquisition below a saved cutoff has no generation to publish.
+            let generation = tx.query_row_cached("SELECT coalesce((SELECT generation FROM analysis_scope_generation WHERE scope=?1),-1)",
+                [scope], |row| row.get(0))?;
             let acquisition = next_acquisition(tx)?;
             Ok(AnalysisOwner { scope: scope.to_owned(), generation, store_identity: Some(self.identity()), pending: None, acquired_at, acquisition, warning: None })
         })
@@ -665,8 +680,8 @@ fn release_analysis_scopes(tx: &rusqlite::Connection, scope: &str, subtree: Opti
     } else {
         let args = (scope, subtree);
         tx.execute_cached(&format!("UPDATE analysis_scope_generation SET generation=generation+1 WHERE {RELEASING}"), args)?;
-        if scope.starts_with("named:") {
-            tx.execute_cached("DELETE FROM analysis_scope_generation WHERE scope=?1", [scope])?;
+        if scope.starts_with("named:") || scope.starts_with("cwd:") {
+            tx.execute_cached(&format!("DELETE FROM analysis_scope_generation WHERE {RELEASING}"), args)?;
         }
         Ok(release_memberships(tx, RELEASING, args)?)
     }

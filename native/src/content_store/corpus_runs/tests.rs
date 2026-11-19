@@ -93,6 +93,92 @@ fn releasing_one_use_names_compacts_generations_and_never_revives_a_stale_owner(
 }
 
 #[test]
+fn a_numbered_parent_stop_compacts_only_fully_covered_directory_generations() {
+    use crate::content_store::analysis_scope::{self, AnalysisRun, Publication, RunSource};
+    let (file, store) = store("directory-generation-compaction");
+    let parent = file.parent().unwrap().canonicalize().unwrap().join("project");
+    let child = parent.join("0");
+    let scope = |dir: &std::path::Path, home| analysis_scope::directory_in(dir, Some(home));
+    let begin = |dir: &std::path::Path, home, id: &str, control| {
+        let mut run = AnalysisRun::begin_at(ContentStore::open(&file).unwrap(), &scope(dir, home), id, control).unwrap();
+        run.select_source(RunSource::directory(dir)).unwrap();
+        run
+    };
+    let count = |table: &str| store.connection.lock().unwrap()
+        .query_row(&format!("SELECT count(*) FROM {table} WHERE scope GLOB 'cwd:*'"), [], |row| row.get::<_, i64>(0)).unwrap();
+    for i in 0..30 {
+        begin(&parent.join(i.to_string()), "home", "one-use", 10).finish(true).unwrap();
+    }
+    let mut delayed = begin(&child, "home", "delayed", 10);
+    let saved = serde_json::to_vec(&delayed.owner).unwrap();
+    let active = parent.join("active");
+    let mut future = begin(&active, "home", "future", 21);
+    let mut overtaken = begin(&active, "home", "older-on-same-path", 9);
+    let mut elsewhere = begin(&child, "other", "other-home", 10);
+    store.delete_directory_analysis_scopes(&parent, Some("20:stop:home")).unwrap();
+    assert_eq!(count("analysis_scope_generation"), 2);
+    assert_eq!(count("analysis_scope_run"), 0);
+    assert_eq!(count("analysis_directory_acquisition"), 2);
+    delayed.finish(true).unwrap();
+    overtaken.finish(true).unwrap();
+    assert_eq!(delayed.publication, Some(Publication::Released));
+    assert_eq!(overtaken.publication, Some(Publication::Released));
+    let mut late = begin(&child, "home", "late", 20);
+    late.finish(true).unwrap();
+    assert_eq!(late.publication, Some(Publication::Released));
+    assert_eq!(count("analysis_scope_generation"), 2);
+    future.finish(true).unwrap();
+    elsewhere.finish(true).unwrap();
+    let reopened = ContentStore::open(&file).unwrap();
+    let mut fresh = begin(&child, "home", "new-watch", 21);
+    let stale: analysis_scope::AnalysisOwner = serde_json::from_slice(&saved).unwrap();
+    assert!(!stale.current(&reopened.connection.lock().unwrap()).unwrap());
+    reopened.delete_directory_analysis_scopes(&parent, Some("20:stop:home")).unwrap();
+    fresh.finish(true).unwrap();
+    let mut ids: Vec<_> = reopened.completed_analysis_runs().unwrap().into_iter().map(|run| run.scan_id).collect();
+    ids.sort();
+    assert_eq!(ids, ["future", "new-watch", "other-home"]);
+    // First delivery by a previous binary executes this insert before it removes memberships.
+    let db = reopened.connection.lock().unwrap();
+    db.execute("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES ('30:later:home',?1,30)",
+        [scope(&parent, "home")]).unwrap();
+    drop(db);
+    assert_eq!(count("analysis_scope_generation"), 1);
+    assert_eq!(count("analysis_directory_acquisition"), 1);
+}
+
+#[test]
+fn directory_generation_compaction_preserves_an_unobserved_legacy_acquisition() {
+    use crate::content_store::analysis_scope;
+    let (file, store) = store("legacy-directory-generation");
+    let parent = file.parent().unwrap().canonicalize().unwrap().join("project");
+    let scope = analysis_scope::directory(&parent.join("child"));
+    let old = store.begin_analysis_scope_at(&scope, 21).unwrap();
+    {
+        let db = store.connection.lock().unwrap();
+        // An older caller can acquire a larger control generation without publishing anything.
+        db.execute("INSERT OR IGNORE INTO analysis_scope_generation VALUES (?1,0)", [&scope]).unwrap();
+    }
+    let observed = store.begin_analysis_scope_at(&scope, 10).unwrap();
+    store.delete_directory_analysis_scopes(&parent, Some("20:stop")).unwrap();
+    let reopened = ContentStore::open(&file).unwrap();
+    {
+        let db = reopened.connection.lock().unwrap();
+        assert!(old.current(&db).unwrap());
+        assert!(!observed.current(&db).unwrap());
+        assert_eq!(db.query_row("SELECT count(*) FROM analysis_directory_acquisition", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    }
+    reopened.delete_directory_analysis_scopes(&parent, None).unwrap();
+    let db = reopened.connection.lock().unwrap();
+    assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_generation WHERE scope=?1", [&scope], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    drop(db);
+    let new = reopened.begin_analysis_scope_at(&scope, 21).unwrap();
+    let db = reopened.connection.lock().unwrap();
+    assert!(new.current(&db).unwrap());
+    assert!(!old.current(&db).unwrap());
+}
+
+#[test]
 fn replaying_a_directory_analysis_scope_release_keeps_a_later_run() {
     use crate::content_store::analysis_scope;
     let (_path, store) = store("analysis-scope-release-replay");
@@ -417,6 +503,9 @@ fn stopping_a_directory_uses_its_indexed_history_after_upgrade() {
     drop(db);
     let upgraded = ContentStore::open(&path).unwrap();
     let db = upgraded.connection.lock().unwrap();
+    // Exercise the generation index with a real candidate on both sides of the measurement.
+    db.execute("INSERT INTO analysis_scope_generation VALUES ('cwd:h:/pkg/src',1)", []).unwrap();
+    db.execute("INSERT INTO analysis_directory_acquisition VALUES ('cwd:h:/pkg/src',11)", []).unwrap();
     let stop = || {
         db.execute_batch("SAVEPOINT history_delivery").unwrap();
         let mut statement = db.prepare("INSERT INTO analysis_scope_release(id,scope,before) VALUES ('10:test:h','cwd:h:/pkg',10)").unwrap();
@@ -432,7 +521,9 @@ fn stopping_a_directory_uses_its_indexed_history_after_upgrade() {
     db.execute_batch("WITH RECURSIVE names(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM names WHERE n<1000)
         INSERT INTO analysis_history_scope SELECT 'named:'||n,CAST(n AS TEXT),'[]' FROM names;
         INSERT INTO analysis_scope_run(scope,acquisition,acquired_at,scan_id)
-        SELECT scope,1,1,'other' FROM analysis_history_scope WHERE scope GLOB 'named:*';").unwrap();
+        SELECT scope,1,1,'other' FROM analysis_history_scope WHERE scope GLOB 'named:*';
+        INSERT INTO analysis_scope_generation SELECT 'cwd:elsewhere:/'||value,1 FROM analysis_history_scope WHERE scope GLOB 'named:*';
+        INSERT INTO analysis_directory_acquisition SELECT scope,1 FROM analysis_scope_generation WHERE scope GLOB 'cwd:elsewhere:*';").unwrap();
     let populated = stop();
     assert!(populated <= baseline + 20, "stop grew from {baseline} to {populated} SQLite instructions");
 }
@@ -510,7 +601,7 @@ fn upgrading_directory_receipts_preserves_both_legacy_cutoffs() {
     let late = store.begin_analysis_scope_at(&bare_child, 5).unwrap();
     {
         let db = store.connection.lock().unwrap();
-        db.execute_batch("DROP TRIGGER analysis_skip_covered_directory_stop").unwrap();
+        db.execute_batch("DROP TRIGGER analysis_skip_covered_directory_stop; DROP TRIGGER analysis_release_directory_generation").unwrap();
         // Before compaction, an older child stop could arrive after its parent. It fenced
         // a later set of unqualified writers even though its control generation was lower.
         for (dir, id, cutoff, acquired) in [

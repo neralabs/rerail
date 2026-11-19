@@ -51,6 +51,7 @@ const FACT_STORE: &[&str] = &[
     "analysis_scope_manifest",
     "analysis_scope_snapshot",
     "analysis_scope_generation",
+    "analysis_directory_acquisition",
     "analysis_scope_workspace_snapshot",
     "analysis_scope_collect",
     "analysis_scope_release",

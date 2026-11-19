@@ -2,9 +2,24 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-## Open findings after `be7e18211`
+## Directory generation cleanup after `9fd0a64ff`
 
-This review tracks 29 open items. The [previous review](#findings-at-ba58532ee-on-macos) gives the evidence and acceptance checks for 28 carried forward.
+Case 68 now passes for directory acquisitions whose control generations the store observes.
+A parent stop previously removed 30 completed runs and left 30 directory-generation rows.
+With the same inputs, the previous addon delivered the stop against the upgraded store. The store kept zero runs and zero generation rows.
+A delayed acquisition recreated zero rows. A writer in another home and a writer above the cutoff both kept their runs.
+The regression repeats publication after reopening the store and checks the persisted scan IDs.
+
+An older writer can acquire a directory without recording its control generation. The store then lacks a safe cutoff for removing that generation row.
+A mixed-version run kept the older writer alive across a lower stop and published its run.
+In a store created by the previous addon, an unconditional release of the same scope removed its legacy row.
+The previous addon then reopened the directory and published. A writer it acquired before that release received the `released` result.
+The other 28 items from the review below remain open.
+[Regression tests](../../../../native/src/content_store/corpus_runs/tests.rs) · [Scope contract](analysis-scopes.md)
+
+## Findings after `be7e18211`
+
+That review tracked 29 open items. The [previous review](#findings-at-ba58532ee-on-macos) gives the evidence and acceptance checks for 28 carried forward.
 They include a performance measurement with an unknown cause and proposed rule APIs.
 Case 102 adds a filesystem side effect. The [Linux verification](#linux-verification-after-8ea34a1a1) records the repairs and their regression results.
 

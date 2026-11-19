@@ -212,6 +212,12 @@ Only successful publication can advance that order. An aborted run or a read in 
 Deleting a named scope releases its memberships and removes its generation row.
 The store allocates a fresh generation when a caller reuses the name. A writer with the earlier generation cannot publish after reuse or restart.
 Older stores can contain generation rows without evidence of whether a scope is still active. The next explicit release removes such a row.
+For each new directory scope, the store records the highest control generation that any caller acquired.
+A numbered parent stop can remove a child's generation row when its cutoff covers this value.
+It must keep the row if a writer already acquired a later control generation, even before that writer publishes.
+A late acquisition below the cutoff cannot recreate the removed row. A new watch gets a fresh store generation.
+Older stores and older writers can leave a directory without a known upper bound.
+A numbered stop preserves that generation row. An unconditional release of the same scope removes it and revokes its writers.
 After a numbered stop, the home removes the directory registrations that the delivery covered.
 A concurrent acquisition in a later generation keeps its registration.
 The home keeps one maintenance address per store so the collector can still visit a released store.

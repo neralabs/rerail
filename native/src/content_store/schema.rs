@@ -179,6 +179,16 @@ CREATE TABLE IF NOT EXISTS analysis_scope_generation (
     scope TEXT PRIMARY KEY,
     generation INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
+-- Only a fully observed directory generation has a known maximum control generation.
+-- The separate table preserves the two-column INSERT used by older writers.
+CREATE TABLE IF NOT EXISTS analysis_directory_acquisition (
+    scope TEXT PRIMARY KEY REFERENCES analysis_scope_generation(scope) ON DELETE CASCADE,
+    max_control_generation INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TRIGGER IF NOT EXISTS analysis_directory_acquisition_unknown BEFORE INSERT ON analysis_scope_generation
+WHEN NEW.scope GLOB 'cwd:*' BEGIN
+    DELETE FROM analysis_directory_acquisition WHERE scope=NEW.scope;
+END;
 CREATE TABLE IF NOT EXISTS analysis_scope_workspace_snapshot (
     scope TEXT NOT NULL,
     workspace TEXT NOT NULL,
@@ -300,15 +310,17 @@ CREATE TABLE IF NOT EXISTS store_state (
 ) STRICT;
 INSERT OR IGNORE INTO store_state(singleton, generation) VALUES (1, 1);
 
--- Older writers also insert zero then read back the generation. Seed every new named scope
--- from the store-wide sequence so deleting and reusing its name cannot revive an old permit.
+-- Older writers also insert zero then read back the generation. Keep the trigger names
+-- they expect, and seed both named and directory scopes from the store-wide sequence.
+DROP TRIGGER IF EXISTS analysis_named_generation_begin;
 CREATE TRIGGER IF NOT EXISTS analysis_named_generation_begin AFTER INSERT ON analysis_scope_generation
-WHEN NEW.scope GLOB 'named:*' AND NEW.generation=0 BEGIN
+WHEN (NEW.scope GLOB 'named:*' OR NEW.scope GLOB 'cwd:*') AND NEW.generation=0 BEGIN
     UPDATE store_state SET analysis_acquisitions=analysis_acquisitions+1 WHERE singleton=1;
     UPDATE analysis_scope_generation SET generation=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1) WHERE scope=NEW.scope;
 END;
+DROP TRIGGER IF EXISTS analysis_named_generation_end;
 CREATE TRIGGER IF NOT EXISTS analysis_named_generation_end BEFORE DELETE ON analysis_scope_generation
-WHEN OLD.scope GLOB 'named:*' BEGIN
+WHEN OLD.scope GLOB 'named:*' OR OLD.scope GLOB 'cwd:*' BEGIN
     UPDATE store_state SET analysis_acquisitions=max(analysis_acquisitions,OLD.generation) WHERE singleton=1;
 END;
 
@@ -318,6 +330,22 @@ CREATE TRIGGER IF NOT EXISTS analysis_scope_legacy_stop AFTER INSERT ON analysis
 WHEN NEW.scope<>'' AND instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0 BEGIN
     UPDATE analysis_scope_release SET legacy_scope='cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':')),
         legacy_acquisition=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1) WHERE id=NEW.id;
+END;
+-- Reclaim directory generations at first delivery, including deliveries by an older binary.
+-- Replaying a home stop must leave a later, unqualified writer with its original generation.
+CREATE TRIGGER IF NOT EXISTS analysis_release_directory_generation AFTER INSERT ON analysis_scope_release
+WHEN NEW.scope<>'' BEGIN
+    DELETE FROM analysis_scope_generation WHERE scope IN (
+        WITH stops(root) AS (
+            SELECT NEW.scope UNION ALL SELECT 'cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':'))
+            WHERE instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0
+        ), bounds(root,prefix) AS (
+            SELECT root,CASE WHEN substr(root,-1)='RR_PATH_SEPARATOR' THEN root ELSE root||'RR_PATH_SEPARATOR' END FROM stops
+        )
+        SELECT a.scope FROM bounds b JOIN analysis_directory_acquisition a
+            ON a.scope=b.root OR (a.scope>=b.prefix AND a.scope<(substr(b.prefix,1,length(b.prefix)-1)||char(unicode(substr(b.prefix,-1))+1)))
+            WHERE a.max_control_generation<=NEW.before
+    );
 END;
 UPDATE analysis_scope_release SET legacy_scope='cwd:'||substr(scope,5+instr(substr(scope,5),':')),
     legacy_acquisition=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1)
@@ -977,6 +1005,7 @@ fn apply_schema(connection: &Connection) -> rusqlite::Result<()> {
       UNION ALL SELECT substr(INPUT_SCOPE,1,pos) FROM boundaries WHERE pos>0"
         .replace("PATH_SEP", std::path::MAIN_SEPARATOR_STR);
     connection.execute_batch(&SCHEMA
+        .replace("RR_PATH_SEPARATOR", std::path::MAIN_SEPARATOR_STR)
         .replace("RR_NEW_DIRECTORY_ANCESTORS", &ancestors.replace("INPUT_SCOPE", "NEW.scope"))
         .replace("RR_OLD_DIRECTORY_ANCESTORS", &ancestors.replace("INPUT_SCOPE", "OLD.scope")))
 }
