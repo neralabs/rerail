@@ -1533,6 +1533,23 @@ pass.
   only ever ran once.
 - **Done when**: the observer's functions take what they dereference safely, or are `unsafe` with their callers'
   contract written down, and `cargo clippy -p rerail-engine --lib --tests` runs to the end.
+- **Done** (2026-11-19): `Observed::start` and `end` are `unsafe fn`, their contract written (`# Safety`: a live
+  statement of the observed connection, for the call's length), and both callers (the admission's and the
+  profiler's trace callbacks, the only holders of a live statement) state why they keep it. The same run stopped
+  next in `rerail-device-metal` on Q218. `cargo clippy -p rerail-engine --lib --tests` runs to the end (rc 0, 1,527
+  warnings); the 6 `sql_admission` tests pass.
+
+### Q218. metal_join's `Words` made a `&mut [u32]` from `&self`, over a buffer the GPU writes too
+
+- **Found** (2026-11-19, by clippy's `mut_from_ref`, deny by default): `Words::slice_mut(&self) -> &mut [u32]` over
+  the shared Metal buffer, called by `set` and `get` and `zeroed`. `Words` are shared through `Rc` (a stratum's
+  flag word, `setfix/device.rs`), so two holders could each hold a `&mut` to the same words: undefined behaviour,
+  in safe code. The device writes the same words between submissions.
+- **Done** (2026-11-19): no reference to the buffer is made. A word is read and written through its address
+  (`Words::word`, bounds-checked), one access at a time, and `zeroed` clears the new buffer with one `write_bytes`.
+  The other slices over Metal buffers in metal_join are local to one function (a buffer filled before its first
+  submission, or read after its command buffers completed), so none outlives an access. The device tests
+  (`rerail-logic` 17, `rerail-device-metal` 11, on the M1 Max) pass.
 
 ### Q158. (a second Q21 until 2026-11-18; Q89 on Typing-support) Red tests that predate 0281 step 4
 

@@ -2271,7 +2271,8 @@ impl Table {
 }
 
 /// Words the host writes before a submission and reads after it: a rule's row counts per table (`totals`) and its
-/// fused steps' counts (`counters`).
+/// fused steps' counts (`counters`). The device writes them too, and holders share them (`Rc`), so no reference to
+/// the buffer is ever made: each word is read or written through its address, one access at a time.
 pub(in crate::code_rule_dsl) struct Words {
     buffer: Held,
     pub(in crate::code_rule_dsl) len: usize,
@@ -2281,22 +2282,30 @@ impl Words {
     pub(in crate::code_rule_dsl) fn zeroed(len: usize) -> Result<Words, Error> {
         let buffer = Held::new((4 * len).max(4))?;
         let w = Words { buffer, len };
-        w.slice_mut().fill(0);
+        if len > 0 {
+            // SAFETY: the buffer's `len` words, new: no command buffer uses them yet.
+            unsafe { std::ptr::write_bytes(w.word(0), 0, len) };
+        }
         Ok(w)
     }
 
-    fn slice_mut(&self) -> &mut [u32] {
-        // SAFETY: `len` words; the host writes them only while no command buffer that reads them runs.
-        unsafe { std::slice::from_raw_parts_mut(self.buffer.buffer.contents().cast::<u32>(), self.len) }
+    /// Word `i`'s address in the shared buffer.
+    fn word(&self, i: usize) -> *mut u32 {
+        assert!(i < self.len, "word {i} of {}", self.len);
+        // SAFETY: within the buffer, which holds `len` words.
+        unsafe { self.buffer.buffer.contents().cast::<u32>().add(i) }
     }
 
     pub(in crate::code_rule_dsl) fn set(&self, i: usize, v: u32) {
-        self.slice_mut()[i] = v;
+        // SAFETY: a word of the buffer, aligned (the buffer is page-aligned); the host writes it only while no
+        // command buffer that reads or writes it runs.
+        unsafe { self.word(i).write(v) }
     }
 
     /// Word `i`, once the command buffers that write it completed.
     pub(in crate::code_rule_dsl) fn get(&self, i: usize) -> u32 {
-        self.slice_mut()[i]
+        // SAFETY: as `set`'s: a word of the buffer, no command buffer writing it running.
+        unsafe { self.word(i).read() }
     }
 }
 
