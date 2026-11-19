@@ -131,7 +131,7 @@ fn row_stage(first: usize, op: u32, x: Key, y: Key, auto: RowAuto, deferred: &Ha
 /// The id a chain of text functions keeps its texts by (`keep_text`'s: a step `/{function}{constants:?}`, by the
 /// rule's function names, so the CPU names a chain as the device does): process-wide, by the automata block's index.
 pub(in crate::code_rule_dsl) fn text_fns_id(chain: &str) -> Option<u32> {
-    crate::code_rule_dsl::text::automata::id(&format!("text functions {chain}"))
+    crate::code_rule_dsl::text::automata::text_functions(chain)
 }
 
 /// What a text function stage `d` of `x` keeps its text by (decision 0450 step 2e): when `x` is an input column's

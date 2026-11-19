@@ -366,10 +366,6 @@ const STATE: &[(&str, &str)] = &[
     // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
     // once before a run's first wave, not a cache of anything else.
     ("content_store/frames.rs", "SNAPSHOTS"),
-    // The device's automata and test tables for regex and text stages, held while the thread runs (a command buffer
-    // may read them).
-    ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
-    ("code_rule_dsl/logic/native/setfix/device.rs", "TESTS"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus.rs", "STORE"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.

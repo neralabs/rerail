@@ -304,6 +304,16 @@ that size came from the cache's first use, a 16z block decoded, and nothing else
 - hogql cold, Metal, profiling, format 15, load 60-70, interleaved with the build before (c7344deba), 1,629 findings
   in every run: 75.9-76.1 B against 76.0-76.4 B, peak 1,343-1,371 MB against 1,231-1,366 MB. Left out: the new
   binary's first run, which compiles the changed kernel (101 B, 43 s).
-- Open: the CPU's text functions make their texts per row in the morsel walk and do not read this cache yet. They
-  intern the text they make, so a kept text would spare the function's work, not the interning.
+- **The CPU's text functions read and keep it too** (2026-11-19). A walk's `Step::Func` of a text function the device
+  makes (`caps::device_fn`), of a symbol, its other arguments constants, carries the id of its one-step chain
+  (`kept`, `text::automata::text_functions("/{name}{constants:?}")`, as the device names it). It takes the text kept
+  for the symbol, else makes it (`eval`) and keeps it (`Kept::text`, `Kept::keep_text`); it then interns it as
+  before. So a text either side made is the other's: a CPU's `lower` past ASCII, which the device sends to the host,
+  is then found on the device. A chain on the CPU keys each step by the symbol its last step interned; the device
+  keys it by the source symbol, so only one-step texts are shared.
+  - Test: `a_cpu_text_function_reads_and_keeps_its_text_in_the_stores_cache` (a text put there before the run is
+    the one the run takes; the others' texts are kept as it ran).
+  - hogql cold, profiling, format 15, load 42-50, interleaved with the build before (640e19de6): CPU binding 84.7-
+    87.4 B against 85.3-89.6 B, peak 349-372 MB against 351-367 MB; Metal 77.0-80.8 B, peak 1,292-1,434 MB; 1,629
+    findings in every run.
 

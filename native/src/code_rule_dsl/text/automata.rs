@@ -163,6 +163,13 @@ pub fn get_or_make(key: &str, make: impl FnOnce() -> Result<(Vec<u8>, [u32; 4]),
     a.read(k, state)
 }
 
+/// The id a chain of text functions keeps its texts by in a store's rolling cache (decision 0450 step 2e): a chain is
+/// its steps from a symbol, each `/{function}{constants:?}` (the rule's function name, its other arguments' constants:
+/// symbols' ids, numbers), the CPU's and the device's named alike.
+pub fn text_functions(chain: &str) -> Option<u32> {
+    id(&format!("text functions {chain}"))
+}
+
 /// The id of `key`: its slot in the index, named the first time any thread asks. The same key gives the same id in
 /// the process, whoever asks, the CPU's text tests and the device's alike. `None` when the index is full.
 pub fn id(key: &str) -> Option<u32> {

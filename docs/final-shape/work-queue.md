@@ -5259,6 +5259,9 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
   `logical_line_predicates_and_aliases_use_the_vocabulary_batch` (the strings' relations numbered in another order
   than the tests expect, after 0281 step 6c named them by content). None reads `finish` or a version's fields.
 - **Done when**: each list names what it lists once, and the strings tests assert by content, not number.
+- **Done** (2026-11-19, with 0450 step 2e's CPU texts): the strings tests name each test by what it matches; the
+  lists' other entries had been cut meanwhile, and `device.rs`'s `AUTOMATA` and `TESTS` (gone with 0450 steps 2c and
+  2d) are cut from `facts_only::STATE` and `run_state::STATE`. All five pass.
 
 ### Q238. (Q106 on Typing-support-final-shape at 4ea96a066) Relax's JIT refuses `sha2`'s `sha512h` inline asm
 

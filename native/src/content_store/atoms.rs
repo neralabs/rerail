@@ -419,6 +419,41 @@ impl Kept {
         unsafe { rerail_blocks::generated_reads::verdict_get(self.cache(), test, sym) }
     }
 
+    /// The text functions `fns` (`text::automata::text_functions`) made of `sym`, if kept.
+    pub fn text(&self, fns: u32, sym: u32) -> Option<String> {
+        use rerail_clif::view::cache::{LEN, PAYLOAD};
+        // SAFETY: as `get`'s; an entry found is complete, and its bytes are read before this returns.
+        unsafe {
+            let r = rerail_blocks::generated_reads::text_find(self.cache(), fns, sym);
+            if r & 3 != 0 {
+                return None;
+            }
+            let e = (r & !3) as *const u8;
+            let len = e.add(LEN as usize).cast::<u32>().read() as usize - PAYLOAD as usize;
+            std::str::from_utf8(std::slice::from_raw_parts(e.add(PAYLOAD as usize), len)).ok().map(str::to_owned)
+        }
+    }
+
+    /// Keeps `text`, functions `fns` of `sym`; whether it was (none past `TEXT_MOST`, none with no room, none another
+    /// thread writes).
+    pub fn keep_text(&self, fns: u32, sym: u32, text: &str) -> bool {
+        use rerail_clif::view::cache::PAYLOAD;
+        if text.len() > TEXT_MOST {
+            return false;
+        }
+        // SAFETY: as `get`'s; an entry taken is this thread's to write, `text.len()` bytes at its payload.
+        unsafe {
+            let r = rerail_blocks::generated_reads::text_open(self.cache(), fns, sym, text.len() as u32);
+            if r & 3 != rerail_clif::reads::TAKEN as u64 {
+                return false;
+            }
+            let e = (r & !3) as *mut u8;
+            std::ptr::copy_nonoverlapping(text.as_ptr(), e.add(PAYLOAD as usize), text.len());
+            rerail_blocks::generated_reads::cache_done(self.cache(), r);
+        }
+        true
+    }
+
     /// Keeps `test`'s verdict for `sym` (`PASSES` or `FAILS`); whether the cache had room.
     pub fn put(&self, test: u32, sym: u32, passes: bool) -> bool {
         // SAFETY: as `get`'s.

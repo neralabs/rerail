@@ -78,10 +78,14 @@ fn tests_on_text_relations_become_relations() {
     // The glob set is one relation for both rules (patterns in any order); the computed string stays per row.
     assert_eq!(v.tests.len(), 3, "{:?}", v.tests.iter().map(|t| &t.0).collect::<Vec<_>>());
     let text = prog.rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
-    assert!(text.contains("!strtest_1($s)"), "{text}");
-    assert!(text.contains("@prefix"), "{text}");
+    // The tests are numbered by their content, not the rules' order: each is named here by what it matches.
     let rows = v.rows(&["_x".into(), "x_async".into(), "db".into(), "y".into()], &[1, 2, 3, 4]);
-    assert_eq!(rows, [vec![1, 2], vec![2], vec![3]]);
+    let suffix = rows.iter().position(|r| *r == [2]).expect("the suffix test");
+    assert!(text.contains(&format!("!strtest_{suffix}($s)")), "{text}");
+    assert!(text.contains("@prefix"), "{text}");
+    let mut sorted = rows.clone();
+    sorted.sort();
+    assert_eq!(sorted, [vec![1, 2], vec![2], vec![3]], "the glob set, the suffix, the names");
 }
 
 /// `fstring_template`'s markers are the program's constants, each once; a marker that is not a constant is an error.
@@ -164,8 +168,10 @@ finding(d,l) :- selected(d,l,t), contains("inspect",t).
     assert_eq!(vocabulary.tests.len(), 2, "both line predicates must be batched");
     let rendered = program.rules.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
     assert!(!rendered.contains("@prefix") && !rendered.contains("@contains"), "{rendered}");
-    assert_eq!(vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]),
-               [vec![11], vec![11,12]]);
+    // Numbered by their content: `prefix` and `contains` in either order.
+    let mut rows = vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]);
+    rows.sort();
+    assert_eq!(rows, [vec![11], vec![11,12]]);
 }
 
 /// A second writer can construct strings that the prepared vocabulary never saw.

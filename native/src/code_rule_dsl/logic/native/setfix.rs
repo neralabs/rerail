@@ -6251,8 +6251,10 @@ pub enum Step {
     /// interned; no value (NULL), no binding.
     /// `texts`: for a node read (`syntax::NODE_READS`), the run's binding of the long-text nodes it reads through
     /// (`functions::node_read`).
+    /// `kept`: the id its text is kept by in the store's rolling cache (decision 0450 step 2e), by its symbol, when it
+    /// is a text function of a symbol whose other arguments are constants (as the device keeps it).
     Func { name: &'static str, kinds: &'static [crate::code_rule_dsl::logic::strings::functions::Kind], args: Vec<Key>, out: usize, bind: bool,
-        texts: Option<NodeTexts> },
+        texts: Option<NodeTexts>, kept: Option<u32> },
     /// `@doc(a) = @doc(b)` (`eq`) or `!=`: the nodes' documents, `d` of `d << 32 | index`, compared.
     Doc { a: Key, b: Key, eq: bool },
     /// `out = @doc(n)`: node n's document, bound or tested.
@@ -6302,6 +6304,19 @@ impl JoinRule {
     pub fn step_of(&self, p: usize) -> Option<usize> {
         self.from.iter().position(|&f| f == p)
     }
+}
+
+/// The id function `name`'s text is kept by in the store's rolling cache (decision 0450 step 2e): a text function the
+/// device makes too (`caps::device_fn`), of a text, its other arguments constants. The chain is one step, named as the
+/// device names it (`text::automata::text_functions`).
+fn kept_text(name: &str, kinds: &[crate::code_rule_dsl::logic::strings::functions::Kind], args: &[Key]) -> Option<u32> {
+    use crate::code_rule_dsl::logic::device::caps;
+    let text = matches!(caps::device_fn(name)?, caps::DeviceFn::Text { texts: 1.., .. } | caps::DeviceFn::RegexReplace);
+    if !text || !matches!(kinds.first(), Some(crate::code_rule_dsl::logic::strings::functions::Kind::Text)) || !matches!(args.first(), Some(Key::Slot(_))) {
+        return None;
+    }
+    let consts: Vec<i64> = args[1..].iter().map(|a| match *a { Key::Const(c) => Some(c), Key::Slot(_) => None }).collect::<Option<_>>()?;
+    crate::code_rule_dsl::text::automata::text_functions(&format!("/{name}{consts:?}"))
 }
 
 /// Where a node read (`Step::Func`'s `texts`) finds the run's long-text nodes: the binding, when the join was made
@@ -6707,7 +6722,8 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                 } else {
                     None
                 };
-                steps.push(Step::Func { name, kinds, args, out: o, bind, texts });
+                let kept = kept_text(name, kinds, &args).filter(|_| texts.is_none());
+                steps.push(Step::Func { name, kinds, args, out: o, bind, texts, kept });
             }
             JoinItem::Test { op, s, p, want } => {
                 use crate::code_rule_dsl::logic::strings;
@@ -7527,9 +7543,14 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             }
             Step::Eq { a, b } => if val(slots, *a) == val(slots, *b) { go(cx, i + 1, slots) },
             Step::Ne { a, b } => if val(slots, *a) != val(slots, *b) { go(cx, i + 1, slots) },
-            Step::Func { name, kinds, args, out, bind, texts } => {
+            Step::Func { name, kinds, args, out, bind, texts, kept } => {
                 use crate::code_rule_dsl::logic::strings::functions::{eval, node_read, Kind};
-                let value = if let Some(nodes) = texts {
+                // A text kept for its symbol (decision 0450 step 2e), the CPU's or the device's.
+                let keep = kept.and_then(|f| u32::try_from(val(slots, args[0])).ok().filter(|_| !matches!(args[0], Key::Const(_))).map(|s| (f, s)));
+                let found = keep.and_then(|(f, s)| cx.syms.atoms.kept().text(f, s));
+                let value = if let Some(t) = found {
+                    rusqlite::types::Value::Text(t)
+                } else if let Some(nodes) = texts {
                     let read = match nodes {
                         NodeTexts::Held(nodes) => node_read(name, Some(&**nodes), val(slots, args[0])),
                         NodeTexts::At(at) => {
@@ -7545,7 +7566,11 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         match k { Kind::Text => strs.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
                     }
                     let strs: Vec<&str> = strs.iter().map(String::as_str).collect();
-                    eval(name, &strs, &numbers)
+                    let v = eval(name, &strs, &numbers);
+                    if let (Some((f, s)), rusqlite::types::Value::Text(t)) = (keep, &v) {
+                        cx.syms.atoms.kept().keep_text(f, s, t);
+                    }
+                    v
                 };
                 let mark = cx.texts.len();
                 let v = match value {
@@ -8630,8 +8655,8 @@ pub mod probe_tests {
     fn a_tested_result_reads_its_slot() {
         // Slots: 0 the whole, 1 and 2 its parts, 3 the text the function reads.
         let split = Step::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2) };
-        let tested = |out| Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out, bind: false, texts: None };
-        let made = Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out: 2, bind: true, texts: None };
+        let tested = |out| Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out, bind: false, texts: None, kept: None };
+        let made = Step::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out: 2, bind: true, texts: None, kept: None };
         assert!(tested(2).mentions(2) && !made.mentions(2));
         let cat = |bind| Step::Cat { out: 2, a: Key::Slot(3), b: Key::Slot(3), bind };
         assert!(cat(false).mentions(2) && !cat(true).mentions(2));
