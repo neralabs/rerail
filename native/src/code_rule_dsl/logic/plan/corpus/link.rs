@@ -27,8 +27,8 @@ pub(super) trait Part: Sized + Send {
     /// A part from its version.
     fn of_version(v: Arc<Version>) -> Result<Self>;
     /// A part lowered in its library's scope (`Text::lower_in`), given the run's rows (decision 0249); `found`, its
-    /// image as the caller read it with the others' (`images::read_all`).
-    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self>;
+    /// image as the caller read it with the others' (`images::read_images`).
+    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::ImageFound>>, extra: &super::added::Added) -> Result<Self>;
     /// The library linked once (decision 0089).
     fn library(l: &crate::code_rule_dsl::logic::rr::Library) -> Result<Self>;
     /// No fields: the linked program's before its rules, which `Merged` merges each part's into.
@@ -371,7 +371,7 @@ impl Part for Versioned {
     fn of_version(v: Arc<Version>) -> Result<Self> {
         Ok(Versioned::of(v))
     }
-    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self> {
+    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::ImageFound>>, extra: &super::added::Added) -> Result<Self> {
         let v = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's version in scope: its image, or lowered".into());
             read.lower_in_version(text, library, scoped, store, found)?.expect("a modular text")

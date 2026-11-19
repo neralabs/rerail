@@ -119,7 +119,7 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
 }
 
 /// The store, the prepared program's key, the entries by path, the programs' images by digest.
-type Held = (ContentStore, [u8; 32], HashMap<String, Vec<u8>>, HashMap<[u8; 32], Vec<u8>>);
+type Held = (ContentStore, [u8; 32], HashMap<String, Vec<u8>>, HashMap<[u8; 32], crate::code_rule_dsl::logic::program_image::SharedBytes>);
 
 /// While held, this thread's runs keep their choices in the store at `path`, under prepared program `prepared`.
 pub(in crate::code_rule_dsl) struct Durable;
@@ -203,8 +203,8 @@ pub(super) fn remember(key: [u8; 32], chosen: Chosen) {
             let _span = super::super::profile::span(|| "planning choices, kept in the store, queued".into());
             // Made into facts here, written by the store's writer in the run's record (decisions 0102, 0306). Its facts
             // hold strings as text (`program_facts::encode`'s own table), no atom: kept after a fork too (decision 0170).
-            let Some((packed, bytes)) = encode(&chosen) else { return };
-            store.record("the planning choices", vec![queued(prepared, &key)], &(prepared, key, packed), Some(bytes), apply);
+            let Some((packed, pieces)) = encode(&chosen) else { return };
+            store.record_held("the planning choices", vec![queued(prepared, &key)], &(prepared, key, packed), pieces, apply);
         }
     });
 }
@@ -371,7 +371,7 @@ fn rewritten(entry: &[u8]) -> Option<[u8; 32]> {
 }
 
 /// A choice's entry: its facts, and the rewritten program (`REWRITTEN`, its digest) opened from its image in `images`.
-fn decode_chosen(images: &HashMap<[u8; 32], Vec<u8>>, entry: &[u8]) -> Option<Chosen> {
+fn decode_chosen(images: &HashMap<[u8; 32], crate::code_rule_dsl::logic::program_image::SharedBytes>, entry: &[u8]) -> Option<Chosen> {
     let Ok(facts) = program_facts::decode(entry) else { return None };
     let nodes = match facts.get(SCALE).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Int(n)]) => *n as f64,
@@ -392,9 +392,9 @@ fn decode_chosen(images: &HashMap<[u8; 32], Vec<u8>>, entry: &[u8]) -> Option<Ch
     };
     let version = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Str(digest)]) => {
-            // The image is the program's version, read as it is, its rules in order.
+            // The image is the program's version, read where the store holds it (decision 0464), its rules in order.
             let bytes = images.get(&unhex(&digest)?)?;
-            Some(super::body::Placed::whole(crate::code_rule_dsl::logic::program_image::Version::open(bytes).ok()?))
+            Some(super::body::Placed::whole(crate::code_rule_dsl::logic::program_image::Version::open_shared(bytes.clone()).ok()?))
         }
         Some(_) => return None,
         None => None,
@@ -415,7 +415,7 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 
 /// `chosen` as its record's item carries it: its rewritten program's image, and its facts entry. `None` for a program
 /// whose image is not made: nothing is kept, and the next run chooses again.
-fn encode(chosen: &Chosen) -> Option<(program_text::Packed, Vec<u8>)> {
+fn encode(chosen: &Chosen) -> Option<(program_text::Packed, Vec<crate::content_store::record::Bytes>)> {
     let mut facts = Facts::new();
     let mut programs = Vec::new();
     if let Some(version) = &chosen.version {
@@ -435,7 +435,7 @@ fn encode(chosen: &Chosen) -> Option<(program_text::Packed, Vec<u8>)> {
 fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
     let (prepared, key, packed): ([u8; 32], [u8; 32], program_text::Packed) = crate::content_store::record::codec::from_body("the planning choices", body)?;
     let store = cx.store;
-    let (sources, entry) = program_text::store_packed(store, &packed, cx.bytes)?;
+    let (sources, entry) = program_text::store_packed(store, &packed, cx.pieces)?;
     cx.name(sources);
     let text = source_text(&prepared);
     let hash = HashKey::sha256(text.as_bytes());

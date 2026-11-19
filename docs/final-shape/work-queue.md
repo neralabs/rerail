@@ -1203,6 +1203,13 @@ pass.
 - **Waits for**: the deferrable tier (0295 path step 2), built on final-rerail-shape-phased-facts.
 - **Done when**: Typing-support's version tests pass on blocks, and dl1's trace validation costs no more
   instructions than 0173's.
+- **Built** (2026-11-19, decision 0464): the image is written once in place (`Layout`/`Placing`), a record carries
+  it as its version's `Arc` (record pieces), stored images are placed in segments and opened over the mapping (an
+  older store's inline rows loaded at 16 bytes), and the bundle is read in place. An open checks bounds, references
+  and strings, not node trees (`Depth::Held`), except for foreign bytes and in debug builds. One fold rule (0456 K4's
+  geometric one), kills by range as views, and views stay their own form. The program image, program text, rr,
+  store and logic tests pass (Linux: 204 of the engine's; M1 Max: 703 of the three crates').
+- **Left**: the dl1 44-policy batch against a26e71b5d (0276 §3), the "costs no more" half of done.
 
 ### Q27. `value_types_are_ws_value_types` reads only the string-typed values
 
@@ -3617,6 +3624,9 @@ Q36's pricing (`field($l, "left", $t)` priced at one row a line) is lost again. 
 - **Still open** (2026-11-19, read at 049b9aaa6): neither a step's `apply` (stored) nor `find` (a hit) names the
   image's and the step facts' sources in the run's manifest (`Apply::name`). Built with Q26, which moves a stored
   image into a block: the sources named are its new home's.
+- **Done** (2026-11-19, decision 0464 §7): `keep`'s apply names the image and the facts it stores or finds, and
+  `find` names both through an item of the run's record. `a_found_step_names_its_sources_as_its_keeper_did`: the
+  run that finds the steps names the sources the keeping run named.
 
 ### Q147. (Q50 on Typing-support) `parse_splice_and_unparse_make_value_documents` fails the debug check of `locate` (Typing-support's)
 
@@ -5414,3 +5424,14 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
 - **Done when**: `cpython::syntax` gives the error's span as CPython 3.13 does, checked by `parity` against CPython
   on a box, and the worker is deleted.
 - **Record**: —
+
+### Q294. Linking every pack's library waits minutes on the store's msync of kept facts (Linux)
+
+- **Found** (2026-11-19, Q26): `rr::tests::library_modules_link_to_the_lowering_of_them_together` takes 217 s at
+  f9c3bd713 and 251 s with Q26 on a DGX Spark (debug), of which 87 s user and 40 s sys. Stack samples show the test
+  waiting in phase 0's graph runs (`phase0::derive` → `run_observed` → `written`) while the store's writer msyncs a
+  kept-facts block of 460–630 MB (`kept::finish` → `Block::sync_mapped`), once a pack. The test was in the quick
+  tier; it is now in the slow tier with 8 periods (`.config/nextest.toml`).
+- **Next**: why a library's phase 0 graph run keeps half a gigabyte of facts, and why its writer syncs the whole
+  mapping and not the pages written. Then the test's time back under 20 s, into the quick tier.
+

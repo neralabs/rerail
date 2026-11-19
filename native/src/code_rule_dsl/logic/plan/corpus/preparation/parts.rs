@@ -655,17 +655,17 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn keep_facts(store: &ContentS
 pub(in crate::code_rule_dsl::logic::plan::corpus) fn keep(store: &ContentStore, key: &[u8; 32], version: &Arc<Version>, facts: impl FnOnce(&[u8; 32]) -> Facts) {
     let Some(encoded) = program_text::encode_version(version) else { return };
     let entry = program_facts::encode(&facts(&encoded.digest));
-    let (packed, bytes) = program_text::pack(vec![encoded], entry);
+    let (packed, pieces) = program_text::pack(vec![encoded], entry);
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
         let (key, packed): ([u8; 32], program_text::Packed) = crate::content_store::record::codec::from_body("a prepared part", body)?;
-        let (sources, entry) = program_text::store_packed(cx.store, &packed, cx.bytes)?;
+        let (sources, entry) = program_text::store_packed(cx.store, &packed, cx.pieces)?;
         cx.name(sources);
         let source = super::super::memo::source(cx.store, &source_text(&key))?;
         cx.name([source]);
         let set = plan();
         cx.store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.to_vec() }], &[]).map(drop)
     }
-    store.record("a prepared part", Vec::new(), &(*key, packed), Some(bytes), apply);
+    store.record_held("a prepared part", Vec::new(), &(*key, packed), pieces, apply);
 }
 
 /// Every relation name `p` mentions: its header's and its rules'.

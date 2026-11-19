@@ -318,9 +318,9 @@ impl Text {
     /// for a text that includes nothing. `store` holds it as a program image (decision 0246 §6) under its text `src`
     /// and its scope's keys: a store that holds it hands it on unread (decision 0281's path, step 7a-2); else the
     /// text is lowered, and its image kept.
-    /// `found`: the image as the caller read it already (`images::read_all`, its lease renewed there), or `None` to
+    /// `found`: the image as the caller read it already (`images::read_images`, its lease renewed there), or `None` to
     /// read it here.
-    pub fn lower_in_version(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<images::Found>>) -> Result<Option<std::sync::Arc<super::program_image::Version>>, Error> {
+    pub fn lower_in_version(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<images::ImageFound>>) -> Result<Option<std::sync::Arc<super::program_image::Version>>, Error> {
         if !matches!(self.0, Read::Modular { .. }) {
             return Ok(None);
         }
@@ -333,11 +333,12 @@ impl Text {
             Some(found) => found,
             None => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's image, from the store".into());
-                images::read(store, key)
+                images::read_image(store, key)
             }
         };
+        // Read where it is held (decision 0464): the bundle's mapping, a segment's, or its row loaded at 16 bytes.
         if let Some((bytes, id)) = found
-            && let Ok(version) = super::program_image::Version::open(&bytes)
+            && let Ok(version) = super::program_image::Version::open_shared(bytes)
         {
             if read_here && let (Some(store), Some(id)) = (store, id) {
                 renew_image(store, id);
@@ -347,7 +348,7 @@ impl Text {
         }
         let Some(version) = self.lowered_in_version(library, scoped)? else { return Ok(None) };
         let version = if version.base_bytes().is_some() { version } else { version.fold().map_err(Error::Syntax)? };
-        if keep_image(store, "a program image", key, version.base_bytes().expect("a folded version is a base").to_vec()) {
+        if keep_image(store, "a program image", key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
             crate::code_rule_dsl::prof::count("rr.program_image_written", 1);
         }
         Ok(Some(version))
@@ -519,8 +520,8 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
         // reads it, and the whole-program half does not run again.
         let key = linked_key(&keys);
         // Read as its version, with no tree decoded (decision 0281's path, step 7a-2).
-        let stored = images::read(store, key).and_then(|(bytes, id)| {
-            let version = super::program_image::Version::open(&bytes).ok()?;
+        let stored = images::read_image(store, key).and_then(|(bytes, id)| {
+            let version = super::program_image::Version::open_shared(bytes).ok()?;
             if let (Some(store), Some(id)) = (store, id) {
                 renew_image(store, id);
             }
@@ -537,7 +538,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
             None => {
                 // Linked on versions (decision 0377): the modules' rules are never a tree.
                 let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
-                if keep_image(store, "a linked library's image", key, version.base_bytes().expect("a folded version is a base").to_vec()) {
+                if keep_image(store, "a linked library's image", key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
                     crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
                 }
                 let version = lower::keep_declared_kind_sets(&version, &modules)?;
@@ -688,8 +689,8 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
     for (u, members) in units.iter().enumerate() {
         let key = module_key(members.iter().map(|&i| &digests[i]), scopes[u].iter().map(|&v| &keys[v]));
         keys.push(key);
-        if let Some((bytes, id)) = images::read(store, key)
-            && let Ok(m) = module_image::decode(&bytes)
+        if let Some((bytes, id)) = images::read_image(store, key)
+            && let Ok(m) = module_image::decode(bytes)
         {
             if let (Some(store), Some(id)) = (store, id) {
                 renew_image(store, id);
@@ -706,8 +707,8 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
         })?;
         // Written by the store's writer, behind the run (decisions 0104, 0240 §1); dropped where its queue is full, as
         // a tape is: the next run lowers the module again.
-        if let Ok(bytes) = module_image::encode(&m)
-            && keep_image(store, "a module image", key, bytes)
+        if let Ok(image) = module_image::encode(&m)
+            && keep_image(store, "a module image", key, std::sync::Arc::new(image))
         {
             crate::code_rule_dsl::prof::count("rr.module_image_written", 1);
         }
@@ -736,18 +737,20 @@ fn image_lease() -> i64 {
 /// Keeps `bytes`, an image, in `store` under alias `key`, pinned for its lease: written by the store's writer, behind
 /// the run (decisions 0104, 0240 §1), and dropped where its queue is full, as a tape is (the next run lowers it
 /// again). Whether it was queued.
-fn keep_image(store: Option<&crate::content_store::ContentStore>, what: &'static str, key: crate::content_store::HashKey, bytes: Vec<u8>) -> bool {
+fn keep_image(store: Option<&crate::content_store::ContentStore>, what: &'static str, key: crate::content_store::HashKey, bytes: crate::content_store::record::Bytes) -> bool {
     use crate::content_store::write_back::{Key, Syms};
-    images::export(key, &bytes);
+    images::export(key, (*bytes).as_ref());
     let Some(store) = store else { return false };
-    // A record of its own (decision 0306), dropped where the queue is full: the image in its byte area.
+    // A record of its own (decision 0306), dropped where the queue is full: the image its piece, as its maker holds
+    // it, placed in a segment by the writer and read there (decision 0464).
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
         let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body("an image", body)?;
-        let id = cx.store.put_source(cx.bytes, &[key])?;
+        let hash = crate::content_store::HashKey::sha256(cx.bytes);
+        let id = cx.store.put_sources_placed(&[(cx.bytes, hash, &[key])])?[0];
         cx.store.pin_source(id, IMAGE_OWNER, image_lease())
     }
     let queued = Key::of(&[what.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
-    store.queue_record(Syms::None, what, vec![queued], &key, Some(bytes), apply, true)
+    store.queue_record_held(Syms::None, what, vec![queued], &key, vec![bytes], apply, true)
 }
 
 /// The text tests' compiled groups of automata as images (decisions 0075, 0264): each under its key, read from the
@@ -781,7 +784,7 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for ImageDfas {
         let mut entry = vec![u8::from(dfa.is_some())];
         entry.extend_from_slice(dfa.unwrap_or_default());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
-        keep_image(self.0.as_deref(), "a group of automata", Self::key(group), entry);
+        keep_image(self.0.as_deref(), "a group of automata", Self::key(group), std::sync::Arc::new(entry));
     }
 }
 

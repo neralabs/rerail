@@ -2,8 +2,9 @@
 //!
 //! A small write (the files' stats, the manifest, a pin, a kept plan) is an **item** of the run's record: a kind, its
 //! body (owned data) and the keys a `queued` or `settle` asks about. Items wait beside the run's waves until the run
-//! ends (or a `settle` of one of their keys), then the record is encoded as **one string**, with **one byte area** for
-//! binary bodies, and queued as the last job of the run's last wave. The writer decodes it and applies its items in
+//! ends (or a `settle` of one of their keys), then the record is encoded as **one string**, with its items' bytes
+//! beside it, each held as its maker holds it (decision 0464: an image where its writer wrote it), never copied into
+//! the record, and queued as the last job of the run's last wave. The writer decodes it and applies its items in
 //! order, each by the function its kind registered: the queue holds data, the registry code.
 //!
 //! The encoding is [`codec`]'s alone, so changing it (JSON now) changes that module.
@@ -24,7 +25,7 @@ pub mod codec {
     /// An item's body, as the codec holds it before the record is written.
     pub type Body = serde_json::Value;
 
-    /// One item: its kind, its body, and the range of the record's byte area it reads, if any.
+    /// One item: its kind, its body, and the record's pieces of bytes it reads (the first and how many), if any.
     #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
     pub struct Item {
         pub kind: String,
@@ -66,11 +67,16 @@ pub mod codec {
     }
 }
 
-/// What an item's apply is given: the store, its bytes (the item's range of the record's byte area) and the run's
-/// named sources, which the manifest's item names.
+/// Bytes an item carries to the writer, held as their maker holds them (an image where its writer wrote it, a vector
+/// made for the item), never copied into the record (decision 0464).
+pub type Bytes = std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>;
+
+/// What an item's apply is given: the store, its bytes (its first piece; empty for none), all its pieces, and the
+/// run's named sources, which the manifest's item names.
 pub struct Apply<'a> {
     pub store: &'a ContentStore,
     pub bytes: &'a [u8],
+    pub pieces: &'a [Bytes],
 }
 
 impl Apply<'_> {
@@ -94,18 +100,24 @@ pub fn register(kind: &'static str, apply: ApplyFn) {
     }
 }
 
-/// Applies `text` (and `bytes`, its byte area) in order. A record of another format is not applied; an item of a kind
-/// not registered fails the record.
-pub fn apply(store: &ContentStore, text: &str, bytes: &[u8]) -> StoreResult<()> {
+/// Applies `text` (and `pieces`, its items' bytes) in order. A record of another format is not applied; an item of a
+/// kind not registered fails the record.
+pub fn apply(store: &ContentStore, text: &str, pieces: &[Bytes]) -> StoreResult<()> {
     let Some(items) = codec::decode(text)? else { return Ok(()) };
     for item in items {
         let f = *KINDS.lock().expect("the record's kinds").get(&item.kind).ok_or_else(|| StoreError::Invalid(format!("a record's item of kind {}: none registered", item.kind)))?;
-        let range = item.bytes.map_or(&[][..], |(at, len)| &bytes[at..at + len]);
+        let range = item.bytes.map_or(&[][..], |(at, n)| &pieces[at..at + n]);
+        let bytes = range.first().map_or(&[][..], |b| (**b).as_ref());
         // Judged by its kind in a warm run, as a job of its own was (`profile::WARM_WRITES_ALLOWED`).
         super::hazards::warm_job(&item.kind);
-        f(&Apply { store, bytes: range }, item.body)?;
+        f(&Apply { store, bytes, pieces: range }, item.body)?;
     }
     Ok(())
+}
+
+/// An item's one vector of bytes as its one piece, moved, not copied.
+fn one(bytes: Option<Vec<u8>>) -> Vec<Bytes> {
+    bytes.into_iter().map(|b| std::sync::Arc::new(b) as Bytes).collect()
 }
 
 /// What a run's record is queued as: no write of its own, judged in a warm run by its items' kinds, never by this name.
@@ -115,24 +127,21 @@ pub(super) const WHAT: &str = "the run's record";
 #[derive(Default)]
 pub(super) struct Record {
     items: Vec<codec::Item>,
-    bytes: Vec<u8>,
+    pieces: Vec<Bytes>,
     keys: Vec<Key>,
 }
 
 impl Record {
-    fn push(&mut self, kind: &'static str, keys: &[Key], body: codec::Body, bytes: Option<Vec<u8>>) {
-        let range = bytes.map(|b| {
-            let at = self.bytes.len();
-            self.bytes.extend_from_slice(&b);
-            (at, b.len())
-        });
+    fn push(&mut self, kind: &'static str, keys: &[Key], body: codec::Body, pieces: Vec<Bytes>) {
+        let range = (!pieces.is_empty()).then(|| (self.pieces.len(), pieces.len()));
+        self.pieces.extend(pieces);
         self.items.push(codec::Item { kind: kind.to_owned(), body, bytes: range });
         self.keys.extend_from_slice(keys);
     }
 
-    /// Its weight in the queue: the bodies' and the byte area's.
+    /// Its weight in the queue: the bodies' and the bytes'.
     fn weight(&self) -> usize {
-        self.bytes.len() + self.items.len() * 256
+        self.pieces.iter().map(|b| (**b).as_ref().len()).sum::<usize>() + self.items.len() * 256
     }
 }
 
@@ -157,7 +166,7 @@ impl Gather for Record {
             return None;
         }
         let bytes = self.weight();
-        Some(Closed { what: WHAT, bytes, keys: Vec::new(), syms: Syms::None, job: Work::record(codec::encode(&self.items), self.bytes) })
+        Some(Closed { what: WHAT, bytes, keys: Vec::new(), syms: Syms::None, job: Work::record(codec::encode(&self.items), self.pieces) })
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
@@ -168,6 +177,11 @@ impl ContentStore {
     /// Adds an item of `kind` (its apply `f`, registered) to this thread's run's record, under `keys`; outside a run,
     /// a record of its own, queued now.
     pub fn record<T: serde::Serialize>(&self, kind: &'static str, keys: Vec<Key>, body: &T, bytes: Option<Vec<u8>>, f: ApplyFn) {
+        self.record_held(kind, keys, body, one(bytes), f)
+    }
+
+    /// `record`, its item's bytes `pieces` as their makers hold them (decision 0464).
+    pub fn record_held<T: serde::Serialize>(&self, kind: &'static str, keys: Vec<Key>, body: &T, bytes: Vec<Bytes>, f: ApplyFn) {
         register(kind, f);
         let body = codec::body(body);
         let mut once = Some((body, bytes));
@@ -183,20 +197,26 @@ impl ContentStore {
         self.queue_item(Syms::None, kind, keys, body, bytes, false);
     }
 
+    /// `queue_record`, its item's bytes `pieces` as their makers hold them (decision 0464).
+    #[allow(clippy::too_many_arguments)]
+    pub fn queue_record_held<T: serde::Serialize>(&self, syms: Syms, kind: &'static str, keys: Vec<Key>, body: &T, bytes: Vec<Bytes>, f: ApplyFn, droppable: bool) -> bool {
+        register(kind, f);
+        self.queue_item(syms, kind, keys, codec::body(body), bytes, droppable)
+    }
+
     /// Queues an item of `kind` (its apply `f`, registered) as a record of its own, never gathered: for a write that
     /// is not the run's record's (dropped where the queue is full when `droppable`, as a cache's; or holding symbols
     /// mapped as it is written, `syms`). Whether it was queued.
     #[allow(clippy::too_many_arguments)]
     pub fn queue_record<T: serde::Serialize>(&self, syms: Syms, kind: &'static str, keys: Vec<Key>, body: &T, bytes: Option<Vec<u8>>, f: ApplyFn, droppable: bool) -> bool {
-        register(kind, f);
-        self.queue_item(syms, kind, keys, codec::body(body), bytes, droppable)
+        self.queue_record_held(syms, kind, keys, body, one(bytes), f, droppable)
     }
 
-    fn queue_item(&self, syms: Syms, kind: &'static str, keys: Vec<Key>, body: codec::Body, bytes: Option<Vec<u8>>, droppable: bool) -> bool {
+    fn queue_item(&self, syms: Syms, kind: &'static str, keys: Vec<Key>, body: codec::Body, bytes: Vec<Bytes>, droppable: bool) -> bool {
         let mut r = Record::default();
         r.push(kind, &[], body, bytes);
         let weight = r.weight();
-        let work = Work::record(codec::encode(&r.items), r.bytes);
+        let work = Work::record(codec::encode(&r.items), r.pieces);
         let keys = keys.into_iter().map(|k| (k, None)).collect();
         if droppable { self.write_back_unless_full(syms, kind, weight, keys, work) } else { self.write_back_syms(syms, kind, weight, keys, work); true }
     }

@@ -3866,7 +3866,7 @@ fn library_modules_link_to_the_lowering_of_them_together() {
         let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
         let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         // Each module read back from its image (decision 0246 §6) links to the same program, on versions (0377).
-        let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(&module_image::encode(m).unwrap()).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
+        let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(std::sync::Arc::new(module_image::encode(m).unwrap())).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
         let on_versions = super::link_library_versions(images).unwrap_or_else(|e| panic!("{}: linked on versions from its images: {e}", dir.display()));
         let linked = super::link_library_versions(modules).unwrap_or_else(|e| panic!("{}: linked on versions: {e}", dir.display()));
         assert_eq!((linked.size(), linked.digest()), (on_versions.size(), on_versions.digest()), "{}: the library linked from its modules' images: {}", dir.display(), crate::code_rule_dsl::logic::program_image::differences(&linked, &on_versions));

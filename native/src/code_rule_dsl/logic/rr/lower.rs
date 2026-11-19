@@ -462,8 +462,7 @@ impl Written {
         if let Some(e) = self.error {
             return Err(Error::Syntax(e));
         }
-        let bytes = b.finish_bytes().map_err(Error::Syntax)?;
-        crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
+        b.base_version().map_err(Error::Syntax)
     }
 }
 
@@ -1252,14 +1251,13 @@ pub fn relinked(v: &crate::code_rule_dsl::logic::program_image::Version, rename:
     } else {
         b.fields().copy_fields(v, &|r: &str| !r.starts_with("module_"));
     }
-    let bytes = b.finish_bytes().map_err(Error::Syntax)?;
-    crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
+    b.base_version().map_err(Error::Syntax)
 }
 
 /// A version of no header and no rules (what `relinked` reads of no module).
 fn empty_version() -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
     let b = crate::code_rule_dsl::logic::program_image::Builder::base();
-    crate::code_rule_dsl::logic::program_image::Version::open(&b.finish_bytes().map_err(Error::Syntax)?).map_err(Error::Syntax)
+    b.base_version().map_err(Error::Syntax)
 }
 
 /// A library's modules linked as versions (`link`'s steps, the rules kept as versions): the first module's program,
@@ -1585,8 +1583,8 @@ impl Seeds {
     /// The scope's program as a version: its seeds' header, which every module linked in it starts from
     /// (`link_seeded_parts`).
     pub fn version(&self) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
-        let bytes = self.l.prog.clone().finish_bytes().map_err(Error::Syntax)?;
-        crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
+        // Written from the lowerer's builder as it is, not a clone of it (decision 0464).
+        self.l.prog.base_version().map_err(Error::Syntax)
     }
 }
 

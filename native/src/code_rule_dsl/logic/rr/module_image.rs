@@ -6,11 +6,11 @@
 use super::lower::{Module, ModuleParts, ViolationParts};
 use crate::code_rule_dsl::logic::front::{List, Value};
 use crate::code_rule_dsl::logic::program_facts::Facts;
-use crate::code_rule_dsl::logic::program_image::{Builder, Cell, Version};
+use crate::code_rule_dsl::logic::program_image::{Builder, Cell, Image, SharedBytes, Version};
 use std::collections::BTreeMap;
 
-/// The image of module `m`.
-pub fn encode(m: &Module) -> Result<Vec<u8>, String> {
+/// The image of module `m`, written once where it lives (decision 0464).
+pub fn encode(m: &Module) -> Result<Image, String> {
     let p = m.parts();
     let v = m.version();
     // Its program as its version holds it (decision 0377), its rules in their order: its `must, may` rules' places
@@ -70,12 +70,12 @@ pub fn encode(m: &Module) -> Result<Vec<u8>, String> {
         put("module_printed", vec![s(d)]);
     }
     b.fields().set_about(&about);
-    b.finish_bytes()
+    b.image()
 }
 
-/// The module image `bytes` holds.
-pub fn decode(bytes: &[u8]) -> Result<Module, String> {
-    let v = Version::open(bytes)?;
+/// The module image `bytes` holds, read where they are (decision 0464).
+pub fn decode(bytes: SharedBytes) -> Result<Module, String> {
+    let v = Version::open_shared(bytes)?;
     // Its program, rules and header, stays in the image, read as the module's version.
     let mut rows: BTreeMap<String, Vec<Vec<Cell>>> = BTreeMap::new();
     for f in v.about_facts() {

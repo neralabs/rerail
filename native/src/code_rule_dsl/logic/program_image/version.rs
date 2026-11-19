@@ -135,6 +135,17 @@ impl Version {
         Version::base_of(Image::open_shared(bytes)?)
     }
 
+    /// The base its writer wrote (`Builder::image`), read where it was written: no copy, and the writer's own checks
+    /// (`Placing::finish`, decision 0464).
+    pub fn of_image(image: Image) -> Result<Arc<Version>, String> {
+        Version::base_of(image)
+    }
+
+    /// The overlay of `parent` and the delta its writer wrote (`Builder::image`), read where it was written.
+    pub fn over_image(parent: &Arc<Version>, delta: Image) -> Result<Arc<Version>, String> {
+        Version::overlay_of(parent, delta)
+    }
+
     fn base_of(image: Image) -> Result<Arc<Version>, String> {
         if image.is_delta() {
             return Err(bad("a delta is opened over its parent (`Version::over`)"));
@@ -275,6 +286,15 @@ impl Version {
         match self {
             Version::Base { image, .. } => Some(image.bytes()),
             _ => None,
+        }
+    }
+    /// Its own image, as it is held (decision 0464: a record's piece takes it so, uncopied): a base's, or an overlay's
+    /// delta; `None` for a view, which has none.
+    pub fn own_image(&self) -> Option<&Arc<Image>> {
+        match self {
+            Version::Base { image, .. } => Some(image),
+            Version::Overlay { delta, .. } => Some(delta),
+            Version::View { .. } => None,
         }
     }
     /// What it is made of over its parent (decision 0333 §2): a base's image bytes, an overlay's parent and delta

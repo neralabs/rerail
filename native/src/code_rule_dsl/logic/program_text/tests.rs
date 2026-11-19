@@ -1,7 +1,8 @@
 use crate::code_rule_dsl::logic::rr::parse_version;
 
-/// A stored program is kept as its image alone (decisions 0173, 0246 §6), and read from it; one kept as text alone
-/// (a store written before images) is not read: a miss, which its run compiles again.
+/// A stored program is kept as its image alone (decisions 0173, 0246 §6), placed in a segment and read there, not
+/// copied (decision 0464); one kept as text alone (a store written before images) is not read: a miss, which its run
+/// compiles again.
 #[test]
 fn a_stored_program_is_read_from_its_image() {
     use crate::content_store::{ContentStore, HashKey};
@@ -12,12 +13,13 @@ fn a_stored_program_is_read_from_its_image() {
     let encoded = super::encode_version(&prog).expect("kept");
     assert!(encoded.image, "an image");
     let digest = encoded.digest;
-    let sources = super::store_encoded(&store, &digest, encoded.image, &encoded.bytes).unwrap();
+    let sources = super::store_encoded(&store, &digest, encoded.image, (*encoded.bytes).as_ref()).unwrap();
     assert_eq!(sources.len(), 1, "its image alone");
     assert!(store.source_by_alias(super::image_key(&digest)).unwrap().is_some());
     let found = super::stored(&store, &[digest]).unwrap();
     let (bytes, ids) = &found[&digest];
-    assert_eq!(bytes, &encoded.bytes, "read from its image");
+    assert_eq!((**bytes).as_ref(), (*encoded.bytes).as_ref(), "read from its image");
+    assert!(store.source_by_alias_in_place(super::image_key(&digest)).unwrap().expect("held").in_place(), "placed in a segment, read there");
     assert_eq!(ids, &sources, "the image's source");
     let (back, _) = super::load_image(&store, &digest).unwrap().expect("loads");
     let shown = |v: &crate::code_rule_dsl::logic::program_image::Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>();

@@ -39,6 +39,9 @@ impl<T: AsRef<[u8]> + std::any::Any + Send + Sync> TapeHeld for T {}
 #[derive(Clone)]
 pub enum ObjectBytes {
     Heap(Arc<Vec<u8>>),
+    /// Decompressed from its row's frame into a buffer at 16 bytes, of its exact length: a load into the bytes its
+    /// readers read (decision 0464: an image opens over it as over a mapping).
+    Loaded(Arc<Loaded>),
     Mapped(SegmentBytes),
     /// A tape queued for the writer, in its home (decision 0353 step 4a: a slab's room, read there).
     Tape(TapeBytes),
@@ -49,9 +52,34 @@ impl std::ops::Deref for ObjectBytes {
     fn deref(&self) -> &[u8] {
         match self {
             ObjectBytes::Heap(b) => b,
+            ObjectBytes::Loaded(b) => (**b).as_ref(),
             ObjectBytes::Mapped(b) => b.bytes(),
             ObjectBytes::Tape(b) => (**b).as_ref(),
         }
+    }
+}
+
+/// Bytes loaded at 16 bytes (`ObjectBytes::Loaded`).
+pub struct Loaded {
+    buf: Vec<u128>,
+    len: usize,
+}
+
+impl Loaded {
+    /// `frame` decompressed into a buffer of `len` bytes at 16: the frame must hold exactly that many.
+    fn of_frame(frame: &[u8], len: usize) -> std::io::Result<Loaded> {
+        let mut buf = vec![0u128; len.div_ceil(16)];
+        // SAFETY: `buf` holds at least `len` bytes, borrowed here alone.
+        let out = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), len) };
+        super::compression::decompress_into(frame, out)?;
+        Ok(Loaded { buf, len })
+    }
+}
+
+impl AsRef<[u8]> for Loaded {
+    fn as_ref(&self) -> &[u8] {
+        // SAFETY: `buf` holds `len` initialized bytes.
+        unsafe { std::slice::from_raw_parts(self.buf.as_ptr().cast::<u8>(), self.len) }
     }
 }
 
@@ -60,6 +88,7 @@ impl ObjectBytes {
     pub fn into_vec(self) -> Vec<u8> {
         match self {
             ObjectBytes::Heap(b) => Arc::try_unwrap(b).unwrap_or_else(|b| (*b).clone()),
+            ObjectBytes::Loaded(b) => (*b).as_ref().to_vec(),
             ObjectBytes::Mapped(b) => b.bytes().to_vec(),
             ObjectBytes::Tape(b) => (*b).as_ref().to_vec(),
         }
@@ -102,6 +131,13 @@ impl ObjectFrame {
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    /// Its bytes at 16 bytes: a frame loaded (`Loaded`), a segment's read in place (decision 0464).
+    pub fn bytes_aligned(&self, raw_length: usize) -> std::io::Result<ObjectBytes> {
+        match self {
+            ObjectFrame::Zstd(f) => Loaded::of_frame(f, raw_length).map(|b| ObjectBytes::Loaded(Arc::new(b))),
+            ObjectFrame::Raw(b) => Ok(ObjectBytes::Mapped(b.clone())),
+        }
     }
     /// Its bytes: a frame decompressed, a segment's read in place.
     pub fn bytes(&self, raw_length: usize) -> std::io::Result<ObjectBytes> {
@@ -449,8 +485,8 @@ impl ContentStore {
 
     /// The source each of `aliases` names, in their order, in one read (decision 0394): one placed in a segment is
     /// read there, mapped (`ObjectBytes::in_place`): not decompressed, hashed or copied, its segment's check (when
-    /// mapped) the check; one held inline is decompressed and checked against its hash, as `get_source` does.
-    /// `None` where no source has the alias, or its segment is gone.
+    /// mapped) the check; one held inline is loaded at 16 bytes (`ObjectBytes::Loaded`, decision 0464) and checked
+    /// against its hash, as `get_source` does. `None` where no source has the alias, or its segment is gone.
     pub fn sources_by_alias_in_place(&self, aliases: &[HashKey]) -> StoreResult<Vec<Option<ObjectBytes>>> {
         let rows: Vec<Option<(i64, i64, Vec<u8>, HashKey, [i64; 3])>> = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
@@ -483,7 +519,7 @@ impl ContentStore {
                 out.push(None);
                 continue;
             };
-            let bytes = frame.bytes(length).map_err(|e| StoreError::Corrupt(format!("a source's frame: {e}")))?;
+            let bytes = frame.bytes_aligned(length).map_err(|e| StoreError::Corrupt(format!("a source's frame: {e}")))?;
             if bytes.len() != length {
                 return Err(StoreError::Corrupt("source length does not match metadata".to_owned()));
             }
@@ -494,6 +530,11 @@ impl ContentStore {
             out.push(Some(bytes));
         }
         Ok(out)
+    }
+
+    /// The source `alias` names, read where the store holds it (`sources_by_alias_in_place`).
+    pub fn source_by_alias_in_place(&self, alias: HashKey) -> StoreResult<Option<ObjectBytes>> {
+        Ok(self.sources_by_alias_in_place(&[alias])?.pop().flatten())
     }
 
     /// The tape and source segments' bytes, and the bytes their rows name: what compaction would leave.

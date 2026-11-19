@@ -207,14 +207,14 @@ fn record_encoded(store: &ContentStore, what: &'static str, key: &[u8; 32], read
     // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`) ships the entry (its program's image ships with
     // `program_text::encode_version`).
     rr::images::export(shipped_key(key), &entry);
-    let (packed, bytes) = program_text::pack(vec![encoded], entry);
-    store.record(what, vec![queued(key)], &(*key, packed), Some(bytes), apply);
+    let (packed, pieces) = program_text::pack(vec![encoded], entry);
+    store.record_held(what, vec![queued(key)], &(*key, packed), pieces, apply);
 }
 
 fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
     let (key, packed): ([u8; 32], program_text::Packed) = crate::content_store::record::codec::from_body("the combined program", body)?;
     let store = cx.store;
-    let (text_source, entry) = program_text::store_packed(store, &packed, cx.bytes)?;
+    let (text_source, entry) = program_text::store_packed(store, &packed, cx.pieces)?;
     let text = source_text(&key);
     let hash = HashKey::sha256(text.as_bytes());
     let source = match store.source_by_hash(hash)? {
