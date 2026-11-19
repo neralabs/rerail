@@ -244,3 +244,18 @@ const folderState = entry => ({
   folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,
   source: entry.source,
 });
+
+/**
+ * A rule's distinct violations in a range (one `rules_activity` entry), each in exactly one outcome: Log only (recorded
+ * on Log, so the coding agent was not told), Declined (a steer the agent declined with `rerail feedback`, even when
+ * another audit recorded it on Log), or Steered (sent to the agent, and not declined). History by rule's chips and
+ * Overview's Violations steered both read it. An answer without the declined counts reads none declined.
+ * @param {{ distinctViolations: number, loggedViolations?: number, declinedViolations?: number, declinedLoggedViolations?: number }} a
+ * @returns {{ all: number, logged: number, steered: number, declined: number }}
+ */
+export function violationOutcomes(a) {
+  const all = a.distinctViolations;
+  const declined = Math.min(a.declinedViolations ?? 0, all);
+  const logged = Math.max(0, Math.min((a.loggedViolations ?? 0) - (a.declinedLoggedViolations ?? 0), all - declined));
+  return { all, logged, steered: all - logged - declined, declined };
+}
