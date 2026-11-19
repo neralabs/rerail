@@ -2886,8 +2886,20 @@ submitted" now hold device memory at once.
     under each size's own spread (15 and 26 G): a chunk's cost is under ~2 G and not resolved. The ~7 G a chunk
     this item set out to remove was the timeline's lines (unprofiled) and the profile's own spans (profiled).
     Item 3 stands as measured: no per-chunk cost to remove past (i); (ii)'s two commits (the normalized
-    program, the symbols' arena outside their lock) are kept as shape, not as savings. Open: the warm-up run
-    (default sizing, 13 chunks) is 579.2 G, under every forced run after it (624-649 G).
+    program, the symbols' arena outside their lock) are kept as shape, not as savings.
+  - (ab79's warm-up under its forced runs, ab80-ab84) Not the sizing and not the order: ab80 (default and
+    52,000 nodes alternated after the warm-up, loads 24-64) 562-578 G every run; ab81 (ab79's order again,
+    loads 50-118) warm-up 567.9, 52,000-node runs 559-563, 28,600-node 590-607. The same forced run counts
+    ~60 G more in ab79 (loads 6-15) than since, and the timeline's sections put the gap in the chunks'
+    evaluation (startup, cross, prepare and report are flat: 20.4, 66-68, 13 G). Candidate: rayon's idle loop
+    (32 rounds of steal and `yield_now` before a worker sleeps), which a free core runs back to back. ab82
+    sampled a run at load 105: 32,508 samples in `swtch_pri` from `wait_until_cold`, about a quarter of the
+    on-CPU samples, at 562 G; ab83, ~3,300. ab84: t69 = t68 with rayon-core's `ROUNDS_UNTIL_SLEEPY` 32 -> 1
+    (patched in the job's copy only), alternated with t68 at 52,000 nodes, loads 30-92: t68 564.5 / 567.9 /
+    575.7, t69 564.0 / 577.3 / 560.7: no difference, and both in the low band. Not shown either way: the high
+    band has not come back since ab79, and the test needs a quiet M3. Next, when the M3 is at load ~10: ab84's
+    runs again (`tmp/m3bench4/ab84.sh`, both binaries kept on the host, no build). Also seen: a forced chunk
+    size gives 8-13 chunks run to run (52,000 nodes).
   - (accounting, before 7562bf8a94) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
