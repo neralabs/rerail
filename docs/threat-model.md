@@ -558,13 +558,6 @@ boundary judges paths by secret-like name and, where a checkout is known, by sym
   only, not symlink target.
 - A link named without a separator, leading dot or extension (`notes -> .env`, read as `cat notes`) is not looked up
   on disk, so its target is not judged.
-- On Windows a share on another machine that does not follow a `:` (`type \\host\share\x`,
-  `src="//cdn.example.com/x.js"`), and a `file:` URL with a host, are still looked up as paths. Their lookup reaches
-  that machine, against G5, and holds the daemon about 21 s when the host does not answer. So does the lookup of a
-  path on a mapped network drive, of a link in the checkout that leads to a share, or of a device path that reaches a
-  share by a route the check does not read (a DOS device name the person defined, a logon session's own device
-  folder, a redirector under another name), wherever it stands. On macOS, and on Linux with an
-  automounted `/net`, a `/net/<host>/x` word that is not certainly a web URL is looked up the same way.
 
 </details>
 

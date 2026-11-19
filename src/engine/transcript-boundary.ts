@@ -284,11 +284,10 @@ const callNames = (input: unknown, judge: (path: string) => boolean, root: strin
  * macOS a web URL under the automount root `/net` (`https://net/host/api`) on another machine. Every other path-shaped
  * token is resolved: a `file:` URL's host and path, a URL's path with no host (`unix:///run/app.sock`), a share or
  * `/net` path on the loopback host or on this machine's own name, on Windows a device path (`\\?\...`) wherever it
- * stands, and a drive path written with doubled separators (`"C:\\Users\\me"` in JSON) as `C:\Users\me` is. On Linux and macOS
- * a `//` path is a local one. On Windows a share on another machine that does not follow a `:`, and a `file:` URL with
- * a host, are resolved too, so they still reach that machine, and wait about 21 s for one that does not answer. It
- * reads names, not a shell: a path built at run time (`cat $(echo .e)nv`) is not seen. An input deeper or larger than
- * it reads counts as naming one.
+ * stands, and a drive path written with doubled separators (`"C:\\Users\\me"` in JSON) as `C:\Users\me` is. On Linux
+ * and macOS a `//` path is a local one. On Windows a share on another machine that does not follow a `:`, and a `file:`
+ * URL with a host, are resolved too, as paths the call names. It reads names, not a shell: a path built at run time
+ * (`cat $(echo .e)nv`) is not seen. An input deeper or larger than it reads counts as naming one.
  */
 export function callNamesDeniedPath(input: unknown, root?: string): boolean {
   return callNames(input, deniedByPathBoundary, root);
