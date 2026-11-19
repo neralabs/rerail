@@ -257,6 +257,25 @@ fn adding_analysis_history_preserves_previous_manifest_owners_without_fabricatin
 }
 
 #[test]
+fn an_offline_scope_store_returns_read_errors_on_a_new_worker() {
+    let area = tempfile::tempdir().unwrap();
+    let mount = area.path().join("mounted");
+    std::fs::create_dir(&mount).unwrap();
+    let file = mount.join("store.sqlite");
+    let store = ContentStore::open(&file).unwrap();
+    crate::content_store::connection::release_all_at(&file);
+    let offline = area.path().join("offline");
+    std::fs::rename(&mount, &offline).unwrap();
+    std::thread::scope(|threads| threads.spawn(|| {
+        assert!(store.directory_release_cutoff(area.path(), "home").is_err());
+        assert!(store.completed_analysis_runs().is_err());
+        assert!(store.analysis_snapshot_due(1).is_err());
+    }).join().unwrap());
+    std::fs::rename(offline, mount).unwrap();
+    assert!(store.completed_analysis_runs().unwrap().is_empty());
+}
+
+#[test]
 fn numbered_directory_stops_keep_one_cutoff_per_directory() {
     use crate::content_store::analysis_scope;
     let (_path, store) = store("scope-high-water");
