@@ -68,7 +68,7 @@ pub fn check_tool_calls(options: &serde_json::Value) -> Result<(), String> {
 impl Added {
     /// What a run of `options` over the root of `settings` adds: the settings' rows, the `toolCalls` option's rows
     /// (`tool_call_rows`; the run's entry checked its shape, `check_tool_calls`), the `dialect` option.
-    pub fn of(settings: &[(String, String)], options: &serde_json::Value) -> Added {
+    pub(super) fn of(settings: &[(String, String)], options: &serde_json::Value) -> Added {
         let mut added = Added::settings(settings);
         if let Some(calls) = options.get("toolCalls") {
             let [calls, inputs] = tool_call_rows(calls).expect("the run's entry checked its toolCalls option (`check_tool_calls`)");
