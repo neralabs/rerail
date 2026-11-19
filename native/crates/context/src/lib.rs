@@ -5,7 +5,7 @@
 //!
 //! - `RUN`: the run under way on this thread, made and carried by `rerail_logic::run` (and `run_state`, to its jobs);
 //! - `setting`, `local`, `with_local`, `local_if_any`: a run's settings and its own values, by type;
-//! - `Shared` (`shared`): what a caller shares by design with the runs it hands the object;
+//! - `Shared` (`shared`, `with_shared`): what a caller shares by design with the runs it hands the object;
 //! - `Machine` (`machine`): the machine's resources, which every `Shared` is made on.
 //!
 //! Outside a run, each gives a value of its own that nothing keeps.
@@ -162,6 +162,27 @@ fn shared_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
     let v = run.shared().get::<T>();
     let _ = SEEN.try_with(|seen| seen.borrow_mut().of(&run).shared.insert(std::any::TypeId::of::<T>(), v.clone()));
     v
+}
+
+/// `f` of the shared object's value of type `T` (`shared`), on a hot path: this thread's copy of the run's shared
+/// values (`SEEN`) answers with no lock and no count of references, so readers on many threads write no shared word.
+#[inline]
+pub fn with_shared<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R) -> R {
+    let held = SEEN.try_with(|seen| {
+        let seen = seen.borrow();
+        if !seen.is_current() {
+            return None;
+        }
+        seen.shared.get(&std::any::TypeId::of::<T>()).and_then(|v| v.downcast_ref::<T>()).map(|t| t as *const T)
+    })
+    .ok()
+    .flatten();
+    match held {
+        // SAFETY: `SEEN` holds the value (an `Arc` of the shared object's) while the run under way on this thread is
+        // the one it was copied from; nothing `f` runs ends that run (a run nested in it joins it).
+        Some(t) => f(unsafe { &*t }),
+        None => f(&shared::<T>()),
+    }
 }
 
 /// The value of type `T` of the machine the run under way runs on (`Machine`), made the first time it is asked for.

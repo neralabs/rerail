@@ -72,7 +72,6 @@ fn the_critical_path_is_the_heaviest_chain_and_its_heavy_lines_are_noted() {
     assert_eq!(n.tried.len(), 1);
     assert!((n.tried[0].ratio - 200.0).abs() < 1e-6, "measured over priced: {n:?}");
     assert!(note(&102).is_none() && note(&100).is_none());
-    let _own = own();
 }
 
 #[test]
@@ -94,7 +93,6 @@ fn a_choice_is_corrected_by_what_its_order_measured_and_rounds_choose_together()
     let round = vec![Choice { key: 200, candidates: candidates.clone(), chosen: 0, why: "" }, Choice { key: 201, candidates, chosen: 0, why: "" }];
     let made = finish_round(round);
     assert_eq!(made.iter().map(|c| c.chosen).collect::<Vec<_>>(), vec![1, 0]);
-    let _own = own();
 }
 
 #[test]
@@ -117,7 +115,6 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
     assert!(explored[1] > 0, "an untried order within the margin is tried now and then: {explored:?}");
     assert_eq!(explored[2], 0, "never one past the margin");
     assert!(explored[0] > explored[1], "mostly the best: {explored:?}");
-    let _own = own();
 }
 
 /// `h(x, z) :- a(x, y), b(y, z)`: priced from its statistics, `a` (50 rows) leads and each probes `b` by `y` for a
@@ -138,7 +135,6 @@ fn a_run_that_changes_no_decision_writes_no_notes() {
     // Measured at four times: its order's ratio moves, and the note is written.
     critical(&["s".into()], &[vec![]], &[line(8e5)]);
     assert!(to_store().is_some(), "a changed measure is written");
-    let _own = own();
 }
 
 #[test]
@@ -164,7 +160,6 @@ fn walked_orders_are_costed_against_the_walked_order_that_ran() {
     // An untried order within the margin is still explored now and then (`explore_rate`, a draw): that is not its walk
     // taken.
     assert!(round[0].chosen == 0 || round[0].why.starts_with("explored"), "within the walks' spread: {}", round[0].why);
-    let _own = own();
 }
 
 #[test]
@@ -195,7 +190,7 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     put_exact(1, b.observed_key(), vec![(atom_sig(atom_b, &bound), [50, 50_000])]);
     let ((order, work, _), _) = model.plan_inner(pf, &b, None, None, false).unwrap();
     assert_eq!(lead(&order), "b", "exact: {work}");
-    let _own = own();
+    clear();
 
     // The memo: the line's best order ran 10,000 times its price; its next plan takes the other.
     let _plans = KeepPlans::start(None);
@@ -209,7 +204,6 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let n = note(&key).unwrap();
     // Decision 0243: the wider search is the background's, asked for at the line's end; the plan makes none.
     assert!(n.wants_search && n.proposals.is_empty(), "no wider search at the plan: {n:?}");
-    let _own = own();
 }
 
 /// A wider search asked for is run by the upkeep job's step (here on the test's thread): its orders are the line's
@@ -231,7 +225,6 @@ fn a_requested_search_proposes_its_orders() {
     let n = note(&400).unwrap();
     assert_eq!(n.proposals.iter().map(|p| p.1).collect::<Vec<_>>(), vec![3.0, 5.0]);
     assert!(!n.wants_search);
-    let _own = own();
 }
 
 /// Decision 0272 (O167): a one-shot process serves its waiting searches at its run's end, so their proposals are
@@ -250,7 +243,6 @@ fn a_one_shot_run_serves_its_waiting_searches_at_its_end() {
     drain_at_end(false);
     assert_eq!(requests(), 0, "a one-shot run serves it at its end");
     assert_eq!(note(&410).unwrap().proposals.iter().map(|p| p.1).collect::<Vec<_>>(), vec![5.0]);
-    let _own = own();
 }
 
 /// Decision 0207: a line's orders are trialled once in a process, and once more after a flag; each trial's ratio is
@@ -272,7 +264,6 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     // Decision 0247: a trial moves the ratio a quarter of the way (in logs), as a run would half of it.
     let quarter = 4f64.powf(0.75) * 16f64.powf(0.25);
     assert!((t.ratio - quarter).abs() < 1e-9 && t.runs == 2, "a trial weighs a quarter: {t:?}");
-    let _own = own();
 }
 
 /// Q80: a slow line keeps what it measured. Its flag measures its rule's exact statistics, which no longer key its
@@ -302,7 +293,6 @@ fn a_slow_lines_measure_outlives_its_exact_statistics() {
     assert_eq!(over_measured(&[(other.clone(), 5_000.0)], 102_000.0, 10, 4_000), Some(other.clone()));
     assert_eq!(over_measured(&[(other.clone(), 5e7)], 102_000.0, 10, 4_000), None);
     assert_eq!(over_measured(&[(other.clone(), 5e4)], 102_000.0, 0, 4_000), Some(other), "no row done: at least its work again");
-    let _own = own();
 }
 
 /// Decision 0274: trials follow the critical path as runs observe it. A line with a share of the measured path is
@@ -330,7 +320,6 @@ fn trials_are_for_lines_observed_on_the_critical_path() {
         assert!(runs <= 5, "a line off the path stops being trialled");
     }
     assert!(on_critical_path(&602) && trial_due(&602), "the new path's line is trialled");
-    let _own = own();
 }
 
 /// A trial cut at its budget measured only part of its order's work: the cut work over the order's price is no
@@ -357,7 +346,6 @@ fn a_trial_cut_at_its_budget_never_makes_its_order_look_cheaper_than_priced() {
     // A cut trial that measured more than its price already says so: kept, as a floor.
     put_trial(301, 1, &cross, 5e6, 1e6, true);
     assert_eq!(note(&301).unwrap().tried[0].ratio, 5.0);
-    let _own = own();
 }
 
 /// A trial cut at its budget measured a floor of its work (decision 0267): under its price it says nothing, so an
@@ -388,7 +376,6 @@ fn a_cut_trial_is_a_floor_of_its_ratio() {
     let n = note(&501).unwrap();
     let t = n.tried.iter().find(|t| t.order == steps(&cheap)).unwrap();
     assert!((t.ratio - 3.0).abs() < 1e-9 && t.runs == 1, "a floor raises the ratio, never lowers it: {t:?}");
-    let _own = own();
 }
 
 /// Decision 0271: a slow line is bounded on every path. One a trial cannot sample (pre_570: 0 of 423 lead rows done
@@ -444,7 +431,6 @@ fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
     assert_eq!(noted, vec![702, 703], "the lines on the measured path, by seconds: {:?}", path.lines);
     assert!(note(&701).is_none(), "s1 is off the measured path");
     assert!((path.lines[0].1 - 0.7 / 0.74).abs() < 1e-9);
-    let _own = own();
 }
 
 /// Decision 0209 §4: `h(a, b) :- r(f, a), r(f, b), r(f, c)` over a key of 100 values of one row and one of 300. A
@@ -825,6 +811,15 @@ fn a_line_misses_its_step_rows_by_a_blow_up_or_an_over_estimate() {
     // Steps that are not the order's one for one, or no lead rows yet: not judged.
     assert_eq!(step_miss(&[100.0, 100_000.0], &[(0, 100)], 250.0), None);
     assert_eq!(step_miss(&[100.0, 100_000.0], &[(0, 0), (0, 0)], 250.0), None);
+}
+
+/// Clears the test's own memo (`own`), in the middle of a test: its relations keep their numbers.
+fn clear() {
+    let joins = joins();
+    *joins.memo.write() = Memo::default();
+    joins.noted.store(false, Relaxed);
+    joins.exact.store(false, Relaxed);
+    joins.requests.lock().clear();
 }
 
 /// A shared object of the test's own, so its memo is empty and no other test's (decision 0442).

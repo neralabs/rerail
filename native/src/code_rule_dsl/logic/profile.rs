@@ -1510,7 +1510,7 @@ thread_local! {
     pub static STAGE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
 
-pub use rerail_context::{AnyArc, Machine, RUN, RunOwn, RunValues, Shared, default_shared, enter, local, local_if_any, machine, run_own, setting, shared, shared_here, shared_object, with_local, within};
+pub use rerail_context::{AnyArc, Machine, RUN, RunOwn, RunValues, Shared, default_shared, enter, local, local_if_any, machine, run_own, setting, shared, shared_here, shared_object, with_local, with_shared, within};
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
 /// waves, until the guard drops.

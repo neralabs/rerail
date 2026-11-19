@@ -512,8 +512,19 @@ fn lease_free() -> bool {
 pub const DIVERGED_TEXT: &str = "this process's atoms forked from the store's and this write's are not mapped (decision 0170)";
 
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<Atoms>>>> = LazyLock::new(Default::default);
-/// The atoms of in-memory databases: one set for the process, as the planner's symbols had.
-static MEMORY: LazyLock<Arc<Atoms>> = LazyLock::new(|| Arc::new(Atoms::new(None, None)));
+/// The atoms of in-memory databases: one set for the shared object (decision 0442), as the planner's symbols had:
+/// another object's in-memory databases have their own, and read none of these texts.
+struct MemoryAtoms(Arc<Atoms>);
+
+impl Default for MemoryAtoms {
+    fn default() -> Self {
+        MemoryAtoms(Arc::new(Atoms::new(None, None)))
+    }
+}
+
+fn memory() -> Arc<Atoms> {
+    rerail_prof::code_rule_dsl::logic::profile::with_shared::<MemoryAtoms, _>(|m| Arc::clone(&m.0))
+}
 
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
 /// run's main thread). A path that does not resolve yet is not remembered.
@@ -712,7 +723,7 @@ impl Atoms {
     pub fn for_connection(connection: &Connection) -> Arc<Atoms> {
         match connection.path().filter(|path| !path.is_empty()) {
             Some(path) => Atoms::for_path(Path::new(path)),
-            None => Arc::clone(&MEMORY),
+            None => memory(),
         }
     }
 
@@ -768,7 +779,7 @@ impl Atoms {
     pub fn attach(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
         let atoms = match connection.path().filter(|path| !path.is_empty()) {
             Some(path) => Atoms::for_database(Path::new(path), Atoms::identity(connection)?),
-            None => Arc::clone(&MEMORY),
+            None => memory(),
         };
         vtab::install(connection, &atoms)?;
         Ok(atoms)

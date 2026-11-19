@@ -999,8 +999,8 @@ const SEGMENT_BYTES: usize = 64 << 20;
 pub(in crate::code_rule_dsl) fn warm() {
     // Once a machine (decision 0442): its pipelines are the machine's.
     #[derive(Default)]
-    struct Warmed(std::sync::Once);
-    crate::code_rule_dsl::logic::profile::machine::<Warmed>().0.call_once(|| {
+    struct Warmed(std::sync::OnceLock<()>);
+    crate::code_rule_dsl::logic::profile::machine::<Warmed>().0.get_or_init(|| {
         // The job compiles on this thread's machine: a pool thread holds no run.
         let shared = crate::code_rule_dsl::logic::profile::shared_here();
         // A panic leaves the kernels to be compiled where they are needed (a job's panic would end

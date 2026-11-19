@@ -207,9 +207,7 @@ const STATE: &[(&str, &str)] = &[
     // The coverage check's census of the shipped rule files, read once by a test process.
     ("code_rule_dsl/logic/plan/coverage.rs", "CENSUS"),
     // The process's interned relation names (`front::Name`): one allocation per distinct name, not a result kept.
-    ("code_rule_dsl/logic/front/name.rs", "TABLE"),
     // The relations' numbers (decision 0209 step 1, `table::rel_id`): an interner as `TABLE`, one number per name.
-    ("code_rule_dsl/logic/plan/table.rs", "NAMES"),
     // Decision 0203: the batch predictor a crate above registers (`joins::set_pricer`), the wider searches queued for
     // the idle `join-search` upkeep job, and that job's one registration.
     // Decision 0203's feedback as measured: each line's notes, exact pair statistics, proposals and trials, written
@@ -293,7 +291,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/atoms.rs", "CANONICAL"),
     // Each database file's identity, read once a file: a registry, as CANONICAL is.
     ("content_store/atoms.rs", "IDENTITIES"),
-    ("content_store/atoms.rs", "MEMORY"),
     ("content_store/atoms.rs", "REGISTRY"),
     ("content_store/compression.rs", "ENCODER"),
     ("content_store/connection.rs", "ALL_CONNECTIONS"),

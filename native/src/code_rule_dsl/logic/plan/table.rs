@@ -7,7 +7,7 @@
 //! by name pay one lookup of the name, not a string built per key.
 
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 /// A relation's number in this process.
 pub type RelId = u32;
@@ -19,33 +19,46 @@ struct Names {
 }
 
 /// Read on every lookup of a relation by name, on every thread of the pool, and written only for a new name: sharded
-/// by reader, so lookups on different threads write no shared lock word (decision 0279 §7).
-static NAMES: LazyLock<rerail_accel::sharded::Sharded<Names>> = LazyLock::new(|| rerail_accel::sharded::Sharded::new(Names::default()));
+/// by reader, so lookups on different threads write no shared lock word (decision 0279 §7), and lent (`with_shared`),
+/// so they count no reference either. The shared object's (decision 0442): a number is its own object's.
+struct RelNames(rerail_accel::sharded::Sharded<Names>);
+
+impl Default for RelNames {
+    fn default() -> Self {
+        RelNames(rerail_accel::sharded::Sharded::new(Names::default()))
+    }
+}
+
+fn with_names<R>(f: impl FnOnce(&rerail_accel::sharded::Sharded<Names>) -> R) -> R {
+    crate::code_rule_dsl::logic::profile::with_shared::<RelNames, _>(|n| f(&n.0))
+}
 
 /// `name`'s number, given it on first sight.
 pub fn rel_id(name: &str) -> RelId {
-    if let Some(&id) = NAMES.read().ids.get(name) {
-        return id;
-    }
-    let mut n = NAMES.write();
-    if let Some(&id) = n.ids.get(name) {
-        return id;
-    }
-    let id = n.names.len() as RelId;
-    let name: Arc<str> = name.into();
-    n.names.push(Arc::clone(&name));
-    n.ids.insert(name, id);
-    id
+    with_names(|names| {
+        if let Some(&id) = names.read().ids.get(name) {
+            return id;
+        }
+        let mut n = names.write();
+        if let Some(&id) = n.ids.get(name) {
+            return id;
+        }
+        let id = n.names.len() as RelId;
+        let name: Arc<str> = name.into();
+        n.names.push(Arc::clone(&name));
+        n.ids.insert(name, id);
+        id
+    })
 }
 
 /// `name`'s number, where it has one.
 pub fn find(name: &str) -> Option<RelId> {
-    NAMES.read().ids.get(name).copied()
+    with_names(|names| names.read().ids.get(name).copied())
 }
 
 /// The name numbered `id`.
 pub fn rel_name(id: RelId) -> Arc<str> {
-    Arc::clone(&NAMES.read().names[id as usize])
+    with_names(|names| Arc::clone(&names.read().names[id as usize]))
 }
 
 /// A statistic of relations: a value per relation number.
