@@ -1,6 +1,6 @@
 # Secret-like files reached through links keep only their digest in the ledger
 
-For the pull request of branch `JeanFrancoisGagne/folder-link-earlier-text`, not opened yet, head 7d8cfc317. [report.html](report.html) is the same report as one page: download it and open it.
+For the pull request of branch `JeanFrancoisGagne/folder-link-earlier-text`, not opened yet, head d4d507b45. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -13,7 +13,7 @@ For the pull request of branch `JeanFrancoisGagne/folder-link-earlier-text`, not
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 402 lines in 9 files: 115 ship, 287 are tests and text | Careful. A maintainer weighs the two changes from `main`. | Nothing. It stands alone on `main` c21947263; nothing needs it. | 2 |
+| 530 lines in 10 files: 171 ship, 359 are tests and text | Careful. A maintainer weighs the two changes from `main`. | Nothing. It stands alone on `main` cccb25a8d; nothing needs it. | 2 |
 
 ## 2. Intent, and the gap
 
@@ -36,7 +36,7 @@ Found in November 2026 on Linux x64 and Windows 11, through Rerail's runtime and
 ## 3. Where to look
 
 1. **Read first**, 10 min: `code-rule-bridge.ts`: `textPreimage`, `ledgerPreimage`, `keptPreimage`, `judgedWhereItLeads` and `#realPathInPlace`. Can any spelling of a file in such a folder reach the ledger, or an ordinary file lose its text?
-2. 3 min: `operations.ts`: `violationView`.
+2. 3 min: `operations.ts` and `audit-store.ts`: `recordedPathJudge`, `violationView`, `workspaceRoots`.
 
 **Then skim**, 5 min: Bridge cases read the ledger form of `.aws/config.py` spelled through links, on time and late, and on Windows by short names; a runtime case reads the ledger and the rollback.
 
@@ -77,9 +77,9 @@ Start with `textPreimage` and `ledgerPreimage`: they decide what the session and
 
 <details><summary><b>7. How it fits</b></summary>
 
-Nothing has to merge first: it holds `main` at c21947263, with the 0.2.0 engine, merged in without conflict. #738 shares the bridge and conflicts with it as with `main` alone; so does #807 in a file it does not share.
+Nothing has to merge first: it holds `main` at cccb25a8d, merged in; the one conflict, in `operations.ts`, keeps both changes. #738 shares the bridge and conflicts with it as with `main` alone; #865 merges cleanly.
 
-**Shared files and trial merges.** Trial merges with this head, at the heads a clone held on 19 November: #738 shares the bridge, its test file and `docs/threat-model.md`, and conflicts in the same 14 regions as with `main` alone. #807 shares `docs/threat-model.md`; its one conflicted file, `docs/privacy.md`, conflicts with `main` alone too.
+**Shared files and trial merges.** Trial merges with this head, at the heads a clone held on 19 November: #738 shares the bridge, its test file, `operations.ts`, `audit-store.ts`, `docs/threat-model.md` and `docs/reference.md`, and conflicts in the same four files as with `main` alone. #865 shares the bridge and its test file, and merges cleanly.
 
 </details>
 
@@ -116,8 +116,8 @@ The description on GitHub is the record: "How you tested it" holds the failing t
 | Linux x64 and Windows 11 | The new cases over `main`'s source, and here; with the fix's first line out; with the late call's judgment by spelling | Over `main`'s source: Linux 5 fail. Here: 20 of 20 runs pass on each. First line out, at 6640685ca: Linux 3 fail, Windows 4 fail in 3 of 3. A late call through `conf` whose file is written again: each call site of `changedSinceWrite` by spelling fails its case on Linux; both fail in 3 of 3 on Windows. |
 | Linux x64 and Windows 11 | The 18 changed and importing test files, here and at `main` | Linux: here 486 passed, 0 failed; at `main` one bridge case failed that passes here. Windows: here 486 passed, `main` 475, none failed. |
 | Linux x64 | CI's integration job, at 6640685ca | Exit 0: 22 files, 90 tests passed, 4 skipped. |
-| Linux x64 | The reviewer's rules at `main` c21947263 over the diff against it | The reviewer's rules at `main` c21947263 over the diff against it: no new Steer, Log or complexity finding, with the published 0.1.5 and with Rerail built from `main`; every function added or edited counts 6 or under. |
+| Linux x64 | The reviewer's rules at `main` cccb25a8d over the diff against it | The reviewer's rules at `main` cccb25a8d over the diff against it: no new Steer, Log or complexity finding, with the published 0.1.5 and with Rerail built from `main`; every function added or edited counts 6 or under. |
 
-**Sources.** The branch at 8a8e89f30 and its diff against `main` c21947263, read on 19 November 2026; runs at that head on Linux x64 machines and Windows 11 virtual machines; `main`'s source for the comparisons.
+**Sources.** The branch at d4d507b45 and its diff against `main` cccb25a8d, read on 19 November 2026; runs at that head on Linux x64 machines and Windows 11 virtual machines; `main`'s source for the comparisons.
 
 </details>
