@@ -3031,6 +3031,29 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if ((state.codeRuleSourceVersions.get(path) ?? 0) > pending.revision) state.undeliveredSources.add(path);
   }
 
+  /**
+   * Whether `pending` goes to the agent no more: a newer revision has overtaken it (its sources are marked, as
+   * `#recordUndelivered` says), or the runtime stops.
+   */
+  #withheld(state: RuntimeSessionState, pending: PendingSteer): boolean {
+    if (!this.#isCurrentSteer(state, pending)) {
+      this.#recordUndelivered(state, pending);
+      return true;
+    }
+    return this.#stopped();
+  }
+
+  /** Hands `delivery` to a native host at once (`deliverBackground`); false when that failed, which is reported. */
+  async #deliveredInBackground(delivery: AdapterDelivery): Promise<boolean> {
+    try {
+      await this.#deliverBackground!(delivery);
+      return true;
+    } catch (error) {
+      process.stderr.write(`rerail: policy delivery failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      return false;
+    }
+  }
+
   #deliverSteer(
     state: RuntimeSessionState,
     pending: PendingSteer,
@@ -3053,33 +3076,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     state.pendingSteers.splice(index, 1);
     let delivered = false;
     try {
-      if (!this.#isCurrentSteer(state, pending)) {
-        this.#recordUndelivered(state, pending);
-        return undefined;
-      }
-      if (this.#stopped()) return undefined;
+      if (this.#withheld(state, pending)) return undefined;
       pending.delivery = this.#currentConflictNotice(state, pending.delivery);
-      try {
-        await this.persistDelivery(pending.delivery);
-      } catch (error) {
-        process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
-      }
+      await this.#recordedDelivery(pending.delivery);
       // A stop committed elsewhere while the ledger was written withholds the result.
-      if (!this.#isCurrentSteer(state, pending)) {
-        this.#recordUndelivered(state, pending);
-        return undefined;
-      }
-      if (this.#stopped()) return undefined;
+      if (this.#withheld(state, pending)) return undefined;
       if (!native) {
         delivered = true;
         return pending.delivery;
       }
-      try {
-        await this.#deliverBackground!(pending.delivery);
-        delivered = true;
-      } catch (error) {
-        process.stderr.write(`rerail: policy delivery failed: ${error instanceof Error ? error.message : String(error)}\n`);
-      }
+      delivered = await this.#deliveredInBackground(pending.delivery);
       return undefined;
     } finally {
       pending.settled?.(delivered);
