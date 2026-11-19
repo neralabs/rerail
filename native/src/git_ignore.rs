@@ -1446,7 +1446,7 @@ mod tests {
             ],
         );
         git(&root, &["init", "--initial-branch=main"]);
-        let root = root.canonicalize().unwrap();
+        // The root as made, not resolved: Git for Windows takes no `\\?\` path as an index file.
         git(
             &root,
             &[
