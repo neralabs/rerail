@@ -1,0 +1,1 @@
+A file a shell command writes is now checked against the rules when Rerail could not read it at the command's result, as when another program held it open: the next check that can read it steers the agent on it. Before, Rerail took that write for another program's and never checked it.
