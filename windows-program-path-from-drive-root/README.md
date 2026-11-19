@@ -1,6 +1,6 @@
 # Windows: no program started by a path from the drive root
 
-For the pull request of branch `JeanFrancoisGagne/windows-program-path-from-drive-root`, not opened yet, head 9688d9ae4. [report.html](report.html) is the same report as one page: download it and open it.
+For the pull request of branch `JeanFrancoisGagne/windows-program-path-from-drive-root`, not opened yet, head b0f051fa1. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -12,7 +12,7 @@ For the pull request of branch `JeanFrancoisGagne/windows-program-path-from-driv
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 491 lines in 11 files: 140 ship, 351 are tests and text | Standard. No high-risk path; the automated reviewer can approve. | Nothing. No CI run on GitHub yet: not published. | 2 |
+| 603 lines in 12 files: 162 ship, 441 are tests and text | Standard. No high-risk path; the automated reviewer can approve. | Nothing. No CI run on GitHub yet: not published. | 2 |
 
 ## 2. Intent, and the gap
 
