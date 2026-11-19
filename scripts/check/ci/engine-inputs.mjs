@@ -3,15 +3,16 @@
 // run built downloads that engine instead of compiling it (.github/actions/engine-artifact). The inputs, by their
 // committed blob ids (`git ls-files --stage`: the same on every OS, whatever a checkout does to line ends or times):
 //   - the crates the engine builds and their build scripts: native/ (the vendored dependencies and grammars with it),
-//     accel/, tools/bitlex/;
+//     accel/, tools/bitlex/, but for the Markdown the build never reads (`unreadDoc`);
 //   - the language registry the build script generates tables from (languages/);
 //   - the lockfile, the workspace manifest and its profiles, cargo's configuration, the toolchain, the checkout's line
 //     ends (.gitattributes);
 //   - the release build's script and this one, and the napi CLI and cross toolchain versions package-lock.json pins;
-//   - every file outside those that an engine source embeds (`include_str!`/`include_bytes!` with a literal path:
-//     packs' rules, docs' `.rerail` libraries, capabilities.json, test fixtures), found by reading the sources, so an
-//     embed added later counts without a change here.
-// A path that changes none of these (TypeScript, docs, the rest of packs/) leaves the hash, and the engine, as they were.
+//   - every file that an engine source embeds (`include_str!`/`include_bytes!` with a literal path: packs' rules, docs'
+//     `.rerail` libraries, capabilities.json, test fixtures, a vendored crate's README as its docs), found by reading
+//     the sources, so an embed added later counts without a change here.
+// A path that changes none of these (TypeScript, docs, the rest of packs/, a README beside the crates) leaves the hash,
+// and the engine, as they were.
 //
 //   node scripts/check/ci/engine-inputs.mjs           the hash (hex) on stdout
 //   node scripts/check/ci/engine-inputs.mjs --list    the entries it hashes, one per line
@@ -34,6 +35,17 @@ export const ENGINE_FILES = [
 const LOCKED_PACKAGES = ["node_modules/@napi-rs/cli", "node_modules/@napi-rs/cross-toolchain"];
 const EMBED = /include_(?:str|bytes)!\s*\(\s*"([^"]+)"\s*\)/gu;
 
+/**
+ * Whether `path`, in the engine's directories, is Markdown the build never reads. The build scripts read named files,
+ * `*.json` from languages/ (src/build_languages.rs), and every file under native/src/, which native/build.rs hashes
+ * into the engine's build id (`collect_sources`, RERAIL_ENGINE_BUILD_ID), notes included; tree-sitter's build script
+ * lists its src/ only to watch it, and compiles lib.c. A Markdown file a source embeds stays an input whatever this
+ * says: the embed scan adds it.
+ */
+export function unreadDoc(path) {
+  return path.endsWith(".md") && !path.startsWith("native/src/");
+}
+
 /** Every tracked file's blob id, by repository-relative path. */
 function trackedBlobs(root) {
   const git = spawnSync("git", ["ls-files", "--stage", "-z"], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 });
@@ -54,8 +66,8 @@ export function engineInputs(root) {
   const paths = new Set(ENGINE_FILES.filter((path) => blobs.has(path)));
   for (const path of blobs.keys()) {
     if (!inEngine(path)) continue;
-    paths.add(path);
-    if (!path.endsWith(".rs") || path.startsWith("native/vendor/")) continue;
+    if (!unreadDoc(path)) paths.add(path);
+    if (!path.endsWith(".rs")) continue;
     for (const [, target] of readFileSync(`${root}/${path}`, "utf8").matchAll(EMBED)) {
       const embedded = posix.normalize(posix.join(posix.dirname(path), target));
       if (blobs.has(embedded)) paths.add(embedded);
