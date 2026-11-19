@@ -741,6 +741,14 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(gitsAnswer(main).git).toBe(false);
     expect(worktreeRegistry(main)).toBeUndefined();
 
+    // Git takes a link's text only under refs/, so a text that only starts with refs is refused as well.
+    await unlink(head);
+    symlinkSync("refs/heads/other", head);
+    expect(registryPlacements(main)).toBe(1);
+    await unlink(head);
+    symlinkSync("refsx/heads/other", head);
+    expect(gitsAnswer(main).git).toBe(false);
+    expect(worktreeRegistry(main)).toBeUndefined();
   });
 
   it("places a worktree whose .git file names a link to its Git folder once, and again once the link names another", async () => {
