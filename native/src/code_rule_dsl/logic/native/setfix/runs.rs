@@ -372,31 +372,18 @@ pub(super) fn cmp_ids<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], t
     cmp_with(cols, tagged, |c| data.value(a, k, c), |c| data.value(b, k, c))
 }
 
-/// The span of `tags` (sorted) equal to `t`, searched from `from`: a galloping search forward from there, or (with
-/// `place`) from where an even spread of tags would put it. Its end gallops too, so a span costs reads logarithmic in
-/// its length: a tag thousands of rows share (a leading value most rows hold) was walked to its end once per row a
-/// sorted batch searched, every row of the batch reading the rest of the span. Generic so a test counts the reads.
+/// The span of `tags` (sorted) equal to `t`, at or past `from`: its start by a galloping search from `from`, or (with
+/// `place`) from where an even spread of tags would put it, back or forward; its end by a galloping search from its
+/// start. A span costs reads logarithmic in its length: its end was walked, so a tag thousands of rows share (a leading
+/// value most rows hold) was read to its end once per row a sorted batch searched. Generic so a test counts the reads.
 #[inline]
 fn tag_span<T: Copy + Ord + Into<u64>>(tags: &[T], t: T, from: usize, place: bool) -> (usize, usize) {
     let n = tags.len();
     if from >= n {
         return (n, n);
     }
-    let mut at = if place { from.max(((t.into() as usize) * n) >> 16) } else { from };
-    // Back while the place is past the span's start (it can be, placed by interpolation).
-    let mut step = 1;
-    while at > from && tags[at.min(n - 1)] >= t {
-        at = at.saturating_sub(step).max(from);
-        step *= 2;
-    }
-    // Forward, galloping, to the first tag at or past `t`.
-    let mut bound = 1;
-    while at + bound <= n && tags[at + bound - 1] < t {
-        bound *= 2;
-    }
-    let lo = if bound > 1 { at + bound / 2 } else { at };
-    let hi = (at + bound - 1).min(n);
-    let s = lo + tags[lo..hi].partition_point(|&x| x < t);
+    let at = if place { from.max(((t.into() as usize) * n) >> 16) } else { from };
+    let s = from + gallop(&tags[from..], at - from, |&x| x < t);
     (s, s + gallop(&tags[s..], 0, |&x| x == t))
 }
 
