@@ -1839,8 +1839,9 @@ names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), kind
     (dir, run)
 }
 
-/// Decision 0431 R5's run: `program` (`.rr`, with its includes) over `files` in a store of its own, giving the report.
-fn batch_run(name: &str, files: &[(&str, &str)], program: &str) -> super::Report {
+/// Decision 0431 R5's run: `program` (`.rr`, with its includes) over `files` in a store of its own, giving the report
+/// and the rows of `output`, as shown.
+fn batch_run(name: &str, files: &[(&str, &str)], program: &str, output: &str) -> (super::Report, Vec<Vec<String>>) {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     let _ = std::fs::remove_dir_all(&dir);
     let ws = dir.join("ws");
@@ -1853,37 +1854,47 @@ fn batch_run(name: &str, files: &[(&str, &str)], program: &str) -> super::Report
     let flat = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let report = super::run(&flat, &ws, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get(output).map(|r| r.shown()).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&dir);
-    report
+    (report, rows)
 }
 
-/// Decision 0431 R5: a program the grammar holds is made with its file, so the chunk's batch is built once: an HTML
-/// file's scripts, which a rule reads, add no second batch.
+/// Decision 0431 R5: a chunk's batch is built once: an HTML file's scripts, which a rule reads, are added to it (§6),
+/// and every script's calls are read. (Step 3 makes them with the file, at its parse.)
 #[test]
-#[ignore = "0431 step 3: a file's programs made with it"]
 fn a_files_programs_build_no_second_batch() {
     let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
-    let report = batch_run("r5-programs", &[("a.html", html)], r#"
+    let (report, calls) = batch_run("r5-programs", &[("a.html", html)], r#"
 .language html
 #include "html/embeds.rr"
 .decl calls(x: symbol)
 calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x).
 .output calls
-"#);
-    assert_eq!(report.batch_rebuilds, 0, "the scripts are a.html's, made with it");
+"#, "calls");
+    assert!(report.batch_grown >= 2, "a.html's batch grew by its scripts: {}", report.batch_grown);
+    assert_eq!(calls, [["f(1)"], ["g(2)"]].map(|r| r.map(str::to_owned).to_vec()).to_vec(), "both scripts' calls");
 }
 
-/// Decision 0431 R5: a string a rule parses is a tape value the fixpoint makes, so the chunk's batch is built once.
+/// Decision 0431 R5: a string a rule parses is a tape value; the chunk's batch is built once and grows by the values
+/// (§6), the second round's (`'Foo'`, inside an annotation) too, and the rows are a rebuilt batch's.
 #[test]
-#[ignore = "0431 step 4: @parse in the fixpoint"]
 fn tape_values_build_no_second_batch() {
-    let report = batch_run("r5-values", &[("a.py", "x: \"List[int]\" = []\ndef f(a: \"Optional['Foo']\"): pass\n")], r#"
+    // `'Foo'` is a string inside the second annotation's value, reached through it (`ann`, as decision 0058 shows a
+    // value's strings), and parsed in the second round.
+    let (report, names) = batch_run("r5-values", &[("a.py", "x: \"List[int]\" = []\ndef f(a: \"Optional['Foo']\"): pass\n")], r#"
 .language python
+.decl ann(n: node)
+ann(r) :- string_annotation(s), parsed(s, "annotation", r).
+ann(r) :- ann(s), kind(s, "string"), parsed(s, "annotation", r).
+ann(c) :- ann(p), child(p, c, _).
 .decl names(x: symbol)
-names(x) :- string_annotation(s), parsed(s, "annotation", r), within(m, r), kind(m, "identifier"), text(m, x).
+names(x) :- ann(m), kind(m, "identifier"), text(m, x).
 .output names
-"#);
-    assert_eq!(report.batch_rebuilds, 0, "the annotations' tapes, and the one nested in them, are values the fixpoint makes");
+"#, "names");
+    // Three values: the two annotations', then `'Foo'`'s, in the batch built with a.py.
+    assert_eq!(report.batch_grown, 3, "the batch grew by the values");
+    let names: std::collections::BTreeSet<String> = names.into_iter().map(|r| r.join("\t")).collect();
+    assert_eq!(names, ["Foo", "List", "Optional", "int"].map(str::to_owned).into(), "both rounds' values are read");
 }
 
 /// Decision 0431 R6, a guard of today's: within one run, equal texts are parsed once, whichever files hold them.

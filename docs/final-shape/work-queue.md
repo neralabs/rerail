@@ -5496,3 +5496,14 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Not 0431's**: it fails with 0431's step 2 stashed. A merge since Q208 brought it in; to bisect between Q208's
   commit and 24740af51 on the maintain mode's recheck lines (`bound_head_order`, `plan_rule_reused`).
 - **Done when**: R7 passes, and the test names the unpriced line when it fails.
+
+### Q263. Two typing oracle tests fail before lowering: "unbounded node Cartesian product in `base`"
+
+- **Seen** (2026-11-19, m1max, with 0431 step 4b in the tree): `oracle_tests::quoted_annotations_are_read_as_their_code`
+  and `oracle_tests::a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_attribute` fail in
+  `corpus::run` with `Plan("before lowering: bound node products by their readers: unbounded node Cartesian product
+  in `base`: the relation must be computed in full")`.
+- **Not 0431's, by its place**: the planner refuses the typing program (`typing/programs/calls.rr`'s `base`, which
+  reads no guest relation) before any batch is built. To find the commit that brought it in, on the planner's node
+  product bound.
+- **Done when**: both pass.

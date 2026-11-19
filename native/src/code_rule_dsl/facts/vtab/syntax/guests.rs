@@ -16,7 +16,7 @@
 //! A withheld guest (one that does not parse, `.on guest_error skip`) has its `guest`, `doc_role`, `tape_of` and
 //! `sub_tape` rows, and no `doc_root` or `parsed`: it has no nodes.
 
-use super::{Document, Guest, Made, Placement, Projected, Relation};
+use super::{Document, Guest, Made, Placement, Projected, Relation, TapePlace};
 
 #[derive(Default)]
 pub struct GuestRows {
@@ -42,7 +42,7 @@ impl GuestRows {
     /// Document `p`'s rows (`d` is its document, `guest` its place when it is one); `docs` are the batch's documents
     /// projected before it, its host among them.
     /// `wants` says whether `host_node`, `unparse_of`, `guest_of` and `guest_place` are read.
-    pub(super) fn document(&mut self, p: &Projected, d: &Document, guest: Option<&Guest>, withheld: bool, docs: &[Projected], [host_nodes, unparse, guest_of, guest_place]: [bool; 4], string: &mut dyn FnMut(&str) -> usize) {
+    pub(super) fn document(&mut self, p: &Projected, d: &Document, guest: Option<&Guest>, withheld: bool, docs: &[std::sync::Arc<Projected>], [host_nodes, unparse, guest_of, guest_place]: [bool; 4], string: &mut dyn FnMut(&str) -> usize) {
         let key = i64::from(p.key);
         let tape = string(&hex(&d.digest)) as i64;
         self.tape.push([key, tape]);
@@ -62,21 +62,7 @@ impl GuestRows {
             // A tape value (decision 0431): a row of each relation for each place, and no `guest` row: it is no
             // document's guest.
             Made::Tape { places } => {
-                for at in places {
-                    self.sub_tape.push([at.at, grammar, tape]);
-                    if let Some(r) = root {
-                        self.parsed.push([at.at, grammar, r]);
-                        if guest_of {
-                            self.guest_of.extend(p.node_ids().map(|(_, _, n)| [n, at.at]));
-                        }
-                        if guest_place {
-                            self.guest_places(p, docs, at.host, at.at, &at.place);
-                        }
-                        if host_nodes && !matches!(at.place, Placement::At(_)) {
-                            self.host_nodes(p, docs, at.host, at.at, &at.place);
-                        }
-                    }
-                }
+                self.tape_places(p, places, grammar, tape, root, docs, [host_nodes, guest_of, guest_place]);
                 return;
             }
             Made::Parse { text } => {
@@ -102,10 +88,39 @@ impl GuestRows {
         self.host_nodes(p, docs, g.host, g.at, &g.place);
     }
 
+    /// The rows of tape value `p` (document `d`) at `places`, places it gained since the batch held it (decision 0431
+    /// §6: its nodes are projected once; a round adds the rows of its new places).
+    pub(super) fn places_added(&mut self, p: &Projected, d: &Document, grammar: &str, places: &[TapePlace], withheld: bool, docs: &[std::sync::Arc<Projected>], [host_nodes, guest_of, guest_place]: [bool; 3], string: &mut dyn FnMut(&str) -> usize) {
+        let tape = string(&hex(&d.digest)) as i64;
+        let grammar = string(grammar) as i64;
+        let root = (!withheld && p.len() > 0).then(|| p.global(0));
+        self.tape_places(p, places, grammar, tape, root, docs, [host_nodes, guest_of, guest_place]);
+    }
+
+    /// A tape value's rows at each of `places` (decision 0431): no `guest` row, it is no document's guest.
+    #[allow(clippy::too_many_arguments)]
+    fn tape_places(&mut self, p: &Projected, places: &[TapePlace], grammar: i64, tape: i64, root: Option<i64>, docs: &[std::sync::Arc<Projected>], [host_nodes, guest_of, guest_place]: [bool; 3]) {
+        for at in places {
+            self.sub_tape.push([at.at, grammar, tape]);
+            if let Some(r) = root {
+                self.parsed.push([at.at, grammar, r]);
+                if guest_of {
+                    self.guest_of.extend(p.node_ids().map(|(_, _, n)| [n, at.at]));
+                }
+                if guest_place {
+                    self.guest_places(p, docs, at.host, at.at, &at.place);
+                }
+                if host_nodes && !matches!(at.place, Placement::At(_)) {
+                    self.host_nodes(p, docs, at.host, at.at, &at.place);
+                }
+            }
+        }
+    }
+
     /// `guest_place`'s rows of tape value `p`'s nodes at string `at` of document `host`, placed by `place` (decision
     /// 0431): each node's line and column in the host's text. A string inside a tape value is placed in that value's
     /// text, which is no file's.
-    fn guest_places(&mut self, p: &Projected, docs: &[Projected], host: u32, at: i64, place: &Placement) {
+    fn guest_places(&mut self, p: &Projected, docs: &[std::sync::Arc<Projected>], host: u32, at: i64, place: &Placement) {
         let Ok(h) = docs.binary_search_by_key(&host, |q| q.key) else { return };
         let Some(lines) = docs[h].extra.as_deref() else { return };
         for ((_, span), (_, _, n)) in p.spans().zip(p.node_ids()) {
@@ -115,7 +130,7 @@ impl GuestRows {
     }
 
     /// `host_node`'s rows of document `p`'s nodes, placed at host node `at` of document `host` by `place`.
-    fn host_nodes(&mut self, p: &Projected, docs: &[Projected], host: u32, at: i64, place: &Placement) {
+    fn host_nodes(&mut self, p: &Projected, docs: &[std::sync::Arc<Projected>], host: u32, at: i64, place: &Placement) {
         let Ok(h) = docs.binary_search_by_key(&host, |q| q.key) else { return };
         let host = &docs[h];
         // A node id's low bits are its local id only under preorder ids.

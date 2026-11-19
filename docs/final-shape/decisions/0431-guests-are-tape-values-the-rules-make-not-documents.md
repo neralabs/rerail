@@ -91,7 +91,21 @@ code may be named by which rules asked for it, or in what order.
      value's node through its key. Written once, for the CPU and the device.
    Languages without a format 16 table (brace and percent formats, eslint directives, HTML, CSS, Markdown) keep format
    15 for their tapes until they have one (0293 §3).
-6. **The batch is built once a chunk.** The views (`node`, `child`, `field`, `text`, …) are reads of tapes (0353): of
+6. **The batch is built once a chunk, and grows in place** (step 4b, the user, 2026-11-19: "Do 1"). A cold run learns
+   which strings to parse by running the embed slice over the host batch, so its tape values come after the batch.
+   The chunk keeps what built it (`syntax::Grower`, `Growth`), and a round adds only the documents it changed:
+   - a new document is projected once, into the batch's block (its gigabyte of address space past the files'); the
+     batch a round makes holds every projection, shared (`Arc`), in key order (0391's guest keys do not ascend with the
+     rounds, and the batch's lookups search by key and key range);
+   - a tape value the batch holds that gained places adds those places' rows alone (`GuestRows::places_added`);
+   - each relation goes on from the last round's (`Relation::grown`): its rows are frozen in their block and their
+     writer taken (`Rows::shared`, 0384 step 2), so the round's rows follow in the same block relation, which the
+     device binds whole, and the last round's relation still reads its own rows, as `retain::owners_delta` needs;
+   - the producers (`ProducerRun`) are kept, and hand over the rows made since they were last asked: the string
+     annotations' producer places a later round's nested annotation by what it read off the file.
+   Not taken: a batch of the values alone (the views and the device reading several blocks), and rebuilding with each
+   document's projection reused (still a second batch).
+   The views (`node`, `child`, `field`, `text`, …) are reads of tapes (0353): of
    the files' tapes, their programs' and the tape values the run's facts name. The CPU and the device read the same
    blocks.
 7. **Kept, and not made again.** A file's programs are kept with the file. A tape value is stored by its key, written
@@ -107,7 +121,7 @@ code may be named by which rules asked for it, or in what order.
 | R2 | `guest_of(n, s)` names the string a tape value's node was parsed at | `guest_of_names_the_string_a_node_was_parsed_from` |
 | R3 | One text is one tape and one set of nodes at every place; a tape value's node is no file's | `one_tape_at_two_places_is_one_set_of_nodes` |
 | R4 | No string is parsed unless a rule asks for it | `a_string_no_rule_asks_for_is_not_parsed` |
-| R5 | The batch is built once a chunk (`Report::batch_rebuilds` is 0): a file's programs (step 3), tape values (step 4) | `a_files_programs_build_no_second_batch`, `tape_values_build_no_second_batch` |
+| R5 | The batch is built once a chunk and grows by the rest (§6; `Report::batch_grown` counts the documents added): a file's programs, tape values, and the rows read are a rebuilt batch's | `a_files_programs_build_no_second_batch`, `tape_values_build_no_second_batch` |
 | R6 | A text a run parsed is not parsed again: after an edit elsewhere in its file, in a new file, after a rule's edit (`Report::guest_parses`) | `an_edit_elsewhere_parses_no_text_the_last_run_parsed`, `a_new_file_with_a_text_parsed_before_parses_nothing`, `an_edited_rule_parses_no_text_the_last_run_parsed`; guard `equal_texts_are_parsed_once_a_run` |
 | R7 | A file read from the memo has its programs and tape values for a cross-file rule | written with step 4 |
 | R8 | CPU and Metal give the same rows, the device reading the same tapes | the Metal path's parity tests, with both kinds |
@@ -128,7 +142,8 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
 4. (Before 3's rest.) 4a, done: a tape value is found by its text's sha and grammar among the tapes the root's last
    runs named, read before the first wave (the run's grammar's with the files', the others' by the tags the program's
    requests name, every tag where one is not a constant), else parsed and queued for the store with its text, which
-   the manifest names (R6; Q30's "a guest's tape is not stored" is superseded). Then `@parse` as a functor in the fixpoint; `parsed` and `sub_tape` of strings derived by the
+   the manifest names (R6; Q30's "a guest's tape is not stored" is superseded). 4b, done: the batch grows by a round's
+   documents (§6, R5). Then `@parse` as a functor in the fixpoint; `parsed` and `sub_tape` of strings derived by the
    program; tape values stored and loaded before the waves (R4, R6, R7, R5's annotations). The embed slice and its
    rounds stay for the grammar's programs until step 3.
 5. PostHog cold on CPU and Metal against 1ca497070's 32.1 s and 34.4 s of guests, findings unchanged (29,747,
