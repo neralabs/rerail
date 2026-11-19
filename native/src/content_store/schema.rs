@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS analysis_scope_workspace_snapshot (
     workspace TEXT NOT NULL,
     snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
     acquired_at INTEGER NOT NULL DEFAULT 0,
+    acquisition INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(scope, workspace)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS analysis_scope_workspace_snapshot_by_snapshot ON analysis_scope_workspace_snapshot(snapshot_id);
@@ -195,6 +196,7 @@ CREATE TABLE IF NOT EXISTS analysis_scope_release (
     scope TEXT NOT NULL DEFAULT '',
     before INTEGER NOT NULL DEFAULT 0
 ) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_release_by_scope ON analysis_scope_release(scope,before);
 CREATE TABLE IF NOT EXISTS workspace_overlay (
     workspace_id INTEGER NOT NULL REFERENCES workspaces(workspace_id),
     path_id INTEGER NOT NULL REFERENCES paths(path_id),
@@ -217,7 +219,8 @@ CREATE INDEX IF NOT EXISTS object_pins_by_lease ON object_pins(lease_until);
 CREATE INDEX IF NOT EXISTS object_pins_by_owner ON object_pins(owner_string_id);
 CREATE TABLE IF NOT EXISTS store_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    generation INTEGER NOT NULL
+    generation INTEGER NOT NULL,
+    analysis_acquisitions INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 INSERT OR IGNORE INTO store_state(singleton, generation) VALUES (1, 1);
 
@@ -818,6 +821,10 @@ impl ContentStore {
                             transaction.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"))?;
                         }
                         transaction.execute_batch(SCHEMA)?;
+                        // Each numbered receipt also covers all earlier stops for the same directory.
+                        transaction.execute_batch("DELETE FROM analysis_scope_release AS old WHERE scope<>'' AND EXISTS (
+                            SELECT 1 FROM analysis_scope_release newer WHERE newer.scope=old.scope
+                            AND (newer.before, newer.id) > (old.before, old.id))")?;
                         if version != SCHEMA_VERSION {
                             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                         }
@@ -890,6 +897,8 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 /// TABLE IF NOT EXISTS` leaves an older store's table as it was, so applying SCHEMA adds these (`ALTER TABLE`).
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("store_state", "analysis_acquisitions", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_workspace_snapshot", "acquisition", "INTEGER NOT NULL DEFAULT 0"),
     ("analysis_scope_snapshot", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
     ("analysis_scope_workspace_snapshot", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
     ("analysis_scope_manifest", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),

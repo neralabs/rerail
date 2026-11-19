@@ -13,6 +13,8 @@ pub struct AnalysisOwner {
     /// Acquisition generation from the control database. Keeps its original serialized field name.
     #[serde(default)]
     acquired_at: i64,
+    #[serde(default)]
+    acquisition: i64,
     #[serde(skip)]
     warning: Option<std::sync::Arc<std::sync::Mutex<Option<String>>>>,
 }
@@ -37,12 +39,18 @@ impl AnalysisOwner {
     }
 
     pub(super) fn current(&self, tx: &rusqlite::Connection) -> rusqlite::Result<bool> {
+        // Receipt keys are the exact directory and its ancestors, including a volume root.
+        let mut ancestors = Vec::new();
+        if self.scope.starts_with("cwd:") {
+            ancestors.push(self.scope.as_str());
+            for (at, sep) in self.scope.match_indices(std::path::MAIN_SEPARATOR) {
+                ancestors.extend([&self.scope[..at], &self.scope[..at + sep.len()]]);
+            }
+        }
         tx.query_row_cached(
             "SELECT EXISTS (SELECT 1 FROM analysis_scope_generation WHERE scope=?1 AND generation=?2) \
-                AND NOT EXISTS (SELECT 1 FROM analysis_scope_release r WHERE r.before>=?3 AND r.scope<>'' \
-                    AND (r.scope=?1 OR substr(?1,1,length(r.scope))=r.scope \
-                        AND (substr(r.scope,-1)=?4 OR substr(?1,length(r.scope)+1,1)=?4)))",
-            (&self.scope, self.generation, self.acquired_at, std::path::MAIN_SEPARATOR.to_string()), |row| row.get(0),
+                AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE scope IN (SELECT value FROM json_each(?4)) AND before>=?3)",
+            (&self.scope, self.generation, self.acquired_at, serde_json::to_string(&ancestors).expect("string list")), |row| row.get(0),
         )
     }
 }
@@ -56,6 +64,8 @@ pub struct AnalysisRun {
 }
 
 impl AnalysisRun {
+    pub fn store_path(&self) -> &Path { self.store.database_path() }
+
     pub fn begin(store: ContentStore, scope: &str, id: &str) -> StoreResult<Self> {
         Self::begin_at(store, scope, id, 0)
     }
@@ -63,7 +73,7 @@ impl AnalysisRun {
     pub fn begin_at(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
         let lease = store.hold_collection()?;
         let mut owner = store.begin_analysis_scope_at(scope, acquired_at)?;
-        owner.pending = Some(format!("pending:{id}"));
+        owner.pending = Some(format!("pending:{}:{id}", owner.acquisition));
         owner.warning = Some(Default::default());
         Ok(Self { owner, store, lease: Some(lease) })
     }
@@ -152,7 +162,7 @@ pub fn existing_directory_ownership(store: &Path, directory: &Path, home: &str) 
     }
     match check(store, directory, home) {
         Err(error) if matches!(error.sqlite_error_code(),
-            Some(rusqlite::ErrorCode::NotADatabase | rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::CannotOpen)) => Ok(false),
+            Some(rusqlite::ErrorCode::NotADatabase)) => Ok(false),
         result => result,
     }
 }
@@ -172,7 +182,9 @@ impl ContentStore {
             let generation = tx.query_row_cached(
                 "SELECT generation FROM analysis_scope_generation WHERE scope=?1", [scope], |row| row.get(0),
             )?;
-            Ok(AnalysisOwner { scope: scope.to_owned(), generation, pending: None, acquired_at, warning: None })
+            let acquisition = tx.query_row_cached("UPDATE store_state SET analysis_acquisitions=analysis_acquisitions+1
+                WHERE singleton=1 RETURNING analysis_acquisitions", [], |row| row.get(0))?;
+            Ok(AnalysisOwner { scope: scope.to_owned(), generation, pending: None, acquired_at, acquisition, warning: None })
         })
     }
 
@@ -197,14 +209,14 @@ fn own_snapshot(tx: &rusqlite::Connection, owner: &AnalysisOwner, workspace: &st
             if scope.starts_with("pending:") || owner.scope.starts_with("cwd:") {
                 tx.execute_cached(
                     "INSERT OR IGNORE INTO analysis_scope_collect SELECT snapshot_id FROM analysis_scope_workspace_snapshot \
-                     WHERE scope=?1 AND workspace=?2 AND snapshot_id<>?3 AND acquired_at<=?4",
-                    (scope, workspace, snapshot.0, owner.acquired_at),
+                     WHERE scope=?1 AND workspace=?2 AND snapshot_id<>?3 AND (acquired_at,acquisition)<=(?4,?5)",
+                    (scope, workspace, snapshot.0, owner.acquired_at, owner.acquisition),
                 )?;
                 tx.execute_cached(
-                    "INSERT INTO analysis_scope_workspace_snapshot(scope,workspace,snapshot_id,acquired_at) VALUES (?1,?2,?3,?4) \
-                     ON CONFLICT(scope,workspace) DO UPDATE SET snapshot_id=excluded.snapshot_id,acquired_at=excluded.acquired_at \
-                     WHERE acquired_at<=excluded.acquired_at",
-                    (scope, workspace, snapshot.0, owner.acquired_at),
+                    "INSERT INTO analysis_scope_workspace_snapshot(scope,workspace,snapshot_id,acquired_at,acquisition) VALUES (?1,?2,?3,?4,?5) \
+                     ON CONFLICT(scope,workspace) DO UPDATE SET snapshot_id=excluded.snapshot_id,acquired_at=excluded.acquired_at,acquisition=excluded.acquisition \
+                     WHERE (acquired_at,acquisition)<=(excluded.acquired_at,excluded.acquisition)",
+                    (scope, workspace, snapshot.0, owner.acquired_at, owner.acquisition),
                 )?;
             } else {
                 tx.execute_cached("INSERT INTO analysis_scope_snapshot(scope,snapshot_id,acquired_at) VALUES (?1,?2,?3) \
@@ -232,6 +244,12 @@ impl ContentStore {
 
     fn release_analysis_scopes(&self, scope: &str, subtree: Option<&str>, release: Option<&str>, before: Option<i64>, legacy: Option<&str>) -> StoreResult<usize> {
         self.immediate_transaction(|tx| {
+            if let Some(cutoff) = before {
+                let covered: bool = tx.query_row_cached("SELECT EXISTS (SELECT 1 FROM analysis_scope_release
+                    WHERE scope=?1 AND before>=?2)", (scope, cutoff), |row| row.get(0))?;
+                if covered { return Ok(0); }
+                tx.execute_cached("DELETE FROM analysis_scope_release WHERE scope=?1 AND before<?2", (scope, cutoff))?;
+            }
             if let Some(release) = release
                 && tx.execute_cached("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES (?1,?2,?3)",
                     (release, if before.is_some() { scope } else { "" }, before.unwrap_or_default()))? == 0

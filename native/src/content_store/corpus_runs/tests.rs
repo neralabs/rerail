@@ -117,6 +117,48 @@ fn analysis_scope_only_publishes_staged_memberships_on_success() {
 }
 
 #[test]
+fn concurrent_analysis_runs_order_snapshots_and_isolate_staging() {
+    use crate::content_store::{analysis_scope::AnalysisRun, GitTree, HashKey};
+    let (path, store) = store("scope-acquisitions");
+    let scope = "cwd:/virtual/project";
+    let begin = |scope: &str| AnalysisRun::begin_at(ContentStore::open(&path).unwrap(), scope, "client-id", 7).unwrap();
+    let mut older = begin(scope);
+    let mut newer = begin(scope);
+    let mut abandoned = begin("named:independent");
+    let tree = HashKey::git_sha1([5; 20]);
+    store.put_git_trees_bulk(&[GitTree { id: tree, prefix: String::new(), entries: Vec::new() }]).unwrap();
+    let snapshots = [1, 2].map(|version| store.put_snapshot(tree, version, HashKey::sha256(b"grammar"), 1).unwrap());
+    for (owner, snapshot) in [(&older.owner, snapshots[0]), (&newer.owner, snapshots[1]), (&abandoned.owner, snapshots[0])] {
+        store.own_analysis_snapshot(owner, "workspace", snapshot).unwrap();
+    }
+    abandoned.finish(false).unwrap();
+    newer.finish(true).unwrap();
+    older.finish(true).unwrap();
+    let db = store.connection.lock().unwrap();
+    let rows = db.prepare("SELECT scope,snapshot_id FROM analysis_scope_workspace_snapshot").unwrap()
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+    assert_eq!(rows, [(scope.to_owned(), snapshots[1].0)]);
+}
+
+#[test]
+fn numbered_directory_stops_keep_one_cutoff_per_directory() {
+    use crate::content_store::analysis_scope;
+    let (_path, store) = store("scope-high-water");
+    let parent = std::path::Path::new("/virtual/project");
+    let child = parent.join("pkg");
+    for (dir, id) in [(parent, "10:a"), (&*child, "30:b"), (parent, "20:c"), (parent, "10:a")] {
+        store.delete_directory_analysis_scopes(dir, Some(id)).unwrap();
+    }
+    for (dir, generation, expected) in [(parent, 19, false), (parent, 21, true), (&*child, 21, false), (&*child, 31, true)] {
+        let owner = store.begin_analysis_scope_at(&analysis_scope::directory(dir), generation).unwrap();
+        let db = store.connection.lock().unwrap();
+        assert_eq!(owner.current(&db).unwrap(), expected);
+    }
+    let db = store.connection.lock().unwrap();
+    assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_release", [], |r| r.get::<_, i64>(0)).unwrap(), 2);
+}
+
+#[test]
 fn analysis_scope_keeps_each_directory_policy_sets_latest_manifest_under_pressure() {
     let (_path, store) = store("analysis-scope-pressure");
     let root = "/virtual/repository";
