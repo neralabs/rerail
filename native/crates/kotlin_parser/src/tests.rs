@@ -312,6 +312,19 @@ fn type_arguments_are_the_lean_parsers() {
     ]);
 }
 
+/// Runs that count their depths (Q271), as `type_args_end` and `lambda_params_end` do: type
+/// arguments to the `>` that closes the `<`, a function type inside them, a lambda's parameters
+/// with brackets and an inner `->`; `a<b>c>(d)`, whose first `>` closes, is no call.
+#[test]
+fn depths_are_the_lean_parsers() {
+    same(&[
+        "val a = f<A<B>, C>(x)\nval b = f<Map<A, List<B>>>(x)\nval c = g<(A) -> B>(y)\n",
+        "val d = { a: Map<K, (V) -> W> -> a }\n",
+        "val e = { (a, b): Pair<A, B> -> a }\n",
+        "val f = a<b>c>(d)\n",
+    ]);
+}
+
 /// Step 20: enum classes, labels, `as?`, reified type parameters, spread arguments.
 #[test]
 fn enums_and_labels_are_the_lean_parsers() {
@@ -447,6 +460,10 @@ fn constructor_lines_are_the_lean_parsers() {
         "class A\n@Inject constructor(x: Int)\n",
         "class A\n\ninternal class B private constructor(x: Int)\n",
         "class A\n@Inject\nclass B @Inject constructor(x: Int)\n",
+        "class A\nprivate fun f() {}\n",
+        "class A\n@Named(\"a(\") @B.C(1, f(2)) constructor(x: Int)\n",
+        "class A<T>\nconstructor(x: T)\n",
+        "enum class E\nconstructor(val v: Int) { X(1) }\n",
     ]);
 }
 
@@ -484,6 +501,15 @@ fn annotated_expressions_are_the_lean_parsers() {
         "fun f() {\n    @Suppress(\"D\", \"E\")\n    when (a) {\n        1 -> b()\n    }\n}\n",
         "val x = when (a) {\n    B,\n    C,\n    -> d\n    else -> e\n}\n",
         "val x = when (a) {\n    B, C, -> d\n    in r -> e\n    else -> f\n}\n",
+        // The run to the `)` passes line breaks (Q272): a declaration after is still one.
+        "fun f() {\n    @A(x) if (y) z\n    val q = 1\n}\n",
+        // An annotation before any expression, as the lean parser's `declaration_ahead` finds no
+        // declaration (Q274); and before a declaration's modifiers and keyword.
+        "fun f() {\n    @A if (y) z\n}\n",
+        "fun f() {\n    @A(x) foo()\n}\n",
+        "fun f() {\n    @A foo()\n    val q = 1\n}\n",
+        "fun f() {\n    @Suppress(\"D\")\n    get(a, b)\n    val x = @A @B g()\n    @A.B(1) h\n}\n",
+        "fun f() {\n    @A private fun g() {}\n    @field:Inject lateinit var x: Int\n    @A(1, \"b\") val y = 1\n    @A @B(c) class C\n}\n",
     ]);
 }
 
@@ -518,13 +544,16 @@ fn what_step_34_does_not_read_is_refused() {
 #[test]
 fn what_step_30_does_not_read_is_refused() {
     refused(&[
-        "package a\n\n/* c */\nabstract class A\n",
-        "package a\n/* c */\nabstract class A\n",
         "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
         "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
-        "fun f() {\n    a +\n    /* c */\n    abstract()\n}\n",
-        "fun f() {\n    g(\n        a(),\n        /* c */ eq(false),\n    )\n}\n",
     ]);
+}
+
+/// A visibility modifier and `constructor` on two lines after a class's name: the lean lexer
+/// reads them on one line only (`modifier_then_constructor`), and refuses (a token's `without`).
+#[test]
+fn a_constructor_off_its_modifiers_line_is_refused() {
+    refused(&["class A\nprivate\nconstructor(x: Int)\n", "class A\n@Inject private\nconstructor(x: Int)\n"]);
 }
 
 #[test]
@@ -658,6 +687,12 @@ fn corpus() {
                     let tables = Default::default();
                     let why = match ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &tables) {
                         Ok(out) => match out.errors.first() {
+                            // `RERAIL_KOTLIN_WHY=bytes`: with the byte, and the text there.
+                            Some(e) if std::env::var("RERAIL_KOTLIN_WHY").as_deref() == Ok("bytes") => {
+                                let at = e.split(" (byte ").nth(1).and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next()).and_then(|n| n.parse::<usize>().ok());
+                                let near = at.filter(|&a| text.is_char_boundary(a)).map_or(String::new(), |a| text[a.saturating_sub(60).min(a)..].chars().take(90).collect::<String>().replace('\n', "⏎"));
+                                format!("{e} `{near}`")
+                            }
                             Some(e) => e.split(" (byte").next().unwrap_or(e).to_string(),
                             // The interpreter's: the text at the token it refused.
                             None => match c.refused_at(&text) {
@@ -780,6 +815,10 @@ fn show() {
                 let got = image_text(&image).unwrap_or_default();
                 if got == lean {
                     eprintln!("== {p}: the same");
+                    // `RERAIL_KOTLIN_PRINT`: the tape too.
+                    if std::env::var_os("RERAIL_KOTLIN_PRINT").is_some() {
+                        eprintln!("{lean}");
+                    }
                 } else {
                     eprintln!("== {p}: DIFFERS\n-- lean\n{lean}-- grammar\n{got}");
                     if std::env::var_os("RERAIL_KOTLIN_TOKENS").is_some() {
@@ -909,4 +948,372 @@ fn tier1_records() {
             eprintln!("records: interp {} cpu {}; totals: interp {:?} cpu {:?}", run.positions[0].len(), cpu.positions[0].len(), run.totals, cpu.totals);
         }
     }
+}
+
+
+/// Tier 1's operations by output: each output's cone (the operations its value needs) and the
+/// operations only it needs, most first. A tool for 0415's stages 3 and 4.
+#[test]
+#[ignore = "a tool: run by name"]
+fn tier1_cones() {
+    use rerail_compiler::bitlex_masks as bitlex_compile;
+    let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+    let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
+    let kind = |name: &str| {
+        crate::lean_kind(name).or_else(|| {
+            let mut own = own.borrow_mut();
+            let next = crate::OWN_IDS + own.len() as u16;
+            Some(*own.entry(name.to_owned()).or_insert(next))
+        })
+    };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
+    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
+    let b = &c.program;
+    let n = b.ops.len();
+    let cone = |v: u16| {
+        let mut seen = vec![false; n];
+        let mut stack = vec![v];
+        while let Some(x) = stack.pop() {
+            if std::mem::replace(&mut seen[usize::from(x)], true) {
+                continue;
+            }
+            stack.extend(b.ops[usize::from(x)].operands());
+        }
+        seen
+    };
+    let cones: Vec<Vec<bool>> = b.outputs.iter().map(|&v| cone(v)).collect();
+    let users: Vec<usize> = (0..n).map(|i| cones.iter().filter(|c| c[i]).count()).collect();
+    let mut rows: Vec<(usize, usize, String)> = Vec::new();
+    for (k, cn) in cones.iter().enumerate() {
+        let label = c.labels.iter().filter(|l| usize::from(l.1) == k).map(|l| l.0.as_str()).collect::<Vec<_>>().join(", ");
+        let size = cn.iter().filter(|&&x| x).count();
+        let only = (0..n).filter(|&i| cn[i] && users[i] == 1).count();
+        rows.push((only, size, label));
+    }
+    // Each operation's statement (`Compiled::origin`): the operations each made, most first.
+    let mut by: std::collections::HashMap<&str, usize> = Default::default();
+    for o in &c.origin {
+        *by.entry(o.as_str()).or_default() += 1;
+    }
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by(|a, b| b.1.cmp(&a.1));
+    for (o, k) in &by {
+        eprintln!("  {k:5} made by {o}");
+    }
+    // What the CPU's body keeps (`BlockNative::cpu_form`, roughly): the cones of every output but
+    // the record pass's starts and lasts, by statement.
+    let kept: Vec<bool> = (0..n).map(|i| cones.iter().enumerate().any(|(k, cn)| cn[i] && !c.labels.iter().any(|l| usize::from(l.1) == k && (l.0 == "stream start" || l.0 == "stream last")))).collect();
+    let mut cpu: std::collections::HashMap<&str, usize> = Default::default();
+    for (i, o) in c.origin.iter().enumerate().filter(|&(i, _)| kept[i]) {
+        let _ = i;
+        *cpu.entry(o.as_str()).or_default() += 1;
+    }
+    let mut cpu: Vec<_> = cpu.into_iter().collect();
+    cpu.sort_by(|a, b| b.1.cmp(&a.1));
+    eprintln!("the CPU body's, roughly: {} operations", kept.iter().filter(|&&k| k).count());
+    for (o, k) in cpu.iter().take(40) {
+        eprintln!("  {k:5} cpu, made by {o}");
+    }
+    // The biggest group's operations by kind, and the outputs whose cones they are in; or the
+    // group `RERAIL_CONES_OF` names (`mask two_start`).
+    let named = std::env::var("RERAIL_CONES_OF").ok();
+    let pick = named.as_deref().or(by.first().map(|b| b.0));
+    if let Some(big) = pick {
+        let mut kinds: std::collections::BTreeMap<String, usize> = Default::default();
+        for (i, o) in c.origin.iter().enumerate() {
+            if o == big {
+                let name = format!("{:?}", b.ops[i]);
+                let name = name.split(['(', ' ', '{']).next().unwrap_or("").to_string();
+                let name = if name == "Prev" { format!("{:?}", b.ops[i]) .split(',').nth(1).map_or(name.clone(), |k| format!("Prev by{}", k.trim_end_matches(')'))) } else { name };
+                *kinds.entry(name).or_default() += 1;
+            }
+        }
+        eprintln!("{big}: {kinds:?}");
+        let mut outs = vec![0usize; b.outputs.len()];
+        for (i, o) in c.origin.iter().enumerate() {
+            if o == big {
+                for (k, cn) in cones.iter().enumerate() {
+                    // A named group: every output that reads them, shared or not.
+                    if cn[i] && (users[i] == 1 || named.is_some()) {
+                        outs[k] += 1;
+                    }
+                }
+            }
+        }
+        for (k, n) in outs.iter().enumerate().filter(|x| *x.1 > 0) {
+            let label = c.labels.iter().filter(|l| usize::from(l.1) == k).map(|l| l.0.as_str()).collect::<Vec<_>>().join(", ");
+            eprintln!("  output {k} ({label}, delay {}): {n} of them its own", b.output_delays[k]);
+        }
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+    let shared = (0..n).filter(|&i| users[i] > 1).count();
+    eprintln!("{n} operations, {} outputs; {shared} shared by two or more", b.outputs.len());
+    for (only, size, label) in rows {
+        eprintln!("  {only:5} own {size:5} cone  {label}");
+    }
+}
+
+/// 0429's step 1, a probe: the grammar's masks that are token-level (their value at a grammar
+/// token's start a function of the tokens: word tests, first-byte classes, their logic, fills
+/// between masks that hold at token starts only) and read by token-level readers only, and the
+/// operations of tier 1's body they make (`Compiled::origin`). Approximate: it reads the syntax,
+/// not the proofs 0429 asks for.
+#[test]
+#[ignore = "a probe: prints"]
+fn token_level_probe() {
+    use ::bitlex::syntax::{Arg, Expr, Stmt};
+    use rerail_compiler::bitlex_masks as bitlex_compile;
+    use std::collections::{HashMap, HashSet};
+    let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+    let mut defs: HashMap<String, Expr> = HashMap::new();
+    let mut classes: HashSet<String> = HashSet::new();
+    fn walk(s: &[Stmt], defs: &mut HashMap<String, Expr>, classes: &mut HashSet<String>) {
+        for s in s {
+            match s {
+                Stmt::Mask(n, e) => {
+                    defs.insert(n.clone(), e.clone());
+                }
+                Stmt::Class(n, _) => {
+                    classes.insert(n.clone());
+                }
+                Stmt::Block { body, .. } | Stmt::Hyp { body, .. } | Stmt::Rounds { body, .. } => walk(body, defs, classes),
+                _ => {}
+            }
+        }
+    }
+    walk(&stmts, &mut defs, &mut classes);
+    // (token-level, holds at token starts only)
+    fn conj<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+        if let Expr::And(a, b) = e {
+            conj(a, out);
+            conj(b, out);
+        } else {
+            out.push(e);
+        }
+    }
+    struct Cx<'a> {
+        defs: &'a HashMap<String, Expr>,
+        classes: &'a HashSet<String>,
+        memo: HashMap<String, (bool, bool)>,
+    }
+    fn word_text(e: &Expr) -> Option<usize> {
+        match e {
+            Expr::Call(f, a) if f == "text" => match a.as_slice() {
+                [Arg::S(s)] if s.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_') => Some(s.len()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    fn tl(cx: &mut Cx, e: &Expr) -> (bool, bool) {
+        match e {
+            Expr::Name(n) if n == "kw_start" => (true, true),
+            Expr::Name(n) if n == "code" => (true, false),
+            Expr::Name(n) if cx.classes.contains(n) => (true, false),
+            Expr::Name(n) => {
+                if let Some(&v) = cx.memo.get(n) {
+                    return v;
+                }
+                cx.memo.insert(n.clone(), (false, false));
+                let v = match cx.defs.get(n).cloned() {
+                    Some(d) => tl(cx, &d),
+                    None => (false, false),
+                };
+                cx.memo.insert(n.clone(), v);
+                v
+            }
+            Expr::Empty => (true, false),
+            Expr::Not(x) => (tl(cx, x).0, false),
+            Expr::Or(a, b) | Expr::Xor(a, b) => {
+                let (x, y) = (tl(cx, a), tl(cx, b));
+                (x.0 && y.0, x.1 && y.1)
+            }
+            Expr::And(..) => {
+                let mut fs = Vec::new();
+                conj(e, &mut fs);
+                // A word test: `kw_start & text(W) & ~next(w, |W|)`.
+                let starts = fs.iter().any(|f| matches!(f, Expr::Name(n) if n == "kw_start"));
+                let mut all = true;
+                let mut only = false;
+                for f in &fs {
+                    let v = match f {
+                        _ if starts && word_text(f).is_some() => (true, true),
+                        Expr::Not(x) if starts && matches!(&**x, Expr::Call(c, _) if c == "next") => (true, false),
+                        Expr::Call(c, a) if c == "text" && matches!(a.as_slice(), [Arg::S(_)]) => (true, true),
+                        f => tl(cx, f),
+                    };
+                    all &= v.0;
+                    only |= v.1;
+                }
+                (all, all && only)
+            }
+            Expr::Call(c, a) if c == "text" && matches!(a.as_slice(), [Arg::S(_)]) => (true, true),
+            Expr::Call(c, a) if c == "fill" => match a.as_slice() {
+                [Arg::E(s), Arg::E(t)] => {
+                    let (x, y) = (tl(cx, s), tl(cx, t));
+                    (x.0 && x.1 && y.0 && y.1, false)
+                }
+                _ => (false, false),
+            },
+            _ => (false, false),
+        }
+    }
+    let mut cx = Cx { defs: &defs, classes: &classes, memo: HashMap::new() };
+    let names: Vec<String> = defs.keys().cloned().collect();
+    let mut level: HashSet<String> = names.iter().filter(|n| tl(&mut cx, &Expr::Name((*n).clone())).0).cloned().collect();
+    // The readers: masks by their definitions; marks read at token starts; every other statement
+    // bytewise.
+    fn uses(e: &Expr, out: &mut HashSet<String>) {
+        let s = format!("{e:?}");
+        for part in s.split("Name(\"").skip(1) {
+            if let Some(n) = part.split('"').next() {
+                out.insert(n.to_string());
+            }
+        }
+    }
+    let mut bytewise: HashSet<String> = HashSet::new();
+    let mut readers: HashMap<String, Vec<String>> = HashMap::new();
+    for (n, e) in &defs {
+        let mut u = HashSet::new();
+        uses(e, &mut u);
+        for x in u {
+            readers.entry(x).or_default().push(n.clone());
+        }
+    }
+    fn others(s: &[Stmt], bytewise: &mut HashSet<String>) {
+        for s in s {
+            match s {
+                Stmt::Mask(..) | Stmt::Class(..) => {}
+                Stmt::Mark { .. } => {}
+                Stmt::Block { body, .. } | Stmt::Hyp { body, .. } => others(body, bytewise),
+                s => {
+                    let d = format!("{s:?}");
+                    for part in d.split("Name(\"").skip(1) {
+                        if let Some(n) = part.split('"').next() {
+                            bytewise.insert(n.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    others(&stmts, &mut bytewise);
+    loop {
+        let before = level.len();
+        let keep: HashSet<String> = level.iter().filter(|n| !bytewise.contains(*n) && readers.get(*n).is_none_or(|rs| rs.iter().all(|r| level.contains(r)))).cloned().collect();
+        level = keep;
+        if level.len() == before {
+            break;
+        }
+    }
+    let own = std::cell::RefCell::new(HashMap::<String, u16>::new());
+    let kind = |name: &str| {
+        crate::lean_kind(name).or_else(|| {
+            let mut own = own.borrow_mut();
+            let next = crate::OWN_IDS + own.len() as u16;
+            Some(*own.entry(name.to_owned()).or_insert(next))
+        })
+    };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
+    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
+    let mut by: HashMap<String, usize> = HashMap::new();
+    for o in &c.origin {
+        if let Some(m) = o.strip_prefix("mask ") {
+            *by.entry(m.to_string()).or_default() += 1;
+        }
+    }
+    let mut rows: Vec<(usize, String)> = level.iter().map(|n| (by.get(n).copied().unwrap_or(0), n.clone())).collect();
+    rows.sort_by(|a, b| b.cmp(a));
+    let total: usize = rows.iter().map(|r| r.0).sum();
+    eprintln!("token-level masks read by token-level readers only: {}, {total} of {} operations", rows.len(), c.program.ops.len());
+    for (k, n) in rows.iter().take(40) {
+        eprintln!("  {k:4} {n}");
+    }
+    // The biggest token-level masks some bytewise reader keeps, and the readers.
+    let tl_all: Vec<String> = names.iter().filter(|n| !level.contains(*n) && tl(&mut cx, &Expr::Name((*n).clone())).0).cloned().collect();
+    let mut kept: Vec<(usize, String)> = tl_all.iter().map(|n| (by.get(n).copied().unwrap_or(0), n.clone())).collect();
+    kept.sort_by(|a, b| b.cmp(a));
+    eprintln!("token-level but read bytewise:");
+    for (k, n) in kept.iter().take(25) {
+        let rs: Vec<&String> = readers.get(n).map_or(vec![], |r| r.iter().filter(|r| !level.contains(*r)).collect());
+        eprintln!("  {k:4} {n}: {}{rs:?}", if bytewise.contains(n) { "a statement, " } else { "" });
+    }
+}
+
+/// Block comments the scanner reads after a line break (the lean lexer's `asi`, 0429): swallowed
+/// before a word with `a`, `e` or `w` where the state takes a semicolon (after a header's line
+/// too, whose node then ends at the word), and any other comment where it takes none (a call's
+/// arguments, after an operator). From the corpus's files the escape refused.
+#[test]
+fn asked_comments_are_the_lean_parsers() {
+    same(&[
+        "package a.b\n\n/**\n * Doc\n */\nabstract class X\n",
+        "import a.b\n/** d */\nenum class E { A }\n",
+        "import a.b\n\n/**\n * d\n */\nabstract class X\n",
+        "package a\n\n/* c */\nabstract class A\n",
+        "package a\n/* c */\nabstract class A\n",
+        "class C {\n    fun f() {\n    }\n\n    /*\n     * c\n     */\n    external fun g(): String?\n}\n",
+        "fun f() {\n    g(\n        /* a = */ x,\n        /* b = */ eq(false),\n    )\n}\n",
+        "fun f() {\n    g(\n        a(),\n        /* c */ eq(false),\n    )\n}\n",
+        "abstract class A {\n    abstract val x: Int\n\n    /**\n     * c\n     */\n    abstract fun g()\n}\n",
+        "val x = 1\n/* c */\nabstract class X\n",
+        "fun f() = g()\n\n/* c */\nwhen (x) {}\n",
+        "fun f() {\n    a +\n    /* c */\n    abstract()\n}\n",
+        // No comment the scanner reads: a `*/` in a string, a comment inside a line.
+        "fun f() {\n    val x = g(\"*/*\", y)\n        ?: h()\n}\n",
+        "val x = \"\"\"\n  a/*/\n\"\"\"\n    .trimIndent()\n",
+        "fun f() = g(a, 0 /*r*/, b)\n",
+        "fun f() {\n    g(\n        true /* s */,\n        x,\n    )\n}\n",
+    ]);
+}
+
+/// A probe: Bitlex's reference (`eval`, `tree`) on `RERAIL_KOTLIN_TEXT`, its tree or its refusal.
+#[test]
+#[ignore = "a probe: prints"]
+fn reference_probe() {
+    let text = std::env::var("RERAIL_KOTLIN_TEXT").unwrap_or_default().replace("\\n", "\n");
+    let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+    let tables = Default::default();
+    match ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &tables) {
+        Ok(out) => {
+            eprintln!("errors {:?}", out.errors);
+            if let Some(tree) = &out.tree {
+                eprintln!("reference tree: {:?}", ::bitlex::tree::nodes(tree, &out.tokens, text.len()).map(|n| n.len()));
+            }
+        }
+        Err(e) => eprintln!("eval: {e:?}"),
+    }
+    let c = compiled().expect("compiles");
+    match c.parser.image(text.as_bytes()) {
+        Ok(i) => eprintln!("compiled: {}", image_text(&i).expect("an image")),
+        Err(e) => eprintln!("compiled refuses: {e:?}\n{}", c.explain(&text)),
+    }
+}
+
+/// Each record mark's lowering on the CPU: its output, word, and the flags that decide whether
+/// tier 2 reads it from the bytes itself (`native_cpu_block::lazy_marks`).
+#[test]
+#[ignore = "a probe: prints each mark's flags"]
+fn lazy_probe() {
+    let c = compiled().expect("compiles");
+    let b = &c.program.block_programs[0];
+    let r = b.records.as_ref().expect("records");
+    let native = rerail_compiler::block_native::BlockNative::lower(b);
+    let bw = rerail_compiler::native_cpu_bytes::Bytewise::of(&native);
+    let lazy = rerail_compiler::native_cpu_block::lazy_marks(r, &|o| bw.can(o));
+    let coded = rerail_compiler::native_cpu_block::lazy_coded(r);
+    for (k, &(o, w)) in r.marks.iter().enumerate() {
+        let bit = |x: u32| x >> k & 1;
+        eprintln!(
+            "mark {k}: output {o} word {w} gap {} tested_only {} alone {} unplaced {} extra {} coded {} unless {} bytewise {} lazy {}",
+            bit(r.gaps), bit(r.tested_only), bit(r.alone), bit(r.unplaced), r.extra == Some(k as u8), bit(coded),
+            r.unless.iter().any(|&(m, _)| m as usize == k), o != rerail_compiler::records::WORD_ALONE && bw.can(o), lazy.iter().any(|&(m, _)| m as usize == k)
+        );
+    }
+    for ch in &r.checks {
+        eprintln!("check: {ch:?}");
+    }
+    eprintln!("blanks: {:?} gap {:?} skip {:?} gaps {:b}", r.blanks, r.gap, r.skip, r.gaps);
+    let blank_bits = rerail_compiler::native_cpu_block::blank_bits(r, &|o| bw.can(o));
+    eprintln!("blank marks read by the CPU loop: {blank_bits:b}; records_made {:?}", native.records_made());
 }

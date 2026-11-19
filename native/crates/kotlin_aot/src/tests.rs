@@ -175,5 +175,51 @@ fn structure() {
         }
     }
     eprintln!("  slots a block: {}", passes.slots);
+    // The CPU's form (`BlockNative::cpu_form`): the record pass's starts and lasts left out, the
+    // regions walked; what the CPU's tier 1 runs.
+    let cpu = native.cpu_form();
+    let mut kinds = std::collections::BTreeMap::<String, usize>::new();
+    for i in &cpu.insts {
+        let name = format!("{i:?}");
+        *kinds.entry(name.split(['(', ' ', '{']).next().unwrap_or("").to_string()).or_default() += 1;
+    }
+    eprintln!("  CPU form: {} instructions, {} outputs; by kind: {kinds:?}", cpu.insts.len(), cpu.outputs.len());
     eprintln!("tier 2: {} words, {} lines of machine", jit.words.lines().count(), jit.machine.lines().count());
+    // The records' marks (`Records::marks`): each its output and word, and how many of the
+    // corpus's bytes its output holds at (where `RERAIL_KOTLIN_CORPUS` is set).
+    if let Some(r) = &b.records {
+        let files: Vec<String> = std::env::var("RERAIL_KOTLIN_CORPUS").map(|_| corpus()).unwrap_or_default();
+        let mut bits = vec![0u64; b.outputs.len()];
+        for f in &files {
+            let mut batch = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
+            batch.call(&jit.parser.tier1);
+            for (i, w) in batch.out.iter().enumerate() {
+                bits[i % b.outputs.len()] += u64::from(w.count_ones());
+            }
+        }
+        eprintln!("records' marks ({} files): gaps {:#x}, tested only {:#x}", files.len(), r.gaps, r.tested_only);
+        for (k, &(o, w)) in r.marks.iter().enumerate() {
+            let held = bits.get(usize::from(o)).copied().unwrap_or(0);
+            eprintln!("  mark {k}: output {o}, word {w}, {held} bits");
+        }
+    }
+}
+
+/// The ahead-of-time tier 1 alone over the corpus files the grammar parses, `KOTLIN_ROUNDS`
+/// times (50): for a profiler (`xctrace`'s Time Profiler) to say where its time goes.
+#[test]
+#[ignore = "a tool for a profiler: run by name, on an optimized build"]
+fn tier1_alone() {
+    let (jit, aot) = both();
+    let rounds: usize = std::env::var("KOTLIN_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
+    let files = corpus();
+    let ours: Vec<&String> = files.iter().filter(|f| jit.parser.image(f.as_bytes()).is_ok()).collect();
+    let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()])).collect();
+    let at = thread_cpu();
+    for _ in 0..rounds {
+        for b in &mut batches {
+            b.call(&aot.parser.tier1);
+        }
+    }
+    eprintln!("{} files, {rounds} rounds: {:.1} ms CPU a round", ours.len(), (thread_cpu() - at).as_secs_f64() * 1e3 / rounds as f64);
 }

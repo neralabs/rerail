@@ -137,7 +137,7 @@ fn gaps() -> Vec<Gap> {
     out
 }
 
-/// What the corpus cannot show, from the grammar (`21-named-only.bitlex`): a setting's arguments
+/// What the corpus cannot show, from the grammar (`22-test-blocks.bitlex`): a setting's arguments
 /// and a declaration's or a functor's modifiers may be any punctuation (`punctuation`,
 /// `setting_punctuation`), or none. So the gaps around them imply the empty word, and every
 /// punctuation but a delimiter is kept under those kinds.

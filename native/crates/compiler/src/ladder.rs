@@ -1,7 +1,8 @@
-//! The Bitlex ladder's checks (the engine's tests and this crate's use them): thirteen languages, from one keyword to a data language with nested
-//! records, lists, texts, escapes, numbers and two kinds of comment, a step at a time. Each is
-//! parsed by its Bitlex file alone (`bitlex_ladder/`), with no Rust between the bytes and the
-//! nodes.
+//! The Bitlex ladder's checks (the engine's tests and this crate's use them). The ladder was built
+//! a step at a time, from one keyword to a data language with nested records, lists, texts,
+//! escapes, numbers and two kinds of comment; the tree keeps its last step (13), and JSON and
+//! JSONC (14, 15), and git's history the rest (decision 0422). Each is parsed by its Bitlex file
+//! alone (`bitlex_ladder/`), with no Rust between the bytes and the nodes.
 //!
 //! The languages are made up, so that no step is a known format: records are `< >`, lists
 //! `( )`, items are separated by `;`, an entry is `#key# = value`, texts are between `#`, a caret

@@ -1922,6 +1922,17 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         if r.tested_only != 0 {
             let _ = writeln!(out, "  block {at} rectested {}", r.tested_only);
         }
+        if r.alone != 0 {
+            let _ = writeln!(out, "  block {at} recalone {}", r.alone);
+        }
+        // `block N recread R`: the marks a token pattern's `without` reads (0430).
+        if r.read != 0 {
+            let _ = writeln!(out, "  block {at} recread {}", r.read);
+        }
+        // `block N recblank K O`: gap mark `K` read from the blanks, by class output `O` (0430).
+        for &(k, o) in &r.blanks {
+            let _ = writeln!(out, "  block {at} recblank {k} {o}");
+        }
         // `block N recunplaced U`: the gap marks whose bit past the last grammar token refuses.
         if r.unplaced != 0 {
             let _ = writeln!(out, "  block {at} recunplaced {}", r.unplaced);

@@ -166,6 +166,9 @@ pub enum StructuralOperation {
     Check { check: u16 },
     /// `SETTLE`: the pending extras before mask `mask`'s first hold, settled.
     SettleBefore { mask: u16 },
+    /// `SETTLE m=1`: where mask `mask` holds at the token's start, the extra pending last
+    /// dropped.
+    DropLast { mask: u16 },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
@@ -237,6 +240,7 @@ impl StructuralOperation {
             Self::Count { count, up, .. } => (crate::program::COUNT, u8::from(!up), count),
             Self::Check { check } => (crate::program::CHECK, 0, check),
             Self::SettleBefore { mask } => (crate::program::SETTLE, 0, mask),
+            Self::DropLast { mask } => (crate::program::SETTLE, 1, mask),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
@@ -497,6 +501,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
                 },
             },
             crate::program::CHECK => StructuralOperation::Check { check: operand },
+            crate::program::SETTLE if mode == 1 => StructuralOperation::DropLast { mask: operand },
             crate::program::SETTLE => StructuralOperation::SettleBefore { mask: operand },
             crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },
             RETURN => StructuralOperation::Return { again: mode != 0 },

@@ -91,7 +91,8 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
         crate::native_cpu_block::lazy_marks(r, &|o| bw.can(o))
     });
     let lazy_bits: u64 = lazy.iter().fold(0, |a, &(k, _)| a | 1 << k);
-    let rest_bits: u64 = (if in_code >= 64 { 0 } else { u64::MAX << in_code }) | lazy_bits;
+    // The code's token marks with no bit (`Records::alone`): live at every token, as past it.
+    let rest_bits: u64 = (if in_code >= 64 { 0 } else { u64::MAX << in_code }) | lazy_bits | records.map_or(0, |r| u64::from(r.alone));
     let mut end_bits = rest_bits;
     for b in &native.structural {
         if let Op::Mark { order, end: true, .. } = b.operation
@@ -175,7 +176,19 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
     let pops = |per: u64| if per > 0 { format!(" + self.depth as usize * {per}") } else { String::new() };
     writeln!(
         out,
-        "    /// The tape's room for the path to the next token (`native_cpu_stream::Bounds`).
+        "    /// A call one level deeper, as the lean parser's `deeper()`: refused past `DEPTH`.
+    #[inline(always)]
+    fn deeper(&mut self, rule: impl FnOnce(&mut S) -> Result<bool, bool>) -> Result<bool, bool> {{
+        if self.depth == DEPTH {{
+            return Err(false);
+        }}
+        self.depth += 1;
+        let again = rule(self)?;
+        self.depth -= 1;
+        Ok(again)
+    }}
+
+    /// The tape's room for the path to the next token (`native_cpu_stream::Bounds`).
     #[inline(always)]
     fn room(&mut self) -> R {{
         if self.nodes as usize + {}{} > self.room_nodes || self.supers as usize + {}{} > self.room_supers {{
@@ -214,6 +227,9 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
     }
     for (i, m) in n.token_marks.iter().enumerate() {
         pattern(out, i, m, n.extras.first().map(|e| e.0));
+        if i == 0 || n.token_marks[i - 1].order != m.order {
+            patterns(out, i, &n.token_marks);
+        }
     }
     // The refusing token marks' tests, at a token whose code has a bit of theirs.
     let refusing: Vec<String> = n
@@ -1234,10 +1250,16 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
         }
         let t = if t.is_empty() { "false".into() } else { t.join(" || ") };
         // A `not` element: none of its choices.
-        if el.not { format!("!({t})") } else { t }
+        let t = if el.not { format!("!({t})") } else { t };
+        // `without M`: none of the marks' bits in the code (`TokenElem::without`).
+        if el.without != 0 { format!("({t}) && c >> {} & {:#x} == 0", crate::records::MARK_SHIFT, el.without) } else { t }
     };
-    let mut ahead = 0i8;
-    for el in &m.elems {
+    // The next record that is no extra, after `at`: past the last, `past`.
+    let advance = |past: &str| format!("        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n");
+    // The token's own element, those before the run; the run (decision 0416) tries the rest
+    // (`pattern_{i}_rest`) from each of its records on, as a forward scan.
+    let run = m.elems.iter().position(|e| e.run);
+    for el in m.elems.iter().take(run.unwrap_or(m.elems.len())) {
         match el.offset {
             0 => writeln!(body, "        let c = unsafe {{ *self.codes.add(here * self.rs) }};\n        if !({}) {{ return false; }}", test(el)).unwrap(),
             o if o < 0 => {
@@ -1249,18 +1271,58 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
                     writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
                 }
             }
-            o => {
+            _ => {
                 // No record left: an `end` element holds there (it is the last), any other fails.
-                let past = if el.end { "true" } else { "false" };
-                for _ in ahead..o {
-                    writeln!(body, "        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};").unwrap();
-                }
-                ahead = o;
+                body.push_str(&advance(if el.end { "true" } else { "false" }));
                 writeln!(body, "        if !({}) {{ return false; }}", test(el)).unwrap();
             }
         }
     }
-    writeln!(out, "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}        true\n    }}\n").unwrap();
+    let Some(r) = run else {
+        writeln!(out, "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}        true\n    }}\n").unwrap();
+        return;
+    };
+    let mut rest = String::new();
+    for el in &m.elems[r + 1..] {
+        rest.push_str(&advance(if el.end { "true" } else { "false" }));
+        writeln!(rest, "        if !({}) {{ return false; }}", test(el)).unwrap();
+    }
+    // The run's depths (Q271): the rest only where each is 0; a closer at 0 ends the run.
+    let run_el = &m.elems[r];
+    let counters = run_el.nests.iter().map(|n| usize::from(n.counter) + 1).max().unwrap_or(0);
+    let (depths, mut zero) = if counters == 0 { (String::new(), String::new()) } else { (format!("        let mut d = [0u32; {counters}];\n"), format!("d == [0; {counters}] && ")) };
+    // Its `ending` (Q274): the record it took last, `at`, one the test takes.
+    if let Some(x) = &run_el.ending {
+        write!(zero, "{{ let c = unsafe {{ *self.codes.add(at * self.rs) }}; {} }} && ", test(x)).unwrap();
+    }
+    let mut nest = String::new();
+    for n in &run_el.nests {
+        let k = n.counter;
+        if n.open {
+            writeln!(nest, "            if {} {{ d[{k}] += 1; }}", test(&n.test)).unwrap();
+        } else {
+            writeln!(nest, "            if {} {{ if d[{k}] == 0 {{ return false; }} d[{k}] -= 1; }}", test(&n.test)).unwrap();
+        }
+    }
+    writeln!(
+        out,
+        "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}{depths}        loop {{\n            if {zero}self.pattern_{i}_rest(at) {{ return true; }}\n    {}            if !({}) {{ return false; }}\n{nest}        }}\n    }}\n\n    /// Token mark {i}'s tokens after its run, from the record after `at`.\n    #[inline(always)]\n    fn pattern_{i}_rest(&self, mut at: usize) -> bool {{\n{rest}        true\n    }}\n",
+        advance("false").replace("\n        ", "\n            "),
+        test(run_el)
+    )
+    .unwrap();
+}
+
+/// The token marks of one order together, from entry `first` (`program::patterns_hold`): none
+/// of the `unless` ones and, where there are others, one of them.
+fn patterns(out: &mut String, first: usize, marks: &[TokenMark]) {
+    let order = marks[first].order;
+    let these: Vec<usize> = (first..marks.len()).take_while(|&i| marks[i].order == order).collect();
+    let none: Vec<String> = these.iter().filter(|&&i| marks[i].unless).map(|i| format!("!self.pattern_{i}()")).collect();
+    let one: Vec<String> = these.iter().filter(|&&i| !marks[i].unless).map(|i| format!("self.pattern_{i}()")).collect();
+    let one = if one.is_empty() { "true".to_string() } else { format!("({})", one.join(" || ")) };
+    let all: Vec<String> = none.into_iter().chain(std::iter::once(one)).collect();
+    writeln!(out, "    /// Mark {order}'s tokens follow: its entries together.\n    #[inline(always)]\n    fn patterns_{first}(&self) -> bool {{\n        {}\n    }}\n", all.join(" && ")).unwrap();
 }
 
 /// A local check's word form (`program::local_value` over the 64 places of a word, a bit
@@ -1601,7 +1663,7 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         Op::Span { last: false, len } => format!("if s.start + {len} != s.rec_end {{ return Err(false); }}\n{}{}", if x.flagged { "s.end = s.rec_end;\ns.need = true;\n" } else { "" }, jump(0)?),
         Op::Span { last: true, .. } => format!("{}{}", if x.flagged { "s.end = s.rec_end;\ns.need = true;\n" } else { "" }, jump(0)?),
         Op::Empty { total } => format!("if s.total({total}) != 0 {{ return Err(false); }}\n{}", jump(0)?),
-        Op::Word { string, test: true } => format!("if s.word() == {} {{ {} }} else {{ {} }}", u32::from(string) + 1, jump(0)?, jump(1)?),
+        Op::Word { string, test: true } => format!("if s.word() == {} {{\n{}\n}}{}", u32::from(string) + 1, jump(0)?, or_else(&jump(1)?)),
         Op::Word { string, test: false } => format!("if s.word() != {} {{ return Err(false); }}\n{}", u32::from(string) + 1, jump(0)?),
         Op::Open { kind } => format!("s.open({});\n{}", u32::from(kind) | u32::from(field_after(x, pc).unwrap_or(0)) << 16, jump(0)?),
         Op::Close { this } => format!("s.close::<{this}>({})?;\n{}", if this { end } else { "0" }, jump(0)?),
@@ -1616,6 +1678,8 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         }
         Op::Settle { .. } => format!("s.pending = 0;\n{}", jump(0)?),
         Op::SettleBefore { mask } => format!("s.settle_before({});\n{}", mask_output(n, mask)?, jump(0)?),
+        // The next node made takes the dropped one's row and cells.
+        Op::DropLast { mask } => format!("if s.pending != 0 && s.bit({}, s.start) {{ s.pending -= 1; s.nodes -= 1; if s.pending == 0 {{ s.last_end = s.start; }} }}\n{}", mask_output(n, mask)?, jump(0)?),
         Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
             let k = u32::from(order);
             // A token mark past the code's (decision 0407): live at every token, its tokens
@@ -1625,8 +1689,8 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
                 // A lazy gap mark with a pattern (`before`, decision 0416): its gap, then its token.
                 let lazy = x.lazy.iter().any(|&(m, _)| u32::from(m) == k);
                 match pattern {
-                    Some(i) if lazy => format!("(if s.at_end {{ {end} }} else {{ s.lazy_{k}() && s.pattern_{i}() }})"),
-                    Some(i) => format!("(if s.at_end {{ {end} }} else {{ s.pattern_{i}() }})"),
+                    Some(i) if lazy => format!("(if s.at_end {{ {end} }} else {{ s.lazy_{k}() && s.patterns_{i}() }})"),
+                    Some(i) => format!("(if s.at_end {{ {end} }} else {{ s.patterns_{i}() }})"),
                     None if lazy => format!("(s.at_end || s.lazy_{k}())"),
                     None => "true".into(),
                 }
@@ -1636,9 +1700,10 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
                 format!("(if s.at_end {{ {end} }} else {{ {w}s.bit({o}, s.start) }})")
             };
             let take = if keep { String::new() } else { format!("s.live &= !((2u64 << {k}) - 1);\n") };
-            format!("if s.live >> {k} & 1 != 0 && {here} {{\n{take}{}\n}} else {{\n{}\n}}", jump(0)?, jump(1)?)
+            let here = if here == "true" { String::new() } else { format!(" && {here}") };
+            format!("if s.live >> {k} & 1 != 0{here} {{\n{take}{}\n}}{}", jump(0)?, or_else(&jump(1)?))
         }
-        Op::Row { mask } => format!("if s.bit({}, s.start) {{ {} }} else {{ {} }}", mask_output(n, mask)?, jump(0)?, jump(1)?),
+        Op::Row { mask } => format!("if s.bit({}, s.start) {{\n{}\n}}{}", mask_output(n, mask)?, jump(0)?, or_else(&jump(1)?)),
         Op::Retag { kind, on: On::Here } => format!("s.here_kind({kind})?;\n{}", jump(0)?),
         Op::Retag { kind, on: On::Moved } => format!("s.moved_kind({});\n{}", kind_of(kind), jump(0)?),
         Op::Retag { kind, on: On::Made } => format!("s.made_kind::<{}>({})?;\n{}", kind == DEAD, kind_of(kind), jump(0)?),
@@ -1664,13 +1729,13 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
             } else {
                 String::new()
             };
-            format!("if s.depth == DEPTH {{ return Err(false); }}\ns.depth += 1;\nlet again = r{callee}(s{args})?;\ns.depth -= 1;\nif again {{ {} }} else {{ {} }}", jump(1)?, jump(0)?)
+            format!("if s.deeper(move |s| r{callee}(s{args}))? {{\n{}\n}}{}", jump(1)?, or_else(&jump(0)?))
         }
         Op::Remember { kind: WORD_KIND } => format!("word = s.word_kind()?;\n{}", jump(0)?),
         Op::Remember { kind } => format!("word = {kind};\n{}", jump(0)?),
         Op::Flag { flag, op: FlagOp::Set } => format!("flags |= {};\n{}", 1u32 << flag, jump(0)?),
         Op::Flag { flag, op: FlagOp::Clear } => format!("flags &= !{};\n{}", 1u32 << flag, jump(0)?),
-        Op::Flag { flag, op: FlagOp::Test } => format!("if flags & {} != 0 {{ {} }} else {{ {} }}", 1u32 << flag, jump(0)?, jump(1)?),
+        Op::Flag { flag, op: FlagOp::Test } => format!("if flags & {} != 0 {{\n{}\n}}{}", 1u32 << flag, jump(0)?, or_else(&jump(1)?)),
         Op::Count { count, up: true, max } => format!("s.counts[{count}] += 1;\nif s.counts[{count}] > {max} {{ return Err(false); }}\n{}", jump(0)?),
         Op::Count { count, up: false, .. } => format!("s.counts[{count}] = s.counts[{count}].saturating_sub(1);\n{}", jump(0)?),
         Op::Check { check } => format!("s.check_{check}()?;\n{}", jump(0)?),
@@ -1680,6 +1745,70 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         Op::Goto { .. } => jump(0)?,
         ref op => return Err(format!("word {pc}: {op:?} is not tier 2's")),
     })
+}
+
+/// An `if`'s `else`: `else if …` where the branch is one `if` chain (as a hand-written chain of
+/// tests reads), else `else { … }`.
+fn or_else(e: &str) -> String {
+    let t = e.trim();
+    if t.starts_with("if ") && one_if(t) {
+        format!(" else {t}")
+    } else {
+        format!(" else {{\n{e}\n}}")
+    }
+}
+
+/// Whether `t`, an `if`, is one statement: every brace that closes at its outer level is followed
+/// by `else` or the end.
+fn one_if(t: &str) -> bool {
+    let mut depth = 0i32;
+    for (i, c) in t.char_indices() {
+        match c {
+            '(' | '{' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let rest = t[i + 1..].trim_start();
+                    if !(rest.is_empty() || rest.starts_with("else")) {
+                        return false;
+                    }
+                }
+            }
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// `body` indented by its braces, four spaces a level from `base` (the generated code has no
+/// braces in strings or characters; a comment's are not counted).
+fn indent(body: &str, base: usize) -> String {
+    let mut out = String::with_capacity(body.len() * 2);
+    let mut depth = base as i32;
+    for line in body.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        let code = l.split("//").next().unwrap_or("");
+        let lead = code.chars().take_while(|c| matches!(c, '}' | ')' | ']')).count() as i32;
+        let level = (depth - lead).max(0);
+        for _ in 0..level {
+            out.push_str("    ");
+        }
+        out.push_str(l);
+        out.push('\n');
+        for c in code.chars() {
+            match c {
+                '(' | '{' | '[' => depth += 1,
+                ')' | '}' | ']' => depth -= 1,
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 /// The function of the rule entered at `entry`: its words reachable from there, structured.
@@ -1700,7 +1829,7 @@ fn rule(out: &mut String, x: &Facts<'_>, entry: usize) -> Result<(), String> {
     let sizes = vec![1; nodes.len()];
     let shape = Shape::of(first, &sizes).ok_or_else(|| format!("rule at {entry}: an irreducible graph"))?;
     let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> { word(x, nodes[node], jump) };
-    let body = shape.tree(&emit, 0)?;
+    let body = indent(&shape.tree(&emit, 0)?, 1);
     let params = if x.context { ", mut word: u32, mut flags: u32" } else { "" };
     writeln!(out, "/// The rule entered at word {entry}.\n#[inline(never)]\nfn r{entry}(s: &mut S{params}) -> Result<bool, bool> {{\n    let mut d: u32 = 0;\n{body}}}\n").unwrap();
     Ok(())

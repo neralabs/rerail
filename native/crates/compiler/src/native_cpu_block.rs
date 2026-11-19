@@ -6603,10 +6603,10 @@ const REREAD_FLAG: i64 = i64::MIN;
 /// chooses by the target, the GPU's tier 1 making every mark at once.
 pub fn lazy_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> Vec<(u8, u16)> {
     // A mark with tests and an `unless after` stays the loop's: the word before holds its
-    // tests' hits too.
+    // tests' hits too. So does one a token pattern's `without` reads (`Records::read`).
     let coded = lazy_coded(r);
     let held = |k: u8| coded >> k & 1 == 1 && r.unless.iter().any(|&(m, _)| m == k);
-    loop_marks(r, bytewise).0.into_iter().filter(|&(k, _)| r.tested_only >> k & 1 == 0 && r.unplaced >> k & 1 == 0 && r.extra != Some(k) && !held(k)).collect()
+    loop_marks(r, bytewise).0.into_iter().filter(|&(k, _)| r.tested_only >> k & 1 == 0 && r.alone >> k & 1 == 0 && r.read >> k & 1 == 0 && r.unplaced >> k & 1 == 0 && r.extra != Some(k) && !held(k)).collect()
 }
 
 /// The code bits of `block`'s gap marks tier 2 on the CPU tests itself (`lazy_marks`): the
@@ -6637,15 +6637,54 @@ pub(crate) fn loop_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> 
         return (Vec::new(), Vec::new());
     }
     let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
+    let blank = blank_bits(r, bytewise);
+    let known = extra_known(r, bytewise);
     let mut lift = Vec::new();
     let mut at = Vec::new();
     for (k, &(o, w)) in r.marks.iter().enumerate() {
-        if o == crate::records::WORD_ALONE || w != 0 || retagged >> k & 1 == 1 || r.tested_only >> k & 1 == 1 || !bytewise(o) {
+        if o == crate::records::WORD_ALONE || w != 0 || retagged >> k & 1 == 1 || r.tested_only >> k & 1 == 1 || r.alone >> k & 1 == 1 || blank >> k & 1 == 1 || !bytewise(o) {
             continue;
         }
-        if r.gaps >> k & 1 == 1 { lift.push((k as u8, o)) } else { at.push((k as u8, o)) }
+        if r.gaps >> k & 1 == 1 {
+            if known {
+                lift.push((k as u8, o));
+            }
+        } else {
+            at.push((k as u8, o));
+        }
     }
     (lift, at)
+}
+
+/// The gap marks the token loop reads from the blanks (`Records::blanks`, decision 0430): each
+/// `(mark, class output)`, the class read from the bytes. While it passes the blank run before
+/// each token, the loop tests the class there, as the lean lexer's `skip` notes `nl`; an
+/// extra's run goes on to the grammar token after it. No mask of the mark is made.
+pub fn blank_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> Vec<(u8, u16)> {
+    if r.skip.is_none() {
+        return Vec::new();
+    }
+    if !extra_known(r, bytewise) {
+        return Vec::new();
+    }
+    r.blanks.iter().copied().filter(|&(_, o)| bytewise(o)).collect()
+}
+
+/// Whether the token loop knows an extra at its token (Q279): it tells one by the extra's mark
+/// in the code, so the mark must be the loop's there (a reader's, or its first byte's), not
+/// set after the tokens (`late_marks`). The gap marks the loop sets (`loop_marks`' lifted,
+/// `blank_marks`) go past an extra to the grammar token after it only so.
+fn extra_known(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> bool {
+    let Some(e) = r.extra else { return true };
+    let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
+    let (o, w) = r.marks[usize::from(e)];
+    let at_first = o != crate::records::WORD_ALONE && w == 0 && r.gaps >> e & 1 == 0 && r.tested_only >> e & 1 == 0 && r.alone >> e & 1 == 0 && bytewise(o);
+    retagged >> e & 1 == 1 || at_first
+}
+
+/// `blank_marks`' marks, as bits `1 << mark`.
+pub fn blank_bits(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> u32 {
+    blank_marks(r, bytewise).iter().fold(0, |a, &(k, _)| a | 1 << k)
 }
 
 /// The marks of `marks` with a bit in the file's bytes `a ..= b` (none where `a > b`), as bits
@@ -6744,6 +6783,45 @@ fn marks_in(f: &mut FunctionBuilder<'_>, rd: &Reads<'_>, c: &FileCols, marks: &[
     f.block_params(join)[0]
 }
 
+/// The blank marks' bits (`blank_marks`) in the blank run before the token at `s`, from
+/// `after` (the end of the token before) to `s - 1`: in the block in registers (its first
+/// byte `base`) when the run starts in it, one word's range per class; else a word at a time
+/// from the bytes, cold (`marks_in`), as the lean lexer's `skip` reads a run of blanks.
+#[allow(clippy::too_many_arguments)]
+fn blanks_before(f: &mut FunctionBuilder<'_>, rd: &Reads<'_>, c: &FileCols, blanks: &[(u8, u16)], after: Value, s: Value, regs: Option<(&BlockRegs, Value)>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+    let before = f.ins().iadd_imm(s, -1);
+    let Some((g, base)) = regs else {
+        return marks_in(f, rd, c, blanks, after, before, None, false, heads);
+    };
+    let (fast, slow, join) = (f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(join, types::I64);
+    let inside = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, after, base);
+    f.ins().brif(inside, fast, &[], slow, &[]);
+    f.switch_to_block(fast);
+    let ones = f.ins().iconst(types::I64, -1);
+    let lo = f.ins().isub(after, base);
+    let hi = f.ins().isub(s, base);
+    let from = f.ins().ishl(ones, lo);
+    let to = f.ins().ishl(ones, hi);
+    let range = f.ins().band_not(from, to);
+    let mut acc = f.ins().iconst(types::I64, 0);
+    for &(m, o) in blanks {
+        let w = g.runs.iter().find(|&&(k, _)| k == o).map(|&(_, v)| v).expect("a blank mark's class word in the registers");
+        let x = f.ins().band(w, range);
+        let any = f.ins().icmp_imm(IntCC::NotEqual, x, 0);
+        let any = f.ins().uextend(types::I64, any);
+        let bit = f.ins().ishl_imm(any, i64::from(m));
+        acc = f.ins().bor(acc, bit);
+    }
+    f.ins().jump(join, &[acc.into()]);
+    f.switch_to_block(slow);
+    f.set_cold_block(slow);
+    let bits = marks_in(f, rd, c, blanks, after, before, None, false, heads);
+    f.ins().jump(join, &[bits.into()]);
+    f.switch_to_block(join);
+    f.block_params(join)[0]
+}
+
 /// The cursor's block in registers (decision 0177), as the lean lexer's window: the starts
 /// left (`cand`, its bits from the cursor), and each run rule's word (output, word).
 #[derive(Clone)]
@@ -6836,6 +6914,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // has the starts left in the cursor's block, and the run rules' words there.
     // The marks the loop sets (`loop_marks`), their words in the registers too.
     let (mut lift, at_marks) = if rd.bytes.is_some() { loop_marks(r, &|o| rd.bytewise(o)) } else { (Vec::new(), Vec::new()) };
+    // The marks of the blanks (`blank_marks`): their classes' words in the registers too.
+    let blanks = if rd.bytes.is_some() { blank_marks(r, &|o| rd.bytewise(o)) } else { Vec::new() };
     // Tier 2's own (`lazy_marks`): the loop sets none of them.
     if rd.bytes.is_some() {
         let lazy = lazy_marks(r, &|o| rd.bytewise(o));
@@ -6846,7 +6926,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         // as the lean lexer's window has its `word` mask alone. A rarer run (a number's) reads
         // its word at its token, by a call: no window a block for a token in hundreds.
         let mut v: Vec<u16> = main_run(r).into_iter().collect();
-        v.extend(lift.iter().chain(&at_marks).map(|&(_, o)| o));
+        v.extend(lift.iter().chain(&at_marks).chain(&blanks).map(|&(_, o)| o));
         v.sort_unstable();
         v.dedup();
         v
@@ -7763,13 +7843,16 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // the grammar token before's first to its own, but where the word before says none
     // (`unless after`); an extra's token leaves all of its own to the next.
     let tests = r.checks.iter().any(|c| c.then.marks());
-    if tests || !lift.is_empty() {
+    if tests || !lift.is_empty() || !blanks.is_empty() {
         let h = cv[STATE_WORDS + 1];
+        // The blank marks' bits from the run before the token (`blanks_before`): with the
+        // others for the grammar token, an extra's left to the next.
+        let blank = if blanks.is_empty() { None } else { Some(blanks_before(f, &rd, c, &blanks, after, s, in_regs, heads)) };
         // `unless after`: of the gap marks the loop sets alone. The word before is only kept
         // where one is.
-        let unless: Vec<(u8, u16)> = r.unless.iter().copied().filter(|&(k, _)| lift.iter().any(|&(m, _)| m == k)).collect();
+        let unless: Vec<(u8, u16)> = r.unless.iter().copied().filter(|&(k, _)| lift.iter().chain(&blanks).any(|&(m, _)| m == k)).collect();
         let gapped = !lift.is_empty();
-        let kept_word = gapped && !unless.is_empty();
+        let kept_word = (gapped || blank.is_some()) && !unless.is_empty();
         let extra = r.extra.filter(|_| !common);
         // The word before, as this token leaves it: its word, but an extra's leaves it.
         let next_word = |f: &mut FunctionBuilder<'_>, code: Value, word_before: Value| {
@@ -7792,6 +7875,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let quiet = regs.is_some() && (!gapped || folded);
         let join = if quiet {
             let any = f.ins().bor(pending, h);
+            let any = match blank {
+                Some(b) => f.ins().bor(any, b),
+                None => any,
+            };
             let (merge, join) = (f.create_block(), f.create_block());
             for _ in 0..4 {
                 f.append_block_param(join, types::I64);
@@ -7811,6 +7898,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let pending_marks = if folded { f.ins().band_imm(pending, !GAP_FLAG) } else { pending };
         let after_bits_kept = if folded { f.ins().bor(after_bits, flag) } else { after_bits };
         let mut mine = f.ins().bor(pending_marks, at_bits);
+        if let Some(b) = blank {
+            mine = f.ins().bor(mine, b);
+        }
         if gapped {
             // Folded, the bits not yet taken start past the token before's first byte, in the
             // token's block (the refill took those before it).
@@ -8030,7 +8120,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         f.ins().jump(then, &[n.into(), c.len.into(), bad.into(), zero.into(), c.len.into(), zero.into()]);
         return;
     }
-    record_end(f, r, extracts, outputs, c, bad, n, differ, 0, then, heads);
+    let blank = blanks.iter().fold(0u32, |a, &(m, _)| a | 1 << m);
+    record_end(f, r, extracts, outputs, c, bad, n, differ, blank, then, heads);
 }
 
 /// A file's records' end (`record_tokens`): a refusal sets the totals' flag, the count after the
@@ -8074,7 +8165,7 @@ fn record_end(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
 fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts: usize, outputs: usize, c: &FileCols, n: Value, lift: bool, looped: u32, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
     // The marks a reader gives (`Reader::retag`) are its: no mask is read for them.
     let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
-    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|&(k, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0 && (r.gaps >> k & 1 == 1) == lift && retagged >> k & 1 == 0 && r.tested_only >> k & 1 == 0 && looped >> k & 1 == 0).map(|(k, m)| (k, m.0)).collect();
+    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|&(k, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0 && (r.gaps >> k & 1 == 1) == lift && retagged >> k & 1 == 0 && r.tested_only >> k & 1 == 0 && r.alone >> k & 1 == 0 && looped >> k & 1 == 0).map(|(k, m)| (k, m.0)).collect();
     if late.is_empty() {
         f.ins().jump(then, &[]);
         return;
@@ -8146,6 +8237,9 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
     let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
     f.ins().brif(open, probe, &qa, found, &[q[0].into(), q[1].into(), q[2].into(), q[3].into()]);
 
+    // On from the cursor, a token at a time: the bits rise, so the walk is a merge of the bits
+    // with the starts (the tokens and the bits once each), where a search a bit was a
+    // mispredicted branch a step.
     f.switch_to_block(probe);
     let q = f.block_params(probe).to_vec();
     let place = {
@@ -8153,15 +8247,11 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
         let base = f.ins().ishl_imm(q[0], 6);
         f.ins().iadd(base, b)
     };
-    let sum = f.ins().iadd(q[3], q[4]);
-    let mid = f.ins().ushr_imm(sum, 1);
-    let (ma, mo) = c.field(f, crate::records::FIELD_START, mid);
+    let (ma, mo) = c.field(f, crate::records::FIELD_START, q[3]);
     let sv = f.ins().uload32(fl, ma, mo);
     let below = f.ins().icmp(IntCC::UnsignedLessThan, sv, place);
-    let mid1 = f.ins().iadd_imm(mid, 1);
-    let lo = f.ins().select(below, mid1, q[3]);
-    let hi = f.ins().select(below, q[4], mid);
-    f.ins().jump(search, &[q[0].into(), q[1].into(), q[2].into(), lo.into(), hi.into()]);
+    let lo1 = f.ins().iadd_imm(q[3], 1);
+    f.ins().brif(below, search, &[q[0].into(), q[1].into(), q[2].into(), lo1.into(), q[4].into()], found, &[q[0].into(), q[1].into(), q[2].into(), q[3].into()]);
 
     // A token starting at the bit's place: the marks' bits there, into its code.
     f.switch_to_block(found);
@@ -8650,7 +8740,7 @@ fn refill_outs(rec: &crate::records::Records, rt: &RecordTables, made: &BlockNat
     rt.fused?;
     let bytewise = crate::native_cpu_bytes::Bytewise::of(made);
     let (lift, at) = loop_marks(rec, &|x| bytewise.can(x));
-    if !lift.is_empty() || !at.is_empty() {
+    if !lift.is_empty() || !at.is_empty() || blank_bits(rec, &|x| bytewise.can(x)) != 0 {
         return None;
     }
     let mut outs = vec![o];
@@ -8769,7 +8859,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
             // The marks the token loop sets itself (`loop_marks`): the end sets the others.
             let (lift, at) = loop_marks(rec, &|o| bytewise.can(o));
-            let looped = lift.iter().chain(&at).fold(0u32, |a, &(m, _)| a | 1 << m);
+            let looped = lift.iter().chain(&at).fold(0u32, |a, &(m, _)| a | 1 << m) | blank_bits(rec, &|o| bytewise.can(o));
             end_fn(&mut func, rec, native.extracts.len(), outputs, looped, rt.layout)?;
             vec![(id, sig, func)]
         }

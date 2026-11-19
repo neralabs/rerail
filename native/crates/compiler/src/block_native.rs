@@ -354,7 +354,23 @@ impl BlockNative {
         // does not set itself): a token mark's mask is the starts (`tokens K …`).
         let stored = self.marks_stored();
         let walked = self.walked_starts().filter(|o| !stored.contains(o));
-        self.ruled_lasts().into_iter().chain(walked).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).collect()
+        self.ruled_lasts().into_iter().chain(walked).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).chain(self.blank_masks()).collect()
+    }
+
+    /// The masks of the marks the CPU's token loop reads from the blanks (`blank_marks`,
+    /// decision 0430), where no other mark reads them: the loop tests their classes, so the
+    /// body makes none of them.
+    fn blank_masks(&self) -> Vec<usize> {
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+            return Vec::new();
+        };
+        let bytes = crate::native_cpu_bytes::Bytewise::of(self);
+        let blank = crate::native_cpu_block::blank_bits(r, &|o| bytes.can(o));
+        let kept: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| blank >> k & 1 == 0).map(|(_, m)| m.0).collect();
+        let mut v: Vec<usize> = r.marks.iter().enumerate().filter(|&(k, m)| blank >> k & 1 == 1 && !kept.contains(&m.0)).map(|(_, m)| usize::from(m.0)).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
     }
 
     /// The outputs the marks the token loop does not set read from their rows.
@@ -364,7 +380,7 @@ impl BlockNative {
         };
         let bytes = crate::native_cpu_bytes::Bytewise::of(self);
         let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
-        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k);
+        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k) | crate::native_cpu_block::blank_bits(r, &|o| bytes.can(o));
         r.marks.iter().enumerate().filter(|&(k, m)| looped >> k & 1 == 0 && m.0 != crate::records::WORD_ALONE).map(|(_, m)| usize::from(m.0)).collect()
     }
 
@@ -400,8 +416,9 @@ impl BlockNative {
         // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
         // still reads from its row stays stored.
         let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
-        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k);
-        read.extend(lift.iter().chain(&at).map(|&(_, o)| o));
+        let blanks = crate::native_cpu_block::blank_marks(r, &|o| bytes.can(o));
+        let looped: u32 = lift.iter().chain(&at).chain(&blanks).fold(0, |a, &(k, _)| a | 1 << k);
+        read.extend(lift.iter().chain(&at).chain(&blanks).map(|&(_, o)| o));
         let stored: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| looped >> k & 1 == 0).map(|(_, m)| m.0).collect();
         // The masks tier 2's local checks alone read: tier 2 on the CPU reads them from the
         // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.

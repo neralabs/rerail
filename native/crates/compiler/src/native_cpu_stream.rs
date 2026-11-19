@@ -1632,7 +1632,16 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
         None => f.ins().iconst(types::I64, 0),
     };
     // The element's test on a code: a kind of its set, or a word of its; a `not` element, none.
-    let test = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem| {
+    // Where it fails, to `fail`.
+    let test = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem, fail: Block| {
+        // `without M`: a code with one of the marks' bits fails (`TokenElem::without`).
+        if el.without != 0 {
+            let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
+            let x = f.ins().band_imm(x, i64::from(el.without));
+            let on = f.create_block();
+            f.ins().brif(x, fail, &[], on, &[]);
+            f.switch_to_block(on);
+        }
         let (ok, miss) = (f.create_block(), f.create_block());
         let ok_to = if el.not { miss } else { ok };
         if el.kinds != 0 {
@@ -1678,69 +1687,158 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
         if el.not {
             f.ins().jump(ok, &[]);
             f.switch_to_block(miss);
-            f.ins().jump(no, &[]);
+            f.ins().jump(fail, &[]);
         } else {
-            f.ins().jump(no, &[]);
+            f.ins().jump(fail, &[]);
             f.switch_to_block(miss);
-            f.ins().jump(no, &[]);
+            f.ins().jump(fail, &[]);
         }
         f.switch_to_block(ok);
     };
-    // The records after the token, in turn; the one before, for an element at -1.
+    // The record after `at` that is no extra: a stated loop over the extras. Past the last, to
+    // `past`; else the found record and its code.
+    let after = |f: &mut FunctionBuilder<'_>, at: Value, past: Block, heads: &mut Vec<(Block, Step)>| -> (Value, Value) {
+        let head = f.create_block();
+        f.append_block_param(head, types::I64);
+        f.ins().jump(head, &[BlockArg::from(at)]);
+        f.switch_to_block(head);
+        heads.push((head, Step::Token));
+        let j = f.block_params(head)[0];
+        let j = f.ins().iadd_imm(j, 1);
+        let beyond = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, j, n);
+        let on = f.create_block();
+        f.ins().brif(beyond, past, &[], on, &[]);
+        f.switch_to_block(on);
+        let c = code_at(f, j);
+        let x = is_extra(f, c);
+        let found = f.create_block();
+        f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
+        f.switch_to_block(found);
+        (j, c)
+    };
+    // The elements after `at`, in turn: each at the next record; past the last, an `end`
+    // element (the last) holds, any other goes to `fail`.
+    let run_of = |f: &mut FunctionBuilder<'_>, els: &[&crate::program::TokenElem], mut at: Value, fail: Block, heads: &mut Vec<(Block, Step)>| -> Value {
+        for el in els {
+            let past = f.create_block();
+            let (j, c) = after(f, at, past, heads);
+            test(f, c, el, fail);
+            let tested = f.current_block().expect("a block");
+            f.switch_to_block(past);
+            f.ins().jump(if el.end { yes } else { fail }, &[]);
+            f.switch_to_block(tested);
+            at = j;
+        }
+        at
+    };
+    for el in m.elems.iter().filter(|e| e.offset < 0) {
+        // The record before, past the extras. No record before: an `end` element (`after ~E`)
+        // holds there, any other fails.
+        let head = f.create_block();
+        f.append_block_param(head, types::I64);
+        f.ins().jump(head, &[BlockArg::from(here)]);
+        f.switch_to_block(head);
+        heads.push((head, Step::Token));
+        let j = f.block_params(head)[0];
+        let first = f.ins().icmp_imm(IntCC::Equal, j, 0);
+        let on = f.create_block();
+        let held = f.create_block();
+        f.ins().brif(first, if el.end { held } else { no }, &[], on, &[]);
+        f.switch_to_block(on);
+        let j = f.ins().iadd_imm(j, -1);
+        let c = code_at(f, j);
+        let x = is_extra(f, c);
+        let found = f.create_block();
+        f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
+        f.switch_to_block(found);
+        test(f, c, el, no);
+        f.ins().jump(held, &[]);
+        f.switch_to_block(held);
+    }
+    // The token's own element, then those before the run, then the run (decision 0416): the
+    // rest tried from each record of it on, as a forward scan, each turn a record's.
+    let rest: Vec<&crate::program::TokenElem> = m.elems.iter().filter(|e| e.offset >= 0).collect();
+    let run = rest.iter().position(|e| e.run).unwrap_or(rest.len());
     let mut at = here;
-    for el in &m.elems {
-        match el.offset {
-            0 => {
-                let c = code_at(f, here);
-                test(f, c, el);
-            }
-            -1 => {
-                let head = f.create_block();
-                f.append_block_param(head, types::I64);
-                f.ins().jump(head, &[BlockArg::from(here)]);
-                f.switch_to_block(head);
-                heads.push((head, Step::Token));
-                let j = f.block_params(head)[0];
-                let first = f.ins().icmp_imm(IntCC::Equal, j, 0);
-                let on = f.create_block();
-                // No record before: an `end` element (`after ~E`) holds there, any other fails.
-                let held = f.create_block();
-                f.ins().brif(first, if el.end { held } else { no }, &[], on, &[]);
-                f.switch_to_block(on);
-                let j = f.ins().iadd_imm(j, -1);
-                let c = code_at(f, j);
-                let x = is_extra(f, c);
-                let found = f.create_block();
-                f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
-                f.switch_to_block(found);
-                test(f, c, el);
-                f.ins().jump(held, &[]);
-                f.switch_to_block(held);
-            }
-            _ => {
-                let head = f.create_block();
-                f.append_block_param(head, types::I64);
-                f.ins().jump(head, &[BlockArg::from(at)]);
-                f.switch_to_block(head);
-                heads.push((head, Step::Token));
-                let j = f.block_params(head)[0];
-                let j = f.ins().iadd_imm(j, 1);
-                let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, j, n);
-                let on = f.create_block();
-                // No record left: an `end` element holds there (it is the last), any other fails.
-                f.ins().brif(past, if el.end { yes } else { no }, &[], on, &[]);
-                f.switch_to_block(on);
-                let c = code_at(f, j);
-                let x = is_extra(f, c);
-                let found = f.create_block();
-                f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
-                f.switch_to_block(found);
-                test(f, c, el);
-                at = j;
-            }
+    for el in rest.iter().take(run) {
+        if el.offset == 0 {
+            let c = code_at(f, here);
+            test(f, c, el, no);
+        } else {
+            at = run_of(f, std::slice::from_ref(el), at, no, heads);
         }
     }
-    f.ins().jump(yes, &[]);
+    if let Some(r) = rest.get(run) {
+        // The run's depths (Q271): a block parameter each, from 0.
+        let counters = r.nests.iter().map(|n| usize::from(n.counter) + 1).max().unwrap_or(0);
+        let scan = f.create_block();
+        for _ in 0..=counters {
+            f.append_block_param(scan, types::I64);
+        }
+        let zero = f.ins().iconst(types::I64, 0);
+        let start: Vec<BlockArg> = std::iter::once(at).chain(std::iter::repeat_n(zero, counters)).map(BlockArg::from).collect();
+        f.ins().jump(scan, &start);
+        f.switch_to_block(scan);
+        heads.push((scan, Step::Token));
+        let from = f.block_params(scan)[0];
+        let depth: Vec<Value> = f.block_params(scan)[1..].to_vec();
+        let step = f.create_block();
+        // The rest only where every depth is 0.
+        if counters > 0 {
+            let any = depth[1..].iter().fold(depth[0], |a, &d| f.ins().bor(a, d));
+            let try_rest = f.create_block();
+            f.ins().brif(any, step, &[], try_rest, &[]);
+            f.switch_to_block(try_rest);
+        }
+        // Its `ending` (Q274): the record it took last (`from`, the one before it where it took
+        // none) one the test takes, else one more record.
+        if let Some(x) = &r.ending {
+            let c = code_at(f, from);
+            test(f, c, x, step);
+        }
+        run_of(f, &rest[run + 1..], from, step, heads);
+        f.ins().jump(yes, &[]);
+        // The rest fails here: one more record of the run, or none.
+        f.switch_to_block(step);
+        let (j, c) = after(f, from, no, heads);
+        test(f, c, r, no);
+        // 1 where a side of a depth takes the record, else 0.
+        let hit = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem| -> Value {
+            let (miss, merged) = (f.create_block(), f.create_block());
+            f.append_block_param(merged, types::I64);
+            test(f, c, el, miss);
+            let one = f.ins().iconst(types::I64, 1);
+            f.ins().jump(merged, &[BlockArg::from(one)]);
+            f.switch_to_block(miss);
+            let zero = f.ins().iconst(types::I64, 0);
+            f.ins().jump(merged, &[BlockArg::from(zero)]);
+            f.switch_to_block(merged);
+            f.block_params(merged)[0]
+        };
+        let mut next: Vec<BlockArg> = vec![BlockArg::from(j)];
+        for (k, &d) in depth.iter().enumerate() {
+            let mut d2 = d;
+            for n in r.nests.iter().filter(|n| usize::from(n.counter) == k) {
+                let h = hit(f, c, &n.test);
+                if n.open {
+                    d2 = f.ins().iadd(d2, h);
+                } else {
+                    // A closer where the depth is 0 ends the run: the rest did not hold.
+                    let at_zero = f.ins().icmp_imm(IntCC::Equal, d2, 0);
+                    let at_zero = f.ins().uextend(types::I64, at_zero);
+                    let bad = f.ins().band(h, at_zero);
+                    let on = f.create_block();
+                    f.ins().brif(bad, no, &[], on, &[]);
+                    f.switch_to_block(on);
+                    d2 = f.ins().isub(d2, h);
+                }
+            }
+            next.push(BlockArg::from(d2));
+        }
+        f.ins().jump(scan, &next);
+    } else {
+        f.ins().jump(yes, &[]);
+    }
     let done = f.create_block();
     f.append_block_param(done, types::I64);
     f.switch_to_block(no);
@@ -1751,6 +1849,30 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
     f.ins().jump(done, &[BlockArg::from(one)]);
     f.switch_to_block(done);
     f.block_params(done)[0]
+}
+
+/// Whether the token marks of one order hold (`program::patterns_hold`), from entry `first` of
+/// `marks`: each entry's `token_pattern`, none of the `unless` ones and, where there are others,
+/// one of them. 1 or 0.
+fn token_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], first: usize, extra_bit: Option<u8>, heads: &mut Vec<(Block, Step)>) -> Value {
+    let order = marks[first].order;
+    let (mut none_of, mut one_of): (Option<Value>, Option<Value>) = (None, None);
+    for m in marks[first..].iter().take_while(|m| m.order == order) {
+        let v = token_pattern(f, e, m, extra_bit, heads);
+        if m.unless {
+            none_of = Some(none_of.map_or(v, |a| f.ins().bor(a, v)));
+        } else {
+            one_of = Some(one_of.map_or(v, |a| f.ins().bor(a, v)));
+        }
+    }
+    let one = one_of.unwrap_or_else(|| f.ins().iconst(types::I64, 1));
+    match none_of {
+        Some(x) => {
+            let not = f.ins().bxor_imm(x, 1);
+            f.ins().band(one, not)
+        }
+        None => one,
+    }
 }
 
 /// The token's end, as a word reads it (`EndAt`).
@@ -3675,7 +3797,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         // the others all set (tested by their masks); at the stream's end, the bits of the
         // marks the end has. A mark the record holds is then one bit test.
         let in_code = native.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.mark_bits());
-        let mut end_bits: i64 = if in_code >= 64 { 0 } else { -1i64 << in_code };
+        let alone_bits: i64 = native.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| i64::from(r.alone));
+        let mut end_bits: i64 = (if in_code >= 64 { 0 } else { -1i64 << in_code }) | alone_bits;
         for b in words {
             if let Op::Mark { order, end: true, .. } = b.operation
                 && usize::from(order) < in_code
@@ -3690,7 +3813,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
             crate::native_cpu_block::lazy_marks(r, &|o| bw.can(o))
         });
         let lazy_bits: i64 = lazy.iter().fold(0, |a, &(k, _)| a | 1 << k);
-        let rest_bits: i64 = (if in_code >= 64 { 0 } else { -1i64 << in_code }) | lazy_bits;
+        // The code's token marks with no bit (`Records::alone`): live at every token, as past it.
+        let rest_bits: i64 = (if in_code >= 64 { 0 } else { -1i64 << in_code }) | lazy_bits | alone_bits;
         let one = f.ins().iconst(types::I64, 1);
         let before_first = f.ins().iconst(types::I64, -1);
         let pick = f.create_block();
@@ -4371,7 +4495,9 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             let ended = if end { follows } else { skip };
                             f.ins().brif(at_end, ended, &[], ask, &[]);
                             f.switch_to_block(ask);
-                            let m = native.token_marks[usize::from(i)].clone();
+                            // Its entries together: `before`s and `unless before`s (decision 0416).
+                            let marks = native.token_marks.clone();
+                            let first = usize::from(i);
                             let bit = native.extras.first().map(|e| e.0);
                             let r = if outlined {
                                 let key = WordFn::TokenMark { index: i };
@@ -4384,7 +4510,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                                         let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
                                         let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a token mark does not refuse");
                                         let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
-                                        let v = token_pattern(g, &env, &m, bit, hs);
+                                        let v = token_patterns(g, &env, &marks, first, bit, hs);
                                         g.ins().return_(&[v]);
                                     })?;
                                     word_fns.insert(key, made);
@@ -4393,7 +4519,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                                 let c = pinned(&mut f);
                                 call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0]
                             } else {
-                                token_pattern(&mut f, &env, &m, bit, &mut heads)
+                                token_patterns(&mut f, &env, &marks, first, bit, &mut heads)
                             };
                             f.ins().brif(r, follows, &[], skip, &[]);
                             f.switch_to_block(follows);
@@ -4537,6 +4663,37 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     mset(&mut f, Mem::Pending, left);
                     f.ins().jump(after, &[]);
                     f.switch_to_block(after);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::DropLast { mask } => {
+                    // `drops`: where the mask holds at the token's start, the extra pending last
+                    // dropped; the next node made takes its row and cells.
+                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                    let start = mget(&mut f, Mem::Start);
+                    let w = f.ins().ushr_imm(start, 6);
+                    let off = f.ins().imul_imm(output_stride, output as i64);
+                    let base = f.ins().iadd(outputs_p, off);
+                    let word = mask_word(&mut f, base, lasts_stride, w);
+                    let s = f.ins().band_imm(start, 63);
+                    let bit = f.ins().ushr(word, s);
+                    let bit = f.ins().band_imm(bit, 1);
+                    let pending = mget(&mut f, Mem::Pending);
+                    let some = f.ins().icmp_imm(IntCC::NotEqual, pending, 0);
+                    let some = f.ins().uextend(types::I64, some);
+                    let both = f.ins().band(bit, some);
+                    let drop = f.create_block();
+                    f.ins().brif(both, drop, &[], fall, &[]);
+                    f.switch_to_block(drop);
+                    let p = f.ins().iadd_imm(pending, -1);
+                    mset(&mut f, Mem::Pending, p);
+                    // None left pending: the nodes closed next end at the token (`Asi::Swallow`).
+                    let le = mget(&mut f, Mem::LastEnd);
+                    let none = f.ins().icmp_imm(IntCC::Equal, p, 0);
+                    let le = f.ins().select(none, start, le);
+                    mset(&mut f, Mem::LastEnd, le);
+                    let n = mget(&mut f, Mem::Nodes);
+                    let n = f.ins().iadd_imm(n, -1);
+                    mset(&mut f, Mem::Nodes, n);
                     f.ins().jump(fall, &[]);
                 }
                 // A keyword's: its token's word's kind (`WORD_KIND`), in a word of its own.
@@ -5783,6 +5940,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::Switch { .. } => vec![BYTES],
         Op::Mark { .. } | Op::Row { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
         Op::SettleBefore { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE, ROWS],
+        Op::DropLast { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
         Op::Open { .. } => vec![ROWS, OPEN],
         Op::Close { .. } => vec![OPEN, ROWS],
         Op::Leaf { .. } => vec![ROWS],

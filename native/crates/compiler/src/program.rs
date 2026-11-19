@@ -99,7 +99,10 @@ pub const CHECK: u8 = 0x66;
 /// The pending extras that start where mask `operand` (`Words::block_programs`' masks) does not
 /// hold, from the first on, are no longer pending: the nodes closed next keep them, as a leaf
 /// taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
-/// line break are the statement's.
+/// line break are the statement's. (0x84: 0x67 became the preprocessing words' `READ`.)
+/// `m=1` (`mark … , drops W`): where mask `operand` holds at the token's start, the extra
+/// pending last is dropped: no node of the tape (decision 0416, the lean lexer's swallowed
+/// comment).
 pub const SETTLE: u8 = 0x84;
 
 // The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
@@ -432,6 +435,30 @@ pub struct TokenMark {
     /// A mark the grammar takes nowhere: where it holds, the file is refused. `TOKEN` tests it
     /// at each token its record's bit names, once (no state tests it).
     pub refuses: bool,
+    /// An `unless before` (decision 0416): the mark holds where it does not. A mark's entries
+    /// share its order (`patterns_hold`).
+    pub unless: bool,
+}
+
+/// Whether the token marks of one order hold (`Words::token_marks` from `first`, the entries
+/// of `first`'s order): none of its `unless` ones, and one of the others where it has any.
+/// `holds` tests one entry.
+pub fn patterns_hold(marks: &[TokenMark], first: usize, holds: &mut dyn FnMut(&TokenMark) -> bool) -> bool {
+    let order = marks[first].order;
+    let these = marks[first..].iter().take_while(|m| m.order == order);
+    let (mut some, mut any) = (false, false);
+    for m in these {
+        let h = holds(m);
+        if m.unless {
+            if h {
+                return false;
+            }
+        } else {
+            some = true;
+            any |= h;
+        }
+    }
+    !some || any
 }
 
 /// One token of a token mark: its offset from the mark's token (-1 the one before), and what
@@ -450,6 +477,49 @@ pub struct TokenElem {
     pub not: bool,
     /// The file's end takes it too: no token left (the last element only).
     pub end: bool,
+    /// A run (decision 0416): any number of records the element takes, then the elements after
+    /// it from any of them on (one run at most, after offset 0, never last).
+    pub run: bool,
+    /// A run's depths (Q271, Bitlex's `nest`): each side of one, the run's records it takes go
+    /// one deeper (`open`) or one out. The elements after the run are tried only where every
+    /// depth is 0; a closer where its depth is 0 ends the run.
+    pub nests: Vec<Nest>,
+    /// A run's `ending` (Q274): the elements after it are tried only where its last record (the
+    /// one before it, where it took none) is one this test takes.
+    pub ending: Option<Box<TokenElem>>,
+    /// The marks (bits of the records' marks) whose bit the record must not hold (`without M`),
+    /// as the lean parser asks `!peek_at(j).nl`: the element holds only where the code has none
+    /// of them.
+    pub without: u32,
+}
+
+/// One side of a run's depth (`TokenElem::nests`): its counter (0 to 3), whether it opens, and
+/// the records it takes (`test`'s kinds and words; never a `~`, an `end` or a run).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Nest {
+    pub counter: u8,
+    pub open: bool,
+    pub test: TokenElem,
+}
+
+/// The depths a run counts (`TokenElem::nests`): 4 at most.
+pub const NESTS: usize = 4;
+
+/// A run's depths after it takes a record (`code`): `None` where a closer's depth is 0, which
+/// ends the run (Q271).
+pub fn nest_step(nests: &[Nest], depth: [u32; NESTS], code: u32) -> Option<[u32; NESTS]> {
+    let mut d = depth;
+    for n in nests.iter().filter(|n| n.test.takes(code)) {
+        let k = usize::from(n.counter);
+        if n.open {
+            d[k] += 1;
+        } else if d[k] == 0 {
+            return None;
+        } else {
+            d[k] -= 1;
+        }
+    }
+    Some(d)
 }
 
 impl TokenElem {
@@ -465,7 +535,7 @@ impl TokenElem {
     pub fn holds(&self, code: Option<u32>) -> bool {
         match code {
             None => self.end,
-            Some(c) => self.takes(c) != self.not,
+            Some(c) => self.takes(c) != self.not && c >> crate::records::MARK_SHIFT & self.without == 0,
         }
     }
 }

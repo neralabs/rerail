@@ -61,7 +61,8 @@ const DOCUMENTS: &[&str] = &[
 fn every_ladder_step_compiles_here_and_equals_the_interpreters() {
     let mut steps: Vec<_> = std::fs::read_dir(DIR).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
     steps.sort();
-    assert!(steps.len() >= 15, "{} steps", steps.len());
+    // The test language's last step, JSON and JSONC (decision 0422).
+    assert_eq!(steps.len(), 3, "{} steps", steps.len());
     let mut parsed = 0;
     for path in steps {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
@@ -87,7 +88,8 @@ fn every_ladder_step_compiles_here_and_equals_the_interpreters() {
         }
     }
     // Not refusals alone: many documents parse, so the nodes are compared too.
-    assert!(parsed >= 30, "{parsed} documents parsed");
+    // 18 with the three steps (decision 0422).
+    assert!(parsed >= 15, "{parsed} documents parsed");
 }
 
 /// A document whose tape does not fit 2-byte columns (70,000 blanks after its first separator: a
@@ -121,7 +123,8 @@ fn a_tape_past_two_byte_columns_is_read_at_four() {
             wide += usize::from(image[rerail_tape_format::header::WIDTHS + 1] == 4);
         }
     }
-    assert!(wide >= 10, "{wide} documents written at 4-byte offsets");
+    // 5 with the three steps (decision 0422).
+    assert!(wide >= 5, "{wide} documents written at 4-byte offsets");
 }
 
 /// The crate's assembler takes a parser's program only: a matcher's rows are the engine's.
