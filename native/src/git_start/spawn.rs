@@ -185,12 +185,15 @@ fn stdio(spawn: &mut Spawn, pipe_stderr: bool) -> io::Result<(Vec<OwnedFd>, Vec<
     Ok((ours, theirs))
 }
 
-/// The exit watch's thread: named, on the stack std gives any thread (2 MiB, or `RUST_MIN_STACK`), of which it touches
-/// only the pages it uses. Its own work is small, but jemalloc's on the same thread is not when jemalloc is built
-/// unoptimised: its malloc slow path takes 35 to 40 KiB of stack in one frame, and setting up the thread's cache at its
-/// first allocation, which std makes as the thread starts, ran past a 64 KiB stack.
-fn watch_thread() -> std::thread::Builder {
-    std::thread::Builder::new().name("rerail-git-exit".into())
+/// Runs `f` on the exit watch's thread: a service of the engine's executor (it waits in the OS, so it is no job of the
+/// pool's), named, on the stack `service` gives when it is asked for none: std's for any thread (2 MiB, or
+/// `RUST_MIN_STACK`), of which it touches only the pages it uses. Its own work is small, but jemalloc's on the same
+/// thread is not when jemalloc is built unoptimised: its malloc slow path takes 35 to 40 KiB of stack in one frame, and
+/// setting up the thread's cache at its first allocation, which std makes as the thread starts, ran past a 64 KiB stack.
+fn watch_thread<T: Send + 'static>(
+    f: impl FnOnce() -> T + Send + 'static,
+) -> io::Result<std::thread::JoinHandle<T>> {
+    rerail_accel::exec::service("rerail-git-exit", None, f)
 }
 
 /// A thread that waits for the pid it is sent to exit, leaves it unreaped, and then drops `write`, which closes
@@ -198,7 +201,7 @@ fn watch_thread() -> std::thread::Builder {
 /// closes the pipe too, while the child may still run: `reap` then says it runs, and the caller reaps it later.
 fn exit_watch(write: OwnedFd) -> io::Result<mpsc::Sender<libc::pid_t>> {
     let (send, receive) = mpsc::channel::<libc::pid_t>();
-    watch_thread().spawn(move || {
+    watch_thread(move || {
         if let Ok(pid) = receive.recv() {
             wait_unreaped(pid);
         }
@@ -416,16 +419,16 @@ mod tests {
 
     #[test]
     fn the_exit_watch_runs_on_the_stack_std_gives_any_thread() {
-        let size_on = |builder: std::thread::Builder| {
-            builder
+        let (watch, any) = (
+            super::watch_thread(own_stack_size)
+                .expect("the exit watch's thread")
+                .join()
+                .expect("its stack size"),
+            std::thread::Builder::new()
                 .spawn(own_stack_size)
                 .expect("a thread")
                 .join()
-                .expect("its stack size")
-        };
-        let (watch, any) = (
-            size_on(super::watch_thread()),
-            size_on(std::thread::Builder::new()),
+                .expect("its stack size"),
         );
         assert!(
             watch >= any,
