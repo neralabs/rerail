@@ -1,7 +1,8 @@
 # Rule packs declared in the repository
 
 Status: the design the Rerail owners settled in review. In internal testing, `rerail scan` reads the file as described
-here (`src/engine/catalog/packs-file/`, `src/cli/scan-packs.ts`); sessions do not read it yet (a later change, below).
+here (`src/engine/catalog/packs-file/`, `src/cli/scan-packs.ts`), `config` included; sessions do not read it yet (a
+later change, below).
 
 ## Problem
 
@@ -23,7 +24,7 @@ the packs.
 {
   "schema": "rerail.packs/1",
   "packs": [
-    { "id": "complexity", "version": "0.1.8" },
+    { "id": "complexity", "version": "0.1.9", "config": { "ceiling": 10 } },
     { "id": "typescript", "version": "0.1.8", "folders": ["web", "admin"] },
     { "id": "@acme/rerail-pack-sql", "version": "1.2.0" },
     { "path": "packs/rerail" }
@@ -43,10 +44,19 @@ the packs.
   repository, no `..`, no absolute path, no symbolic link on the way, and a folder of the scanned tree. Left out, the
   pack judges the whole repository. A list keeps one entry per pack, so "names a pack twice" and one version per pack
   stand as written.
+- **`config`** (optional, on either kind): option values for the pack's rules, option name to value
+  (`{ "ceiling": 10 }`). Each option applies to every rule of the pack that declares it (`define.options`,
+  [code rule options](code-rule-dsl-reference.html#options)), exactly as a rule setting's `config` for that rule over
+  the whole repository would ([rule scoping](rule-scoping.md)); a rule that does not declare it is unchanged. Left out,
+  every rule runs at its options' defaults. Its pack's README names the options a pack's rules declare.
 - **No file**: nothing changes. A scan and a session choose packs as they do today (below).
 
 The file is refused, with the reason, when it is not JSON, has a key it does not define, names a pack twice, gives a
-published pack no exact version, or lists a folder that is empty, repeated, outside the repository or not a folder.
+published pack no exact version, lists a folder that is empty, repeated, outside the repository or not a folder, or
+gives `config` that is not an object of options. Once the packs are loaded, it is refused when an option in `config`
+is one no rule of that pack declares, or a value a rule that declares it does not allow (its declaration's type, or
+the rule's own checks with the value in place, such as a count's minimum of 1 for a ceiling of 0); the message names
+the file, the pack and the option, and the value a rule refuses.
 
 <details>
 <summary>Why this shape</summary>
@@ -62,6 +72,13 @@ published pack no exact version, or lists a folder that is empty, repeated, outs
   repository moving to the file would have its packs widened to the whole repository, with new findings in folders
   never checked on the day it adopts the file. A pack's `match` and each rule's `scope` cannot say "this pack judges
   `web` and not `legacy`" when both hold the same language.
+- `config` stays in `rerail.packs/1`, as `folders` did: it is optional, so every file written without it keeps its
+  meaning, and a file with it is refused by a reader that predates it (an unknown key), never run at the defaults
+  without saying so. A new schema id would add nothing a reader can act on, and would make every file in use move.
+- `config` is per pack, not per rule: a pack's rules that share an option (the complexity pack's `ceiling`, one rule
+  per language) take one value, and a repository need not list rule ids that a pack release may rename. An option
+  no rule of the pack declares is an error rather than ignored, so a typo or a pack that dropped the option fails the
+  scan instead of running the defaults.
 
 </details>
 
@@ -74,11 +91,16 @@ command line can set the file aside, with `--pack` (below).
 
 **The file replaces the machine's choice.** When the file exists, the scan always uses a throwaway configuration: the
 file's packs, each attached at its `folders` or the whole repository, and the tree's own rules, each rule starting
-with its pack's `on` and `mode`. The home's attachments and rule settings are not used, even where Rerail is set up in
-the checkout, so a developer's local scan reproduces CI exactly. The home's approvals are, exactly as today
-([Approval](#approval)). Without the file, the scan is what it is today: the home's configuration when Rerail is set up
-there, else the tree's rules plus each `--pack`. With the file and `--pack`, the throwaway configuration holds the
-`--pack` packs in place of the file's (below).
+with its pack's `on` and `mode`, and with the options its pack's `config` sets. The home's attachments and rule
+settings are not used, even where Rerail is set up in the checkout, so a developer's local scan reproduces CI exactly.
+The home's approvals are, exactly as today ([Approval](#approval)). Without the file, the scan is what it is today:
+the home's configuration when Rerail is set up there, else the tree's rules plus each `--pack`. With the file and
+`--pack`, the throwaway configuration holds the `--pack` packs in place of the file's (below).
+
+**The options come from the same commit.** `config` is read with the rest of the file, so with `--rules-ref` the
+ceiling or any other option is the ref's: a pull request that raises the complexity ceiling in its own
+`.rerail/packs.json` is still judged at the base branch's. Where `--pack` sets the file aside, its `config` goes with
+it: the `--pack` packs run at their rules' defaults.
 
 **Published packs are fetched at their version for the scan.** Each is installed with npm, at exactly the version the
 file names, into the scan's own temporary folder, as set-up's staging install does: `--ignore-scripts`, no lockfile,
@@ -91,6 +113,7 @@ session's packs are untouched.
 unreachable), a `path` that is not a pack, a listed folder that is not a folder of the scanned tree, or a pack the
 catalog leaves out (its core range, a clash, a rule that does not compile) is an error naming the pack and why, exit
 `1`, never a scan that passes with its rules missing. That is how `--pack` treats a pack that is not installed today.
+So is a `config` its rules do not declare or allow: the scan never runs a rule at other options than the file says.
 
 **`--pack` replaces the file's packs.** `rerail scan --pack x` where the file exists runs only the `--pack` packs, each
 the version installed in the Rerail home as without the file, and the tree's own `.rerail/rules/` (from the working
@@ -105,8 +128,9 @@ as the choice that could be loosened later; replacing is that loosening.
 
 **The report names the packs.** `rerail.scan/1` gains a field, which its contract allows: `packs`, each pack the scan
 ran with its `id`, `packageName`, `version`, `from` (`npm`, `repository` with its `path`, or `home` for one from the
-home's configuration or `--pack`) and its `folders` when the file gives them. A scan where `--pack` replaced the file's
-packs lists only `home` packs. Every rule keeps `source.packId`, so each finding still names its pack.
+home's configuration or `--pack`), its `folders` when the file gives them and its `config` when the file sets it. A
+scan where `--pack` replaced the file's packs lists only `home` packs. Every rule keeps `source.packId`, so each
+finding still names its pack.
 
 ## A session on a developer's machine reads it
 
@@ -116,6 +140,9 @@ A session in a started, set-up checkout whose tree has `.rerail/packs.json` runs
   the whole repository, the way `.rerail/rules/` is attached without a row today. The database's pack attachments for
   that repository are not used while the file exists. Rule settings, library rules and approvals still apply by id,
   as they do across a pack upgrade.
+- **Options.** The file's `config` applies to its packs' rules as in a scan, resolved by the same code
+  (`declaredPackRuleConfigs`, `src/engine/catalog/packs-file/pack-config.ts`), so a session and a scan of one commit
+  run every rule at the same options.
 - **`path` packs** are read from the checkout's working tree, as `.rerail/rules/` is, and seen at the next event after
   an edit.
 - **Published packs** come from a store of exact versions in the Rerail home (`$RERAIL_HOME/pack-versions/`, one
@@ -151,13 +178,13 @@ Content no one approved on this machine runs in Log, exactly as today, and nothi
 
 Nothing without the file. A repository that adds it changes what its scans run, and once sessions read it, what its
 sessions run; its database attachments stay and apply again if the file is removed. Files already committed in the
-`rerail.packs/1` shape keep working unchanged: `folders` is optional, and without it a pack judges the whole
-repository, as before.
+`rerail.packs/1` shape keep working unchanged: `folders` and `config` are optional, and without them a pack judges the
+whole repository with its rules at their defaults, as before.
 
 Rule settings stay in the database, and a scan with the file does not use them: every listed pack runs at its own
-starting `on` and `mode`, so the only way past one noisy rule in CI is dropping its pack. Moving rule settings into
-`.rerail` is therefore the next step after this one, so that a repository's tuning reaches every machine as its packs
-do.
+starting `on` and `mode`, so the only way past one noisy rule in CI is dropping its pack. A pack's options are the
+exception: `config` sets them in the file. Moving `on` and `mode` into `.rerail` is therefore the next step after this
+one, so that a repository's tuning reaches every machine as its packs do.
 
 ## The change
 
@@ -173,7 +200,8 @@ Behind `RERAIL_EXPERIMENTAL_HEADLESS_SCAN`, the switch `rerail scan` already nee
    changelog entry.
 
 Next, each its own pull request: sessions reading the file (the version store, the daemon's catalog per checkout, its
-fetching of `@neralabs/*` packs, the dashboard's refusal), then rule settings in `.rerail`.
+fetching of `@neralabs/*` packs, the dashboard's refusal, the file's `config` as rule settings), then `on` and `mode`
+settings in `.rerail`.
 
 ## Decisions
 
@@ -184,3 +212,4 @@ Settled in review of the first draft:
 - `folders` per entry: in the first version, optional.
 - A scan with the file ignores the home's rule settings; moving rule settings into `.rerail` is the next step.
 - The file keeps the `schema: "rerail.packs/1"` shape already in use.
+- A pack's options are set on its entry (`config`), in `rerail.packs/1`.

@@ -995,7 +995,11 @@ pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>, library: O
     l.library_spans = library.map(|(_, spans)| std::sync::Arc::clone(spans));
     let mut program = whole(l, library.map(|(program, _)| program))?;
     crate::code_rule_dsl::logic::front::declared(&program)?;
-    let gone = |r: &str| !core.contains(r);
+    // A relation of the scope is the library's, held once by the run's library part, unless that part does not
+    // declare it: `core.rerail`'s `within`, which the library's linking (`whole`) keeps only where a library rule
+    // reads it, was read by the program and declared by no part of the run (`no declaration of within`). A
+    // relation no part holds stays with the program, as `corpus::own_part` leaves a base relation it reads.
+    let gone = |r: &str| !core.contains(r) && library.is_none_or(|(library, _)| library.decls.contains_key(r));
     program.decls.retain(|r, _| !(seeded.decls.contains(r.as_str()) && gone(r)));
     program.inputs.retain(|r| !(seeded.inputs.contains(r) && gone(r)));
     program.natives.retain(|r, _| !(seeded.natives.contains(r) && gone(r)));
