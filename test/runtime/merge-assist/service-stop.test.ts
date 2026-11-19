@@ -822,6 +822,33 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     expect(await stored(ws)).toEqual({ lastScan: null, scanning: true, conflicts: [] });
   });
 
+  it("resolves a stop with no wait whose caller keeps the database open until it resolves without waiting for another process's write lock at either release of a scan's mark", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    addPeers(ws);
+    await ws.service().setEnabled(ws.repo, true);
+    const github = new HeldGithub();
+    const { service, close } = ownConnection(ws, github);
+    const asked = Promise.withResolvers<void>();
+    github.onHeld = () => asked.resolve();
+    const scan = service.openSession(ws.repo, "claude-code", "session-1");
+    await asked.promise;
+    const holder = holdWriteLock(ws.databasePath, ws.folder);
+    await holder.held;
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    // The other process gives the lock back only once the stop has resolved and the database has closed. A release that
+    // waited for the lock would hold this thread until the other process's bound is over, then get it and remove the mark.
+    await service.stop(0);
+    const written = stderr.mock.calls.map(([text]) => String(text));
+    stderr.mockRestore();
+    close();
+    await holder.release();
+    github.release();
+    await scan;
+
+    const busy = `rerail: Merge Assist could not give up its scan of ${ws.repo}: database is locked\n`;
+    expect({ written, stored: await stored(ws) }).toEqual({ written: [busy, busy], stored: { lastScan: null, scanning: true, conflicts: [] } });
+  });
+
   it("gives up the mark of a scan still running when a stop's wait is over once another process's write lock frees, as before", async () => {
     const ws = await workspace();
     addPeers(ws);

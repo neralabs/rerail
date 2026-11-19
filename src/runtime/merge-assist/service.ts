@@ -682,7 +682,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     } finally {
       clearTimeout(timeout);
     }
-    await this.#endPasses();
+    await this.#endPasses(waitMs > 0);
   }
 
   /**
