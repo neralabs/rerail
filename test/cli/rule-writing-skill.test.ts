@@ -52,6 +52,8 @@ describe("rerail-create skill drafts", () => {
   it.each([...drafts, ...guideDrafts])("$name is valid and every case is right", async ({ json }) => {
     const report = await testRuleDraft(parseRuleDraft(JSON.parse(json)), repo);
     expect(report.valid).toBe(true);
+    // `rules add` refuses a rule without a title, so a draft people copy must carry one.
+    expect(report.refusal).toBeUndefined();
     expect(report.cases.filter(result => !result.ok)).toEqual([]);
     expect(report.cases.filter(result => result.expected === "caught").length).toBeGreaterThanOrEqual(1);
     expect(report.cases.filter(result => result.expected === "passed").length).toBeGreaterThanOrEqual(2);

@@ -238,8 +238,8 @@ export const packGroups = pack => [...new Set(pack.rules.map(r => r.group))];
 /** The folder set-up adds a pack in: its folder in `recommendations` (fetched for the write's scope), else the whole repository. */
 export const packFolder = (recommendations, id) => recommendations.find(r => r.packId === id)?.folder ?? "";
 
-/** The row title: the pack's plain title when the rule comes from one, else the rule's own. */
-export const titleOf = stored => packRuleOf(stored.rule.id)?.rule.title ?? ruleTitle(stored);
+/** The row title: the rule's own title; else the pack's plain title when the rule comes from one; else the rule's fallback. */
+export const titleOf = stored => (stored.rule.title?.trim() ? ruleTitle(stored) : packRuleOf(stored.rule.id)?.rule.title ?? ruleTitle(stored));
 
 const haystacks = new WeakMap();
 /** Text the search box runs over: title, id, description, scope, pack and group. */

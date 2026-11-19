@@ -28,7 +28,7 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal =>
 /** One forbid clause over an ast query of `language`, reporting every identifier of every file. */
 function astCodeRule(id: string, language: string): CodeRule {
   return codeRuleSchema.parse({
-    format: "rerail.policy/v1", id, revision: 1, mode: "steer",
+    format: "rerail.policy/v1", id, revision: 1, mode: "steer", title: `Every identifier in ${language}`,
     scope: { include: ["**/*"], exclude: [] },
     clauses: [{
       id: "any",
