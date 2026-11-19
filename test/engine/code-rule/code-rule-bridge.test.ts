@@ -3678,6 +3678,39 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
+  // `git worktree remove` deletes a worktree's files, its `.git` entry among them, before Git stops listing it. A first
+  // walk that read the worktree whole took every file Git wrote there as possibly a write since the session opened, and,
+  // with no checkout left for Git to read them against, recorded every one.
+  it.each([
+    ["outside the session's folder", false],
+    ["inside the session's folder", true],
+  ])("records nothing of a worktree added during the session whose `.git` entry went before its first walk read Git, %s", async (_name, inside) => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0 });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const place = inside ? join(root, "wt") : join(await workspace(), "w");
+    git(root, "worktree", "add", "--quiet", place, "other");
+    const worktree = await realpath(place);
+    await mkdir(join(worktree, "deep", "deeper"), { recursive: true });
+    roots.push(worktree);
+    // The walk reads each level whole before the next, so this gate holds it once it has read every file there.
+    const walk = holdDiscovery("directories", join(worktree, "deep", "deeper"));
+    await bridge.checkpoint("turn");
+    await walk.entered;
+    await rm(join(worktree, ".git"));
+    walk.release();
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
   it("reports no deletions for a worktree removed while its own walk ran, with no other walk between", async () => {
     const root = await twoBranches();
     const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
