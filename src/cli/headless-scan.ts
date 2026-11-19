@@ -550,13 +550,18 @@ async function scanRrRules(
   configured?: { policies: ReadonlyMap<string, RrPolicySource>; mode: ReturnType<typeof resolveRrModes> },
   refPolicy?: RefRules,
   loadedRr?: NativeLoadedRrPolicies,
-): Promise<{ rules: ScanRule[]; violations: ScanViolation[] }> {
+): Promise<{ rules: ScanRule[]; violations: ScanViolation[]; failures: ScanFailure[] }> {
   const inputs = refPolicy === undefined ? policies.map(path => resolve(path)) : [...policies];
-  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync(inputs, root, store, output, analysisRun, paths ?? undefined, source, refPolicy?.rr?.source, loadedRr)) as RrReport[];
+  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync(inputs, root, store, output, analysisRun, paths ?? undefined, source, refPolicy?.rr?.source, loadedRr)) as (RrReport | { error: string; ruleId: string | null })[];
   const rules: ScanRule[] = [];
   const violations: ScanViolation[] = [];
+  const failures: ScanFailure[] = [];
   for (const [index, report] of reports.entries()) {
     const policyPath = inputs[index]!;
+    if ("error" in report) {
+      failures.push({ code: "adapter-error", path: policyPath, ruleId: report.ruleId, message: report.error });
+      continue;
+    }
     const payloadHash = rrPayloadHash(report.programInputs);
     const provenance = refPolicy === undefined ? { kind: "rr", id: policyPath, packId: null }
       : { ...refPolicy.provenance, id: policyPath, packId: null };
@@ -587,7 +592,7 @@ async function scanRrRules(
       });
     }
   }
-  return { rules, violations: distinctFingerprints(violations) };
+  return { rules, violations: distinctFingerprints(violations), failures };
 }
 
 /** Runs the scan in its scratch folder and reports it: the scan's own database, always, with the home's only read and closed before the scan runs. */
@@ -656,7 +661,6 @@ async function scanReport(
   }
   if (rr.length > 0) {
     try {
-      if (explicitRr) for (const path of rr) loadedRr.load(resolve(path));
       let configured: Parameters<typeof scanRrRules>[7];
       if (catalog !== undefined && configuredPolicies.length > 0) {
         const database = openRerailDatabase(databasePath, { readonly: true });
@@ -670,8 +674,18 @@ async function scanReport(
           database.$client.close();
         }
       }
-      const selected = configured === undefined ? rr : configuredPolicies.filter(configured.mode.enabled).map(policy => policy.path);
+      let selected = configured === undefined ? rr : configuredPolicies.filter(configured.mode.enabled).map(policy => policy.path);
+      if (explicitRr) selected = selected.filter(path => {
+        try { loadedRr.load(resolve(path)); return true; }
+        catch (error) {
+          failures.push({ code: "adapter-error", path: resolve(path), ruleId: null, message: error instanceof Error ? error.message : String(error) });
+          completed = false;
+          return false;
+        }
+      });
       const evaluated = await scanRrRules(selected, root, analysisStore, join(scratch, "rr"), analysisRun, paths, source, configured, refRules, loadedRr);
+      failures.push(...evaluated.failures);
+      if (evaluated.failures.length > 0) completed = false;
       for (const rule of evaluated.rules) {
         if (rules.has(rule.ruleId)) throw new Error(`duplicate policy ID ${rule.ruleId} across configured rules`);
         rules.set(rule.ruleId, rule);

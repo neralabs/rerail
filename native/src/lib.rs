@@ -346,8 +346,8 @@ pub fn scan_rr_policies_async(
 ) -> Result<napi::bindgen_prelude::AsyncTask<ScanRrPolicies>> {
     let policies = loaded.map(|loaded| {
         let programs = loaded.0.lock().unwrap_or_else(|error| error.into_inner());
-        paths.iter().map(|path| programs.get(path).cloned().ok_or_else(|| Error::from_reason(format!("{path}: policy was not loaded")))).collect::<Result<Vec<_>>>()
-    }).transpose()?;
+        paths.iter().map(|path| programs.get(path).cloned().ok_or_else(|| format!("{path}: policy was not loaded"))).collect()
+    });
     Ok(napi::bindgen_prelude::AsyncTask::new(ScanRrPolicies {
         paths, root, store, output, owner: analysis.map(|run| run.owner()), source_paths,
         snapshot: source.map(|source| source.pinned_snapshot()),
@@ -366,7 +366,7 @@ pub struct ScanRrPolicies {
     source_paths: Option<Vec<String>>,
     snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>,
     policy_snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>,
-    policies: Option<Vec<LoadedRrPolicy>>,
+    policies: Option<Vec<std::result::Result<LoadedRrPolicy, String>>>,
 }
 
 #[cfg(not(feature = "headless"))]
@@ -387,38 +387,48 @@ impl napi::Task for ScanRrPolicies {
         code_rule_dsl::logic::plan::corpus::with_tape_cache_path(path, ownership, || {
             let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
             let options = serde_json::json!({ "sourcePaths": self.source_paths, "scanSpans": true, "reuse": path != Path::new(":memory:") });
-            let policies = match self.policies.take() {
-                Some(policies) => policies,
-                None => self.paths.iter().map(|path| LoadedRrPolicy::read(path, self.policy_snapshot.as_deref())).collect::<Result<Vec<_>>>()?,
-            };
-            let mut ids = std::collections::HashSet::new();
-            for (path, policy) in self.paths.iter().zip(&policies) {
-                let metadata = code_rule_dsl::logic::rr::metadata(&policy.program).map_err(|err| Error::from_reason(err.to_string()))?;
-                let declared = metadata["policies"].as_array().filter(|policies| !policies.is_empty())
-                    .ok_or_else(|| Error::from_reason(format!("{path}: .policy declaration required")))?;
-                for policy in declared {
-                    let id = policy["id"].as_str().filter(|id| !id.trim().is_empty())
-                        .ok_or_else(|| Error::from_reason(format!("{path}: .policy ID must not be empty")))?;
-                    if !ids.insert(id.to_owned()) {
-                        return Err(Error::from_reason(format!("duplicate .rr policy ID {id:?} in {path}")));
-                    }
+            let policies = self.policies.take().unwrap_or_else(|| self.paths.iter().map(|path|
+                LoadedRrPolicy::read(path, self.policy_snapshot.as_deref()).map_err(|error| error.to_string())
+            ).collect());
+            let mut counts = std::collections::HashMap::new();
+            let policies: Vec<_> = policies.into_iter().map(|policy| {
+                let policy = policy?;
+                let metadata = code_rule_dsl::logic::rr::metadata(&policy.program).map_err(|err| err.to_string())?;
+                let declared = metadata["policies"].as_array().filter(|ids| !ids.is_empty()).ok_or(".policy declaration required")?;
+                let mut ids = Vec::new();
+                for entry in declared {
+                    let id = entry["id"].as_str().filter(|id| !id.trim().is_empty()).ok_or(".policy ID must not be empty")?;
+                    ids.push(id.to_owned());
+                    *counts.entry(id.to_owned()).or_insert(0usize) += 1;
                 }
-            }
+                Ok::<_, String>((policy, ids))
+            }).collect();
             let mut reports = Vec::new();
             let mut ephemeral = path == Path::new(":memory:");
-            for (i, LoadedRrPolicy { program, files }) in policies.into_iter().enumerate() {
+            for (i, policy) in policies.into_iter().enumerate() {
+                let (LoadedRrPolicy { program, files }, ids) = match policy {
+                    Ok(policy) => policy,
+                    Err(error) => {
+                        reports.push(serde_json::json!({"error": error, "ruleId": null}));
+                        continue;
+                    }
+                };
+                if let Some(id) = ids.iter().find(|id| counts[*id] > 1) {
+                    reports.push(serde_json::json!({"error": format!("duplicate .rr policy ID {id:?}"), "ruleId": id}));
+                    continue;
+                }
                 let out = Path::new(&self.output).join(i.to_string());
                 let report = if ephemeral {
                     None
                 } else {
                     match tools::run_program_checked(program.clone(), &files, root, &out, &options) {
-                        Ok(report) => Some(report),
+                        Ok(report) => Some(Ok(report)),
                         Err(tools::ProgramRunError::Cache(error)) => {
                             if let Some(owner) = &self.owner { owner.warn(error.to_string()); }
                             ephemeral = true;
                             None
                         }
-                        Err(error) => return Err(Error::from_reason(error.to_string())),
+                        Err(error) => Some(Err(error)),
                     }
                 };
                 let report = match report {
@@ -428,10 +438,12 @@ impl napi::Task for ScanRrPolicies {
                         options["reuse"] = serde_json::Value::Bool(false);
                         code_rule_dsl::logic::plan::corpus::with_tape_cache_path(Path::new(":memory:"), None, ||
                             tools::run_program_checked(program, &files, root, &out, &options)
-                        ).map_err(|error| Error::from_reason(error.to_string()))?
+                        )
                     }
                 };
-                reports.push(report);
+                reports.push(report.unwrap_or_else(|error| serde_json::json!({
+                    "error": error.to_string(), "ruleId": ids.first().filter(|_| ids.len() == 1),
+                })));
             }
             serde_json::to_string(&reports).map_err(|e| Error::from_reason(e.to_string()))
         })

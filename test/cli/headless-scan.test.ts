@@ -1305,6 +1305,19 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     }
   });
 
+  it("keeps findings from healthy policies in either order when a references setting fails", async () => {
+    const root = checkout();
+    const valid = join(root, "valid.rr"), invalid = join(root, "invalid.rr");
+    writeFileSync(valid, '#include "git.rr"\n.policy "good" revision 1\n.violation Seen(at: span) "found"\nSeen(@place("git", 1)) :- git_source_commit(_, _).\n');
+    writeFileSync(invalid, '#include "core.rr"\n.policy "bad" revision 1\n.language python\n.references {"unknownParameter":true}\n.violation V(at: node) "edge"\nV(n) :- reference_edge(n,_,_).\n');
+    for (const rr of [[valid, invalid], [invalid, valid]]) {
+      const report = await scan(root, { revision: "HEAD", analysisScope: "partial-policies", rr });
+      expect(report.status).toBe("failed");
+      expect(report.violations.map(row => row.message)).toEqual(["found"]);
+      expect(report.failures).toEqual([expect.objectContaining({ path: invalid, ruleId: "bad", message: expect.stringContaining("unknownParameter") })]);
+    }
+  }, 30_000);
+
   it("rejects duplicate explicit policy IDs and leaves no named ownership", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");
