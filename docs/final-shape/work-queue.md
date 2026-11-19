@@ -4425,6 +4425,16 @@ after the phases went on the run path (0083).
 - **Open:** where `estimate`'s rows for the cone's library relations come from in a combined program (a missing
   card defaulting large is the first suspect), and whether a negative added work should be possible at all.
 
+### Q243. A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (open)
+
+Found 2026-11-18, the data-layer rules (56, Q242's rule left out) over corpus0's first 300 files, strict.
+- **What happens.** The run aborts after 97 s: "the writer's queue is full (148.0 MB in 4102 jobs; kept facts
+  brings 49.4 MB)", a wait inside a wave (`retain::write_input_frames` -> `queue_kept`), which strict refuses.
+  Queued then: kept facts 2,405 jobs, 185 MB; the run's record 12 jobs, 123 MB; frames 2,416 jobs, 1.3 MB.
+- **Open:** whether an input's kept facts should be queued per granule (as its frames are) rather than in one
+  job, and whether the run's record (10 MB a job) belongs behind the run. The 300-file measurement ran with
+  `RERAIL_WRITE_QUEUE_MB=512`, strict otherwise.
+
 ### Q180. Every fork stays one relation, a chain of continuations: step 8 of decision 0384 (done)
 
 Done 2026-11-18. The user asked to address all of the forking, including a fork of a fork (Q179's leftover).
