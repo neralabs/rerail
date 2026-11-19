@@ -774,7 +774,7 @@ jobs:
       # P's producer-shape and SQL-budget gates measure P's SQL anchor engine, which this engine places test-only
       # (docs/final-shape/open-items.md O20; P's tests that need P's addon, O84). On this addon they find no anchor
       # batches or producer plans, and the 100-submission budget "remains an expected acceptance failure"
-      # (docs/sql-performance-recovery-workplan.md). As vitest.config.ts does for P's relational suites, they run only
+      # (docs/sql-performance-recovery-workplan.md, removed; at 7efcac9c67). As vitest.config.ts does for P's relational suites, they run only
       # with RERAIL_RELATIONAL_TESTS=1 (set it in this job's env) until O20 picks one anchor engine. By hand,
       # `npm run test:producer-shape` and `npm run test:sql-execution-budget -- <directory>` run as they are.
       # The shape gate requires profiling spans and must never silently skip on a production addon.
