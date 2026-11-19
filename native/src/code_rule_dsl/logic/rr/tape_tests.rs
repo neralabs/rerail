@@ -254,7 +254,7 @@ errors(l, m) :- syntax_error(_, l, m).
 "#;
     let path = root.with_extension("rule.rr");
     std::fs::write(&path, rule).unwrap();
-    let program = print(&parse_file(&path).unwrap()).unwrap();
+    let program = print_version(&parse_file_version(&path).unwrap()).unwrap();
     let out = root.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let rows = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();

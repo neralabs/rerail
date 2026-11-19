@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use rerail_rr_syntax::syntax::quote;
 use super::translate::{relation, var};
-use crate::code_rule_dsl::logic::front::{Error, Native, Program, Value, axis};
+use crate::code_rule_dsl::logic::front::{Error, Native, Value, axis};
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef, Version};
 use crate::code_rule_dsl::logic::strings::{SET, is_test};
@@ -289,12 +289,6 @@ impl<'v> Printer<'v> {
 
 /// The built-in constraints that read like relations (`atom`).
 const BUILTINS: [&str; 2] = ["match_all", "match_group"];
-
-/// Tree program `prog`'s `.rr` text: its version's (`print_version`).
-pub fn print(prog: &Program) -> Result<String, Error> {
-    let bytes = crate::code_rule_dsl::logic::program_image::encode(prog).map_err(Error::Syntax)?;
-    print_version(&Version::open(&bytes).map_err(Error::Syntax)?)
-}
 
 /// The program's `.rr` text: as written, its node attributes inputs again where the lowering answered them on request
 /// (decision 0174, `lower::undo_on_request`), which reading the text makes again.

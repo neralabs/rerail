@@ -2,13 +2,13 @@
 //! `docs/rule-syntax/lib/core.rr` (decision 0043). Every rule the engine runs is read here.
 //!
 //! - `syntax`: tokens and statements as written;
-//! - `lower`: statements to the engine's `Program`, the form the planner, magic sets and the backends take;
-//! - `print`: a `Program` as `.rr` text, read back as the same program;
+//! - `lower`: statements to a program version (decision 0276), the form the planner, magic sets and the backends take;
+//! - `print`: a version as `.rr` text, read back as the same program;
 //! - `check`: the checks of `docs/rule-syntax/site/check_rr.py` (grounded, declared once, stratified);
 //! - `translate`: the earlier `.rdl` dialect's text in `.rr`, comments kept, for the move and for the converter.
 //!
 //! `#include "x.rr"` reads `docs/rule-syntax/lib/x.rr`, or else `x.rr` beside the including file; each file once.
-//! A file read with `parse_file` has `core.rr` before it, included or not. An included file's `.output`s are its own,
+//! A file read with `parse_file_version` has `core.rr` before it, included or not. An included file's `.output`s are its own,
 //! not the program's: they are left out (`python/calls.rr`'s).
 
 pub use rerail_rr::code_rule_dsl::logic::rr::check;
@@ -118,13 +118,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub use super::front::Error;
-use super::front::Program;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use lower::drop_unread_core;
 pub use lower::is_core;
 pub use lower::findings::{is_diagnostic, HEAD as DIAGNOSTIC_HEAD};
 pub use lower::WORLD;
-pub use print::{print, print_version};
+pub use print::print_version;
 pub use syntax::quote;
 pub use translate::translate;
 
@@ -153,33 +152,18 @@ pub fn library() -> PathBuf {
         .unwrap_or_else(|| rerail_store::source_tree::root().map_or_else(|| PathBuf::from("docs/rule-syntax/lib"), |root| root.join("docs/rule-syntax/lib")))
 }
 
-/// A program's `.rr` text. Its `#include`s name library files (decision 0089), read as `parse_file` reads them:
-/// `core.rr` first unless the text is in T's shape, each file once, includes first. A text that includes nothing is
-/// read as it is, without `core.rr`.
-pub fn parse(src: &str) -> Result<Program, Error> {
-    parse_with(src, true)
-}
-
-/// A program's `.rr` text as `parse` reads it, but with only its libraries' declarations, not their clauses: what a
-/// run that holds the libraries once (decision 0089 §5) needs of a program that adds to no library relation. Its own
-/// rules are lowered against the library's names; the library's rules are the run's, lowered once.
-pub fn parse_own(src: &str) -> Result<Program, Error> {
-    parse_with(src, false)
-}
-
-/// `parse`'s program as a version, nothing decoded.
+/// A program's `.rr` text. Its `#include`s name library files (decision 0089), read as `parse_file_version` reads
+/// them: `core.rr` first unless the text is in T's shape, each file once, includes first. A text that includes nothing
+/// is read as it is, without `core.rr`.
 pub fn parse_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     read_text(src)?.lower_version(true)
 }
 
-/// `parse_own`'s program as a version, nothing decoded.
+/// A program's `.rr` text as `parse_version` reads it, but with only its libraries' declarations, not their clauses:
+/// what a run that holds the libraries once (decision 0089 §5) needs of a program that adds to no library relation.
+/// Its own rules are lowered against the library's names; the library's rules are the run's, lowered once.
 pub fn parse_own_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     read_text(src)?.lower_version(false)
-}
-
-// A run handed a program it read is handed the program itself (`corpus::run_read`), not its print to lower again.
-fn parse_with(src: &str, clauses: bool) -> Result<Program, Error> {
-    read_text(src)?.lower(clauses)
 }
 
 /// A program text read once (its tape, its statements, its includes resolved), for what a run needs of it: its
@@ -278,19 +262,6 @@ impl Text {
         }
     }
 
-    /// The text's own program, lowered as a module against the library's modules its includes reach and linked in
-    /// their scope (`lower::link_in`, decision 0246 §2): what `lower(false)` gives less what `own_part` takes out,
-    /// without lowering the library's declarations again. A text that asks of the library has its request's part
-    /// copied from the linked library (`with_cone`). `None` for a text that includes nothing. `store` holds it as a program
-    /// image (decision 0246 §6) under its text `src` and its scope's keys: a store that holds it reads it, and the
-    /// text is not lowered.
-    ///
-    /// The version's program decoded (`lower_in_version`): a key's image has one encoding, the version's.
-    pub fn lower_in(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>) -> Result<Option<Program>, Error> {
-        let Some(v) = self.lower_in_version(src, library, scoped, store, None)? else { return Ok(None) };
-        v.program(&Default::default()).map(Some).map_err(Error::Syntax)
-    }
-
     /// The text's own program as a version, with the library's cone it asks for. A text that asks nothing of the
     /// library is its own version; one that asks has its cone copied on the version (`plan::corpus::cone_on_version`),
     /// the library's tree never decoded.
@@ -335,8 +306,12 @@ impl Text {
         Ok(lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?.own)
     }
 
-    /// `lower_in` as a version: the stored image handed on unread (decision 0281's path, step 7a-2); else the text
-    /// lowered, and its image kept.
+    /// The text's own program, lowered as a module against the library's modules its includes reach and linked in
+    /// their scope (`lower::link_in`, decision 0246 §2), without lowering the library's declarations again. A text
+    /// that asks of the library has its request's part copied from the linked library (`with_cone_version`). `None`
+    /// for a text that includes nothing. `store` holds it as a program image (decision 0246 §6) under its text `src`
+    /// and its scope's keys: a store that holds it hands it on unread (decision 0281's path, step 7a-2); else the
+    /// text is lowered, and its image kept.
     /// `found`: the image as the caller read it already (`images::read_all`, its lease renewed there), or `None` to
     /// read it here.
     pub fn lower_in_version(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<images::Found>>) -> Result<Option<std::sync::Arc<super::program_image::Version>>, Error> {
@@ -370,11 +345,6 @@ impl Text {
             crate::code_rule_dsl::prof::count("rr.program_image_written", 1);
         }
         Ok(Some(version))
-    }
-
-    /// The text's program, as `parse` (`clauses`) or `parse_own` reads it: its version (`lower_version`), decoded.
-    pub fn lower(self, clauses: bool) -> Result<Program, Error> {
-        self.lower_version(clauses)?.program(&Default::default()).map_err(Error::Syntax)
     }
 
     /// The text's program as a version, as `parse_version` (`clauses`) or `parse_own_version` reads it.
@@ -414,7 +384,7 @@ impl Text {
     }
 }
 
-/// A program text's library modules (decision 0089): the files its `#include`s name, as `parse` reads them, and
+/// A program text's library modules (decision 0089): the files its `#include`s name, as `parse_version` reads them, and
 /// what the text itself declares and derives. `None` for a text that includes nothing (a printed program).
 #[derive(Clone, Debug)]
 pub struct Modules {
@@ -440,8 +410,6 @@ pub struct Library {
     pub keys: Vec<crate::content_store::HashKey>,
     /// The linked library, as its image read from the store or made once (decision 0281's path, step 7a-2).
     pub version: std::sync::Arc<super::program_image::Version>,
-    /// Its tree, decoded from `version` when a reader asks (`program`): a request's cone copied from it, a tool.
-    tree: std::sync::OnceLock<Program>,
 }
 
 impl Text {
@@ -480,17 +448,8 @@ impl Scoped {
 }
 
 impl Library {
-    fn of(modules: Vec<lower::Module>, files: Vec<Vec<PathBuf>>, keys: Vec<crate::content_store::HashKey>, version: std::sync::Arc<super::program_image::Version>, tree: Option<Program>) -> Self {
-        let held = std::sync::OnceLock::new();
-        if let Some(tree) = tree {
-            let _ = held.set(tree);
-        }
-        Library { modules, files, keys, version, tree: held }
-    }
-
-    /// The linked library as a tree, decoded from its version once.
-    pub fn program(&self) -> &Program {
-        self.tree.get_or_init(|| self.version.program(&Default::default()).expect("the linked library's image reads as a program"))
+    fn of(modules: Vec<lower::Module>, files: Vec<Vec<PathBuf>>, keys: Vec<crate::content_store::HashKey>, version: std::sync::Arc<super::program_image::Version>) -> Self {
+        Library { modules, files, keys, version }
     }
 
     /// The aliases the library's images are kept under: each module's, and the linked library's.
@@ -534,9 +493,8 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
     }
     check_names(&files, false)?;
     let library = if std::env::var("RERAIL_LIBRARY_LOWERING").is_ok_and(|v| v == "whole") {
-        let program = lower_statements(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())?;
-        let version = version_of(&program)?;
-        Library::of(Vec::new(), Vec::new(), Vec::new(), version, Some(program))
+        let version = lower_statements_version(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())?;
+        Library::of(Vec::new(), Vec::new(), Vec::new(), version)
     } else {
         let (modules, members, keys) = library_modules_with_files(paths, files, store)?;
         // The linked library is an image too (decision 0246 §2, §6), under its modules' keys: a store that holds it
@@ -552,14 +510,14 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
             Some(version)
         });
         match stored {
-            Some(version) => Library::of(modules, members, keys, version, None),
+            Some(version) => Library::of(modules, members, keys, version),
             None => {
                 // Linked on versions (decision 0377): the modules' rules are never a tree.
                 let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
                 if keep_image(store, "a linked library's image", key, version.base_bytes().expect("a folded version is a base").to_vec()) {
                     crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
                 }
-                Library::of(modules, members, keys, version, None)
+                Library::of(modules, members, keys, version)
             }
         }
     };
@@ -573,15 +531,10 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
 }
 
 /// Library files (canonical paths, includes first, with their statements less their includes) lowered one module
-/// at a time, each against the modules it reaches (decision 0246 §1), and linked. A module is a file, or files that
-/// include each other (`python/names.rr` and `python/imports.rr`: one unit, read together). `core.rr` is in every
-/// other file's scope, as `parse` reads a file with it first. `RERAIL_LIBRARY_LOWERING=whole` lowers them as one, as
-/// before, to compare.
-pub fn lower_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::Statement>)>) -> Result<Program, Error> {
-    link_modules(library_modules(paths, files)?)
-}
-
-/// The library files' modules (`lower_modules`), includes first, each lowered against the modules it reaches.
+/// at a time, each against the modules it reaches (decision 0246 §1), to be linked (`link_library_versions`). A
+/// module is a file, or files that include each other (`python/names.rr` and `python/imports.rr`: one unit, read
+/// together). `core.rr` is in every other file's scope, as `parse_version` reads a file with it first.
+/// `RERAIL_LIBRARY_LOWERING=whole` lowers them as one (`lower_library`), as before, to compare.
 pub fn library_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::Statement>)>) -> Result<Vec<lower::Module>, Error> {
     let store = image_store();
     Ok(library_modules_with_files(paths, files, store.as_deref())?.0)
@@ -874,7 +827,7 @@ struct Own {
     declared: BTreeSet<String>,
 }
 
-/// The relations of `library`'s cone for `asked` (`with_cone`'s): those reading what `asked` reaches, and the helpers
+/// The relations of `library`'s cone for `asked` (`with_cone_version`'s): those reading what `asked` reaches, and the helpers
 /// they read that `declared` and core leave the library's. Over the library's rules' heads and reads and its natives.
 fn cone_of<'a>(heads_reads: &[(&'a str, Vec<&'a str>)], natives: &'a std::collections::BTreeMap<String, super::front::Native>, asked: &BTreeSet<String>, declared: &BTreeSet<String>) -> BTreeSet<String> {
     let mut cone: BTreeSet<String> = asked.clone();
@@ -913,15 +866,15 @@ fn cone_of<'a>(heads_reads: &[(&'a str, Vec<&'a str>)], natives: &'a std::collec
 /// 0089 §3): the library relations reading `asked`, through any rule or native, with `asked` themselves; and the
 /// relations their rules read that no library file declares (lowering's helpers), with their own. Their rules,
 /// declarations, natives, facts and lattices, as the library has them.
-/// `with_cone` on versions (decision 0281's path, step 7b): the cone's relations by `cone_of` over the library
-/// version's heads and reads, its rules copied (`Builder::copy`), and their declarations, natives, facts and lattices
-/// set in the header.
+/// A program with the library's cone for `asked` (decision 0281's path, step 7b): the cone's relations by `cone_of`
+/// over the library version's heads and reads, its rules copied (`Builder::copy`), and their declarations, natives,
+/// facts and lattices set in the header.
 pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::Version>, library: &std::sync::Arc<super::program_image::Version>, asked: &BTreeSet<String>, declared: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, String> {
     use super::program_image::Lit;
     use super::program_image::fields::{FieldsMut, ProgramFields};
     use super::program_facts::Field;
     let lib_natives = ProgramFields::natives(&**library);
-    // The library as written: the on-request rewrite's rules are the program's to make again over its cone (`with_cone`).
+    // The library as written: the on-request rewrite's rules are the program's to make again over its cone.
     let written = |r: &super::program_image::RuleRef<'_>| !lower::on_request_rule(library.rel_name(r.head().rel()));
     let heads_reads: Vec<(&str, Vec<&str>)> = library
         .rules()
@@ -980,34 +933,6 @@ pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::V
     b.finish_overlay()
 }
 
-pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<String>, declared: &BTreeSet<String>) {
-    use super::front::Literal;
-    // The library as written: the on-request rewrite's rules are the program's to make again over its cone.
-    let rules: Vec<&super::front::Rule> = library.rules.iter().filter(|r| !lower::on_request_rule(r.head.rel.as_str())).collect();
-    let heads_reads: Vec<(&str, Vec<&str>)> = rules.iter().map(|r| (r.head.rel.as_str(), r.body.iter().filter_map(|l| match l {
-        Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
-        _ => None,
-    }).collect())).collect();
-    let take = cone_of(&heads_reads, &library.natives, asked, declared);
-    for r in rules.iter().filter(|r| take.contains(r.head.rel.as_str())) {
-        if !program.rules.contains(r) {
-            program.rules.push((*r).clone());
-        }
-    }
-    for (rel, cols) in library.decls.iter().filter(|(r, _)| take.contains(r.as_str())) {
-        program.decls.entry(rel.clone()).or_insert_with(|| cols.clone());
-    }
-    for (rel, n) in library.natives.iter().filter(|(r, _)| take.contains(*r)) {
-        program.natives.entry(rel.clone()).or_insert_with(|| n.clone());
-    }
-    for (rel, rows) in library.facts.iter().filter(|(r, _)| take.contains(*r)) {
-        program.facts.entry(rel.clone()).or_insert_with(|| rows.clone());
-    }
-    for (rel, d) in library.lattice.iter().filter(|(r, _)| take.contains(*r)) {
-        program.lattice.entry(rel.clone()).or_insert_with(|| d.clone());
-    }
-}
-
 /// The module linked in `scoped` (`lower::link_seeded_parts`), its own program `own_v`, appended onto
 /// the scope's version and through the lowering's tail.
 fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
@@ -1022,20 +947,9 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
 
 
 /// `statements` lowered as one module, its rules written in the walk, and linked alone on versions
-/// (`link_library_versions`): the program the tree's `lower::lower` made. Decoded for the callers that read a tree,
-/// until they read the version (decision 0276 step 6).
-fn lower_statements(statements: Vec<syntax::Statement>) -> Result<Program, Error> {
-    lower_statements_version(statements)?.program(&Default::default()).map_err(Error::Syntax)
-}
-
-/// `lower_statements`' version.
+/// (`link_library_versions`).
 pub fn lower_statements_version(statements: Vec<syntax::Statement>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     link_library_versions(vec![lower::lower_module_in_written(statements, &[])?])
-}
-
-/// `modules` linked on versions (`link_library_versions`), decoded for a caller that reads a tree (0276 step 6).
-fn link_modules(modules: Vec<lower::Module>) -> Result<Program, Error> {
-    link_library_versions(modules)?.program(&Default::default()).map_err(Error::Syntax)
 }
 
 /// A library's modules linked on versions (decision 0377): `lower::link_versions`, then the lowering's tail
@@ -1089,19 +1003,6 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
     }
     let (v, _) = p.finish().map_err(Error::Syntax)?;
     Ok(v)
-}
-
-/// `program` as a version, opened from the image the store keeps of it (`encode_program`).
-fn version_of(program: &Program) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    let bytes = encode_program(program).map_err(Error::Syntax)?;
-    super::program_image::Version::open(&bytes).map_err(Error::Syntax)
-}
-
-/// A lowered program's image (decision 0173): its rules, declarations, facts and `.about` rows.
-fn encode_program(program: &Program) -> Result<Vec<u8>, String> {
-    let mut b = super::program_image::Builder::of_program_less_maintenance(program)?;
-    b.set_about(&super::program_image::about_of(program));
-    b.finish_bytes()
 }
 
 /// The alias the library linked from modules `keys` is kept under.
@@ -1466,11 +1367,6 @@ pub fn files_given(v: &std::sync::Arc<super::program_image::Version>) -> Result<
 /// A program's `.rr` file, with what it includes.
 pub fn parse_file_version(path: &Path) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     read_file(path).map(|(program, _)| program)
-}
-
-/// `parse_file_version`'s program decoded, for the tests that read a tree until they read the version (0276 step 6).
-pub fn parse_file(path: &Path) -> Result<Program, Error> {
-    parse_file_version(path)?.program(&Default::default()).map_err(Error::Syntax)
 }
 
 /// A library file a program read: decision 0044's seeded fact `library_file(path, hash)`. `sha256`
@@ -1924,14 +1820,6 @@ fn read_shared(path: &Path) -> Result<(std::sync::Arc<Vec<syntax::Statement>>, L
     let statements = Arc::new(stored_statements(path, src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?);
     cache.lock().expect("the parsed files").insert(path.to_owned(), (digest, Arc::clone(&statements)));
     Ok((statements, file))
-}
-
-/// A rule file's statements, read off the lean parser's tape (decision 0275). Its tape was the content store's, as a
-/// corpus file's is (decision 0062): a lookup and a decode of facts cost more than the lean parse.
-/// `src` (a document named `name`) as a program, read off its tape as a rule file's is (`stored_statements`): a
-/// prepared program's document (decision 0074).
-pub(in crate::code_rule_dsl) fn parse_stored(name: &str, src: String) -> Result<Program, Error> {
-    lower_statements(stored_statements(Path::new(name), src)?)
 }
 
 fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {

@@ -1917,16 +1917,12 @@ pub(crate) mod logic {
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::Error;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::Program;
-        #[allow(unused_imports)]
         #[cfg(test)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::drop_unread_core;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::is_core;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::WORLD;
-        #[allow(unused_imports)]
-        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::print::print;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use syntax::quote;
         #[allow(unused_imports)]
