@@ -427,21 +427,18 @@ error entry's kind is `ERROR_CODE` (0, tree-sitter's end symbol, never a node's)
 Where the presence cannot tell (none kept, a clause over a derived document, project evidence, no root kinds) the
 index is asked as before (`kept_presences_skip_only_error_free_tapes_that_cannot_match`).
 
-**Done (2026-11-18): the device's block skip.** A label pass's rule over codes holds, after the files it runs in, a
-bit for each of the batch's root groups (64 nodes, each document's from its first) set where the group's block
-(`tape::PRESENCE_BLOCK`, 1,024 nodes: 16 groups) may hold one of its kinds and each `KIND` test's kind
-(`Roots::group_bits`, by `TapeDoc::block_may_have_kind`: the block's presence where it is held, else the document's).
-The kernels' `root_mask_in` and `root_admits` test the group's bit before reading a code: a left-out block's codes are
-not read (`metal_passes_skip_the_blocks_their_presence_rules_out`; `lowered_clauses_find_the_same_roots_on_metal`
-holds).
+**Withdrawn (2026-11-19): the host's skip bits for the device.** 82a7c73a5 had the host test each block's presence
+against each rule's kinds and write a bit a group into the root table, and part 2 had it do the same per file (the
+`active` bits, `may_have_roots`). Both are host work for the kernels, and a structure only the kernels read. The
+user: "no host work for Metal kernels and now separate data structures for Metal kernels. Host and metal must read
+exactly the same data and start from the same point." Both are gone; the tests that lock the device's skips
+(`metal_passes_skip_the_files_their_presence_rules_out`, `..._the_blocks_...`) are ignored until the kernels read
+the presence themselves.
 
-Not as planned above: the presence is not laid in the slabs for the kernels to read. What a kernel needs of it is one
-answer per (rule, block), and the planner already answers per (rule, file) from the same presence (part 2); the
-answer per block is the same planning, finer: a derived bit a group, a 1/64 of a node row, written once into the rule
-table the kernels read. Laying the words beside the tape would have made the kernels test each rule's kinds against
-W words a block in every task, needed an `IntCol` read in CLIF for the kept column (none exists: `col_get` is the
-row blocks'), and a writer's room for a cold run's presences, for the same skip. The presence stays where it lies:
-the writer's image, or the store's kept file, read in place by position on the host.
+**The shape (2026-11-19).** The presence has one home that both the host and the device read in place, through one
+read written once in CLIF, from the same view (`TapeView`) as the tape: the host's planners (`may_have_kind`, the
+workspace's selector, the CPU's root walks, which skip the blocks too) and the kernels (`root_mask_in`, the rule's
+kinds a mask over the presence's words) read the same words. No host-made answer is handed to the device.
 
 ## Requirements, each with its test
 

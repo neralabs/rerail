@@ -2382,8 +2382,10 @@ holds the design, its requirements (R1–R12) and its steps.
   `an_inner_root_is_answered...`, `rerails_own_files_are_outside_the_observer`) fail with the crate's 30 observer
   tests run at once on a fully loaded host, and pass run alone; a flake of the journal's delivery, not of 0400's
   listings, which they never reach.
-- **Done** (2026-11-18, step 6, the device's block skip): a rule over codes' root table holds a bit a root group,
-  set from its block's presence by the planner; the kernels read no codes in a left-out block.
+- **Withdrawn** (2026-11-19): the device's skips by bits the host made from the presence (per file, part 2; per
+  block, 82a7c73a5): host work for the kernels, and a structure only they read. Next in step 6: the presence's one
+  home, read by the host and the kernels alike through one CLIF read from the tape's view; the CPU's root walks skip
+  blocks by it too.
 - **Next**: SQL commits at its statements once `claim` decides a program's held tokens as they come; C, C++, Go,
   Kotlin, Scala and Swift take a `Sink` when their tables come; simdjson's index writer (a CPU no
   kernel runs on) on the ops.

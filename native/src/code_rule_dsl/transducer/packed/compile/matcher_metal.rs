@@ -75,10 +75,6 @@ pub(in crate::code_rule_dsl) fn wave_roots(this: &LoweredWave, tapes: &[TapeDoc]
 /// round, recursive groups of different clauses share their rounds, and the wave's levels are the
 /// deepest clause's per phase, not their sum. `active` (per clause, per tape): where a clause's
 /// passes start, none elsewhere (`LoweredWave::labelled`).
-///
-/// A rule over codes runs in a file only where the file's presence (decision 0434 §4) may hold one of its domain's
-/// kinds and the kind each `KIND` entry test names (`may_have_roots`): elsewhere it has no roots, and the device's
-/// passes skip the file (`Roots::runs_in`).
 fn metal<'a>(
     clauses: &[&'a LoweredMatcher],
     labels: usize,
@@ -115,10 +111,8 @@ fn metal<'a>(
             _ => None,
         };
         let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
+        let active = (0..tapes.len()).map(|tape| active.is_none_or(|active| active[at][tape])).collect::<Vec<_>>();
         let starts = bound.unwrap_or_else(|| starts.clone());
-        let active = (0..tapes.len())
-            .map(|tape| active.is_none_or(|active| active[at][tape]) && may_have_roots(&tapes[tape], &starts, entry.as_ref().map_or(&[][..], |entry| &entry.0)))
-            .collect::<Vec<_>>();
         let key = (starts.clone(), entry.as_ref().map(|entry| entry.0.clone()), active.clone());
         Arc::clone(shared.entry(key).or_insert_with(|| {
             let kinds = match starts {
@@ -214,7 +208,7 @@ fn metal<'a>(
                     Domain::All | Domain::Label(_) => None,
                 },
                 entry: Vec::new(),
-                active: active[at].iter().zip(tapes).map(|(&active, tape)| active && may_have_roots(tape, &clause.domain, &[])).collect(),
+                active: active[at].clone(),
                 anchor: None,
             },
         };
@@ -528,31 +522,4 @@ fn apart<'a>(
     }
     flush(&mut segment, &mut outcome, true)?;
     Ok(outcome)
-}
-
-/// Whether `tape` may have a node of `domain` that passes the entry tests `entry`, by its presence (decision 0434 §4):
-/// `false` where it has none of the domain's kinds, or not the kind a `KIND` test names. A label domain reads as every
-/// node (its kinds are bounded before this is asked).
-fn may_have_roots(tape: &TapeDoc, domain: &Domain, entry: &[(u8, u16)]) -> bool {
-    let kinds = match domain {
-        Domain::Kinds(kinds) => kinds.iter().any(|&kind| tape.may_have_kind(kind)),
-        Domain::All | Domain::Label(_) => true,
-    };
-    let may = kinds && entry.iter().all(|&(op, arg)| op != KIND || tape.may_have_kind(arg));
-    #[cfg(any(test, feature = "test-hooks"))]
-    if !may {
-        PRESENCE_RULED_OUT.set(PRESENCE_RULED_OUT.get() + 1);
-    }
-    may
-}
-
-#[cfg(any(test, feature = "test-hooks"))]
-thread_local! {
-    static PRESENCE_RULED_OUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// The (rule, file) pairs this thread's presence tests ruled out, and the count restarted.
-#[cfg(any(test, feature = "test-hooks"))]
-pub fn take_presence_ruled_out() -> usize {
-    PRESENCE_RULED_OUT.replace(0)
 }
