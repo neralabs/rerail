@@ -115,31 +115,44 @@ The standard building blocks:
 | S7 sort rows by (key, position) | row | the visibility table |
 | S8 stretches | (instance, directive gap) | each active stretch, compacted by a scan: its first token and its position. These are the round-0 lists, whose tokens are tape leaves (refs, not copies) |
 
-**Execution: one round = these passes, over the work lists** (those created or reopened in the
-round before):
+**The launch bound decides the execution's shape.** An evaluation has at most 200 launches
+(`KERNEL_LAUNCH_LIMIT`, the user's, 2026-11-03). Rounds as launches would need about 40 a
+round, over tens of rounds. So the recursive part runs on **0027's device work queue**:
+- **One persistent dispatch** (at most 64 groups of 256 threads), re-launched by the host only
+  as 0027's safety net.
+- **A worker is a SIMD group.** Lane 0 takes an item and broadcasts it; the 32 lanes share its
+  tokens, 32 at a time, with SIMD scans carrying across chunks (`simd_prefix_*`, a
+  `simd_shuffle_up` ladder for the segmented ones, `simd_ballot` for marks). Expansion lists are
+  short (9–12 tokens on average in the corpus, 8,000 at the most), so a list is one SIMD group's
+  work, and the queue spreads lists across every group on the device.
+- **Dependencies are counts**, never waits: an item that finishes the last thing another needs
+  pushes it.
+- **The queue's `wq_*` source** moves from the engine (`metal_work_queue.metal`) into
+  `rerail-metal`, one definition both include.
 
-| Pass | Thread per | What it does |
-|---|---|---|
-| E1 classify | work token | key → definition by search in S7, at its list's stretch position; disabled by a chain walk bounded by the list depth (or by the list's precomputed chain hash); candidate, object- or function-like |
-| E2 depth | work token, segmented scan by list | paren depth; each `)` key goes into the close table, sorted (radix) by (list, depth, pos) |
-| E3 reach | candidate | an object-like name reaches itself. A function-like one needs its next raw token `(` (inside the list, or, at its end, R-peek's exit: a search in the parent's close table, through ancestors). Its `)` is found by search in the close table. An exit that lands inside a sibling's covered range marks that sibling for rollback and retries next round |
-| E4 outermost | work token, segmented max scan | a call is outermost if it starts past every earlier reach in its list. Reached tokens are taken; every other token is done (R-done) |
-| E5 rollback | marked child | the child's subtree is dead (its list and its descendants' state, by pointer jumping over parents in log depth steps); the parent reopens from the covered range's start |
-| E6 calls | outermost call | a call row; argument boundaries by a segmented scan of top-level commas over the call's tokens (one thread a token); its argument count is checked (a wrong count is the name alone, painted) |
-| E7 argument lists | (call, param needing expansion) | counts → scan → one thread a token copies the argument's refs into a new fenced list (refs only), whose parent is the list of `e` |
-| E8 substitute | (ready call, body item) → expand → one thread an output token | counts: a literal is 1; a param is its expanded or raw length (0 → a placemarker); `#` is 1. A scan, then each output thread gathers its source ref, sets `SPACE`/`BOL` (the first token takes the name's) and stores `NOEXP` (R-paint) |
-| E9 stringize | stringized param token | byte counts (escapes by a word-wise count of `"`/`\`, spacing by flags); a scan gives scratch offsets; each thread writes its token's bytes, escaped |
-| E10 paste | `##` item | the left and right tokens' bytes, concatenated into scratch, and the MSL relexer's verdict: one token and its kind, or not (both kept). Left-to-right chains `a##b##c` by a segmented scan of runs; a placemarker drops |
-| E11 finality | list | the pending-children count. A list is final when it has been scanned and its count is 0, which decrements its parent's count (atomic). A call whose argument lists are all final is ready next round |
-| E12 work | work list | the next round's work lists, counts and indirect arguments. 0 work → every later dispatch is 0 groups |
+**Top level: grid passes before the queue.** The stretches' tokens (up to 600 K in a unit) get
+one thread a token, in launches: E1 classify, E2 depth, E3 reach, E4 outermost, E6 calls. Each
+outermost call becomes the queue's first items.
 
-**Rounds:** encoded up to a bound in one command buffer (0408's lockstep: every unit of a batch
-in the same launches). An idle round costs its empty dispatches. A unit still working at the
-bound sets `room`, and reruns with more rounds.
+**The queue's items:**
 
-**Output:** list sizes bottom-up (by list depth, an atomic add into the parent, deepest first,
-one dispatch a depth); bases top-down; then one thread an output token, a search of its list's
-covered children, writing its ref.
+| Item | What the SIMD group does (32 lanes over the item's tokens) |
+|---|---|
+| **call** | Argument boundaries (a SIMD scan of depth and top-level commas), the count check, and the lists for the parameters that need expanding: one atomic add takes their room, lanes copy refs. Pushes a **scan** of each such list; with none, pushes **substitute** |
+| **scan** (a list) | E1–E4 on the list's tokens: classify (search S7, the chain's disabled macros), depth, `(`/`)` matching in the list by a SIMD stack-free match (depth and a ballot), the outermost calls by a max scan. At the end, the exit check (R-peek): a function-like name or an open call reads on in the parent's raw tokens, by search in its close table. A sibling it reaches is marked dead (rollback), and the parent's rescan from there is pushed. Pushes a **call** a call; no calls → the list is final |
+| **substitute** | Item counts (a literal 1, a parameter its list's length or the raw one's, `#` 1) and a SIMD scan; one atomic add takes the room; lanes write refs with `SPACE`/`BOL`/`NOEXP`; then stringize and paste over the written runs. Pushes a **scan** of the new list |
+| **final** | A list's size (its own tokens not covered, plus its live children's sizes) added into its parent; a parent's last pending child pushes the parent's **final**. A call whose argument lists are all final pushes its **substitute** |
+| **place** | Top-down: the list's pieces' offsets by a SIMD scan, its own tokens written to the output, a **place** pushed for each live child. The roots' **place** is pushed when the last top-level **final** is done |
+
+- **Allocation in the queue:** one atomic add on the arena's top per item, for all its tokens
+  (never one a token); its lanes write at offsets from a SIMD scan. Past a capacity, the item
+  sets `room` and the unit's items stop.
+- **Order:** the output's order is the tree's (place), never the arena's, so the arena's order
+  of allocation does not matter and nothing needs determinism there.
+- **Dead work:** an item under a dead list does its work and its pushes are dropped (it checks
+  its list's state when taken). Rollback is rare.
+- **Launches in all:** setup about 25, the top level about 15, the queue 1 (8 at most), so the
+  evaluation stays well under 200.
 
 ## Requirements, each held by a test
 
