@@ -537,12 +537,15 @@ describe("rerail rules test", () => {
     const repo = await repository({ "src/a.ts": "console.log(1);\n" });
     mkdirSync(join(repo, ".rerail", "rules"), { recursive: true });
     const file = join(repo, ".rerail", "rules", "no-console-log.json");
-    writeFileSync(file, JSON.stringify(noConsolePolicy()));
+    // A worktree's rule loads without a title, so testing it as it is asks for none.
+    const { title: _title, ...untitled } = noConsolePolicy();
+    writeFileSync(file, JSON.stringify(untitled));
 
     const { exit, report, stdout } = await testReportText(file, repo);
 
     expect(exit).toBe(0);
     expect(report).toMatchObject({ valid: true, cases: [], repository: { matches: [{ path: "src/a.ts", line: 1 }] } });
+    expect(report).not.toHaveProperty("refusal");
     expect(stdout).toContain("● No cases to run; only the repo was checked.");
     const { exit: added, stderr } = await run("add", [file, "--repo", repo]);
     expect(added).toBe(1);

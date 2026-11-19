@@ -119,6 +119,8 @@ declare module "*/ui/derive.js" {
   export function publisherLabel(pack: { publisher: string }): string;
   /** The skipped entries that are files of the worktree at `checkoutPath`'s `.rerail/rules`, by file name, with why. */
   export function worktreeLeftOut(skipped: ReadonlyArray<{ path: string; reason: string }>, checkoutPath: string | null | undefined): Array<{ file: string; reason: string }>;
+  /** The sentence a rule's row leads with: its title, else its first message (or reference), else its id. */
+  export function ruleTitle(stored: { kind: string; rule: object }): string;
 }
 
 declare module "*/ui/render/pack-panel.js" {
@@ -170,6 +172,8 @@ declare module "*/ui/state.js" {
   export function isAudited(id: string): boolean;
   export function runningCount(): number;
   export function matches(stored: object): boolean;
+  /** The row title: the rule's own title, else its pack's title, else `ruleTitle`'s fallback. */
+  export function titleOf(stored: { kind: string; rule: object }): string;
   export interface RuleGroup { name: string; all: Array<{ rule: { id: string } }> }
   export function ruleSections(): Array<{ key: string; kind: "mine" | "pack" | "legacy"; groups: RuleGroup[] }>;
 }
