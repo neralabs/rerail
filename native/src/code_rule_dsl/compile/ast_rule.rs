@@ -315,14 +315,14 @@ fn validate_relation<'a>(
 }
 
 /// Whether `kind` resolves to a grammar supertype (`expression`, `statement`, ...), which tree-sitter
-/// never assigns to a node. Read from the dialect's supertype names (`supertype_names`): asking
-/// `kind_to_id` walks the grammar's symbols, and every rule's `kind` asks this.
+/// never assigns to a node. Asking `kind_to_id` walks the grammar's symbols, and every rule's `kind`
+/// asks this: only a name some supertype has (`supertype_names`) is looked up.
 fn is_supertype(kind: &str, language: GrammarDialect) -> bool {
     supertype_names(language).contains(kind)
+        && language.kind_is_supertype(language.kind_to_id(kind))
 }
 
-/// The names `kind_to_id` resolves to a supertype of `language`'s grammar, found once a process: a
-/// supertype's name, kept where looking it up gives a supertype.
+/// The names of `language`'s grammar's supertypes, found once a process.
 fn supertype_names(language: GrammarDialect) -> &'static BTreeSet<&'static str> {
     static BY_DIALECT: [std::sync::OnceLock<BTreeSet<&'static str>>; 256] =
         [const { std::sync::OnceLock::new() }; 256];
@@ -330,7 +330,6 @@ fn supertype_names(language: GrammarDialect) -> &'static BTreeSet<&'static str> 
         let ids = 0..u16::try_from(language.kind_count()).unwrap_or(u16::MAX);
         ids.filter(|&id| language.kind_is_supertype(id))
             .filter_map(|id| language.kind_name(id))
-            .filter(|name| language.kind_is_supertype(language.kind_to_id(name)))
             .collect()
     })
 }
