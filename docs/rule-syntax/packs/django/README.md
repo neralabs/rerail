@@ -579,17 +579,18 @@ or any decorator named `task`, and the argument holds a model instance: `self` i
 `self.request.user`; a model constructor `M(...)`; `M.objects.get/create/first/last/earliest/latest(...)` not after
 `values()`/`values_list()`; `get_object_or_404(...)`; a parameter annotated with a model class; a name the same
 function assigns from one of those; the target of `for x in <queryset>:` over a queryset not through
-`values()`/`values_list()`. Model classes resolve across the run. Test files are skipped.
+`values()`/`values_list()`; a value the type program proves is a model instance (python/types' `proven_type`:
+`x = make_order()` where the helper returns `Order(...)`). Model classes resolve across the run. Test files are skipped.
 
 It leaves alone: `x.pk`, ids and other plain values; `.get()` after `values()`/`values_list()` and loops over them
 (dicts and tuples, the shape the rule asks for); sends of plain functions that are not tasks (`send_report.delay(x)`
 on an undecorated def); test files.
 
-**Gaps:** instances returned by helpers (`x = make_order()`, taiga's `get_object_or_error(...)`), unannotated
+**Gaps:** instances returned by helpers the type program cannot follow (taiga's `get_object_or_error(...)`), unannotated
 parameters (paperless-ngx's signal handler `add_or_update_document_in_llm_index(sender, document)`), related objects
-(`order.customer`), instances inside lists. The type program's `proven_type` (python/types) would catch `x = make_order()` when
-the helper returns a constructor call, but reading it makes the engine run the typing program (over 60 minutes on
-DefectDojo, against 2 min 20 s without it) for no corpus match the syntactic forms miss. The 5 matches are in taigaio/taiga-back
+(`order.customer`), instances inside lists. Reading `proven_type` runs the typing program: on DefectDojo 60 s against
+21 s without it (it once ran over 60 minutes there: ENGINE-BUGS.md, bug 9). The corpus numbers here were measured
+without it; it found no corpus match the syntactic forms miss when it was tried. The 5 matches are in taigaio/taiga-back
 (`taiga/export_import/api.py:64`, `:367`, and two on `taiga/export_import/management/commands/dump_project_async.py:66`)
 and paperless-ngx/paperless-ngx (`src/documents/tasks.py:800`). Both projects set a pickle serializer (taiga
 `CELERY_TASK_SERIALIZER = "pickle"`, paperless `"signed-pickle"`), so the sends work and ship snapshots that may be
@@ -1087,11 +1088,12 @@ cannot tell a cached path from a querying one, so offloading is often unneeded t
 
 ## The corpus
 
-31 open-source Django apps, cloned shallow at these commits. PostHog/posthog
-(`37c895112cd9830ba6161037c34c431a2a6d7d0c`, MIT) was left out: with 29,885 Python files, no run finished. In
-netbox-community/netbox, `netbox/extras/data/un_locode.py` (6.2 MB, one tuple of about 111k string pairs, no Django
-code) was removed from the working tree, because of an engine issue described in [ENGINE-BUGS.md](ENGINE-BUGS.md)
-(bug 2).
+31 open-source Django apps, cloned shallow at these commits. The numbers below were measured with two exclusions the
+engine of the time needed, which it no longer does ([ENGINE-BUGS.md](ENGINE-BUGS.md), bugs 2 and 6): PostHog/posthog
+(`37c895112cd9830ba6161037c34c431a2a6d7d0c`, MIT, 29,885 Python files) was left out, as no run finished; with #878 and
+#882 the whole pack finishes on it in 100 minutes (1,264 findings, not read). In netbox-community/netbox,
+`netbox/extras/data/un_locode.py` (6.2 MB, one tuple of about 111k string pairs, no Django code) was removed from the
+working tree; main runs the whole pack over netbox with it in 164 s.
 
 | Repository | Commit | Licence |
 |---|---|---|
