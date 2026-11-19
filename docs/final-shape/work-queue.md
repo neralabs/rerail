@@ -4790,3 +4790,10 @@ native join it falls back to the planner's whole-rule order.
   cache's corpus test.
 - **Open**: results, relationships, the facts memo and tree pages keep zstd rows (not sources or tapes); the user
   decides whether they go to segments too.
+
+### Q271. Sessions own the store's data: latest live in segments, the rest aged (decision 0450)
+
+- **Decided** (the user, 2026-11-19): 0450 §1. **Open**: §2, what a session is (proposed); §3, the cross-file memo
+  (surveyed: no shipped program declares it, it does not pay on an edit, its format is decoded into columns).
+- **Next**: once §2 and §3 are agreed, 0450's order of work, starting with results, call summaries and tree pages
+  in segments.
