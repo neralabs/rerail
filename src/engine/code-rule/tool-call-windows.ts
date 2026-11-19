@@ -31,8 +31,8 @@ export class ToolCallWindows {
   #ends = 0;
 
   /**
-   * How many calls have ended so far. A walk notes it as it starts (`commandSince`): unlike the filesystem's clock, it
-   * orders a call's end and a walk's start that fall within one tick.
+   * How many calls have ended so far. A walk notes it as it starts (`commandSince`, `answered`): unlike the filesystem's
+   * clock, it orders a call's end and a walk's start that fall within one tick, or that the walk reads the clock after.
    */
   get ends(): number {
     return this.#ends;
@@ -64,9 +64,13 @@ export class ToolCallWindows {
     for (const toolCallId of [...this.#running.keys()]) this.finish(toolCallId, at);
   }
 
-  /** A walk that began at `at` has seen every write of the calls that ended before it: those go. */
-  answered(at: number): void {
-    this.#finished = this.#finished.filter(window => window.end >= at);
+  /**
+   * A walk that began once `ends` calls had ended (`ends` as it began) has seen every write of those calls: they go. A
+   * call that ended since stays, though it ended before the walk read the clock: the walk may have left what it was
+   * writing to the walk after it (`commandSince`), which takes that write as the call's.
+   */
+  answered(ends: number): void {
+    this.#finished = this.#finished.filter(window => window.ended > ends);
   }
 
   /** Whether a call ran at some point from `from` to `to`; `from` equal to `to` asks about one stamp. */

@@ -233,8 +233,31 @@ without hooks or network.
     going first, but not every route (T11).
   - Every call sets `core.fsmonitor=false` and `core.hooksPath=/dev/null`, `GIT_TERMINAL_PROMPT=0` and
     `GIT_NO_LAZY_FETCH=1` where relevant, and a 10 s timeout.
-  - No network commands; `cat-file --batch` runs no textconv. The native side runs no git process and no
-    `.gitattributes` filter drivers.
+  - No network commands; `cat-file --batch` runs no textconv.
+- **Git read in process** (`native/src/git_access/`): the engine opens every repository it reads through one opener.
+  It starts no Git process and runs no filter driver a repository or user configures: the config files outside the
+  repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
+  It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse). Before
+  gix reads them it refuses the top-level config files (system, installation, global, the repository's `config` and
+  `config.worktree`), `info/exclude`, `info/attributes` and the global exclude and attribute files when one holds more
+  than 100 MiB or is neither a regular file nor a folder (a FIFO or a device, which a read would wait on for ever); the
+  null device (`GIT_CONFIG_GLOBAL=/dev/null`, `NUL` on Windows) reads as empty, as Git reads it. In another user's
+  repository only the config files gix reads to open it (the common `config`, also for a linked worktree, and
+  `config.worktree`) are measured before `safe.directory` lets it through (a stat, which opens nothing); the rest once
+  it has. Not measured: files a config pulls in through
+  `include.path` or `includeIf`, which gix reads whole as Git does; the `.git` file and `commondir`, which gix's
+  discovery reads first; and a `.gitignore` or `.gitattributes` inside the worktree, which gix reads whole where Git
+  skips one over 100 MiB (like Git, gix does not follow one that is a symbolic link). Each open of a repository runs on
+  a thread of its own under a 10 s limit, and a panic in one is an error for that open only; while an open of a root
+  that outran its limit has not ended, a later open of that root fails at once, so a disk that stops answering holds
+  one thread per root path as the host names it. A lane whose ignore rules timed out sees none for a minute and then
+  opens them again, so a disk that answers only slowly costs the JS thread one 10 s wait a minute, not one a path. A
+  repository Git refused stays refused until the process's owner of Git reads changes: where Rerail's Git did not
+  answer its asks, the process asks again after a minute, and only an answer that differs makes a new owner, under
+  which lanes open their rules again. The store's walk and status after the open, and an ignore question, run on the
+  caller's thread with no limit of their own: a walk asks one or two ignore questions per file, and a question's disk
+  reads are a stat of the index and the `.gitignore` of a folder the walk has just listed. The repository index walk
+  opens its rules under the same 10 s limit.
 - **SQL** uses bound parameters (Drizzle, `better-sqlite3`, `rusqlite`); raw SQL is only constants and quoted
   migration DDL.
 - **Embedding model** SHA-256 is checked against `model/manifest.json` before loading (`native/src/model.rs`).
