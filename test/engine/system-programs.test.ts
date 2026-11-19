@@ -50,12 +50,12 @@ async function driveWithTools(): Promise<{ root: string; drive: string }> {
   throw new Error("no free drive letter from R to T");
 }
 
-/** What the Windows PATH search finds for node on `path` while this process's current folder is `folder`. */
-function searchFrom(folder: string, path: string): string | undefined {
+/** What the Windows PATH search finds for `name` (node by default) on `path` while this process's current folder is `folder`. */
+function searchFrom(folder: string, path: string, name = "node"): string | undefined {
   const before = process.cwd();
   process.chdir(folder);
   try {
-    return programOnPath("node", { env: { PATH: path, PATHEXT: ".exe" }, platform: "win32" });
+    return programOnPath(name, { env: { PATH: path, PATHEXT: ".exe" }, platform: "win32" });
   } finally {
     process.chdir(before);
   }
@@ -145,5 +145,15 @@ describe("programOnPath", () => {
     expect(searchFrom(`${drive}\\docs`, String.raw`\tools`)).toBeUndefined();
     // Only the nearest repository counts, as in Git's search: from a nested clone the outer one's folder is read as before.
     expect(searchFrom(`${drive}\\src`, String.raw`\tools`)).toBe(`${drive}\\tools\\node.exe`);
+  });
+
+  // A caller can hand the search a program a person named so (`\nodejs\node.exe`), which the program-path check refuses
+  // as written: it is read as such a PATH entry is.
+  it.runIf(process.platform === "win32")("on Windows names a program written from the root of the current drive with the current folder's drive, and skips one in the repository nearest that folder", async () => {
+    const { root, drive } = await driveWithTools();
+    expect(searchFrom(`${drive}\\src`, "", String.raw`\tools\node.exe`)).toBe(`${drive}\\tools\\node.exe`);
+    expect(searchFrom(`${drive}\\src`, "", "/tools/node.exe")).toBe(`${drive}\\tools\\node.exe`);
+    await mkdir(join(root, ".git"));
+    expect(searchFrom(`${drive}\\src`, "", String.raw`\tools\node.exe`)).toBeUndefined();
   });
 });

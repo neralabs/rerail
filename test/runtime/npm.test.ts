@@ -8,12 +8,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
 
-import { cleanCommandError, CommandTimeoutError, environmentForNode, runCommand, runNpm } from "../../src/runtime/npm.js";
+import { cleanCommandError, CommandTimeoutError, environmentForNode, runCommand, runNpm, windowsNpmCliPath } from "../../src/runtime/npm.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
-import { fullyQualified } from "../support/platform/windows-paths.js";
+import { fromDriveRoot, fullyQualified } from "../support/platform/windows-paths.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(temporaryDirectories.splice(0).map(async directory => await removeFolder(directory)));
 });
 
@@ -73,7 +74,40 @@ describe("runNpm on Windows", () => {
     const [command] = vi.mocked(childProcess.spawn).mock.calls.at(-1)!;
     expect(command).toBe(join(binaries, "node.exe"));
   });
+
+  // On Windows only: elsewhere a path from the root has no drive to change with. A program start read such a name on the
+  // drive of the child's folder, and Rerail now starts a program there only by a path from a drive or a server.
+  it.runIf(process.platform === "win32")("runs npm under a node named from the root of the current drive, with the current folder's drive", async () => {
+    const bin = await binDirectory("node.exe");
+    const node = join(bin, "node.exe");
+    vi.stubEnv("npm_execpath", "");
+    vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
+      process.nextTick(() => child.emit("exit", 0, null));
+      return child as unknown as childProcess.ChildProcess;
+    });
+    await inFolder(bin, async () => {
+      await runNpm(["rebuild", "better-sqlite3"], { node: fromDriveRoot(node), env: { PATH: String.raw`C:\Windows` } });
+      expect(windowsNpmCliPath(fromDriveRoot(node))).toBe(join(bin, "node_modules", "npm", "bin", "npm-cli.js"));
+      expect(environmentForNode(fromDriveRoot(node), { PATH: "" })).toEqual({ PATH: bin });
+    });
+    const [command, args, options] = vi.mocked(childProcess.spawn).mock.calls.at(-1)!;
+    expect(command).toBe(node);
+    expect(args?.[0]).toBe(join(bin, "node_modules", "npm", "bin", "npm-cli.js"));
+    expect((options as childProcess.SpawnOptions).env?.PATH).toBe(`${bin};C:\\Windows`);
+  });
 });
+
+/** Runs `body` with this process's current folder at `folder`, and puts the folder back after it. */
+async function inFolder(folder: string, body: () => Promise<void>): Promise<void> {
+  const before = process.cwd();
+  process.chdir(folder);
+  try {
+    await body();
+  } finally {
+    process.chdir(before);
+  }
+}
 
 describe("environmentForNode", () => {
   it("puts the chosen Node's directory first on PATH so npm's env shebang resolves to it", () => {
