@@ -1174,6 +1174,24 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
   });
 
+  it("lists the folder between's list once a folder between such a checkout and the repository above whose .git folder holds only a HEAD is made a repository in place", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    // A Git folder with a HEAD and no objects or refs, which Git passes over; `git init` leaves that HEAD as it is.
+    mkdirSync(join(middle, ".git"), { recursive: true });
+    await writeFile(join(middle, ".git", "HEAD"), "ref: refs/heads/main\n");
+    mkdirSync(inner);
+    expect(registryPlacements(inner)).toBe(1);
+
+    git(middle, "init", "--quiet");
+    git(middle, "commit", "--quiet", "--allow-empty", "-m", "seed");
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
+  });
+
   it("keeps Git's acceptance of such a checkout with no Git process once the repository above switches to another branch", async () => {
     const root = await temporaryRoot();
     const outer = repository(join(root, "outer"));
