@@ -24,3 +24,5 @@ npm run --silent check:reference
 python3 scripts/check/check-dev-features.py
 # Blocks are never copied into another data structure (decision 0353): a commit that adds a copy is refused.
 python3 scripts/check/check-no-block-copies.py
+# No process-global state (decision 0442): a commit that adds a static the list does not hold is refused.
+python3 scripts/check/check-no-global-state.py

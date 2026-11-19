@@ -1,0 +1,565 @@
+# Decision 0442: every non-constant static in the engine, by where it goes (check-no-global-state.py).
+# path::NAME<TAB>class<TAB>why; classes: stays, run, connection, shared, review. Only shrinks.
+native/crates/blocks/src/alloc.rs::POLICY	review	
+native/crates/blocks/src/block.rs::ZEROED	review	
+native/crates/blocks/src/mem.rs::RESERVED	review	
+native/crates/c_directives/src/expand.rs::C	review	
+native/crates/c_directives/src/expand.rs::CPP	review	
+native/crates/c_directives/src/lib.rs::LOWERED	review	
+native/crates/c_directives/src/lib.rs::PARSER	review	
+native/crates/c_directives/src/tokens.rs::C	review	
+native/crates/c_directives/src/tokens.rs::CPP	review	
+native/crates/c_directives/src/tokens.rs::CPP_WORDS	review	
+native/crates/c_directives/src/tokens.rs::C_WORDS	review	
+native/crates/compiler/src/native_cpu_block.rs::FORM	run	a setting read once a process: the run reads it as it starts
+native/crates/compiler/src/native_cpu_codegen.rs::OPTIMIZE_TIER1	review	
+native/crates/compiler/src/native_cpu_codegen.rs::OPTIMIZE_TIER2	review	
+native/crates/compiler/src/native_cpu_codegen.rs::PARALLEL_TIMES	review	
+native/crates/compiler/src/native_cpu_lanes.rs::BIT_TEST	review	
+native/crates/compiler/src/native_cpu_stream.rs::KEEP_IR	review	
+native/crates/compiler/src/native_cpu_stream.rs::ROOM_RETRIES	review	
+native/crates/device_metal/src/lib.rs::ONCE	review	
+native/crates/kotlin_lean/src/lex.rs::BIN	review	
+native/crates/kotlin_lean/src/lex.rs::DEC	review	
+native/crates/kotlin_lean/src/lex.rs::HEX	review	
+native/crates/kotlin_lean/src/lex.rs::TICK_BODY	review	
+native/crates/kotlin_parser/src/lib.rs::PARSER	review	
+native/crates/metal/src/block_program.rs::INTERPRETER	review	
+native/crates/metal/src/block_program.rs::REPEATED_LAUNCHES	review	
+native/crates/metal/src/block_serial.rs::COMPILES	review	
+native/crates/metal/src/block_serial.rs::KERNELS	review	
+native/crates/metal/src/block_serial.rs::LEARNED	review	
+native/crates/metal/src/block_serial.rs::PASSES	review	
+native/crates/metal/src/block_serial.rs::SETTLED	review	
+native/crates/metal/src/block_serial.rs::SHAPES	review	
+native/crates/metal/src/block_serial.rs::SOURCES	review	
+native/crates/metal/src/launch.rs::RATIO	review	
+native/crates/metal/src/lib.rs::METAL_DEVICE	review	
+native/crates/metal/src/pool.rs::MADE	review	
+native/crates/metal/src/pool.rs::MADE_BYTES	review	
+native/crates/metal/src/runtime.rs::COMPILING	review	
+native/crates/metal/src/runtime.rs::LEDGER	review	
+native/crates/metal/src/runtime.rs::LIBRARIES	review	
+native/crates/metal/src/runtime.rs::METAL_ALLOCATION_LOCK	review	
+native/crates/metal/src/runtime.rs::METAL_BUFFER_BYTES	review	
+native/crates/metal/src/runtime.rs::METAL_BUFFER_PEAK	review	
+native/crates/metal/src/runtime.rs::METAL_PRIVATE_BYTES	review	
+native/crates/metal/src/runtime.rs::PIPELINES	review	
+native/crates/metal/src/slabs.rs::DROPPER	review	
+native/crates/metal/src/slabs.rs::ONE	review	
+native/crates/metal/src/slabs.rs::STATE	review	
+native/crates/prof/src/lib.rs::DROPPED	review	
+native/crates/prof/src/lib.rs::KEYS	review	
+native/crates/prof/src/lib.rs::NAMES	review	
+native/crates/prof/src/lib.rs::ON	run	a setting read once a process: the run reads it as it starts
+native/crates/prof/src/lib.rs::SIZES	review	
+native/crates/prof/src/lib.rs::SPANS	review	
+native/crates/prof/src/lib.rs::STAGES	review	
+native/crates/prof/src/lib.rs::START	review	
+native/crates/prof/src/lib.rs::STATE	review	
+native/crates/prof/src/lib.rs::TABLE	review	
+native/crates/prof/src/lib.rs::THREADS	review	
+native/crates/prof/src/lib.rs::THREAD_NAMES	review	
+native/crates/rr_parser/src/lib.rs::PARSER	run	a setting read once a process: the run reads it as it starts
+native/crates/scala_lean/src/lex.rs::BIN_	review	
+native/crates/scala_lean/src/lex.rs::DEC	review	
+native/crates/scala_lean/src/lex.rs::HEX	review	
+native/crates/simd8/src/lib.rs::BEST	review	
+native/crates/swift_lean/src/lex.rs::BIN	review	
+native/crates/swift_lean/src/lex.rs::DEC	review	
+native/crates/swift_lean/src/lex.rs::HEX	review	
+native/crates/swift_lean/src/lex.rs::OCT	review	
+native/crates/swift_lean/src/lex.rs::TICK_BODY	review	
+native/crates/tape_format/src/f16.rs::LANGS	review	
+native/crates/tape_format/src/f16.rs::NEXT	review	
+native/src/code_rule_dsl/blade/forte/directives/mod.rs::DEFAULTS	review	
+native/src/code_rule_dsl/build_ids.rs::ENGINE	review	
+native/src/code_rule_dsl/build_ids.rs::GRAMMAR	review	
+native/src/code_rule_dsl/build_ids.rs::REBUILT	review	
+native/src/code_rule_dsl/calls/contracts.rs::REGISTRY	review	
+native/src/code_rule_dsl/calls/names.rs::TABLE	review	
+native/src/code_rule_dsl/compile/resolve.rs::FLOW_RESOLVES	review	
+native/src/code_rule_dsl/cpython/syntax.rs::NOT	stays	a regex of a literal
+native/src/code_rule_dsl/demand/driver.rs::REGISTRY	review	
+native/src/code_rule_dsl/demand/driver/catalog.rs::SLOTS	review	
+native/src/code_rule_dsl/device_metal.rs::LOAD	review	
+native/src/code_rule_dsl/device_metal.rs::METAL	review	
+native/src/code_rule_dsl/embed.rs::EMBEDDERS	review	
+native/src/code_rule_dsl/eval/mod.rs::SNAPSHOT_CONTEXT	review	
+native/src/code_rule_dsl/facts/core.rs::CORE_NAMES	stays	code a crate above registers at load
+native/src/code_rule_dsl/facts/core.rs::EMPTY	review	
+native/src/code_rule_dsl/facts/core.rs::EXECUTORS	stays	code a crate above registers at load
+native/src/code_rule_dsl/facts/core.rs::OWN	review	
+native/src/code_rule_dsl/facts/core.rs::VALUE_READER	stays	code a crate above registers at load
+native/src/code_rule_dsl/facts/facts_a/facts.rs::GRAMMAR	review	
+native/src/code_rule_dsl/facts/facts_a/facts.rs::SYMBOLS	review	
+native/src/code_rule_dsl/facts/families.rs::PREFILTER_IMAGE	review	
+native/src/code_rule_dsl/facts/grammar_shape.rs::GRAMMAR	review	
+native/src/code_rule_dsl/facts/grammar_shape.rs::KEPT	review	
+native/src/code_rule_dsl/facts/nearest.rs::CHUNK_AXIS	review	
+native/src/code_rule_dsl/facts/nearest.rs::NEAREST	review	
+native/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
+native/src/code_rule_dsl/facts/rows.rs::GIVEN_BACK	review	
+native/src/code_rule_dsl/facts/rows.rs::LIVE	review	
+native/src/code_rule_dsl/facts/rows.rs::OPEN	review	
+native/src/code_rule_dsl/facts/span_prefilter.rs::SPAN_PREFILTER	review	
+native/src/code_rule_dsl/facts/vtab.rs::BOUND	review	
+native/src/code_rule_dsl/facts/vtab.rs::CLOSES	review	
+native/src/code_rule_dsl/facts/vtab.rs::FORGET	review	
+native/src/code_rule_dsl/facts/vtab.rs::NODE_TABLES	review	
+native/src/code_rule_dsl/facts/vtab.rs::OFF	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/facts/vtab.rs::REGISTERED	review	
+native/src/code_rule_dsl/facts/vtab.rs::SETUP	review	
+native/src/code_rule_dsl/facts/vtab.rs::UNRESOLVED	review	
+native/src/code_rule_dsl/facts/vtab.rs::VIEWS	review	
+native/src/code_rule_dsl/facts/vtab/demand.rs::NEXT	review	
+native/src/code_rule_dsl/facts/vtab/lookup_spike.rs::MODE	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/facts/vtab/lookup_spike.rs::TRACE	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/facts/vtab/schema/cache.rs::SCHEMAS	review	
+native/src/code_rule_dsl/facts/vtab/syntax.rs::AST_COMPILER	stays	code a crate above registers at load
+native/src/code_rule_dsl/facts/vtab/syntax.rs::BATCHES	review	
+native/src/code_rule_dsl/facts/vtab/syntax.rs::FAMILIES	review	
+native/src/code_rule_dsl/facts/vtab/syntax.rs::ON	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/facts/vtab/syntax.rs::PRODUCERS	review	
+native/src/code_rule_dsl/facts/vtab/syntax.rs::SEMANTIC	stays	code a crate above registers at load
+native/src/code_rule_dsl/facts/vtab/syntax/ast_wave.rs::LOWERED	review	
+native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs::DIALECT_FACTS	stays	code a crate above registers at load
+native/src/code_rule_dsl/facts/vtab/syntax/py_families.rs::STRINGS	review	
+native/src/code_rule_dsl/fixtures.rs::NEXT	review	
+native/src/code_rule_dsl/fixtures.rs::SWEPT	review	
+native/src/code_rule_dsl/functors.rs::REGEXES	review	
+native/src/code_rule_dsl/import_target/mod.rs::FALLBACK	review	
+native/src/code_rule_dsl/import_target/resolver.rs::INVALID_OR_EMPTY_SEGMENT	stays	a regex of a literal
+native/src/code_rule_dsl/import_target/resolver.rs::INVALID_SEGMENT	stays	a regex of a literal
+native/src/code_rule_dsl/language.rs::ANSWERERS	review	
+native/src/code_rule_dsl/language.rs::BASES	stays	code a crate above registers at load
+native/src/code_rule_dsl/language.rs::GRAMMARS	review	
+native/src/code_rule_dsl/language.rs::JSX_IMPORT_SOURCE_PRAGMA	stays	a regex of a literal
+native/src/code_rule_dsl/language.rs::JSX_PRAGMA	stays	a regex of a literal
+native/src/code_rule_dsl/language.rs::MANIFEST_READER	review	
+native/src/code_rule_dsl/language.rs::NO_MANIFEST	stays	code a crate above registers at load
+native/src/code_rule_dsl/language/adapter.rs::PAREN_KINDS	review	
+native/src/code_rule_dsl/language/adapter.rs::WALK_COMMENT_KINDS	review	
+native/src/code_rule_dsl/language/adapter/pack.rs::PACKS	stays	code a crate above registers at load
+native/src/code_rule_dsl/literal/annotation.rs::PYTHON	review	
+native/src/code_rule_dsl/literal/mod.rs::GRAMMARS	review	
+native/src/code_rule_dsl/literal/mod.rs::NEXT_TREE	review	
+native/src/code_rule_dsl/logic.rs::LOAD	review	
+native/src/code_rule_dsl/logic/costs.rs::BEGUN	review	
+native/src/code_rule_dsl/logic/costs.rs::FITTED	shared	shared by design: a learned model, its queue or its job
+native/src/code_rule_dsl/logic/costs.rs::MODEL_STATE	shared	shared by design: a learned model, its queue or its job
+native/src/code_rule_dsl/logic/costs.rs::READ_DONE	review	
+native/src/code_rule_dsl/logic/costs.rs::STARTED	review	
+native/src/code_rule_dsl/logic/costs.rs::STARTED_ONCE	review	
+native/src/code_rule_dsl/logic/costs.rs::TRAINED_AT	review	
+native/src/code_rule_dsl/logic/costs.rs::TRAINING	review	
+native/src/code_rule_dsl/logic/costs.rs::WRITER	shared	shared by design: a learned model, its queue or its job
+native/src/code_rule_dsl/logic/costs.rs::WRITTEN	review	
+native/src/code_rule_dsl/logic/costs/join_steps.rs::QUEUE	shared	shared by design: a learned model, its queue or its job
+native/src/code_rule_dsl/logic/costs/sql_plans.rs::DROPPED	review	
+native/src/code_rule_dsl/logic/costs/sql_plans.rs::ENABLED	review	
+native/src/code_rule_dsl/logic/costs/sql_plans.rs::MODEL	shared	shared by design: a learned model, its queue or its job
+native/src/code_rule_dsl/logic/costs/sql_plans.rs::QUEUE	shared	shared by design: a learned model, its queue or its job
+native/src/code_rule_dsl/logic/costs/sql_plans.rs::WRITE_ERRORS	review	
+native/src/code_rule_dsl/logic/device.rs::SOLVER	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/front/name.rs::TABLE	shared	shared by design: an interner (names are visible to every caller holding it)
+native/src/code_rule_dsl/logic/json_rules/translate.rs::E	review	
+native/src/code_rule_dsl/logic/lanes.rs::ALL	shared	shared by design: an executor or its queues
+native/src/code_rule_dsl/logic/lanes.rs::BATCHES	shared	shared by design: an executor or its queues
+native/src/code_rule_dsl/logic/lanes.rs::CPU	shared	shared by design: an executor or its queues
+native/src/code_rule_dsl/logic/lanes.rs::FORMS	shared	shared by design: an executor or its queues
+native/src/code_rule_dsl/logic/lanes.rs::MADE	review	
+native/src/code_rule_dsl/logic/lanes.rs::NEXT	review	
+native/src/code_rule_dsl/logic/lanes.rs::SQL	shared	shared by design: an executor or its queues
+native/src/code_rule_dsl/logic/native.rs::LATTICES	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native.rs::RESULTS	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native/extension.rs::RESULTS	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native/extension.rs::TAPE	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native/extension/setfix.rs::COMPONENTS	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native/extension/setfix.rs::DERIVED	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native/extension/setfix.rs::INPUTS	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native/extension/setfix.rs::LOADS	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/native/extension/setfix.rs::SYMS	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native/setfix.rs::ADOPTED	connection	a connection's own state, keyed by connection in a process map
+native/src/code_rule_dsl/logic/native/setfix.rs::CHANGING	connection	a connection's own state, keyed by connection in a process map
+native/src/code_rule_dsl/logic/native/setfix.rs::COMPONENTS	connection	a connection's own state, keyed by connection in a process map
+native/src/code_rule_dsl/logic/native/setfix.rs::CUTS	review	
+native/src/code_rule_dsl/logic/native/setfix.rs::DEFERRED_WALKS	review	
+native/src/code_rule_dsl/logic/native/setfix.rs::DERIVATIONS	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/native/setfix.rs::DERIVED	connection	a connection's own state, keyed by connection in a process map
+native/src/code_rule_dsl/logic/native/setfix.rs::EAGER	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/native/setfix.rs::INPUTS	connection	a connection's own state, keyed by connection in a process map
+native/src/code_rule_dsl/logic/native/setfix.rs::LEFT_IN_ORDER	review	
+native/src/code_rule_dsl/logic/native/setfix.rs::LEVELS_ON_CYCLES	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/native/setfix.rs::LOADS	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/native/setfix.rs::MODE	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/native/setfix.rs::ON	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/native/setfix.rs::ONCE	review	
+native/src/code_rule_dsl/logic/native/setfix.rs::ORDERS_MADE	review	
+native/src/code_rule_dsl/logic/native/setfix.rs::ORDERS_OPENED	review	
+native/src/code_rule_dsl/logic/native/setfix.rs::PROBES	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/native/setfix.rs::SCOPE_PATHS	connection	a connection's own state, keyed by connection in a process map
+native/src/code_rule_dsl/logic/native/setfix.rs::SCOPE_SYMS	connection	a connection's own state, keyed by connection in a process map
+native/src/code_rule_dsl/logic/native/setfix.rs::STORED	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native/setfix.rs::SYMS	shared	shared by design: one per store file
+native/src/code_rule_dsl/logic/native/setfix.rs::V	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/native/setfix/device.rs::TICKETS	review	
+native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	review	
+native/src/code_rule_dsl/logic/native/setfix/lab.rs::STORED	review	
+native/src/code_rule_dsl/logic/native/setfix/lab.rs::WRITTEN	review	
+native/src/code_rule_dsl/logic/native/setfix/level.rs::MIN	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	review	
+native/src/code_rule_dsl/logic/native/setfix/level.rs::ON	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/native/setfix/level.rs::PENDING	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native/setfix/level.rs::SENT	review	
+native/src/code_rule_dsl/logic/native/setfix/level.rs::USED	review	
+native/src/code_rule_dsl/logic/native/setfix/runs.rs::COUNTS	review	
+native/src/code_rule_dsl/logic/native/setfix/runs.rs::OFF	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/native/setfix/runs.rs::ON	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/native/setfix/runs.rs::PACKED	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/native/setfix/runs.rs::SITES	review	
+native/src/code_rule_dsl/logic/native/setfix/table.rs::BUILT	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/native/setfix/table.rs::PAID	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/plan.rs::ALL	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan.rs::ANSWER_CALLS	review	
+native/src/code_rule_dsl/logic/plan.rs::ANSWER_WAIT	review	
+native/src/code_rule_dsl/logic/plan.rs::ASK_SUSPENDED	review	
+native/src/code_rule_dsl/logic/plan.rs::ASK_SUSPENSIONS	review	
+native/src/code_rule_dsl/logic/plan.rs::BUDGET_MISS	review	
+native/src/code_rule_dsl/logic/plan.rs::COUNT	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan.rs::DRED_WHOLE	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan.rs::FRESH	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan.rs::INPUT_VIEWS	review	
+native/src/code_rule_dsl/logic/plan.rs::KEPT	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/plan.rs::LAZY	review	
+native/src/code_rule_dsl/logic/plan.rs::LIVE	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan.rs::LOG	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/plan.rs::MODE_STRATA	review	
+native/src/code_rule_dsl/logic/plan.rs::OFF	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan.rs::ON	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan.rs::PATH	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan.rs::PLAN_CACHE	review	
+native/src/code_rule_dsl/logic/plan.rs::PROBE	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan.rs::PUBLISHED	review	
+native/src/code_rule_dsl/logic/plan.rs::RUNS	review	
+native/src/code_rule_dsl/logic/plan.rs::SEARCHES	review	
+native/src/code_rule_dsl/logic/plan.rs::SEEN	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/plan.rs::SETTING	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan.rs::SHAPED	review	
+native/src/code_rule_dsl/logic/plan.rs::SHOWN	review	
+native/src/code_rule_dsl/logic/plan.rs::STATISTICS	review	
+native/src/code_rule_dsl/logic/plan.rs::SUMS	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/plan.rs::TEMP_LEFT	connection	a connection's own state, keyed by connection in a process map
+native/src/code_rule_dsl/logic/plan.rs::UNSIZED_DELTAS	review	
+native/src/code_rule_dsl/logic/plan/body.rs::OFF	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan/choices.rs::KEPT	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/logic/plan/corpus.rs::CLOSING	review	
+native/src/code_rule_dsl/logic/plan/corpus.rs::COMBINED	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/logic/plan/corpus.rs::CROSS_FILE	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/plan/corpus.rs::OFF	review	
+native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	review	
+native/src/code_rule_dsl/logic/plan/corpus.rs::PREPARED	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/logic/plan/corpus.rs::RUNS_STARTED	review	
+native/src/code_rule_dsl/logic/plan/corpus.rs::STORE	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::BASE	review	
+native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::CONSULTED	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::FACTS_DIR	review	
+native/src/code_rule_dsl/logic/plan/corpus/inputs.rs::REQUIRE_FACTS	review	
+native/src/code_rule_dsl/logic/plan/corpus/keptstats.rs::OWN	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan/corpus/memo.rs::SIZES	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/plan/corpus/phase0.rs::KEPT	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/logic/plan/corpus/phase0.rs::RUNS	review	
+native/src/code_rule_dsl/logic/plan/corpus/phases.rs::BATCH	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/plan/corpus/phases.rs::BATCH_PLANS	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/plan/corpus/phases.rs::READING	run	a run's own results or batch: two runs at once collide
+native/src/code_rule_dsl/logic/plan/corpus/session.rs::GENERATION	review	
+native/src/code_rule_dsl/logic/plan/corpus/switches.rs::CHANGED	review	
+native/src/code_rule_dsl/logic/plan/corpus/switches.rs::STATE	run	the RERAIL_* switches' gate: a setting is the run's, read as it starts
+native/src/code_rule_dsl/logic/plan/coverage.rs::CENSUS	review	
+native/src/code_rule_dsl/logic/plan/issue.rs::ON	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan/joins.rs::COUNTS	review	
+native/src/code_rule_dsl/logic/plan/joins.rs::DRAIN	review	
+native/src/code_rule_dsl/logic/plan/joins.rs::EXACT	review	
+native/src/code_rule_dsl/logic/plan/joins.rs::JOB	shared	shared by design: a learned model, its queue or its job
+native/src/code_rule_dsl/logic/plan/joins.rs::MEMO	shared	shared by design: a learned model, its queue or its job
+native/src/code_rule_dsl/logic/plan/joins.rs::MISSES	review	
+native/src/code_rule_dsl/logic/plan/joins.rs::N	review	
+native/src/code_rule_dsl/logic/plan/joins.rs::NOTED	review	
+native/src/code_rule_dsl/logic/plan/joins.rs::ON	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan/joins.rs::PRICER	shared	shared by design: a learned model, its queue or its job
+native/src/code_rule_dsl/logic/plan/joins.rs::PRICING	review	
+native/src/code_rule_dsl/logic/plan/joins.rs::R	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan/joins.rs::RAISED	review	
+native/src/code_rule_dsl/logic/plan/joins.rs::REQUESTS	shared	shared by design: a learned model, its queue or its job
+native/src/code_rule_dsl/logic/plan/joins.rs::V	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan/joins.rs::W	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan/keeps.rs::FOLDS	review	
+native/src/code_rule_dsl/logic/plan/keeps.rs::OBSERVED	review	
+native/src/code_rule_dsl/logic/plan/output.rs::WRITES	review	
+native/src/code_rule_dsl/logic/plan/placement.rs::ALWAYS	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan/placement.rs::BIAS	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan/placement.rs::OFF	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan/placement.rs::RECORDED	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/plan/placement.rs::RECORDING	review	
+native/src/code_rule_dsl/logic/plan/prepared.rs::LOG	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/plan/prepared.rs::SEARCHED	review	
+native/src/code_rule_dsl/logic/plan/prepared.rs::TAKEN	review	
+native/src/code_rule_dsl/logic/plan/prepared.rs::VERSIONS	review	
+native/src/code_rule_dsl/logic/plan/sketch.rs::FILE	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/plan/table.rs::BATCHES	review	
+native/src/code_rule_dsl/logic/plan/table.rs::IN_PLACE	review	
+native/src/code_rule_dsl/logic/plan/table.rs::MODE	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/plan/table.rs::NAMES	shared	shared by design: an interner (names are visible to every caller holding it)
+native/src/code_rule_dsl/logic/profile.rs::ALL	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/profile.rs::COMMAND	run	the run's profile: profiled runs now queue for the one process profile
+native/src/code_rule_dsl/logic/profile.rs::DIR	run	the run's profile: profiled runs now queue for the one process profile
+native/src/code_rule_dsl/logic/profile.rs::EXITED	run	the run's profile: profiled runs now queue for the one process profile
+native/src/code_rule_dsl/logic/profile.rs::EXITED_GAPS	run	the run's profile: profiled runs now queue for the one process profile
+native/src/code_rule_dsl/logic/profile.rs::ON	run	the run's profile: profiled runs now queue for the one process profile
+native/src/code_rule_dsl/logic/profile.rs::ONE_RUN	review	
+native/src/code_rule_dsl/logic/profile.rs::RUN_PHASES	run	the run's profile: profiled runs now queue for the one process profile
+native/src/code_rule_dsl/logic/profile.rs::SECTIONS	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/profile.rs::SHARDS	run	the run's profile: profiled runs now queue for the one process profile
+native/src/code_rule_dsl/logic/profile.rs::STATE	run	the run's profile: profiled runs now queue for the one process profile
+native/src/code_rule_dsl/logic/profile.rs::STRICT	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/profile.rs::THREADS	run	the run's profile: profiled runs now queue for the one process profile
+native/src/code_rule_dsl/logic/profile.rs::TICK	review	
+native/src/code_rule_dsl/logic/profile.rs::TIMELINE	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/profile.rs::WARM	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/profile.rs::WARM_FAULTS	review	
+native/src/code_rule_dsl/logic/profile.rs::WAVES	review	
+native/src/code_rule_dsl/logic/profile/life.rs::ENTERED	stays	computed once from the engine's own files
+native/src/code_rule_dsl/logic/profile/memory.rs::AT	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/logic/profile/memory.rs::DOING	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/profile/memory.rs::LAST	review	
+native/src/code_rule_dsl/logic/profile/memory.rs::PEAK	review	
+native/src/code_rule_dsl/logic/profile/memory.rs::SAMPLED	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/profile/memory.rs::START	review	
+native/src/code_rule_dsl/logic/profile/memory.rs::STARTED	review	
+native/src/code_rule_dsl/logic/profile/roofline.rs::ROOFS	run	a run's measurement: two runs at once mix their numbers
+native/src/code_rule_dsl/logic/profile/watch.rs::SNAPSHOTS	review	
+native/src/code_rule_dsl/logic/rr.rs::CORE	stays	computed once from the engine's own files
+native/src/code_rule_dsl/logic/rr.rs::LIBRARIES	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/logic/rr.rs::PARSED	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/logic/rr.rs::PROGRAMS	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/logic/rr.rs::SHAPE	stays	computed once from the engine's own files
+native/src/code_rule_dsl/logic/rr/images.rs::SHIPPED	stays	computed once from the engine's own files
+native/src/code_rule_dsl/logic/rr/lower.rs::ALL	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/rr/lower.rs::WORLD	review	
+native/src/code_rule_dsl/logic/rr/lower/core.rs::DECLS	stays	computed once from the engine's own files
+native/src/code_rule_dsl/logic/strings.rs::FUNCTORS	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/strings.rs::GROUP_REGEXES	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/logic/strings.rs::MATCHERS	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/logic/strings/functions.rs::PY_REPR	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/strings/functions.rs::TO_PRECISION	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/strings/git.rs::STATE	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/matcher/d_anchors/sql/capture.rs::NEXT	review	
+native/src/code_rule_dsl/matcher/d_anchors/sql/execute.rs::CENSUS	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/matcher/d_anchors/sql/graph.rs::TOKENS	stays	a regex of a literal
+native/src/code_rule_dsl/matcher/d_anchors/sql/lower/lifetime.rs::IDENTIFIER	stays	a regex of a literal
+native/src/code_rule_dsl/matcher/d_anchors/sql/lower/lifetime.rs::WRITE	stays	a regex of a literal
+native/src/code_rule_dsl/matcher/d_anchors/sql/lower/render.rs::IDENTIFIER	stays	a regex of a literal
+native/src/code_rule_dsl/matcher/d_anchors/sql/lower/waves.rs::IDENTIFIER	stays	a regex of a literal
+native/src/code_rule_dsl/matcher/format_args.rs::PREPARERS	review	
+native/src/code_rule_dsl/matcher/lower.rs::CHECK	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/matcher/p_anchors.rs::PLANS	review	
+native/src/code_rule_dsl/matcher/p_anchors/sql/capture.rs::NEXT	review	
+native/src/code_rule_dsl/matcher/p_anchors/sql/graph.rs::TOKENS	stays	a regex of a literal
+native/src/code_rule_dsl/matcher/p_anchors/sql/lower/lifetime.rs::IDENTIFIER	stays	a regex of a literal
+native/src/code_rule_dsl/matcher/p_anchors/sql/lower/lifetime.rs::WRITE	stays	a regex of a literal
+native/src/code_rule_dsl/matcher/p_anchors/sql/lower/render.rs::IDENTIFIER	stays	a regex of a literal
+native/src/code_rule_dsl/matcher/p_anchors/sql/lower/waves.rs::IDENTIFIER	stays	a regex of a literal
+native/src/code_rule_dsl/matcher/term.rs::TERMS	review	
+native/src/code_rule_dsl/matcher/transform.rs::NUMBER_TEXT	stays	code a crate above registers at load
+native/src/code_rule_dsl/matcher/value.rs::NEXT_READING_ID	review	
+native/src/code_rule_dsl/module_graph.rs::DISK_SUMMARIES	review	
+native/src/code_rule_dsl/module_graph.rs::SERVER_ENTRY	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::BLANK	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::DOUBLE_BACKSLASH	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::ENDING	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::ESCAPED_SPACE	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::ESCAPED_WILDCARD	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::EXTENDED_GLOB	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::INNER_SLASH	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::LEADING_GLOBSTAR	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::LINES	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::METACHARACTERS	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::NEVER_IGNORED	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::RANGE	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::RANGE_BOUNDS	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::SEQUENCE	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::TRAILING_BACKSLASH	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::TRAILING_SPACES	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::TRAILING_WILDCARD	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::TWO_GLOBSTARS	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::UNESCAPE_METACHARACTER	stays	a regex of a literal
+native/src/code_rule_dsl/npm_ignore/mod.rs::WILDCARDS	stays	a regex of a literal
+native/src/code_rule_dsl/package_manifest.rs::DEFAULT_NODE_RANGE	review	
+native/src/code_rule_dsl/package_manifest.rs::NODE_SUBSETS	review	
+native/src/code_rule_dsl/phase_clock.rs::ANCHOR_COMPILE	review	
+native/src/code_rule_dsl/phase_clock.rs::ANCHOR_SELECT	review	
+native/src/code_rule_dsl/phase_clock.rs::INDEX_PUBLISH	review	
+native/src/code_rule_dsl/phase_clock.rs::RELATIONAL	review	
+native/src/code_rule_dsl/prefilter/gates.rs::PLANS	review	
+native/src/code_rule_dsl/prefilter/graph.rs::TOKENS	stays	a regex of a literal
+native/src/code_rule_dsl/prefilter/lab/capture.rs::NEXT	review	
+native/src/code_rule_dsl/prefilter/lower/lifetime.rs::IDENTIFIER	stays	a regex of a literal
+native/src/code_rule_dsl/prefilter/lower/lifetime.rs::WRITE	stays	a regex of a literal
+native/src/code_rule_dsl/prefilter/lower/render.rs::IDENTIFIER	stays	a regex of a literal
+native/src/code_rule_dsl/prefilter/lower/waves.rs::IDENTIFIER	stays	a regex of a literal
+native/src/code_rule_dsl/prof.rs::DEVICE_MEMORY	stays	code a crate above registers at load
+native/src/code_rule_dsl/prof.rs::RISEN	review	
+native/src/code_rule_dsl/prof.rs::SEEN	review	
+native/src/code_rule_dsl/profile.rs::ACTIVE_SESSION	review	
+native/src/code_rule_dsl/profile/sql.rs::CONTEXT_FILTER	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/profile/sql.rs::CTAS	stays	a regex of a literal
+native/src/code_rule_dsl/profile/sql.rs::DIRECTORY	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/profile/sql.rs::ORIGIN	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/profile/sql.rs::SERIAL	review	
+native/src/code_rule_dsl/profile/sql/coverage.rs::WRITE	review	
+native/src/code_rule_dsl/profile/sql/snapshot.rs::DIRECTORY	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/profile/sql/snapshot.rs::NEXT	review	
+native/src/code_rule_dsl/profile/trace.rs::ENABLED	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/residency/admission/relational/ast_stage.rs::PRODUCER	stays	code a crate above registers at load
+native/src/code_rule_dsl/residency/admission/relational/schema/cache.rs::SCHEMAS	review	
+native/src/code_rule_dsl/resolution.rs::RESOLUTIONS	review	
+native/src/code_rule_dsl/rule_api.rs::FRONTIER_AUDIT	stays	code a crate above registers at load
+native/src/code_rule_dsl/scope/ecma.rs::SCRIPTS	review	
+native/src/code_rule_dsl/scope/mod.rs::PROGRAM_SCOPES	review	
+native/src/code_rule_dsl/scope/options.rs::INTERNED	review	
+native/src/code_rule_dsl/scope/options.rs::TABLE	review	
+native/src/code_rule_dsl/scope/php_names.rs::BUILTINS	review	
+native/src/code_rule_dsl/scope/python.rs::PYTHON	review	
+native/src/code_rule_dsl/semver/mod.rs::MINIMUM_VERSION	review	
+native/src/code_rule_dsl/semver/mod.rs::REGEXES	review	
+native/src/code_rule_dsl/slice/memo.rs::HELD	review	
+native/src/code_rule_dsl/sql_executor/documents.rs::SNAPSHOT_FILES	review	
+native/src/code_rule_dsl/sql_executor/work_graph.rs::NEXT_GRAPH	review	
+native/src/code_rule_dsl/suppress/kinds.rs::KINDS	review	
+native/src/code_rule_dsl/suppress/nosec.rs::NOSEC_COMMENT	stays	a regex of a literal
+native/src/code_rule_dsl/suppress/nosec.rs::NOSEC_COMMENT_TESTS	stays	a regex of a literal
+native/src/code_rule_dsl/suppress/psalm.rs::STAR_LINE	stays	a regex of a literal
+native/src/code_rule_dsl/tape.rs::COUNTS	review	
+native/src/code_rule_dsl/tape.rs::GRAMMARS	review	
+native/src/code_rule_dsl/tape.rs::PATTERNS	review	
+native/src/code_rule_dsl/tape.rs::ROUTER	review	
+native/src/code_rule_dsl/tape.rs::SITES	review	
+native/src/code_rule_dsl/tape.rs::SITES_ON	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/tape/c_lean.rs::C	review	
+native/src/code_rule_dsl/tape/c_lean.rs::CPP	review	
+native/src/code_rule_dsl/tape/csharp_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/css_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/ecma_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/ecma_lean.rs::JAVASCRIPT	review	
+native/src/code_rule_dsl/tape/ecma_lean.rs::TSX	review	
+native/src/code_rule_dsl/tape/ecma_lean.rs::TYPESCRIPT	review	
+native/src/code_rule_dsl/tape/formats.rs::RUN	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/tape/formats.rs::SAID	review	
+native/src/code_rule_dsl/tape/go_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/html_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/java_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/kotlin_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/markdown_inline_lean.rs::KINDS	review	
+native/src/code_rule_dsl/tape/markdown_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/navigation.rs::ENABLED	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/tape/php_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/python_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/rust_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/scala_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/sql_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/swift_lean.rs::IDS	review	
+native/src/code_rule_dsl/tape/token_census.rs::BY_DIALECT	review	
+native/src/code_rule_dsl/tape/tokens.rs::BY_DIALECT	review	
+native/src/code_rule_dsl/tape/tokens.rs::KEPT	review	
+native/src/code_rule_dsl/tape/vue_lean.rs::IDS	review	
+native/src/code_rule_dsl/text.rs::LOWERED	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/text.rs::NAMES	shared	a cache (decision 0104 moves it to facts, in the shared store)
+native/src/code_rule_dsl/text/scan.rs::ALONE	review	
+native/src/code_rule_dsl/text/scan.rs::CHECK	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/text/table.rs::MADE	review	
+native/src/code_rule_dsl/text/table.rs::TABLES	review	
+native/src/code_rule_dsl/text/vocabulary.rs::KEPT	review	
+native/src/code_rule_dsl/transducer/packed/compilation.rs::REQUESTS	review	
+native/src/code_rule_dsl/transducer/packed/compile/matcher.rs::CHECK	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/transducer/packed/compile/matcher.rs::NAMES	review	
+native/src/code_rule_dsl/transducer/packed/device.rs::MATCHER	stays	code a crate above registers at load
+native/src/code_rule_dsl/transducer/packed/json_parser.rs::PARSER	review	
+native/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::DOM	review	
+native/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::KINDS	review	
+native/src/code_rule_dsl/transducer/packed/metal_join.rs::MIN	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/transducer/packed/metal_join.rs::SOURCE	review	
+native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::HOST	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::ON	run	a setting read once a process: the run reads it as it starts
+native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::PATTERN_PIPELINES	review	
+native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::PIPELINES	review	
+native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::SEEN	review	
+native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::SOURCE	review	
+native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::STARTED	review	
+native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::TAPE_VIEW	review	
+native/src/code_rule_dsl/transducer/packed/metal_lattice.rs::PIPELINE	review	
+native/src/code_rule_dsl/transducer/packed/metal_nearest.rs::PIPELINE	review	
+native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::INTERPRETER	review	
+native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::JIT_CACHE	review	
+native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::METAL_WORKSPACE_POOL	review	
+native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::RESIDENT_PREFIX	review	
+native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::SWEEP	review	
+native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::TAPE_PREFIX	review	
+native/src/code_rule_dsl/transducer/packed/metal_set_steps.rs::PIPELINES	review	
+native/src/code_rule_dsl/transducer/packed/native_cpu.rs::CPU_JIT_CACHE	review	
+native/src/code_rule_dsl/typing/rounds.rs::BIGS	review	
+native/src/code_rule_dsl/value/names.rs::TABLE	review	
+native/src/code_rule_dsl/waves/matches.rs::WAVE_PLANS	review	
+native/src/code_rule_dsl/waves/owner/database.rs::SETUP	review	
+native/src/code_rule_dsl/waves/relational/pipeline.rs::PURE	stays	a regex of a literal
+native/src/code_rule_dsl/waves/relational/pipeline/readers.rs::IDENTIFIER	stays	a regex of a literal
+native/src/code_rule_dsl/waves/relational/schema/cache.rs::SCHEMAS	review	
+native/src/code_rule_dsl/waves/relational/shared/capture.rs::NEXT	review	
+native/src/code_rule_dsl/workspace/api.rs::SLOT	review	
+native/src/code_rule_dsl/workspace/api.rs::WORKSPACE_INSTANCES	review	
+native/src/code_rule_dsl/workspace/calls_state.rs::SHARED_SUMMARIES	review	
+native/src/code_rule_dsl/workspace/calls_state.rs::SUMMARIES_EXTRACTED	review	
+native/src/code_rule_dsl/workspace/ingest.rs::PACKAGE_CONTEXT_PATH_VISITS	review	
+native/src/code_rule_dsl/workspace/ingest.rs::PROJECT	stays	code a crate above registers at load
+native/src/code_rule_dsl/workspace/ingest.rs::REPOSITORY_CONTEXT	review	
+native/src/code_rule_dsl/workspace/persisted.rs::CATALOGS	review	
+native/src/code_rule_dsl/workspace/storage.rs::CONTENT_STORES	review	
+native/src/content_store/atoms.rs::CANONICAL	shared	shared by design: one per store file
+native/src/content_store/atoms.rs::FREE	run	a setting read once a process: the run reads it as it starts
+native/src/content_store/atoms.rs::GIVEN	review	
+native/src/content_store/atoms.rs::IDENTITIES	shared	shared by design: one per store file
+native/src/content_store/atoms.rs::MEMORY	shared	shared by design: one per store file
+native/src/content_store/atoms.rs::REGISTRY	shared	shared by design: one per store file
+native/src/content_store/atoms.rs::RESERVED	connection	a connection's own state, keyed by connection in a process map
+native/src/content_store/compression.rs::LANGUAGE_TAGS	stays	code a crate above registers at load
+native/src/content_store/connection.rs::ALL_CONNECTIONS	shared	shared by design: one per store file
+native/src/content_store/connection.rs::CONNECTION_FUNCTIONS	stays	code a crate above registers at load
+native/src/content_store/connection.rs::HANDLES	shared	shared by design: one per store file
+native/src/content_store/connection.rs::MMAP	run	a setting read once a process: the run reads it as it starts
+native/src/content_store/connection.rs::ONCE	review	
+native/src/content_store/frames.rs::COUNTED	run	a run's own results or batch: two runs at once collide
+native/src/content_store/frames.rs::SNAPSHOTS	shared	shared by design: one per store file
+native/src/content_store/journal.rs::COUNTER	review	
+native/src/content_store/journal.rs::EPOCH	review	
+native/src/content_store/journal.rs::LIVE	shared	shared by design: one per store file
+native/src/content_store/mod.rs::SEARCH_INDEX_FAMILY_WRITES	review	
+native/src/content_store/observe.rs::JOURNAL	review	
+native/src/content_store/observe.rs::OBSERVERS	shared	shared by design: one per store file
+native/src/content_store/observe.rs::OWN	shared	shared by design: one per store file
+native/src/content_store/observe.rs::SHOW	run	a setting read once a process: the run reads it as it starts
+native/src/content_store/record.rs::KINDS	stays	code a crate above registers at load
+native/src/content_store/record.rs::LOG	review	
+native/src/content_store/schema.rs::SCHEMA_OBJECTS	stays	computed once from the engine's own files
+native/src/content_store/segments.rs::WRITES	review	
+native/src/content_store/write_back.rs::BY_KIND	run	a run's measurement: two runs at once mix their numbers
+native/src/content_store/write_back.rs::CAP	run	a setting read once a process: the run reads it as it starts
+native/src/content_store/write_back.rs::ON	run	a setting read once a process: the run reads it as it starts
+native/src/content_store/write_back.rs::RUNS	review	
+native/src/content_store/write_back.rs::T0	run	a setting read once a process: the run reads it as it starts
+native/src/content_store/write_back.rs::TOLD	review	
+native/src/content_store/write_back.rs::WRITERS	shared	shared by design: one per store file
+native/src/git_workspace.rs::NEXT_FIXTURE	review	
+native/src/git_workspace.rs::SOURCE_ALIAS_HASHES	review	
+native/src/lib.rs::GLOBAL	review	
+native/src/lib.rs::ONCE	review	
+native/src/lib.rs::SQLITE_ALLOCATOR	review	
+native/src/source_tree.rs::IMAGE	review	
