@@ -117,6 +117,9 @@ struct OneFn {
     sites: Vec<(usize, usize)>,
     /// Each `RETURN`'s numbers (those of the calls whose rule holds it), each with its place.
     returns: HashMap<usize, Vec<(usize, usize)>>,
+    /// Each call's places after it: where its rule's returns go back to (its target, and the one
+    /// after only where a `RETURN` gives `again`).
+    after: HashMap<usize, Vec<usize>>,
 }
 
 impl OneFn {
@@ -137,6 +140,15 @@ impl OneFn {
                     returns.entry(w).or_default().push((k, usize::from(target) + usize::from(again)));
                 }
                 work.extend(x(w));
+            }
+        }
+        let mut after: HashMap<usize, Vec<usize>> = HashMap::new();
+        for arms in returns.values() {
+            for &(k, t) in arms {
+                let v = after.entry(sites[k]).or_default();
+                if !v.contains(&t) {
+                    v.push(t);
+                }
             }
         }
         // A call's number: the places every return sends it to, numbered as they first come.
@@ -160,7 +172,7 @@ impl OneFn {
             arms.sort_unstable();
             arms.dedup();
         }
-        OneFn { sites: sites.into_iter().zip(number).collect(), returns }
+        OneFn { sites: sites.into_iter().zip(number).collect(), returns, after }
     }
 }
 
@@ -1566,6 +1578,8 @@ fn plain_succ(x: &Facts<'_>, pc: usize) -> Vec<usize> {
         Op::Goto { target } => vec![usize::from(target)],
         Op::Switch { table } => x.native.switches[usize::from(table)].all_targets().filter(|&t| t != REFUSE).map(usize::from).collect(),
         Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
+        // In one function (`OneFn`), only the places its rule's returns go back to.
+        Op::Push { .. } if x.one.is_some() => x.one.as_ref().and_then(|o| o.after.get(&pc)).cloned().unwrap_or_default(),
         Op::Push { target, .. } => vec![usize::from(target), usize::from(target) + 1],
         Op::Return { .. } | Op::Accept | Op::Stop => vec![],
         _ => vec![pc + 1],
@@ -1775,6 +1789,12 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
 
 /// A word's code, `jump(k)` its `k`th successor's.
 fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>) -> Result<String, String> {
+    word_with(x, pc, jump, None)
+}
+
+/// `word`, the token's code known (`known`) where it is a constant: a keyword's leaf its kind,
+/// as simdjson's `case 't'` writes its own tape word.
+fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>, known: Option<u32>) -> Result<String, String> {
     let n = x.native;
     let kind_of = |k: u16| -> String { if k == REMEMBERED { "{ if word == 0 { return Err(false) } word as u16 }".into() } else { format!("{k}") } };
     // The token's end, as this word reads it: its phase's (`phases`), or the run's field.
@@ -1827,7 +1847,10 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         Op::Close { this } => format!("s.close::<{this}>({})?;\n{}", if this { end } else { "0" }, jump(0)?),
         Op::Leaf { kind, deferred, extra } => {
             let f = u32::from(field_after(x, pc).unwrap_or(0)) << 16;
+            let constant = known.filter(|_| kind == WORD_KIND).map(|c| n.word_kinds.iter().find(|&&(w, _)| u32::from(w) + 1 == (c >> 8) & 0xff).map(|&(_, k)| u32::from(k)));
             let k = match (kind == WORD_KIND, f) {
+                (true, _) if constant == Some(None) => return Ok("return Err(false);".into()),
+                (true, f) if constant.is_some() => format!("{}", constant.flatten().unwrap_or(0) | f),
                 (true, 0) => "s.word_kind()?".to_string(),
                 (true, f) => format!("s.word_kind()? | {f}"),
                 (false, f) => format!("{}", u32::from(kind) | f),
@@ -1981,6 +2004,11 @@ fn fetched_token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>) -> Resul
     // The tape's room for the path to the next token, unless the tape is sized from the input.
     let room = if x.unchecked { "" } else { "        self.room()?;\n" };
     if x.sentinel {
+        // `rec_end` 0 (not made yet) only where a switch has a kind path to tell it apart.
+        // A part's switch is `part_plan`'s, which reads no `rec_end`.
+        let part = |pc: usize| pc > 0 && x.fetch.as_ref().is_some_and(|fx| fx.part_at(x, pc - 1));
+        let again = x.native.structural.iter().enumerate().any(|(pc, w)| matches!(w.operation, Op::Switch { table } if !part(pc) && on_kinds(x, &x.native.switches[usize::from(table)]) && !fresh(x, &x.native.switches[usize::from(table)])));
+        let unmade = if again { "        self.rec_end = 0;\n" } else { "" };
         // Past the last token, the file's length as the start, the stream's two slots past its
         // count readable: a select, no branch; the byte there (0, padding) no switch takes.
         writeln!(
@@ -1993,9 +2021,7 @@ fn fetched_token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>) -> Resul
         let i = self.next.min(self.n as u32);
         let st = unsafe {{ *self.starts.add(i as usize * self.rs) }};
         self.start = if i as usize == self.n {{ self.len }} else {{ st }};
-        self.rec_end = 0;
-        self.next = i + 1;
-        self.live = {live};
+{unmade}        self.next = i + 1;
         Ok(())
     }}
 "
@@ -2257,8 +2283,8 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
             i = j + 1;
         }
         let body = match form {
-            0 => format!("s.rec_end = s.start + 1;\ns.code = {a:#x};\n{}", p.to(t)),
-            1 => format!("s.rec_end = s.start + 1;\ns.code = {a:#x};\ns.part_at = s.start + 1;\n{}", p.to(t)),
+            0 => format!("s.rec_end = s.start + 1;\n{}{}", code_set(x, &[t], a), p.to(t)),
+            1 => format!("s.rec_end = s.start + 1;\n{}s.part_at = s.start + 1;\n{}", code_set(x, &[t], a), p.to(t)),
             _ => {
                 let r = a;
                 let mut words = String::new();
@@ -2267,21 +2293,26 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
                     let n = w.len();
                     let mask = if n == 8 { u64::MAX } else { (1u64 << (8 * n)) - 1 };
                     let want = w.iter().rev().fold(0u64, |acc, &y| acc << 8 | u64::from(y));
-                    let to = match check_at(x, kind_target(x, fx, sw, *code)) {
+                    let at = match check_at(x, kind_target(x, fx, sw, *code)) {
                         // A check of no delay at the word's place reads the word's bytes alone:
                         // decided here, as simdjson tests an atom by its bytes and nothing else.
                         Some((q, _, c)) if c.delay == 0 => {
                             if crate::program::token_value(c, w, 0, w.len(), &|_| false) {
-                                "return Err(false);".to_string()
+                                REFUSE
                             } else {
-                                p.to(q as u16 + 1)
+                                q as u16 + 1
                             }
                         }
-                        _ => p.to(kind_target(x, fx, sw, *code)),
+                        _ => kind_target(x, fx, sw, *code),
+                    };
+                    // Its leaf written in its arm, its kind a constant (`known_leaf`).
+                    let (to, set) = match known_leaf(x, at, *code).ok().flatten() {
+                        Some((code_text, past)) => (format!("{code_text}{}", p.to(past)), code_set(x, &[past], *code)),
+                        None => (p.to(at), code_set(x, &[at], *code)),
                     };
                     writeln!(
                         words,
-                        "if st + {n} <= s.len && s.word8(st) & {mask:#x} == {want:#x} && (st + {n} == s.len || S::CLASS_{r}[usize::from(s.byte(st + {n}))] == 0) {{\n// {:?}\ns.rec_end = st + {n};\ns.code = {code:#x};\n{to}\n}}",
+                        "if st + {n} <= s.len && s.word8(st) & {mask:#x} == {want:#x} && (st + {n} == s.len || S::CLASS_{r}[usize::from(s.byte(st + {n}))] == 0) {{\n// {:?}\ns.rec_end = st + {n};\n{set}{to}\n}}",
                         String::from_utf8_lossy(w)
                     )
                     .unwrap();
@@ -2291,9 +2322,10 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
                     Some((q, ci, _)) => {
                         let past = p.to(q as u16 + 1);
                         let long = p.to(t);
-                        format!("let st = s.start;\n{words}match s.run_{r}_check_{ci}(st)? {{\nSome(l) => {{\ns.rec_end = l + 1;\ns.code = {kind};\n{past}\n}}\nNone => {{\ns.rec_end = s.run_{r}(st) + 1;\ns.code = {kind};\n{long}\n}}\n}}")
+                        let (sp, sl) = (code_set(x, &[q as u16 + 1], kind), code_set(x, &[t], kind));
+                        format!("let st = s.start;\n{words}match s.run_{r}_check_{ci}(st)? {{\nSome(l) => {{\ns.rec_end = l + 1;\n{sp}{past}\n}}\nNone => {{\ns.rec_end = s.run_{r}(st) + 1;\n{sl}{long}\n}}\n}}")
                     }
-                    None => format!("let st = s.start;\n{words}s.rec_end = s.run_{r}(st) + 1;\ns.code = {kind};\n{}", p.to(t)),
+                    None => format!("let st = s.start;\n{words}s.rec_end = s.run_{r}(st) + 1;\n{}{}", code_set(x, &[t], kind), p.to(t)),
                 }
             }
         };
@@ -2377,6 +2409,38 @@ fn fresh(x: &Facts<'_>, sw: &ByteSwitch) -> bool {
     (0..words.len()).all(|pc| pc == here - 1 || !plain_succ(x, pc).contains(&here))
 }
 
+/// A keyword's way from `at` to its leaf (`LEAF` of the word's kind), each word on it one with
+/// one successor that reads no code (an `OPEN`, a supertype, a field, a `GOTO`): their code, the
+/// leaf's kind the constant of `code`'s word, and the place after the leaf. `None` where the way
+/// is not such.
+fn known_leaf(x: &Facts<'_>, at: u16, code: u32) -> Result<Option<(String, u16)>, String> {
+    let words = &x.native.structural;
+    let (mut q, mut out) = (usize::from(at), String::new());
+    for _ in 0..16 {
+        let Some(w) = words.get(q) else { return Ok(None) };
+        let next = succ(x, q);
+        let &[t] = next.as_slice() else { return Ok(None) };
+        match w.operation {
+            Op::Leaf { kind, .. } if kind == WORD_KIND => {
+                out.push_str(&word_with(x, q, &|_| Ok(String::new()), Some(code))?);
+                return Ok(Some((out, t as u16)));
+            }
+            Op::Open { .. } | Op::NodeSuper { .. } | Op::NodeField { .. } | Op::Goto { .. } => {
+                out.push_str(&word(x, q, &|_| Ok(String::new()))?);
+                q = t;
+            }
+            _ => return Ok(None),
+        }
+    }
+    Ok(None)
+}
+
+/// `s.code = code;`, where a word reached from `to` reads it (`code_read`); nothing where none
+/// does, as simdjson's switch makes no record a token.
+fn code_set(x: &Facts<'_>, to: &[u16], code: u32) -> String {
+    if to.iter().any(|&t| reads_code(x, t)) { format!("s.code = {code:#x};\n") } else { String::new() }
+}
+
 /// Whether the byte past the file (0, padding) is refused by `sw`'s switch on the first byte, and
 /// by the switch it gives its other bytes to (`delegate_of`).
 fn zero_refused(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch) -> bool {
@@ -2416,23 +2480,32 @@ struct PartFacts {
     content: u16,
     words: Vec<(u16, u16)>,
     part: u16,
-    closer_code: String,
+    closer_code: u32,
 }
 
-/// Each place a word reached from `t` on reads the token's code (its kind or word) before the
-/// next `TOKEN`: a straight path of plain words, else assumed to.
+/// Whether the token's code is read from word `t` on, before a word that makes the next
+/// token's or this one's again: a `TOKEN`, a part (which writes its own) and a switch on the
+/// first byte (`fresh`) end the walk; a switch with a kind path reads it. Of the other words,
+/// those known to read no code are passed (each successor, a call's returns); any other reads it.
 fn reads_code(x: &Facts<'_>, t: u16) -> bool {
-    let mut pc = usize::from(t);
-    for _ in 0..64 {
-        match x.native.structural.get(pc).map(|w| w.operation) {
-            Some(Op::Token { .. }) => return false,
-            Some(Op::Goto { target }) => pc = usize::from(target),
-            Some(Op::Span { .. } | Op::Open { .. } | Op::Close { .. } | Op::NodeSuper { .. } | Op::NodeField { .. }) => pc += 1,
-            Some(Op::Leaf { kind, .. }) if kind != WORD_KIND => pc += 1,
+    let words = &x.native.structural;
+    let mut seen = vec![false; words.len()];
+    let mut work = vec![usize::from(t)];
+    while let Some(pc) = work.pop() {
+        if pc >= words.len() || std::mem::replace(&mut seen[pc], true) || x.fetch.as_ref().is_some_and(|fx| fx.part_at(x, pc)) {
+            continue;
+        }
+        match words[pc].operation {
+            Op::Token { .. } | Op::Stop => continue,
+            Op::Switch { table } if fresh(x, &x.native.switches[usize::from(table)]) => continue,
+            Op::Goto { .. } | Op::Span { .. } | Op::Open { .. } | Op::Close { .. } | Op::NodeSuper { .. } | Op::NodeField { .. } | Op::Check { .. } | Op::Count { .. } => {}
+            Op::Leaf { kind, .. } if kind != WORD_KIND && kind != REMEMBERED => {}
+            Op::Push { .. } | Op::Return { .. } if x.one.is_some() => {}
             _ => return true,
         }
+        work.extend(succ(x, pc));
     }
-    true
+    false
 }
 
 fn part_facts(x: &Facts<'_>, fx: &Fetched, pc: usize) -> Result<PartFacts, String> {
@@ -2455,7 +2528,7 @@ fn part_facts(x: &Facts<'_>, fx: &Fetched, pc: usize) -> Result<PartFacts, Strin
     let closer = one((0..256).filter(|&b| in_set(&q.xs, b)).map(|b| kind_target(x, fx, sw, ft.codes1[b])).collect(), "closer")?;
     let codes: BTreeSet<u32> = (0..256).filter(|&b| in_set(&q.xs, b)).map(|b| ft.codes1[b]).collect();
     let closer_code = match codes.into_iter().collect::<Vec<_>>().as_slice() {
-        &[c] => format!("{c:#x}"),
+        &[c] => c,
         _ => return Err(format!("word {pc}: a closer of more than one code")),
     };
     // The content: its place by its first byte's kind; no word the switch names begins with it,
@@ -2509,8 +2582,7 @@ s.part_at = i;
 // The closer: the region's last token.
 s.start = i;
 s.rec_end = i + 1;
-s.code = {};
-s.part_at = 0;
+{}s.part_at = 0;
 {closer}
 }} else {{
 // A part of two bytes (an escape): its code by its second byte.
@@ -2522,7 +2594,7 @@ s.part_at = i + 2;
 {by_word}}}
 ",
         if x.unchecked { "" } else { "s.room()?;\n" },
-        pf.closer_code
+        code_set(x, &[past_span(x, pf.closer, 1)], pf.closer_code)
     );
     p
 }

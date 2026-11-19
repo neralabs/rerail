@@ -283,6 +283,8 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         .iter()
         .filter_map(|w| if let rerail_compiler::native_ir::StructuralOperation::Push { target, .. } = w.operation { Some(usize::from(target) + 1) } else { None })
         .filter(|&t| matches!(native.structural.get(t).map(|w| w.operation), Some(rerail_compiler::native_ir::StructuralOperation::Switch { .. })))
+        // A call's one after is a return's place only where a `RETURN` gives `again`.
+        .filter(|_| native.structural.iter().any(|w| matches!(w.operation, rerail_compiler::native_ir::StructuralOperation::Return { again: true })))
         .collect();
     let kind_paths = src.matches("if s.rec_end == 0 && !s.at_end {").count() + src.matches("if s.rec_end == 0 && !(s.start == s.len) {").count();
     assert_eq!(kind_paths, again.len(), "the kind path only where a call returns: {again:?}");
@@ -296,6 +298,12 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // the last token, and the value switches refuse its byte, as simdjson's switch the index past
     // its last. No `at_end` field is read.
     assert!(!src.contains("s.at_end") && !src.contains("self.at_end") && !src.contains("if (s.start == s.len) { return Err(false); }"), "no end test where the switch refuses the end");
+    // No record field written that no word reads: no `live` (no marks), no `rec_end = 0` (no
+    // kind path), and the code only where the escapes' word `match` reads it; the atoms write
+    // their leaves with their kinds, as simdjson's `case 't'` its tape word.
+    let code_writes: Vec<&str> = src.lines().filter(|l| l.starts_with("s.code = ")).collect();
+    assert!(code_writes.iter().all(|l| l.starts_with("s.code = S::CODES2[")) && !code_writes.is_empty(), "code written where no word reads it: {code_writes:?}");
+    assert!(!src.contains("live =") && !src.contains("rec_end = 0;") && !src.contains("s.word_kind()") && !src.contains("rec_end == 0"), "a field written that no word reads");
     // No dispatch's arm only sets `d` again for its own loop (`Shape::threaded`).
     let resets = dispatch_resets(&src);
     assert!(resets.is_empty(), "a dispatch's arm only re-sets d: {resets:?}");

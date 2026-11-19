@@ -593,6 +593,37 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 21, done: no record field written that no word reads, in the generated Rust
+
+simdjson's `advance()` writes nothing but the index. Each token here wrote record fields:
+- `s.code` in 47 places, read in 9;
+- `s.live` every token, read nowhere (no marks);
+- `s.rec_end = 0` every token, for the kind paths.
+
+Three changes, all in `rust_stream`:
+- **The kind paths were dead.** The program's one `RETURN` gives no `again`, so a call goes back
+  only to its target. `plain_succ` listed target + 1 for every `PUSH` too, so the three switches
+  there were not `fresh`, and kept a kind path no run takes. In one function a call's
+  successors are now the places its rule's returns go back to (`OneFn::after`). The kind paths
+  go, and with them `rec_end = 0`: `token_all` writes it only where a switch has one.
+- **An atom writes its own leaf.** Its arm knows the word it matched, so the arm writes the
+  `OPEN` and the leaf with the kind as a constant (`known_leaf`, `word_with`), as simdjson's
+  `case 't'` does. There was a shared leaf whose `word_kind()` matched on the code to find it
+  again.
+- **The code only where it is read** (`code_set`). `reads_code` walks the graph from the arm's
+  place to the next `TOKEN`. A word it doesn't know counts as a read.
+
+Now `token_all` is: the end before kept (`close` reads it), the next start loaded, the select,
+the increment. The code is written only by the escapes, whose word `match` reads it.
+
+The Rust trees test asserts both: every code write is an escape's, and no `live`, `rec_end = 0`,
+`rec_end == 0` or `word_kind()` is left. An atom's constant from the next word fails it at the
+first file. Not inlining the atoms fails it at their code writes.
+
+A check that ran before the kind paths went: on 113 files no run switched a made token again.
+That is why a mutation treating those switches as reading no code passed. The paths were
+dead.
+
 ## Step 20, done: the end tested only where it is taken, in the generated Rust
 
 Each token tested the end three times: `token_all`'s `at_end`, its `i == n`, and the value
@@ -671,7 +702,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 | `switch (*value)` | `match s.byte(s.start)`, the record made in the arm | yes |
 | one switch a value; `case '['`: `]` peeked for, then `array_begin` and the one value switch | the array's loop was entered at each value's place from two switches (the first value's, which also takes `]`, and the one after `,`), so the arms set `d` and the loop's `match d` took them apart again; every switch also had a path on the kind | yes, since step 15: the first value's switch takes `]`, then sends every other byte to the one value switch; the kind path only where a call returns to switch on its token again |
 | `case ','`, `case ']'` in the continue states | each punctuation byte straight to its place, every other byte refused | yes |
-| atoms: `str4ncmp(src, "true")`, then the byte after not structural or white space | the same test, a word load | yes |
+| atoms: `str4ncmp(src, "true")`, then the byte after not structural or white space; `visit_true_atom` writes its own tape word | the same test, a word load; the arm writes its leaf with its kind | yes, since step 21 |
 | `parse_number`: the digits read once, validated as they are read | `run_0_check_0`: one read of 16 bytes, the end and the check from it, then on past the check | yes, since step 14 (a number past 15 bytes: as before) |
 | `parse_string`: `copy_and_find`, then one branch: quote, backslash or neither | `part_stop`, then one branch: closer, escape or content | yes |
 | an escape: `escape_map[c]`, the `\u` work only after a `u` | `CODES2[c]`, then `\u` to its two checks and the eight others, one range, past them | yes, since step 16 |
@@ -689,8 +720,7 @@ the Rust it writes:
 
 The next six, from reading the Rust after step 19 (each a step, its assertion and a mutation):
 1. Done in step 20.
-2. No record field written that no later word reads (`s.code`, `s.live`, `s.rec_end = 0`,
-   `s.last_end`).
+2. Done in step 21.
 3. One stack for the nesting: the return's number in the open node's entry, one depth, one test.
 4. No test of the string opener's length right after it is set.
 5. `part_stop` 32 bytes a step, and which stop it found from its masks, not the byte read again.
