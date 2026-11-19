@@ -316,7 +316,14 @@ impl<'p> Encoder<'p> {
         let k = self.rule_node.len() as u32 - 1;
         self.vars.extend_from_slice(&self.slot_names);
         self.rule_vars.push(self.vars.len() as u32);
-        let end = self.kind.len();
+        self.index_rule(k, at, self.kind.len());
+        let h = self.hash_closed(at);
+        self.rule_hash.push(h);
+        self.from.push(super::NO_RULE);
+        k
+    }
+    /// Records local rule `k`'s head and reads (nodes `at..end`) in the relation index.
+    fn index_rule(&mut self, k: u32, at: usize, end: usize) {
         let head_at = at + 1;
         let head_end = head_at + self.size.get(head_at) as usize;
         for n in at..end {
@@ -332,10 +339,45 @@ impl<'p> Encoder<'p> {
                 }
             }
         }
-        let h = self.hash_closed(at);
-        self.rule_hash.push(h);
-        self.from.push(super::NO_RULE);
-        k
+    }
+    /// Copies rules `ks` of `src` (consecutive locals, so one run of nodes) whole, when `src`'s ids are this image's:
+    /// their nodes as one range, each rule's variables and hash as `src` holds them (the hash is of texts and values,
+    /// so the same over the same ids), a big integer to this image's table. The local index of the first; 0276 §3's
+    /// range copy, as 0266 §3 copies a stratum.
+    pub fn copy_run(&mut self, src: &super::Image, ks: std::ops::Range<u32>) -> u32 {
+        let first = self.rule_node.len() as u32;
+        if ks.is_empty() {
+            return first;
+        }
+        let (a, b) = {
+            let last = ks.end - 1;
+            let at = src.rule_node(last);
+            (src.rule_node(ks.start), at + src.node(at).1)
+        };
+        let base = self.kind.len() as u32;
+        let (kinds, sizes, vals) = (&src.u8s(super::R::Kind)[a as usize..b as usize], &src.u32s(super::R::Size)[a as usize..b as usize], &src.u32s(super::R::Val)[a as usize..b as usize]);
+        self.kind.extend(kinds);
+        self.size.extend(sizes);
+        self.val.extend(vals);
+        // A big integer's value indexes `src`'s table: written to this one's.
+        for (i, &kd) in kinds.iter().enumerate() {
+            if kd & kind::MASK == kind::INT && kd & kind::BIG != 0 {
+                self.ints.push(src.big(vals[i]));
+                self.val.set(base as usize + i, self.ints.len() as u32 - 1);
+            }
+        }
+        for k in ks {
+            let at = (src.rule_node(k) - a + base) as usize;
+            let end = at + src.node(src.rule_node(k)).1 as usize;
+            let local = self.rule_node.len() as u32;
+            self.rule_node.push(at as u32);
+            self.vars.extend_from_slice(src.rule_vars(k));
+            self.rule_vars.push(self.vars.len() as u32);
+            self.index_rule(local, at, end);
+            self.rule_hash.push(src.rule_hash(k));
+            self.from.push(super::NO_RULE);
+        }
+        first
     }
     /// The hash of the rule begun at `at`, its nodes closed (`close`) and not yet ended: what `end_rule` records,
     /// so a writer can leave out a rule it wrote before (`Builder::close_rule_once`).

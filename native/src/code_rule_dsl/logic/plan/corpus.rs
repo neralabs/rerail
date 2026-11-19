@@ -11858,13 +11858,6 @@ fn stats_key(root: &str) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"corpus stats", root.as_bytes()])
 }
 
-/// An edit's version of a part (decision 0244): made wherever the part had one. In a debug build (every test's), an
-/// edit that made none is a fault, never a quiet fall back to an image of the tree.
-pub(super) fn made_from<T>(had: bool, made: Option<T>, edit: &str) -> Option<T> {
-    debug_assert!(!had || made.is_some(), "{edit}: no version was made from the part's");
-    made
-}
-
 /// The cone of requests of the cross-file part `cross`, answered inside the fixpoint (decision 0065 §2a): a load's
 /// answer is the loaded document's rows of every per-file relation the cone reads (an export, `exports`; a base
 /// relation, `base`, is refused), made by the chunk path as any file's are; the rest of the cross-file part reads the

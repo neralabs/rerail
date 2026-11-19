@@ -566,6 +566,17 @@ Progress (2026-11-18):
       decode counter (`trees_decoded`) counted nothing once `Version::program` went, and goes with them: the
       maintained run's test now rests on the guard. `front::tests::no_tree_program_comes_back` refuses each form by
       path, by import from `front`, or by a definition where it lived, in the engine's code (comments aside).
+- **§3, the rest of the writer: the plan (user, 2026-11-19: "implement the planned not built parts").** In order:
+  `made_from`; range copies; `rewrite_all`; `fields()`; `freeze` to `Placed` and the `pass` wrapper; §2's `Part`
+  over one shared `Lowering`; the prepared key as the linked base's digest; identities by the version's digest
+  (0173 step 6); dl1 before and after.
+  - *Done (`made_from`).* It had no caller left; deleted.
+  - *Done (range copies).* `Encoder::copy_run` copies rules of one image whose ids are the writer's as one node
+    range: their variables and hashes as the source holds them (a hash is of texts and values, so the same over the
+    same ids), a big integer to the writer's table, each rule indexed. `Builder::copy` takes it for such a rule, so
+    `keep`, `keep_into`, `copy_as_is` and `copy_from` do too; `Builder::keep_run` copies a run of consecutive rules
+    as one range, and a derivation's kept rules (`manager::drive`) go as runs, ending where a visited rule writes.
+    Locked by `a_run_of_kept_rules_is_the_rules_kept_one_by_one`.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 

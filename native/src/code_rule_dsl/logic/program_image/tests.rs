@@ -1934,3 +1934,24 @@ fn an_open_rule_writes_what_the_rule_builder_writes() {
     assert!(c.close_rule(o).is_err(), "a rule with no head is refused");
     assert_eq!(c.finish().unwrap().0.rules().count(), 0);
 }
+
+/// A derivation's kept rules copied as runs of nodes (`Builder::keep_run`, 0276 §3) are the rules `keep` copies one
+/// by one: the same program, rule hashes and sources, and an image that opens as it; a gap in the run (a rule left
+/// out) splits it.
+#[test]
+fn a_run_of_kept_rules_is_the_rules_kept_one_by_one() {
+    let v = every_part();
+    let kept: Vec<RuleRef<'_>> = v.rules().enumerate().filter(|(i, _)| i % 3 != 1).map(|(_, r)| r).collect();
+    let mut one = Builder::derive(&v);
+    for r in &kept {
+        one.keep(&v, *r);
+    }
+    let (one, _) = one.finish().unwrap();
+    let mut run = Builder::derive(&v);
+    run.keep_run(&v, &kept);
+    let (run, _) = run.finish().unwrap();
+    same(&one, &run);
+    assert!(one.rules().map(|r| (r.hash(), r.source())).eq(run.rules().map(|r| (r.hash(), r.source()))));
+    assert!(run.rules().all(|r| r.source().is_some()));
+    same(&Version::open(run.fold().unwrap().base_bytes().unwrap()).unwrap(), &run);
+}

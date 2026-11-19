@@ -723,18 +723,22 @@ fn drive<P: RulePass>(pass: &mut P, cx: &Cx<'_>, v: &Version, b: &mut Builder<'_
     let picked = select.ids(v);
     let mut visited = 0;
     if derive {
+        // The kept rules are copied in runs (`Builder::keep_run`): a run ends where a visited rule writes.
+        let mut kept: Vec<RuleRef<'_>> = Vec::new();
         for r in v.rules() {
             let step = match &picked {
                 Some(p) if !p.has(r.id()) => Step::Keep,
                 _ => {
+                    b.keep_run(v, &std::mem::take(&mut kept));
                     visited += 1;
                     visit(pass, cx, v, r, b)?
                 }
             };
             if step == Step::Keep {
-                b.keep(v, r);
+                kept.push(r);
             }
         }
+        b.keep_run(v, &kept);
     } else {
         let ids: Vec<RuleId> = match &picked {
             Some(p) => p.iter().collect(),

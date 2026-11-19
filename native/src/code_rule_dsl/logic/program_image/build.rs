@@ -243,17 +243,47 @@ impl<'p> Builder<'p> {
     pub fn next_id(&self) -> RuleId {
         RuleId(self.enc.rule_base() + self.enc.rules())
     }
-    /// Adds a copy of `rule`, one of `from`'s rules: its nodes as they are when `from`'s ids are this builder's,
-    /// else each name by its text.
+    /// Adds a copy of `rule`, one of `from`'s rules: when `from`'s ids are this builder's, its nodes, variables and
+    /// hash as they are, one range; else each name by its text.
     pub fn copy(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
         let id = self.next_id();
         let same = self.same(rule);
+        if same {
+            // Its ids are this builder's: its nodes, variables and hash as they are, one range (`Encoder::copy_run`).
+            self.enc.copy_run(rule.image(), rule.local()..rule.local() + 1);
+            return id;
+        }
         let at = self.enc.begin_rule();
         let n = rule.nodes();
         let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
         self.enc.copy_nodes(from, rule.image(), n.start + 1..n.end, &vars, same);
         self.enc.end_rule(at);
         id
+    }
+    /// Adds copies of `rules`, `from`'s, in order, as `keep` adds each: a run of consecutive rules of one image,
+    /// when `from`'s ids are this builder's, is copied as one range of nodes (`Encoder::copy_run`, 0276 §3), as a
+    /// stratum is (0266 §3); any other rule as `keep` copies it.
+    pub fn keep_run(&mut self, from: &Version, rules: &[RuleRef<'_>]) {
+        let mut i = 0;
+        while i < rules.len() {
+            let r = rules[i];
+            if !self.same(r) {
+                self.keep(from, r);
+                i += 1;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < rules.len() && std::ptr::eq(rules[j].image(), r.image()) && rules[j].local() == rules[j - 1].local() + 1 {
+                j += 1;
+            }
+            let first = self.enc.copy_run(r.image(), r.local()..r.local() + (j - i) as u32);
+            if self.parent.is_none() {
+                for (n, kept) in rules[i..j].iter().enumerate() {
+                    self.enc.set_from(first + n as u32, kept.id());
+                }
+            }
+            i = j;
+        }
     }
     /// Adds a copy of `rule`, one of a derivation's input's, recording it as the copy's source (§9): a rule a pass
     /// kept as it was (`manager`'s derivations).
