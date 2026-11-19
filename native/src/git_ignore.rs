@@ -297,10 +297,11 @@ impl Stamp {
     }
 }
 
-/// A digest of `bytes`, compared only within one process.
+/// A digest of `bytes`, compared only within one process: foldhash's, which reads an index of
+/// hundreds of kilobytes in a fraction of the time SipHash takes, as a question on a share does.
 fn digest(bytes: &[u8]) -> u64 {
-    use std::hash::Hasher;
-    let mut hasher = std::hash::DefaultHasher::new();
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = foldhash::quality::FixedState::with_seed(0).build_hasher();
     hasher.write(bytes);
     hasher.finish()
 }
