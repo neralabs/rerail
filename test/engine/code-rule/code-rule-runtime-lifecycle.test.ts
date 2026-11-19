@@ -805,13 +805,16 @@ describe("source-scoped steers", () => {
     const BUSY_TIMEOUT_MS = 5_000;
 
     // The turn end's own event puts a removed row back before the walk. A row removed while the walk runs is first found
-    // gone by the place's write, in the transaction that writes the turn end's places; the claim that the put-back
-    // writes again goes through another connection, which would wait out the busy timeout behind that transaction.
-    it("writes the session's claim again at once when a turn end's place is the first write to find its row gone, and records the place once", async () => {
+    // gone by the first place's write, in the transaction that writes the turn end's places; the claim that the put-back
+    // writes again goes through another connection, which would wait out the busy timeout behind that transaction. The
+    // second place's write finds the row back, so the claim comes back only if the first place's put-back counts.
+    it("writes the session's claim again at once when the first of a turn end's two places finds its row gone, and records each place once", async () => {
       const root = await realpath(await temporaryDirectory());
       const store = await realpath(await temporaryDirectory());
       const locked = join(root, "locked");
+      const locked2 = join(root, "locked2");
       await mkdir(locked);
+      await mkdir(locked2);
       const runtime = gapRuntime(root, store);
       const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
       try {
@@ -822,16 +825,20 @@ describe("source-scoped steers", () => {
         const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
         let removals = 0;
         vi.mocked(opendir).mockImplementation(async (...args) => {
-          if (String(args[0]) !== locked) return actual.opendir(...args);
+          const folder = String(args[0]);
+          if (folder !== locked && folder !== locked2) return actual.opendir(...args);
           if (removals === 0) removeSessionRow(store);
           removals += 1;
-          throw Object.assign(new Error(denial(locked)), { code: "EACCES" });
+          throw Object.assign(new Error(denial(folder)), { code: "EACCES" });
         });
         const startedAt = performance.now();
         expect(await turnEnd(runtime, 2)).toEqual([]);
         const tookMs = performance.now() - startedAt;
         expect({ removed: removals > 0, ...rowAndClaim(store) }).toEqual({ removed: true, ...claimed });
-        expect(gapRows(store).map(row => row.payload)).toEqual([{ boundary: "turn", path: "locked", reason: denial(locked) }]);
+        expect(gapRows(store).map(row => row.payload)).toEqual([
+          { boundary: "turn", path: "locked", reason: denial(locked) },
+          { boundary: "turn", path: "locked2", reason: denial(locked2) },
+        ]);
         expect(stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("claim"))).toEqual([]);
         expect(tookMs).toBeLessThan(BUSY_TIMEOUT_MS);
       } finally {
