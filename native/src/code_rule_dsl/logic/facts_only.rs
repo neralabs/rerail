@@ -59,6 +59,16 @@ const FACT_STORE: &[&str] = &[
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
     "memo_entries",
     "memo_packs",
+    // The segment files the frames' bytes and the sources' and tapes' bytes are in (decision 0295 §4, step 5): a row
+    // names a file, as `memo_packs` does.
+    "frame_segments",
+    "object_segments",
+    // Each guest document's key (decision 0391): its identity's, one row a guest, as `paths` and `hashes` are.
+    "guest_keys",
+    // The observer's own journal (decision 0400 §4): what changed under a root, by the check that saw it. An
+    // observation of the file system where its journal cannot be asked, as the git and snapshot tables are, not a
+    // result derived.
+    "observed_changes",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
@@ -224,7 +234,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
     // The device's wave on this thread (decision 0113 §3): its open command buffer, the waves flushed, the strata
     // waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a result kept.
-    ("code_rule_dsl/logic/native/setfix/device.rs", "WAVE"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
@@ -389,6 +398,27 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/write_back.rs", "WRITERS"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
+    // Open things a run holds while it runs: the device joins' open submission (`lanes`), a run's given versions of
+    // its changed reads (dropped at its end), and the rule being compiled's arena-text columns (as `BINDER`).
+    ("code_rule_dsl/logic/lanes.rs", "OPEN"),
+    ("code_rule_dsl/logic/native/setfix.rs", "GIVEN"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
+    // `RERAIL_KEPT_DOCS` (a debugging aid, Q20): its switch and the rows it counted, printed, never read back.
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "LISTED"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_DOCS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_ROWS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "COUNTING"),
+    // Profiling: `RERAIL_HEAP_AT`'s switch, and the trees a thread decoded from versions (a count).
+    ("code_rule_dsl/logic/profile/memory.rs", "AT"),
+    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
+    // What the crates register at load: the languages' world rows, the tapes stored as they are, the record's kinds.
+    ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
+    ("content_store/compression.rs", "KEPT_AS_IS"),
+    ("content_store/record.rs", "KINDS"),
+    // The stores forgotten (as a test's store is removed): which files no frames job reads again.
+    ("content_store/upkeep.rs", "GONE"),
+    // A test's log (`record.rs`'s `#[cfg(test)]` module, which the file filter cannot leave out by name).
+    ("content_store/record.rs", "LOG"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
@@ -401,7 +431,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "COMBINED", "2"),
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
     ("code_rule_dsl/logic/plan/choices.rs", "KEPT", "2"),
-    ("code_rule_dsl/logic/plan/corpus/guests.rs", "KEPT", "3"),
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
@@ -420,8 +449,9 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "LOWERED", "7"),
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
-/// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 24;
+/// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised. 22 (2026-11-19): the guests' parses moved
+/// to the run (7c273bdd8, guests.rs's `KEPT`), and a move before it had left the pin one over the list.
+const NOT_YET_MAPS_PIN: usize = 22;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")

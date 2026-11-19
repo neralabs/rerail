@@ -5207,6 +5207,11 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
     `COUNTING`, `KEPT_DOCS` and `KEPT_ROWS`, and more.
 - **Next**: classify each by its decision (0103, 0104), or move it where the guard says. A table or map that is a
   cache is to be rules, not a list entry ([[caches-are-ordinary-rules]]).
+- **Done** (2026-11-19): none is a cache. `frame_segments`, `object_segments` (segment files), `guest_keys` (0391)
+  and `observed_changes` (0400 §4, the observer's journal) are the store's own; the 14 maps are state (open things,
+  registries, switches, profiling, a test's log). Entries gone are cut: `WAVE`, guests.rs's `KEPT` (moved to the run
+  by 7c273bdd8; the maps' pin 24 to 22, one move before it had left the pin over), run_state's `WAVES`, `TICKETS`
+  and `TOGETHER`. The three guards and `run_state`'s pass.
 
 ### Q234. (Q213 on Swift-Kotlin-Scala-support) The engine keeps the grammars' proof answers as it keeps images (0414)
 

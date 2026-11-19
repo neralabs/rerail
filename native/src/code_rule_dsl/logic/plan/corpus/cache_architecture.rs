@@ -38,6 +38,9 @@ const NOT_CACHES: &[&str] = &[
     "source_objects", "source_aliases", "strings", "atom_blocks", "hashes", "paths", "store_state", "store_identity", "object_pins",
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
+    // Each guest document's key (decision 0391), as `paths`; the observer's own journal of what changed under a root
+    // (decision 0400 §4), an observation of the file system as the git and snapshot tables are.
+    "guest_keys", "observed_changes",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
