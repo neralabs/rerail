@@ -1176,7 +1176,7 @@ async function answered(response: ServerResponse, body: string): Promise<boolean
   response.once("finish", () => (finished = true));
   response.end(body);
   await closed;
-  // A failed write still finishes the answer; the error it left on the connection says the client never got it.
+  // A write the closed connection refused (EPIPE) emits no finish and leaves its error on the connection.
   return live && finished && connection.errored === null;
 }
 
