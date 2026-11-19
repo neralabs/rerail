@@ -13,6 +13,11 @@
 //!   after another, keep using the first and what it caches; runs at once each get their own.
 //! - A store the user names (`RERAIL_TAPE_CACHE`) is waited for (`named`): a process that finds another owning it
 //!   says so and starts once that one ends, or gives up after `NAMED_WAIT` with an error that names it.
+//! - A store whose lock cannot be made or taken at all (no file locks: the browser build, the only process on its
+//!   filesystem) is used as before, without an owner; said once, unless the platform has no file locks.
+//!
+//! Each answer is the process's for its life: asked again, a store is owned, used without a lock, or refused as it
+//! was the first time.
 
 use std::collections::HashMap;
 use std::fs::{File, TryLockError};
@@ -27,14 +32,19 @@ pub const NAMED_WAIT: Duration = Duration::from_secs(600);
 enum Claim {
     /// The store is this process's: its lock file, locked, kept open to the process's end.
     Owned(#[allow(dead_code)] File),
+    /// Its lock could not be made or taken (`unlocked`): used without an owner.
+    Unlocked,
     /// Another process kept it past the wait: why this process runs without it.
     Refused(String),
 }
 
-/// The stores this process claimed, by path.
+/// The stores this process claimed, by path. Held only to look up and record, never across a wait.
 static CLAIMS: LazyLock<Mutex<HashMap<PathBuf, Claim>>> = LazyLock::new(Default::default);
 /// The slot this process owns of each base store it asked for (`slot`).
 static SLOTS: LazyLock<Mutex<HashMap<PathBuf, PathBuf>>> = LazyLock::new(Default::default);
+/// Held by the thread waiting for a named store (`named_within`): another thread of the process asking for one waits
+/// for its answer, and never takes the lock file a second time against its own process.
+static WAITING: Mutex<()> = Mutex::new(());
 
 fn claims() -> MutexGuard<'static, HashMap<PathBuf, Claim>> {
     CLAIMS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -47,8 +57,31 @@ fn beside(store: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// The store's lock file, opened (made, with its folder, where missing).
 fn lock_file(store: &Path) -> std::io::Result<File> {
+    if let Some(dir) = store.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)?;
+    }
     std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(beside(store, "-owner.lock"))
+}
+
+/// Whether `file` (locked) is still the lock file at `store`'s path: a cleanup (`remove_unowned`) unlinks a lock file
+/// last, holding it, so a process that opened it before and locks it after has a lock no one else can see.
+fn still_there(file: &File, store: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (file.metadata(), std::fs::metadata(beside(store, "-owner.lock"))) {
+            (Ok(held), Ok(named)) => (held.dev(), held.ino()) == (named.dev(), named.ino()),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // Elsewhere an open file is not removed while another process holds it.
+        let _ = (file, store);
+        true
+    }
 }
 
 /// Names this process as `store`'s holder, replacing the record whole so a reader never sees half of one.
@@ -74,23 +107,46 @@ pub fn holder(store: &Path) -> String {
     }
 }
 
-/// Takes `store` for this process without waiting: whether it is this process's now. A lock that cannot be made or
-/// taken at all (no file locks: the browser build, the only process on its filesystem) leaves it to this process too.
-fn try_own(store: &Path, claims: &mut HashMap<PathBuf, Claim>) -> bool {
-    match claims.get(store) {
-        Some(Claim::Owned(_)) => return true,
-        Some(Claim::Refused(_)) => return false,
-        None => {}
+/// `store` used without an owner, its lock file failing with `error`: said, unless the platform has no file locks.
+fn unlocked(store: &Path, error: &std::io::Error) -> Claim {
+    if error.kind() != std::io::ErrorKind::Unsupported {
+        eprintln!("rerail-engine: cannot lock {} ({error}); this process uses the store without owning it", beside(store, "-owner.lock").display());
     }
-    let Ok(file) = lock_file(store) else { return true };
-    match file.try_lock() {
-        Ok(()) => {
-            record(store);
-            claims.insert(store.to_path_buf(), Claim::Owned(file));
-            true
+    Claim::Unlocked
+}
+
+/// What this process already answered for `store`: `Some(true)` owned or used without a lock, `Some(false)` refused.
+fn answered(store: &Path, claims: &HashMap<PathBuf, Claim>) -> Option<bool> {
+    claims.get(store).map(|c| !matches!(c, Claim::Refused(_)))
+}
+
+/// Takes `store` for this process without waiting: whether this process may use it now (owned, or without a lock).
+fn try_own(store: &Path, claims: &mut HashMap<PathBuf, Claim>) -> bool {
+    if let Some(usable) = answered(store, claims) {
+        return usable;
+    }
+    loop {
+        let file = match lock_file(store) {
+            Ok(file) => file,
+            Err(error) => {
+                claims.insert(store.to_path_buf(), unlocked(store, &error));
+                return true;
+            }
+        };
+        match file.try_lock() {
+            // A lock file a cleanup unlinked meanwhile: the one at the path now is the store's.
+            Ok(()) if !still_there(&file, store) => continue,
+            Ok(()) => {
+                record(store);
+                claims.insert(store.to_path_buf(), Claim::Owned(file));
+                return true;
+            }
+            Err(TryLockError::WouldBlock) => return false,
+            Err(TryLockError::Error(error)) => {
+                claims.insert(store.to_path_buf(), unlocked(store, &error));
+                return true;
+            }
         }
-        Err(TryLockError::WouldBlock) => false,
-        Err(TryLockError::Error(_)) => true,
     }
 }
 
@@ -120,54 +176,81 @@ pub fn slot(base: &Path) -> PathBuf {
 }
 
 /// Claims `store`, which the user named, for this process: at once when no other process owns it, else once that
-/// one ends, waiting at most `NAMED_WAIT`. Asked again, answers as it did the first time. The error names the holder.
+/// one ends, waiting at most `NAMED_WAIT`. Asked again, answers as it did the first time. The error names the holder,
+/// and is said once as it is made: every caller but the run's opener (`tape_cache`) then sees no store.
 pub fn named(store: &Path) -> Result<(), String> {
     named_within(store, NAMED_WAIT)
 }
 
 pub(super) fn named_within(store: &Path, wait: Duration) -> Result<(), String> {
-    let mut claims = claims();
-    match claims.get(store) {
-        Some(Claim::Owned(_)) => return Ok(()),
-        Some(Claim::Refused(why)) => return Err(why.clone()),
-        None => {}
+    let refused = |claims: &HashMap<PathBuf, Claim>| match claims.get(store) {
+        Some(Claim::Refused(why)) => Err(why.clone()),
+        _ => Ok(()),
+    };
+    {
+        let claims = claims();
+        if claims.contains_key(store) {
+            return refused(&claims);
+        }
     }
-    let Ok(file) = lock_file(store) else { return Ok(()) };
+    let _one = WAITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Another thread of the process may have answered while this one waited for it.
+    {
+        let claims = claims();
+        if claims.contains_key(store) {
+            return refused(&claims);
+        }
+    }
+    let claim = wait_for(store, wait);
+    let mut claims = claims();
+    claims.insert(store.to_path_buf(), claim);
+    refused(&claims)
+}
+
+/// `store`'s claim once its lock is this process's, or another process kept it past `wait`; no map held meanwhile.
+fn wait_for(store: &Path, wait: Duration) -> Claim {
     let mut said = false;
     let deadline = Instant::now() + wait;
     let mut pause = Duration::from_millis(5);
     loop {
-        match file.try_lock() {
-            Ok(()) => break,
-            Err(TryLockError::Error(_)) => return Ok(()),
-            Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
-                if !said {
-                    eprintln!(
-                        "rerail-engine: the store {} belongs to {}; waiting for it to end (at most {} s): a store is one process's at a time",
+        let file = match lock_file(store) {
+            Ok(file) => file,
+            Err(error) => return unlocked(store, &error),
+        };
+        loop {
+            match file.try_lock() {
+                Ok(()) if !still_there(&file, store) => break,
+                Ok(()) => {
+                    record(store);
+                    return Claim::Owned(file);
+                }
+                Err(TryLockError::Error(error)) => return unlocked(store, &error),
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    if !said {
+                        eprintln!(
+                            "rerail-engine: the store {} belongs to {}; waiting for it to end (at most {} s): a store is one process's at a time",
+                            store.display(),
+                            holder(store),
+                            wait.as_secs()
+                        );
+                        said = true;
+                    }
+                    std::thread::sleep(pause.min(deadline.saturating_duration_since(Instant::now())));
+                    pause = (pause * 2).min(Duration::from_millis(500));
+                }
+                Err(TryLockError::WouldBlock) => {
+                    let why = format!(
+                        "the store {} belongs to {}, which kept it past the {} s this process waited: a store is one process's at a time (decisions 0049, 0160); name another with RERAIL_TAPE_CACHE, or leave it unset for one of the engine's own",
                         store.display(),
                         holder(store),
                         wait.as_secs()
                     );
-                    said = true;
+                    eprintln!("rerail-engine: {why}; this process runs without it");
+                    return Claim::Refused(why);
                 }
-                std::thread::sleep(pause.min(deadline.saturating_duration_since(Instant::now())));
-                pause = (pause * 2).min(Duration::from_millis(500));
-            }
-            Err(TryLockError::WouldBlock) => {
-                let why = format!(
-                    "the store {} belongs to {}, which kept it past the {} s this process waited: a store is one process's at a time (decisions 0049, 0160); name another with RERAIL_TAPE_CACHE, or leave it unset for one of the engine's own",
-                    store.display(),
-                    holder(store),
-                    wait.as_secs()
-                );
-                claims.insert(store.to_path_buf(), Claim::Refused(why.clone()));
-                return Err(why);
             }
         }
     }
-    record(store);
-    claims.insert(store.to_path_buf(), Claim::Owned(file));
-    Ok(())
 }
 
 /// Why this process runs without `store`, which the user named: another process kept it past the wait (`named`).
@@ -178,19 +261,41 @@ pub fn refusal(store: &Path) -> Option<String> {
     }
 }
 
-/// Whether a live process other than this one owns the store that the file `name` in `dir` belongs to (its name up to
-/// `.sqlite`): a cleanup leaves such a store's files.
-pub fn owned_elsewhere(dir: &Path, name: &str) -> bool {
-    let Some(at) = name.find(".sqlite") else { return false };
-    let store = dir.join(&name[..at + ".sqlite".len()]);
-    if claims().contains_key(&store) {
-        return true;
+/// Removes the files `names` in `dir` (a cleanup's: another build's, unused for a day), each store's whole while
+/// holding its owner lock, and the lock file last: a store a live process owns keeps its files. A process that opened
+/// the lock file before it went finds it gone once it locks it (`still_there`), and takes the new one.
+pub fn remove_unowned(dir: &Path, names: &[String]) {
+    let mut stores: HashMap<&str, Vec<&String>> = HashMap::new();
+    for name in names {
+        match name.find(".sqlite") {
+            Some(at) => stores.entry(&name[..at + ".sqlite".len()]).or_default().push(name),
+            None => {
+                let _ = std::fs::remove_file(dir.join(name));
+            }
+        }
     }
-    let lock = beside(&store, "-owner.lock");
-    if !lock.exists() {
-        return false;
+    for (store, files) in stores {
+        let store = dir.join(store);
+        let lock = beside(&store, "-owner.lock");
+        let held = match std::fs::OpenOptions::new().read(true).write(true).open(&lock) {
+            Ok(file) => match file.try_lock() {
+                Ok(()) => Some(file),
+                Err(_) => continue,
+            },
+            Err(_) => None,
+        };
+        if claims().contains_key(&store) {
+            continue;
+        }
+        let lock_name = lock.file_name().map(|n| n.to_string_lossy().into_owned());
+        for name in files.iter().filter(|n| Some(n.as_str()) != lock_name.as_deref()) {
+            let _ = std::fs::remove_file(dir.join(name));
+        }
+        if held.is_some() && files.iter().any(|n| Some(n.as_str()) == lock_name.as_deref()) {
+            let _ = std::fs::remove_file(&lock);
+        }
+        drop(held);
     }
-    std::fs::OpenOptions::new().read(true).write(true).open(lock).is_ok_and(|file| matches!(file.try_lock(), Err(TryLockError::WouldBlock)))
 }
 
 #[cfg(test)]
@@ -306,7 +411,38 @@ mod tests {
         assert!(why.contains("belongs to process 4242") && why.contains("RERAIL_TAPE_CACHE"), "{why}");
         assert_eq!(super::refusal(&store).as_deref(), Some(why.as_str()), "kept: the process runs without it");
         assert_eq!(super::named(&store), Err(why), "asked again, the same answer");
-        assert!(super::owned_elsewhere(dir.path(), "held.sqlite-wal"), "a cleanup leaves a store another process owns");
+    }
+
+    /// A named store in a folder not made yet is this process's from its first ask: the lock file is made with the
+    /// folder, so no later ask, with the store open, finds it to take.
+    #[test]
+    fn a_named_store_in_a_new_folder_is_owned_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("new/folder/named.sqlite");
+        assert_eq!(super::named_within(&store, Duration::from_millis(50)), Ok(()));
+        let other = std::fs::OpenOptions::new().read(true).write(true).open(super::beside(&store, "-owner.lock")).unwrap();
+        assert!(matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)), "the lock is this process's");
+        assert_eq!(super::named_within(&store, Duration::from_millis(50)), Ok(()), "asked again, the same answer");
+    }
+
+    /// A cleanup removes an unused store's files, its lock file with them, and leaves every file of a store another
+    /// process owns (here an open file of the test's own, locked, as the OS sees another process's).
+    #[test]
+    fn a_cleanup_leaves_a_store_another_process_owns() {
+        let dir = tempfile::tempdir().unwrap();
+        let names = |store: &str| -> Vec<String> { ["", "-wal", "-owner.lock", "-owner.json", ".files"].iter().map(|s| format!("{store}{s}")).collect() };
+        let mut all: Vec<String> = names("held.sqlite").into_iter().chain(names("free.sqlite")).chain(["loose".to_owned()]).collect();
+        for name in &all {
+            std::fs::write(dir.path().join(name), "").unwrap();
+        }
+        let other = std::fs::OpenOptions::new().read(true).write(true).open(dir.path().join("held.sqlite-owner.lock")).unwrap();
+        other.lock().unwrap();
+        super::remove_unowned(dir.path(), &all);
+        let mut left: Vec<String> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        all = names("held.sqlite");
+        all.sort();
+        assert_eq!(left, all, "the held store's files stay; the free store's and the loose file go");
     }
 
     /// One of the processes above: owns its store (a slot of `RERAIL_OWNER_CHILD_BASE`, or the one `RERAIL_TAPE_CACHE`
