@@ -79,7 +79,7 @@ fn admitted(rules: &[(&Plan, &JoinRule, usize)], rep: &mut Report) -> Result<rer
 /// overflow runs the stage again exactly.
 fn table_rows(cap_in: usize, nr: usize, scan: bool, seen: Option<f64>, est: Option<f64>) -> usize {
     let seen = seen.map(|r| ((cap_in as f64 * r * 1.25).ceil() as usize).max(16));
-    let est = est.map(|e| ((e * EST_MARGIN).ceil() as usize).max(16));
+    let est = est.filter(|_| !rerail_accel::gpu::shared::q180_off("est")).map(|e| ((e * EST_MARGIN).ceil() as usize).max(16));
     if scan {
         return seen.or(est).map_or(nr, |e| e.min(nr)).max(1);
     }

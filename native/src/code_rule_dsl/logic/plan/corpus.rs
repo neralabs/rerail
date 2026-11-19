@@ -2895,7 +2895,7 @@ const RUN_MB: f64 = 1024.0;
 /// Metal budget bounds, on top of the overall one (decision 0126). On unified memory the footprint counts them.
 fn device_mb() -> usize {
     #[cfg(target_os = "macos")]
-    return rerail_accel::gpu::shared::device_held() >> 20;
+    return if rerail_accel::gpu::shared::q180_off("chunk") { 0 } else { rerail_accel::gpu::shared::device_held() >> 20 };
     #[cfg(not(target_os = "macos"))]
     0
 }

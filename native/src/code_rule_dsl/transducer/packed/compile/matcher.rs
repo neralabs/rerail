@@ -1213,6 +1213,7 @@ impl LoweredWave {
         // One tape that does not fit while strata hold or have reserved the device's room (Q180: their admission):
         // the wave, nothing of it encoded, waits for some of it to come back and runs again, up to its patience.
         let t0 = std::time::Instant::now();
+        let mut waits = 0;
         while tapes.len() == 1 && matches!(found, Err(Error::BackendCapacity)) {
             let left = WAVE_ROOM_PATIENCE - t0.elapsed().as_secs_f64();
             #[cfg(target_os = "macos")]
@@ -1220,8 +1221,16 @@ impl LoweredWave {
             #[cfg(not(target_os = "macos"))]
             let released = false;
             if left <= 0.0 || !released {
+                #[cfg(target_os = "macos")]
+                eprintln!(
+                    "rerail: a one-tape matcher wave found no room after {waits} waits, {:.3} s ({}); the device: {}",
+                    t0.elapsed().as_secs_f64(),
+                    if left <= 0.0 { "its patience" } else { "nothing held by threads that go on" },
+                    rerail_accel::gpu::shared::describe()
+                );
                 break;
             }
+            waits += 1;
             crate::code_rule_dsl::prof::count("wave.waited_for_room", 1);
             found = run();
         }

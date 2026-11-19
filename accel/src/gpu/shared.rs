@@ -537,7 +537,7 @@ pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
 /// - past `patience`, the seconds waiting is worth (`placement::worth_waiting`: the CPU's price over the device's).
 pub fn admit(bytes: usize, patience: f64) -> Result<Admitted, String> {
     let budget = crate::budget::metal();
-    if bytes == 0 {
+    if bytes == 0 || q180_off("admit") {
         return Ok(Admitted { waited: 0.0 });
     }
     if bytes > budget {
@@ -586,6 +586,9 @@ pub fn admit(bytes: usize, patience: f64) -> Result<Admitted, String> {
 /// comes back (true), running the pool's jobs meanwhile. False at once when they hold nothing (no lease coming back
 /// can make room: as `admit`, waiting for a waiting thread is a deadlock), and past `patience` seconds.
 pub fn wait_for_release(patience: f64) -> bool {
+    if q180_off("wave") {
+        return false;
+    }
     let me = holder();
     let others = || -> usize {
         holders().lock().expect("the holders").iter().filter(|(t, (_, waiting))| **t != me && *waiting == 0).map(|(_, (held, _))| *held).sum::<usize>() + reserved()
@@ -606,6 +609,26 @@ pub fn wait_for_release(patience: f64) -> bool {
         e.1 -= 1;
     }
     got
+}
+
+/// A measurement aid (Q180): `RERAIL_Q180_OFF`, a comma list of `est` (tables sized by the planner's estimates),
+/// `admit` (admission), `chunk` (chunks sized by host memory) and `wave` (a wave's wait for room), turns those off,
+/// so one binary measures each against the run without it in one job.
+pub fn q180_off(what: &str) -> bool {
+    static OFF: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    OFF.get_or_init(|| std::env::var("RERAIL_Q180_OFF").map(|v| v.split(',').map(|s| s.trim().to_owned()).collect()).unwrap_or_default()).iter().any(|s| s == what)
+}
+
+/// The device's memory now, for a refusal's message: the pool's leases (those of threads that go on), its idle
+/// buffers, the reservations not yet leased, and the buffer pool's ledger, of the Metal budget.
+pub fn describe() -> String {
+    let (live, idle) = held_bytes();
+    let me = holder();
+    let going: usize = holders().lock().expect("the holders").iter().filter(|(t, (_, waiting))| **t != me && *waiting == 0).map(|(_, (held, _))| *held).sum();
+    format!(
+        "{} MB leased ({} MB by threads that go on), {} MB idle, {} MB reserved, {} MB in the buffer pool's ledger, of {} MB",
+        live >> 20, going >> 20, idle >> 20, reserved() >> 20, other() >> 20, crate::budget::metal() >> 20
+    )
 }
 
 /// A stratum's reservation (`admit`): what its leases did not take goes back when it is dropped, after it encoded.
