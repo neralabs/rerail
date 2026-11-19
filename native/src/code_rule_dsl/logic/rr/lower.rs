@@ -187,6 +187,12 @@ fn place_relation(v: &str) -> String {
 struct Lowerer {
     /// The rules the walk writes onto its header, a text's version (`Written`, decision 0377 step 3).
     out: Written,
+    /// The fresh names the clause's deciding walk made, in order, which its writing walks read again (decision 0276
+    /// A3.3).
+    log: Vec<String>,
+    /// While a writing walk replays the clause: the next name of `log` it reads. Its rule writes then do nothing:
+    /// the deciding walk wrote them.
+    replay: Option<usize>,
     /// Its header (decision 0276 §3): a module's declarations, inputs, facts and fields as the walk states them, its
     /// rules then written onto it (`Written`); the scope's, seeded; the modules' linked so far.
     prog: crate::code_rule_dsl::logic::program_image::Builder<'static>,
@@ -1951,18 +1957,29 @@ impl Lowerer {
     /// A new name, none the program declares: a printed program (`rr::print`) declares the helpers it was lowered
     /// with, and lowering it again makes more.
     fn fresh(&mut self, stem: &str) -> String {
+        if let Some(at) = self.replay.as_mut() {
+            let name = self.log.get(*at).cloned().expect("a replayed walk makes the names its deciding walk made");
+            *at += 1;
+            return name;
+        }
         let prog = &self.prog;
-        fresh_name(&mut self.next, &mut self.made, |n| prog.declares(n), stem)
+        let name = fresh_name(&mut self.next, &mut self.made, |n| prog.declares(n), stem);
+        self.log.push(name.clone());
+        name
     }
 
-    /// A rule the walk made, written onto its header (`out`).
+    /// A rule the walk made, written onto its header (`out`); nothing in a replay, whose deciding walk wrote it.
     fn write(&mut self, rule: Rule) {
-        self.out.write(&mut self.prog, &rule, false);
+        if self.replay.is_none() {
+            self.out.write(&mut self.prog, &rule, false);
+        }
     }
 
     /// `rule`, unless the walk wrote it already: a demand is written once.
     fn write_once(&mut self, rule: Rule) {
-        self.out.write(&mut self.prog, &rule, true);
+        if self.replay.is_none() {
+            self.out.write(&mut self.prog, &rule, true);
+        }
     }
 
     /// How many rules the walk has written.
@@ -1970,9 +1987,13 @@ impl Lowerer {
         self.out.n
     }
 
-    /// Ends rule `o`, open on the header (`Builder::open_rule`), as one the walk wrote.
+    /// Ends rule `o`, open on the header (`Builder::open_rule`), as one the walk wrote; left out in a replay.
     fn close(&mut self, o: crate::code_rule_dsl::logic::program_image::Open) {
-        self.out.close(&mut self.prog, o, false);
+        if self.replay.is_some() {
+            self.prog.abandon_rule(o);
+        } else {
+            self.out.close(&mut self.prog, o, false);
+        }
     }
 
     /// A helper relation named `name` (a `fresh` one of `stem`), with these columns and rules; or, when one made
@@ -2160,17 +2181,16 @@ impl Lowerer {
             Some(L::Atom { rel, neg: false, .. }) => Some(rel),
             _ => None,
         };
-        // An aggregate in a head's argument (`cc(f, 1 + count : { … })`) is a variable the body binds.
-        let mut body = body;
-        let mut sub = None;
-        for a in heads.iter().flat_map(|h| h.args.iter()) {
-            self.hoist(a, 0, &mut sub, &mut body, true);
-        }
-        let s = sub.unwrap_or(0);
-        let heads: Vec<HeadAt> = heads.into_iter().map(|h| HeadAt { args: h.args.into_iter().map(|a| reads::with_sub_at(a, s)).collect(), ..h }).collect();
-        let mut outer = Vec::new();
-        heads.iter().flat_map(|h| &h.args).for_each(|a| self.term_vars(a, &mut outer));
-        let bodies = self.conjunction(&body, &outer.into_iter().collect())?;
+        // The deciding walk, then a writing walk that replays it (decision 0276 A3.3): the same bodies.
+        self.log.clear();
+        self.replay = None;
+        let (heads, bodies) = self.clause_bodies(c, heads, body.clone())?;
+        self.subs.truncate(1);
+        self.replay = Some(0);
+        let again = self.clause_bodies(c, self.heads_at(c), body);
+        self.replay = None;
+        let (_, again) = again?;
+        debug_assert!(again == bodies, "a replayed clause lowers as its deciding walk did");
         for head in &heads {
             if let Some(m) = &head.modal
                 && !self.three.contains(&head.rel)
@@ -2204,6 +2224,22 @@ impl Lowerer {
             }
         }
         Ok(())
+    }
+
+    /// Clause `c`'s heads, each argument read under the substitution its hoisting made, and its bodies: the
+    /// aggregates in the heads' arguments hoisted into the body (`cc(f, 1 + count : { … })` is a variable the body
+    /// binds), and the conjunction's alternatives.
+    fn clause_bodies(&mut self, _c: u32, heads: Vec<HeadAt>, mut body: Vec<LitAt>) -> Result<(Vec<HeadAt>, Vec<Vec<Literal>>), Error> {
+        let mut sub = None;
+        for a in heads.iter().flat_map(|h| h.args.iter()) {
+            self.hoist(a, 0, &mut sub, &mut body, true);
+        }
+        let s = sub.unwrap_or(0);
+        let heads: Vec<HeadAt> = heads.into_iter().map(|h| HeadAt { args: h.args.into_iter().map(|a| reads::with_sub_at(a, s)).collect(), ..h }).collect();
+        let mut outer = Vec::new();
+        heads.iter().flat_map(|h| &h.args).for_each(|a| self.term_vars(a, &mut outer));
+        let bodies = self.conjunction(&body, &outer.into_iter().collect())?;
+        Ok((heads, bodies))
     }
 
     /// A conjunction's alternatives (one per choice in its disjunctions).

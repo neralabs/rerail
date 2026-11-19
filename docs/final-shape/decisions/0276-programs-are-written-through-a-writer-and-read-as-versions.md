@@ -478,6 +478,12 @@ Progress (2026-11-18):
       rule opens, which collects the chosen alternatives' `unset(v)` variables, then applied as each term is put;
       and the merge of consecutive negated tests of one subject (`merge_negated_tests`) by holding one pending
       negated test (its operation, its subject's position and its patterns) until the next literal is written.
+    - *Done (A3.3 stage 1, the replay).* The lowerer logs the clause's fresh names as its deciding walk makes them
+      and reads them back in a replay (`log`, `replay`); a replay's rule writes do nothing, and `helper_once` finds
+      the helper the deciding walk made by its key. Each clause is lowered twice, the second time as a replay, and
+      checked to lower to the same bodies: it does over the library and every pack (the print-back tests,
+      `library_modules_link`, `dropping_unreached` over the other packs). The second walk doubles the lowering until
+      each literal writes its picked alternative (stage 2): the eight tests took 203 s, against 115 s before.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,
