@@ -5146,6 +5146,12 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Keep**: decision 0089's library held once, and the request cones as they are; Tim's fixes (363b91c0b, 4146acbd9,
   afeb076e5) are on the tree's lowering (`rr::Text::lower_in`), so they are ported onto the version's combine.
 - **Done when**: the six `corpus::tests` named in t47 pass, unignored.
+- **Done** (2026-11-18, branch `pr508-fixes-as-tests`): all six pass on the M3, unignored, with the kind-set, span,
+  library, cycle, cone and `nearest` tests (65 of 66; the 66th, `calls_into_the_standard_library_reach_its_stubs`,
+  fails the same at the hub tip 65e368a0b: see Q244). On versions: `lower::keep_declared_kind_sets`,
+  `cycles::check_given`, facts asking of the library (363b91c0b); `KindSets` and `SpanPatterns` given the library
+  (`kinds_of` over the library's version, `Library::spans` from `lower::span_columns`), each keyed by the library's
+  digest; the merge's `library_sets` (afeb076e5, 4146acbd9).
 
 ### Q242. (PR #508, t47) A pack's guests and dialects
 
@@ -5170,6 +5176,9 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   (eslint-yoda's `yoda_in_order`).
 - **Keep**: Tim's 3fe6f8227, without the 0201 ports he reverted (adfb49fac; see Q247).
 - **Done when**: `rr::tests::a_negated_cross_product_is_bound_by_the_rules_context` passes, unignored.
+- **Also seen** (2026-11-18): `typing::oracle_tests::calls_into_the_standard_library_reach_its_stubs` fails at the hub
+  tip 65e368a0b with "unbounded node Cartesian product in `base`". Check whether 3fe6f8227 fixes it; if not, it is its
+  own item.
 
 ### Q245. (PR #508, t47) `using` as a name reads without a syntax error
 

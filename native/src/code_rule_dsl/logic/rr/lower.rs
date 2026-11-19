@@ -1524,13 +1524,33 @@ pub fn is_place_call(name: &str) -> bool {
 /// A derived relation's column holds the spans its rules bind it to: each rule binds it so, directly or through
 /// another such column (a fixpoint); rules that bind it differently give it each (string contents and comments).
 pub fn span_patterns(p: &SpanProgram<'_>) -> Result<SpanPatterns, Error> {
+    spans(p, true).map(|(found, _)| found)
+}
+
+/// Each relation's columns' span sets, by name (`span_columns`): `None` where a column is bound to no span.
+pub type SpanColumns = BTreeMap<String, Vec<Option<BTreeSet<SpanIn>>>>;
+
+/// The span sets of a linked program's columns (a library's, `rr::Library::spans`): what a module lowered in its
+/// scope reads of the relations the library derives (PR #508's 4146acbd9, t47).
+pub fn span_columns(p: &SpanProgram<'_>) -> Result<SpanColumns, Error> {
+    spans(p, false).map(|(_, columns)| columns)
+}
+
+/// `span_patterns`, or where `patterns` is false the columns' span sets after the bottom-up fixpoint (`span_columns`).
+/// A library relation a module lowered in its library's scope reads (`SpanProgram::library`), declared and not derived
+/// here, holds the spans its library rules bind it to, not none: python's FAST003 matches `match_all` over
+/// `route_path`'s `s`, a string by misc2-fastapi.rr's `plain_str`, and found nothing in a pack.
+fn spans(p: &SpanProgram<'_>, patterns: bool) -> Result<(SpanPatterns, SpanColumns), Error> {
     use SpanTerm as Term;
     // The relations by number, and each column's spans a vector per relation.
     let mut id: rustc_hash::FxHashMap<&str, u32> = Default::default();
+    let mut names: Vec<&str> = Vec::new();
     {
         let mut number = |rel| {
             let n = id.len() as u32;
-            id.entry(rel).or_insert(n);
+            if *id.entry(rel).or_insert(n) == n {
+                names.push(rel);
+            }
         };
         for r in &p.rules {
             number(r.head.rel);
@@ -1540,6 +1560,15 @@ pub fn span_patterns(p: &SpanProgram<'_>) -> Result<SpanPatterns, Error> {
     }
     let rels = id.len();
     let of = |rel: &str| id.get(rel).copied();
+    // A library relation's column, as the library's rules bind it: `Some(None)` where they bind it to no span.
+    // `core.rr`'s relations are each program's own.
+    let given = |rel: u32, c: usize| -> Option<Option<BTreeSet<SpanIn>>> {
+        let name = names[rel as usize];
+        if self::core::is_core(name) {
+            return None;
+        }
+        p.library?.get(name).map(|cols| cols.get(c).cloned().flatten())
+    };
     /// Each relation's columns' span sets, by number.
     struct Cols(Vec<Vec<Option<BTreeSet<SpanIn>>>>);
     impl Cols {
@@ -1584,7 +1613,8 @@ pub fn span_patterns(p: &SpanProgram<'_>) -> Result<SpanPatterns, Error> {
         })
     };
     // A declared relation no rule derives, and that is not read in, has no rows: its columns hold no nodes, and a
-    // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too.
+    // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too. A
+    // library relation of a module lowered in its library's scope holds what the library's rules bind it to.
     {
         let heads: rustc_hash::FxHashSet<&str> = p.rules.iter().map(|r| r.head.rel).collect();
         let inputs: rustc_hash::FxHashSet<&str> = p.inputs.iter().copied().collect();
@@ -1592,7 +1622,11 @@ pub fn span_patterns(p: &SpanProgram<'_>) -> Result<SpanPatterns, Error> {
             if !heads.contains(rel) && !inputs.contains(rel) && !p.natives.contains(rel) {
                 let r = of(rel).expect("a declared relation's number");
                 for i in 0..cols {
-                    columns.insert(r, i, BTreeSet::new());
+                    match given(r, i) {
+                        Some(Some(set)) => columns.insert(r, i, set),
+                        Some(None) => {}
+                        None => columns.insert(r, i, BTreeSet::new()),
+                    }
                 }
             }
         }
@@ -1630,8 +1664,13 @@ pub fn span_patterns(p: &SpanProgram<'_>) -> Result<SpanPatterns, Error> {
                     Some(Term::Var(x)) => binder(&r.body, x, &columns),
                     _ => None,
                 }).collect();
-                if let Some(each) = each {
-                    let all: BTreeSet<SpanIn> = each.into_iter().flatten().collect();
+                // A library relation the module adds to holds the library's rules' spans too.
+                let library_col = given(rel, i);
+                if let Some(each) = each
+                    && library_col != Some(None)
+                {
+                    let mut all: BTreeSet<SpanIn> = each.into_iter().flatten().collect();
+                    all.extend(library_col.flatten().unwrap_or_default());
                     if columns.get(Some(rel), i) != Some(&all) {
                         found.push((rel, i, all));
                     }
@@ -1650,6 +1689,11 @@ pub fn span_patterns(p: &SpanProgram<'_>) -> Result<SpanPatterns, Error> {
         for (r, i, set) in found {
             columns.insert(r, i, set);
         }
+    }
+    if !patterns {
+        // Every relation, a column bound to no span `None`: one absent is no library relation.
+        let mut cols = columns.0;
+        return Ok((SpanPatterns::default(), names.iter().enumerate().map(|(i, rel)| ((*rel).to_owned(), std::mem::take(&mut cols[i]))).collect()));
     }
     // Top-down: a helper's column its own rules do not bind to spans, where every rule that reads the helper binds
     // that argument so (`binder`, or through its own head's such column), holds those spans. The helper derives
@@ -1725,7 +1769,7 @@ pub fn span_patterns(p: &SpanProgram<'_>) -> Result<SpanPatterns, Error> {
             }
         }
     }
-    Ok(out)
+    Ok((out, SpanColumns::new()))
 }
 
 /// `core.rr`'s `kind(n, k)` is a projection of `node`, and so is `docof(n, d)` as T's programs declare it (over
@@ -1839,6 +1883,8 @@ pub struct SpanProgram<'a> {
     pub inputs: Vec<&'a str>,
     pub natives: BTreeSet<&'a str>,
     pub outputs: Vec<&'a str>,
+    /// The library's columns' spans, for a module lowered in its library's scope (`span_columns`).
+    pub library: Option<&'a SpanColumns>,
 }
 
 impl<'a> SpanProgram<'a> {
@@ -1855,6 +1901,7 @@ impl<'a> SpanProgram<'a> {
             inputs: prog.inputs.iter().map(String::as_str).collect(),
             natives: prog.natives.keys().map(String::as_str).collect(),
             outputs: prog.outputs.iter().map(String::as_str).collect(),
+            library: None,
         }
     }
 }

@@ -298,7 +298,7 @@ impl Text {
     /// library is its own version; one that asks has its cone copied on the version (`plan::corpus::cone_on_version`),
     /// the library's tree never decoded.
     fn lowered_in_version(self, library: &Library, scoped: &Scoped) -> Result<Option<std::sync::Arc<super::program_image::Version>>, Error> {
-        let Some(Own { version: own, asked, declared }) = self.lowered_own(scoped, Some(&*library.version))? else { return Ok(None) };
+        let Some(Own { version: own, asked, declared }) = self.lowered_own(scoped, Some(library))? else { return Ok(None) };
         if asked.is_empty() {
             return Ok(Some(own));
         }
@@ -308,7 +308,7 @@ impl Text {
     /// The text's own program, lowered and linked in its libraries' scope, and what it asks of the library: the
     /// library relations it adds to (decision 0089 §3), and every relation the library's files declare.
     /// `library`, the scope's library linked, gives the guarantees of its relations to the value cycles' check.
-    fn lowered_own(self, scoped: &Scoped, library: Option<&super::program_image::Version>) -> Result<Option<Own>, Error> {
+    fn lowered_own(self, scoped: &Scoped, library: Option<&Library>) -> Result<Option<Own>, Error> {
         let Read::Modular { files, own } = self.0 else { return Ok(None) };
         let checked: Vec<syntax::Statement> = own.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { body, .. } if body.is_empty())).cloned().collect();
         let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rr"));
@@ -453,6 +453,8 @@ pub struct Library {
     pub version: std::sync::Arc<super::program_image::Version>,
     /// Its tree, decoded from `version` when a reader asks (`program`): a request's cone copied from it, a tool.
     tree: std::sync::OnceLock<Program>,
+    /// Its columns' spans (`lower::span_columns`), made when a program lowered in its scope first reads them (`spans`).
+    spans: std::sync::OnceLock<std::sync::Arc<lower::SpanColumns>>,
 }
 
 impl Text {
@@ -496,12 +498,22 @@ impl Library {
         if let Some(tree) = tree {
             let _ = held.set(tree);
         }
-        Library { modules, files, keys, version, tree: held }
+        Library { modules, files, keys, version, tree: held, spans: Default::default() }
     }
 
     /// The linked library as a tree, decoded from its version once.
     pub fn program(&self) -> &Program {
         self.tree.get_or_init(|| self.version.program(&Default::default()).expect("the linked library's image reads as a program"))
+    }
+
+    /// Its columns' spans, which a program lowered in its scope reads of the library relations it does not derive
+    /// (`lowering_tail::SpanPatterns`, PR #508's 4146acbd9). Made once; a library whose rules the analysis refuses
+    /// gives none.
+    pub fn spans(&self) -> std::sync::Arc<lower::SpanColumns> {
+        std::sync::Arc::clone(self.spans.get_or_init(|| {
+            let columns = super::plan::corpus::preparation::lowering_tail::with_span_program(&self.version, None, lower::span_columns);
+            std::sync::Arc::new(columns.ok().and_then(Result::ok).unwrap_or_default())
+        }))
     }
 
     /// The aliases the library's images are kept under: each module's, and the linked library's.
@@ -1040,7 +1052,7 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
 
 /// The module linked in `scoped` (`lower::link_seeded_parts`), its own program `own_v`, appended onto
 /// the scope's version and through the lowering's tail.
-fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>, library: Option<&super::program_image::Version>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>, library: Option<&Library>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::Builder;
     let seeds = &scoped.seeds;
     let lower::Linked { lowered, stated, own_stated, .. } = linked;
@@ -1079,7 +1091,7 @@ pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::A
 /// The lowering's whole-program half on versions (`lower::whole` on a tree): the modules `appended` onto `start`
 /// (`lowering_tail::AppendModule`), checked declared where `declared` (a text's link: `link_seeded`), then the passes
 /// `whole` runs, in its order, from what the lowerer knows of the modules (`lowered`).
-fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, appended: Vec<(std::sync::Arc<super::program_image::Version>, usize, usize)>, declared: bool, lowered: lower::Lowered, library: Option<&super::program_image::Version>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, appended: Vec<(std::sync::Arc<super::program_image::Version>, usize, usize)>, declared: bool, lowered: lower::Lowered, library: Option<&Library>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::manager::Pipeline;
     let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
     let mut p = Pipeline::new("the lowering's tail", start);
@@ -1094,15 +1106,15 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
         }
         p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
         p.program(&mut lowering_tail::Findings { pending: findings.clone() });
-        p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
-        p.program(&mut lowering_tail::KindSets { sets: sets.clone() }).program(&mut lowering_tail::Unit);
+        p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) }).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
+        p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) }).program(&mut lowering_tail::Unit);
         p.program(&mut lowering_tail::BooleanRelations).program(&mut lowering_tail::ScopeGlobs);
         for round in lower::ON_REQUEST {
             p.program(&mut SourcesOnRequest { round });
         }
         p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
         // `finish`'s checks, on the version.
-        super::front::finish_checks_given(p.current().map_err(Error::Syntax)?, library)?;
+        super::front::finish_checks_given(p.current().map_err(Error::Syntax)?, library.map(|l| &*l.version))?;
     }
     {
         use super::plan::corpus::preparation::{DropRepeated, lowering_tail};

@@ -1876,7 +1876,6 @@ fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
 /// set's declaration but not its facts, so it held `scope` empty, and its `nearest` climbed to nothing: ruff-n807,
 /// RUF033, AIR303 and F406 found nothing in the python pack. PR #508's afeb076e5 (t47).
 #[test]
-#[ignore = "PR #508 afeb076e5 not ported: Q241"]
 fn a_programs_nearest_over_a_library_kind_set_finds_in_a_pack_what_it_finds_alone() {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
     let near = ".language python\n#include \"python/names.rr\"\n.decl top(x: symbol)\n\
@@ -1902,7 +1901,6 @@ fn a_programs_nearest_over_a_library_kind_set_finds_in_a_pack_what_it_finds_alon
 /// the spans the library's rules bind it to in a pack, as alone: the program held the library relation declared and
 /// not derived, ran no pattern, and ruff-fast003 found nothing in a pack. PR #508's 4146acbd9 (t47).
 #[test]
-#[ignore = "PR #508 4146acbd9 not ported: Q241"]
 fn a_match_over_a_library_relations_node_finds_in_a_pack_what_it_finds_alone() {
     let words = ".language python\n#include \"python/ast.rr\"\n.decl word(k: symbol)\n\
                  word(k) :- plain_str(s, _), match_all(\"(?<K>[a-z]+)\", s), text(K, k).\n.output word\n";
@@ -1917,7 +1915,6 @@ fn a_match_over_a_library_relations_node_finds_in_a_pack_what_it_finds_alone() {
 /// program climbs to them in a pack, as alone: eslint's no-extra-label found nothing in a pack, no-unsafe-finally
 /// climbed past functions. PR #508's 4146acbd9 (t47).
 #[test]
-#[ignore = "PR #508 4146acbd9 not ported: Q241"]
 fn a_programs_nearest_over_a_library_relation_of_kinds_finds_in_a_pack_what_it_finds_alone() {
     let near = ".language typescript\n#include \"tsx/eslint-a-control.rr\"\n.decl left(k: symbol)\n\
                 left(k) :- kind(j, \"break_statement\"), nearest(j, s, breakable_kind), kind(s, k).\n.output left\n\
