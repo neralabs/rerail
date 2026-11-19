@@ -476,15 +476,17 @@ fn every_operation_runs_on_every_executor() {
 
 /// The operations a file's statements use, by the names the probes give them (`Probe::ops`): read from the `.rr`
 /// syntax (`rerail_rr_syntax`), as written, so no file needs its includes or a lowering to be counted.
-fn ops_of(items: &[rerail_rr_syntax::syntax::Statement], out: &mut BTreeMap<String, String>, file: &str) {
-    use rerail_rr_syntax::syntax::{Item, Lit, Term as S};
+fn ops_of(file: &std::sync::Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>, out: &mut BTreeMap<String, String>, name: &str) -> Option<()> {
+    use crate::code_rule_dsl::logic::rr::clause::{At, L, LitAt, Reads, T};
+    use crate::code_rule_dsl::logic::rr::from_tape::{RrFile, S};
+    use crate::code_rule_dsl::logic::rr::tape::Field;
     let tests: BTreeMap<&str, &str> = crate::code_rule_dsl::logic::rr::lower::TESTS.into_iter().collect();
     let mut add = |op: String| {
-        out.entry(op).or_insert_with(|| file.to_owned());
+        out.entry(op).or_insert_with(|| name.to_owned());
     };
-    fn term(t: &S, add: &mut dyn FnMut(String), tests: &BTreeMap<&str, &str>) {
-        match t {
-            S::Call { name, functor, args } => {
+    fn term(f: &RrFile, t: &At, add: &mut dyn FnMut(String), tests: &BTreeMap<&str, &str>) {
+        match f.tv(t) {
+            T::Call { name, functor, args } => {
                 let name = match (name.as_str(), functor) {
                     ("dot", true) => "cat",
                     ("cat", false) => "concat",
@@ -492,59 +494,64 @@ fn ops_of(items: &[rerail_rr_syntax::syntax::Statement], out: &mut BTreeMap<Stri
                 };
                 add(format!("call {name}"));
                 add(format!("arity {name} {}", args.len()));
-                args.iter().for_each(|a| term(a, add, tests));
+                args.iter().for_each(|a| term(f, a, add, tests));
             }
-            S::Bin { op, l, r } => {
-                if let Some((_, f)) = ARITHMETIC.iter().find(|(o, _)| o == op) {
-                    add(format!("call {f}"));
+            T::Bin { op, l, r } => {
+                if let Some((_, fun)) = ARITHMETIC.iter().find(|(o, _)| *o == op) {
+                    add(format!("call {fun}"));
                 }
-                term(l, add, tests);
-                term(r, add, tests);
+                term(f, &l, add, tests);
+                term(f, &r, add, tests);
             }
-            S::Agg { op, over, by, body, .. } => {
+            T::Agg { op, over, by, body, .. } => {
                 add(format!("agg {op}"));
-                over.iter().for_each(|o| term(o, add, tests));
-                by.iter().for_each(|b| term(b, add, tests));
-                body.iter().for_each(|l| lit(l, add, tests));
+                over.iter().for_each(|o| term(f, o, add, tests));
+                by.iter().for_each(|b| term(f, b, add, tests));
+                body.iter().for_each(|l| lit(f, l, add, tests));
             }
-            S::Named(_, t) => term(t, add, tests),
+            T::Named(_, t) => term(f, &t, add, tests),
             _ => {}
         }
     }
-    fn lit(l: &Lit, add: &mut dyn FnMut(String), tests: &BTreeMap<&str, &str>) {
-        match l {
-            Lit::Atom { rel, args, neg } => {
+    fn lit(f: &RrFile, l: &LitAt, add: &mut dyn FnMut(String), tests: &BTreeMap<&str, &str>) {
+        match f.lit(l) {
+            L::Atom { rel, args, neg } => {
                 match rel.as_str() {
                     r if tests.contains_key(r) => add(format!("test {}", tests[r])),
                     "nearest" | "ast" => add(rel.clone()),
-                    _ => add(if *neg { "negation" } else { "atom" }.to_owned()),
+                    _ => add(if neg { "negation" } else { "atom" }.to_owned()),
                 }
-                args.iter().for_each(|a| term(a, add, tests));
+                args.iter().for_each(|a| term(f, a, add, tests));
             }
-            Lit::Cmp { l, op, r } => {
+            L::Cmp { l, op, r } => {
                 add(format!("cmp {op}"));
-                term(l, add, tests);
-                term(r, add, tests);
+                term(f, &l, add, tests);
+                term(f, &r, add, tests);
             }
-            Lit::Pattern { subject, .. } => {
+            L::Pattern { subject, .. } => {
                 add("test rx".to_owned());
-                term(subject, add, tests);
+                term(f, &subject, add, tests);
             }
-            Lit::Group { alts, .. } => alts.iter().flatten().for_each(|l| lit(l, add, tests)),
+            L::Group { alts, .. } => alts.iter().flatten().for_each(|l| lit(f, l, add, tests)),
         }
     }
-    for (item, _) in items {
-        match item {
-            Item::Lattice { .. } => add("lattice".to_owned()),
-            Item::Clause { heads, body, .. } => {
-                for h in heads {
-                    h.args.iter().for_each(|t| term(t, &mut add, &tests));
+    let t = file.tape();
+    for st in file.statements() {
+        match st.what() {
+            Some(S::Lattice(_)) => add("lattice".to_owned()),
+            Some(S::Clause) => {
+                let c = st.node();
+                file.check_clause(c).ok()?;
+                for h in file.heads_at(c) {
+                    h.args.iter().for_each(|a| term(file, a, &mut add, &tests));
                 }
-                body.iter().for_each(|l| lit(l, &mut add, &tests));
+                let body = t.get(c, Field::Body).map_or_else(Vec::new, |b| file.body_at(b, 0));
+                body.iter().for_each(|l| lit(file, l, &mut add, &tests));
             }
             _ => {}
         }
     }
+    Some(())
 }
 
 /// The shipped `.rr` files: the packs and the engine's own programs.
@@ -579,9 +586,9 @@ fn census() -> &'static (BTreeMap<String, BTreeSet<String>>, usize, usize) {
             .par_iter()
             .map(|f| {
                 let text = std::fs::read_to_string(f).ok()?;
-                let items = rerail_rr_syntax::syntax::Parser::new(&text).and_then(|mut p| p.statements()).ok()?;
+                let file = crate::code_rule_dsl::logic::rr::from_tape::RrFile::read(text).ok()?;
                 let mut used = BTreeMap::new();
-                ops_of(&items, &mut used, &f.display().to_string());
+                ops_of(&file, &mut used, &f.display().to_string())?;
                 Some(used)
             })
             .collect();

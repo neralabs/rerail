@@ -1905,8 +1905,6 @@ pub(crate) mod logic {
             #[allow(unused_imports)]
             use std::collections::{BTreeMap, BTreeSet};
             #[allow(unused_imports)]
-            use rerail_rr_syntax::syntax::{Head, Item, Lit, Statement, Term};
-            #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::front::Error;
         }
         #[cfg(test)]

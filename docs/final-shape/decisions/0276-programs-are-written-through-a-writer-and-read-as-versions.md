@@ -444,7 +444,10 @@ Progress (2026-11-18):
       so does the `Violation` holder. The lowering reads a `.violation`'s code, tag, fixes and suppressions off its
       node and writes each as it reaches it, and a `.lattice`'s `Lub` off its value's node. The tape tests' parity
       check compares each statement's kind, name, line and heads with the parser's (and each clause passes
-      `check_clause`) instead of converting the tape to the parser's form. Left for A2: the coverage census.
+      `check_clause`) instead of converting the tape to the parser's form.
+    - *Done (A2).* The coverage census reads the shipped files' tapes (`RrFile`, `clause::Reads`), not the text
+      parser's statements: 1733 files, none unread, 165 operations. Outside `rerail-rr-syntax`, the parser's
+      `Item`/`Head`/`Lit`/`Term` are named only by the parity test, which compares with the parser.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,
