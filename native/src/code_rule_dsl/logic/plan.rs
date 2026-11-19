@@ -1099,12 +1099,27 @@ fn plan_site(site: &'static str) {
 /// Orders made, by how (`RERAIL_PLAN_CACHE_COUNTS`): searched, and taken greedily under a search's cost (decision 0123
 /// §7).
 static SEARCHES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-/// Decision 0123 §9's probes in this process: left unplanned when their stratum opened, and planned later (when their
-/// delta came, or when the device took their stratum). Never reset, so a test reads its own run's by difference.
+/// Decision 0123 §9's probes in this process, for `RERAIL_PLAN_CACHE_COUNTS` (taken by `KeepPlans`' end, as the
+/// other counts are): left unplanned when their stratum opened, and planned later. A run's own are its `ProbeTally`.
 static LAZY: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-pub fn lazy_probes_counted() -> (u64, u64) {
-    (LAZY[0].load(std::sync::atomic::Ordering::Relaxed), LAZY[1].load(std::sync::atomic::Ordering::Relaxed))
+
+/// A run's probes of decision 0123 §9, counted across its strands (`Run::strand`) and reported in its `Outcome`: left
+/// unplanned when their stratum opened, and planned later (when their delta came, or when the device took their
+/// stratum). Per run, not per process: a test read the process's counts by difference, and another test's probe left
+/// before its run and planned during it moved them (`left - planned` overflowed).
+#[derive(Debug, Default)]
+struct ProbeTally {
+    left: std::sync::atomic::AtomicU64,
+    planned: std::sync::atomic::AtomicU64,
+}
+
+impl ProbeTally {
+    /// A probe left unplanned at its stratum's open (`planned` false), or planned later.
+    fn count(&self, planned: bool) {
+        let (mine, process) = if planned { (&self.planned, &LAZY[1]) } else { (&self.left, &LAZY[0]) };
+        mine.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        process.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 fn plan_cache(outcome: usize) {
@@ -1925,8 +1940,8 @@ impl Drop for KeepPlans {
             let miss: Vec<String> = BUDGET_MISS.iter().zip(["no price", "never ran", "ran over a search", "inputs grew"]).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
             let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
-            let lazy = lazy_probes_counted();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], searches[0], searches[1], lazy.0, lazy.1);
+            let lazy: Vec<u64> = LAZY.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], searches[0], searches[1], lazy[0], lazy[1]);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -4828,6 +4843,8 @@ pub struct Outcome {
     /// The strata passed on as quiet (decision 0101 §1), and the relations they held with no column measured
     /// (`QuietTally`).
     pub quiet: (usize, usize),
+    /// Decision 0123 §9's probes of the run (`ProbeTally`): left unplanned when their stratum opened, and planned later.
+    pub lazy_probes: (u64, u64),
 }
 
 impl Outcome {
@@ -5060,6 +5077,8 @@ pub struct Run<'a, 'b> {
     answer_logs: HashMap<usize, BTreeMap<String, BTreeSet<Vec<i64>>>>,
     /// The run's quiet strata, shared with its strands (`QuietTally`).
     quiet: Arc<QuietTally>,
+    /// The run's probes left unplanned and planned later, shared with its strands (`ProbeTally`).
+    probes: Arc<ProbeTally>,
 }
 
 /// The runner's answer to requests (`Run::answer`): a request relation and its new rows (atoms and integers), to the
@@ -6733,6 +6752,7 @@ impl<'a> Run<'a, '_> {
             logging: None,
             answer_logs: HashMap::new(),
             quiet: Arc::clone(&self.quiet),
+            probes: Arc::clone(&self.probes),
         }, arena, (0, 0)))
     }
 
@@ -6770,6 +6790,7 @@ impl<'a> Run<'a, '_> {
             logging: None,
             answer_logs: HashMap::new(),
             quiet: Arc::clone(&self.quiet),
+            probes: Arc::clone(&self.probes),
         }, arena, (0, 0)))
     }
 
@@ -7807,7 +7828,7 @@ impl<'a> Run<'a, '_> {
                     probes.push((r, ai, Vec::new()));
                     sql_probe.push(false);
                     unplanned.push(true);
-                    LAZY[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    self.probes.count(false);
                     continue;
                 }
                 unplanned.resize(probes.len() + 1, false);
@@ -8065,7 +8086,7 @@ impl<'a> Run<'a, '_> {
             .whole_join_spec(&b, &order, Some(at), ri, scc, native_rels)
             .ok_or_else(|| Error::Plan(format!("a probe of {} planned when its delta came has no native step", b.head_text())))?;
         let x = x.map(|x| delta_sources(x, Order::new(&b, &order), at, scc));
-        LAZY[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.probes.count(true);
         Ok((order, spec, x))
     }
 
@@ -10469,7 +10490,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // What each issued form's job did, from its component's retire to its own slot.
     let mut form_ran: HashMap<usize, (usize, Option<Result<(Option<String>, Option<String>)>>)> = HashMap::new();
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default(), probes: Default::default() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(f0, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };
@@ -12031,6 +12052,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     outcome.inlined = inlined_rels;
     outcome.again += again_chosen.iter().filter(|c| **c == Some(true)).count();
     outcome.quiet = (run.quiet.strata.load(std::sync::atomic::Ordering::Relaxed), run.quiet.unmeasured.load(std::sync::atomic::Ordering::Relaxed));
+    outcome.lazy_probes = (run.probes.left.load(std::sync::atomic::Ordering::Relaxed), run.probes.planned.load(std::sync::atomic::Ordering::Relaxed));
     // The program's analysis is freed on the pool: on a pack's program, its free was 3% of the main thread.
     crate::threads::drop_behind(std::mem::take(&mut run.model.analysis));
     Ok(outcome)

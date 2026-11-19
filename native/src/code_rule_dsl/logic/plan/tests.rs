@@ -270,14 +270,12 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
         let db = Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
-        let before = super::lazy_probes_counted();
         let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), modes).unwrap();
-        let after = super::lazy_probes_counted();
         if !modes.is_empty() {
             assert!(got.native.iter().any(|c| c.split('/').any(|r| r == "r")), "r's component runs natively: {:?}", got.native);
             // The probes searched: r by r, r by s, s by r, t by r (`r(a, b) :- t(b, a)` is a copy, with no order to
-            // find). Other tests' runs only add to both counts, and never plan more probes than they left.
-            let (left, planned) = (after.0 - before.0, after.1 - before.1);
+            // find). The run's own counts (`Outcome::lazy_probes`): other tests' runs beside it count theirs.
+            let (left, planned) = got.lazy_probes;
             assert!(left >= 4 && planned >= 3, "left {left}, planned {planned}; native {:?}, inlined {:?}", got.native, got.inlined);
             assert!(left - planned >= 1, "r's probe by s is never planned: left {left}, planned {planned}");
         }
