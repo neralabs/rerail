@@ -76,11 +76,58 @@ Tier 1 decides each, but the record's kind is still its first byte's. The lean l
 kind (`Tok::kind`), so step 2 is a record kind per row, the reader's retag (`Reader::retag`)
 made general.
 
+## G and D: one `deeper()`, `else if`, indentation and the grammar's names (2026-11-19)
+
+These two change only the emitter (`rust_stream`), and the tapes are the same.
+- A call is `s.deeper(move |s| rule(s))?`, one function as the lean parser's `deeper()`.
+- A test whose else is one `if` chain is written `else if`.
+- Each rule's body is indented by its braces.
+- The program carries the grammar's names (`Words::names`, text `name rule R "N"`, `name kind
+  #K "N"`, `name token K "N"`). A rule's function is named for its rule (`fn import_header`,
+  `fn class_body`). Node kinds are `k::…`, record kinds `t::…` and words `w::…`, and bytes are
+  written as literals (`b'.'`).
+
+Indentation shows what is left. Before E, the median function nested 22 levels deep and the
+deepest 43; the lean parser stays near 5.
+
+## E: each decision at the token where the lean parser makes it (2026-11-19)
+
+The four marks that are not hidden (`dotted`, `acc`, `generic`, `decl_mod`) each made every
+nested level that may end test them before its switch (0430 step 3). The lean parser tests each
+only where its loop would take the token. `user_type` asks `i != type_stop` at a `.`.
+`declaration_ahead` decides at a modifier's word, and `accessor_ahead` at `get` or `set`. Three
+changes give tier 2 the same shape:
+
+1. **A mark's words.** A mark holds, as tier 2 tests it, only where one of its `before`s does
+   (`patterns_hold`). So its first bytes are within the first tokens of its `before`s, and where
+   each of those is a word, the mark holds only at those words (`Mark::words`). A token mark's
+   words are its first element's. `acc` says its words: `before "get" | "set"`.
+2. **A test in the arm of its word.** An End test of a mark with words moves into the switch,
+   onto those words' entries. A one-byte word (`.`, `{`) goes on its byte's target instead. A
+   refusal of such a mark moves the same way. A word is named in the switch only to hold its
+   test, and is taken out again where it holds none. A token that no arm takes already ends a
+   nested level (the switch's default). A test moves only past the tests of marks apart from it:
+   their first bytes, or their words, never meet.
+3. **Two decisions apart.** `dotted` also held at a receiver's first token, and `generic` at a
+   function type's receiver's first name. Each is a decision a rule makes where the declaration
+   or the type starts, as `receiver_end` does. Each is now a hidden mark of its own: `recv`,
+   taken by `receiver`, and `fn_recv`, taken by `type`. What is left of `dotted` holds at `.`
+   and `{`, and of `generic` at `<`, `(` and `suspend`.
+
+The four marks' tests went from 750–1,060 places each to 283 (`dotted`), 205 (`acc`), 381
+(`generic`) and 290 (`decl_mod`), each in the arm of its own word. Tier 2's program went from
+17,815 words to 10,765. `tier2_aot.rs` went from 71,093 lines to 53,721. `import_header` now
+begins with its token's switch. Tapes unchanged: the compiler tests (128) and the Kotlin tests
+(51) pass; the corpus is 447 the same, 44 refused, 0 differ; `aot_tapes_are_the_jits` passes.
+
+The names are still split into record kinds by first letter (`SIMPLE_IDENTIFIER_15`, …). One
+switch causes it: in a string after `$`, `interpolated_identifier` and `string_content` both
+begin at a letter, and tier 2 tells them apart with `ROW` tests, a byte at a time. That is F
+step 2.
+
 ## Order of the rest
 
-1. F step 2: the record's kind from the row.
-2. D: functions named by rule (`Emit::rule_of`), and kinds and words as named constants.
-3. G: the depth guard as one function.
-4. E: 0429 item 6's remaining part. `dotted`, `acc`, `generic` and `decl_mod` each decide at the
-   token where the lean parser decides, in place of a mark that every nested level must end on.
-5. A and B: the structured tier 1 emitter.
+1. F step 2: the record's kind from the row. This also gives names one record kind.
+2. A and B: the structured tier 1 emitter.
+
+D, G and E are done (above).

@@ -458,9 +458,12 @@ mark semi_close = close_at, before "}", settles, ends
 # argument follows, but a delegated property's name (`val x by a.b`); its last `.`: that `.` and
 # name. One mark (a code holds 16): each `before`
 # starts with its own token.
-mark dotted     = rstart & decl_run | code & dot & decl_run | del_brace, before simple_identifier | backtick_name (simple_identifier | backtick_name | "in" | "." | "<" | ">" | "," | "?" | "*")* "." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), before "." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), before "{", unless before simple_identifier | backtick_name "by"
+# The receiver's first token is a decision of its own (`recv`), the lean parser's `receiver_end`
+# where the declaration's name may come: the rule takes it there, and no level ends on it.
+mark recv       = rstart & decl_run, before simple_identifier | backtick_name (simple_identifier | backtick_name | "in" | "." | "<" | ">" | "," | "?" | "*")* "." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), unless before simple_identifier | backtick_name "by"
+mark dotted     = code & dot & decl_run | del_brace, before "." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), before "{"
 # A property's accessor: its `get` or `set` at a line's start (or after a visibility word there).
-mark acc        = acc_word, unless before "get" | "set" "." | ":", unless before "get" "(" ~")"
+mark acc        = acc_word, before "get" | "set", unless before "get" | "set" "." | ":", unless before "get" "(" ~")"
 # A `{` after `)`, `else`, `do`, `try` or `finally`: where a control structure's body goes, a
 # block, not a lambda; after a call's arguments, the call's own lambda (the lean parser's
 # `call`), not another call's. Before the lambda's marks, which hold at the same token.
@@ -492,7 +495,10 @@ mask after_ty   = prev(fill(prev(colon_ty), solid))
 # before a `(`.
 # One mark: each `before` starts with its own token (a receiver's name not `suspend`).
 mask frecv_at   = w & ~prev(w | dot | text("<") | text(">")) & ~text("suspend")
-mark generic    = code & text("<") & ~text("<=") & prev(w) | code & text("(") & after_ty | code & text("suspend") & ~next(w, 7) & after_ty | frecv_at, before "<" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("<" to ">") ("(" to ")") ">" "(" | "{" | "." | "?." | "::", before "(" "(", before "suspend" "(", before simple_identifier (simple_identifier | "." | "<" | ">")* "." "("
+mark generic    = code & text("<") & ~text("<=") & prev(w) | code & text("(") & after_ty | code & text("suspend") & ~next(w, 7) & after_ty, before "<" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("<" to ">") ("(" to ")") ">" "(" | "{" | "." | "?." | "::", before "(" "(", before "suspend" "("
+# A function type's receiver's first name (`fn_recv`): where a type starts, the type rule's
+# decision, as the lean parser's at the type's first token.
+mark fn_recv    = frecv_at, before simple_identifier (simple_identifier | "." | "<" | ">")* "." "("
 # A decimal number with a fraction, an exponent or an `f`: a real one.
 mark real       = empty, at integer_literal when count(frac_dot | e_at | f_at) at least 1
 # A backtick name before `::`: no rule takes it, so the file is refused where it holds. It
@@ -636,7 +642,8 @@ tree kotlin {
   # --- Types -------------------------------------------------------------------------------------
 
   choice type nested    = user_type [wrap nullable_type _ ('?' as quest)+] | function_type
-                        | generic (parenthesized_type [wrap nullable_type _ ('?' as quest)+] | recv_function_type | type_modifiers function_type)
+                        | generic (parenthesized_type [wrap nullable_type _ ('?' as quest)+] | type_modifiers function_type)
+                        | fn_recv recv_function_type
   node recv_function_type = retag function_type receiver: fn_receiver ft_dot_at '.' function_type_parameters '->' type
   node fn_receiver      = retag receiver_type fn_receiver_type
   # Its first name is no soft word, which `suspend` would be (a soft word's receiver is refused).
@@ -644,7 +651,7 @@ tree kotlin {
   choice fn_name        = simple_identifier as type_identifier | backtick_name as type_identifier
   node type_modifiers   = 'suspend'
   node parenthesized_type = '(' type ')'
-  choice receiver       = dotted receiver: receiver_type dotted '.'
+  choice receiver       = recv receiver: receiver_type dotted '.'
   node receiver_type    = type
   node user_type        = type_name [type_arguments] ('.' type_name [type_arguments])*
   node type_arguments   = [generic] '<' type_projection (',' type_projection)* (trail_angle | '>')
@@ -835,6 +842,6 @@ tree kotlin {
   implied when_subject '(' ')' 'val' '='
   implied when_entry ',' 'else'
   implied callable_reference '::' 'class'
-  hidden semi semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr
+  hidden recv fn_recv semi semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr
   extra line_comment multiline_comment
 }

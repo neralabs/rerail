@@ -3333,7 +3333,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 [TokenElem::Word(w)] => Some(w.clone()),
                 _ => None,
             };
-            marks.push(bitlex_tier2::Mark { settle: None, drop: None, ends: false, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)), nexts: vec![], unless: vec![] });
+            let words = seq[0].iter().map(|c| if let TokenElem::Word(w) = c { Some(w.clone()) } else { None }).collect();
+            marks.push(bitlex_tier2::Mark { settle: None, drop: None, ends: false, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: vec![], unless: vec![] });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -3496,7 +3497,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         // out is proved apart, `never`). A state that refuses it tests it only on those bytes.
         // Proved on `m`, the mark's own: where it holds only at the grammar's starts
         // (`m & ~starts` never), the lift to the next start adds nothing.
-        let on_starts = low.never(before);
+        let on_starts = low.settled_never(&mut settled, before);
         let mut first: ByteSet = [u64::MAX; 4];
         if on_starts {
             first = [0; 4];
@@ -3505,7 +3506,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     continue;
                 }
                 let both = low.and(m, token_rows[r].1)?;
-                if !low.never(both) {
+                if !low.settled_never(&mut settled, both) {
                     for i in 0..4 {
                         first[i] |= rows[r].first[i];
                     }
@@ -3521,19 +3522,56 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 one[usize::from(b) / 64] |= 1 << (b % 64);
                 let class = low.class_set(one);
                 let both = low.and(m, class)?;
-                if low.never(both) {
+                if low.settled_never(&mut settled, both) {
                     first[usize::from(b) / 64] &= !(1 << (b % 64));
                 }
             }
         }
+        // With `before`s, it holds (as tier 2 tests it) only where one of them does from the
+        // token: its first bytes are within their first tokens', and where each first token is
+        // a word, those words are the only ones it holds at, as the lean parser asks `is_word`
+        // where it reads the token.
+        let nexts = low.mark_next.get(&k).cloned().unwrap_or_default();
+        let mut words: Option<Vec<Vec<u8>>> = None;
+        let positive: Vec<&Vec<TokenElem>> = nexts.iter().filter(|(unless, _)| !unless).filter_map(|(_, seqs)| seqs.first()).collect();
+        let simple = |e: &Vec<TokenElem>| e.iter().all(|c| matches!(c, TokenElem::Word(_) | TokenElem::Kind(_)));
+        if !positive.is_empty() && positive.iter().all(|e| simple(e)) {
+            let mut by: ByteSet = [0; 4];
+            let mut ws: Vec<Vec<u8>> = Vec::new();
+            let mut all_words = true;
+            for e in &positive {
+                for c in e.iter() {
+                    match c {
+                        TokenElem::Word(w) => {
+                            by[usize::from(w[0]) / 64] |= 1 << (w[0] % 64);
+                            ws.push(w.clone());
+                        }
+                        TokenElem::Kind(name) => {
+                            all_words = false;
+                            for r in (0..rows.len()).filter(|&r| &token_rows[r].0 == name) {
+                                for i in 0..4 {
+                                    by[i] |= rows[r].first[i];
+                                }
+                            }
+                        }
+                        _ => unreachable!("a simple element"),
+                    }
+                }
+            }
+            for i in 0..4 {
+                first[i] &= by[i];
+            }
+            if all_words {
+                ws.sort();
+                ws.dedup();
+                words = Some(ws);
+            }
+        }
         if std::env::var_os("RERAIL_TIER2_SIZES").is_some() {
-            eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>());
+            eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes, words {:?}", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>(), words.as_ref().map(|ws| ws.iter().map(|w| String::from_utf8_lossy(w).into_owned()).collect::<Vec<_>>()));
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        // `before`, `unless before`: the tokens from the one the mark is before, tested by tier 2
-        // there.
-        let nexts = low.mark_next.get(&k).cloned().unwrap_or_default();
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None, nexts, unless, settle: None, drop: None, ends: low.ends.contains(&k) });
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, settle: None, drop: None, ends: low.ends.contains(&k) });
         if low.settles.contains(&k) {
             // From each bit up to the next grammar token's start: an extra that starts there is
             // after the mark's bit. Its mask after the marks' (below).

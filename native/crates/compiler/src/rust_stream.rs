@@ -1740,7 +1740,8 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
         let mut by_word = String::new();
         let mut values = vec![REFUSE; 256];
         for (k, &tk) in t.iter().enumerate() {
-            let named: Vec<(u16, u16)> = sw.words.iter().copied().filter(|&(w, _)| k < reps.len() && x.word_kind_of.get(usize::from(w)).is_some_and(|&y| usize::from(y) == k)).collect();
+            // A word whose target is its kind's needs no arm of its own.
+            let named: Vec<(u16, u16)> = sw.words.iter().copied().filter(|&(w, to)| to != tk && k < reps.len() && x.word_kind_of.get(usize::from(w)).is_some_and(|&y| usize::from(y) == k)).collect();
             if named.is_empty() {
                 values[k] = tk;
                 continue;

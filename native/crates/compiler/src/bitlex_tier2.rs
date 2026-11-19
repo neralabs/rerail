@@ -186,6 +186,10 @@ pub struct Mark {
     /// The bytes a token it holds at can begin with (`bitlex_prove::never` of its mask and the
     /// other rows' starts).
     pub first: ByteSet,
+    /// The words a token it holds at is one of, where it holds at no other (its first element's
+    /// words, or proved of its mask): a state tests it at those words alone, as the lean parser
+    /// asks `is_word` where it reads the token.
+    pub words: Option<Vec<Vec<u8>>>,
     /// A token mark (decision 0129): the token before (none: any), then the run from the mark's.
     pub tokens: Option<(Vec<::bitlex::syntax::TokenElem>, Vec<Vec<::bitlex::syntax::TokenElem>>)>,
     /// `before`, `unless before` (decision 0406): the tokens from the one a gap mark is before,
@@ -206,7 +210,7 @@ pub struct Mark {
 }
 
 /// What a state does at a mark it tests: its arm, a refusal, or its level's end (`Mark::ends`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum AtMark {
     Arm(usize),
     Refuse,
@@ -930,12 +934,29 @@ impl Emit<'_> {
         // first bytes apart): refusals commute, and so do two tests never both met at a token;
         // a jump to a mark's arm, or a level's end, must stay after one that may hold with it.
         // Not a mark the end has (the switch's end is not a byte's).
-        let apart = |a: usize, b: usize| (0..4).all(|i| self.marks[a].first[i] & self.marks[b].first[i] == 0);
-        let moved: Vec<usize> = (0..tests.len())
-            .filter(|&i| tests[i].1 == AtMark::Refuse && !self.marks[tests[i].0].end && tests[i + 1..].iter().all(|&(j, a)| a == AtMark::Refuse || apart(tests[i].0, j)))
-            .map(|i| tests[i].0)
+        // A level's end of a mark of words (`Mark::words`) moves the same way, into the arms of
+        // its words, as the lean parser stops a loop at the token it reads (`i != type_stop` at a
+        // `.`): a token no arm takes ends the level anyway (the switch's default). It moves past
+        // tests of marks apart from it only: a mark's arm, an end or a refusal that holds with it
+        // must still come first or after as before.
+        let apart = |a: usize, b: usize| {
+            let (x, y) = (&self.marks[a], &self.marks[b]);
+            (0..4).all(|i| x.first[i] & y.first[i] == 0) || matches!((&x.words, &y.words), (Some(p), Some(q)) if p.iter().all(|w| !q.contains(w)))
+        };
+        let moved: Vec<(usize, AtMark)> = (0..tests.len())
+            .filter(|&i| {
+                let (k, at) = tests[i];
+                let later = &tests[i + 1..];
+                !self.marks[k].end
+                    && match at {
+                        AtMark::Refuse => later.iter().all(|&(j, a)| a == AtMark::Refuse || apart(k, j)),
+                        AtMark::End => nested && self.marks[k].words.is_some() && later.iter().all(|&(j, _)| apart(k, j)),
+                        AtMark::Arm(_) => false,
+                    }
+            })
+            .map(|i| tests[i])
             .collect();
-        let tests: Vec<(usize, AtMark)> = tests.into_iter().filter(|(k, _)| !moved.contains(k)).collect();
+        let tests: Vec<(usize, AtMark)> = tests.into_iter().filter(|t| !moved.contains(t)).collect();
         let mut mark_arms = Vec::new();
         let mut to_end = Vec::new();
         self.mark_tests_here(&tests, &mut mark_arms, &mut to_end);
@@ -1046,10 +1067,39 @@ impl Emit<'_> {
         }
         // The moved refusals: each target of a byte one of them can begin a token with gets
         // them first, once a target and set of marks.
+        // A mark of words is tested at its words: a word of more than one byte by its entry in
+        // the switch (named here where it is not yet, to the target its byte gives), one of one
+        // byte at that byte. Any other at the bytes it may begin with (`Mark::first`).
         if !moved.is_empty() {
-            let mut made: HashMap<(Place, Vec<usize>), Place> = HashMap::default();
-            let mut wrap = |e: &mut Self, b: u8, old: Place| -> Place {
-                let these: Vec<usize> = moved.iter().copied().filter(|&k| has(&e.marks[k].first, b)).collect();
+            let long = |e: &Self, k: usize| e.marks[k].words.as_ref().map(|ws| ws.iter().filter(|w| w.len() > 1).cloned().collect::<Vec<_>>());
+            let mut named: Vec<u16> = Vec::new();
+            for &(k, _) in &moved {
+                for w in long(self, k).unwrap_or_default() {
+                    let s = self.string(&w);
+                    if self.switches[t].words.binary_search_by_key(&s, |&(x, _)| x).is_err() {
+                        let to = self.switches[t].targets[usize::from(w[0])];
+                        self.name_word(t, s, to)?;
+                        named.push(s);
+                    }
+                }
+            }
+            let mut made: HashMap<(Place, Vec<(usize, AtMark)>), Place> = HashMap::default();
+            let mut ends: Vec<Place> = Vec::new();
+            // The tests at a byte's target (`word` None) or a word's (`Some`).
+            let mut wrap = |e: &mut Self, b: u8, word: Option<&[u8]>, old: Place| -> Place {
+                let these: Vec<(usize, AtMark)> = moved
+                    .iter()
+                    .copied()
+                    .filter(|&(k, at)| {
+                        let m = &e.marks[k];
+                        let here = match (&m.words, word) {
+                            (Some(ws), Some(w)) => ws.iter().any(|x| x.as_slice() == w),
+                            (Some(ws), None) => ws.iter().any(|x| x.len() == 1 && x[0] == b),
+                            (None, _) => has(&m.first, b),
+                        };
+                        here && !(at == AtMark::End && old == end)
+                    })
+                    .collect();
                 if old == REFUSE || these.is_empty() {
                     return old;
                 }
@@ -1057,23 +1107,29 @@ impl Emit<'_> {
                     return pc;
                 }
                 let at = e.pc();
-                let tests: Vec<(usize, AtMark)> = these.iter().map(|&k| (k, AtMark::Refuse)).collect();
-                e.mark_tests_here(&tests, &mut Vec::new(), &mut Vec::new());
+                e.mark_tests_here(&these, &mut Vec::new(), &mut ends);
                 e.push("GOTO", 0, Arg::Pc(old));
                 made.insert((old, these), at);
                 at
             };
             for b in 0..=255u8 {
                 let old = self.switches[t].targets[usize::from(b)];
-                let new = wrap(self, b, old);
+                let new = wrap(self, b, None, old);
                 self.switches[t].targets[usize::from(b)] = new;
             }
             for i in 0..self.switches[t].words.len() {
                 let (w, old) = self.switches[t].words[i];
-                let b = self.strings[usize::from(w)][0];
-                let new = wrap(self, b, old);
+                let text = self.strings[usize::from(w)].clone();
+                let new = wrap(self, text[0], Some(&text), old);
                 self.switches[t].words[i].1 = new;
             }
+            for jump in ends {
+                self.words[jump as usize].2 = Arg::Pc(end);
+            }
+            // A word named here for its tests that has none: its byte's target is its own.
+            let (targets, strings) = (&self.switches[t].targets, &self.strings);
+            let keep: Vec<(u16, Place)> = self.switches[t].words.iter().copied().filter(|&(w, to)| !(named.contains(&w) && to == targets[usize::from(strings[usize::from(w)][0])])).collect();
+            self.switches[t].words = keep;
         }
         // The marks' arms: their acts, no bytes taken (the next state switches on this token).
         for (jump, a) in mark_arms {
