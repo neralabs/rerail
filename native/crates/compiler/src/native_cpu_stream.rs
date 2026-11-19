@@ -1994,7 +1994,7 @@ fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error> {
     if rd.parts.iter().any(|p| p.last.is_some()) || rd.arms.iter().any(|a| a.last.is_some()) {
         return Err(Error::UnsupportedFeature("a region tier 2 splits, with a part to a last"));
     }
-    if rd.arms.len() != 1 || !r.marks.is_empty() || !r.retags.is_empty() || r.gaps != 0 {
+    if rd.arms.len() != 1 || !r.marks.is_empty() || r.retags.iter().any(|t| !t.part) || rd.parts.iter().any(|p| p.kind.is_some()) || r.gaps != 0 {
         return Err(Error::UnsupportedFeature("a region tier 2 splits, with marks or retags"));
     }
     let tables = crate::native_cpu_block::RecordTables::new(r, block)?;

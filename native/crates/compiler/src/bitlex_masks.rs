@@ -324,6 +324,8 @@ pub struct Lowering {
     /// A kind read in parts (`read K parts { … }`): each part's start mask and bytes, in order.
     /// Each part's start, and its bytes or its last (`ReadPart`).
     pub token_parts: HashMap<String, Vec<(Val, u8, Option<Val>)>>,
+    /// A region read in parts: its parts' kinds, in order, and its content's kind.
+    pub token_part_names: HashMap<String, (Vec<String>, String)>,
     /// A region read in parts: its fill (`f_R`), by the reader's kind (`Reader::quiet`).
     pub token_fills: HashMap<String, Val>,
     /// Each token read whole by a region's reader (`read R`, `read R | S`): its regions' fills,
@@ -481,6 +483,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_reads: HashMap::default(),
         token_closer_last: HashMap::default(),
         token_parts: HashMap::default(),
+        token_part_names: HashMap::default(),
         token_fills: HashMap::default(),
         read_fills: HashMap::default(),
         inside: Vec::new(),
@@ -880,6 +883,7 @@ impl Lowering {
                                 });
                             }
                             self.token_parts.insert(kind.clone(), ps);
+                            self.token_part_names.insert(kind.clone(), (parts.parts.iter().map(|p| p.0.clone()).collect(), parts.content.clone()));
                             let fill = rs.iter().map(|r| Expr::Name(format!("f_{}", r.kind))).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a region");
                             let fill = self.expr(&fill)?;
                             self.token_fills.insert(kind.clone(), fill);
@@ -3142,6 +3146,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             keywords,
             check: check_of.get(&r).copied(),
             mask: None,
+            moved: false,
         });
     }
     // `RERAIL_TIER2_SIZES` (`bitlex_tier2::lower`): each row's first bytes, and each mark's, on
@@ -3614,6 +3619,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // tells the two apart by a start mask (`ROW`).
     let real_first: Vec<ByteSet> = rows.iter().map(|x| x.first).collect();
     let mut moved: Vec<(usize, u8)> = Vec::new();
+    // The parts' own bytes, by their kinds (`ReadPart::kind`).
+    let mut part_bytes: HashMap<String, u8> = HashMap::default();
     if looped {
         // A row read inside a region (`inside`) is its reader's, met only in the region's mode
         // (`row_modes`): it begins no token at a byte's dispatch, so it takes no byte here.
@@ -3643,9 +3650,39 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             };
             moved.push((r, f));
         }
+        // A part of a region read in parts that begins with a byte another of the region's
+        // tokens of another kind begins with (a `$name` and the string's text): a kind of its own
+        // (`ReadPart::kind`, `Retag::part`), as the lean lexer's string reader says what it read.
+        // The region's content keeps its byte's kind, and so do its closers.
+        let mut readers_in_parts: Vec<&String> = low.token_part_names.keys().collect();
+        readers_in_parts.sort();
+        for reader in readers_in_parts {
+            let (parts, content) = low.token_part_names[reader].clone();
+            let of = |r: usize| low.inside_of.get(r).cloned().flatten().filter(|(k, _)| k == reader);
+            let ins: Vec<usize> = (0..rows.len()).filter(|&r| of(r).is_some()).collect();
+            let mut names: Vec<&String> = parts.iter().filter(|p| **p != content).collect();
+            names.sort();
+            names.dedup();
+            for p in names {
+                let these: Vec<usize> = ins.iter().copied().filter(|&r| token_rows[r].0 == *p && of(r).is_some_and(|(_, closes)| !closes)).collect();
+                let meets = |a: usize, b: usize| (0..4).any(|i| real_first[a][i] & real_first[b][i] != 0);
+                if !these.iter().any(|&r| ins.iter().any(|&q| token_rows[q].0 != *p && meets(r, q))) {
+                    continue;
+                }
+                // One kind a part's name, whichever reader reads it.
+                let f = match part_bytes.get(p) {
+                    Some(&f) => f,
+                    None if free.is_empty() => return Err(format!("`{p}`: no byte left that no token begins with, for its part's kind")),
+                    None => free.remove(0),
+                };
+                part_bytes.insert(p.clone(), f);
+                moved.extend(these.iter().map(|&r| (r, f)));
+            }
+        }
         for &(r, f) in &moved {
             rows[r].first = [0; 4];
             rows[r].first[usize::from(f) / 64] |= 1 << (f % 64);
+            rows[r].moved = true;
         }
         // A moved kind's byte is its alone: tier 2 switches on a record's kind (its least
         // byte's target), so a row read inside a region, whose bytes may be any, never meets
@@ -4089,8 +4126,13 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     }
                 }
                 // A region read in parts: each part's start, a mask output.
+                let part_names = low.token_part_names.get(&kind).map(|p| p.0.clone()).unwrap_or_default();
                 let parts = match low.token_parts.get(&kind).cloned() {
-                    Some(ps) => ps.into_iter().map(|(v, bytes, last)| crate::records::ReadPart { start: mask_of(low, v, &mut mark_masks), bytes, last: last.map(|l| mask_of(low, l, &mut mark_masks)) }).collect(),
+                    Some(ps) => ps
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (v, bytes, last))| crate::records::ReadPart { start: mask_of(low, v, &mut mark_masks), bytes, last: last.map(|l| mask_of(low, l, &mut mark_masks)), kind: part_names.get(i).and_then(|n| part_bytes.get(n)).map(|&f| kinds[usize::from(f)]) })
+                        .collect(),
                     None => Vec::new(),
                 };
                 let reader = crate::records::Reader { arms, other, retag, parts, split: crate::records::Split::Tier1, quiet: false };
@@ -4208,7 +4250,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     for &(r, f) in &moved {
         let o = mask_of_val(token_rows[r].1, &mut mark_masks);
         let marks = extra_marks(&token_rows[r].0);
-        retags.push(crate::records::Retag { o, kind: kinds[usize::from(f)], marks });
+        let part = low.inside.get(r).copied().unwrap_or(false);
+        retags.push(crate::records::Retag { o, kind: kinds[usize::from(f)], marks, part });
     }
     // A region read in parts whose bytes past its opener, through its closer, hold no mask mark
     // and no retag (proved, with the regions' fixed point): its walk's codes need no marks
@@ -4224,7 +4267,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let ends = low.andnot(opens, fill)?;
         let within = low.or(body, ends)?;
         let mut quiet = true;
-        let held: Vec<u16> = in_code.iter().map(|&(m, _)| m).filter(|&m| m != crate::records::WORD_ALONE).chain(retags.iter().map(|t| t.o)).collect();
+        // A part's own kind (`Retag::part`) is the walk's: not a mark it would need.
+        let held: Vec<u16> = in_code.iter().map(|&(m, _)| m).filter(|&m| m != crate::records::WORD_ALONE).chain(retags.iter().filter(|t| !t.part).map(|t| t.o)).collect();
         for m in held {
             let both = low.and(mark_masks[usize::from(m)], within)?;
             if !low.settled_never(&mut settled, both) {
@@ -4385,6 +4429,14 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             continue;
         }
         if let Some(r) = (0..rows.len()).find(|&r| !low.inside.get(r).copied().unwrap_or(false) && rows[r].first[b / 64] >> (b % 64) & 1 == 1) {
+            token_named[usize::from(k)] = true;
+            names.tokens.push((k, token_rows[r].0.clone()));
+        }
+    }
+    // A reader's or a part's own kind (`records::Retag`): its row's name.
+    for &(r, f) in &moved {
+        let k = records.kinds[usize::from(f)];
+        if !token_named[usize::from(k)] {
             token_named[usize::from(k)] = true;
             names.tokens.push((k, token_rows[r].0.clone()));
         }

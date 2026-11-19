@@ -1478,7 +1478,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
             })),
             // A reader's kind and marks by its start mask (`Records::retags`).
             // A token a reader says is no word (`records::pass`).
-            unword = r.retags.iter().map(|t| format!(" if (record_bit(out, f, {}u, s)) word = 0u;", t.o)).collect::<String>(),
+            unword = r.retags.iter().filter(|t| !t.part).map(|t| format!(" if (record_bit(out, f, {}u, s)) word = 0u;", t.o)).collect::<String>(),
             retags = r
                 .retags
                 .iter()

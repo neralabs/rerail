@@ -387,6 +387,8 @@ pub struct ReadPart {
     pub start: u16,
     pub bytes: u8,
     pub last: Option<u16>,
+    /// Its kind of its own (`Retag::part`), the records' kind; None: its first byte's.
+    pub kind: Option<u8>,
 }
 
 impl ReadPart {
@@ -406,6 +408,10 @@ pub struct Retag {
     pub o: u16,
     pub kind: u8,
     pub marks: u32,
+    /// A part's kind in a region read in parts (`ReadPart::kind`), where another of the region's
+    /// tokens begins with its byte: its word stays (a `$name`'s), and on the CPU the reader's walk
+    /// says it, as the lean lexer's string reader says what it read.
+    pub part: bool,
 }
 
 /// A region a reader reads (`Reader`): its opener's and closer's outputs; the last byte at
@@ -818,7 +824,9 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
         for t in records.retags.iter().filter(|t| bit_of(t.o)) {
             kind = u32::from(t.kind);
             marks |= t.marks;
-            word = 0;
+            if !t.part {
+                word = 0;
+            }
         }
         let retagged: u32 = records.retags.iter().fold(0, |a, t| a | t.marks);
         for (k, &(o, w)) in records.marks.iter().enumerate().filter(|&(k, _)| retagged >> k & 1 == 0) {

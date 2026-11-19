@@ -44,6 +44,10 @@ pub struct Row {
     /// Its start mask, the program's mask of that index, when another row can begin with one
     /// of its bytes: `ROW` tests it.
     pub mask: Option<u16>,
+    /// Its kind is its own (`records::Retag`, a reader's or a part's), at its one byte of
+    /// `first`, which no token begins with: its keywords are met at that byte, not at their
+    /// first letters.
+    pub moved: bool,
 }
 
 impl Row {
@@ -624,7 +628,10 @@ impl Emit<'_> {
         let row = &self.rows[cands[0].row];
         let (one_byte, takes_last) = (row.one_byte, row.takes_last());
         let check_refuses = row.check.is_some_and(|first| !has(&first, b));
-        let missing: Vec<Vec<u8>> = row.keywords.iter().map(|(w, _)| w.clone()).filter(|w| w[0] == b && !cands.iter().any(|c| c.word.as_ref() == Some(w))).collect();
+        // A row of its own kind (`Row::moved`): a keyword read as it keeps the row's kind, so it
+        // reserves none.
+        let moved = row.moved;
+        let missing: Vec<Vec<u8>> = row.keywords.iter().map(|(w, _)| w.clone()).filter(|w| !moved && w[0] == b && !cands.iter().any(|c| c.word.as_ref() == Some(w))).collect();
         let plain = cands.iter().find(|c| c.word.is_none()).map(|c| c.arm);
         for w in missing {
             let s = self.string(&w);
@@ -643,6 +650,45 @@ impl Emit<'_> {
         Ok(match plain {
             _ if check_refuses => REFUSE,
             Some(a) => self.arm(a, if one_byte { Span::Len(1) } else { Span::Last }, Pre::None),
+            None => self.default,
+        })
+    }
+
+    /// `by_words` over rows `met` that begin with byte `b`, all but at most one of keywords only:
+    /// each row's keywords named (its arm where one takes it, else the state's default), and a
+    /// token that is no keyword the other row's.
+    fn by_words_of(&mut self, t: usize, b: u8, met: &[usize], cands: Vec<Cand>) -> Result<Place, String> {
+        let mut plain_row: Option<usize> = None;
+        for &r in met {
+            let row = &self.rows[r];
+            if row.kind != 0 {
+                plain_row = Some(r);
+            }
+            let takes_last = row.takes_last();
+            // A row of its own kind (`Row::moved`) reserves no keyword (`by_words`).
+            let keywords: Vec<Vec<u8>> = row.keywords.iter().filter(|(w, _)| !row.moved && w[0] == b).map(|(w, _)| w.clone()).collect();
+            let span_of = |w: &[u8]| if takes_last { Span::Last } else { Span::Len(w.len() as u16) };
+            for w in &keywords {
+                let s = self.string(w);
+                let to = match cands.iter().find(|c| c.row == r && c.word.as_ref() == Some(w)) {
+                    Some(c) => self.arm(c.arm, span_of(w), Pre::None),
+                    None => self.default,
+                };
+                self.name_word(t, s, to)?;
+            }
+            for c in cands.iter().filter(|c| c.row == r && c.word.is_some() && !keywords.iter().any(|k| Some(k) == c.word.as_ref())) {
+                let w = c.word.clone().expect("a soft keyword");
+                let s = self.string(&w);
+                let to = self.arm(c.arm, span_of(&w), Pre::None);
+                self.name_word(t, s, to)?;
+            }
+        }
+        let Some(p) = plain_row else { return Ok(self.default) };
+        let row = &self.rows[p];
+        let (one_byte, check_refuses) = (row.one_byte, row.check.is_some_and(|first| !has(&first, b)));
+        Ok(match cands.iter().find(|c| c.row == p && c.word.is_none()) {
+            _ if check_refuses => REFUSE,
+            Some(c) => self.arm(c.arm, if one_byte { Span::Len(1) } else { Span::Last }, Pre::None),
             None => self.default,
         })
     }
@@ -670,7 +716,7 @@ impl Emit<'_> {
             .keywords
             .iter()
             .map(|(w, _)| w.clone())
-            .filter(|w| depth == 0 && w[0] == b && !words.iter().any(|c| c.word.as_ref() == Some(w)))
+            .filter(|w| depth == 0 && !row.moved && w[0] == b && !words.iter().any(|c| c.word.as_ref() == Some(w)))
             .collect();
         let check_refuses = row.check.is_some_and(|first| !has(&first, b));
         // A token of a checked row beginning with a byte its check does not take, and no keyword:
@@ -995,9 +1041,11 @@ impl Emit<'_> {
                         }
                     }
                 }
+                let own = (0..=255u8).find(|&b| row.moved && has(&row.first, b));
                 for (w, k) in row.keywords.iter().chain(&row.soft) {
-                    if *k == kind && has(&row.first, w[0]) {
-                        cands[usize::from(w[0])].push(Cand { arm: a, row: r, word: Some(w.clone()) });
+                    let at = if has(&row.first, w[0]) { Some(w[0]) } else { own };
+                    if let Some(at) = at.filter(|_| *k == kind) {
+                        cands[usize::from(at)].push(Cand { arm: a, row: r, word: Some(w.clone()) });
                     }
                 }
             }
@@ -1006,8 +1054,12 @@ impl Emit<'_> {
             // An arm whose row the state cannot meet is dead (an extra's in a string, say).
             let mut cs = std::mem::take(&mut cands[usize::from(b)]);
             cs.retain(|c| self.meets[s][c.row]);
+            // A part's own byte (`Row::moved`) where the state meets none of its rows: no token
+            // of that kind comes here (it is read only inside its region), so none is taken.
+            let rows_at: Vec<usize> = (0..self.rows.len()).filter(|&r| has(&self.rows[r].first, b)).collect();
+            let unmet_part = !rows_at.is_empty() && rows_at.iter().all(|&r| self.rows[r].moved && !self.meets[s][r]);
             if cs.is_empty() {
-                self.switches[t].targets[usize::from(b)] = default;
+                self.switches[t].targets[usize::from(b)] = if unmet_part { REFUSE } else { default };
                 continue;
             }
             // The rows the state can meet that begin with the byte (`meets`): when more than the
@@ -1017,6 +1069,13 @@ impl Emit<'_> {
             taken.sort_unstable();
             taken.dedup();
             let met: Vec<usize> = (0..self.rows.len()).filter(|&r| has(&self.rows[r].first, b) && self.meets[s][r]).collect();
+            // Rows of keywords only beside at most one other: the record's word tells them apart,
+            // as the lean parser's `peek()` gives the token's kind (a `.` or a `.5`).
+            if met.len() > 1 && met.iter().filter(|&&r| self.rows[r].kind != 0).count() <= 1 {
+                let pc = self.by_words_of(t, b, &met, cs)?;
+                self.switches[t].targets[usize::from(b)] = pc;
+                continue;
+            }
             if met.len() > 1 {
                 let all = met.iter().all(|r| taken.contains(r));
                 let mut tos = Vec::new();

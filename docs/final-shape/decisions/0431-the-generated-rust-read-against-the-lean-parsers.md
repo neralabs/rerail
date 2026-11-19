@@ -125,9 +125,38 @@ switch causes it: in a string after `$`, `interpolated_identifier` and `string_c
 begin at a letter, and tier 2 tells them apart with `ROW` tests, a byte at a time. That is F
 step 2.
 
+## F, step 2: the token's kind from its row, as the lean lexer's `Tok::kind` (2026-11-19)
+
+After step 1, tier 2 still told rows that share a first byte apart by a test of tier 1's start
+mask per row (`ROW`). There were two kinds of such rows.
+
+1. **Rows of keywords beside one other row.** At `.` these are `punct`'s `.`, `op3`'s `...` and
+   a real literal's `.5`. At `<` and `=` they are `punct` and `op3`. Where every row met at a byte
+   but one holds only keywords, the record's word already tells them apart. So the switch names
+   each keyword, and a token that is no keyword is the other row's (`by_words_of`). This is the
+   lean parser's `peek() == T::Dot`.
+2. **A string's parts.** After `$`, a name (`interpolated_identifier`) and the string's text
+   both begin at a letter. A `$` alone is text too. A part whose first byte another token of its
+   region also begins with now has a record kind of its own (`ReadPart::kind`). That is the
+   lean lexer's string reader, which says what it read. The compiler gives the kind a byte that
+   no token begins with, one byte per part's name, whichever reader reads it. The CPU's walk
+   writes that kind into the part's code and keeps its word. The interpreter and Metal take it
+   from a retag (`Retag::part`) that keeps the word too. Tier 2 meets the part's keywords at that
+   byte (`Row::moved`). A keyword read as a part keeps the part's kind, so the row reserves none
+   for the state's end. A state that cannot meet the part (outside its region, by
+   `row_modes`) refuses that byte, so the emitter names its words only where the part comes.
+
+`ROW` tests: none, from 295. The names are one record kind, `t::SIMPLE_IDENTIFIER`: the kinds
+`SIMPLE_IDENTIFIER_15` and its kin are gone. Each reader's and part's kind is named for its
+row (`t::INTERPOLATED_IDENTIFIER`, `t::LINE_COMMENT`). Tier 2's program went from 10,765 words
+to 9,514, and `tier2_aot.rs` from 53,721 lines to 40,574. The 96 `s.bit` tests left are marks'
+`drops`, which test where a comment lies, not a token's kind.
+
+Tapes unchanged: the compiler tests (128), Kotlin (51), Bitlex (11) and `rr_aot` (15) pass; the
+corpus is 447 the same, 44 refused, 0 differ; `aot_tapes_are_the_jits` passes.
+
 ## Order of the rest
 
-1. F step 2: the record's kind from the row. This also gives names one record kind.
-2. A and B: the structured tier 1 emitter.
+1. A and B: the structured tier 1 emitter.
 
-D, G and E are done (above).
+D, G, E and F are done (above).

@@ -2625,7 +2625,8 @@ impl RecordTables {
             let tested = r.rules.iter().enumerate().any(|(k, e)| matches!(e, crate::records::EndRule::Read(i) if r.readers[usize::from(*i)].parts_in_tier1()) && r.checks.iter().any(|c| usize::from(c.rule) == k));
             // A quiet region (`Reader::quiet`): no mark or retag holds in it, so its parts' codes
             // are plain whatever the grammar's marks.
-            let marked = parted.iter().any(|rd| !rd.quiet) && (!r.marks.is_empty() || !r.retags.is_empty() || r.gaps != 0);
+            // A part's own kind (`Retag::part`) is the walk's, not a retag it would need.
+            let marked = parted.iter().any(|rd| !rd.quiet) && (!r.marks.is_empty() || r.retags.iter().any(|t| !t.part) || r.gaps != 0);
             if parted.iter().any(|rd| rd.arms.len() != 1) || marked || tested {
                 return Err(Error::UnsupportedFeature("a region read in parts, on the CPU, with this grammar's marks or tests"));
             }
@@ -4138,10 +4139,18 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let kc = f.block_params(after)[0];
     // Each: its bits, its last's offset (or the output its last is the first bit of), and its
     // bytes where it is a part.
-    let mut checks: Vec<(Value, i64, Option<i64>, Option<u16>)> = vec![(xc, i64::from(a.off), None, a.last)];
-    checks.extend(parts.iter().zip(&xp).map(|(pt, &x)| (x, i64::from(pt.bytes) - 1, Some(i64::from(pt.bytes)), pt.last)));
+    let mut checks: Vec<(Value, i64, Option<i64>, Option<u16>, Option<u8>)> = vec![(xc, i64::from(a.off), None, a.last, None)];
+    checks.extend(parts.iter().zip(&xp).map(|(pt, &x)| (x, i64::from(pt.bytes) - 1, Some(i64::from(pt.bytes)), pt.last, pt.kind)));
     let n = checks.len();
-    for (j, (x, off, part, to_last)) in checks.into_iter().enumerate() {
+    // A part's code: its own kind where it has one (`ReadPart::kind`), its word kept.
+    let own = |f: &mut FunctionBuilder<'_>, code: Value, kind: Option<u8>| match kind {
+        Some(k) => {
+            let rest = f.ins().band_imm(code, !0xff);
+            f.ins().bor_imm(rest, i64::from(k))
+        }
+        None => code,
+    };
+    for (j, (x, off, part, to_last, kind)) in checks.into_iter().enumerate() {
         let (this, other) = (f.create_block(), if j + 1 < n { Some(f.create_block()) } else { None });
         match other {
             Some(o) => {
@@ -4184,6 +4193,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let len = f.ins().isub(l, pos);
             let len = f.ins().iadd_imm(len, 1);
             let code = code_at(f, pos, len);
+            let code = own(f, code, kind);
             write_record(f, c, stores, kc, Some(pos), Some(l), code);
             let k2 = c.step(f, kc);
             let at2 = f.ins().iadd_imm(l, 1);
@@ -4197,6 +4207,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let l = f.ins().iadd_imm(pos, off);
         let len = f.ins().iconst(types::I64, off + 1);
         let code = code_at(f, pos, len);
+        let code = own(f, code, kind);
         write_record(f, c, stores, kc, Some(pos), Some(l), code);
         let k2 = c.step(f, kc);
         match part {

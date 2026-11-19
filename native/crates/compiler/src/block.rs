@@ -1874,10 +1874,11 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     let last = a.last.map_or(String::new(), |o| format!(" last {o}"));
                     let _ = writeln!(out, "  block {at} recarm {k} {} {} {} {none}{retag}{last}", a.opener, a.closer, a.off);
                 }
-                // `block N recpart K START BYTES [last O]` each part of a region read in parts.
+                // `block N recpart K START BYTES [last O] [kind K]` each part of a region read in parts.
                 for p in &rd.parts {
                     let last = p.last.map_or(String::new(), |o| format!(" last {o}"));
-                    let _ = writeln!(out, "  block {at} recpart {k} {} {}{last}", p.start, p.bytes);
+                    let kind = p.kind.map_or(String::new(), |k| format!(" kind {k}"));
+                    let _ = writeln!(out, "  block {at} recpart {k} {} {}{last}{kind}", p.start, p.bytes);
                 }
                 if rd.quiet {
                     let _ = writeln!(out, "  block {at} recquiet {k}");
@@ -1887,9 +1888,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 }
             }
         }
-        // `block N recretag O KIND MARKS`: a reader's kind and marks by its start mask.
+        // `block N recretag O KIND MARKS [part]`: a reader's or a part's kind and marks by its start mask.
         for t in &r.retags {
-            let _ = writeln!(out, "  block {at} recretag {} {} {}", t.o, t.kind, t.marks);
+            let _ = writeln!(out, "  block {at} recretag {} {} {}{}", t.o, t.kind, t.marks, if t.part { " part" } else { "" });
         }
         // `block N recgaps G` the gap marks' bits, `block N recextra K` an extra's mark.
         if r.gaps != 0 {

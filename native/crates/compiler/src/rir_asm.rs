@@ -754,7 +754,8 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
-                r.retags.push(crate::records::Retag { o, kind, marks });
+                let part = matches!(line.word(), Ok(w) if w == "part");
+                r.retags.push(crate::records::Retag { o, kind, marks, part });
             } else if first == "recarm" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recarm before its records"))?;
                 let k: usize = line.number("")?;
@@ -776,16 +777,20 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recarm {k}: no such reader"))?;
                 rd.arms.push(crate::records::ReadArm { opener, closer, off, last, none, retag });
             } else if first == "recpart" {
-                // `recpart K START BYTES [last O]`: a part of reader K's region (`Reader::parts`).
+                // `recpart K START BYTES [last O] [kind K]`: a part of reader K's region (`Reader::parts`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recpart before its records"))?;
                 let k: usize = line.number("")?;
                 let (start, bytes): (u16, u8) = (line.number("")?, line.number("")?);
-                let last = match line.word() {
-                    Ok(w) if w == "last" => Some(line.number("")?),
-                    _ => None,
-                };
+                let (mut last, mut kind) = (None, None);
+                while let Ok(w) = line.word() {
+                    match w.as_str() {
+                        "last" => last = Some(line.number("")?),
+                        "kind" => kind = Some(line.number("")?),
+                        w => return Err(format!("block {at} recpart: `last` or `kind`, not {w}")),
+                    }
+                }
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recpart {k}: no such reader"))?;
-                rd.parts.push(crate::records::ReadPart { start, bytes, last });
+                rd.parts.push(crate::records::ReadPart { start, bytes, last, kind });
             } else if first == "recquiet" {
                 // `recquiet K`: reader K's region holds no mask mark (`Reader::quiet`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recquiet before its records"))?;
