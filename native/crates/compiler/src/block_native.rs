@@ -283,8 +283,8 @@ impl BlockNative {
                 }
             }
         }
-        for x in 0..insts.len() {
-            if keep[x] && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
+        for (x, &kept) in keep.iter().enumerate().take(insts.len()) {
+            if kept && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
                 place(x, &insts, &mut placed, &mut order);
             }
         }
@@ -537,6 +537,7 @@ impl BlockNative {
 
 /// A pass over a file's blocks, of a program in passes (`BlockNative::passes`).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Pass {
     /// First block to first: a body, as a program without passes runs it. Its `Load`s read the
     /// slots of passes before it. Before the last pass, output `k` is stored to slot
@@ -661,9 +662,9 @@ impl BlockNative {
                 slots += 1;
             }
         };
-        for x in 0..n {
+        for (x, inst) in self.insts.iter().enumerate() {
             for p in (0..=last).filter(|&p| made[p][x]) {
-                for o in self.insts[x].operands() {
+                for o in inst.operands() {
                     if !in_pass(o, p) {
                         give(o, &mut slot);
                     }
@@ -817,11 +818,10 @@ impl PlaneFormulas {
     fn push(&mut self, inst: BlockInst) -> u16 {
         // A carry is its group's own value, never another's, however alike their starts.
         let pure = !matches!(inst, BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Carry(_));
-        if pure {
-            if let Some(&i) = self.shared.get(&inst) {
+        if pure
+            && let Some(&i) = self.shared.get(&inst) {
                 return i;
             }
-        }
         let i = self.insts.len() as u16;
         self.insts.push(inst);
         if pure {

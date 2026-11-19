@@ -481,4 +481,22 @@ mod tests {
             assert_eq!(job.due(), Due::No);
         }
     }
+
+    /// A store removed after its last keep decision (a test's, with its directory) is due no more, and its job makes
+    /// no store at its path: its reader, opened before the removal, still read the old file's unswept decision.
+    #[test]
+    fn a_removed_stores_frames_are_not_due_and_no_store_is_made_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("test-store");
+        let path = folder.join("store.sqlite");
+        drop(ContentStore::open(&path).unwrap());
+        Connection::open(&path).unwrap().execute("UPDATE corpus_decided SET run = swept + 1 WHERE singleton = 1", []).unwrap();
+        let mut job = Frames::new(&path);
+        assert_eq!(job.due(), Due::Urgent, "a decision past the last sweep");
+        std::fs::remove_dir_all(&folder).unwrap();
+        assert_eq!(job.due(), Due::No, "the store is gone");
+        let stop = AtomicBool::new(false);
+        assert_eq!(job.step(&Slice::for_test(Duration::from_millis(200), 64 << 20, &stop)), Ok(Step::Done));
+        assert!(!folder.exists(), "no store is made where the removed one was");
+    }
 }

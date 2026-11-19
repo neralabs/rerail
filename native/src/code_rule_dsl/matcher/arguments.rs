@@ -1,15 +1,15 @@
-use crate::code_rule_dsl::tree::Tree;
 use super::util::UNKNOWN;
 use super::value::spend_step;
 use crate::code_rule_dsl::identifier::python_identifier;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::value::{Context, Value};
 // cratify: a re-export of rerail-lang-php's, which its facades of this module make
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// How a signature slot may be passed.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -60,7 +60,6 @@ pub fn every<'r, D: Doc>(count: usize, make: impl Fn() -> Passed<'r, D>) -> Vec<
     (0..count).map(|_| make()).collect()
 }
 
-
 impl Arguments {
     pub fn match_node<'tree, D: Doc>(
         &self,
@@ -78,7 +77,10 @@ impl Arguments {
         {
             return None;
         }
-        let passed = { let pack = language_pack::pack(Family::of(self.language)); passed::<D>(pack, self, &node) }?;
+        let passed = {
+            let pack = language_pack::pack(Family::of(self.language));
+            passed::<D>(pack, self, &node)
+        }?;
         let mut unknown = false;
         for &slot in &self.absent {
             match passed[slot] {
@@ -199,12 +201,12 @@ impl Arguments {
 
 /// What `call` passes for `arguments`' slots, as `A`'s family binds a call's arguments.
 fn passed<'r, D: Doc>(
-    pack: &dyn language_pack::LanguagePack, arguments: &Arguments,
+    pack: &dyn language_pack::LanguagePack,
+    arguments: &Arguments,
     call: &Node<'r, D>,
 ) -> Option<Vec<Passed<'r, D>>> {
     language_pack::arguments_passed(pack, arguments, call)
 }
-
 
 /// Passes `value` by `name`, to `slot` where the signature lists the name; a name outside it
 /// binds a parameter the signature does not list. `false` where PHP refuses the call: the name
@@ -246,7 +248,6 @@ pub fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
     }
     node
 }
-
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 

@@ -34,12 +34,11 @@ pub fn run(p: &Placed, db: &Connection, mut inputs: Inputs, lowered: Option<lowe
     ks.admit(&clean.iter().cloned().collect::<Vec<_>>());
     let mut restored = BTreeMap::new();
     for rel in &clean {
-        if ks.has_rows(rel) {
-            if let Some((types,flat,n))=ks.rows(rel) {
+        if ks.has_rows(rel)
+            && let Some((types,flat,n))=ks.rows(rel) {
                 component::hold_rows(db,rel,types,flat,n);
                 restored.insert(rel.clone(),component::derived(db,rel).expect("held rows"));
             }
-        }
     }
     clean.retain(|r|restored.contains_key(r));
     let cut = stages::inputs_made(p,&clean.iter().cloned().collect::<Vec<_>>())?;

@@ -45,7 +45,7 @@ fn kinds_flow_through_derived_columns_and_facts() {
 #[test]
 fn a_variable_in_two_symbol_domains_is_refused() {
     let p = parse(&format!("{BASE}.decl bad(n: node)\n.output bad\nbad(n) :- node(_, n, k, _, _), text(n, k).\n")).unwrap();
-    let e = domains(&p).err().expect("a domain conflict").to_string();
+    let e = domains(&p).expect_err("a domain conflict").to_string();
     assert!(e.contains("$k is a Kind and a Name") || e.contains("$k is a Name and a Kind"), "{e}");
 }
 

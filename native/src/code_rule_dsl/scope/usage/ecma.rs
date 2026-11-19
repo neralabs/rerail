@@ -10,10 +10,10 @@ use super::super::{
     Binding, BuildError, Form, MAX_BUILD_DEPTH, MAX_BUILD_STACK_BYTES, NodeRef, ScopeKind,
     ScopeTable, stack_address,
 };
-use crate::code_rule_dsl::tree::Tree;
 use super::{Facts, PrivateDeclaration, PrivateMember, Steps, known};
 use crate::code_rule_dsl::identifier::ecma_name;
 use crate::code_rule_dsl::language::kind_ids;
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
 use std::collections::BTreeSet;
@@ -119,7 +119,6 @@ const WRAPPERS: &[&str] = &[
     "type_assertion",
 ];
 
-
 fn same<D: Doc>(left: &Node<'_, D>, right: &Node<'_, D>) -> bool {
     left.range() == right.range() && left.kind_id() == right.kind_id()
 }
@@ -135,7 +134,6 @@ fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
     }
     node
 }
-
 
 /// A class member's key: tree-sitter-javascript's `field_definition` names it `property`;
 /// tree-sitter-typescript's `public_field_definition` and both grammars' `method_definition`,
@@ -619,7 +617,8 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
                 }
                 // The queried expression or the predicate's parameter, not its type.
                 "type_query" | "type_predicate" | "asserts" => {
-                    return ancestor.named_code()
+                    return ancestor
+                        .named_code()
                         .next()
                         .is_some_and(|first| same(&first, &child));
                 }
@@ -1018,7 +1017,8 @@ fn inside_storable_function<D: Doc>(node: &Node<'_, D>, rhs: (usize, usize)) -> 
         match kind.as_ref() {
             "parenthesized_expression" | "arguments" | "template_substitution" => {}
             "sequence_expression"
-                if !current.named_code()
+                if !current
+                    .named_code()
                     .last()
                     .is_some_and(|last| same(&last, &child)) =>
             {

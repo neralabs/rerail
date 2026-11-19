@@ -25,7 +25,7 @@
 //! in a test file) are left out: a test sets them on its own thread.
 //!
 //! The tests below read the source: every thread-local is listed, every listed one exists, and every **Carried**
-//! one is taken by [`Carry::here`]. `scripts/check/check-thread-state.py` refuses a commit that adds an unlisted
+//! one is taken by [`Carry::here`]. `scripts/check/check_thread_state.py` refuses a commit that adds an unlisted
 //! thread-local, before it is made.
 
 use std::any::Any;
@@ -91,6 +91,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/lanes.rs", "SUSPENDABLE", Thread, "this thread's device queue: what it issued, it flushes and waits for"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "GROWN", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "MIXED", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
+    ("src/code_rule_dsl/logic/native.rs", "OWN_LATTICES", Carried, ""),
     ("src/code_rule_dsl/logic/native/setfix.rs", "WALKS_WHOLE", Carried, ""),
     ("src/code_rule_dsl/facts/rows.rs", "CHUNK", Carried, ""),
     ("src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),
@@ -299,6 +300,7 @@ const CARRIERS: &[fn(&mut Capture)] = &[
     super::plan::corpus::switches::carried,
     super::plan::corpus::session::carried,
     super::native::setfix::carried,
+    super::native::carried,
     #[cfg(any(test, feature = "test-hooks"))]
     super::plan::corpus::test_store::carried,
     carried_elsewhere,

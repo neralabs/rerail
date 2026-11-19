@@ -5150,7 +5150,7 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
     }
     let rules = || (0..p.len()).map(|k| p.body(k));
     // A relation of the program's facts is its table too (`run`: `c0`, `c1`, …), though an input of that name has
-    // named columns (the converter's `option_item`, core.rr's `option_item(name, i, v)`).
+    // named columns (the converter's `option_item`, core.rerail's `option_item(name, i, v)`).
     let derived: HashSet<String> = rules()
         .map(|b| b.rel(b.head()).to_owned())
         .chain(f.fact_rels().into_iter().map(|r| f.text(r.name())).filter(|rel| !f.is_input(rel)).map(str::to_owned))
@@ -5185,7 +5185,7 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
             stats.fan.insert((rel.clone(), col), (rows / distinct).max(1.0));
         }
     }
-    // An input no rule reads needs no statistics: a `.rr` program declares every `core.rr` relation (its prelude).
+    // An input no rule reads needs no statistics: a `.rerail` program declares every `core.rerail` relation (its prelude).
     let read: BTreeSet<String> = rules().flat_map(|b| (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a).to_owned()).collect::<Vec<_>>()).collect();
     for rel in f.inputs().filter(|rel| !inputs.batch.contains_key(*rel) && read.contains(*rel)) {
         // A relation whose statistics are made when first planned with (`Model::resolve`).
@@ -5958,7 +5958,7 @@ impl<'a> Run<'a, '_> {
     /// its prefixes. A search containing an index's columns extends that index (rebuilt once, the old one dropped)
     /// rather than adding one, so the indexes form chains of searches (Soufflé's index selection: a minimum chain
     /// cover, here greedy as searches arrive). Each secondary index of a `WITHOUT ROWID` table holds the whole row,
-    /// a copy of the relation that every insert maintains: on `calls.rr` this makes 22 indexes where one per search
+    /// a copy of the relation that every insert maintains: on `calls.rerail` this makes 22 indexes where one per search
     /// made 96.
     fn index_for(&mut self, rel: &str, cols: &[usize]) -> Result<()> {
         let want: BTreeSet<usize> = cols.iter().copied().collect();
@@ -12683,7 +12683,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             outcome.native.insert(key);
             continue;
         }
-        // The import components (`components.rr`) from the rows the engine holds: no table read or written.
+        // The import components (`components.rerail`) from the rows the engine holds: no table read or written.
         if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
             && let Some(NativeSpec::Components { edge, own }) = f0.native(rel).map(|n| &n.spec)
             && let Some(n) = run.native_components(rel, f0.rel_name(*edge), f0.rel_name(*own))?

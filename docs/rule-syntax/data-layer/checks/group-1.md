@@ -1,4 +1,4 @@
-# Group 1: what .rr lacks for 16 data-layer checks
+# Group 1: what .rerail lacks for 16 data-layer checks
 
 Oracle: data-layer scripts at revision 2b1504ad. Cited as `script.py:LINE`; a bare `:LINE` refers to the section's own script.
 
@@ -442,7 +442,7 @@ Oracle: data-layer scripts at revision 2b1504ad. Cited as `script.py:LINE`; a ba
     with format variants.
   - `POLICY`: a signature failure is a finding, not an engine error. If the list fails, the reporter returns exactly
     one finding `unsigned_allowlist` at `scripts/lint_conn_or_txn_union.py:1` and suppresses every other finding
-    (:412-421). core.rr says only that `signed_list` "refuses" a bad list. The policy needs a directive (e.g.
+    (:412-421). core.rerail says only that `signed_list` "refuses" a bad list. The policy needs a directive (e.g.
     `.on_signature_failure finding CODE at "path"`) or a nullary relation `signed_list_invalid(path)` so a rule can
     report it and the other rules can be guarded by `!signed_list_invalid(…)`.
 - **Hard parts:**

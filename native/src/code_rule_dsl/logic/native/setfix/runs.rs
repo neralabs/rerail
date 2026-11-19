@@ -543,7 +543,7 @@ impl Run {
         let n = self.ids.len();
         let Some(&lead) = cols.first() else {
             // No columns: one row at most, held when a live id is.
-            if self.ids.iter().any(|id| live(id)) {
+            if self.ids.iter().any(live) {
                 held.iter_mut().for_each(|h| *h = true);
             }
             return;
@@ -564,7 +564,7 @@ impl Run {
                 let (s, e) = tag_span(&self.tags, tag(row[lead]), at, false);
                 let p = split_at_pos(s, e, |j| cmp(self.ids.get(j)).is_lt());
                 at = p;
-                held[i] = (p..e).map(|j| self.ids.get(j)).take_while(|&id| cmp(id).is_eq()).any(|id| live(id));
+                held[i] = (p..e).map(|j| self.ids.get(j)).take_while(|&id| cmp(id).is_eq()).any(live);
                 continue;
             }
             // The first id at or past the row is past the block before the first fence at or past its leading value.
@@ -580,7 +580,7 @@ impl Run {
             let hi = (start + bound - 1).min(n);
             let p = split_at_pos(lo, hi, |j| cmp(self.ids.get(j)).is_lt());
             at = p;
-            held[i] = (p..n).map(|j| self.ids.get(j)).take_while(|&id| cmp(id).is_eq()).any(|id| live(id));
+            held[i] = (p..n).map(|j| self.ids.get(j)).take_while(|&id| cmp(id).is_eq()).any(live);
         }
     }
 
@@ -1810,7 +1810,7 @@ pub mod tests {
         let shapes: [(&str, fn(i64) -> i64); 5] = [
             ("narrow", |i| i % 37),
             ("negative", |i| (i % 211) - 105),
-            ("node", |i| ((i % 9) << 32) | (i * 7) % 4001),
+            ("node", |i| ((i % 9) << 32) | ((i * 7) % 4001)),
             ("wide", |i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15u64 as i64)),
             ("extremes", |i| [i64::MIN, -1, 0, 1, i64::MAX][i as usize % 5]),
         ];
@@ -1844,7 +1844,7 @@ pub mod tests {
         let mut rand = move || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
         for shape in ["clustered", "shuffled", "small"] {
             let rows: Vec<i64> = (0..n as i64).flat_map(|i| {
-                let node = match shape { "clustered" => ((i / 600) << 32) | (i % 600) * 3, "shuffled" => (((rand() % 9000) as i64) << 32) | (rand() % 4000) as i64, _ => (rand() % 40_000) as i64 };
+                let node = match shape { "clustered" => ((i / 600) << 32) | ((i % 600) * 3), "shuffled" => (((rand() % 9000) as i64) << 32) | (rand() % 4000) as i64, _ => (rand() % 40_000) as i64 };
                 [node, (rand() % 5000) as i64]
             }).collect();
             for cols in [vec![0usize], vec![0, 1]] {

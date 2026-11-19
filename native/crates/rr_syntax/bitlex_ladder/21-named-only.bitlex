@@ -1,4 +1,4 @@
-# `.rr`, step 21: a named-only tape.
+# `.rerail`, step 21: a named-only tape.
 #
 #   f(a, b) :- g(a), !h(b).
 #

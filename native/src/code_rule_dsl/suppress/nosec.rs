@@ -185,7 +185,9 @@ impl NosecIndex {
 
     /// Each line holding a `# nosec` comment, with the tests it names (none: every test).
     pub fn directives(&self) -> impl Iterator<Item = (usize, &[&'static str])> {
-        self.lines.iter().filter_map(|(&line, tests)| Some((line, tests.as_deref()?)))
+        self.lines
+            .iter()
+            .filter_map(|(&line, tests)| Some((line, tests.as_deref()?)))
     }
 
     /// Whether a finding of one of `codes`, reported at `at` on a node spanning `node`, is

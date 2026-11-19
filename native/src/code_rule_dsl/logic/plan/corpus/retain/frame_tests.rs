@@ -341,7 +341,7 @@ fn a_frames_digests_are_of_content_whichever_ids_its_atoms_have() {
     let b = stores[1].intern_atoms(&["pad", "len", "join", "os.path"]).unwrap()[1..].to_vec();
     assert_ne!(a[0], b[2], "the two number `os.path` otherwise");
     // Rows (module, name, kind): two atom columns and a number.
-    let types = [b's', b's', b'i'];
+    let types = *b"ssi";
     let rows = |ids: &[crate::content_store::Sym]| -> Vec<i64> { vec![i64::from(ids[0]), i64::from(ids[1]), 7, i64::from(ids[2]), i64::from(ids[1]), 7] };
     let (atoms_a, atoms_b) = (stores[0].atoms_handle(), stores[1].atoms_handle());
     let (ca, cb) = (crate::code_rule_dsl::logic::plan::Cells::new(&atoms_a, &types), crate::code_rule_dsl::logic::plan::Cells::new(&atoms_b, &types));

@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 use super::super::tape::TapeDoc;
 use ast_grep_core::MatchStrictness;
@@ -134,7 +133,7 @@ pub mod regex_block;
 // cratify: `block_rows_tests` is rerail-device-metal's (it mounts it)
 #[cfg(test)]
 pub mod block_digest_tests;
-// The `.rr` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
+// The `.rerail` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
 // what it refuses. Nothing in the engine parses with it yet; named here for the engine's callers.
 #[allow(unused_imports)]
 pub use rerail_rr_parser as rr_parser;

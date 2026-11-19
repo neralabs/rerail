@@ -148,7 +148,8 @@ fn place(plan: &Plan, spec: &Spec, kind: u32) -> (Block, PackStats) {
     let cp: *mut IntCol = block.alloc_t(plan.arity);
     let ip: *mut PIndex = block.alloc_t(plan.indexes.len().max(1));
     let n = plan.n;
-    let mut jobs: Vec<(&Choice, &[i64], &mut [u64], &mut [u64])> = Vec::new();
+    type Job<'a> = (&'a Choice, &'a [i64], &'a mut [u64], &'a mut [u64]);
+    let mut jobs: Vec<Job> = Vec::new();
     unsafe {
         (*p).arity = plan.arity as u32;
         (*p).n = n as u32;

@@ -51,7 +51,7 @@ Out of scope for the engine, and owned by the integration: presentation, orderin
 
 ## 3. Tape: v9np (decision 0003)
 
-Measured in `research/tape-v8-measurements.md` over 24.2M nodes: CPython 3.13 Lib, nera-data-layer `impl/`, and rerail's TS, Rust and PHP. Code is in `experiments/tape-v8/`. All variants decode to identical checksums.
+Measured in `research/tape-v8-measurements.md` over 24.2M nodes: CPython 3.13 Lib, the data-layer repository's `impl/`, and rerail's TS, Rust and PHP. Code is in `experiments/tape-v8/`. All variants decode to identical checksums.
 
 **Content: structure only.** The tape holds exactly the parser's tree for one document in one grammar, and nothing else:
 
@@ -442,7 +442,7 @@ M1–M9 and the phase each one gates are listed in `architecture.md` (Integratio
 
 ## 20. Tape residency and caching
 
-Evidence and the Tempo/main survey: `research/tempo-residency.md`. Bare document paths below are in the Tempo tree (`nera-landing-2/ner-1562-scale-test-the-re-railer/tempo/docs/`).
+Evidence and the Tempo/main survey: `research/tempo-residency.md`. Bare document paths below are in the Tempo tree (`scale-test-the-re-railer/tempo/docs/`).
 
 Tempo evidence: first-use Metal mapping cost 213 ms against 6.1 ms of GPU time, and reused buffers cut the wait 30–60× (`shared-sparse-bump-arena-design.md:14-35,260`). A 32 MiB / 30 s decompressed cache got 0 hits on full scans and spent 37.6 worker-seconds decompressing in a warm run. Heap decompression left 3.3 GiB of malloc high-water (`workspace-store-runtime-journal.md:536-681`). Per-object mappings were rejected for VM metadata cost (`:517-520`).
 

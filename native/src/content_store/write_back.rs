@@ -536,7 +536,8 @@ fn writers() -> &'static Mutex<HashMap<PathBuf, Arc<Writer>>> {
 /// The writer of the store at `path`, counted as one more of its handles (a `Hold`, which names no store).
 pub(super) fn register(path: &Path) -> Arc<Writer> {
     let mut all = writers().lock().expect("the writers");
-    let w = Arc::clone(all.entry(path.to_path_buf()).or_default());
+    let entry = all.entry(path.to_path_buf()).or_default();
+    let w = Arc::clone(entry);
     w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     w
 }
@@ -573,6 +574,8 @@ fn unregister(path: &Path, w: &Arc<Writer>) {
         let (jobs, bytes) = w.shared.state.lock().map(|s| (s.jobs, s.bytes)).unwrap_or_default();
         let t = std::time::Instant::now();
         drop(tx);
+        // The writer joins the checkpointer as it ends (`checkpoints`): joined, every connection to the file is
+        // closed, as a run that deletes it and creates it again (`corpus::closed`) needs.
         let _ = thread.join();
         // What the end of the run waited for: the queue the waves left behind them.
         let waited = t.elapsed().as_secs_f64();
@@ -595,14 +598,20 @@ impl Drop for Hold {
     }
 }
 
-/// `Hold` of the store at `path`.
+/// `Hold` of the store at `path`: the writer of the store a handle opens there next, or has open.
 pub fn hold(path: &Path) -> Hold {
     Hold(path.to_path_buf(), register(path))
 }
 
+/// A kind of job's count, bytes held until written, CPU on the writer's thread and the bytes of the frames it encoded.
+type KindWrites = (usize, usize, f64, usize);
+
+/// A kind of job and its `KindWrites`, as the profile lists them.
+pub type KindRow = (&'static str, usize, usize, f64, usize);
+
 /// Each kind of job's count, bytes held until written, CPU on the writer's thread and the bytes of the frames it
 /// encoded, in this process (the profile's write-back).
-static BY_KIND: std::sync::LazyLock<Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64, usize)>>> = std::sync::LazyLock::new(Default::default);
+static BY_KIND: std::sync::LazyLock<Mutex<std::collections::BTreeMap<&'static str, KindWrites>>> = std::sync::LazyLock::new(Default::default);
 
 /// Each kind of job written so far in this process: count, bytes held, the writer's CPU and the bytes of the frames
 /// it encoded, costliest first.
@@ -730,7 +739,7 @@ impl ContentStore {
             static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
             if t.is_some() && !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
                 let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c, _))| (*w, *j, *b, *c)).collect();
-                rows.sort_by(|a, b| b.2.cmp(&a.2));
+                rows.sort_by_key(|r| std::cmp::Reverse(r.2));
                 let rows: Vec<String> = rows.iter().map(|(w, j, b, c)| format!("{w}: {j} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect();
                 eprintln!("rerail: the writer's queue is full ({:.1} MB in {} jobs; {what} brings {:.1} MB): queued so far, by what: {}", s.bytes as f64 / 1048576.0, s.jobs, bytes as f64 / 1048576.0, rows.join("; "));
             }
@@ -896,7 +905,7 @@ impl ContentStore {
                         let mut outcomes = Vec::with_capacity(batch.len());
                         for (job, _, _, _, what) in batch.iter_mut() {
                             let (c0, e0) = (thread_cpu(), super::compression::encoded_here());
-                            let _span = super::hazards::span(*what);
+                            let _span = super::hazards::span(what);
                             outcomes.push(
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                                     .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),
@@ -1070,7 +1079,7 @@ impl ContentStore {
 
     /// The writer's work by what each job writes, `(what, jobs, bytes held, writer CPU, bytes of frames encoded)`,
     /// costliest first; the most bytes queued at once; and the back-pressure's holds of a producer, `(count, seconds)`.
-    pub fn written_by_what(&self) -> (Vec<(&'static str, usize, usize, f64, usize)>, usize, (usize, f64)) {
+    pub fn written_by_what(&self) -> (Vec<KindRow>, usize, (usize, f64)) {
         let Some(w) = self.writer() else { return (Vec::new(), 0, (0, 0.0)) };
         let s = w.shared.state.lock().expect("the writer's state");
         let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c, e))| (*w, *j, *b, *c, *e)).collect();
@@ -1429,4 +1438,5 @@ mod tests {
         drop(again);
         let _ = std::fs::remove_dir_all(dir);
     }
+
 }

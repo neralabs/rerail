@@ -1,6 +1,5 @@
 import { execFileSync, fork } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
-import Database from "better-sqlite3";
 import { EventEmitter, once } from "node:events";
 import { existsSync, opendirSync, type Dir, type Dirent } from "node:fs";
 import * as fsPromises from "node:fs/promises";
@@ -34,6 +33,7 @@ import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engin
 import * as native from "../../../src/engine/native/native.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { queryContentStore } from "../../support/engine/content-store-query.js";
 import { GIT_OPEN_AGAIN_MS, nativeGitAccess } from "../../../src/engine/native/git-access.js";
 
 
@@ -250,13 +250,10 @@ function listingInOrder(directory: Dir, names: readonly string[]): Dir {
   return Object.defineProperty(directory, Symbol.asyncIterator, { value: entries });
 }
 
-/** Clean directories the shared content store records as complete. */
+/** Clean directories the shared content store records as complete, read in another process (`queryContentStore`). */
 function completedDirectories(): number {
-  const store = new Database(process.env.RERAIL_CONTENT_STORE_PATH!, { readonly: true });
-  try {
-    const count: unknown = store.prepare("SELECT count(*) FROM completed_directory_reuse").pluck().get();
-    return typeof count === "number" ? count : Number.NaN;
-  } finally { store.close(); }
+  const [row] = queryContentStore(process.env.RERAIL_CONTENT_STORE_PATH!, "SELECT count(*) AS n FROM completed_directory_reuse");
+  return typeof row?.n === "number" ? row.n : Number.NaN;
 }
 
 /** Another process that takes the content store's write lock (`lock`) and gives it back (`release`) on request. */

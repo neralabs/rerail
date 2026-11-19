@@ -27,7 +27,7 @@ Differences near one or two percent do not establish an optimization gain.
 Peak RSS covers the process, including compilation and retained workspace data.
 RSS differences do not identify particular heap allocations.
 
-The [evidence file](../fixtures/host/data-layer-port/profiling/sql-spikes.json) records fingerprints, timings, parity totals, and profile summaries.
+The [evidence file](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-spikes.json) records fingerprints, timings, parity totals, and profile summaries.
 Raw artifacts remain in `.rerail/profiles/sql-spikes-2026-10-20/`.
 
 ## Isolated experiments
@@ -212,7 +212,7 @@ Run each measurement separately:
 
 ```sh
 python3 scripts/profiling/run.py --trace off --cold-only --deadline 115 \
-  --source /path/to/pinned/nera-data-layer \
+  --source /path/to/pinned/data-layer \
   --selection fixtures/host/data-layer-port/profiling/quality-five.json \
   --policies .rerail/profiles/example-policy \
   --output .rerail/profiles/example-run

@@ -209,7 +209,7 @@ impl ProgramPass for Hide {
                 let grammar_of = |s: Slot| facts.get(&s).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
                 // A kind read off a guest's node is its grammar's (decision 0222): `kind(f, k), fn_scope(k)` over a view's
                 // node reads the kind set named in the view's grammar, and `k = "arrow_function"` names that grammar's
-                // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rr
+                // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rerail
                 // read over a Vue component's view) finds none of its kinds.
                 let kind_of: BTreeMap<Slot, String> = rule
                     .body
@@ -1383,7 +1383,7 @@ mod tests {
         assert!(out.iter().any(|r| r.contains("rr_in_sql_0_sql_1_pair(")), "{out:?}");
     }
 
-    /// O110: a column filled by host and guest nodes alike (`calls.rr`'s `tv`) is not a guest's column. A rule reading
+    /// O110: a column filled by host and guest nodes alike (`calls.rerail`'s `tv`) is not a guest's column. A rule reading
     /// a relation with a variable from it keeps reading the relation for the host's nodes, and a clone reads the
     /// guest's copy; before, the rule read only the copy, and `tbv` lost every host assignment.
     #[test]

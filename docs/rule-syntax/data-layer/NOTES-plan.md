@@ -1,11 +1,11 @@
 # Notes: the plan group
 
-This group ports four checks from the data-layer repository's Python linters to `.rr`. The specification is
+This group ports four checks from the data-layer repository's Python linters to `.rerail`. The specification is
 each linter at commit 2b1504adc. A score counts the recorded linter calls (events) whose finding keys the rule
 reproduces exactly, using plain `tools/rrlab/rrlab dl` with `--jobs 2`. The last column says whether the engine's
-`.rr` reader (`rr-census`) lowers every clause.
+`.rerail` reader (`rr-census`) lowers every clause.
 
-| check | Python lines | .rr lines | score (exact/events) | reader lowers it |
+| check | Python lines | .rerail lines | score (exact/events) | reader lowers it |
 |---|---|---|---|---|
 | plan_composition_architecture | 354 | 120 | 12/13 | yes |
 | plan_helpers_allowlist | 607 | 166 + 35 generated | 27/82 (75/82 with message codes) | yes |
@@ -14,9 +14,9 @@ reproduces exactly, using plain `tools/rrlab/rrlab dl` with `--jobs 2`. The last
 | total | 4,659 | 1,079 + 150 generated | 270/338 (318/338) | |
 
 Files:
-- the rules: `plan-composition-architecture.rr`, `plan-helpers-allowlist.rr`, `plan-optimizer-v2.rr` and
-  `eager-resolve.rr`;
-- the generated tables: `plan-helpers-allowlist.tables.rr` and `eager-resolve.tables.rr`;
+- the rules: `plan-composition-architecture.rerail`, `plan-helpers-allowlist.rerail`, `plan-optimizer-v2.rerail` and
+  `eager-resolve.rerail`;
+- the generated tables: `plan-helpers-allowlist.tables.rerail` and `eager-resolve.tables.rerail`;
 - their generators: `gen-plan-helpers-allowlist.py` and `gen-eager-resolve.py`. Both read the linter with
   `git show`, and `--check` prints ok when the committed table matches.
 
@@ -144,7 +144,7 @@ The remaining gaps:
    For example, `--code-from-message CODE` would treat any recorded code that is not a declared code of the rule as
    CODE.
 
-No change to `lib/core.rr` or to an existing library is needed.
+No change to `lib/core.rerail` or to an existing library is needed.
 
 ## Not expressible
 

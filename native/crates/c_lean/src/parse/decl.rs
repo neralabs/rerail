@@ -754,10 +754,8 @@ impl<'a> P<'a> {
         let mut named = false;
         if self.cpp {
             // `_class_name`: `X`, `A::X`, `X<T>`; then `final`, bases.
-            if (self.is_ident() || self.peek() == T::ColonColon) && !self.is_word(w::FINAL) {
-                self.class_name(slot(f::NAME, Ctx::Bare))?;
-                named = true;
-            } else if self.is_word(w::FINAL) && self.is_ident_at(1) {
+            // A name, or `final` used as one (`final` then a name).
+            if ((self.is_ident() || self.peek() == T::ColonColon) && !self.is_word(w::FINAL)) || (self.is_word(w::FINAL) && self.is_ident_at(1)) {
                 self.class_name(slot(f::NAME, Ctx::Bare))?;
                 named = true;
             }
@@ -1043,7 +1041,7 @@ impl<'a> P<'a> {
                 self.leaf(K::Identifier, f::PREFIX, C_NONE)?;
                 self.tk(K::Attribute, K::TColonColon)?;
             }
-            if !self.is_ident() && !(self.cpp && self.peek() == T::Name) {
+            if !(self.is_ident() || self.cpp && self.peek() == T::Name) {
                 return self.refuse();
             }
             self.leaf(K::Identifier, f::NAME, C_NONE)?;

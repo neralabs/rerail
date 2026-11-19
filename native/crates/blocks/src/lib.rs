@@ -45,6 +45,16 @@ pub mod relation;
 pub mod rows;
 pub mod scratch;
 pub mod sort;
+
+/// The flag an anonymous mapping takes to be address space reserved, its pages committed as they are written: Linux's
+/// `MAP_NORESERVE`. Without it Linux's overcommit heuristic refuses a reservation larger than memory and swap (a 64
+/// GiB scratch region on a 16 GiB runner), which macOS grants as it maps every anonymous region so.
+#[cfg(target_os = "linux")]
+pub(crate) const RESERVE_ONLY: libc::c_int = libc::MAP_NORESERVE;
+#[cfg(all(unix, not(target_os = "linux")))]
+pub(crate) const RESERVE_ONLY: libc::c_int = 0;
+#[cfg(windows)]
+mod windows;
 #[cfg(target_os = "macos")]
 pub mod gpu;
 

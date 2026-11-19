@@ -620,14 +620,12 @@ impl<'s> Lexer<'s> {
         }
         // `D '.' D exponent? suffix?`, and `'.' D …`.
         let int = if c0 == b'.' { Some(s) } else { self.digits(s, dec) };
-        if let Some(e) = int {
-            if self.at(e) == b'.' {
-                if let Some(f) = self.digits(e + 1, dec) {
+        if let Some(e) = int
+            && self.at(e) == b'.'
+                && let Some(f) = self.digits(e + 1, dec) {
                     let x = self.exponent(f).unwrap_or(f);
                     take(T::Real, real_suffix(x));
                 }
-            }
-        }
         if best.1 == s {
             return Err(Refusal::Lex(s as u32));
         }

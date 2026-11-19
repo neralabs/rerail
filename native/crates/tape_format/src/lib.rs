@@ -67,7 +67,7 @@ pub const FIELD_LIMIT: usize = 64;
 pub const SENTINEL: u16 = u16::MAX;
 /// ERROR's `kf`.
 pub const ERROR_CODE: u16 = 0;
-/// The `.rr` dialect's language tag (`languages/rr.json`'s `tapeTag`).
+/// The `.rerail` dialect's language tag (`languages/rr.json`'s `tapeTag`).
 pub const RR_TAG: u8 = 13;
 
 /// A kind's bits in a code's `kf`: the field is above them.
@@ -144,7 +144,7 @@ pub struct Widths {
 
 impl Widths {
     /// The guess for a source of `len` bytes (decision 0140). An offset and a tail are at most
-    /// the source's length, and a `.rr` file has fewer nodes than bytes: below 64 KiB every
+    /// the source's length, and a `.rerail` file has fewer nodes than bytes: below 64 KiB every
     /// column fits 2 bytes, so nearly every file is written once. Above it, offsets and tails
     /// stay 2 (they are short distances), and sizes take 4 from `SIZE_GUESS_BYTES` on.
     pub fn guess(len: usize) -> Self {
@@ -186,7 +186,7 @@ impl Layout for Widths {
 }
 
 /// From this many source bytes on, `Widths::guess` writes sizes at 4 bytes. Calibrated on the
-/// repository's 1,362 `.rr` files (`rr_syntax`'s `widths_guess_calibration`, 2026-11-13): the
+/// repository's 1,362 `.rerail` files (`rr_syntax`'s `widths_guess_calibration`, 2026-11-13): the
 /// densest has 0.334 nodes a byte, the densest of 64 KiB or more 0.205 (42,081 nodes in
 /// 205,423 bytes); none needs 4. At 0.205 a file has 65,535 nodes at about 320,000 bytes. With
 /// this bound no file is parsed twice; at 160,000, six were.

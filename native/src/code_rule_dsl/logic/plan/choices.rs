@@ -22,7 +22,7 @@
 //! does each later chunk of a run, where the first chunk's choices were made at the same size.
 //!
 //! Kept in the process (each part of a run, each chunk), and across processes in the tape cache: an entry of facts
-//! under a source named by the prepared program's key, a rewritten program as its `.rr` text (`program_text`, decision
+//! under a source named by the prepared program's key, a rewritten program as its `.rerail` text (`program_text`, decision
 //! 0155) named by its digest. The run's manifest names that source and the entry's plan (`named`), so collection keeps
 //! the entry while it keeps the run.
 
@@ -393,7 +393,7 @@ fn decode_chosen(texts: &HashMap<[u8; 32], program_text::Stored>, entry: &[u8], 
     };
     let version = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Str(digest)]) => {
-            let stored = texts.get(&unhex(&digest)?)?;
+            let stored = texts.get(&unhex(digest)?)?;
             // A program kept as its image is read as it is: the image is the program's version, its rules in order.
             // One kept as its text alone is read, and its image made: a program with no image is not taken.
             let placed = match stored {

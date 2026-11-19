@@ -13,7 +13,7 @@ The engine retains one chosen execution path. Profiling adds observation and doe
 Every area in the 975-submission survey now has an executable prototype.
 Production retains C. Runtime changes live in an isolated worktree and a checked patch, with no production algorithm flag.
 The [design and decisions](sql-post-c-spikes.md) describe the selected shapes and remaining integration.
-The [checked evidence](../fixtures/host/data-layer-port/profiling/post-c-spikes-20261024.json) retains complete trials, hashes, accounting, and validation.
+The [checked evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/post-c-spikes-20261024.json) retains complete trials, hashes, accounting, and validation.
 
 ### Combined runtime result
 
@@ -119,7 +119,7 @@ No Linear tickets are created.
 ## Remaining SQL submission survey: 2026-10-24
 
 Production remains at `82d82d89`: 975 engine submissions, 106 SQLite internal executions, and zero unknown origins.
-The [checked survey](../fixtures/host/data-layer-port/profiling/post-c-sql-survey-20261024.json) assigns every engine statement to one disjoint bucket.
+The [checked survey](../packs/data-layer/upstream/benchmarks/authored/profiling/post-c-sql-survey-20261024.json) assigns every engine statement to one disjoint bucket.
 Candidate execution costs 312, event clauses cost 202, flow execution costs 184, index/reader setup costs 176, compiler inference costs 53, and publication costs 48.
 The guard includes two observations through snapshot and workspace paths. Four physical index lifetimes cover two source hashes.
 These lifecycle counts do not predict full-repository CPU savings.
@@ -255,7 +255,7 @@ Candidate preparation contributes 308, relational evaluation contributes 366, an
 These counts identify remaining work. They do not price a new implementation chunk or establish full-repository performance.
 The final 100 gate and broader recovery requirements remain open.
 
-The [checked delivery evidence](../fixtures/host/data-layer-port/profiling/state-domain-admission-recovery-20261024.json) records all trials, source and artifact hashes, validation, and accounting.
+The [checked delivery evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/state-domain-admission-recovery-20261024.json) records all trials, source and artifact hashes, validation, and accounting.
 Raw builds, captures, controls, external profiles, and parity reports reside under `.rerail/profiles/chunk-c-20261024/`.
 Builds use the standing permission to finish. Runtime checks and experiments remain within 115 seconds.
 
@@ -291,7 +291,7 @@ Median peak RSS is 325,600 → 285,312 KiB.
 These controls cover only the frontend experiment and small guard. They are independent of the earlier B timing series.
 They do not measure the unimplemented input precondition or the complete repository.
 
-The [checked scope evidence](../fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) retains the exact consumers, transformed schemas, sessions, trials, and artifact hashes.
+The [checked scope evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-execution-chunk-c-20261024.json) retains the exact consumers, transformed schemas, sessions, trials, and artifact hashes.
 Raw policies, transformation code, controls, and reports reside under `.rerail/profiles/chunk-c-scope-20261024/`.
 All experiment commands complete within the 115-second deadline. No production code or Linear tickets change during this scoping work.
 
@@ -307,7 +307,7 @@ It includes typed operation batches, private pipelines, version membership, scop
 Cold compilation, publication, result emission, and cleanup remain inside the same budget.
 The first implementation step must price the complete executable schedule. Replacement counts and CPU improvement remain unproven.
 
-The [frozen C ledger](../fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) records all six remaining phases and their source hashes.
+The [frozen C ledger](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-execution-chunk-c-20261024.json) records all six remaining phases and their source hashes.
 Its counts sum to 2,250, with 181 separately reported SQLite internal executions.
 Acceptance also requires complete parity, genuine nonempty shared execution, repeatable CPU improvement, and no memory regression.
 Smaller TDD commits support C but cannot complete the delivery by themselves.
@@ -386,7 +386,7 @@ A separate traced capture spends much of its sampled time writing instrumentatio
 The next investigation should measure compilation, lowering, allocation, and regex costs with a broader bounded sample.
 The remaining 2,150 excess submissions also need a new complete inventory before the next delivery receives a target.
 
-The [checked evidence](../fixtures/host/data-layer-port/profiling/relational-storage-recovery-20261024.json) retains all timing trials, exact accounting, artifact hashes, and experiment decisions.
+The [checked evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/relational-storage-recovery-20261024.json) retains all timing trials, exact accounting, artifact hashes, and experiment decisions.
 Raw reports and immutable addons reside under `.rerail/profiles/chunk-b-20261024/`.
 
 ## Candidate ownership delivery R5-A: 2026-10-24
@@ -484,7 +484,7 @@ Its retirement component is now 324 to 200, rather than 1,028 to 200. It cannot 
 The updated plan leaves 2,389 submissions after that target, still above the final 100 limit.
 This chunk does not run the full repository or the complete 3,210-observation corpus.
 
-Evidence: [checked measurements and all timing trials](../fixtures/host/data-layer-port/profiling/candidate-ownership-recovery-20261024.json).
+Evidence: [checked measurements and all timing trials](../packs/data-layer/upstream/benchmarks/authored/profiling/candidate-ownership-recovery-20261024.json).
 Raw captures and commands remain in `.rerail/profiles/chunk-a-20261024/`.
 
 ## Original execution reduction planning: 2026-10-24
@@ -553,8 +553,8 @@ Native consumer ordinals can differ across processes, so native acceptance compa
 
 **Decision:** retain the owner-projection rewrite and relevant-identifier filtering. Remove generic family packing and scalar-fusion packing from the engine.
 The rejected paths reduce submissions but regress CPU. Their raw captures, all timing trials, and source snapshot remain available.
-The checked [recovery evidence](../fixtures/host/data-layer-port/profiling/selector-materialization-recovery-20261024.json) records both decisions.
-The [rejected source artifact](../fixtures/host/data-layer-port/profiling/rejected-selector-family-spike-20261024.patch) preserves the abandoned design for review.
+The checked [recovery evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/selector-materialization-recovery-20261024.json) records both decisions.
+The [rejected source artifact](../packs/data-layer/upstream/benchmarks/authored/profiling/rejected-selector-family-spike-20261024.patch) preserves the abandoned design for review.
 Neither artifact selects an alternate production algorithm.
 Raw evidence remains in `.rerail/profiles/selector-family-recovery-20261024/`.
 
@@ -667,7 +667,7 @@ The remaining candidate preparation and cleanup total **5,532 submissions**, abo
 Repeated temporary selector construction, indexes, and cleanup remain the next measured target.
 The universal node-property fill already executes once in these frontiers; scoped node demand and empty-relation simplification remain open.
 WP3 and aggregate recovery remain incomplete. This slice does not establish full-corpus or repository acceptance.
-Checked evidence: [shared child demand](../fixtures/host/data-layer-port/profiling/shared-child-demand-recovery-20261024.json).
+Checked evidence: [shared child demand](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-child-demand-recovery-20261024.json).
 Raw captures, commands, and all nine CPU pairs remain in `.rerail/profiles/child-demand-recovery-20261024/`.
 
 ### Different fields in one ready wave: red
@@ -732,7 +732,7 @@ Final diagnostic parity passes. The full corpus and repository checks remain nec
 The remaining preparation and cleanup submissions total 6,468, about 75% of engine submissions in this case.
 The next slice can now measure their repeated materialization against a reproducible frontier.
 Node/child demand coalescing, selector ownership across frontiers, broad SQL consumers, whole-job publication, and session lifetimes remain open.
-Checked evidence: [canonical frontier recovery](../fixtures/host/data-layer-port/profiling/canonical-frontier-recovery-20261024.json).
+Checked evidence: [canonical frontier recovery](../packs/data-layer/upstream/benchmarks/authored/profiling/canonical-frontier-recovery-20261024.json).
 Raw captures, all timing trials, the red audit, and commands remain in `.rerail/profiles/frontier-recovery-20261024/`.
 
 ### Same-object plan permutations: red
@@ -807,7 +807,7 @@ Decision: keep one-pass batched dependency waves for spans, without an algorithm
 The next recovery slice must make frontier construction independent of allocation addresses and earlier producer-cache warmth.
 It must prove this on fixed plan permutations before another aggregate optimization claim.
 Other property fills, repeated selector construction, whole-job publication, session lifetimes, and complete repository acceptance remain open.
-Checked evidence: [shared span waves](../fixtures/host/data-layer-port/profiling/shared-span-waves-20261024.json).
+Checked evidence: [shared span waves](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-span-waves-20261024.json).
 All raw controls and rejected trials remain in `.rerail/profiles/shared-producers-20261024/`.
 
 ### Shared span dependency waves: red
@@ -873,7 +873,7 @@ WP1 has its first catalog/export checkpoint. Private authored-stage exports and 
 WP2 must union ready selector demand by binding and dependency wave, then publish rows and completion atomically.
 It must remove separate fills while preserving admission, empty results, edits, cancellation, and packet lifetimes.
 Whole-job publication, session lifetimes, and full repository acceptance remain open.
-Checked evidence: [shared producer foundation](../fixtures/host/data-layer-port/profiling/shared-producer-foundation-20261024.json).
+Checked evidence: [shared producer foundation](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-producer-foundation-20261024.json).
 Raw runs and commands remain in `.rerail/profiles/shared-producers-20261024/`.
 
 ### Real compiler export: red
@@ -930,7 +930,7 @@ This scope does not replace the full 3,210-observation corpus or whole-repositor
 
 R3 remains open for whole-job publication and session lifetimes. R4 must share physical runtime producers and coalesce admitted source-span demand.
 Those runtime statements dominate the remaining count. Compiler metadata sharing alone cannot meet the allowance or establish CPU recovery.
-Checked evidence: [stage schema recovery](../fixtures/host/data-layer-port/profiling/sql-stage-schema-recovery-20261023.json).
+Checked evidence: [stage schema recovery](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-stage-schema-recovery-20261023.json).
 Raw captures, commands, and all timing trials remain in `.rerail/profiles/sql-stage-recovery-20261023/`.
 
 ### Compiler schema reuse across documents: red
@@ -1009,7 +1009,7 @@ Compiler stage boundaries alone exceed 100 before the complete runtime workload 
 The next recovery slices need compiler stage schemas, whole-job publication, named shared physical producers, and broad SQL consumers.
 No unsupported engine-feature ticket follows from the rejected experiments.
 
-Checked evidence: [compiler recovery checkpoint](../fixtures/host/data-layer-port/profiling/sql-recovery-compiler-20261023.json).
+Checked evidence: [compiler recovery checkpoint](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-recovery-compiler-20261023.json).
 Detailed evidence stays in `.rerail/profiles/sql-recovery-compiler-20261023/`.
 
 ### Work-estimate physical order: rejected
@@ -1292,7 +1292,7 @@ One complete bulk insert uses 11.545 ms, 70.6% below packet transactions and 50.
 The packet forms leave five segments; the complete bulk statement leaves one.
 All variants preserve positional results, deletion, and replacement.
 The earlier development-build medians were 64.771, 50.572, and 26.594 ms; they are separate controls.
-The [optimized evidence](../fixtures/host/data-layer-port/profiling/fts-bulk-publication-20261023.json) retains every trial and the schema/binary identities.
+The [optimized evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/fts-bulk-publication-20261023.json) retains every trial and the schema/binary identities.
 This result supports whole-frontier `INSERT ... SELECT`, rather than suspending user triggers or changing the FTS layout.
 Whole-job integration remains pending; the isolated result does not predict aggregate linter CPU.
 
@@ -1308,7 +1308,7 @@ The rebuilt inventory contains 5,176 candidate construction, 2,534 cleanup, 1,78
 
 ## Recovery checkpoint: 2026-10-23
 
-The [checkpoint evidence](../fixtures/host/data-layer-port/profiling/sql-recovery-checkpoint-20261023.json) records the final measured addon and exact controls.
+The [checkpoint evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-recovery-checkpoint-20261023.json) records the final measured addon and exact controls.
 All original positive and clean state-tripwire observations pass snapshot and workspace parity.
 Every connection receipt and origin counter reconciles. No SQL execution has an unknown origin or phase.
 The complete job submits **10,443 engine statements**, plus **994 SQLite internal statements**.
@@ -1377,7 +1377,7 @@ Missing coverage, incomplete operations, or failed parity prevent acceptance, in
 Ordinary SQL capture and report commands preserve evidence and return nonzero when the gate fails.
 A mandatory CI step uses original positive and clean state-tripwire observations.
 
-The new [evidence](../fixtures/host/data-layer-port/profiling/sql-execution-budget-20261023.json) records a complete real acceptance attempt.
+The new [evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-execution-budget-20261023.json) records a complete real acceptance attempt.
 Two original observations run through both snapshot and workspace paths in one cold process.
 Both observations pass parity, with one positive, one clean, and no engine or execution-path failures.
 The 136 connection lifecycles and their statement counts reconcile, without coverage errors.
@@ -1428,7 +1428,7 @@ The archived pre-SQL reference has SHA-256 `52692a151eea8bab2add9c1c3aeb8400bf0c
 Its archived changed-source manifest matches the corresponding files at `5616076a`.
 The interrupted first attempt uses addon `4df3c64a06c079d4199e942fbf3daa46dba5405e635c6228f7deb199f57c92a6`.
 The final SQL reference is `dab45422f19898d582f330c38fd402aadffc0bd4edb8d916827d85cd63c90419`.
-The [aggregate evidence](../fixtures/host/data-layer-port/profiling/aggregate-checkpoint-20261023.json) records current validation progress and frozen source identities.
+The [aggregate evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/aggregate-checkpoint-20261023.json) records current validation progress and frozen source identities.
 Both references use engine optimization level 1, dependency level 3, no cross-crate LTO, 256 codegen units, and the system-malloc shim.
 
 Serial comparisons cover the original first-50 and combined 60-rule repository snapshots.
@@ -1777,7 +1777,7 @@ Clash reports contain both origins and exact field differences.
 Binding diagnostics explain why different options, generations, snapshots, or domains prevent sharing.
 Different demand sets can share a keyed producer. Unknown semantic fields fail declaration checks.
 
-The [evidence](../fixtures/host/data-layer-port/profiling/shared-producer-discovery-20261023.json) retains capture hashes and discovery witnesses.
+The [evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-producer-discovery-20261023.json) retains capture hashes and discovery witnesses.
 The tool processed the earlier state and ten-rule captures, without new engine execution.
 Both reports cover every host statement, without skipped scopes.
 
@@ -1817,7 +1817,7 @@ Statements and result packets read those owners without embedding another materi
 The design covers demand waves, empty completion, semantic domains, clause sharing, and retirement.
 It retains indexed base access and single-use pipelines without blanket materialization.
 
-The [static placement audit](../fixtures/host/data-layer-port/profiling/sql-materialization-design-20261023.json) resolves local dependencies and typed parameters before comparing definitions.
+The [static placement audit](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-materialization-design-20261023.json) resolves local dependencies and typed parameters before comparing definitions.
 It identifies 248 state definitions and 420 ten-rule definitions present in multiple generated statements.
 One demanded-span definition appears in 61 state statements and 90 ten-rule statements.
 These are SQL placement counts, not measured execution counts or CPU savings.
@@ -1832,7 +1832,7 @@ Earlier benchmark results remain the baseline for implementation.
 This bounds temporary storage. CPU and process RSS remain mostly flat on the measured snapshots.
 
 The [implementation](sql-composition-implementation.md#candidate-relation-lifetimes) describes the execution contract.
-The [evidence](../fixtures/host/data-layer-port/profiling/sql-relation-lifetimes-20261023.json) retains trials, source hashes, storage measurements, allocation peaks, and corpus results.
+The [evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-relation-lifetimes-20261023.json) retains trials, source hashes, storage measurements, allocation peaks, and corpus results.
 The reference addon has SHA-256 `7a193b2a060803b6e5f73e6760066e72c43d962aa673c2fd81f51f38405f6c3b`.
 The final addon has SHA-256 `86846fe45e731c10b44beecb54cbfb35b7610c2eafb71f199ce3840969c07b6d`.
 The data-layer source remains at `2b1504adc4291daaf080b2e932962b134da1a69a`.
@@ -1954,7 +1954,7 @@ The real Git index remains unchanged.
 Keep the streaming packed-node adapter. These choices add no production algorithm switch.
 
 The [implementation](sql-composition-implementation.md) describes the interfaces and SQL execution boundaries.
-The [evidence](../fixtures/host/data-layer-port/profiling/sql-composition-promotion-20261022.json) records artifacts, source hashes, trials, diagnostics, and corpus results.
+The [evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-composition-promotion-20261022.json) records artifacts, source hashes, trials, diagnostics, and corpus results.
 The reference checkout remains `5616076ad60127d6ac3df0fbf60eff9f7a523ca0` with the existing uncommitted typed-fact changes.
 The saved reference addon has SHA-256 `efa0dcf04b170a10588e4661c7843a846989ce98262e68b6bc6abbb6a7dca72f`.
 The measured addon has SHA-256 `7a193b2a060803b6e5f73e6760066e72c43d962aa673c2fd81f51f38405f6c3b`.
@@ -2080,7 +2080,7 @@ Extra copied column buffers do not establish a CPU improvement.
 These are isolated experiments. They add no production execution switch or engine cutover.
 
 The [design](sql-composition-opportunities.md) records the sibling survey and integration requirements.
-The [evidence](../fixtures/host/data-layer-port/profiling/sql-composition-20261022.json) retains every measured trial, query, plan, source hash, and scope limit.
+The [evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-composition-20261022.json) retains every measured trial, query, plan, source hash, and scope limit.
 The baseline is `5616076ad60127d6ac3df0fbf60eff9f7a523ca0` with the existing typed-fact changes.
 The engine addon remains `efa0dcf04b170a10588e4661c7843a846989ce98262e68b6bc6abbb6a7dca72f`.
 
@@ -2167,7 +2167,7 @@ The copied column prototype remains a rejected CPU alternative in the isolated l
 **Decision:** keep typed column storage, SQL column demand, deferred preparation, and bounded SQL import.
 These changes remove per-row JSON maps from normal AST projections. They do not establish an end-to-end performance improvement.
 SQLite still executes the rules. The engine has one execution path and no new algorithm switches.
-The [evidence](../fixtures/host/data-layer-port/profiling/typed-facts-20261022.json) records individual trials, hashes, counters, failures, and reproduction commands.
+The [evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/typed-facts-20261022.json) records individual trials, hashes, counters, failures, and reproduction commands.
 
 ### Implementation
 
@@ -2215,8 +2215,8 @@ Missing-file contracts contribute to those findings; the source replay also chec
 The matched single-worker Python observations measure 0.264 s CPU for the state file and 1.429 s for the ten-rule snapshot.
 Native execution remains approximately 12 and 16 times slower on these selections.
 These are small selections, not the full 50-rule repository run or a comparison against its historical 1,400-second result.
-The checked [state selection](../fixtures/host/data-layer-port/profiling/typed-facts-state-one.json) and
-[ten-rule selection](../fixtures/host/data-layer-port/profiling/typed-facts-ten-four.json) preserve source hashes and snapshot expectations.
+The checked [state selection](../packs/data-layer/upstream/benchmarks/authored/profiling/typed-facts-state-one.json) and
+[ten-rule selection](../packs/data-layer/upstream/benchmarks/authored/profiling/typed-facts-ten-four.json) preserve source hashes and snapshot expectations.
 
 ### Storage proof and remaining costs
 
@@ -2266,7 +2266,7 @@ The baseline archive captures that complete pre-experiment SQL source and its na
 Both rebuilt comparison binaries use release dependencies, engine optimization level 1, 256 code generation units, and no LTO.
 Both use the same system-malloc shim, bundled SQLite settings, one worker, and 32-file ingestion requests.
 Parser generation now builds at optimization level 3 to fit the bounded build deadline; this changes build-tool execution only.
-The [evidence file](../fixtures/host/data-layer-port/profiling/sql-preparation-20261022.json) records binary and source hashes.
+The [evidence file](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-preparation-20261022.json) records binary and source hashes.
 
 Each cell below is the median of three fresh serial runs, with before/after order alternated.
 Detailed tracing, SQL capture, census, and external sampling are off during timing runs.
@@ -2471,7 +2471,7 @@ The public native suites passed 320 tests, with two existing skips.
 The source smoke replay passed ten positive and ten clean calls without differences.
 Both profiling and production configurations passed Clippy. Repository checks and profiling-tool tests also passed.
 
-Evidence: [value access and decoded properties](../fixtures/host/data-layer-port/profiling/value-access-20261021.json).
+Evidence: [value access and decoded properties](../packs/data-layer/upstream/benchmarks/authored/profiling/value-access-20261021.json).
 
 ## Candidate SQL CPU root cause: 2026-10-21
 
@@ -2560,7 +2560,7 @@ Sharing demanded decoded properties across SQL statements is the next remedy for
 
 The final code retains batched preparation and one execution path.
 It adds no optional execution backend.
-The [root-cause evidence](../fixtures/host/data-layer-port/profiling/index-root-cause-20261021.json) records source identities, reference files, traces, counters, experiments, and validation.
+The [root-cause evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/index-root-cause-20261021.json) records source identities, reference files, traces, counters, experiments, and validation.
 
 Validation passes 1,202 DSL tests and 194 workspace tests, with 22 existing native skips.
 The public suites pass 320 tests, with two existing skips.
@@ -2606,7 +2606,7 @@ The comparison covers complete implementations and does not isolate the candidat
 The ten-rule batched control has no completed result within the two-minute cap.
 It therefore has no valid total CPU over/under result.
 
-The [comparison evidence](../fixtures/host/data-layer-port/profiling/index-comparison-20261021.json) records every trial, binary identity, fingerprint, metric, and percentage.
+The [comparison evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/index-comparison-20261021.json) records every trial, binary identity, fingerprint, metric, and percentage.
 
 ## Batch candidate preparation: 2026-10-21
 
@@ -2647,7 +2647,7 @@ Three repeated consumption passes issue none.
 Another regression prepares 65 plans across 64 files in three batches and reuses every result.
 Budget, retry, and discarded-dependency tests also pass.
 
-The final measurements and binary identity appear in the [batch evidence](../fixtures/host/data-layer-port/profiling/sql-batch-candidates-20261021.json).
+The final measurements and binary identity appear in the [batch evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-batch-candidates-20261021.json).
 The two-rule positive control contains all twelve source files and retains all 61 expected findings.
 It has no false positives, false negatives, or engine failures.
 The five-file quality control also checks unchanged and edited revisions.
@@ -2781,7 +2781,7 @@ The saved Rust baseline also reproduces an existing Python NFKC false negative.
 The semantic name prefilter now retains non-ASCII names for authoritative resolution.
 The existing identifier test passes after that correction.
 
-The [corpus evidence](../fixtures/host/data-layer-port/profiling/sql-corpus-index-20261021.json) records source hashes, binary identities, controls, lifecycle counters, validation, and diagnostic bytecode.
+The [corpus evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-corpus-index-20261021.json) records source hashes, binary identities, controls, lifecycle counters, validation, and diagnostic bytecode.
 The measured binary SHA-256 is `b8347b9f50101a7a9c2a089840c9eb806365d020e5509405c8193734bbea7f46`.
 Every command remains below the two-minute limit.
 Bounded runs stop after 112 seconds.
@@ -2897,7 +2897,7 @@ An earlier Rust five-file control used 2.848 CPU seconds.
 Both controls finish within the two-minute command limit.
 The SQL build also disables SQLite's global page-cache group, while the saved Rust control retains it.
 The comparison covers the complete branch change and does not isolate index storage alone.
-The [evidence](../fixtures/host/data-layer-port/profiling/sql-ast-index-20261021.json) records binary identities, source hashes, rejected trials, external samples, and passing checks.
+The [evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-ast-index-20261021.json) records binary identities, source hashes, rejected trials, external samples, and passing checks.
 
 This SQL implementation is a storage and comparison baseline, not a performance improvement.
 Candidate selection consumes 81.422 CPU seconds, against 3.722 seconds for Rust.
@@ -2923,7 +2923,7 @@ Persistent corpus indexing, SQL scope integration, and the spike's later value-p
 ## Field-aware anchors and shared input indexes: 2026-10-21, after `a92c126a`
 
 **Keep selective anchors and share one index across each file's relational inputs.**
-The [evidence](../fixtures/host/data-layer-port/profiling/anchor-execution-20261021.json) records the controls, rejected trial, navigation counters, external samples, and tests.
+The [evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/anchor-execution-20261021.json) records the controls, rejected trial, navigation counters, external samples, and tests.
 
 The implementation uses the existing kind and value postings, plus sparse postings for requested AST fields.
 Each field posting identifies the first child in that field.
@@ -3014,7 +3014,7 @@ Every command retains a deadline shorter than two minutes.
 **The remaining problem is large fact construction, repeated AST navigation, and large SQL intermediates.**
 The earlier 1,114.637-second reference also contains substantial profiling work.
 Removing that measurement flaw does not remove the engine's preparation costs.
-The [evidence](../fixtures/host/data-layer-port/profiling/cpu-memory-attribution-20261021.json) records controls, ownership counts, samples, and validation.
+The [evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/cpu-memory-attribution-20261021.json) records controls, ownership counts, samples, and validation.
 The [profiling guide](code-rule-profiling.md#measure-cpu-and-memory) describes the new tools.
 
 ### Matched Python comparison
@@ -3157,7 +3157,7 @@ No Rust unit execution pass or new full-repository benchmark is claimed.
 
 **All 60 rules now pass together over 9,021 files: 24,993 findings and zero engine failures.**
 Cold, unchanged-file, and trailing-newline edit comparisons have zero missing or extra findings.
-The [diagnosis evidence](../fixtures/host/data-layer-port/profiling/batch-six-root-cause-20261021.json) contains reports, source hashes, test receipts, SQL counters, and external samples.
+The [diagnosis evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/batch-six-root-cause-20261021.json) contains reports, source hashes, test receipts, SQL counters, and external samples.
 
 Both combined runs use the same 137,924,324-byte pinned snapshot and reference harness.
 CPU includes process user and system time, including the profiling build's residency accounting.
@@ -3358,7 +3358,7 @@ Global projected AST extraction and its SQL demand frontier remain CPU preparati
 ## Full repository verification: 2026-10-21, execution `3285b48f`
 
 **The first 50 rules pass at repository scale. Batch six fails at repository scale.**
-The [complete evidence](../fixtures/host/data-layer-port/profiling/full-repository-20261021.json) preserves reports, failures, commands, source hashes, binary hashes, and corpus coverage.
+The [complete evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/full-repository-20261021.json) preserves reports, failures, commands, source hashes, binary hashes, and corpus coverage.
 This entry changes no engine implementation or limits.
 
 ### Repository results
@@ -3463,7 +3463,7 @@ The evidence retains the actual invocation commands and ordered rule sets.
 ## Current baseline: 2026-10-21, execution `7da151b8`
 
 This entry establishes the comparison point after removal of the experimental execution paths.
-The [baseline evidence](../fixtures/host/data-layer-port/profiling/execution-baseline-7da151b8.json) contains all 15 timing runs, diagnostic summaries, and external samples.
+The [baseline evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/execution-baseline-7da151b8.json) contains all 15 timing runs, diagnostic summaries, and external samples.
 The evidence includes policy, source, binary, allocator, and measurement-code hashes.
 
 All times in this table are **process CPU milliseconds**, including user and system time.
@@ -3505,7 +3505,7 @@ The workloads run sequentially, with alternating order between rounds, on a shar
 Small differences within the observed ranges do not establish an optimization gain.
 
 The three performance selections expect zero findings.
-Positive coverage remains separate from timing: the quality policy and addon match the [promotion proof](../fixtures/host/data-layer-port/profiling/sql-shape-decisions.json).
+Positive coverage remains separate from timing: the quality policy and addon match the [promotion proof](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-shape-decisions.json).
 That proof contains 200 upstream cases, including 135 positives, plus 219 production comparisons and 177 edit transitions.
 This baseline reuses that proof. It does not claim another corpus replay.
 
@@ -3553,7 +3553,7 @@ Run each measurement in a fresh process and a new output directory:
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/profiling/run.py \
   --trace off --deadline 115 \
-  --source /path/to/pinned/nera-data-layer \
+  --source /path/to/pinned/data-layer \
   --selection fixtures/host/data-layer-port/profiling/quality-five.json \
   --policies packs/data-layer/candidates/rules \
   --allocator system-malloc-shim \
@@ -3596,7 +3596,7 @@ The first budget model charges native visits too heavily and treats derived outp
 The corrected model retains limits and cancellation without those duplicate charges.
 This result requires both positive corpus coverage and the larger pinned workload.
 
-Evidence: [native relation experiments](native-relations-spikes.md), [implementation report](native-relations-implementation.md), and [measurements](../fixtures/host/data-layer-port/profiling/native-relations-implementation.json).
+Evidence: [native relation experiments](native-relations-spikes.md), [implementation report](native-relations-implementation.md), and [measurements](../packs/data-layer/upstream/benchmarks/authored/profiling/native-relations-implementation.json).
 
 ### 2026-10-20: shared syntax preparation
 
@@ -3605,7 +3605,7 @@ The implementation at `c4bd76bf` shares immutable syntax facts and uses direct p
 SQL no longer reconstructs those facts for the quality groups.
 This change addresses the expensive preparation that limited earlier native-access experiments.
 
-Evidence: [requirement](shared-syntax-requirement.md), [implementation](shared-syntax-implementation.md), and [controlled measurements](../fixtures/host/data-layer-port/profiling/shared-syntax-metrics.json).
+Evidence: [requirement](shared-syntax-requirement.md), [implementation](shared-syntax-implementation.md), and [controlled measurements](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-syntax-metrics.json).
 
 ### 2026-10-21: broad producer passes
 
@@ -3617,7 +3617,7 @@ Tests keep the number of passes constant as roots, files, and policies increase.
 The motivation includes the future GPU execution contract. This is a CPU reference, not a GPU speed measurement.
 Batching alone does not establish a large CPU gain.
 
-Evidence: [execution contract](gpu-producer-execution-contract.md) and [producer measurements](../fixtures/host/data-layer-port/profiling/batched-producer-evidence.json).
+Evidence: [execution contract](gpu-producer-execution-contract.md) and [producer measurements](../packs/data-layer/upstream/benchmarks/authored/profiling/batched-producer-evidence.json).
 
 ### 2026-10-21: complete SQL instrumentation
 
@@ -3665,7 +3665,7 @@ UNION ALL removes sorts and lowers VM counts. The materialized CTE and unpivot r
 Those counter reductions do not offset their other execution costs.
 The accepted combination retains the original root query.
 
-Evidence: [experiment report](sql-shape-spikes.md) and [individual runs and counters](../fixtures/host/data-layer-port/profiling/sql-shape-spikes.json).
+Evidence: [experiment report](sql-shape-spikes.md) and [individual runs and counters](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-shape-spikes.json).
 
 ### 2026-10-21: promotion and removal of optional paths
 
@@ -3681,7 +3681,7 @@ Live tables and cursors retain their own references.
 
 Validation covers 400 native tests in each build, the producer gate, the positive corpus, production comparisons, and edit transitions.
 Typechecking and Clippy pass in both build modes.
-The [promotion evidence](../fixtures/host/data-layer-port/profiling/sql-shape-decisions.json) records the exact scope and hashes.
+The [promotion evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-shape-decisions.json) records the exact scope and hashes.
 
 ### 2026-10-24: R5-A acceptance starts with a failing ownership test
 

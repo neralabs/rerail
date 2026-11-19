@@ -3,7 +3,7 @@
 Nine checks, hand-written from the Python linters at `2b1504adc`. All nine parse and every clause lowers in the
 engine's reader (`rr-census` prints nothing for any of them).
 
-| Check | Python lines | `.rr` lines | rrlab dl (exact / events) | Reader |
+| Check | Python lines | `.rerail` lines | rrlab dl (exact / events) | Reader |
 |---|---|---|---|---|
 | executor_publication_repairs | 147 | 20 (+34 library) | 5 / 5 | lowers |
 | revision_ancestry_invariants | 201 | 47 | 5 / 6 | lowers |
@@ -17,7 +17,7 @@ engine's reader (`rr-census` prints nothing for any of them).
 | **total** | **3,632** | **717 + 34** | **191 / 199** | |
 
 The tables (forbidden names, reviewed callers, fate overrides) are short, 4 to 16 entries, so they are inline facts
-and not generated `.part.rr` files.
+and not generated `.part.rerail` files.
 
 ## Misses
 
@@ -80,7 +80,7 @@ libsodium; before that the stub failed every signature, and an openssl check of 
   ×2) miss for that reason. They are entry emulations: a rule must not change what it reports by a test option, so
   the coordinator removed a `pos_entries_only` fact keyed on `entryPoint` that kept them exact.
 - Only the first module-level `def assert_post_op_symbol_signed` is the verifier, as in the linter.
-- Idiom: the two ALLOWLIST_SIGNATURE readings are one clause over signing.rr's `unsigned_sig`, and `pos_dataclass`
+- Idiom: the two ALLOWLIST_SIGNATURE readings are one clause over signing.rerail's `unsigned_sig`, and `pos_dataclass`
   uses python/names' `decorator`.
 
 ## Deliberate choices
@@ -94,7 +94,7 @@ libsodium; before that the stub failed every signature, and an openssl check of 
   event records it.
 - **post_op_side_effects: base64 is decoded leniently.** Python's `base64.b64decode` drops characters outside the
   alphabet, so `"…==\n\t!!!"` verifies. The rule strips them before verifying (`@replace_all(s, "[^A-Za-z0-9+/=]", "")`).
-- **executor_publication_repairs numbers lines as `str.splitlines()` does,** through the new `pub-lines.rr`. A probe
+- **executor_publication_repairs numbers lines as `str.splitlines()` does,** through the new `pub-lines.rerail`. A probe
   has U+2028 inside a line; core's `src_line` splits only at `\n`, `\r\n` and `\r`.
 - **revision_ancestry_invariants and history_serverplan_projection count lines as `line` does,** for regex matches
   over the file. That is `\n`, `\r\n` and `\r`, while the linter counts `\n` only. They differ only on a file that
@@ -107,7 +107,7 @@ libsodium; before that the stub failed every signature, and an openssl check of 
 
 ## Vocabulary added
 
-`lib/data-layer/pub-lines.rr` adds `py_line(d, n, s)`: line n of a document as `str.splitlines()` numbers it. It
+`lib/data-layer/pub-lines.rerail` adds `py_line(d, n, s)`: line n of a document as `str.splitlines()` numbers it. It
 also splits at `\v`, `\f`, `\x1c`–`\x1e`, `\x85`, U+2028 and U+2029. A test on the text of each line (the many
 "read the file, enumerate its lines" scripts) needs this to match the scripts' line numbers.
 - **Users:** executor_publication_repairs. rust_sql_grammar_boundary and serverplan_name_inference need the same
@@ -133,7 +133,7 @@ also splits at `\v`, `\f`, `\x1c`–`\x1e`, `\x85`, U+2028 and U+2029. A test on
    gives 1 whatever the line. The same capture outside an aggregate gives the right line. revision_ancestry_invariants
    puts the matches in a relation first (`rai_chain_at`), which is also clearer.
 4. **rrlab: `@ed25519_ok`.** Done: rrlab now verifies with libsodium.
-5. **python/ast.rr, `ast_name` (changes POSTOP200). Done in bd0bb04d8.** It counted names that are strings in `ast`, and misses one Name.
+5. **python/ast.rerail, `ast_name` (changes POSTOP200). Done in bd0bb04d8.** It counted names that are strings in `ast`, and misses one Name.
    - It counts `case` captures (`case x`, `P(a=px)`, `… as q`, `*rest`, `**more`), the later parts of a
      dotted value pattern (`RED` in `Color.RED`), and PEP 695 type parameters (`T`, `*Ts`, `**P`).
    - It misses the walrus target (`w` in `(w := 1)`), which nameref leaves out as a `name` field.

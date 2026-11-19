@@ -35,7 +35,7 @@ impl Session {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let marker = format!("# {name} {:?}\n", std::time::SystemTime::now());
-        let rule = dir.join("program.rr");
+        let rule = dir.join("program.rerail");
         std::fs::write(&rule, program).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
         let handle = super::session::Handle::open(&dir.join("session")).unwrap();

@@ -53,7 +53,7 @@ The normative module map is `spec.md` §16. It is transducer-centric: `engine/tr
 | main | `tape/`, `content_store/`, `matcher/` (parity oracle and rehydration), `workspace/`, `eval/` |
 | DLRE | anchor SQL → `engine/plan/` scope; producer contracts → relation catalog; reachability/forest → `engine/vtab/graph.rs`; fact extraction → `engine/transducer/facts/`; `relational/` frozen (decision 0002); parity harness → gate |
 | N1562 | `packed/` → `engine/transducer/ir/` and `exec/{cpu,jit}`; lowering → `engine/transducer/lower/`; `sql_backend` → `engine/vtab/transducer.rs`; `semantic_facts` → `facts/`; `query/plan/` → `engine/plan/`; stats tables → `engine/stats/` |
-| Tempo (`nera-landing-2`) | IR word layout → `engine/transducer/ir/`; Metal executor → `exec/metal/` |
+| Tempo (Landing) | IR word layout → `engine/transducer/ir/`; Metal executor → `exec/metal/` |
 | SSC (`c17d2e47`) | `sql/fragments/` → `engine/vtab/` (boundary, demand handle, typed cells, outcome codes); `sql/engine/` session and compile cache → `engine/plan/`; `queries()` publication → `engine/compose/`; `statistics.rs` → `engine/stats/`; `structural.rs`, `candidates.rs` → `engine/fallback/`; checker → gate tooling; crossfile/select_when → `engine/compose/` |
 | facts-engine | `facts_memo.rs` → `content_store/`; gate and mutant discipline |
 
@@ -96,8 +96,8 @@ M1, M2 and M7 are cheap and settle most of the range; M4 and M5 carry the parity
 | # | Phase | Method | Entry measurements | Exit check |
 |---|---|---|---|---|
 | 1 | DLRE onto current main | `git merge` of DLRE committed tip | — | native build, cargo tests for touched modules, vitest engine tests |
-| 2 | N1562: packed IR, CPU interpreter/JIT, lowering, `sql_backend` vtab, `semantic_facts`, `query/plan/`, contract goldens | `git merge` of `jbarnes/ner-1562-sql-rerailer` | M1, M2 ✓, M7 ✓. Note: N1562's packed IR lowers none of the M2/M7 rules today (`research/m2-m7.md`); the merge brings infrastructure, and the M2 prototype's techniques must be ported into it | builds; packed and contract tests pass; differential test interpreter vs native matcher on the finding-key set |
-| 3 | Tempo IR and Metal executor | merge or port from `nera-landing-2` onto the v7 tape; reconcile word layouts into one IR | metal-recursion and metal-enqueue results (recorded) | Metal parity on macOS; `metal_coverage` gate wired |
+| 2 | N1562: packed IR, CPU interpreter/JIT, lowering, `sql_backend` vtab, `semantic_facts`, `query/plan/`, contract goldens | `git merge` of `jbarnes/sql-rerailer` | M1, M2 ✓, M7 ✓. Note: N1562's packed IR lowers none of the M2/M7 rules today (`research/m2-m7.md`); the merge brings infrastructure, and the M2 prototype's techniques must be ported into it | builds; packed and contract tests pass; differential test interpreter vs native matcher on the finding-key set |
+| 3 | Tempo IR and Metal executor | merge or port from Landing's checkout onto the v7 tape; reconcile word layouts into one IR | metal-recursion and metal-enqueue results (recorded) | Metal parity on macOS; `metal_coverage` gate wired |
 | 4 | SSC at `c17d2e47`: typed-fragment vtab boundary and demand handles (`sql/fragments/`), session, compile cache and execution budget (`sql/engine/`), resident partitioning, statistics reader, structural pure-SQL emitter, checker tooling | `git merge` of `jeremy/sql-capture-demand-spikes`; frame compiler and `retired_control.rs` not wired | M3 | builds; fallback differential tests |
 | 5 | Restructure into `engine/` | `git mv` plus path fixes only | — | builds; same tests pass |
 | 6 | Mutate toward the spec | findings consolidation and set-based parity first (0001); IR extensions E1–E14 and set stage; fusion; statistics from SQL; plan cache; re-express the 10 authored-SQL rules and remove `relational/` (0002); v9np tape (0003); remove executors not carried forward | M4, M5, M6, M8, M9 per item | set-based parity suites; end-to-end gate recorded against §19 of the spec |
@@ -110,7 +110,7 @@ M1, M2 and M7 are cheap and settle most of the range; M4 and M5 carry the parity
 | main | `origin/main` | `5cf4246e` |
 | DLRE | `jeremybarnes/Data-layer-rule-expressivity` | `d3470da2` (staged, uncommitted work in its worktree is excluded) |
 | SSC | `jeremy/sql-capture-demand-spikes` | `c17d2e47` |
-| N1562 | `jbarnes/ner-1562-sql-rerailer` | `16343282` (uncommitted work in its worktree is excluded) |
+| N1562 | `jbarnes/sql-rerailer` | `16343282` (uncommitted work in its worktree is excluded) |
 | Moti SQL+DLRE merge (reference) | `origin/Moti-Velz/sql-dl60` | `e6d2ac73` |
 | Moti facts | `origin/Moti-Velz/facts-engine` | `685db3f7` |
-| Tempo Metal | `nera-landing-2` `jbarnes/ner-1562-scale-test-the-re-railer` | `a091aa063` (approximate; re-pin at phase 3) |
+| Tempo Metal | Landing `jbarnes/scale-test-the-re-railer` | `a091aa063` (approximate; re-pin at phase 3) |

@@ -78,7 +78,7 @@ hub's renumbering, take it, and move your branch's references to match.
 Run the audit on the merge in progress (it reads `HEAD`, `MERGE_HEAD` and the working tree):
 
 ```
-scripts/check/merge-audit.py
+scripts/check/merge_audit.py
 ```
 
 It lists:
@@ -90,7 +90,7 @@ It lists:
 
 Moved code is not reported, because a line found anywhere in the tree counts as kept. Each
 finding is either restored before committing, or named in the merge commit as superseded, with the
-commit or decision that supersedes it. `scripts/check/merge-audit.py <merge>` audits a merge
+commit or decision that supersedes it. `scripts/check/merge_audit.py <merge>` audits a merge
 already made. `--since <date>` audits every merge on the branch since then.
 
 ## The merge commit
@@ -125,8 +125,8 @@ This list is not complete. The decision records are the full set.
   0140 for the writer).
 - One tape format, defined in `native/crates/tape_format` (`FORMAT_VERSION`, `header`), with no
   stored digest. Other crates re-export it.
-- A cache is two ordinary rules in `.rr`, a key rule and an output rule (0103). Nothing kept
-  outside facts, and no wave waits for SQL (0104). `scripts/check/check-no-new-caches.py` refuses
+- A cache is two ordinary rules in `.rerail`, a key rule and an output rule (0103). Nothing kept
+  outside facts, and no wave waits for SQL (0104). `scripts/check/check_no_new_caches.py` refuses
   new cache stores.
 - A relation carries its delta, and an edit runs the strata its deltas reach (0117, 0120).
 - Planning costs no more than running (0122, 0132).

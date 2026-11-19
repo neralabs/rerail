@@ -22,7 +22,6 @@ use super::storage::{Attached, StorageContext, attach_storage, unix_seconds};
 use super::{
     CLAUSE_WORK_BUDGET, CandidateSets, STORED_RESULT_UNAVAILABLE, WorkspaceState, check_closed,
 };
-use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::evidence::Side;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
@@ -32,10 +31,11 @@ use crate::code_rule_dsl::model::{
     ClauseKind, CodeRuleScope, CompiledCodeRule, Evaluation, Metrics, Query, Snapshot,
 };
 use crate::code_rule_dsl::placement::parse_placement;
+use crate::code_rule_dsl::prof::release_allocator_memory;
+use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
 use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
-use crate::code_rule_dsl::prof::release_allocator_memory;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
 use napi_derive::napi;
@@ -53,16 +53,19 @@ static WORKSPACE_INSTANCES: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 
 #[napi]
 pub struct CodeRuleDslWorkspace {
-    #[napi(skip)] pub state: Arc<Mutex<WorkspaceState>>,
+    #[napi(skip)]
+    pub state: Arc<Mutex<WorkspaceState>>,
     /// Each registered code rule's scope, and whether the code rule reads text
     /// (`CompiledCodeRule::reads_text`), answered without the state lock.
-    #[napi(skip)] pub scopes: Mutex<Vec<(CodeRuleScope, bool)>>,
+    #[napi(skip)]
+    pub scopes: Mutex<Vec<(CodeRuleScope, bool)>>,
     /// Whether a code rule reads `file.package.serverGraph`, answered without the state lock.
     pub(super) server_graph: AtomicBool,
     /// Whether a code rule has an AST clause in a family whose files read their nearest
     /// `package.json`, answered without the state lock.
     pub(super) package_manifests: AtomicBool,
-    #[napi(skip)] pub closed: Arc<AtomicBool>,
+    #[napi(skip)]
+    pub closed: Arc<AtomicBool>,
 }
 
 impl Default for CodeRuleDslWorkspace {
@@ -236,6 +239,7 @@ impl CodeRuleDslWorkspace {
                                     producer.violation.project.clear();
                                     producer.violation.each = None;
                                     producer.violation.node_regexes.clear();
+                                    producer.violation.gap_tests.clear();
                                 }
                                 id
                             })
@@ -493,11 +497,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(self.result_page_task(cursor, maximum_bytes))
     }
 
-    pub fn result_page_task(
-        &self,
-        cursor: u32,
-        maximum_bytes: u32,
-    ) -> WorkspaceResultPageTask {
+    pub fn result_page_task(&self, cursor: u32, maximum_bytes: u32) -> WorkspaceResultPageTask {
         WorkspaceResultPageTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),

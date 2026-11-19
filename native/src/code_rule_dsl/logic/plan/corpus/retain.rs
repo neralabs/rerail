@@ -1308,7 +1308,7 @@ pub mod tests {
     #[test]
     fn unchanged_gated_programs_reuse_only_complete_retained_results() {
         use crate::code_rule_dsl::logic::magic;
-        let p = front::prune(crate::code_rule_dsl::logic::rr::parse(include_str!("../golden/programs/workload.rr")).unwrap());
+        let p = front::prune(crate::code_rule_dsl::logic::rr::parse(include_str!("../golden/programs/workload.rerail")).unwrap());
         let p = magic::magic_adorn(p, &magic::Options { gate:true, ..Default::default() }).unwrap();
         assert!(!p.gates.is_empty());
         let (strata,_) = front::strata(&p).unwrap();

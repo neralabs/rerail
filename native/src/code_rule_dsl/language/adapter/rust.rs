@@ -11,6 +11,7 @@ use super::{
     FormatArgRules, Refusal, ScopeFeature, ScopeRules, SyntaxFeature, SyntaxRules, ValueFeature,
     ValueRules,
 };
+use crate::code_rule_dsl::calls::closure::lang_rust::RustLinks as _;
 use crate::code_rule_dsl::calls::closure::{Graph, Link};
 use crate::code_rule_dsl::calls::names::Name;
 use crate::code_rule_dsl::calls::summary::{Callee, Summary};
@@ -20,11 +21,15 @@ use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::{Family, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::literal::Grammar;
-use crate::code_rule_dsl::matcher::{Arguments, Passed, ScopeName, SemanticText, Style, Unresolved, file_index};
+use crate::code_rule_dsl::matcher::arguments::rust::RustArguments as _;
+use crate::code_rule_dsl::matcher::{
+    Arguments, Passed, ScopeName, SemanticText, Style, Unresolved, file_index,
+};
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::rust::{self as scope_rust, LABEL, MACRO};
+use crate::code_rule_dsl::scope::usage::lang_rust::RustUsage as _;
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
 use crate::code_rule_dsl::scope::{
     Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind,
@@ -41,9 +46,6 @@ use std::cmp::Ordering;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
-use crate::code_rule_dsl::calls::closure::lang_rust::RustLinks as _;
-use crate::code_rule_dsl::matcher::arguments::rust::RustArguments as _;
-use crate::code_rule_dsl::scope::usage::lang_rust::RustUsage as _;
 
 /// Rust's family.
 pub struct Rust;
@@ -92,10 +94,12 @@ impl Adapter for Rust {
         anchored: Range<usize>,
         _: (usize, usize),
     ) -> bool {
-        suppress.get::<crate::code_rule_dsl::suppress::clippy::Suppressions>().is_some_and(|clippy| {
-            let index = file_index(|| ClippyIndex::read(&root(node)));
-            index.suppresses(clippy, anchored.start)
-        })
+        suppress
+            .get::<crate::code_rule_dsl::suppress::clippy::Suppressions>()
+            .is_some_and(|clippy| {
+                let index = file_index(|| ClippyIndex::read(&root(node)));
+                index.suppresses(clippy, anchored.start)
+            })
     }
 }
 
@@ -623,7 +627,7 @@ impl ValueRules for Rust {
     }
 
     fn string(text: &str) -> Value {
-        Value::Str(text.to_owned().into())
+        Value::Str(text.to_owned())
     }
 
     /// An integer of an inferred type, else a float.
@@ -754,7 +758,11 @@ impl CallRules for Rust {
         _: impl FnOnce() -> Option<Arc<ModulePath>>,
         _: impl FnOnce() -> Option<crate::code_rule_dsl::scope::NameTable>,
     ) -> Option<FileTables> {
-        Some(FileTables { table: table()?, module: None, names: None })
+        Some(FileTables {
+            table: table()?,
+            module: None,
+            names: None,
+        })
     }
 
     fn callee_at<'t, D: Doc>(
@@ -762,9 +770,7 @@ impl CallRules for Rust {
         summary: &Summary,
         tables: impl FnOnce() -> Option<FileTables>,
     ) -> Option<Option<Callee>> {
-        let Some(FileTables { table, .. }) = tables() else {
-            return None;
-        };
+        let FileTables { table, .. } = tables()?;
         Some(calls::rust::callee_at(node, summary, &table))
     }
 
@@ -836,7 +842,12 @@ impl SyntaxRules for Rust {
             SyntaxFeature::LanguageOptions => {
                 refused("`languageOptions` is not available for rust policies")
             }
-            SyntaxFeature::Parse(grammar) if crate::code_rule_dsl::language::Family::of(grammar.host_language()) == crate::code_rule_dsl::language::Family::Rust => Ok(()),
+            SyntaxFeature::Parse(grammar)
+                if crate::code_rule_dsl::language::Family::of(grammar.host_language())
+                    == crate::code_rule_dsl::language::Family::Rust =>
+            {
+                Ok(())
+            }
             SyntaxFeature::Parse(grammar) if grammar.reads_comments() => unhosted(grammar, ""),
             SyntaxFeature::Parse(grammar) => match grammar.name() {
                 "braceFormat" | "percentFormat" | "printfFormat" => {

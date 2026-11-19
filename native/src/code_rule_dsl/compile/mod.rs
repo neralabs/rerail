@@ -40,6 +40,7 @@ use super::model::{
 };
 use super::soundness::sound_under_errors;
 use super::violations;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
 pub use ast_rule::compile_ast_rule;
 use ast_rule::validate_ast_rule;
@@ -57,7 +58,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 pub use utils::UtilScope;
 use utils::{UtilDef, UtilIds, reachable, reject_util_cycles, rule_map, util_map};
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Parses a code-rule document. An object with two equal keys is an error: a plain `Value` keeps the
 /// last one, so the first term would vanish silently (ast-grep 0.45.3 rejects such a rule).
@@ -270,10 +270,7 @@ type CompiledDocument = (
 );
 
 /// The code rule's id, scope, clauses, required capabilities, and aggregate reporting gate.
-pub fn compile_document(
-    document: &Value,
-    capabilities: &Capabilities,
-) -> Result<CompiledDocument> {
+pub fn compile_document(document: &Value, capabilities: &Capabilities) -> Result<CompiledDocument> {
     let (resolved, options) = config::resolve(document)?;
     let document = &resolved;
     // A token test nothing answers on a named-only tape is refused (t31).
@@ -400,7 +397,15 @@ fn compile_clause(
     let clause = object(value, path)?;
     reject_unknown(
         clause,
-        &["id", "forbid", "require_each", "budget", "relational", "llm", "violation"],
+        &[
+            "id",
+            "forbid",
+            "require_each",
+            "budget",
+            "relational",
+            "llm",
+            "violation",
+        ],
         path,
     )?;
     let id = required_str(value, "id", path)?.to_owned();
@@ -863,33 +868,42 @@ fn compile_query_as(
             let (options, python) = match ast.get("languageOptions") {
                 None => (None, None),
                 Some(value) => {
-                    gate(
-                        &format!("{path}/ast/languageOptions"),
-                        { let pack = language_pack::pack(family); pack.syntax_feature(SyntaxFeature::LanguageOptions) },
-                    )?;
-                    { let pack = language_pack::pack(family); pack.syntax_compile_language_options(
-                        value,
-                        &format!("{path}/ast"),
-                    ) }?
+                    gate(&format!("{path}/ast/languageOptions"), {
+                        let pack = language_pack::pack(family);
+                        pack.syntax_feature(SyntaxFeature::LanguageOptions)
+                    })?;
+                    {
+                        let pack = language_pack::pack(family);
+                        pack.syntax_compile_language_options(value, &format!("{path}/ast"))
+                    }?
                 }
             };
             let (applies, source_types) = ast
                 .get("when")
                 .map(|when| {
-                    { let pack = language_pack::pack(family); pack.syntax_compile_when(
+                    let pack = language_pack::pack(family);
+                    pack.syntax_compile_when(
                         when,
                         &format!("{path}/ast"),
                         options.as_deref(),
                         python.as_deref(),
                         &defines.options,
-                    ) }
+                    )
                 })
                 .transpose()?
                 .unwrap_or((true, None));
             let file = ast
                 .get("file")
                 .map(|file| {
-                    let (packages, declarations, manifests, jsx_runtimes) = { let pack = language_pack::pack(family); (pack.packages(), pack.declaration_files(), pack.package_manifests(), pack.jsx_runtimes()) };
+                    let (packages, declarations, manifests, jsx_runtimes) = {
+                        let pack = language_pack::pack(family);
+                        (
+                            pack.packages(),
+                            pack.declaration_files(),
+                            pack.package_manifests(),
+                            pack.jsx_runtimes(),
+                        )
+                    };
                     options::compile_file_condition(
                         file,
                         &format!("{path}/ast"),
@@ -1033,7 +1047,11 @@ fn compile_query_as(
                 use sha2::{Digest as _, Sha256};
                 let mut digest = Sha256::new();
                 digest.update(salt.as_bytes());
-                digest.update(serde_json::to_string(ast).map_err(|error| invalid(error.to_string()))?.as_bytes());
+                digest.update(
+                    serde_json::to_string(ast)
+                        .map_err(|error| invalid(error.to_string()))?
+                        .as_bytes(),
+                );
                 digest.finalize().into()
             };
             let calls = crate::code_rule_dsl::calls::CallsCollector::new(
@@ -1695,6 +1713,7 @@ fn parse_violation(value: &Value, path: &str) -> Result<ViolationSpec> {
         fix: None,
         fix_template: None,
         node_regexes: Vec::new(),
+        gap_tests: Vec::new(),
         each: violation
             .get("each")
             .map(|each| non_empty_str(Some(each), &format!("{path}/each")).map(str::to_owned))
@@ -1884,7 +1903,12 @@ pub fn refuse_unavailable_semantics(
 
 /// The error for `predicate` at `at` when `language`'s registry entry does not support its
 /// capability.
-pub fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
+pub fn unsupported_semantic(
+    support: Support,
+    at: &str,
+    predicate: &str,
+    language: &str,
+) -> Result<()> {
     gate(
         at,
         match support {

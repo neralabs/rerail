@@ -826,7 +826,7 @@ fn flow(rules: &[Rule<'_>], component: &BTreeSet<String>) -> Vec<(Column, Column
             }
         }
         // A head term that a variable bound outside the component is assigned (`$t = @add($l, 1), lines(d, $t, _)`
-        // and the head's `@add($l, 1)`, as `.rr` lowers a call it binds and also writes) takes that variable's
+        // and the head's `@add($l, 1)`, as `.rerail` lowers a call it binds and also writes) takes that variable's
         // finitely many values (O111: `era001`'s `era_run`).
         let finite_terms: Vec<TermRef<'_>> = rule
             .lits()

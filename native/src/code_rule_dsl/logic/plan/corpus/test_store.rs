@@ -5,7 +5,7 @@
 //! test's thread ends. No test sees what another left behind, and none waits on another's leases (O146).
 //!
 //! The template holds what every test would otherwise make first: the rule library's phase 0 (each module's tape and
-//! its loads, `bootstrap.rr`'s plan) and the core program's plan. It is made once per build (keyed by the build's
+//! its loads, `bootstrap.rerail`'s plan) and the core program's plan. It is made once per build (keyed by the build's
 //! identities, `build_ids`), by the first test process that wants it, under a file lock; the processes after it find
 //! it ready (`<key>.ready`). It is written to a staging store, drained (atoms, queued writes), and published with
 //! `VACUUM INTO` and a rename, so a reader never sees half of one. A binary that registers no language (a lower
@@ -130,13 +130,13 @@ fn make(path: &Path) {
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
     let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
-    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())], phases: Vec::new() }];
+    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rerail".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
     modules.sort();
     seeds.extend(modules.into_iter().map(super::phase0::Seed::File));
     super::phase0::graphs(&seeds).map_err(|e| e.to_string())?;
-    let program = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
+    let program = "#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(program).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let corpus = templates().join("corpus");
     std::fs::create_dir_all(&corpus).map_err(|e| e.to_string())?;

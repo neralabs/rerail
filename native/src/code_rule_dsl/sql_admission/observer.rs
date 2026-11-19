@@ -18,7 +18,7 @@ impl Observed {
     pub fn ledger(&self) -> Arc<Ledger> {
         self.ledger.clone()
     }
-    pub fn start(&self, statement: *mut ffi::sqlite3_stmt) {
+    pub(crate) fn start(&self, statement: *mut ffi::sqlite3_stmt) {
         let mut running = self.running.lock();
         if running.contains_key(&(statement as usize)) {
             return;
@@ -44,7 +44,7 @@ impl Observed {
         });
         running.insert(statement as usize, Running { receipt, vm_before });
         drop(running);
-        let first = sql.trim_start().split_whitespace().next().unwrap_or("");
+        let first = sql.split_whitespace().next().unwrap_or("");
         let recovery =
             first.eq_ignore_ascii_case("ROLLBACK") || first.eq_ignore_ascii_case("RELEASE");
         let admitted = self
@@ -56,7 +56,7 @@ impl Observed {
             unsafe { ffi::sqlite3_interrupt(self.database as *mut ffi::sqlite3) };
         }
     }
-    pub fn end(&self, statement: *mut ffi::sqlite3_stmt) {
+    pub(crate) fn end(&self, statement: *mut ffi::sqlite3_stmt) {
         let running = self.running.lock().remove(&(statement as usize));
         if let Some(Running { receipt, vm_before }) = running {
             let mut measured_steps = None;
@@ -86,7 +86,11 @@ pub struct Observer {
     pub shared: Arc<Observed>,
 }
 impl Observer {
-    /// The observer must drop before the connection. A later profiler can adopt `shared`.
+    /// A later profiler can adopt `shared`.
+    ///
+    /// # Safety
+    ///
+    /// The observer must drop before the connection: it registers a raw pointer to itself with SQLite.
     pub unsafe fn install(
         db: &Connection,
         ledger: Arc<Ledger>,

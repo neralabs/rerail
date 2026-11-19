@@ -2172,7 +2172,7 @@ The submission reduction does not establish a general CPU or memory improvement.
 Dense publication and scalar maintenance require further work before performance acceptance.
 
 The broader sample uses the nine CPython modules in the committed corpus, about 123 KB of source.
-The `workload.rr` program covers findings, type propagation, recursive relations, and aggregates.
+The `workload.rerail` program covers findings, type propagation, recursive relations, and aggregates.
 Two alternating pairs each append a function to `json/decoder.py`, repeat that unchanged publication, restore the file, and repeat the restore.
 Each trial repeats this cycle three times, for 12 publications.
 The appended function is:
@@ -2189,7 +2189,7 @@ Median engine CPU for the complete timing request increases from 59.962 to 69.13
 Both pairs regress, but two pairs do not establish a precise effect size.
 Unchanged publications remain inexpensive, with median CPU of 0.157 ms before and 0.163 ms currently.
 
-The `calls.rr` program has one complete timing pair with the same 12-publication pattern.
+The `calls.rerail` program has one complete timing pair with the same 12-publication pattern.
 Initial CPU increases from 21.108 to 21.883 seconds.
 Changed-file CPU increases from 34.565 to 35.745 seconds.
 Complete engine CPU increases from 227.844 to 232.791 seconds.
@@ -2227,8 +2227,8 @@ The broader traced programs still exceed the allowance by large margins.
 
 | Current capture | Recorded checkpoints | Submissions | Setup submissions | Matching and cleanup submissions |
 | --- | --- | ---: | ---: | ---: |
-| CPython `workload.rr` | Initial, failed edit, retry, unchanged edit, restore | 16,421 | 466 | 15,944 |
-| CPython `calls.rr` | Initial and one successful edit | 13,648 | 1,322 | 12,318 |
+| CPython `workload.rerail` | Initial, failed edit, retry, unchanged edit, restore | 16,421 | 466 | 15,944 |
+| CPython `calls.rerail` | Initial and one successful edit | 13,648 | 1,322 | 12,318 |
 
 The call-analysis capture has limited replay coverage. It does not include failure rollback or recovery.
 Neither capture satisfies complete-job acceptance.

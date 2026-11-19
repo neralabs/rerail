@@ -56,7 +56,7 @@ Each language family has one adapter type, and every engine call site asks it in
 | `rust` | `rust` | all five | `clippy` |
 | `vue` | `vue` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint` |
 | `sql` | `sql` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
-| `rr` | `rr` (`.rr` rule files, the engine's own grammar `native:rr`) | none: all five `Refused`; rules match its kinds and text | none |
+| `rr` | `rr` (`.rerail` rule files, the engine's own grammar `native:rr`) | none: all five `Refused`; rules match its kinds and text | none |
 | `json` | `json` | none: all five `Refused` (rules read its tree) | none |
 
 <details>
@@ -122,7 +122,7 @@ segments mapping that text to the file's bytes.
 
 ### The Java adapter
 
-`adapter/java.rs` reads Java from tree-sitter-java's syntax alone (`ast-grep:Java`, tape tag 13). Its files parse and
+`adapter/java.rs` reads Java from tree-sitter-java's syntax alone (`ast-grep:Java`, tape tag 18). Its files parse and
 its structural terms run; no semantic capability is read yet.
 
 <details>
@@ -268,7 +268,7 @@ Each language is one file, `languages/<id>.json`, so changing one language touch
 | `capabilities` | yes | Per capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (no such thing or no plan; a rule using it is invalid) or `not-supported-yet` |
 | `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `oxlint`, `biome`, `phpstan`, `psalm`, `phpcs`, `clippy`, `sqlfluff`) |
 | `embeds` | no | Embedded languages and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks. A rule runs on the program with `ast.embedded: "<via>"` and reaches it from the file's tree with `embedded` ([DSL reference](code-rule-dsl-reference.html#embedded)) |
-| `fragments` | no | Grammars of a part of one of its dialects, which `.rr` rules name in `embed`, `sub_tape` and `parsed`: `{ "name": "annotation", "dialect": "python", "start": "expression" }` is a Python expression, parsed inside a written `( … )`. A name is unique among every dialect label and fragment ([decision 0082](final-shape/decisions/0082-embedded-grammar-names-sql-and-global-guests.md)) |
+| `fragments` | no | Grammars of a part of one of its dialects, which `.rerail` rules name in `embed`, `sub_tape` and `parsed`: `{ "name": "annotation", "dialect": "python", "start": "expression" }` is a Python expression, parsed inside a written `( … )`. A name is unique among every dialect label and fragment ([decision 0082](final-shape/decisions/0082-embedded-grammar-names-sql-and-global-guests.md)) |
 
 Each dialect has:
 
@@ -279,7 +279,7 @@ Each dialect has:
   language has at least one dialect with a suffix.
 - **`variant`**, supported only: the engine's `GrammarDialect::<variant>`.
 - **`parser`**, supported only: `tree-sitter`; `forte`, Rerail's port of Forte ([docs/blade-parser.md](blade-parser.md));
-  `rr`, the rule engine's own parser of `.rr` files (decision 0061); or `bitlex`, a Bitlex grammar the transducer
+  `rr`, the rule engine's own parser of `.rerail` files (decision 0061); or `bitlex`, a Bitlex grammar the transducer
   compiles, written in its tree-sitter grammar's ids, with tree-sitter for a file the grammar refuses. Validated; the
   engine picks the parser by dialect, not from this field (JSON's Bitlex parser: `tape::TapeImage::parse`).
 - **`grammar`**, supported only: `vendored:<name>` (built by `build.rs`), `native:<name>` (a parser Rerail implements)

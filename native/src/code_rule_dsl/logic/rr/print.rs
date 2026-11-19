@@ -1,4 +1,4 @@
-//! A `Program` as `.rr` text, which `rr::parse` reads back as the same program: for programs the engine builds
+//! A `Program` as `.rerail` text, which `rr::parse` reads back as the same program: for programs the engine builds
 //! (a wave's rules, the converter's output) and passes on as text.
 
 use std::collections::BTreeSet;
@@ -25,8 +25,8 @@ fn term(t: &Term) -> Result<String, Error> {
         Term::Str(s) => quote(s),
         Term::Top => "top".to_owned(),
         // A lowered program's atom (decision 0270) is the store's: a lowered program is kept as its image.
-        Term::Branded(b) => return Err(Error::Syntax(format!("the atom {b}: no .rr form"))),
-        Term::Call(f, _) if is_test(f) || f == SET => return Err(Error::Syntax(format!("@{f} as a value: no .rr form"))),
+        Term::Branded(b) => return Err(Error::Syntax(format!("the atom {b}: no .rerail form"))),
+        Term::Call(f, _) if is_test(f) || f == SET => return Err(Error::Syntax(format!("@{f} as a value: no .rerail form"))),
         Term::Call(f, args) => format!("@{}({})", if f == "cat" { "dot" } else { f }, terms(args)?),
     })
 }
@@ -47,7 +47,7 @@ pub(super) fn glob_literal(s: &str) -> String {
     out
 }
 
-/// A regex test's `.rr` pattern: `match` is whole-string, the engine's `rx` a search. A `match("X", s)` lowers to
+/// A regex test's `.rerail` pattern: `match` is whole-string, the engine's `rx` a search. A `match("X", s)` lowers to
 /// `rx` of `^(?:X)$` and prints back as written; another `rx` is the search `(?s:.*)(?:P)(?s:.*)`, its flag on the
 /// dots only (a leading `(?s)` would give P's own `.` newlines), `irx` that under `(?i:…)`.
 pub fn search(op: &str, p: &str) -> String {
@@ -114,7 +114,7 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
 }
 
 /// An atom. `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are the built-ins where the program
-/// declares no relation of that name (a `.rr` program cannot): they print as themselves, where a relation of a
+/// declares no relation of that name (a `.rerail` program cannot): they print as themselves, where a relation of a
 /// reserved name gets a trailing `_` (`translate::relation`).
 fn atom(a: &Atom, prog: &Program) -> Result<String, Error> {
     let bang = if a.neg { "!" } else { "" };
@@ -223,7 +223,7 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
     })
 }
 
-/// The program's `.rr` text: as written, its node attributes inputs again where the lowering answered them on request
+/// The program's `.rerail` text: as written, its node attributes inputs again where the lowering answered them on request
 /// (decision 0174, `lower::undo_on_request`), which reading the text makes again.
 pub fn print(prog: &Program) -> Result<String, Error> {
     if super::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| prog.decls.contains_key(a.req)) {
@@ -286,7 +286,7 @@ fn print_written(prog: &Program) -> Result<String, Error> {
                     };
                     printed.push(format!("{c}: {column}"));
                 }
-                // `core.rr`'s `docof` over nodes and spans stays an input (`lower::projections`).
+                // `core.rerail`'s `docof` over nodes and spans stays an input (`lower::projections`).
                 _ if i == 0 && name == "docof" && prog.inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
                 _ if prog.tapes.get(name.as_str()).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
                 _ => printed.push(format!("{c}: {}", ty(t))),
@@ -315,7 +315,7 @@ fn print_written(prog: &Program) -> Result<String, Error> {
             let values = row.iter().map(|v| match v {
                 Value::Int(n) => Ok(n.to_string()),
                 Value::Str(s) => Ok(quote(s)),
-                Value::Branded(b) => Err(Error::Syntax(format!("the atom {b}: no .rr form"))),
+                Value::Branded(b) => Err(Error::Syntax(format!("the atom {b}: no .rerail form"))),
             });
             writeln!(out, "{}({}).", relation(rel), values.collect::<Result<Vec<_>, _>>()?.join(", ")).expect("a string");
         }

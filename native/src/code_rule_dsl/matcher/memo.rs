@@ -18,6 +18,7 @@
 //! `calls` seed), nor where the verdict reads state the key does not hold: an unknown verdict
 //! pending, or a `parse`'s host being matched.
 
+use super::gap::ParentGaps;
 use super::nth_child::Siblings;
 use super::relation::WalkFilter;
 use super::util::{THREE_VALUED, UNKNOWN, UtilCall, UtilRef};
@@ -100,6 +101,9 @@ struct FileMemo {
     /// A parent's children by their class under an `eq` comparison, by comparison and parent
     /// (`same_key_siblings`).
     same_keys: rustc_hash::FxHashMap<(usize, usize), Arc<SameKeys>>,
+    /// The gap tests' reading of a parent (`gap::ParentGaps`), by grammar (its address) and
+    /// parent; `None` where the parent's kind has no automaton or it refuses the children.
+    gaps: rustc_hash::FxHashMap<(usize, usize), Option<Arc<ParentGaps>>>,
 }
 
 impl FileMemo {
@@ -598,6 +602,26 @@ pub(super) fn siblings<D: Doc>(
     let listed = Arc::new(filling(list)?);
     MEMO.with_borrow_mut(|memo| memo.siblings.insert(key, Arc::clone(&listed)));
     Some(listed)
+}
+
+/// The gap tests' reading of `parent` under the grammar at `grammar` (`gap::ParentGaps`), read once
+/// per file being evaluated; elsewhere read each time. Reading spends nothing.
+pub(super) fn parent_gaps<D: Doc>(
+    grammar: usize,
+    parent: &Node<'_, D>,
+    read: impl FnOnce() -> Option<ParentGaps>,
+) -> Option<Arc<ParentGaps>> {
+    let address = std::ptr::from_ref(parent.root()) as usize;
+    if MEMO.with_borrow(|memo| memo.root != address) {
+        return read().map(Arc::new);
+    }
+    let key = (grammar, parent.node_id());
+    if let Some(known) = MEMO.with_borrow(|memo| memo.gaps.get(&key).cloned()) {
+        return known;
+    }
+    let gaps = read().map(Arc::new);
+    MEMO.with_borrow_mut(|memo| memo.gaps.insert(key, gaps.clone()));
+    gaps
 }
 
 /// `node` as a node of the file being evaluated, where it is one.

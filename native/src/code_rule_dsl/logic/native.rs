@@ -23,9 +23,9 @@ pub mod setfix;
 pub use setfix::DERIVATIONS;
 pub use setfix::{forget_engine, forget_scope};
 pub mod aggregation;
-/// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
+/// `dfs_first` and `dfs_first_memo` (`core.rerail`): a relation the evaluator makes from its inputs' rows.
 pub mod dfs_first;
-/// `components` (`core.rr`, decision 0063): each document's import component and its Merkle key.
+/// `components` (`core.rerail`, decision 0063): each document's import component and its Merkle key.
 pub mod components;
 pub mod rank;
 /// The reach index (decision 0119): a transitive closure as one bitmap per start.
@@ -138,7 +138,7 @@ impl Lattice for Min {
     fn widen(&self, old: i64, new: i64) -> i64 { if new < old { -TOP } else { new } }
 }
 
-/// `shortlex_min<symbol>`: the shortest symbol, then the least by its UTF-8 bytes (`core.rr`), over a run's atoms.
+/// `shortlex_min<symbol>`: the shortest symbol, then the least by its UTF-8 bytes (`core.rerail`), over a run's atoms.
 /// Shortlex is a well-order, so every chain of ever-smaller values is finite. A value the atoms do not hold (`TOP`)
 /// absorbs. The run declares it over its store's atoms (`declare`), as its symbols are those atoms.
 pub struct ShortlexMin(pub Arc<crate::content_store::atoms::Atoms>);
@@ -163,16 +163,54 @@ static LATTICES: LazyLock<Mutex<Vec<(String, Arc<dyn Lattice>)>>> = LazyLock::ne
     Mutex::new(vec![("flat".to_owned(), Arc::new(Flat) as Arc<dyn Lattice>), ("max".to_owned(), Arc::new(Max)), ("min".to_owned(), Arc::new(Min))])
 });
 
-/// Declares `lattice` under `name`, replacing an earlier declaration.
+/// The lattices declared on this thread (`declare`), and carried to its run's jobs on other threads (`carried`):
+/// looked up before the process's. A lattice over a run's own atoms (`shortlex_min<>`, decision 0108) is that run's:
+/// declared only process-wide, a run on another thread declaring its own over its store replaced it under this one,
+/// whose values it then read as the other store's atoms (the coverage probe's shortlex order, which held or not by
+/// the tests that ran beside it).
+type Declared = Arc<Vec<(String, Arc<dyn Lattice>)>>;
+
+thread_local! {
+    static OWN_LATTICES: std::cell::RefCell<Declared> = std::cell::RefCell::new(Arc::new(Vec::new()));
+}
+
+/// Declares `lattice` under `name`, replacing an earlier declaration: this thread's (and its run's jobs'), and the
+/// process's, which threads that declare none read.
 pub fn declare(name: &str, lattice: Arc<dyn Lattice>) {
+    OWN_LATTICES.with(|own| {
+        let mut list: Vec<(String, Arc<dyn Lattice>)> = own.borrow().iter().filter(|(n, _)| n != name).cloned().collect();
+        list.push((name.to_owned(), Arc::clone(&lattice)));
+        *own.borrow_mut() = Arc::new(list);
+    });
     let mut lattices = LATTICES.lock().unwrap();
     lattices.retain(|(n, _)| n != name);
     lattices.push((name.to_owned(), lattice));
 }
 
 pub(in crate::code_rule_dsl) fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
+    if let Some(l) = OWN_LATTICES.with(|own| own.borrow().iter().find(|(n, _)| n == name).map(|(_, l)| Arc::clone(l))) {
+        return Ok(l);
+    }
     LATTICES.lock().unwrap().iter().find(|(n, _)| n == name).map(|(_, l)| Arc::clone(l))
         .ok_or_else(|| user_err(format!("no lattice named {name:?}")))
+}
+
+/// Carries this thread's declared lattices to a job of its run on another thread (`run_state`).
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.part(&["OWN_LATTICES"], crate::code_rule_dsl::logic::run_state::Shared(OWN_LATTICES.with(|own| Arc::clone(&own.borrow())), enter_lattices));
+}
+
+/// While the guard lives, this thread reads `declared` as its own lattices.
+fn enter_lattices(declared: Declared) -> impl Drop {
+    struct Entered(Option<Declared>);
+    impl Drop for Entered {
+        fn drop(&mut self) {
+            if let Some(d) = self.0.take() {
+                OWN_LATTICES.with(|own| *own.borrow_mut() = d);
+            }
+        }
+    }
+    Entered(Some(OWN_LATTICES.with(|own| std::mem::replace(&mut *own.borrow_mut(), declared))))
 }
 
 struct FlatJoin;

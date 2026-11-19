@@ -100,6 +100,7 @@ pub struct Facts {
     pub bindings: std::cell::OnceCell<Result<Vec<super::bindings::Binding>, String>>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Built {
     Facts(Facts),
     /// The parser stopped at a limit (`file_tape` returned `None`).

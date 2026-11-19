@@ -317,7 +317,7 @@ fn facts() -> std::path::PathBuf {
 
 /// T's `rdl.py sql` front: prune, demand (adornment for `.demand *`), prune.
 fn program(name: &str) -> Program {
-    let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rr"))).unwrap();
+    let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rerail"))).unwrap();
     let p = prune(parse(&src).unwrap());
     let options = Options::default();
     prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap())
@@ -719,13 +719,13 @@ fn t_programs_run_natively_over_atoms_like_t() {
 /// T's outputs on T's facts, through the same front (prune, magic sets, prune). Their plans may differ from
 /// T's; their outputs may not.
 #[test]
-#[ignore = "O95: T's facts predate relations calls.rr now reads (`value`, `str`, …); the facts need them, empty or rebuilt"]
+#[ignore = "O95: T's facts predate relations calls.rerail now reads (`value`, `str`, …); the facts need them, empty or rebuilt"]
 fn product_programs_derive_t_outputs() {
     let facts = facts();
-    // T's facts predate `strprefix` (which calls.rr's type relations read, decision 0047): empty here, so every
+    // T's facts predate `strprefix` (which calls.rerail's type relations read, decision 0047): empty here, so every
     // string is str. Likewise the guests (`parsed`, `host_node`, decision 0055): no string is parsed. No T output
-    // reads them. Nor do they have `name`, `str`, `value` and `op_at` (core.rr), which calls.rr reads through
-    // python/conditions.rr (Typing's B6, B10): empty here, so no `sys.version_info` or `sys.platform` test is
+    // reads them. Nor do they have `name`, `str`, `value` and `op_at` (core.rerail), which calls.rerail reads through
+    // python/conditions.rerail (Typing's B6, B10): empty here, so no `sys.version_info` or `sys.platform` test is
     // decided and every branch is taken, as T assumed.
     Connection::open(&facts).unwrap().execute_batch(
         "CREATE TABLE strprefix(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.strprefix', 0);
@@ -745,7 +745,7 @@ fn product_programs_derive_t_outputs() {
     ).unwrap();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
-        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rerail"))).unwrap();
         let mut p = prune(parse(&src).unwrap());
         // T has no library stage (decision 0059): with no `stage` fact, the rules it opens are dead, and their
         // unbound reads of demanded relations (`need_attr(c, a) :- stage("library"), found(c, a, _)`) are not asked.
@@ -758,7 +758,7 @@ fn product_programs_derive_t_outputs() {
         }
         let golden = root().join(format!("plan/golden/{name}"));
         let got = run_sql(&p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
-        // The product's own outputs (calls.rr's type relations, decision 0047) are not T's: they have no golden.
+        // The product's own outputs (calls.rerail's type relations, decision 0047) are not T's: they have no golden.
         for (rel, rows) in got.shown().iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
             let expected = golden_rows(&golden, rel);
             let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
@@ -806,7 +806,7 @@ fn own_ingestion_derives_what_t_facts_do() {
     };
     let read = |out: &std::path::Path| output::Outputs::open(out).unwrap_or_else(|e| panic!("{}: {e}", out.display()));
     for name in ["workload", "calls"] {
-        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rerail"))).unwrap();
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
@@ -847,7 +847,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     write("decl/make.pyi", "# rerail.types/v1\n# module: vendor.core\ndef make() -> str: ...\n");
     write("app/main.py", "from vendor import version\nfrom vendor.core import make\nimport other\na = version()\nb = make()\nc = other.thing()\n");
     write("decl/other.pyi", "# rerail.types/v1\n# module: other\ndef thing() -> bytes | None: ...\n");
-    let src = std::fs::read_to_string(root().join("../typing/programs/workload.rr")).unwrap();
+    let src = std::fs::read_to_string(root().join("../typing/programs/workload.rerail")).unwrap();
     let cache = dir.join("cache");
 
     let summarize = Typing { summarize: Some(cache.clone()), declarations: vec![dir.join("decl/make.pyi")], ..Default::default() };
@@ -910,7 +910,7 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
         super::corpus::closes_done();
         assert_eq!(crate::content_store::holding(&store), (0, 0), "run {i} left store handles or connections open (handles, connections)");
         // The kernel names files by their real path (macOS's /var is /private/var).
-        let real = out.canonicalize().unwrap().join(store.file_name().unwrap());
+        let real = dunce::canonicalize(&out).unwrap().join(store.file_name().unwrap());
         let held: Vec<_> = open_files().into_iter().filter(|file| file.to_string_lossy().starts_with(&*real.to_string_lossy())).collect();
         assert!(held.is_empty(), "run {i} left its store open: {held:?}");
     }
@@ -949,12 +949,12 @@ fn open_files() -> Vec<std::path::PathBuf> {
 fn a_second_corpus_run_deletes_and_creates_its_store_again() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("restore");
     std::fs::create_dir_all(&dir).unwrap();
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
         .args(["--ignored", "--exact", "code_rule_dsl::logic::plan::tests::corpus_store_child", "--nocapture", "--test-threads=1"])
         .env(CORPUS_STORE_CHILD, &dir)
-        .env("RERAIL_TAPE_CACHE", "off")
-        .output()
-        .unwrap();
+        .env("RERAIL_TAPE_CACHE", "off");
+    let status = super::corpus::switches::started(|| child.output()).unwrap();
     // The child's own output, shown when it fails: a failure beside other tests says nothing without it (Q42).
     assert!(
         status.status.success() && dir.join("done").exists(),
@@ -1003,7 +1003,7 @@ async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifie
 }
 
 /// The tree axes (decision 0036): `inside(n, a, set)` holds every ancestor of `n` whose kind is in the set, not
-/// only the nearest; `has(a, n, set)` every descendant of `a` whose kind is in the set (`core.rr`: the set tests the
+/// only the nearest; `has(a, n, set)` every descendant of `a` whose kind is in the set (`core.rerail`: the set tests the
 /// descendant); both negate.
 #[test]
 fn rules_read_inside_and_has_as_tape_relations() {
@@ -1224,7 +1224,7 @@ low(@lower(cat(a, " ", b))) :- w(a, b).
     assert_eq!(got["low"], [["x y"], ["àé i\u{307} ας"]]);
 }
 
-/// `@dot("", b)` is `b` (`core.rr`), built and split: a split of a bound whole gives `""` and the whole, and each
+/// `@dot("", b)` is `b` (`core.rerail`), built and split: a split of a bound whole gives `""` and the whole, and each
 /// cut at a "." with a part before it; with a bound part, the other. Recursive (the native set engine) and not.
 #[test]
 fn dot_of_the_empty_name_is_the_name() {
@@ -1307,8 +1307,8 @@ found(x, i, a, b, c) :- s(x), match_all("(?<c>x+)", x, i, a, b).
     assert!(found(["é xx xx", "1", "5", "7", "xx"]) && found(["x", "0", "0", "1", "x"]), "{:?}", got["found"]);
 }
 
-/// A head's `@dot` with a computed part (`walk_qualname(f, @dot(p, @nfkc(x)))`, data-layer `purity-ast.rr`), and an
-/// ordered comparison with an extremum's value (`k < v`, `v = min l : {…}`, `post-op-side-effects.rr`), on both
+/// A head's `@dot` with a computed part (`walk_qualname(f, @dot(p, @nfkc(x)))`, data-layer `purity-ast.rerail`), and an
+/// ordered comparison with an extremum's value (`k < v`, `v = min l : {…}`, `post-op-side-effects.rerail`), on both
 /// paths. The native engine declined both: the head's part was not a slot, and `v` had no type.
 #[test]
 fn a_heads_computed_part_and_an_extremums_comparison_run_natively() {
@@ -1336,7 +1336,7 @@ late(f, k) :- r(f, k), v = max x : { l(f, x) }, k >= v.
 
 // ---- violations ----
 
-/// A `.violation` at a `loc` (`core.rr`): a node's finding is at its document's path and line; a `@place(path,
+/// A `.violation` at a `loc` (`core.rerail`): a node's finding is at its document's path and line; a `@place(path,
 /// line)`'s at that path and line, line 0 for the file itself and a path that need not exist; a place passed through
 /// another relation keeps its path and line.
 #[test]
@@ -1744,7 +1744,7 @@ chained(a, top) :- child(a, b, _), child(b, top, _).
     assert_eq!(got[3], got[2]);
 }
 
-/// `s` as a `.rr` string literal (`rr::syntax`'s escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}`).
+/// `s` as a `.rerail` string literal (`rr::syntax`'s escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}`).
 fn rr_str(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -2022,7 +2022,7 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
         ("fgp", 100.0, vec![50.0, 5.0, 50.0, 10.0, 20.0]),
         ("fbind", 1.0, vec![1.0; 4]),
     ] {
-        model.stats.card.insert(rel.to_owned(), rows);
+        model.stats.card.insert(rel, rows);
         for (c, n) in ndv.into_iter().enumerate() {
             model.ndv.insert((rel.to_owned(), c), n);
             model.stats.fan.insert((rel.to_owned(), c), rows / n);
@@ -2030,7 +2030,7 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     }
     model.stats.solve(["pv", "fcall", "tfix", "fgp", "fbind"].into_iter().map(str::to_owned).collect());
     let r = &p.rules[0];
-    let ((order, _, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), Some(2)).unwrap();
+    let ((order, _, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), Some(2)).unwrap();
     let order: Vec<&str> = order.iter().filter_map(|s| r.body[s.at].atom()).map(|a| a.rel.as_str()).collect();
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }
@@ -2056,7 +2056,7 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     }
     model.stats.solve(["delta","expand","result"].into_iter().map(str::to_owned).collect());
     let r=&p.rules[0];
-    let ((order,work,_),_)=model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
+    let ((order,work,_),_)=model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0),Some(2)).unwrap();
     let order:Vec<_>=order.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect();
     assert_eq!(order, ["delta","restrict","expand"], "restrict the delta before its high-fanout probe: {order:?}, work={work}");
     assert!(work<10_000.0, "price misses as well as hits: {work}");
@@ -2064,11 +2064,11 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     // A cached live plan must notice a new value distribution even when every relation's size is unchanged.
     let _plans=KeepPlans::start(None);
     model.ndv.insert(("delta",1),1.0);
-    let ((before,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
+    let ((before,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0),Some(2)).unwrap();
     let before:Vec<_>=before.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect();
     assert_eq!(before,["delta","expand","restrict"],"the initial narrow-domain estimate makes expansion cheaper");
     model.ndv.insert(("delta",1),173.0);
-    let ((after,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
+    let ((after,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0),Some(2)).unwrap();
     let after:Vec<_>=after.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect();
     assert_eq!(after,["delta","restrict","expand"],"a size-only cache must not keep the obsolete order");
 
@@ -2077,23 +2077,23 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     model.ndv.insert(("delta",1),1.0);
     model.stats.dfreq.insert(("delta",1),HashMap::from([(Constant::Int(10),526)]));
     model.stats.dfreq.insert(("restrict",2),HashMap::from([(Constant::Int(10),450)]));
-    let ((overlap,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
+    let ((overlap,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0),Some(2)).unwrap();
     assert_eq!(overlap.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","expand","restrict"]);
     model.stats.dfreq.insert(("delta",1),HashMap::from([(Constant::Int(11),526)]));
-    assert_eq!(model.delta_misses(&body::nth(&body::alone(&r).unwrap(), 0),Some(2)),[0]);
-    let ((disjoint,work,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(2)).unwrap();
+    assert_eq!(model.delta_misses(&body::nth(&body::alone(r).unwrap(), 0),Some(2)),[0]);
+    let ((disjoint,work,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0),Some(2)).unwrap();
     assert_eq!(disjoint.iter().filter_map(|s|r.body[s.at].atom()).map(|a|a.rel.as_str()).collect::<Vec<_>>(),["delta","restrict","expand"]);
     assert!(work<2000.0,"disjoint key values must avoid expansion: {work}");
-    assert!(model.delta_misses(&body::nth(&body::alone(&r).unwrap(), 0),None).is_empty(),"a later predicate is not an already-applied demand");
+    assert!(model.delta_misses(&body::nth(&body::alone(r).unwrap(), 0),None).is_empty(),"a later predicate is not an already-applied demand");
 
     // A partial SQL constant memo does not prove absence. Complete native postings do.
     model.stats.dfreq.remove(&("restrict",2));
     let col=model.col("restrict",2);
     model.stats.col.insert(("restrict".into(),col.clone()),[450,2,0,0]);
     model.stats.memo.insert("restrict".into(),HashMap::from([((col.clone(),Constant::Int(10)),225)]));
-    assert!(model.delta_misses(&body::nth(&body::alone(&r).unwrap(), 0),Some(2)).is_empty());
+    assert!(model.delta_misses(&body::nth(&body::alone(r).unwrap(), 0),Some(2)).is_empty());
     model.stats.memo.get_mut("restrict").unwrap().insert((col,Constant::Int(12)),225);
-    assert_eq!(model.delta_misses(&body::nth(&body::alone(&r).unwrap(), 0),Some(2)),[0]);
+    assert_eq!(model.delta_misses(&body::nth(&body::alone(r).unwrap(), 0),Some(2)),[0]);
 }
 
 /// O125's retval regression: a kind-filtered node is not a random draw from the complete node domain.
@@ -2122,7 +2122,7 @@ fn filtered_binding_domains_do_not_underprice_expansion_from_function_scopes() {
     let made = body::alone(rule).unwrap();
     let b = body::nth(&made, 0);
     assert_eq!(model.binding_domains(&b,3)[0],Some(2181.0));
-    let ((order,work,_),_)=model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&rule).unwrap(), 0),None).unwrap();
+    let ((order,work,_),_)=model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(rule).unwrap(), 0),None).unwrap();
     let first=order.iter().find_map(|s|rule.body[s.at].atom()).unwrap();
     assert_eq!(first,&rule.body[0].atom().unwrap().clone(),"return statements must precede scope expansion: {order:?}");
     assert!(work<20_000.0,"avoid the 160,836-row function-body expansion: {work}");
@@ -2156,7 +2156,7 @@ fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
         ("fv", 695.0, vec![(60.0, 46.9), (153.0, 19.2), (3.0, 489.6), (201.0, 8.0)]),
         ("ifn", 1.0, vec![(1.0, 1.0); 2]),
     ] {
-        model.stats.card.insert(rel.to_owned(), rows);
+        model.stats.card.insert(rel, rows);
         for (c, (n, fan)) in cols.into_iter().enumerate() {
             model.ndv.insert((rel.to_owned(), c), n);
             model.stats.fan.insert((rel.to_owned(), c), fan);
@@ -2167,7 +2167,7 @@ fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
     model.stats.dfreq.insert(("fv".to_owned(), 2), values(&[(193, 570), (1, 100), (2, 25)]));
     model.stats.solve(["pv", "fv", "ifn"].into_iter().map(str::to_owned).collect());
     let r = &p.rules[0];
-    let ((order, _, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), Some(2)).unwrap();
+    let ((order, _, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), Some(2)).unwrap();
     let order: Vec<&str> = order.iter().filter_map(|s| r.body[s.at].atom()).map(|a| a.rel.as_str()).collect();
     assert_eq!(order, ["fv", "icall", "pv"], "{order:?}");
 }
@@ -2192,7 +2192,7 @@ fn an_equality_binds_its_right_side_before_the_next_join() {
     inputs.given = Some(stats);
     let model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
     let r = &p.rules.iter().find(|r| r.head.rel == "o").unwrap();
-    let (order, work, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let (order, work, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
     let shown: Vec<String> = order.iter().map(|s| r.body[s.at].to_string()).collect();
     assert_eq!(shown[1], "$s = $a", "the equality between the joins: {shown:?}, work {work}");
     assert!(work < 100_000.0, "a cross product priced: {work}");
@@ -2207,7 +2207,7 @@ fn an_equality_binds_its_right_side_before_the_next_join() {
 }
 
 /// A concatenation given its inverse and a function made a join key (`simplify::concat_inverses`, `function_keys`)
-/// derive the rows the rule did: a module's stub file found from its head (`modules.rr`'s `py_try` "stubs"), and
+/// derive the rows the rule did: a module's stub file found from its head (`modules.rerail`'s `py_try` "stubs"), and
 /// the rest of a name by `substr`, which runs natively.
 #[test]
 fn join_keys_from_functions_derive_the_rules_rows() {
@@ -2277,10 +2277,10 @@ fn a_gate_is_joined_once_its_key_is_bound() {
     let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
     let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     for (rel, rows) in [("dir", 400.0), ("done_n_b", 1.0), ("n", 10.0), ("k", 10_000.0)] {
-        model.stats.card.insert(rel.to_owned(), rows);
+        model.stats.card.insert(rel, rows);
     }
     let r = &p.rules[0];
-    let ((order, _, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), Some(0)).unwrap();
+    let ((order, _, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), Some(0)).unwrap();
     let atoms: Vec<&str> = order.iter().filter_map(|s| r.body[s.at].atom()).filter(|a| !a.neg).map(|a| a.rel.as_str()).collect();
     assert_eq!(atoms, ["dir", "k", "done_n_b"], "{:?}", order.iter().map(|s| r.body[s.at].to_string()).collect::<Vec<_>>());
 }
@@ -2305,20 +2305,20 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     let r=&p.rules[0];
     let _plans=KeepPlans::start(None);
     // Unknown delta distribution first, then an exact zero for the constant, at identical row counts.
-    let _ = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),None).unwrap();
+    let _ = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0),None).unwrap();
     model.stats.memo.insert("changed__plus".into(),HashMap::from([(("c1".into(),Constant::Int(1)),0)]));
-    let ((order,work,_),_)=model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),None).unwrap();
+    let ((order,work,_),_)=model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0),None).unwrap();
     assert_eq!(r.body[order[0].at].atom().unwrap().rel,"changed__plus", "the seed must not retain the old full-walk scan");
     assert!(work < 10.0, "zero constant postings precede all walk/binding work: {work}");
     model.stats.solve(["walk","out"].into_iter().map(str::to_owned).collect());
     model.stats.memo.get_mut("changed__plus").unwrap().insert(("c1".into(),Constant::Int(1)),12);
-    let ((order,work,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(0)).unwrap();
+    let ((order,work,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0),Some(0)).unwrap();
     assert_eq!(r.body[order[0].at].atom().unwrap().rel,"changed__plus", "a changed-input demand can precede a delta read");
     assert!(order.iter().position(|s|s.at==0).unwrap()>0);
     assert!(work<5000.0,"probe walk by the demanded scopes: {work}");
     // The same rule later has one new walk row. Rescanning the full changed-input demand each wave is worse.
     model.stats.delta_rows.insert("walk",1.0);
-    let ((small,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0),Some(0)).unwrap();
+    let ((small,_,_),_)=model.plan_rule_live(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0),Some(0)).unwrap();
     assert_eq!(small[0].at,0,"a one-row delta drives its own probe");
 
 }
@@ -2344,7 +2344,7 @@ fn a_relation_empty_when_planned_does_not_make_a_cross_product_free() {
     let r = &p.rules[0];
     let _plans = KeepPlans::start(None);
     let was = explaining(true);
-    let (_, explained) = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let (_, explained) = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
     explaining(was);
     let steps = explained.expect("explained").steps;
     let zero: Vec<&str> = steps.iter().filter(|s| s.rows <= 0.0).map(|s| s.literal.as_str()).collect();
@@ -2380,12 +2380,12 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     // Planned before the guest round: about no fragment yet (production's estimate was 0.01 rows), and the line
     // ran over none.
     size(&mut model, 300.0, 1);
-    let ((order, work, _), _) = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let ((order, work, _), _) = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
     assert_eq!(lead(&order).as_deref(), Some("doc_role"), "with about no fragment, `doc_role` leads: {work} {:?}", order.iter().map(|s| r.body[s.at].to_string()).collect::<Vec<_>>());
-    model.ran_as_planned(&body::nth(&body::alone(&r).unwrap(), 0), None, 1.0);
+    model.ran_as_planned(&body::nth(&body::alone(r).unwrap(), 0), None, 1.0);
     // The guest round made 2,455 fragment documents.
     size(&mut model, 2_755.0, 2_455);
-    let ((order, _, _), _) = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let ((order, _, _), _) = model.plan_rule_reused(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
     assert_eq!(lead(&order).as_deref(), Some("ann_str"), "2,455 fragments, each scanning every string, are searched again");
 }
 
@@ -2449,7 +2449,7 @@ fn a_cross_product_after_a_relation_empty_when_planned_is_not_free() {
     }
     model.stats.nodes = 300_000.0;
     let r = &p.rules[0];
-    let (order, work, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let (order, work, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
     let lead = r.body[order[0].at].atom().map(|a| a.rel.to_string());
     assert_eq!(lead.as_deref(), Some("ann_str"), "`doc_role`, empty when planned, does not lead a cross product: {work} {:?}", order.iter().map(|s| r.body[s.at].to_string()).collect::<Vec<_>>());
 }
@@ -2467,7 +2467,7 @@ fn a_filter_is_priced_at_the_rows_it_passes_on() {
     model.ndv.insert(("a", 0), 1_000.0);
     model.stats.fan.insert(("a", 0), 1.0);
     let r = &p.rules[0];
-    let (order, work, rows) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let (order, work, rows) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
     let shown: Vec<String> = order.iter().map(|s| r.body[s.at].to_string()).collect();
     let want = 1_000.0 + 1_000.0 * 0.97 + 1_000.0 * 0.97 * 0.98;
     assert!((work - want).abs() < 1e-6 * want, "work {work}, wanted {want}: {shown:?}");
@@ -2484,7 +2484,7 @@ fn bare_model(p: &Program) -> Model {
 /// `(order shown, work)` of `p`'s first rule.
 fn priced_first_rule(model: &Model, p: &Program) -> (Vec<String>, f64) {
     let r = &p.rules[0];
-    let (order, work, _) = model.plan_rule(body::Placed::of_program(p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let (order, work, _) = model.plan_rule(body::Placed::of_program(p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
     (order.iter().map(|s| r.body[s.at].to_string()).collect(), work)
 }
 
@@ -2733,7 +2733,7 @@ fn o148_plans_and_their_work() {
     use std::sync::Mutex;
     static COSTS: Mutex<Vec<(String, u64, u64)>> = Mutex::new(Vec::new());
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
-        if event == ffi::SQLITE_TRACE_PROFILE as u32 {
+        if event == ffi::SQLITE_TRACE_PROFILE {
             let stmt = p.cast::<ffi::sqlite3_stmt>();
             // SAFETY: for SQLITE_TRACE_PROFILE, P is the statement and X its time in nanoseconds.
             let (ns, vm, text) = unsafe {
@@ -2752,7 +2752,7 @@ fn o148_plans_and_their_work() {
         db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())]).unwrap();
         db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;").unwrap();
         // SAFETY: the connection outlives the run; the callback reads only its arguments.
-        unsafe { ffi::sqlite3_trace_v2(db.handle(), ffi::SQLITE_TRACE_PROFILE as u32, Some(trace), std::ptr::null_mut()) };
+        unsafe { ffi::sqlite3_trace_v2(db.handle(), ffi::SQLITE_TRACE_PROFILE, Some(trace), std::ptr::null_mut()) };
         COSTS.lock().unwrap().clear();
         let got = super::run(&body::Placed::of_program(&program(name)).unwrap(), &db, Inputs::file(), None, Hooks::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
         for c in &got.chosen {
@@ -2830,7 +2830,7 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
         let model = model_for(&p, sized);
         let _plans = KeepPlans::start(None);
         let r = &p.rules[0];
-        let (order, _, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), first).unwrap();
+        let (order, _, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), first).unwrap();
         order.iter().filter_map(|s| r.body[s.at].atom().map(|a| a.rel.to_string())).collect()
     };
     let at = |o: &[String], r: &str| o.iter().position(|x| x == r).unwrap();
@@ -2863,7 +2863,7 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
             let model = model_for(&p, &sizes);
             let _plans = KeepPlans::start(None);
             let r = &p.rules[0];
-            let (_, x) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+            let (_, x) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
             assert_eq!(x.map(|x| x.shaped), Some(vec!["retparam bound f".to_owned()]));
         }
         let _ = order_of(&format!("{rule}.shape pv after posarg\n"), &sizes, None, None);
@@ -3134,7 +3134,7 @@ fn a_base_relations_answered_columns_are_not_counted() {
     assert_eq!((got[1].3, got[1].4), (6, 6));
 }
 
-/// The program of the prepared-plan tests (decision 0361 step 5): `child2` and `kind2` shaped as core.rr's `child` and
+/// The program of the prepared-plan tests (decision 0361 step 5): `child2` and `kind2` shaped as core.rerail's `child` and
 /// `kind`; `part` with no size; `up` declared, recursive.
 fn prepared_program() -> crate::code_rule_dsl::logic::front::Program {
     parse(".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
@@ -3233,7 +3233,7 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     std::fs::write(root.join("a.py"), "f()\n").unwrap();
     std::fs::write(root.join("b.py"), "def g():\n    f()\n").unwrap();
     std::fs::write(root.join("c.py"), "x = 1\ng()\n").unwrap();
-    let policy = root.with_extension("policy.rr");
+    let policy = root.with_extension("policy.rerail");
     std::fs::write(
         &policy,
         ".language python\n.violation hit(at: node) code \"X1\" \"a statement at a module's top\"\n\

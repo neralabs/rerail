@@ -1,4 +1,4 @@
-//! A `front::Program` as `.rr` text, and that text read back as the same program (decisions 0155, 0162).
+//! A `front::Program` as `.rerail` text, and that text read back as the same program (decisions 0155, 0162).
 //!
 //! This is how a run keeps what it compiled (a prepared program, a plan choice, a combined program): the program's
 //! own rules as text, read back into the program's parts by one walk over the lean parser's tape image
@@ -1021,7 +1021,7 @@ pub struct Opened {
     pub rows_in_place: bool,
 }
 
-/// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
+/// `facts` as a `.rerail` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
 /// same rows.
 pub fn document(facts: &super::program_facts::Facts, extra: &std::collections::BTreeMap<super::front::name::Name, crate::code_rule_dsl::logic::front::name::List<(super::front::name::Name, super::front::name::Name)>>) -> Result<String, String> {
     let mut decls = super::program_facts::schema();

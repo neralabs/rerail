@@ -12,7 +12,7 @@
         let out = dir.join("out");
         super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let program = |name: &str| {
-            let text = format!("#include \"core.rr\"\n.decl {name}(s: symbol)\n{name}(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output {name}\n");
+            let text = format!("#include \"core.rerail\"\n.decl {name}(s: symbol)\n{name}(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output {name}\n");
             crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(&text).unwrap()).unwrap()
         };
         let options = serde_json::json!({ "reuse": true });
@@ -44,11 +44,11 @@
         assert!(!kept(&run(&with_env("defs"))), "the root's settings, for a program that declares `env`");
         assert!(!kept(&run(&program("names"))), "another text");
         // Each library file a text includes is in the record, with its digest (a flattened text includes none).
-        let rules = super::rule_files(&super::super::Texts::of(&["#include \"core.rr\"\n.decl x(s: symbol)\n"]).unwrap(), &serde_json::Value::Null).unwrap();
-        assert!(rules.iter().any(|r| r.1.ends_with("core.rr") && !r.2.is_empty()) && rules.iter().any(|r| r.1.ends_with("components.rr")), "{rules:?}");
+        let rules = super::rule_files(&super::super::Texts::of(&["#include \"core.rerail\"\n.decl x(s: symbol)\n"]).unwrap(), &serde_json::Value::Null).unwrap();
+        assert!(rules.iter().any(|r| r.1.ends_with("core.rerail") && !r.2.is_empty()) && rules.iter().any(|r| r.1.ends_with("components.rerail")), "{rules:?}");
         // A policy file the program reads (`.input … filename=`) is consulted: its edit runs it again.
         std::fs::write(src.join("allow.txt"), "a\n").unwrap();
-        let reads = "#include \"core.rr\"\n.decl entry(n: number, e: symbol)\n.input entry(IO=lines, filename=\"allow.txt\")\n.decl listed(e: symbol)\nlisted(e) :- entry(_, e).\n.output listed\n";
+        let reads = "#include \"core.rerail\"\n.decl entry(n: number, e: symbol)\n.input entry(IO=lines, filename=\"allow.txt\")\n.decl listed(e: symbol)\nlisted(e) :- entry(_, e).\n.output listed\n";
         let reads = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reads).unwrap()).unwrap();
         run(&reads);
         assert!(kept(&run(&reads)));
@@ -73,18 +73,18 @@
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let options = serde_json::json!({ "phase_dir": dir.to_string_lossy() });
-        let text = "#include \"core.rr\"\n.decl values__x(s: symbol)\n";
+        let text = "#include \"core.rerail\"\n.decl values__x(s: symbol)\n";
         let rules = || super::rule_files(&super::super::Texts::of(&[text]).unwrap(), &options).unwrap();
-        let shadow = dir.join("values.rr");
+        let shadow = dir.join("values.rerail");
         let entry = |rules: &[(String, String, String)]| rules.iter().find(|r| r.1 == shadow.to_string_lossy()).cloned();
         let before = rules();
         assert_eq!(entry(&before).map(|r| r.2), Some(String::new()), "looked for there first, and missing: {before:?}");
-        assert!(before.iter().any(|r| r.1.ends_with("typing/programs/values.rr") && !r.2.is_empty()), "the engine's own, read: {before:?}");
-        std::fs::write(&shadow, "#include \"core.rr\"\n.decl y(s: symbol)\n").unwrap();
+        assert!(before.iter().any(|r| r.1.ends_with("typing/programs/values.rerail") && !r.2.is_empty()), "the engine's own, read: {before:?}");
+        std::fs::write(&shadow, "#include \"core.rerail\"\n.decl y(s: symbol)\n").unwrap();
         // The check compares each `rule` line's digest with the file's now: an empty one with a file there differs.
         let now = rules();
         assert!(entry(&now).is_some_and(|r| !r.2.is_empty()), "the file there is read now: {now:?}");
-        assert!(!now.iter().any(|r| r.1.ends_with("typing/programs/values.rr")), "and the engine's own is not: {now:?}");
+        assert!(!now.iter().any(|r| r.1.ends_with("typing/programs/values.rerail")), "and the engine's own is not: {now:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -92,12 +92,12 @@
     /// where it was looked for, with no digest, as `listed` lists it (decision 0275): one written there differs.
     #[test]
     fn a_phase_program_the_graph_did_not_find_is_listed_as_missing() {
-        let text = "#include \"core.rr\"\n.decl nosuchphase__x(s: symbol)\n";
+        let text = "#include \"core.rerail\"\n.decl nosuchphase__x(s: symbol)\n";
         let texts = [text];
         let given = super::super::Texts::of(&texts).unwrap();
         assert!(given.graphs.iter().all(Option::is_some), "the text has its graph");
         let rules = super::rule_files(&given, &serde_json::json!({})).unwrap();
-        let missing: Vec<_> = rules.iter().filter(|r| r.1.ends_with("typing/programs/nosuchphase.rr")).collect();
+        let missing: Vec<_> = rules.iter().filter(|r| r.1.ends_with("typing/programs/nosuchphase.rerail")).collect();
         assert_eq!(missing.len(), 1, "{rules:?}");
         assert!(missing[0].2.is_empty(), "no digest: {rules:?}");
     }
@@ -109,7 +109,7 @@
         std::fs::write(src.join("a.py"),"x = 1\n").unwrap();
         std::fs::write(src.join("b.py"),"y = 2\n").unwrap();
         super::super::TEST_TAPE_CACHE.with(|p|*p.borrow_mut()=Some(dir.join("store.sqlite")));
-        let p = "#include \"core.rr\"\n.decl pairs(a:symbol,b:symbol)\npairs(a,b) :- doc(d,a,_),doc(e,b,_),d!=e.\n.output pairs\n";
+        let p = "#include \"core.rerail\"\n.decl pairs(a:symbol,b:symbol)\npairs(a,b) :- doc(d,a,_),doc(e,b,_),d!=e.\n.output pairs\n";
         let out=dir.join("out");
         let run=||super::super::run_with_options(&[p],&src,None,&out,"program",Binding::Cpu,1<<18,&Default::default(),&serde_json::json!({"reuse":true})).unwrap();
         let first=run();
@@ -146,7 +146,7 @@
     fn outputs_and_records_round_trip() {
         let files = vec![("a.rro".to_owned(), b"1\t2\n".to_vec()), ("b.rro".to_owned(), Vec::new())];
         assert_eq!(super::decode_outputs(&super::encode_outputs(&files)).unwrap(), files);
-        let c = vec![("doc".to_owned(), "a.py".to_owned(), "ab".to_owned()), ("rule".to_owned(), "/x/core.rr".to_owned(), "cd".to_owned())];
+        let c = vec![("doc".to_owned(), "a.py".to_owned(), "ab".to_owned()), ("rule".to_owned(), "/x/core.rerail".to_owned(), "cd".to_owned())];
         assert_eq!(super::decode_consulted(&super::encode_consulted(&c)), Some(c.clone()));
         let bytes = super::encode_consulted(&c);
         assert_eq!(super::decode_consulted(&bytes[..bytes.len() - 1]), None, "a cut record is none");
@@ -167,7 +167,7 @@
         let out = dir.join("out");
         super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let text = {
-            let text = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
+            let text = "#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
             crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(text).unwrap()).unwrap()
         };
         let options = serde_json::json!({ "reuse": true });

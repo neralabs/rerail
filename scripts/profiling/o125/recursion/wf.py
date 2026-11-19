@@ -1,4 +1,4 @@
-# wf.py <program.rr>...: which recursive components cannot hold a row up by itself, read off the rules (decision
+# wf.py <program.rerail>...: which recursive components cannot hold a row up by itself, read off the rules (decision
 # 0328, the static check levels could skip). A component is well-founded here when each relation has a measure
 # column such that every recursive rule's own atom is strictly below (or every one strictly above) its head in the
 # tree, or at the same node with no cycle of such steps, or a self-recursion whose number column steps by @add/@sub.
@@ -8,7 +8,7 @@ import itertools,os,re,sys
 from collections import defaultdict,Counter
 sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)))
 from rr import parse,rel,split_top
-CORE=os.path.join(os.path.dirname(os.path.abspath(__file__)),'../../../../docs/rule-syntax/lib/core.rr')
+CORE=os.path.join(os.path.dirname(os.path.abspath(__file__)),'../../../../docs/rule-syntax/lib/core.rerail')
 # (atom, below, above): atom(args) says args[below] is strictly below args[above] in the tree; SIB: document order
 BELOW={'child':(1,0),'field':(2,0),'within':(0,1),'inside':(0,1),'has':(1,0),'nearest':(0,1),'within_stop':(0,1)}
 SIB={'precedes':(1,0),'next_sibling':(1,0)}

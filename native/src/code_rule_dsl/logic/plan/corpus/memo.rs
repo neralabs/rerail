@@ -72,7 +72,7 @@ pub(super) fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
 
 /// The identities `entry` holds (`COVERED`).
 pub(super) fn covered(entry: &Entry) -> HashSet<[i64; 2]> {
-    entry.rows.get(COVERED).map(|(_, v)| v.chunks_exact(2).map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
+    entry.rows.get(COVERED).map(|(_, v)| v.as_chunks::<2>().0.iter().map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
 }
 
 /// Whether `a` and `b` hold the same rows (exported or output) of relation `rel`, in any order.
@@ -841,7 +841,7 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
             }
         }
         let mut by: Vec<_> = by.into_iter().collect();
-        by.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+        by.sort_by_key(|b| std::cmp::Reverse(b.1.1));
         let top: Vec<String> = by.iter().take(12).map(|(r, (n, b))| format!("{r}: {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
         eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", estimate as f64 / 2097152.0, held.len(), top.join("; "));
     }

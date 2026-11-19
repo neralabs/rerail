@@ -1,4 +1,4 @@
-# `.rr`, step 19: an aggregate as another's value, and `min (…) : { … }` at a literal's start.
+# `.rerail`, step 19: an aggregate as another's value, and `min (…) : { … }` at a literal's start.
 #
 #   r(n) :- n = sum min x : { s(x) } : { t(n) }.
 #   r(n) :- min (x) : { s(x) } = n.

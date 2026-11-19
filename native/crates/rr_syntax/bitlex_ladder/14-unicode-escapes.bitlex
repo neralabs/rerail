@@ -1,4 +1,4 @@
-# `.rr`, step 14: `\u` escapes in strings.
+# `.rerail`, step 14: `\u` escapes in strings.
 #
 #   r(x) :- x = "\u212a", y = "\u{1F600}", z = "\u{41}".
 #

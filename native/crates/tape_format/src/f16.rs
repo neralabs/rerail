@@ -509,7 +509,9 @@ struct Cells {
 }
 
 /// Where `write` puts each finished block: format 16's regions and side lists, or 16z's pieces, with the checkpoints
-/// and each side list's part starts (`base`, from the parts' lengths so far, `sides`).
+/// and each side list's part starts (`base`, from the parts' lengths so far, `sides`). One per write, never moved
+/// after it is made: its variants' sizes do not matter.
+#[allow(clippy::large_enum_variant)]
 enum Out {
     Plain { regions: [Vec<u8>; 5], side: [(Vec<u8>, Vec<u32>); 4] },
     Blocks { pieces: Pieces, ckpt: Vec<u8>, base: [Vec<u32>; 4], sides: [usize; 4], piece: Vec<u8> },

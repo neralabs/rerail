@@ -246,7 +246,8 @@ fn small_joins_and_staged_columns_match_the_reference() {
     let ex = Executor::new();
     let mut rng = Rng(0x5eed);
     let mut col = |n: usize, m: u64| -> Vec<i64> { (0..n).map(|_| rng.below(m) as i64 - (m as i64) / 2).collect() };
-    let mut cases: Vec<(Vec<Vec<i64>>, Vec<Vec<i64>>)> = Vec::new();
+    type Sides = (Vec<Vec<i64>>, Vec<Vec<i64>>);
+    let mut cases: Vec<Sides> = Vec::new();
     for (nl, nr, k, m) in [(1500, 2048, 1, 700), (3000, 1000, 2, 40), (10, 1, 3, 3), (0, 50, 1, 9), (40, 0, 2, 9), (5000, 1999, 3, 6), (6000, 5000, 1, 50), (4000, 9000, 2, 30)] {
         cases.push(((0..k).map(|_| col(nl, m)).collect(), (0..k).map(|_| col(nr, m)).collect()));
     }
@@ -355,7 +356,8 @@ fn launches_planned_on_a_lane_behind_its_plan_are_claimed_by_the_others() {
     let delay = std::time::Duration::from_millis(300);
     let mut ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Slow(delay))]);
     // The device priced far cheaper, so the plan puts every launch there.
-    for f in [rerail_accel::kernel::Form::Probe] {
+    {
+        let f = rerail_accel::kernel::Form::Probe;
         ex.prices.set(f, Lane::Gpu, Some(1e-15));
     }
     ex.prices.latency = [0.0; Lane::COUNT];
@@ -602,7 +604,9 @@ fn polling_a_batch_preserves_its_outputs_and_scoreboard_completion() {
     let mut running=executor.begin(Batch(vec![Launch::on(kernel.clone(),Lane::Cpu),Launch::on(kernel,Lane::Cpu)])).unwrap();
     let started=std::time::Instant::now();
     while !running.ready() {
-        assert!(started.elapsed()<std::time::Duration::from_secs(5));
+        // A guard against a batch that never completes, not a time limit: the pool this batch queues on is shared
+        // with the other tests here, which on a two-core runner hold it for many seconds.
+        assert!(started.elapsed()<std::time::Duration::from_secs(120), "the batch never completed");
         if !rerail_accel::exec::on_pool() || !rerail_accel::exec::help_once() {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }

@@ -55,7 +55,7 @@ fn encode_keys(keys: &[u64]) -> Vec<u8> {
 }
 
 fn decode_keys(data: &[u8]) -> Vec<u64> {
-    data.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 bytes"))).collect()
+    data.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect()
 }
 
 /// A relation as its frame names it: its name and its identity.
@@ -317,6 +317,7 @@ impl Admitted {
     }
 
     /// Its rows' count, where its rows were admitted.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> Option<usize> {
         match &self.data {
             Data::Encoded { n, .. } => Some(*n),
@@ -340,6 +341,12 @@ impl Admitted {
 // Stay below even SQLite's older 999-parameter limit. Full batches share one prepared shape.
 const READ_BATCH: usize = 128;
 
+/// A space's frames as the snapshot holds them, by relation and part.
+type Held = HashMap<(Rel, i64), Arc<Admitted>>;
+
+/// A relation given a delta after its frame: its digest and stored reads now (`write_frames`).
+type Head = (Rel, u64, Vec<(String, u64)>);
+
 /// Every frame of a store as this process holds it (decision 0104: a run reads before its first wave): read once
 /// (`preload_frames`), kept current by every write this process queues or makes, by space, then relation and part.
 /// Shared by the store's handles in this process, by its path. With the frames, what else the store keeps of them:
@@ -347,7 +354,7 @@ const READ_BATCH: usize = 128;
 /// process queues, and the memo spaces whose entries were admitted (`admit_memo_entries`).
 #[derive(Default)]
 struct Snapshot {
-    frames: HashMap<[u8; 32], HashMap<(Rel, i64), Arc<Admitted>>>,
+    frames: HashMap<[u8; 32], Held>,
     confirmed: Confirms,
     admitted: HashSet<[u8; 32]>,
     /// The memo entries admitted (`admit_memo_entries`) and written since, by space and part (decision 0240 §4).
@@ -451,7 +458,7 @@ pub(super) struct FramesWrite {
     frames: Vec<Encoded>,
     delta_frames: Vec<Encoded>,
     retags: Vec<Retag>,
-    heads: Vec<(Rel, u64, Vec<(String, u64)>)>,
+    heads: Vec<Head>,
     gone: Vec<(Rel, i64)>,
     used: Option<Used>,
     segments: Option<super::segments::SealedSegments>,
@@ -597,7 +604,7 @@ impl ContentStore {
     /// each identity reads the file's pages at random (1.5 s against 0.7 s, ep2). With a dev trace
     /// (`RERAIL_FRAMES_TRACE`), the identities of the space's frames left out, so a read of one names a reader the set
     /// missed (`read_frame_parts_from`).
-    fn read_cross_space(&self, cross: &CrossSpace<'_>) -> StoreResult<(HashMap<(Rel, i64), Arc<Admitted>>, Option<HashSet<Rel>>)> {
+    fn read_cross_space(&self, cross: &CrossSpace<'_>) -> StoreResult<(Held, Option<HashSet<Rel>>)> {
         let _span = rerail_prof::code_rule_dsl::logic::profile::span(|| "the cross part's space, by identity (Q19)".into());
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let space = cross.space;
@@ -929,7 +936,7 @@ impl ContentStore {
     fn queue_encoded_as(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>, syms: super::write_back::Syms, placer: Option<FramePlacer>) {
         // Each delta after its relation's frame as it is now (in memory, queued or stored).
         let mut delta_frames: Vec<Encoded> = Vec::new();
-        let mut heads: Vec<(Rel, u64, Vec<(String, u64)>)> = Vec::new();
+        let mut heads: Vec<Head> = Vec::new();
         // Each delta's relation as it is now, its new head and its rows' counts: composed with the delta once it is
         // placed (below).
         let mut chained: Vec<(Rel, Arc<Admitted>, Stored, usize, usize)> = Vec::new();
@@ -976,7 +983,7 @@ impl ContentStore {
                 e.2 += f.frame.encoded_bytes();
             }
             let mut by: Vec<_> = by.into_iter().collect();
-            by.sort_by(|a, b| b.1.2.cmp(&a.1.2));
+            by.sort_by_key(|b| std::cmp::Reverse(b.1.2));
             let top: Vec<String> = by.iter().take(15).map(|(r, (f, n, b))| format!("{r}: {f} frames, {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
             eprintln!("rerail: frames queued: {:.1} MB in {} frames of {} relations; by relation: {}", bytes as f64 / 1048576.0, frames.len(), by.len(), top.join("; "));
             if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
@@ -1223,7 +1230,7 @@ impl ContentStore {
     /// Writes encoded `rows` into `space` (each replacing its frame; the last `deltas` of them delta frames), with
     /// `retags`, the deltas' `heads`, and `gone` forgotten, in one transaction; with `used`, as `keep_frames`.
     #[allow(clippy::too_many_arguments)]
-    fn write_frames(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
+    fn write_frames(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[Head], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
         self.write_frames_placed(space, rows, deltas, retags, heads, gone, used, None)
     }
 
@@ -1231,7 +1238,7 @@ impl ContentStore {
     /// transaction, and each placed frame's row a pointer into them (decision 0295 §4); renamed to their numbers once
     /// the rows commit. A forked process writes every frame's bytes inline: the writer renumbers their symbols.
     #[allow(clippy::too_many_arguments)]
-    fn write_frames_placed(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>, mut segments: Option<&mut super::segments::SealedSegments>) -> StoreResult<()> {
+    fn write_frames_placed(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[Head], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>, mut segments: Option<&mut super::segments::SealedSegments>) -> StoreResult<()> {
         let timed = std::env::var_os("RERAIL_WRITES").is_some();
         let files = match segments.as_deref_mut() {
             Some(s) => {
@@ -1445,7 +1452,9 @@ pub(super) fn collect_unreachable_frames(t: &Connection) -> rusqlite::Result<Unr
     }
     out.memo = old + memo_pack::collect_memo_entries(t, &live, &contents)?;
     // The maintained spaces: each one's live programs' relations.
-    let rows: Vec<(Vec<u8>, Vec<u8>, i64, Vec<u8>)> = t
+    // Each row's relation, key, part and frame bytes.
+    type Row = (Vec<u8>, Vec<u8>, i64, Vec<u8>);
+    let rows: Vec<Row> = t
         .prepare("SELECT space, program, run, rels FROM frame_program_used")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .collect::<Result<_, _>>()?;
@@ -1530,7 +1539,7 @@ fn encode_confirmed(map: &HashMap<u64, u64>) -> Vec<u8> {
 }
 
 fn decode_confirmed(bytes: &[u8]) -> HashMap<u64, u64> {
-    bytes.chunks_exact(16).map(|c| (u64::from_le_bytes(c[..8].try_into().expect("8 bytes")), u64::from_le_bytes(c[8..].try_into().expect("8 bytes")))).collect()
+    bytes.as_chunks::<16>().0.iter().map(|c| (u64::from_le_bytes(c[..8].try_into().expect("8 bytes")), u64::from_le_bytes(c[8..].try_into().expect("8 bytes")))).collect()
 }
 
 /// A frame encoded to be queued (`Put::encoded`, `queue_encoded`): the queue, the snapshot and the writer share it.
@@ -1762,6 +1771,11 @@ fn decode_reads_all(mut bytes: &[u8]) -> Vec<(String, u64)> {
     out
 }
 
+/// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.
+pub fn forget_snapshot(path: &str) {
+    snapshots().lock().expect("the frames' snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1929,7 +1943,7 @@ mod tests {
             store.queue_frames([1; 32], vec![Put { rel: r.clone(), part: 0, digest: 1, reads: vec![], rows: rows(&[1, 1, 2, 2, 3, 3]) }], vec![], None);
             store.queue_frames_retagged([1; 32], vec![], vec![], vec![delta(2, &[2, 2], &[4, 4])], vec![], None);
             // Queued, in memory: the rows after the delta.
-            let now = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+            let now = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
             assert_eq!(now[&r].stored.digest, 2);
             assert_eq!(sorted(now[&r].rows().unwrap().rows), vec![[1, 1], [3, 3], [4, 4]]);
             assert_eq!(now[&r].chain(), (1, 2));
@@ -1937,7 +1951,7 @@ mod tests {
         }
         // Stored: read from SQL with its deltas, oldest first.
         let store = ContentStore::open(&path).unwrap();
-        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let got = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         assert_eq!(got[&r].stored, Stored { digest: 3, reads: vec![("a".into(), 3)] });
         assert_eq!(sorted(got[&r].rows().unwrap().rows), vec![[3, 3], [4, 4], [5, 5]]);
         assert_eq!(got[&r].chain(), (2, 4));
@@ -1946,7 +1960,7 @@ mod tests {
         store.queue_frames_retagged([1; 32], vec![], vec![Retag { rel: r.clone(), part: 0, reads: vec![("b".into(), 4)] }], vec![], vec![], None);
         drop(store);
         let store = ContentStore::open(&path).unwrap();
-        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let got = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         assert_eq!((got[&r].stored.reads.clone(), got[&r].chain()), (vec![("a".into(), 3)], (2, 4)));
         assert_eq!(store.confirmed(&[1; 32]).unwrap().get(&confirm_key(&r, 0)), Some(&reads_hash(&[("b".into(), 4)])));
         assert_eq!(sorted(got[&r].rows().unwrap().rows), vec![[3, 3], [4, 4], [5, 5]]);
@@ -1954,12 +1968,12 @@ mod tests {
         // And from the frames read before the first wave.
         let store = ContentStore::open(&path).unwrap();
         store.preload_frames().unwrap();
-        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let got = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         assert_eq!(sorted(got[&r].rows().unwrap().rows), vec![[3, 3], [4, 4], [5, 5]]);
         assert_eq!(got[&r].chain(), (2, 4));
         // A frame put whole ends its deltas.
         store.keep_frames(&[1; 32], &[Put { rel: r.clone(), part: 0, digest: 9, reads: vec![], rows: rows(&[9, 9]) }], &[], None).unwrap();
-        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let got = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         assert_eq!((sorted(got[&r].rows().unwrap().rows), got[&r].chain()), (vec![[9, 9]], (0, 0)));
         // A frame put whole is no longer confirmed: in memory (the snapshot's), and in the store.
         assert_eq!(store.confirmed(&[1; 32]).unwrap().get(&confirm_key(&r, 0)), None);
@@ -2043,7 +2057,7 @@ mod tests {
             let (release, blocked) = std::sync::mpsc::channel::<()>();
             store.write_back("test gate", 0, vec![], crate::content_store::write_back::Work::test(Box::new(move |_| { blocked.recv().unwrap(); Ok(()) })));
             store.queue_frames([1; 32], vec![put()], vec![], None);
-            let queued = store.admit_frames(&[1; 32], &[r.clone()], 3).unwrap();
+            let queued = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 3).unwrap();
             assert_eq!(queued[&r].rows().unwrap().rows, values, "queued: read from its encoded bytes");
             assert_eq!(queued[&r].encoded_bytes(), encoded);
             release.send(()).unwrap();
@@ -2071,7 +2085,7 @@ mod tests {
             reads: vec![], rows: Rows { types: vec![0], rows: vec![], n: 0 } }], vec![], None);
         let (tx, rx) = mpsc::channel();
         let read = std::thread::spawn(move || {
-            let meta = reader.frames(&[1; 32], &[r.clone()], 0).unwrap();
+            let meta = reader.frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
             let rows = reader.frame_rows(&[1; 32], &r, 0).unwrap();
             tx.send((meta, rows)).unwrap();
         });
@@ -2104,8 +2118,8 @@ mod tests {
         let store = ContentStore::open(&path).unwrap();
         let frames = store.admit_frames(&[1; 32], &[r.clone(), r.clone(), rel("r", 2), empty.clone(), nullary.clone()], 0).unwrap();
         assert_eq!(frames.len(), 3);
-        assert_eq!(store.admit_frames(&[1; 32], &[r.clone()], 1).unwrap()[&r].rows().unwrap().rows, [99]);
-        assert!(store.admit_frames(&[2; 32], &[r.clone()], 0).unwrap().is_empty());
+        assert_eq!(store.admit_frames(&[1; 32], std::slice::from_ref(&r), 1).unwrap()[&r].rows().unwrap().rows, [99]);
+        assert!(store.admit_frames(&[2; 32], std::slice::from_ref(&r), 0).unwrap().is_empty());
         drop(store);
         // No open store or connection remains: every consumer uses admitted memory.
         assert_eq!(frames[&r].rows().unwrap().rows, [-9, 1 << 40, 2, 3]);
@@ -2127,11 +2141,11 @@ mod tests {
         let (release, blocked) = std::sync::mpsc::channel();
         store.write_back("test gate", 0, vec![], crate::content_store::write_back::Work::test(Box::new(move |_| { blocked.recv().unwrap(); Ok(()) })));
         store.queue_frames([1; 32], vec![put(2)], vec![], None);
-        let replaced = reader.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let replaced = reader.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         store.queue_frames([1; 32], vec![], vec![(r.clone(), 0)], None);
-        let deleted = reader.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let deleted = reader.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         store.queue_frames([1; 32], vec![put(3)], vec![], None);
-        let latest = reader.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let latest = reader.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         release.send(()).unwrap();
         store.written().unwrap();
         assert_eq!(replaced[&r].rows().unwrap().rows, [2]);
@@ -2216,7 +2230,7 @@ mod tests {
             collect_unreachable_frames(&c).unwrap()
         };
         assert_eq!(swept.maintained, 0, "the reusing program holds the frame: {swept:?}");
-        assert!(store.frames(&maintained, &[kept.clone()], 0).unwrap().contains_key(&kept));
+        assert!(store.frames(&maintained, std::slice::from_ref(&kept), 0).unwrap().contains_key(&kept));
     }
 
     fn rel(name: &str, i: u8) -> Rel {
@@ -2258,7 +2272,7 @@ mod tests {
         let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
         let space = [1u8; 32];
         let (r, s) = (rel("r", 1), rel("r", 2));
-        assert!(store.frames(&space, &[r.clone()], 0).unwrap().is_empty());
+        assert!(store.frames(&space, std::slice::from_ref(&r), 0).unwrap().is_empty());
         let rows = Rows { types: vec![0, 1], rows: vec![5, -3, 1 << 40, 7], n: 2 };
         let put = Put { rel: r.clone(), part: 0, digest: 9, reads: vec![("input".into(), 4), ("q".into(), 1 << 63)], rows };
         store.keep_frames(&space, &[put], &[], None).unwrap();
@@ -2271,9 +2285,9 @@ mod tests {
         // Replaced, then forgotten.
         let put = Put { rel: r.clone(), part: 0, digest: 10, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
         store.keep_frames(&space, &[put], &[], None).unwrap();
-        assert_eq!(store.frames(&space, &[r.clone()], 0).unwrap()[&r].digest, 10);
+        assert_eq!(store.frames(&space, std::slice::from_ref(&r), 0).unwrap()[&r].digest, 10);
         store.keep_frames(&space, &[], &[(r.clone(), 0)], None).unwrap();
-        assert!(store.frames(&space, &[r.clone()], 0).unwrap().is_empty());
+        assert!(store.frames(&space, std::slice::from_ref(&r), 0).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2438,9 +2452,4 @@ mod tests {
         store.put_memo_entries(&space, vec![put(1, vec![5; 20], false)], 4).unwrap();
         assert!(store.memo_entries(&space, &[1], true).unwrap()[&1].over.is_none(), "written again whole");
     }
-}
-
-/// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.
-pub fn forget_snapshot(path: &str) {
-    snapshots().lock().expect("the frames' snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
 }

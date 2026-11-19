@@ -233,7 +233,6 @@ pub trait Source: Send + Sync {
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
     /// device reads where they lie (decision 0325 step 3). `None`: the device copies them (`device_view`, `row_at`).
-    #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<super::rows::InBlock> {
         None
     }
@@ -1105,11 +1104,10 @@ struct Cursor {
 impl Cursor {
     fn start_stream(&mut self) {
         if !self.cache_rows||self.direct.is_some() {return;}
-        if let Some(rows)=&self.selected {
-            if rows.len()>128&&rows.windows(2).all(|w|w[1]==w[0]+1) {
+        if let Some(rows)=&self.selected
+            && rows.len()>128&&rows.windows(2).all(|w|w[1]==w[0]+1) {
                 self.range=rows[0]..rows[rows.len()-1]+1;self.selected=None;
             }
-        }
         if self.selected.is_none()&&self.range.len()>128 {
             self.stream=self.source.row_stream(self.range.clone(),self.reverse);
             if let Some(stream)=&mut self.stream {self.stream_row=stream.next();}
@@ -1485,7 +1483,6 @@ impl Source for Relation {
     fn len(&self) -> usize {
         self.rows
     }
-    #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<super::rows::InBlock> {
         self.cells().in_block()
     }

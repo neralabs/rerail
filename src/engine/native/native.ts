@@ -324,13 +324,13 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
   /**
-   * The tests the `.rr` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
+   * The tests the `.rerail` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
    * `NativeRrTestResult` (`rerail-engine test-rr`).
    */
   testRr(pathsJson: string, filter?: string | null): string;
 }
 
-/** One test of a `.rr` file, as `testRr` reports it. */
+/** One test of a `.rerail` file, as `testRr` reports it. */
 export interface NativeRrTestResult {
   file: string;
   test: string;

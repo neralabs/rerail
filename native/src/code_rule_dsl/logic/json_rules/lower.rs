@@ -76,7 +76,7 @@ fn underscores(s: &str) -> String {
     out
 }
 
-/// A util's relation: its name in snake case, and `_util` after a name core.rr declares (a util `field` is not the
+/// A util's relation: its name in snake case, and `_util` after a name core.rerail declares (a util `field` is not the
 /// core `field(p, f, c)` the rules beside it read).
 pub fn util_name(name: &str) -> String {
     let s = snake(name);
@@ -173,7 +173,7 @@ pub fn opt_alts(arg: &Value, render: &dyn Fn(&Lit) -> String) -> String {
     if parts.len() > 1 { format!("({})", parts.join(" ; ")) } else { parts.remove(0) }
 }
 
-/// An option's value as an operand. A list option has no `option` row, only `option_item` rows (core.rr), so
+/// An option's value as an operand. A list option has no `option` row, only `option_item` rows (core.rerail), so
 /// `{"$option": L, "join": "|", "template": T}` (the regex T around the items joined by `|`) is read per item: the
 /// joined regex matches where the regex T around some one item does. A `template` with no `join` puts a scalar
 /// option's value where the template's first `{}` is (`"^.{0,{}}$"`), as main does.
@@ -438,23 +438,23 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             lits.extend(compare(prog, vo.expect("an object"), vs));
         } else if k == "count" && vo.is_some() {
             lits.extend(count(px, prog, vo.expect("an object"), v, vs)?);
-        } else if k == "layout" && vo.is_some() && main_terms::layout(prog, vo.expect("an object"), v, &mut Vars::default()).is_some() {
-            lits.extend(main_terms::layout(prog, vo.expect("an object"), v, vs).expect("layout"));
-        } else if k == "nthChild" && vo.is_some() && nth_position(vo.and_then(|o| o.get("position"))).is_some() {
-            lits.extend(nth_child(px, prog, vo.expect("an object"), v, vs)?);
+        } else if k == "layout" && let Some(o) = vo && main_terms::layout(prog, o, v, &mut Vars::default()).is_some() {
+            lits.extend(main_terms::layout(prog, o, v, vs).expect("layout"));
+        } else if k == "nthChild" && let Some(o) = vo && nth_position(o.get("position")).is_some() {
+            lits.extend(nth_child(px, prog, o, v, vs)?);
         } else if k == "nthChild" && val.is_str() && nth_position(Some(val)).is_some() {
             let c = Obj(vec![("position".to_owned(), val.clone())]);
             lits.extend(nth_child(px, prog, &c, v, vs)?);
         } else if k == "binds" && vo.is_some_and(Obj::is_empty) {
-            // `binds: {}`: v is some binding's name node (names.rr's `bind_name`, in every language).
+            // `binds: {}`: v is some binding's name node (names.rerail's `bind_name`, in every language).
             prog.use_("names");
             lits.push(format!("bind_name({v}, _)"));
-        } else if k == "binds" && vo.is_some() {
+        } else if k == "binds" && let Some(o) = vo {
             // Main's `binds` holds at the binding's name node, and its filters are about the binding's site.
             prog.use_("names");
             let s = vs.fresh("b");
             lits.push(format!("bind_name({v}, {s})"));
-            lits.extend(site_filters(px, prog, vo.expect("an object"), &s, Some(v), vs)?);
+            lits.extend(site_filters(px, prog, o, &s, Some(v), vs)?);
         } else if k == "parse" && vo.is_some_and(|o| o.has("grammar")) {
             let o = vo.expect("an object");
             let r = vs.fresh("r");
@@ -524,8 +524,8 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
                 }
                 _ => rest.insert(k, val.clone()),
             }
-        } else if matches!(k, "has" | "inside" | "precedes" | "follows") && vo.is_some() {
-            lits.extend(relation(px, prog, k, vo.expect("an object"), v, vs)?);
+        } else if matches!(k, "has" | "inside" | "precedes" | "follows") && let Some(o) = vo {
+            lits.extend(relation(px, prog, k, o, v, vs)?);
         } else if k == "all" && val.is_list() {
             for s in val.as_list().expect("a list") {
                 if is_option(s) && s.get("spread").is_some_and(Value::is_true) {
@@ -548,10 +548,10 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             lits.push(format!("{rel}({v})"));
         } else if k == "nthChild" && val.is_int() {
             lits.push(format!("child(_, {v}, {})", val.int().expect("an int") - 1));
-        } else if k == "arguments" && vo.is_some() && prog.lang == "python" {
-            lits.extend(main_terms::arguments(prog, vo.expect("an object"), v, vs)?);
-        } else if k == "resolves" && vo.is_some() {
-            lits.extend(resolves(px, prog, vo.expect("an object"), v, vs)?);
+        } else if k == "arguments" && let Some(o) = vo && prog.lang == "python" {
+            lits.extend(main_terms::arguments(prog, o, v, vs)?);
+        } else if k == "resolves" && let Some(o) = vo {
+            lits.extend(resolves(px, prog, o, v, vs)?);
         } else if k == "host" && vo.is_some() && prog.embedded.is_some() {
             lits.extend(super::embedded::host(px, prog, val, v, vs)?);
             prog.host_reads.extend(host_reads(px, val));

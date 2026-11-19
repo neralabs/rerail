@@ -2853,7 +2853,7 @@ impl ProgramPass for BaseInputs {
     }
 }
 
-/// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
+/// core.rerail's functors only CPython gives, each of a node, and the relations the batches bind them as
 /// (`facts::vtab::syntax::cpython`): `@py_unparse(n)` is the `s` of `cpython_unparse(n, s)`. `@unparse` is decision
 /// 0058's, a tape's text (`rr::lower`, `unparse_of`), not intercepted here.
 const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", crate::code_rule_dsl::facts::core::cpython_relations::UNPARSE), ("ast_dump", crate::code_rule_dsl::facts::core::cpython_relations::AST_DUMP)];

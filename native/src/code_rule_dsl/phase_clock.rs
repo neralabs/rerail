@@ -6,12 +6,12 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 thread_local! {
-    /// Set while this thread runs phase 0 (`logic::plan::corpus::phase0`): `bootstrap.rr` itself is read by the
+    /// Set while this thread runs phase 0 (`logic::plan::corpus::phase0`): `bootstrap.rerail` itself is read by the
     /// builtin reader, and the profiler's roofline measures nothing in it.
     pub static IN_PHASE_0: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Whether this thread is running phase 0 (`bootstrap.rr` and `core.rr` are then read by the builtin reader).
+/// Whether this thread is running phase 0 (`bootstrap.rerail` and `core.rerail` are then read by the builtin reader).
 pub fn active() -> bool {
     IN_PHASE_0.with(Cell::get)
 }

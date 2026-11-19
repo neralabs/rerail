@@ -8,6 +8,10 @@
 //! - `Kernel`: stage 1 with the source's SHA-256 in it and our stage 2, which writes the tape into the
 //!   caller's buffers (`Sink`). One for each implementation, with the CPU's SHA-256 instructions and
 //!   without: `Kernel::ALL` lists them best first, and `Kernel::runs` says which this CPU runs.
+//!
+//! Nothing on MSVC, which compiles none of the C++ (GCC and Clang target regions and attributes): the
+//! engine reads JSON there without simdjson (`json_parser::fallback`).
+#![cfg(not(all(windows, target_env = "msvc")))]
 
 use std::ffi::{CStr, c_char};
 

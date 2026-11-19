@@ -930,7 +930,7 @@ fn carried_serial(at: usize, inst: &BlockInst, out: &mut String) {
 /// the positions and totals from the finished words.
 /// `generate_serial`'s sources by what they are made from: each program, the pass's stores and
 /// slots, what runs have learned of each, and the switches the generator reads. A batch's
-/// source is made once, not at every run: made in a debug build, a pass of `.rr`'s took 26 s.
+/// source is made once, not at every run: made in a debug build, a pass of `.rerail`'s took 26 s.
 static SOURCES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, (std::sync::Arc<String>, usize, usize)>>> = std::sync::LazyLock::new(Default::default);
 
 /// A source's kernels by its key (`serial_source`) and name: found without hashing the source
@@ -1901,7 +1901,7 @@ fn blocks_of(len: usize, delay: u8) -> usize {
 /// as made; each backward pass's fills from the files' last blocks to their first
 /// (`back_kernels`). The slots stay in the device's buffer from pass to pass. One program a
 /// batch.
-/// A program's passes (`BlockNative::passes`), made once a program: in a debug build `.rr`'s
+/// A program's passes (`BlockNative::passes`), made once a program: in a debug build `.rerail`'s
 /// took most of a second, at every run.
 fn passes_of(program: &BlockNative) -> std::sync::Arc<rerail_compiler::block_native::Passes> {
     use std::hash::{Hash, Hasher};

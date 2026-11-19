@@ -7,7 +7,7 @@
 //! - `flat`:  one flat image per program (nodes in columns): copy the image, tombstone, append, rebuild its index.
 //! - `pool`:  a run's rule pool, a program a list of rule ids: copy the list, retain, append, rebuild its index.
 //! - `v:*`:   the proposal: views (ranges of a base), overlays (a base, a removed set, added ids), derivations (a new
-//!            base), under a layout of the roots (source, head, oracle), a fold policy, and a removed-set kind.
+//!   base), under a layout of the roots (source, head, oracle), a fold policy, and a removed-set kind.
 //!
 //! Usage: versions <trace dir> [more trace dirs…]
 use rerail_rr::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Lists, Program, Rule, Term, Value};
@@ -43,6 +43,13 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static A: Counting = Counting;
 
+/// Instructions retired by this process: macOS's `proc_pid_rusage`; 0 elsewhere (no counter is read there).
+#[cfg(not(target_os = "macos"))]
+fn retired() -> u64 {
+    0
+}
+
+#[cfg(target_os = "macos")]
 fn retired() -> u64 {
     let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
     let ok = unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
@@ -849,7 +856,7 @@ fn reads(dir: &Path) {
     let lists = Lists::default();
     let mut names: Vec<_> = std::fs::read_dir(dir).expect("trace dir").filter_map(|e| {
         let p = e.ok()?.path();
-        (p.extension()? == "rr").then_some(p)
+        (p.extension()? == "rerail").then_some(p)
     }).collect();
     names.sort();
     let (mut text, mut image, mut open, mut rules) = (Cost::default(), Cost::default(), Cost::default(), 0usize);
@@ -889,7 +896,7 @@ fn validate(dir: &Path) {
     let mut progs: HashMap<String, Program> = HashMap::new();
     let load = |d: &str, progs: &mut HashMap<String, Program>| {
         if !progs.contains_key(d) {
-            let t = std::fs::read_to_string(dir.join(format!("{d}.rr"))).expect("program text");
+            let t = std::fs::read_to_string(dir.join(format!("{d}.rerail"))).expect("program text");
             progs.insert(d.to_owned(), program_text::read_in(&t, &lists).expect("reads"));
         }
     };
@@ -955,7 +962,7 @@ fn replay(dir: &Path) {
     for op in &ops {
         for d in [&op.from, &op.to] {
             if !progs.contains_key(d) {
-                let text = std::fs::read_to_string(dir.join(format!("{d}.rr"))).expect("program text");
+                let text = std::fs::read_to_string(dir.join(format!("{d}.rerail"))).expect("program text");
                 let tree = program_text::read_in(&text, &lists).expect("program reads");
                 let items = encode(&tree, &mut atoms);
                 progs.insert(d.clone(), Prog { tree, items });
@@ -991,7 +998,7 @@ fn replay(dir: &Path) {
         e.1 += from;
         e.2 += removed;
         e.3 += d.added.len() as u64;
-        e.4 += (from - removed + d.added.len() as u64) as u64;
+        e.4 += from - removed + d.added.len() as u64;
     }
     println!("\n{:<20} {:>5} {:>10} {:>10} {:>10} {:>10}", "site", "ops", "from items", "removed", "added", "to items");
     for (s, e) in &shape {

@@ -238,7 +238,7 @@ mod tests {
                         x ^= x << 13;
                         x ^= x >> 7;
                         x ^= x << 17;
-                        if x % 3 == 0 { (x >> 16) as u8 } else { b"aZ_9 \t\n\r\x0c'\"`\\{}#.(@[\x7f"[(x >> 8) as usize % 21] }
+                        if x.is_multiple_of(3) { (x >> 16) as u8 } else { b"aZ_9 \t\n\r\x0c'\"`\\{}#.(@[\x7f"[(x >> 8) as usize % 21] }
                     })
                     .collect();
                 let want = scalar(&src);

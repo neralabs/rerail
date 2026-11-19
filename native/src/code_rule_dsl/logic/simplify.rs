@@ -546,7 +546,7 @@ fn ground_rules(prog: &mut Program) -> usize {
                         _ => constant(t),
                     };
                     match (part(&args[0])?, part(&args[1])?) {
-                        // `@dot("", y)` is `y` (`core.rr`).
+                        // `@dot("", y)` is `y` (`core.rerail`).
                         (Value::Str(m), Value::Str(x)) => Some(Value::Str(if m.is_empty() { x } else { format!("{m}.{x}").into() })),
                         _ => None,
                     }
@@ -572,7 +572,7 @@ fn ground_rules(prog: &mut Program) -> usize {
     replaced
 }
 
-/// The parts of a concatenation (`@concat`, `.rr`'s `cat`), in order: variables and constant texts only.
+/// The parts of a concatenation (`@concat`, `.rerail`'s `cat`), in order: variables and constant texts only.
 fn concat_parts(t: &Term) -> Option<Vec<Term>> {
     match t {
         Term::Call(f, args) if f == "concat" && args.len() == 2 => {
@@ -1099,7 +1099,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             // A request the engine reads (a guest's `embed`, the demand a `parsed` read makes) stays a relation.
             !kept(prog, rel)
                 && !super::plan::corpus::guests::REQUESTS.contains(&rel.as_str())
-                // `core.rr`'s relations (`kind`, `precedes`) are the engine's, read by name (kind views, kind sets).
+                // `core.rerail`'s relations (`kind`, `precedes`) are the engine's, read by name (kind views, kind sets).
                 && !super::rr::core_names().contains(*rel)
                 && rules.len() <= FILTER_RULES
                 && (rules.iter().all(|r| r.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) && filter(r).is_some())
@@ -2944,7 +2944,7 @@ pub mod tests {
     }
 
     /// A relation whose readers read no location column keeps its first one: the split partitions a file-local
-    /// relation's rows by it, and a load hands on a document's rows by it (python/modules.rr's `py_docmod`).
+    /// relation's rows by it, and a load hands on a document's rows by it (python/modules.rerail's `py_docmod`).
     #[test]
     fn a_projection_keeps_a_location_column() {
         let mut prog = super::super::rr::parse(
@@ -3014,7 +3014,7 @@ pub mod tests {
             "#,
         )
         .unwrap();
-        // The `.rr` reader reads `count : {…} = 0` as the negation already (`none`'s rule): only `> 0` is left.
+        // The `.rerail` reader reads `count : {…} = 0` as the negation already (`none`'s rule): only `> 0` is left.
         assert!(prog.rules.iter().any(|r| r.head.rel == "none" && !r.to_string().contains("count")));
         let report = simplify(&mut prog);
         assert_eq!(report.existence, 1);

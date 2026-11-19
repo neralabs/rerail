@@ -676,7 +676,7 @@ unsafe impl VTabCursor for RelCursor {
 // here, in literal order, so each step looks up one index and never re-derives the binding pattern.
 // An input relation is read once per process (`INPUTS`) with a hash index per key-column set, built on first use.
 
-/// `@dot(a, b)` (`core.rr`): `a.b`, and `b` when `a` is "".
+/// `@dot(a, b)` (`core.rerail`): `a.b`, and `b` when `a` is "".
 fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
     if syms.names[a as usize].is_empty() {
         return b;
@@ -691,11 +691,9 @@ fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
     id
 }
 
-/// This thread's CPU seconds.
+/// This thread's CPU seconds (`rerail_prof::thread_cpu`: Unix's thread clock, Windows' `GetThreadTimes`).
 fn thread_cpu() -> f64 {
-    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-    t.tv_sec as f64 + t.tv_nsec as f64 / 1e9
+    rerail_prof::thread_cpu().as_secs_f64()
 }
 
 /// CPU seconds and rows of input loads and index builds: [base facts (construction), lower strata's tables].
@@ -729,8 +727,8 @@ impl Csr {
         let mut at = 0;
         for e in table.iter_mut() { e.1 = at; at += e.2; e.2 = 0; }
         let mut ids = vec![0u32; rel.n];
-        for id in 0..rel.n {
-            let e = table.find_mut(hashes[id], |&(rep, _, _)| same(rep as usize, id)).expect("a key seen in the first pass");
+        for (id, &hash) in hashes.iter().enumerate() {
+            let e = table.find_mut(hash, |&(rep, _, _)| same(rep as usize, id)).expect("a key seen in the first pass");
             ids[(e.1 + e.2) as usize] = id as u32;
             e.2 += 1;
         }

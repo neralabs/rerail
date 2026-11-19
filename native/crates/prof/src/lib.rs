@@ -45,7 +45,7 @@ pub fn single_thread_cpu() -> Duration {
 
 /// The process's CPU time so far (user + sys).
 #[cfg(target_family = "wasm")]
-fn process_cpu() -> Duration {
+pub fn process_cpu() -> Duration {
     single_thread_cpu()
 }
 
@@ -72,7 +72,7 @@ pub fn thread_cpu() -> Duration {
 
 /// The process's CPU time so far (user + sys).
 #[cfg(unix)]
-fn process_cpu() -> Duration {
+pub fn process_cpu() -> Duration {
     let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
     let time = |t: libc::timeval| Duration::from_secs(t.tv_sec as u64) + Duration::from_micros(t.tv_usec as u64);
@@ -81,7 +81,7 @@ fn process_cpu() -> Duration {
 
 /// The process's CPU time so far (user + kernel).
 #[cfg(windows)]
-fn process_cpu() -> Duration {
+pub fn process_cpu() -> Duration {
     let (user, kernel) = windows_cpu(false);
     user + kernel
 }
@@ -126,7 +126,6 @@ pub fn windows_peak_working_set() -> u64 {
 }
 
 /// Prints the stages' times under `title` and clears them.
-
 pub fn report(title: &str) {
     if !*ON {
         return;
@@ -358,7 +357,7 @@ pub mod heap {
             *by.entry(SPANS[at].load(Relaxed)).or_default() += weight;
         }
         let mut v: Vec<(u32, u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|b| std::cmp::Reverse(b.1));
         v
     }
 

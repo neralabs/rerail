@@ -385,7 +385,7 @@ pub(super) fn exact_for(rule: u64) -> Option<Arc<HashMap<Sig, [i64; 2]>>> {
     MEMO.read().exact.get(&rule).cloned()
 }
 
-fn noted_mut<'m>(memo: &'m mut Memo, key: PlanKey, rule: u64) -> &'m mut Note {
+fn noted_mut(memo: &mut Memo, key: PlanKey, rule: u64) -> &mut Note {
     NOTED.store(true, Relaxed);
     memo.dirty = true;
     if memo.notes.len() >= NOTES_MAX && !memo.notes.contains_key(&key) {
@@ -1156,10 +1156,10 @@ pub fn from_store((notes, exact, raised): Stored) {
     let mut m = MEMO.write();
     let mut taken: FxHashSet<PlanKey> = FxHashSet::default();
     for (k, n) in notes {
-        if !m.notes.contains_key(&k) {
+        m.notes.entry(k).or_insert_with(|| {
             taken.insert(k);
-            m.notes.insert(k, n);
-        }
+            n
+        });
     }
     for (k, rule, sig, c) in exact {
         if taken.contains(&k)

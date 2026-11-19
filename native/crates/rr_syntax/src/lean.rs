@@ -1,4 +1,4 @@
-//! A lean `.rr` parser for the tape alone: the baseline the compiled grammar is measured against
+//! A lean `.rerail` parser for the tape alone: the baseline the compiled grammar is measured against
 //! (docs/parser-generators/30-a-lean-rust-baseline.md). It is not on the product's path.
 //!
 //! It reads the grammar `syntax::Parser` reads and gives the same tape (`crate::tape`), node for
@@ -1722,7 +1722,7 @@ impl<L: Layout> Parser<'_, L> {
 
 #[cfg(test)]
 mod tests {
-    /// The `.rr` files of the repository.
+    /// The `.rerail` files of the repository.
     fn corpus() -> Vec<(String, String)> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
@@ -1733,7 +1733,7 @@ mod tests {
                 let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
                 if p.is_dir() && !skip {
                     work.push(p);
-                } else if p.extension().is_some_and(|x| x == "rr") {
+                } else if p.extension().is_some_and(|x| x == "rerail") {
                     files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
                 }
             }
@@ -1742,7 +1742,7 @@ mod tests {
     }
 
     /// An image read in place (`rerail_tape_format::View`) is the image decoded (`decode`): each
-    /// node's key and span, and each node's children the nodes whose parent it is, on every `.rr`
+    /// node's key and span, and each node's children the nodes whose parent it is, on every `.rerail`
     /// file and on one with columns at 4 bytes (more than 65,535 nodes).
     #[test]
     fn a_view_reads_each_node_as_decode_does() {
@@ -1765,7 +1765,7 @@ mod tests {
     }
 
     /// The lexer's tokens and comments are the engine's lexer's (`syntax::lex`), kind for kind
-    /// and span for span, on every `.rr` file.
+    /// and span for span, on every `.rerail` file.
     /// Tapes whose columns need 4 bytes, each parsed again at them (`Widths::guess` writes 2
     /// below `SIZE_GUESS_BYTES`): a tail of a 70,000-byte string, an offset across a 70,000-byte
     /// comment, more than 65,535 nodes (20,000 facts). Each is the reference parser's tape, byte for byte.
@@ -1829,7 +1829,7 @@ mod tests {
         }
     }
 
-    /// Every `.rr` file of the repository, and every prefix of each at a few cut points (to run
+    /// Every `.rerail` file of the repository, and every prefix of each at a few cut points (to run
     /// the recovery paths), gives `crate::tape`'s tape.
     /// The width guess (`rerail_tape_format::Widths::guess`) against the widths each file's tape
     /// needs: the files parsed twice, and the most nodes a byte (what `SIZE_GUESS_BYTES` is
@@ -1846,7 +1846,7 @@ mod tests {
                 let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
                 if p.is_dir() && !skip {
                     work.push(p);
-                } else if p.extension().is_some_and(|x| x == "rr") {
+                } else if p.extension().is_some_and(|x| x == "rerail") {
                     files.extend(std::fs::read_to_string(&p).ok());
                 }
             }
@@ -1879,7 +1879,7 @@ mod tests {
                 let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
                 if p.is_dir() && !skip {
                     work.push(p);
-                } else if p.extension().is_some_and(|x| x == "rr") {
+                } else if p.extension().is_some_and(|x| x == "rerail") {
                     files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
                 }
             }
@@ -1912,7 +1912,7 @@ mod tests {
     }
 
     /// The lean parser stands for the engine's on every rule a user writes, the broken ones included: each
-    /// `.rr` file of the repository, edited at random points (a character of `.rr`'s syntax inserted, a
+    /// `.rerail` file of the repository, edited at random points (a character of `.rerail`'s syntax inserted, a
     /// character deleted, two swapped), gives the engine's tape. Seeded, so a failure names its text again.
     #[test]
     fn lean_tape_is_the_engines_on_edited_files() {
@@ -1925,7 +1925,7 @@ mod tests {
                 let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
                 if p.is_dir() && !skip {
                     work.push(p);
-                } else if p.extension().is_some_and(|x| x == "rr") {
+                } else if p.extension().is_some_and(|x| x == "rerail") {
                     files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
                 }
             }

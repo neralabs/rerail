@@ -1,9 +1,9 @@
-//! `.rr`'s `\\u` checks: tier 2's, at the string (tier 1's `gating_tests` has the gated regions).
+//! `.rerail`'s `\\u` checks: tier 2's, at the string (tier 1's `gating_tests` has the gated regions).
 
 use rerail_compiler::native_cpu_block::State;
 use rerail_compiler::block_native::Pass;
 
-/// `.rr`'s `\\u` check is tier 2's (`CHECK`, a local check at the string token): tier 1 makes
+/// `.rerail`'s `\\u` check is tier 2's (`CHECK`, a local check at the string token): tier 1 makes
 /// the escapes' mask alone, none of the digits' values; the check is the escape's ops.
 #[test]
 fn rr_checks_its_unicode_escapes_at_the_string() {

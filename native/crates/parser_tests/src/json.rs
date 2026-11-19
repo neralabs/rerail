@@ -1,11 +1,11 @@
 //! The JSON suite's helpers, shared with the engine's Metal measurements: a JSON step compiled
 //! (`form`), the files a variable names (`files_in`), a file's short name (`base`).
 
-use rerail_compiler::ladder::{Compiled, DIR, compile_step};
+use rerail_compiler::ladder::{Compiled, compile_step, dir};
 use std::path::{Path, PathBuf};
 
 pub fn form(name: &str) -> Compiled {
-    let source = std::fs::read_to_string(format!("{DIR}/{name}.bitlex")).expect("reads");
+    let source = std::fs::read_to_string(format!("{}/{name}.bitlex", dir())).expect("reads");
     compile_step(name, &source)
 }
 

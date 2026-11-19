@@ -171,3 +171,37 @@ fn a_pool_job_runs_in_the_context_it_was_started_in() {
     assert!(!held.join().unwrap(), "started outside phase 0");
     assert_eq!(*seen.lock().unwrap(), vec![true; 4]);
 }
+
+/// A lattice a run declares (`shortlex_min<>` over its store's atoms) is that run's: another thread declaring its own
+/// under the same name, as a run beside it does, changes neither this thread's nor a job it carries its context to.
+/// Declared only process-wide, the coverage probe's shortlex order read another test's atoms ("ba" for "ab") as the
+/// tests beside it ran.
+#[test]
+fn a_declared_lattice_is_its_threads_and_carried_to_its_jobs() {
+    use crate::code_rule_dsl::logic::native::{Lattice, TOP, declare, lattice};
+    use std::sync::Arc;
+    struct Fixed(i64);
+    impl Lattice for Fixed {
+        fn lub(&self, _: i64, _: i64) -> i64 {
+            self.0
+        }
+        fn top(&self) -> i64 {
+            TOP
+        }
+        fn finite(&self) -> bool {
+            true
+        }
+    }
+    let name = "rerail_test_lattice_scope";
+    declare(name, Arc::new(Fixed(1)));
+    std::thread::scope(|s| {
+        s.spawn(|| declare(name, Arc::new(Fixed(2)))).join().unwrap();
+    });
+    assert_eq!(lattice(name).unwrap().lub(0, 0), 1, "this thread's own, whatever another declared since");
+    let carry = super::Carry::here();
+    let on_job = std::thread::scope(|s| s.spawn(|| {
+        let _entered = carry.enter();
+        lattice(name).unwrap().lub(0, 0)
+    }).join().unwrap());
+    assert_eq!(on_job, 1, "a job of this thread's run reads its lattice");
+}

@@ -1,4 +1,4 @@
-//! W's `parse: {grammar: pythonFString}` (`literal::parse_python_fstring`) as core.rr's relations, made by a batch
+//! W's `parse: {grammar: pythonFString}` (`literal::parse_python_fstring`) as core.rerail's relations, made by a batch
 //! only for a program that reads them (`FStrings::new`'s `reads`), off the document's tape (`Document::tape`):
 //!
 //! ```text

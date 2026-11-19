@@ -1360,7 +1360,7 @@ profile: the profile's own writing costs about 25 s of CPU after a cold run). Th
 
 - **python:** rerail's python pack, 317 rules (`docs/rule-syntax/packs/python`), over 1, 10 and 50
   files of the bench corpus0 (61, 2,218 and 13,734 lines).
-- **data-layer:** the gate's data-layer candidates, 75 rules (`gate/data-layer/packs/data-layer/candidates/rr`),
+- **data-layer:** the gate's data-layer candidates, 75 rules (`packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rr`),
   over every k-th `impl/*.py` of the data-layer repository: 10 files (1,508 lines) and 50 (23,491).
 
 ```text

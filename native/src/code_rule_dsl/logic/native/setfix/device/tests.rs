@@ -1069,7 +1069,7 @@
         }
         assert_eq!(seen, 10);
         assert_eq!(in_place, 10, "node, child, field, core_node and line read in place");
-        // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
+        // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
             // With a guest (decision 0055): its places are its host's lines, through its placement, found on the
@@ -1092,7 +1092,7 @@
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
-            // directory, its tapes and core.rr's lines in the batch's block; a guest's (a copied stretch) through its
+            // directory, its tapes and core.rerail's lines in the batch's block; a guest's (a copied stretch) through its
             // host's lines and its placement. With the guest and without.
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();
             for views in [&core_views, &own_views] {

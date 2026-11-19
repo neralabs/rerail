@@ -135,7 +135,7 @@ impl<T> Drop for DemandZeroRegion<T> {
 // Windows: committed VirtualAlloc pages are demand-zero, as an anonymous mapping's are.
 #[cfg(windows)]
 impl<T> DemandZeroRegion<T> {
-    fn new(count: usize) -> Result<Self, Error> {
+    pub fn new(count: usize) -> Result<Self, Error> {
         use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc};
         let mapped_bytes = count
             .checked_mul(mem::size_of::<T>())
@@ -462,7 +462,7 @@ fn reverse_pending(function: &mut FunctionBuilder<'_>, task: cranelift_codegen::
     };
     let last = function.ins().iadd_imm(high, -1);
     let (a, b) = (record(function, low), record(function, last));
-    const _: () = assert!(mem::size_of::<PendingRecord>() % 4 == 0);
+    const _: () = assert!(mem::size_of::<PendingRecord>().is_multiple_of(4));
     for word in 0..mem::size_of::<PendingRecord>() as i32 / 4 {
         let x = function.ins().load(types::I32, flags, a, 4 * word);
         let y = function.ins().load(types::I32, flags, b, 4 * word);
@@ -2907,8 +2907,7 @@ fn execute_batch_packed_once(
             return Err(Error::BackendFailure);
         }
     }
-    let task_outputs = (|| {
-        spans
+    let task_outputs = spans
             .into_par_iter()
             .map(|span| span.iter_mut().map(|(program, context)| {
                 // The queue uses tombstones within a task. Keeping a full
@@ -2976,8 +2975,7 @@ fn execute_batch_packed_once(
                     },
                 })
             }).collect::<Result<Vec<_>, Error>>())
-            .collect::<Result<Vec<Vec<_>>, Error>>()
-    })()?
+            .collect::<Result<Vec<Vec<_>>, Error>>()?
     .into_iter()
     .flatten()
     .collect::<Vec<_>>();

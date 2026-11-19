@@ -1,5 +1,5 @@
 //! Per-directory result pages (C16; docs/final-shape/03-architecture.md §15), adapted from Tempo's
-//! tree result segments (ner-1562-scale-test-the-re-railer@8fe9ffed4, `tree_result_segments`):
+//! tree result segments (scale-test-the-re-railer@8fe9ffed4, `tree_result_segments`):
 //! a directory's results are stored as up to 64-file pages, compressed, and restored whole
 //! wherever the same subtree appears (Tempo E33–E34: complete-root reuse in 610 ms, then 34 ms
 //! median; 47 workspaces 48.7 s → 13.6 s).

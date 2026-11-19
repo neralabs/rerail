@@ -361,7 +361,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device uchar* out [[
         return;
     }
     if (view >= 5u && view <= 8u) {
-        // core.rr's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
+        // core.rerail's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
         uint lo = 0u, hi = root->ndocs;
         while (hi - lo > 1u) {
             uint m = (lo + hi) / 2u;

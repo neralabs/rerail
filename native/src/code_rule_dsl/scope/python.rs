@@ -1,6 +1,5 @@
 //! Python bindings and references, after Ruff's `Checker` visitor.
 
-use crate::code_rule_dsl::tree::Tree;
 use super::options::python_builtins;
 use super::{
     Access, Binding, BuildError, Builder, Form, Grammar, Import, ImportKind, NodeRef, Origin,
@@ -8,6 +7,7 @@ use super::{
 };
 use crate::code_rule_dsl::identifier::python_identifier as identifier;
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use std::sync::OnceLock;
 
@@ -211,7 +211,6 @@ fn python() -> &'static Python {
 }
 
 type Visit = Result<(), BuildError>;
-
 
 fn fields() -> &'static Fields {
     &python().fields
@@ -475,7 +474,9 @@ impl Visitor<'_, '_> {
                 // Ruff binds the name in the declaring scope only; the module is not rebound.
                 let current = self.builder.current;
                 if self.builder.scope(current).kind != ScopeKind::Module {
-                    let names = node.named().filter(|child| self.tag(child) == Tag::Identifier);
+                    let names = node
+                        .named()
+                        .filter(|child| self.tag(child) == Tag::Identifier);
                     for child in names.collect::<Vec<_>>() {
                         let binding = Binding {
                             origin: Origin::Global,
@@ -615,7 +616,8 @@ impl Visitor<'_, '_> {
             }
             Tag::ConditionalExpression => {
                 // `body if test else orelse` runs the test first (Ruff visits it first too).
-                let parts = node.named()
+                let parts = node
+                    .named()
                     .filter(|part| self.tag(part) != Tag::Comment)
                     .collect::<Vec<_>>();
                 if let [body, test, rest @ ..] = parts.as_slice() {
@@ -799,7 +801,8 @@ impl Visitor<'_, '_> {
             "parenthesized_expression" | "tuple_pattern"
         ) && !target.children().any(|child| child.kind() == ",")
         {
-            match target.named()
+            match target
+                .named()
                 .filter(|child| self.tag(child) != Tag::Comment)
                 .collect::<Vec<_>>()
                 .as_slice()
@@ -1114,7 +1117,8 @@ impl Visitor<'_, '_> {
         let Some(callable) = callable else {
             return self.visit(&arguments);
         };
-        let items = arguments.named()
+        let items = arguments
+            .named()
             .filter(|item| self.tag(item) != Tag::Comment)
             .collect::<Vec<_>>();
         // Ruff's `Arguments::args` (positional and starred) and `keywords` (named and `**`).
@@ -1216,13 +1220,15 @@ impl Visitor<'_, '_> {
     /// `NamedTuple("N", [("a", int), ...])`: each two-element display's second element is a type.
     fn named_tuple_fields<D: Doc>(&mut self, display: &Node<'_, D>) -> Visit {
         self.builder.enter()?;
-        for element in display.named()
+        for element in display
+            .named()
             .filter(|element| element.kind() != "comment")
             .collect::<Vec<_>>()
         {
             let pair = matches!(element.kind().as_ref(), "list" | "tuple")
                 .then(|| {
-                    element.named()
+                    element
+                        .named()
                         .filter(|part| self.tag(part) != Tag::Comment)
                         .collect::<Vec<_>>()
                 })
@@ -1243,7 +1249,8 @@ impl Visitor<'_, '_> {
     /// entry's value is one too) or `NamedTuple("N", **{"a": int})` (where it is not).
     fn dictionary_values<D: Doc>(&mut self, display: &Node<'_, D>, splat_is_type: bool) -> Visit {
         self.builder.enter()?;
-        for entry in display.named()
+        for entry in display
+            .named()
             .filter(|entry| entry.kind() != "comment")
             .collect::<Vec<_>>()
         {
@@ -1270,7 +1277,8 @@ impl Visitor<'_, '_> {
             return self.children(node);
         };
         self.visit(&value)?;
-        let slices = node.named()
+        let slices = node
+            .named()
             .filter(|child| child.node_id() != value.node_id() && self.tag(child) != Tag::Comment)
             .collect::<Vec<_>>();
         let kind = self
@@ -1289,7 +1297,8 @@ impl Visitor<'_, '_> {
             Some(SubscriptKind::Annotated) => {
                 // Ruff's slice is a tuple when there are several, or one written in parentheses.
                 let elements = match slices.as_slice() {
-                    [single] if single.kind() == "tuple" => single.named()
+                    [single] if single.kind() == "tuple" => single
+                        .named()
                         .filter(|element| self.tag(element) != Tag::Comment)
                         .collect::<Vec<_>>(),
                     [_] => return self.visit(&slices[0]),
@@ -1393,8 +1402,9 @@ impl Visitor<'_, '_> {
                 None => {}
                 Some((inner, Tag::Identifier)) => self.bind_here(inner, offset, None, site),
                 Some((inner, Tag::SplatType)) => {
-                    if let Some(name) =
-                        inner.named().find(|child| self.tag(child) == Tag::Identifier)
+                    if let Some(name) = inner
+                        .named()
+                        .find(|child| self.tag(child) == Tag::Identifier)
                     {
                         self.bind_here(&name, offset, None, site);
                     }
@@ -1512,7 +1522,8 @@ impl Visitor<'_, '_> {
                 Tag::GlobalStatement => {
                     self.builder.enter()?;
                     names.extend(
-                        child.named()
+                        child
+                            .named()
                             .filter(|name| self.tag(name) == Tag::Identifier)
                             .map(|name| identifier(&name).into_owned()),
                     );
@@ -1631,7 +1642,8 @@ impl Visitor<'_, '_> {
     /// element run in the comprehension's own scope.
     fn comprehension<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
         let fields = fields();
-        let clauses = node.named()
+        let clauses = node
+            .named()
             .filter(|child| self.tag(child) != Tag::Comment)
             .collect::<Vec<_>>();
         let body = field(node, fields.body);
@@ -1777,7 +1789,8 @@ impl Visitor<'_, '_> {
                 let text = node.text();
                 let prefix = text.chars().take_while(|c| *c == '.' || c.is_whitespace());
                 let level = prefix.filter(|c| *c == '.').count();
-                let after = node.named()
+                let after = node
+                    .named()
                     .find(|part| self.tag(part) == Tag::DottedName)
                     .map(|part| self.dotted(&part));
                 (level, after)
@@ -1873,7 +1886,8 @@ impl Visitor<'_, '_> {
                 let name = if self.tag(node) == Tag::Identifier {
                     Some(node.clone())
                 } else {
-                    node.named().find(|child| self.tag(child) == Tag::Identifier)
+                    node.named()
+                        .find(|child| self.tag(child) == Tag::Identifier)
                 };
                 if let Some(name) = name {
                     self.capture(&name, offset);

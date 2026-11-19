@@ -3,7 +3,7 @@
 use super::*;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
-use crate::code_rule_dsl::test_support::CAPABILITIES;
+use crate::code_rule_dsl::test_support::{CAPABILITIES, pack_test_data};
 use std::path::{Path, PathBuf};
 
 mod reference_tests;
@@ -11,11 +11,12 @@ mod reference_tests;
 /// The rules converted: the pack as rewritten by Pulling-it-all-together (`rules-ast`, decision 0037 step 1).
 const RULES: &str = "rules-ast";
 
+/// The data-layer pack's candidates, pack test data (`packs/data-layer/upstream/lint/`, not in git).
 fn pack() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates")
+    pack_test_data("packs/data-layer/upstream/lint/authored/packs/data-layer/candidates")
 }
 
-/// The authored overlay's files (`convert` module doc): `<rule-id>.rr`.
+/// The authored overlay's files (`convert` module doc): `<rule-id>.rerail`.
 fn authored() -> PathBuf {
     pack().join("datalog").join("authored")
 }
@@ -168,7 +169,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         return Err(Failure::Config(format!("{} configures more than one reference graph", document["id"])));
     }
     let id = document["id"].as_str().unwrap().to_owned();
-    // A relational clause is SQL stages: it is not converted but written by hand in `.rr` (list step 30). It is
+    // A relational clause is SQL stages: it is not converted but written by hand in `.rerail` (list step 30). It is
     // taken out before the rest compiles, since the newer rules' stages use forms (`escape: sql`, `message`,
     // `line`) only their SQL engine reads.
     let mut relational = Vec::new();
@@ -233,7 +234,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     e.decls.insert("option_value".into(), "name: sym, v: sym".into());
     e.decls.insert("option_json".into(), "name: sym, pointer: sym, v: sym".into());
     // The tape's verdict (tree-sitter's ERROR and MISSING nodes), for the authored file (`GIVEN`): the converter's
-    // `syntax_error(d)`, under a name of its own, since core.rr's `syntax_error` is the engine's (decision 0141).
+    // `syntax_error(d)`, under a name of its own, since core.rerail's `syntax_error` is the engine's (decision 0141).
     e.rule("tape_syntax_error($d)", "d: int", vec!["syntax_error($d)".into()]);
     let as_text = |v: &Json| v.as_str().map_or_else(|| v.to_string(), str::to_owned);
     let mut option_facts = BTreeSet::new();
@@ -350,7 +351,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         clauses.push((clause.id.clone(), result.map(|()| Origin::Converted)));
     }
     clauses.sort_by_key(|(c, _)| order.iter().position(|o| o == c));
-    // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043).
+    // The emitter's text, in `.rerail`: every program the converter gives is Soufflé form (decision 0043).
     let text = crate::code_rule_dsl::logic::rr::translate(&e.program(&["violation"])).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let mut prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
     // W reads its documentation and configuration files as text: the `.scope text` setting (`w_text_scope`).
@@ -361,7 +362,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         prog.settings.push(("references".into(), serde_json::Value::Object(graph).to_string()));
     }
     // The authored file's clauses over the converter's, with only what `violation` reaches.
-    let file = authored.map(|dir| dir.join(format!("{id}.rr"))).filter(|f| f.exists());
+    let file = authored.map(|dir| dir.join(format!("{id}.rerail"))).filter(|f| f.exists());
     let prog = if let Some(file) = file {
         let authored = crate::code_rule_dsl::logic::rr::parse_file(&file).map_err(|e| Failure::Authored(format!("{}: {e:?}", file.display())))?;
         let (prog, given) = overlay(prog, authored, &id, &order, &|c| adjust.keep.as_ref().is_none_or(|keep| keep(c))).map_err(|e| Failure::Authored(format!("{}: {e}", file.display())))?;
@@ -397,7 +398,7 @@ fn rule_files() -> Vec<PathBuf> {
 /// The codes a hand-written rule reports in log mode (`.mode log A, B`): the suite plugin, the production entry,
 /// drops them, as it drops a linter's `audit` severity. A violation's code is its `code "X"`, else its name.
 fn log_codes(check: &str) -> Vec<String> {
-    let path = hand_dir().join(format!("{}.rr", check.replace('_', "-")));
+    let path = hand_dir().join(format!("{}.rerail", check.replace('_', "-")));
     let Ok(text) = std::fs::read_to_string(path) else { return vec![] };
     let code_of = |name: &str| {
         text.lines()
@@ -414,20 +415,20 @@ fn log_codes(check: &str) -> Vec<String> {
 }
 
 /// Where the hand-written data-layer rules are: `docs/rule-syntax/data-layer` (More-ergonomic's drafts), or
-/// `RERAIL_HAND_DIR`. The data-layer pack's ports (`gate/data-layer/packs/data-layer/candidates/rr`) read
-/// `core.rr` relations the data-layer integration engine adds (`split_line`, `lf_line`), so they wait on that merge.
+/// `RERAIL_HAND_DIR`. The data-layer pack's ports (`candidates/rr` under [`pack`]) read
+/// `core.rerail` relations the data-layer integration engine adds (`split_line`, `lf_line`), so they wait on that merge.
 fn hand_dir() -> PathBuf {
     std::env::var_os("RERAIL_HAND_DIR").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::logic::rr::library().join("../data-layer"))
 }
 
-/// A check's hand-written rule (`docs/rule-syntax/data-layer/<check>.rr`, includes resolved), as `.rr` text, where
+/// A check's hand-written rule (`docs/rule-syntax/data-layer/<check>.rerail`, includes resolved), as `.rerail` text, where
 /// it lowers and the check has no authored file (`authored()`, which follows the oracle's configurations: on
 /// layer-violations, missing-async-pairs, post-op-no-internal-dispatch, public-api-triples and swallowed-exceptions
 /// it gives 107 of 107 events, the hand-written rules 97 of 98 and none of the 9 configured).
 /// `RERAIL_REPLAY_HAND_WRITTEN` runs the hand-written rule over an authored file; `RERAIL_REPLAY_CONVERTED` replays
 /// the converted JSON (and its authored file) instead. `given`: the files are a test's own (`hand_written_once`).
 fn hand_written(check: &str, given: bool) -> Option<String> {
-    let overlay = authored().join(format!("data-layer-{}.rr", check.replace('_', "-")));
+    let overlay = authored().join(format!("data-layer-{}.rerail", check.replace('_', "-")));
     if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() || (overlay.exists() && std::env::var_os("RERAIL_REPLAY_HAND_WRITTEN").is_none()) {
         return None;
     }
@@ -445,7 +446,7 @@ fn hand_written(check: &str, given: bool) -> Option<String> {
 }
 
 fn hand_written_once(check: &str, given: bool) -> Option<String> {
-    let path = hand_dir().join(format!("{}.rr", check.replace('_', "-")));
+    let path = hand_dir().join(format!("{}.rerail", check.replace('_', "-")));
     if !path.exists() {
         return None;
     }
@@ -462,9 +463,9 @@ fn hand_written_once(check: &str, given: bool) -> Option<String> {
         crate::code_rule_dsl::logic::rr::files_given(&mut program);
     }
     let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap_or_else(|e| panic!("{check}: {e}"));
-    // `RERAIL_REPLAY_DUMP=<dir>`: the program as replayed, `<dir>/<check>.rr`.
+    // `RERAIL_REPLAY_DUMP=<dir>`: the program as replayed, `<dir>/<check>.rerail`.
     if let Some(dir) = std::env::var_os("RERAIL_REPLAY_DUMP") {
-        std::fs::write(PathBuf::from(dir).join(format!("{check}.rr")), &text).unwrap();
+        std::fs::write(PathBuf::from(dir).join(format!("{check}.rerail")), &text).unwrap();
     }
     Some(text)
 }
@@ -480,7 +481,7 @@ fn convert_pack() -> Vec<(String, Result<Converted, Failure>)> {
     rule_files().into_iter().map(|path| (path.file_stem().unwrap().to_string_lossy().into_owned(), convert(&path, &Adjust::default()))).collect()
 }
 
-/// What the converter's run writes into `candidates/datalog`, by file name: every rule's program, `<rule>.rr` (its
+/// What the converter's run writes into `candidates/datalog`, by file name: every rule's program, `<rule>.rerail` (its
 /// authored file merged), and the coverage, `coverage.txt`: clauses converted or authored, the gaps by kind, the
 /// approximations.
 fn pack_files(run: &[(String, Converted)]) -> BTreeMap<String, String> {
@@ -491,7 +492,7 @@ fn pack_files(run: &[(String, Converted)]) -> BTreeMap<String, String> {
     let mut per_rule = Vec::new();
     for (id, c) in run {
         crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap_or_else(|e| panic!("{id}: {e:?}\n{}", c.program));
-        files.insert(format!("{id}.rr"), c.program.clone());
+        files.insert(format!("{id}.rerail"), c.program.clone());
         let ok = c.clauses.iter().filter(|(_, r)| r.is_ok()).count();
         let by_hand = c.clauses.iter().filter(|(_, r)| *r == Ok(Origin::Authored)).count();
         total += c.clauses.len();
@@ -558,10 +559,10 @@ fn convert_the_data_layer_pack() {
     println!("{}", files["coverage.txt"]);
 }
 
-/// Every authored file (`datalog/authored/<rule>.rr`) is a rule's, and merges into its conversion (core.rr's
+/// Every authored file (`datalog/authored/<rule>.rerail`) is a rule's, and merges into its conversion (core.rerail's
 /// prelude, decision 0141's checks, `rr::check`, lowering, the overlay's rules), each `violation` at a clause its
 /// policy has, which it then authors; and what the pack holds in `datalog` is the converter's run as it is now
-/// (`convert_the_data_layer_pack` writes it): every rule's merged program and `coverage.txt`, and no other `.rr`.
+/// (`convert_the_data_layer_pack` writes it): every rule's merged program and `coverage.txt`, and no other `.rerail`.
 #[test]
 fn the_pack_holds_the_converters_run_over_every_authored_file() {
     let run = convert_pack();
@@ -570,7 +571,7 @@ fn the_pack_holds_the_converters_run_over_every_authored_file() {
     let mut authored_files = BTreeSet::new();
     for e in std::fs::read_dir(authored()).unwrap() {
         let path = e.unwrap().path();
-        if path.extension().is_none_or(|x| x != "rr") {
+        if path.extension().is_none_or(|x| x != "rerail") {
             continue;
         }
         let id = path.file_stem().unwrap().to_string_lossy().into_owned();
@@ -592,7 +593,7 @@ fn the_pack_holds_the_converters_run_over_every_authored_file() {
             continue;
         }
         // The clauses the file's `violation`s name, each the policy's and authored.
-        let file = authored().join(format!("{id}.rr"));
+        let file = authored().join(format!("{id}.rerail"));
         let program = crate::code_rule_dsl::logic::rr::parse_file(&file).unwrap_or_else(|e| panic!("{}: {e:?}", file.display()));
         let named: BTreeSet<&str> = program.rules.iter().filter_map(violation_of).map(|(_, clause)| clause).collect();
         if named.is_empty() {
@@ -614,7 +615,7 @@ fn the_pack_holds_the_converters_run_over_every_authored_file() {
     for e in std::fs::read_dir(&out).unwrap() {
         let path = e.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        if path.is_file() && (path.extension().is_some_and(|x| x == "rr") || name == "coverage.txt") {
+        if path.is_file() && (path.extension().is_some_and(|x| x == "rerail") || name == "coverage.txt") {
             committed.insert(name, std::fs::read_to_string(&path).unwrap());
         }
     }
@@ -756,8 +757,9 @@ struct Event {
     setting: String,
 }
 
+/// The recordings of the data-layer port, pack test data (`packs/data-layer/upstream/lint/`, not in git).
 fn port() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/fixtures/host/data-layer-port")
+    pack_test_data("packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port")
 }
 
 /// Every event of the oracle (`fixtures/host/data-layer-port`): the recordings and probes, then the API records of
@@ -1093,7 +1095,7 @@ fn replay_program(event: &Event) -> Result<Replayed, Outcome> {
     if let Err(reason) = &event.want {
         return Err(Outcome::Skipped(reason.clone()));
     }
-    // A hand-written `.rr` that lowers wins over the converted JSON. It has no options, so it replays the events
+    // A hand-written `.rerail` that lowers wins over the converted JSON. It has no options, so it replays the events
     // the oracle ran unconfigured (`Event::plain`).
     match hand_written(&event.check, true) {
         Some(_) if !event.plain => Err(Outcome::Skipped("configured (the hand-written rule has no options)".into())),
@@ -1128,7 +1130,7 @@ fn replay_run(k: usize, event: &Event, program: &Replayed, root: &Path) -> Outco
     // `RERAIL_REPLAY_SHOW=a,b`: relations a and b are outputs too, and their rows are printed.
     let show: Vec<String> = std::env::var("RERAIL_REPLAY_SHOW").map(|s| s.split(',').map(str::to_owned).collect()).unwrap_or_default();
     let program = show.iter().fold(program, |p, r| format!("{p}\n.output {r}\n"));
-    // `RERAIL_REPLAY_EXTRA=<file>`: `.rr` rules added to every replayed program, to try a change to a rule.
+    // `RERAIL_REPLAY_EXTRA=<file>`: `.rerail` rules added to every replayed program, to try a change to a rule.
     let program = match std::env::var("RERAIL_REPLAY_EXTRA") {
         Ok(f) => format!("{program}\n{}\n", std::fs::read_to_string(f).unwrap()),
         Err(_) => program,
@@ -1294,6 +1296,9 @@ const SAMPLED: usize = 2;
 /// few threads, each keeping its own prepared programs.
 #[test]
 fn a_sample_of_the_replay_gives_the_recorded_findings() {
+    // Every check's sampled events through its prepared programs: about 11 minutes on CI's 4-vCPU runner (2 cores,
+    // hyperthreaded) beside the rest of its leg, past a test's 10. More than that, never hours.
+    crate::test_watchdog::allow(std::time::Duration::from_secs(1500));
     let start = std::time::Instant::now();
     let baseline = Baseline::read().unwrap_or_else(|e| panic!("{e}"));
     let events = events();
@@ -1596,7 +1601,7 @@ fn authored_clauses_replace_the_converters() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("authored");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join(format!("{TARGET_ID}.rr")), TARGET_AUTHORED).unwrap();
+    std::fs::write(dir.join(format!("{TARGET_ID}.rerail")), TARGET_AUTHORED).unwrap();
     let rule = rule_file(TARGET).unwrap();
     let c = convert_over(&rule, &Adjust::default(), Some(&dir)).unwrap();
     let origin = |c: &Converted, id: &str| c.clauses.iter().find(|(c, _)| c == id).map(|(_, r)| r.clone());
@@ -1668,7 +1673,7 @@ violation("{ID}", "usage-0", "escape_hatch", p, l) :- usage_0_witness(p, l), !us
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("report-gate");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join(format!("{ID}.rr")), authored).unwrap();
+    std::fs::write(dir.join(format!("{ID}.rerail")), authored).unwrap();
     let run = dir.join("run");
     write_files(&run, [("impl/a.py", "f()\ng()\n")]);
     let rule = rule_file("sql_grammar_escape_hatches").unwrap();
@@ -1718,7 +1723,7 @@ violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), ca
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("options");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join(format!("{ID}.rr")), authored).unwrap();
+    std::fs::write(dir.join(format!("{ID}.rerail")), authored).unwrap();
     let everywhere = || Some((vec!["**/*".to_owned()], Vec::new()));
     // Each run in a directory of its own: a second corpus run over one output directory in a process decodes
     // its symbols with the first run's atoms.
@@ -1889,7 +1894,7 @@ fn check_baseline(now: &Baseline, ran: &BTreeSet<String>, counted: &dyn Fn(&(Str
 }
 
 /// The rules `rules` (comma-separated ids, or `*`), each check's hand-written rule replacing its converted one, as in
-/// the replay. A run binds one shape of base relations (`core.rr`'s for the hand-written rules, T's for the converted
+/// the replay. A run binds one shape of base relations (`core.rerail`'s for the hand-written rules, T's for the converted
 /// ones), so the two sets are two runs: the converted rules of the checks with no hand-written rule, then the
 /// hand-written rules, and the totals. `RERAIL_MEASURE_HAND=off`, `only` or `skip`: that one run alone.
 fn measure_all(corpus: &Path, rules: &str) {
@@ -1909,7 +1914,7 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
     let ids: Vec<String> = if rules == "*" {
         let mut ids: Vec<String> = std::fs::read_dir(pack().join("datalog")).unwrap().filter_map(|e| {
             let p = e.unwrap().path();
-            (p.extension().is_some_and(|x| x == "rr")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
+            (p.extension().is_some_and(|x| x == "rerail")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
         }).collect();
         ids.sort();
         ids
@@ -1919,12 +1924,12 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
     // A check's hand-written rule (`docs/rule-syntax/data-layer`), where it lowers, replaces its converted one, as in
     // the replay (`RERAIL_MEASURE_HAND=off`: the converted rules only).
     // `RERAIL_MEASURE_HAND=only`: the hand-written rules alone, including the checks the pack has no rule for; `skip`: the
-    // converted rules of the other checks. A run binds one shape of base relations (`core.rr`'s, or T's), so the two
+    // converted rules of the other checks. A run binds one shape of base relations (`core.rerail`'s, or T's), so the two
     // sets are two runs.
     let hand = mode != "off";
     let texts: Vec<String> = ids
         .iter()
-        .map(|id| {
+        .filter_map(|id| {
             // `RERAIL_HAND_SKIP`: checks (comma-separated, as `layer-violations`) whose hand-written rule is left out.
             let skip = std::env::var("RERAIL_HAND_SKIP").unwrap_or_default();
             let skipped = |c: &str| skip.split(',').any(|s| s.trim() == c);
@@ -1936,10 +1941,9 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
                 ("only", w) => w,
                 ("skip", Some(_)) => None,
                 (_, Some(w)) => Some(w),
-                _ => Some(std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap()),
+                _ => Some(std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rerail"))).unwrap()),
             }
         })
-        .flatten()
         .collect();
     let mut texts = texts;
     // The hand-written rules of checks the pack has no rule for.
@@ -1947,18 +1951,15 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
         let dir = hand_dir();
         let mut extra: Vec<String> = std::fs::read_dir(&dir).unwrap().filter_map(|e| {
             let p = e.unwrap().path();
-            (p.extension().is_some_and(|x| x == "rr")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
-        // `x.tables.rr` and `x.symbols.rr` are tables a policy includes, not checks.
+            (p.extension().is_some_and(|x| x == "rerail")).then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
+        // `x.tables.rerail` and `x.symbols.rerail` are tables a policy includes, not checks.
         }).filter(|c| !c.contains('.') && !ids.contains(&format!("data-layer-{c}"))).filter(|c| !std::env::var("RERAIL_HAND_SKIP").unwrap_or_default().split(',').any(|s| s.trim() == c)).collect();
         extra.sort();
         for c in extra {
             // Repository inputs are read (`corpus::inputs`), `input_error` rows included.
-            match hand_written(&c.replace('-', "_"), false) {
-                Some(t) => {
-                    println!("HAND {c} (no converted rule)");
-                    texts.push(t);
-                }
-                None => {}
+            if let Some(t) = hand_written(&c.replace('-', "_"), false) {
+                println!("HAND {c} (no converted rule)");
+                texts.push(t);
             }
         }
     }
@@ -2015,7 +2016,7 @@ fn measure_converted_rules() {
         return measure_all(&corpus, &rules);
     }
     for id in rules.split(',') {
-        let program = std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap();
+        let program = std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rerail"))).unwrap();
         // The relations the cross-file part derives, and the base relations it reads.
         let mut parsed = crate::code_rule_dsl::logic::rr::parse(&program).unwrap();
         crate::code_rule_dsl::logic::strings::as_relations(&mut parsed).unwrap();
@@ -2050,15 +2051,15 @@ fn measure_converted_rules() {
     }
 }
 
-/// A Python module that exercises the python library (`docs/rule-syntax/lib/python/*.rr`): definitions of every
+/// A Python module that exercises the python library (`docs/rule-syntax/lib/python/*.rerail`): definitions of every
 /// parameter kind, decorators, a class, imports, chained comparisons and assignments, `if`/`elif`/`else`.
 const LIBRARY_FIXTURE: (&str, &str) = (
     "pkg/sub/mod.py",
     "\"\"\"Module doc.\"\"\"\nimport os\nfrom . import sibling\nfrom ..pkg.mod import thing as alias\n\nX = 1\n\n\n@decorator(arg)\ndef f(a, /, b: int = 0, *c: str, d, **e) -> None:\n    \"\"\"Doc.\"\"\"\n    global X\n    x = a\n    x = x + 1\n    if a < b <= c:\n        return x\n    elif a or b or d:\n        pass\n    else:\n        g()\n    return os.path.join(x)\n\n\nclass C(Base, metaclass=M):\n    def m(self, y):\n        def inner():\n            return self.m(y)\n        return inner()\n\n\ndef g():\n    f(1, d=2)\n\n\nlam = lambda q, r=1: q\ns = f\"x{X}\"\nt = u = 3\ndel X\n",
 );
 
-/// The python library's relations through an overlay that includes them (`#include "python/ast.rr"`,
-/// `"python/calls.rr"`): for each relation the closure declares, an overlay whose one clause reads it, converted,
+/// The python library's relations through an overlay that includes them (`#include "python/ast.rerail"`,
+/// `"python/calls.rerail"`): for each relation the closure declares, an overlay whose one clause reads it, converted,
 /// merged and run by the corpus runner over `LIBRARY_FIXTURE`. Prints, per relation, its rows' count or the error.
 #[test]
 #[ignore = "a report: which library relations lower and run through an overlay"]
@@ -2072,9 +2073,9 @@ fn library_relations_through_an_overlay_report() {
         write_files(&run, [LIBRARY_FIXTURE]);
         run
     };
-    let includes = "#include \"python/ast.rr\"\n#include \"python/calls.rr\"\n";
-    std::fs::write(dir.join("closure.rr"), includes).unwrap();
-    let closure = crate::code_rule_dsl::logic::rr::parse_file(&dir.join("closure.rr"));
+    let includes = "#include \"python/ast.rerail\"\n#include \"python/calls.rerail\"\n";
+    std::fs::write(dir.join("closure.rerail"), includes).unwrap();
+    let closure = crate::code_rule_dsl::logic::rr::parse_file(&dir.join("closure.rerail"));
     let closure = match closure {
         Ok(p) => p,
         Err(e) => panic!("the closure does not lower: {e}"),
@@ -2087,7 +2088,7 @@ fn library_relations_through_an_overlay_report() {
              .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)\n\
              violation(\"{TARGET_ID}\", \"executor-parameters\", \"{rel}\", p, 1) :- {rel}({args}), in_scope(d), doc(d, p, _).\n"
         );
-        std::fs::write(dir.join(format!("{TARGET_ID}.rr")), authored).unwrap();
+        std::fs::write(dir.join(format!("{TARGET_ID}.rerail")), authored).unwrap();
         let only = Adjust { keep: Some(Box::new(|c: &str| c == "executor-parameters")), scope: Some((vec!["**/*".to_owned()], Vec::new())), ..Adjust::default() };
         let result = convert_over(&rule, &only, Some(&dir)).map_err(|e| e.to_string()).and_then(|c| findings(&c.program, &run(i)));
         let _ = std::fs::remove_dir_all(dir.join(format!("run-{i}")));
@@ -2099,8 +2100,8 @@ fn library_relations_through_an_overlay_report() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// An overlay that includes the python library (`#include "python/ast.rr"`: names, imports, flow, and calls
-/// beside it) lowers, merges and runs through the corpus runner: its relations read core.rr's (`kind`, `within`,
+/// An overlay that includes the python library (`#include "python/ast.rerail"`: names, imports, flow, and calls
+/// beside it) lowers, merges and runs through the corpus runner: its relations read core.rerail's (`kind`, `within`,
 /// `docof`, `unset`, `next_sibling`, `op_at`, `earlier`, `visit_index`, …) with no declaration of them, and give
 /// on `LIBRARY_FIXTURE` what the library says: a chained comparison's links, each parameter's kind, the last
 /// assignment before a read in CPython's order, owners' dotted paths, calls' names.
@@ -2111,8 +2112,8 @@ fn an_overlay_includes_the_python_library() {
     std::fs::create_dir_all(&dir).unwrap();
     let authored = format!(
         r#"
-#include "python/ast.rr"
-#include "python/calls.rr"
+#include "python/ast.rerail"
+#include "python/calls.rerail"
 .decl in_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl library_at(n: node, p: symbol, l: number)
@@ -2126,7 +2127,7 @@ violation("{TARGET_ID}", "executor-parameters", cat("owner ", s), p, l) :- owner
 violation("{TARGET_ID}", "executor-parameters", cat("call ", x), p, l) :- call_name(c, x), library_at(c, p, l).
 "#
     );
-    std::fs::write(dir.join(format!("{TARGET_ID}.rr")), authored).unwrap();
+    std::fs::write(dir.join(format!("{TARGET_ID}.rerail")), authored).unwrap();
     let run = dir.join("run");
     write_files(&run, [LIBRARY_FIXTURE]);
     let only = Adjust { keep: Some(Box::new(|c: &str| c == "executor-parameters")), scope: Some((vec!["**/*".to_owned()], Vec::new())), ..Adjust::default() };
@@ -2189,7 +2190,7 @@ violation("{TARGET_ID}", "required-contracts", "SPTA001", p, 1) :- in_scope(d), 
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("authored-match");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join(format!("{TARGET_ID}.rr")), authored).unwrap();
+    std::fs::write(dir.join(format!("{TARGET_ID}.rerail")), authored).unwrap();
     let c = convert_over(&rule_file(TARGET).unwrap(), &Adjust::default(), Some(&dir)).unwrap();
     assert!(c.program.contains("match_all(\"") && c.program.contains("match_group(\"") && !c.program.contains("match_all_("), "{}", c.program);
     let again = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap()).unwrap();

@@ -1,10 +1,8 @@
 //! Content-addressed source and tape objects: compression, aliases, and bulk reads.
 
-#[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use super::object_segments::{ObjectFrame, object_dir, row_frame};
 use super::read_cache::CacheKey;
 use super::rows::{generation, hash_params, intern_hash};
-use super::object_segments::{ObjectFrame, object_dir, row_frame};
 use super::segments::SegmentMaps;
 use super::{
     CODEC_ZSTD, CachedBytes, ContentStore, DocumentPayload, HASH_SHA256, HashKey, SourceId,
@@ -12,6 +10,8 @@ use super::{
     TapePayload,
     compression::{compress_source, compress_tape, path_tag, tape_tag},
 };
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use rusqlite::Connection;
 use rusqlite::{OptionalExtension, params};
 use std::collections::{BTreeSet, HashMap};
@@ -62,12 +62,22 @@ impl ContentStore {
                 .enumerate()
                 .map(|(at, digest)| {
                     let key = HashKey::from_sha256_digest(*digest);
-                    serde_json::json!([at, key.algorithm, key.lanes[0], key.lanes[1], key.lanes[2], key.lanes[3]])
+                    serde_json::json!([
+                        at,
+                        key.algorithm,
+                        key.lanes[0],
+                        key.lanes[1],
+                        key.lanes[2],
+                        key.lanes[3]
+                    ])
                 })
                 .collect::<Vec<_>>(),
         )
         .map_err(|error| StoreError::Invalid(error.to_string()))?;
-        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
             "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) at, \
              CAST(json_extract(value,'$[1]') AS INTEGER) algorithm, CAST(json_extract(value,'$[2]') AS INTEGER) lane0, \
@@ -81,28 +91,66 @@ impl ContentStore {
              JOIN source_objects s ON s.source_id=t.source_id JOIN hashes sh ON sh.hash_id=s.canonical_hash_id",
         )?;
         let mut out = (0..tapes.len()).map(|_| None).collect::<Vec<_>>();
-        type Row = (i64, i64, usize, usize, [u8; 32], (i64, Vec<u8>, [i64; 3]), (i64, Vec<u8>, [i64; 3]));
+        type Row = (
+            i64,
+            i64,
+            usize,
+            usize,
+            [u8; 32],
+            (i64, Vec<u8>, [i64; 3]),
+            (i64, Vec<u8>, [i64; 3]),
+        );
         let rows: Vec<Row> = statement
             .query_map([encoded], |row| {
-                let length = |at: usize| row.get::<_, i64>(at).map(|length| usize::try_from(length).unwrap_or(usize::MAX));
+                let length = |at: usize| {
+                    row.get::<_, i64>(at)
+                        .map(|length| usize::try_from(length).unwrap_or(usize::MAX))
+                };
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get(1)?,
                     length(3)?,
                     length(6)?,
-                    HashKey { algorithm: row.get(8)?, lanes: [row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?] }.sha256_bytes().unwrap_or_default(),
-                    (row.get(2)?, row.get(4)?, [row.get(13)?, row.get(14)?, row.get(15)?]),
-                    (row.get(5)?, row.get(7)?, [row.get(16)?, row.get(17)?, row.get(18)?]),
+                    HashKey {
+                        algorithm: row.get(8)?,
+                        lanes: [row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?],
+                    }
+                    .sha256_bytes()
+                    .unwrap_or_default(),
+                    (
+                        row.get(2)?,
+                        row.get(4)?,
+                        [row.get(13)?, row.get(14)?, row.get(15)?],
+                    ),
+                    (
+                        row.get(5)?,
+                        row.get(7)?,
+                        [row.get(16)?, row.get(17)?, row.get(18)?],
+                    ),
                 ))
             })?
             .collect::<Result<_, _>>()?;
         drop(statement);
         drop(connection);
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
-        for (at, grammar_id, tape_length, source_length, source_sha256, (tc, tf, t), (sc, sf, s)) in rows {
-            let (Some(tape_frame), Some(source_frame)) = (row_frame(&mut maps, tc, tf, t[0], t[1], t[2])?, row_frame(&mut maps, sc, sf, s[0], s[1], s[2])?) else { continue };
+        for (at, grammar_id, tape_length, source_length, source_sha256, (tc, tf, t), (sc, sf, s)) in
+            rows
+        {
+            let (Some(tape_frame), Some(source_frame)) = (
+                row_frame(&mut maps, tc, tf, t[0], t[1], t[2])?,
+                row_frame(&mut maps, sc, sf, s[0], s[1], s[2])?,
+            ) else {
+                continue;
+            };
             if let Some(slot) = usize::try_from(at).ok().and_then(|at| out.get_mut(at)) {
-                *slot = Some(ResidentFrames { grammar_id, tape_length, tape_frame, source_length, source_frame, source_sha256 });
+                *slot = Some(ResidentFrames {
+                    grammar_id,
+                    tape_length,
+                    tape_frame,
+                    source_length,
+                    source_frame,
+                    source_sha256,
+                });
             }
         }
         Ok(out)
@@ -113,12 +161,22 @@ impl ContentStore {
 
     /// [`Self::put_source`] for a caller that already holds the source's SHA-256 (`canonical`): the bytes are not
     /// hashed again.
-    pub fn put_source_hashed(&self, source: &[u8], canonical: HashKey, aliases: &[HashKey]) -> StoreResult<SourceId> {
+    pub fn put_source_hashed(
+        &self,
+        source: &[u8],
+        canonical: HashKey,
+        aliases: &[HashKey],
+    ) -> StoreResult<SourceId> {
         self.put_source_tagged(source, canonical, aliases, None)
     }
 
     /// [`Self::put_source`] for a file at `path`: its frame may use its language's dictionary.
-    pub fn put_source_at(&self, source: &[u8], aliases: &[HashKey], path: &str) -> StoreResult<SourceId> {
+    pub fn put_source_at(
+        &self,
+        source: &[u8],
+        aliases: &[HashKey],
+        path: &str,
+    ) -> StoreResult<SourceId> {
         self.put_source_tagged(source, HashKey::sha256(source), aliases, path_tag(path))
     }
 
@@ -194,17 +252,30 @@ impl ContentStore {
         if sources.is_empty() {
             return Ok(out);
         }
-        let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
-        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>())
+            .expect("integers");
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
             "SELECT j.key, t.raw_length, t.codec_id, t.frame, t.seg, t.seg_at, t.seg_len FROM json_each(?1) j JOIN tape_objects t \
              ON t.source_id=j.value AND t.grammar_id=?2 AND t.grammar_version=?3 AND t.tape_format_version=?4",
         )?;
         type Row = (i64, i64, i64, Vec<u8>, [i64; 3]);
         let rows: Vec<Row> = statement
-            .query_map(params![list, grammar_id, grammar_version, tape_format_version], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, [row.get(4)?, row.get(5)?, row.get(6)?]))
-            })?
+            .query_map(
+                params![list, grammar_id, grammar_version, tape_format_version],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        [row.get(4)?, row.get(5)?, row.get(6)?],
+                    ))
+                },
+            )?
             .collect::<Result<_, _>>()?;
         drop(statement);
         drop(connection);
@@ -430,7 +501,7 @@ impl ContentStore {
             ));
         }
         let mut digest = [0_u8; 32];
-        for (chunk, lane) in digest.chunks_exact_mut(8).zip(key.lanes) {
+        for (chunk, lane) in digest.as_chunks_mut::<8>().0.iter_mut().zip(key.lanes) {
             chunk.copy_from_slice(&lane.to_be_bytes());
         }
         Ok(digest)
@@ -442,14 +513,24 @@ impl ContentStore {
         if sources.is_empty() {
             return Ok(out);
         }
-        let ids = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
-        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let ids = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>())
+            .expect("integers");
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
             "SELECT j.key, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3 FROM json_each(?1) j \
              CROSS JOIN source_objects s ON s.source_id = j.value JOIN hashes h ON h.hash_id = s.canonical_hash_id",
         )?;
         let rows = statement.query_map([ids], |row| {
-            Ok((row.get::<_, i64>(0)?, HashKey { algorithm: row.get(1)?, lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?] }))
+            Ok((
+                row.get::<_, i64>(0)?,
+                HashKey {
+                    algorithm: row.get(1)?,
+                    lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?],
+                },
+            ))
         })?;
         for row in rows {
             let (at, key) = row?;
@@ -520,12 +601,16 @@ impl ContentStore {
         drop(connection);
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         let Some(frame) = row_frame(&mut maps, codec, frame, seg, seg_at, seg_len)? else {
-            return Err(StoreError::Corrupt("a source's segment is not there".to_owned()));
+            return Err(StoreError::Corrupt(
+                "a source's segment is not there".to_owned(),
+            ));
         };
         // In a segment: read in place, no copy to the cache.
         if let ObjectFrame::Raw(bytes) = &frame {
             if usize::try_from(raw_length).ok() != Some(bytes.len()) || key != canonical_hash {
-                return Err(StoreError::Corrupt("source length or hash does not match metadata".to_owned()));
+                return Err(StoreError::Corrupt(
+                    "source length or hash does not match metadata".to_owned(),
+                ));
             }
             return Ok(bytes.bytes().to_vec());
         }
@@ -620,7 +705,11 @@ impl ContentStore {
                             algorithm: row.get(4)?,
                             lanes: [row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?],
                         },
-                        [row.get::<_, i64>(9)?, row.get::<_, i64>(10)?, row.get::<_, i64>(11)?],
+                        [
+                            row.get::<_, i64>(9)?,
+                            row.get::<_, i64>(10)?,
+                            row.get::<_, i64>(11)?,
+                        ],
                     ));
                 }
                 frames
@@ -641,10 +730,15 @@ impl ContentStore {
                 let bytes = match cached {
                     Some(bytes) => bytes,
                     None => {
-                        let Some(frame) = row_frame(&mut maps, codec, frame, seg, seg_at, seg_len)? else { continue };
+                        let Some(frame) = row_frame(&mut maps, codec, frame, seg, seg_at, seg_len)?
+                        else {
+                            continue;
+                        };
                         if let ObjectFrame::Raw(bytes) = &frame {
                             if bytes.len() != length {
-                                return Err(StoreError::Corrupt("source length does not match metadata".into()));
+                                return Err(StoreError::Corrupt(
+                                    "source length does not match metadata".into(),
+                                ));
                             }
                             result.insert(id, bytes.bytes().to_vec());
                             continue;
@@ -714,13 +808,24 @@ impl ContentStore {
         tape: &[u8],
     ) -> StoreResult<(SourceId, TapeId)> {
         let frames = self.source_and_tape_frames(source, canonical, tape)?;
-        self.put_source_and_tape_framed(canonical, grammar_id, grammar_version, tape_format_version, &frames)
+        self.put_source_and_tape_framed(
+            canonical,
+            grammar_id,
+            grammar_version,
+            tape_format_version,
+            &frames,
+        )
     }
 
     /// The compressed frames [`Self::put_source_and_tape_framed`] stores: made where the source and tape are made (a
     /// parse worker), so the store's one writer thread only inserts them. Compressing on the writer took most of its
     /// time on a cold run, and the queue held every source whole until then.
-    pub fn source_and_tape_frames(&self, source: &[u8], canonical: HashKey, tape: &[u8]) -> StoreResult<SourceAndTapeFrames> {
+    pub fn source_and_tape_frames(
+        &self,
+        source: &[u8],
+        canonical: HashKey,
+        tape: &[u8],
+    ) -> StoreResult<SourceAndTapeFrames> {
         Ok(SourceAndTapeFrames {
             source_len: source.len(),
             source: compress_source(source, self.compression_level, tape_tag(tape))?,
@@ -760,7 +865,13 @@ impl ContentStore {
             let tape_id = put_tape_prepared_tx(
                 transaction,
                 source_id,
-                TapePayload { grammar_id, grammar_version, tape_format_version, bytes: &[], documents: &[] },
+                TapePayload {
+                    grammar_id,
+                    grammar_version,
+                    tape_format_version,
+                    bytes: &[],
+                    documents: &[],
+                },
                 frames.tape_len,
                 frames.tape_identity,
                 tape_frame,
@@ -947,7 +1058,11 @@ impl ContentStore {
                             algorithm: row.get(9)?,
                             lanes: [row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?],
                         },
-                        [row.get::<_, i64>(14)?, row.get::<_, i64>(15)?, row.get::<_, i64>(16)?],
+                        [
+                            row.get::<_, i64>(14)?,
+                            row.get::<_, i64>(15)?,
+                            row.get::<_, i64>(16)?,
+                        ],
                     ))
                 })?
                 .collect::<Result<Vec<_>, _>>()?
@@ -956,10 +1071,16 @@ impl ContentStore {
         // their length checked; a row whose segment is gone is a miss.
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         for (id, length, codec, frame, hash, source, [seg, seg_at, seg_len]) in rows {
-            let Some(frame) = row_frame(&mut maps, codec, frame, seg, seg_at, seg_len).map_err(|_| StoreError::Corrupt(format!("unsupported {what} codec")))? else { continue };
+            let Some(frame) = row_frame(&mut maps, codec, frame, seg, seg_at, seg_len)
+                .map_err(|_| StoreError::Corrupt(format!("unsupported {what} codec")))?
+            else {
+                continue;
+            };
             if let ObjectFrame::Raw(bytes) = frame {
                 if usize::try_from(length).ok() != Some(bytes.len()) {
-                    return Err(StoreError::Corrupt(format!("{what} length does not match metadata")));
+                    return Err(StoreError::Corrupt(format!(
+                        "{what} length does not match metadata"
+                    )));
                 }
                 result.insert(id, (Arc::new(CachedBytes::mapped(bytes)), false));
                 continue;
@@ -1050,11 +1171,18 @@ impl ContentStore {
             .map_err(|_| StoreError::Corrupt("tape length does not fit memory".to_owned()))?;
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         let Some(frame) = row_frame(&mut maps, codec, frame, seg, seg_at, seg_len)? else {
-            return Err(StoreError::Corrupt("a tape's segment is not there".to_owned()));
+            return Err(StoreError::Corrupt(
+                "a tape's segment is not there".to_owned(),
+            ));
         };
         if let ObjectFrame::Raw(bytes) = frame {
-            if bytes.len() != raw_length || key != canonical_hash || key != HashKey::tape_identity(source, bytes.bytes()) {
-                return Err(StoreError::Corrupt("tape length or hash does not match metadata".to_owned()));
+            if bytes.len() != raw_length
+                || key != canonical_hash
+                || key != HashKey::tape_identity(source, bytes.bytes())
+            {
+                return Err(StoreError::Corrupt(
+                    "tape length or hash does not match metadata".to_owned(),
+                ));
             }
             return Ok((Arc::new(CachedBytes::mapped(bytes)), false));
         }
@@ -1280,7 +1408,12 @@ pub(super) fn put_tape_tx(
         "SELECT h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 FROM source_objects s \
          JOIN hashes h ON h.hash_id=s.canonical_hash_id WHERE s.source_id=?1",
         [source_id.0],
-        |row| Ok(HashKey { algorithm: row.get(0)?, lanes: [row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?] }),
+        |row| {
+            Ok(HashKey {
+                algorithm: row.get(0)?,
+                lanes: [row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?],
+            })
+        },
     )?;
     let tape_id = put_tape_prepared_tx(
         transaction,
@@ -1394,7 +1527,10 @@ fn put_tape_prepared_tx(
     Ok(TapeId(tape_id))
 }
 
-pub(super) fn source_id_by_hash(connection: &Connection, key: HashKey) -> StoreResult<Option<SourceId>> {
+pub(super) fn source_id_by_hash(
+    connection: &Connection,
+    key: HashKey,
+) -> StoreResult<Option<SourceId>> {
     connection
         .query_row_cached(
             "SELECT s.source_id FROM source_objects s JOIN hashes h ON h.hash_id=s.canonical_hash_id \
@@ -1417,14 +1553,19 @@ impl TapeFrame {
     /// The tape's bytes: decompressed, or read in place.
     pub fn bytes(&self) -> StoreResult<super::ObjectBytes> {
         // The frame may name a language's dictionary (RER-131's `compression`), which `decompress` reads.
-        let bytes = self.frame.bytes(usize::try_from(self.raw_length).unwrap_or(0))?;
+        let bytes = self
+            .frame
+            .bytes(usize::try_from(self.raw_length).unwrap_or(0))?;
         if usize::try_from(self.raw_length).ok() != Some(bytes.len()) {
-            return Err(StoreError::Corrupt("tape length does not match metadata".to_owned()));
+            return Err(StoreError::Corrupt(
+                "tape length does not match metadata".to_owned(),
+            ));
         }
         Ok(bytes)
     }
 
     /// The frame's size, as stored.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.frame.len()
     }

@@ -1,4 +1,4 @@
-//! core.rr's base relations the corpus runner binds beyond T's (`facts::vtab::syntax::Extra`), each against W's
+//! core.rerail's base relations the corpus runner binds beyond T's (`facts::vtab::syntax::Extra`), each against W's
 //! notion of it (`CodeRuleDslRuntime`, the matcher, the regex query) on fixture files.
 
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -846,11 +846,11 @@ const TREE: (&str, &str) = (
     "def f(a):\n    x = g(a)\n    y = h(x)\n    print(y)\n    return y\n\n\nclass C:\n    def m(self):\n        z = k(1)\n        z.w()\n        return z\n",
 );
 
-/// core.rr's tree arithmetic, which lowering rewrites to the base relations (`rr::lower::core`), as W's matcher
+/// core.rerail's tree arithmetic, which lowering rewrites to the base relations (`rr::lower::core`), as W's matcher
 /// sees it: `kind` is a node's kind; `within` W's `inside` to the end, its ancestor's kind tested (a kind set of
 /// one) or read from a relation (the set of every kind); `next_sibling` W's `follows` at a neighbour (statements of a
 /// block, which no token separates), negated W's `nthChild: 1`; `precedes` W's `precedes` to the end. No program
-/// declares them: core.rr's declarations are the prelude.
+/// declares them: core.rerail's declarations are the prelude.
 #[test]
 fn tree_arithmetic_is_ws_relations() {
     let files = [TREE];
@@ -1173,7 +1173,7 @@ fn an_unbound_relation_is_named() {
     let fails = |out: &str, program: &str| {
         super::run(program, &dir, None, &dir.join(out), "program", Binding::Cpu, 1 << 18).err().map(|e| e.to_string()).unwrap_or_default()
     };
-    // `git_tracked` is a functor now (`@git_tracked`); `signed_list` is still a core.rr input no producer binds (O80).
+    // `git_tracked` is a functor now (`@git_tracked`); `signed_list` is still a core.rerail input no producer binds (O80).
     let e = fails(".out-signed", ".decl v(p: symbol, e: symbol)\nv(p, e) :- signed_list(p, e).\n.output v\n");
     assert!(e.contains("signed_list is read, and nothing derives it or binds it"), "{e}");
     let e = fails(".out-str", ".decl v(n: node)\nv(n) :- str_part(n, 0, _, _, _).\n.output v\n");
@@ -1198,7 +1198,7 @@ fn a_failed_runs_store_reopened_report() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `as` names a variable (python/calls.rr's `field(c, "arguments", as)`), as the engine always read it. Soufflé
+/// `as` names a variable (python/calls.rerail's `field(c, "arguments", as)`), as the engine always read it. Soufflé
 /// reserves it (its `as(x, T)` cast), so a program for Soufflé renames it.
 #[test]
 fn as_is_a_variable() {
@@ -1476,7 +1476,7 @@ late(fq) :- source(_, sp), match_all("RE", sp, m), match_group("RE", sp, m, "mod
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// core.rr's `syntax_error(d, l, msg)` is CPython's verdict (`cpython::syntax`), bound as `cpython_syntax_error`: a file
+/// core.rerail's `syntax_error(d, l, msg)` is CPython's verdict (`cpython::syntax`), bound as `cpython_syntax_error`: a file
 /// tree-sitter reads without an error node (an empty block) is rejected, as is an invalid target, with CPython's line and
 /// message; one only `compile` rejects (`return` outside a function) is not. A program that declares
 /// `syntax_error(d: number)` reads the tape's verdict, and both may be read side by side.

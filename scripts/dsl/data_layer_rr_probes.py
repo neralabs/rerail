@@ -7,7 +7,7 @@ usage: data_layer_rr_probes.py <engine> <ported dir> <main stem> <probes.json> <
 import json, os, re, subprocess, sys, pathlib, time, resource
 engine, ported, stem, probes, check, work = sys.argv[1:7]
 ported, work = pathlib.Path(ported), pathlib.Path(work)
-main = (ported / f"{stem}.rr").read_text()
+main = (ported / f"{stem}.rerail").read_text()
 pol = json.loads(next(l for l in main.splitlines() if l.startswith(".policy"))[len(".policy "):])
 code = {c["id"]: c.get("code") or c.get("id") for c in pol["clauses"]}
 for c in pol["clauses"]:
@@ -18,7 +18,7 @@ def with_vline(name, t):
     if "vline(" in t:
         return t
     t += "\n.decl vline(clause: symbol, path: symbol, l: number)\n.output vline\n"
-    if name == f"{stem}.rr":
+    if name == f"{stem}.rerail":
         t += "vline(c, p, l) :- violation(_, c, d, n), doc(d, p, _), line(n, l).\n"
     if (m := re.search(r"^\.decl finding\((\w+): symbol, \w+: symbol, \w+: node\)", t, re.M)):
         # The code is the `key` column (`finding(clause, key, n)`), or the first where it is the `issue`.
@@ -42,7 +42,7 @@ def with_options(t, options):
             lines[i] = ".policy " + json.dumps(j) + "\n"
     return "".join(lines)
 
-sources = {f.name: with_vline(f.name, f.read_text()) for f in ported.glob("*.rr")}
+sources = {f.name: with_vline(f.name, f.read_text()) for f in ported.glob("*.rerail")}
 events = [e for e in json.load(open(probes))["events"] if e["check"] == check]
 ok = bad = 0
 t0 = resource.getrusage(resource.RUSAGE_CHILDREN); w0 = time.time()

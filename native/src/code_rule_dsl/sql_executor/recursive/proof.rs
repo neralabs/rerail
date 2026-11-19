@@ -23,11 +23,9 @@ fn collect(block: &Select, keys: &BTreeMap<String, usize>, ancestors: &[(E, E)],
             left,
             right,
         } = e
-        {
-            if plain(left) && plain(right) {
+            && plain(left) && plain(right) {
                 equalities.push((left.as_ref().clone(), right.as_ref().clone()));
             }
-        }
     }
     for item in &block.from {
         if let Some(r) = item

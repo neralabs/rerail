@@ -75,9 +75,7 @@ impl<'tree> AnchorCursor<'tree> for TapeCursor<'tree> {
     }
 }
 
-pub trait AnchorNode<'tree>:
-    SgNode<'tree> + Copy
-{
+pub trait AnchorNode<'tree>: SgNode<'tree> + Copy {
     type Cursor: AnchorCursor<'tree, Node = Self>;
     fn cursor(self) -> Self::Cursor;
     fn child_count(self) -> usize;
@@ -103,8 +101,8 @@ impl<'tree> AnchorNode<'tree> for crate::code_rule_dsl::tape::TapeNode<'tree> {
     }
 }
 
-use rerail_store::probes::TextProbe;
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
+use rerail_store::probes::TextProbe;
 
 // cratify: `tests` is rerail-engine's (it mounts it)
 
@@ -597,10 +595,10 @@ impl AnchorPlan {
 /// The kinds whose value `reading` can know, as the grammar's symbol ids: those the decoder reads
 /// and, following bindings, the names it follows.
 fn value_kinds(reading: &super::Reading) -> BTreeSet<u16> {
-    let (values, names) = { let pack = language_pack::pack(reading.family); (
-        pack.value_value_kinds(),
-        pack.value_name_kinds(),
-    ) };
+    let (values, names) = {
+        let pack = language_pack::pack(reading.family);
+        (pack.value_value_kinds(), pack.value_name_kinds())
+    };
     let mut kinds = crate::code_rule_dsl::language::kind_ids(reading.language, values);
     if reading.follow {
         kinds.extend(crate::code_rule_dsl::language::kind_ids(

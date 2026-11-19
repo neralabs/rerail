@@ -199,5 +199,4 @@ pub(in crate::code_rule_dsl) fn compiled(matchers: &[(String, String, Vec<String
     crate::code_rule_dsl::facts::vtab::syntax::compile_matchers(matchers, policies)
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: its tests (`matchers/tests.rs`) are rerail-engine's, which mounts them: they run what this crate is below.

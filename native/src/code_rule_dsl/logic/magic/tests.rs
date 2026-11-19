@@ -3,7 +3,7 @@ use crate::code_rule_dsl::logic::front::prune;
 use crate::code_rule_dsl::logic::rr::parse;
 
 fn root() -> std::path::PathBuf {
-    std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/logic")
+    rerail_store::source_tree::native().join("src/code_rule_dsl/logic")
 }
 
 fn strings(items: &[String]) -> String {
@@ -61,14 +61,14 @@ fn t_programs_transform_like_t() {
     let mut failures = Vec::new();
     let renamed = regex::Regex::new(r"(^|[^A-Za-z0-9])glob(_[bf]+\b|\b)").unwrap();
     for name in ["calls", "calls_rust", "workload", "workload_demand", "workload_perdoc"] {
-        let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rr"))).unwrap();
+        let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rerail"))).unwrap();
         let p = prune(parse(&src).unwrap());
         for mode in ["demand", "adorn", "gate"] {
             let options = Options { gate: mode == "gate", ..Options::default() };
             let got = if mode == "demand" { magic_sets(p.clone(), &options) } else { magic_adorn(p.clone(), &options) };
             let got = golden_text(&prune(got.unwrap_or_else(|e| panic!("{name} {mode}: {e}"))));
             let expected = std::fs::read_to_string(root().join(format!("magic/golden/{name}.{mode}.txt"))).unwrap();
-            // `glob` is a `.rr` built-in, so the program's relation of that name reads as `glob_` (the goldens are
+            // `glob` is a `.rerail` built-in, so the program's relation of that name reads as `glob_` (the goldens are
             // copies, kept as written).
             let expected = renamed.replace_all(&expected, |c: &regex::Captures| format!("{}glob_{}", &c[1], &c[2])).into_owned();
             if got != expected {

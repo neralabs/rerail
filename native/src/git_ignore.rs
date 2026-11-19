@@ -33,8 +33,7 @@ impl GitIgnore {
     /// The exclude stack of the Git worktree around `root`; `None` when `root` is in no Git
     /// worktree (a plain folder or a bare repository), where nothing is ignored.
     pub fn open(root: &Path) -> std::result::Result<Option<Self>, String> {
-        let root = root
-            .canonicalize()
+        let root = dunce::canonicalize(root)
             .map_err(|error| format!("cannot resolve {}: {error}", root.display()))?;
         let repository = match opener::discover(&root) {
             Ok(repository) => repository,
@@ -44,8 +43,7 @@ impl GitIgnore {
         let Some(worktree) = repository.workdir() else {
             return Ok(None);
         };
-        let worktree = worktree
-            .canonicalize()
+        let worktree = dunce::canonicalize(worktree)
             .map_err(|error| format!("cannot resolve Git worktree: {error}"))?;
         let Ok(below) = root.strip_prefix(&worktree) else {
             return Ok(None);
@@ -241,7 +239,9 @@ pub mod tests {
     use std::path::PathBuf;
 
     fn git(directory: &Path, arguments: &[&str]) {
-        let output = std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+        let output = std::process::Command::new("git")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .arg("-C")
             .arg(directory)
             .args(arguments)
@@ -347,7 +347,7 @@ pub mod tests {
         );
         git(&root, &["init", "--initial-branch=main"]);
         std::fs::write(root.join(".git/info/exclude"), "# local\n\nlocal.py\n").unwrap();
-        let root = root.canonicalize().unwrap();
+        let root = dunce::canonicalize(root).unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         let source = |path: &str| Some(root.join(path).to_string_lossy().into_owned());
         let matched = |pattern: &str, path: &str, line: u32| GitIgnoreMatch {

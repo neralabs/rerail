@@ -1,4 +1,4 @@
-//! A `.rr` file's statements, read off its tape (decision 0062). The tape is what the parser makes
+//! A `.rerail` file's statements, read off its tape (decision 0062). The tape is what the parser makes
 //! (`syntax::Parser::taped`, decision 0061) and what the content store keeps; lowering reads the statements this module
 //! gives, so a rule file's program is a function of its stored tape.
 //!

@@ -114,9 +114,9 @@ fn a_gated_region_equals_the_interpreter() {
     }
 }
 
-/// `.rr`'s `\u` check (`h4`, the `\u{…}` forms, `u_ok`) is behind the gate of a `\u` in a
+/// `.rerail`'s `\u` check (`h4`, the `\u{…}` forms, `u_ok`) is behind the gate of a `\u` in a
 /// string: set in 0.02% of the corpus's blocks.
-/// The gate after a `back_fill`, as `.rr`'s `uesc` is (a string's fill comes after one): the
+/// The gate after a `back_fill`, as `.rerail`'s `uesc` is (a string's fill comes after one): the
 /// hex check, made from the bytes alone, must not be made in the first pass and stored.
 pub(super) const LATE: &str = "lexer t
 deprecated back_fill
