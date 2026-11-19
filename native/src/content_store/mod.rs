@@ -44,6 +44,7 @@ pub use postings::segment_positions;
 pub mod prefilter;
 pub use prefilter::TapePrefilter;
 mod private_files;
+pub use private_files::prepare_cache_directory;
 mod publication;
 mod read_cache;
 mod reclamation;
@@ -754,7 +755,7 @@ impl ContentStore {
     }
 
     fn open_with(path: &Path, models: bool) -> StoreResult<Self> {
-        // Created `0600` before SQLite opens it, in a `0700` folder, so the WAL SQLite creates beside it is private too.
+        // Create the database with mode 0600 before SQLite copies its mode to the WAL.
         private_files::prepare(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE

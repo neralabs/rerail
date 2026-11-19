@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
 import { mainContentStoreDirectory, type RerailBuild } from "./rerail-build.js";
+import { keepPrivate } from "../storage/private-files.js";
 
 /**
  * At most one main Rerail instance runs on a machine: the main daemon, which alone opens the machine-wide
@@ -75,6 +76,7 @@ function readHolder(directory: string): MainInstanceHolder | undefined {
 export function acquireMainInstance(build: MainRerailBuild, directory: string = mainContentStoreDirectory()): MainInstanceLease {
   if (held !== undefined) throw new Error(`This process is already the main Rerail instance (${held.directory})`);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
+  if (resolve(directory) === resolve(mainContentStoreDirectory())) keepPrivate(directory);
   const lock = loadNativeBinding().tryLockExclusive(join(directory, MAIN_INSTANCE_LOCK_FILE));
   if (lock === null) throw new MainInstanceConflictError(directory, readHolder(directory));
   const holder: MainInstanceHolder = {

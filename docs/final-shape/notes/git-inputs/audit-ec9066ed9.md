@@ -2,6 +2,12 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
+The repair goal covers the original cases and every open follow-up below. Windows runtime verification is a separate acceptance check for two cases.
+
+The headless regression for case 102 reproduced the permission change before the repair.
+After the repair, each scan reported the expected violation and published its scope. The existing parents kept modes `0755` and `1777`.
+Both database files had mode `0600`. The native tests also check the journal mode and repair a managed cache directory on reopen.
+
 ## Checks repeated at `e7e4bf393`
 
 The review still has 28 open items. That count excludes the two Windows runtime checks and the optional language features below.

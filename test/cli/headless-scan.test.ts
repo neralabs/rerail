@@ -161,6 +161,22 @@ Seen(@place("git",1), oid) :- git_revision(r, "HEAD", oid), git_revision(r, ":a.
     }
   });
 
+  it.skipIf(process.platform === "win32")("preserves the permissions of an existing parent of the selected content store", async () => {
+    const root = checkout();
+    for (const mode of [0o755, 0o1777]) {
+      const parent = join(root, String(mode)), store = join(parent, "scope.sqlite");
+      mkdirSync(parent);
+      chmodSync(parent, mode);
+      vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+      try {
+        const report = await scan(root, { revision: "HEAD", analysisScope: "permissions" });
+        expect(report).toMatchObject({ status: "completed", summary: { violations: 1 }, cache: { publication: "published" } });
+        expect(statSync(parent).mode & 0o7777).toBe(mode);
+        expect(statSync(store).mode & 0o7777).toBe(0o600);
+      } finally { vi.unstubAllEnvs(); }
+    }
+  }, 30_000);
+
   it("reports the original ref bytes when a packed branch has a replacement-character sibling", async () => {
     const root = checkout(), head = git(root, "rev-parse", "HEAD");
     git(root, "commit", "--allow-empty", "-qm", "other tip");

@@ -319,7 +319,7 @@ impl Observer {
         // The journal's cookies in a directory of their own: a stream watches it with its roots, and is told every
         // event in it. Beside the store, it was told every write of the store, its outputs and logs (2,596 events in
         // one warm batch's first ask, all of them replayed and dropped).
-        let cookies = path.map(cookie_dir).filter(|d| private_dir(d).is_ok());
+        let cookies = path.map(cookie_dir).filter(|d| super::prepare_cache_directory(d).is_ok());
         let stored_roots: Vec<PathBuf> = db
             .as_ref()
             .map(|k| k.meta.keys().filter(|k| k.starts_with("journal:")).filter_map(|k| k.splitn(3, ':').nth(2)).map(PathBuf::from).collect())
@@ -1659,15 +1659,6 @@ fn cursor_key(root: &Path, volume: [u8; 16]) -> String {
 }
 
 /// Where the observer of the store at `path` writes the journal's cookies: `<store>.cookies`, holding nothing else.
-/// A folder of the observer's, created private to the user (`0700`) where it is absent.
-fn private_dir(dir: &Path) -> std::io::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)
-}
-
 fn cookie_dir(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(".cookies");

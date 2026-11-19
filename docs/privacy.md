@@ -135,6 +135,10 @@ Rerail's files are private to your user: directories `0700`, files `0600`.
 This covers `~/.rerail/`, `~/.cache/rerail/`, the databases, daemon state, capability and log files, and ledgers.
 SQLite side files inherit the database's mode.
 
+If you supply a content store path, Rerail preserves the permissions of its existing parent directory.
+It creates missing directories with mode `0700` on Unix. The database and its journal files have mode `0600`.
+Rerail also limits access to the directories it manages for source bytes, derived facts, and file observations.
+
 On macOS and Linux, Rerail removes group and other access from these when it opens one your user owns, fixing old
 releases or loose umasks. Covered: home and cache folders, `rerail.sqlite*` (pre-update copies too),
 `content-v5.sqlite*` (the `.objects`, `.frames` and `.memo` folders are made private to you, and the `.files` database is created private), `harness.sqlite*`, `daemon.json`, `access-token`, `daemon.log`. It never follows symlinks or

@@ -2444,7 +2444,7 @@ fn default_store() -> &'static std::path::PathBuf {
 pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
     use std::hash::{Hash, Hasher};
     let dir = std::env::temp_dir().join(dir);
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = crate::content_store::prepare_cache_directory(&dir);
     let build = crate::code_rule_dsl::build_ids::engine();
     let build = &build[..build.len().min(16)];
     let day = std::time::Duration::from_secs(24 * 3600);
