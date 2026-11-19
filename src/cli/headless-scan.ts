@@ -5,15 +5,16 @@
  * home's configuration it opens that database as the daemon would, which applies this version's schema to it.)
  *
  * Which rules run:
- * - When the scan's tree declares its packs (`.rerail/packs.json`, in the working tree or at `--rules-ref`), exactly
- *   those packs, fetched or read for this scan (`scan-packs.ts`), and the tree's own rules, on a throwaway database:
- *   the Rerail home's attachments, settings and installed packs are not used, so every machine runs the same rules
- *   for the same commit. `--pack` is then refused.
+ * - When the scan's tree declares its packs (`.rerail/packs.json`, in the working tree or at `--rules-ref`) and no
+ *   `--pack` is given, exactly those packs, fetched or read for this scan (`scan-packs.ts`), and the tree's own rules,
+ *   on a throwaway database: the Rerail home's attachments, settings and installed packs are not used, so every
+ *   machine runs the same rules for the same commit.
  * - Otherwise the Rerail home's configuration for the checkout, when Rerail is started and set up in it there (packs
- *   attached, approvals, settings), and neither `--pack` nor `--rules-ref` is given.
+ *   attached, approvals, settings), the tree declares no packs, and neither `--pack` nor `--rules-ref` is given.
  * - Otherwise a throwaway database: the checkout's own `.rerail/rules/` (unapproved, so they run in Log), plus each
- *   `--pack` installed in the Rerail home. With `--rules-ref <ref>` the rules come from `.rerail/rules/` at that Git
- *   ref instead of the working tree, which the change under review cannot edit. Either way the approval policy is a
+ *   `--pack` installed in the Rerail home. `--pack` replaces the packs `.rerail/packs.json` declares, which is then not
+ *   read: a scan of experimental packs. With `--rules-ref <ref>` the rules come from `.rerail/rules/` at that Git ref
+ *   instead of the working tree, which the change under review cannot edit. Either way the approval policy is a
  *   session's: content no one approved in the Rerail home (`rerail rules approve`) runs in Log.
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -95,7 +96,7 @@ export interface ScanReport {
   paths: string[] | null;
   /** Null when the scan had something to scan and ran no audit, so no configuration's rules ran: `failures` says why. */
   rulesSource: { kind: "home" } | { kind: "worktree" } | { kind: "ref"; ref: string } | null;
-  /** The rule packs the scan ran, besides the tree's own rules: what `.rerail/packs.json` lists, else the home's. */
+  /** The rule packs the scan ran, besides the tree's own rules: what `.rerail/packs.json` lists, else the home's (its configuration or `--pack`). */
   packs: ScanPack[];
   status: "completed" | "failed";
   rules: ScanRule[];
@@ -633,10 +634,8 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const scanId = randomUUID();
   const root = scanRoot(options);
   const homeDatabase = options.databasePath ?? defaultRerailDatabasePath();
-  const declared = await declaredPacksOf(root, options.rulesRef);
-  if (declared !== undefined && options.packs.length > 0) {
-    throw new Error(`--pack: this repository lists its packs in ${declared.label}; add ${options.packs.join(", ")} there instead`);
-  }
+  // `--pack` replaces the declared packs: the file is not read, and the scan runs the home's installed version of each.
+  const declared = options.packs.length > 0 ? undefined : await declaredPacksOf(root, options.rulesRef);
   const packs = installedPackIds(options.packs);
   const home = openHomeDatabase(homeDatabase);
   const useHome = declared === undefined && homeIsScanConfiguration(options, home, root, packs);
