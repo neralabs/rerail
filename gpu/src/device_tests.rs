@@ -248,3 +248,39 @@ fn a_specialized_program_is_one_program_a_value() {
     assert!(got[0].0 == got[2].0 && got[0].0 != got[1].0, "one program a value, made once");
     assert!(crate::kernels::program("device_tests_specialized.ukl", SPECIALIZED).is_err(), "unspecialized, it does not compile");
 }
+
+/// A block's device buffer (`rerail_blocks::Block::device_buffer`) is the block's own pages, on every backend: a
+/// kernel's writes through it are in the block where it lies, at an allocation's offset, with no copy back
+/// (decision 0353), and the wrap is made once while the block does not outgrow it.
+#[test]
+fn a_blocks_device_buffer_is_its_pages() {
+    let Some(shared) = crate::shared::get() else { return };
+    let p = program("device_tests.ukl", KERNELS).unwrap_or_else(|e| panic!("{e}"));
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Args {
+        n: u32,
+        add: u32,
+    }
+    unsafe impl crate::Pod for Args {}
+    let block = rerail_blocks::alloc::host(rerail_blocks::block::kind::SCRATCH, 4 << 20);
+    const N: usize = 4096;
+    let at = block.alloc(N * 4, 4096);
+    // SAFETY: the allocation is this test's, `N` words at `at`.
+    let words = unsafe { std::slice::from_raw_parts_mut(block.base_ptr().add(at).cast::<u32>(), N) };
+    for (i, w) in words.iter_mut().enumerate() {
+        *w = i as u32;
+    }
+    let b = block.device_buffer(&shared.device).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(b.contents().cast::<u8>(), block.base_ptr(), "the buffer is over the block's pages");
+    let again = block.device_buffer(&shared.device).unwrap();
+    assert_eq!(again.contents(), b.contents(), "the wrap is kept");
+    let mut q = crate::device::ComputeQueue::new(&shared.queue);
+    launch(&q, p.function("d_in_place").unwrap())
+        .value("args", &Args { n: N as u32, add: 7 })
+        .buffer_at("w", &b, at as u64)
+        .run(&[(N / 256) as u64], &[256])
+        .unwrap_or_else(|e| panic!("{e}"));
+    q.flush().await_().unwrap();
+    assert!(words.iter().enumerate().all(|(i, &w)| w == 2 * i as u32 + 7), "the kernel wrote the block where it lies");
+}

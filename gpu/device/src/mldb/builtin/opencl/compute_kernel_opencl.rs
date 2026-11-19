@@ -39,6 +39,8 @@ const CL_DEVICE_NAME: ClUint = 0x102B;
 const CL_DEVICE_VERSION: ClUint = 0x102F;
 const CL_DEVICE_MAX_WORK_GROUP_SIZE: ClUint = 0x1004;
 const CL_DEVICE_HOST_UNIFIED_MEMORY: ClUint = 0x1035;
+const CL_DEVICE_MEM_BASE_ADDR_ALIGN: ClUint = 0x1019;
+const CL_BUFFER_CREATE_TYPE_REGION: ClUint = 0x1220;
 const CL_MEM_READ_WRITE: u64 = 1;
 const CL_MEM_USE_HOST_PTR: u64 = 1 << 3;
 const CL_QUEUE_PROFILING_ENABLE: u64 = 1 << 1;
@@ -60,6 +62,7 @@ struct Api {
     release_command_queue: unsafe extern "C" fn(Ptr) -> ClInt,
     create_buffer: unsafe extern "C" fn(Ptr, u64, usize, Ptr, *mut ClInt) -> Ptr,
     release_mem_object: unsafe extern "C" fn(Ptr) -> ClInt,
+    create_sub_buffer: unsafe extern "C" fn(Ptr, u64, ClUint, *const c_void, *mut ClInt) -> Ptr,
     create_program_with_source: unsafe extern "C" fn(Ptr, ClUint, *const *const c_char, *const usize, *mut ClInt) -> Ptr,
     build_program: unsafe extern "C" fn(Ptr, ClUint, *const Ptr, *const c_char, Ptr, Ptr) -> ClInt,
     get_program_build_info: unsafe extern "C" fn(Ptr, Ptr, ClUint, usize, Ptr, *mut usize) -> ClInt,
@@ -121,6 +124,7 @@ fn api() -> Result<&'static Api, String> {
             release_command_queue: f!("clReleaseCommandQueue"),
             create_buffer: f!("clCreateBuffer"),
             release_mem_object: f!("clReleaseMemObject"),
+            create_sub_buffer: f!("clCreateSubBuffer"),
             create_program_with_source: f!("clCreateProgramWithSource"),
             build_program: f!("clBuildProgram"),
             get_program_build_info: f!("clGetProgramBuildInfo"),
@@ -179,6 +183,8 @@ struct DeviceInner {
     context: Ptr,
     name: String,
     max_group: usize,
+    /// The alignment of a sub-buffer's origin, in bytes (`CL_DEVICE_MEM_BASE_ADDR_ALIGN`, given in bits).
+    base_align: u64,
 }
 
 unsafe impl Send for DeviceInner {}
@@ -224,7 +230,9 @@ impl ClDevice {
         let mut e = 0;
         let context = unsafe { (a.create_context)(std::ptr::null_mut(), 1, &device, std::ptr::null_mut(), std::ptr::null_mut(), &mut e) };
         check("clCreateContext", e)?;
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name, max_group }));
+        let ba = device_info_bytes(a, device, CL_DEVICE_MEM_BASE_ADDR_ALIGN);
+        let base_align = (u32::from_ne_bytes(ba[..4].try_into().unwrap()) as u64 / 8).max(1);
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, base_align }));
         d.reads_host_pages_in_place()?;
         Ok(d)
     }
@@ -287,6 +295,8 @@ struct Allocation {
     /// `None`: memory wrapped in place (`wrap_host_memory`), its owner's.
     layout: Option<std::alloc::Layout>,
     mem: Ptr,
+    /// A sub-buffer's buffer (`set_buffer_at`): kept while the region is.
+    _parent: Option<ClBuffer>,
 }
 
 unsafe impl Send for Allocation {}
@@ -341,7 +351,7 @@ pub fn alloc_uninitialized_array_sync<T>(device: &ClDevice, length: usize) -> Cl
         unsafe { std::alloc::dealloc(ptr, layout) };
         panic!("OpenCL: clCreateBuffer of {len} bytes failed ({e})");
     }
-    ClBuffer(Arc::new(Allocation { ptr, len: len as u64, layout: Some(layout), mem }))
+    ClBuffer(Arc::new(Allocation { ptr, len: len as u64, layout: Some(layout), mem, _parent: None }))
 }
 
 /// A buffer over `len` bytes of the host's memory at `ptr`, read in place (decision 0353; the device reads host
@@ -359,7 +369,7 @@ pub unsafe fn wrap_host_memory(device: &ClDevice, ptr: *mut u8, len: usize) -> R
     let mut e = 0;
     let mem = unsafe { (a.create_buffer)(device.0.context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, len, ptr.cast(), &mut e) };
     check("clCreateBuffer", e)?;
-    Ok(ClBuffer(Arc::new(Allocation { ptr, len: len as u64, layout: None, mem })))
+    Ok(ClBuffer(Arc::new(Allocation { ptr, len: len as u64, layout: None, mem, _parent: None })))
 }
 
 /// `transferToDeviceImmutable`: memory holding `data`.
@@ -870,6 +880,29 @@ impl ClBindContext<'_> {
 
     pub fn set_buffer(&mut self, arg_num: u64, buffer: &ClBuffer) {
         self.params[arg_num as usize] = Some(Param::Buffer(buffer.clone()));
+    }
+
+    /// The buffer from byte `offset` on: a sub-buffer of it (the same memory, `clCreateSubBuffer`), whose origin the
+    /// device's base alignment must divide.
+    pub fn set_buffer_at(&mut self, arg_num: u64, buffer: &ClBuffer, offset: u64) -> Result<(), String> {
+        if offset == 0 {
+            self.set_buffer(arg_num, buffer);
+            return Ok(());
+        }
+        let align = self.function.device.0.base_align;
+        if offset % align != 0 || offset >= buffer.length() {
+            return Err(format!("{}: argument {arg_num} at byte {offset} of a {}-byte buffer: OpenCL binds a region at a multiple of {align} bytes", self.function.name, buffer.length()));
+        }
+        let a = api()?;
+        let region = [offset as usize, (buffer.length() - offset) as usize];
+        let mut e = 0;
+        let mem = unsafe { (a.create_sub_buffer)(buffer.0.mem, CL_MEM_READ_WRITE, CL_BUFFER_CREATE_TYPE_REGION, region.as_ptr().cast(), &mut e) };
+        check("clCreateSubBuffer", e)?;
+        // SAFETY: inside the buffer, which the region keeps.
+        let ptr = unsafe { buffer.0.ptr.add(offset as usize) };
+        let sub = ClBuffer(Arc::new(Allocation { ptr, len: buffer.length() - offset, layout: None, mem, _parent: Some(buffer.clone()) }));
+        self.set_buffer(arg_num, &sub);
+        Ok(())
     }
 
     pub fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {

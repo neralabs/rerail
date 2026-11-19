@@ -438,6 +438,9 @@ pub enum ComputeKernelArgument<'a> {
 pub trait GridBindContext {
     fn set_primitive(&mut self, arg_num: u64, bytes: &[u8]);
     fn set_buffer(&mut self, arg_num: u64, buffer: &BufferRef);
+    /// `buffer` from byte `offset` on (a block's allocation, a slab's region): what the kernel's row reads at 0
+    /// (decision 0440 step B). The bytes are the buffer's, in place.
+    fn set_buffer_at(&mut self, arg_num: u64, buffer: &BufferRef, offset: u64) -> Result<(), String>;
     fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64);
     fn launch(&mut self, grid: &[u64], block: &[u64]) -> Result<(), String>;
     /// Lets the kernel read and write `buffer` through an address another buffer holds (`Buffer::device_address`):
@@ -743,6 +746,9 @@ impl GridBindContext for RecordingBindContext {
         self.primitives.push((arg_num, bytes.to_vec()));
     }
     fn set_buffer(&mut self, _arg_num: u64, _buffer: &BufferRef) {}
+    fn set_buffer_at(&mut self, _arg_num: u64, _buffer: &BufferRef, _offset: u64) -> Result<(), String> {
+        Ok(())
+    }
     fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {
         self.thread_groups.push((arg_num, n_bytes));
     }

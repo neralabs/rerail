@@ -469,6 +469,11 @@ impl MetalBindContext {
         self.encoder.set_buffer(arg_num, Some(buffer), 0);
     }
 
+    pub fn set_buffer_at(&mut self, arg_num: u64, buffer: &metal::BufferRef, offset: u64) -> Result<(), String> {
+        self.encoder.set_buffer(arg_num, Some(buffer), offset);
+        Ok(())
+    }
+
     pub fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {
         self.encoder.set_threadgroup_memory_length(arg_num, n_bytes);
     }

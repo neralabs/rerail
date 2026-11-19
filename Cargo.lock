@@ -3158,6 +3158,7 @@ dependencies = [
  "parking_lot",
  "rayon",
  "rerail-blocks",
+ "rerail-device",
  "rerail-forest",
  "rerail-gpu",
  "rerail-ukl",
@@ -3173,6 +3174,7 @@ dependencies = [
  "libc",
  "metal",
  "rayon",
+ "rerail-device",
  "rerail-ukl",
 ]
 
@@ -3253,6 +3255,17 @@ version = "0.1.0"
 dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-device"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "libc",
+ "metal",
+ "objc",
+ "rerail-ukl",
 ]
 
 [[package]]
@@ -3551,6 +3564,8 @@ dependencies = [
  "lz4-sys",
  "metal",
  "objc",
+ "rerail-blocks",
+ "rerail-device",
  "rerail-ukl",
 ]
 

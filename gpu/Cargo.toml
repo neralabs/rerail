@@ -7,10 +7,14 @@ description = "The GPU device layer (decision 0440): one interface over Metal (m
 
 [dependencies]
 libc = "0.2.189"
+# The device layer, below the preprocessor (re-exported).
+rerail-device = { path = "device" }
 # Kernels preprocessed in-process from UKL, with the UKL libraries carried in the binary (decision 0440 §4, §5).
 rerail-ukl = { path = "../native/crates/ukl" }
 
 [dev-dependencies]
+# A block's device buffer read and written in place by a kernel, on each backend (decision 0440 step B).
+rerail-blocks = { path = "../native/crates/blocks" }
 # The LZ4 block compressor the tapes' 16z pieces are made with: the library's decoder is tested on its blocks.
 lz4-sys = "=1.11.1"
 

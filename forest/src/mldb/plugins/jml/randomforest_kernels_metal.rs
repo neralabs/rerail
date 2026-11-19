@@ -59,6 +59,7 @@ pub const KERNELS: [&str; 16] = [
 pub fn library() -> Result<&'static ComputeFunctionLibrary, String> {
     static LIB: OnceLock<Result<ComputeFunctionLibrary, String>> = OnceLock::new();
     LIB.get_or_init(|| {
+        use rerail_gpu::Preprocessing;
         let shared = crate::gpu::shared::get().ok_or("no device")?;
         #[cfg(target_os = "macos")]
         let source = if shared.device.metal().is_some() { SOURCE.to_string() } else { ukl_source(shared.device.preprocess())? };

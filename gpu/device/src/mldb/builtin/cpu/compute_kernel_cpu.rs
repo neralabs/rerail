@@ -538,6 +538,12 @@ impl CpuBindContext<'_> {
         self.params[arg_num as usize] = vec![buffer.device_address()];
     }
 
+    pub fn set_buffer_at(&mut self, arg_num: u64, buffer: &CpuBuffer, offset: u64) -> Result<(), String> {
+        self.keep.push(buffer.clone());
+        self.params[arg_num as usize] = vec![buffer.device_address() + offset];
+        Ok(())
+    }
+
     pub fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {
         let at = self.shared.next_multiple_of(16);
         self.shared = at + n_bytes;

@@ -953,8 +953,25 @@ Apple's OpenCL, and on a GB10's CUDA and its CPU (aarch64 Linux):
   the counts, no stall in the queue.
 - **Specialization** (`program_with`; the label passes' function constant): a define a value, each value a
   program compiled once. A define is portable where a function constant is Metal's alone.
-Next in B: the process's device, buffer pool and blocks on `rerail-gpu`'s types (`rerail_blocks`'s `Backing`,
-`accel::gpu::shared`), and the kernel store.
+- **A bind at an offset** (`buffer_at`; most of the engine's binds are a block's allocation): Metal's offset,
+  the address plus the offset on CUDA and the CPU, and a sub-buffer on OpenCL (at its base alignment, else an
+  error).
+
+**B: the blocks and the pool on the device layer (2026-11-19).** The device layer is a crate of its own now,
+`rerail-device` (`gpu/device`: the backends' runtimes at their MLDB paths, `device`, the shared device), below the
+preprocessor; `rerail-gpu` re-exports it and keeps the preprocessing (`Preprocessing`), the kernels and the
+library. The blocks could not take the device layer's types while it sat above them (`rerail-gpu` reaches the
+preprocessor, whose lexer reaches the tape crate, then CLIF, then the blocks).
+- A block's device buffer is the device layer's, on every backend (`Block::device_buffer`, `Backing::buffer`, a
+  deferrable's wrap): its pages wrapped in place, made once and kept. `gpu_buffer` gives it as Metal's to the
+  kernels step C has not moved yet. A test (`a_blocks_device_buffer_is_its_pages`) has a kernel write a block's
+  allocation through it, and the host read the block where it lies, on Metal, the CPU, OpenCL and CUDA.
+- The pool (`accel::gpu::shared`) leases the device layer's buffers, made by it; `Shared::layer` is the process's
+  device in it. The Metal accessors stay for the kernels not yet moved.
+- Found on the way: on Linux, a blocks test read the process-wide count of zeroed bytes, which its neighbours
+  move; it reads its thread's count now (`zeroed_bytes_here`). The merge left `Tape16Z::pieces` unused: removed.
+Next in B: the kernel store, and the engine's Metal call sites onto `rerail-gpu`'s launches with their kernels in
+step C.
 
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's

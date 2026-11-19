@@ -29,7 +29,9 @@
 //! Everything here is safe to share between threads: Metal's device, queues and pipelines are, and the pool is
 //! behind a lock.
 
-use metal::{Buffer, BufferRef, CommandQueue, ComputePipelineState, Device, MTLResourceOptions};
+use metal::{Buffer, BufferRef, CommandQueue, ComputePipelineState, Device};
+/// The pool's buffers: the device layer's (decision 0440 step B), Metal's to the kernels not yet on it.
+type DeviceBuffer = rerail_device::device::Buffer;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -74,7 +76,7 @@ pub fn set_lease_hook(hook: fn(usize, usize)) {
     let _ = LEASE_HOOK.set(hook);
 }
 
-fn leased(b: &Buffer) {
+fn leased(b: &DeviceBuffer) {
     LIVE.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
     if let Some(hook) = LEASE_HOOK.get() {
         hook(b.contents() as usize, b.length() as usize);
@@ -94,6 +96,9 @@ pub fn held_bytes() -> (usize, usize) {
 
 /// The device and its one queue.
 pub struct Shared {
+    /// The process's device in the device layer (`rerail_gpu`): what the pool leases from and blocks wrap for.
+    pub layer: rerail_device::device::Device,
+    /// The same device as Metal's, for the engine's kernels not yet on the device layer (decision 0440 step C).
     pub device: Device,
     pub queue: CommandQueue,
     /// The host's page size (a column wrapped without a copy must be page-aligned).
@@ -115,7 +120,7 @@ pub fn get() -> Option<&'static Shared> {
                 let (device, queue): (Device, CommandQueue) = (one.device.metal()?.clone(), one.queue.metal()?.clone());
                 let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
                 let max_buffer = device.max_buffer_length();
-                Some(Shared { device, queue, page, max_buffer })
+                Some(Shared { layer: one.device.clone(), device, queue, page, max_buffer })
             })
         })
         .as_ref()
@@ -150,7 +155,7 @@ pub fn pipeline<E>(key: &str, make: impl FnOnce() -> Result<ComputePipelineState
 #[derive(Default)]
 struct Pool {
     /// Idle buffers by class, each with when it came back (a count), the oldest first.
-    idle: HashMap<usize, Vec<(u64, Buffer)>>,
+    idle: HashMap<usize, Vec<(u64, DeviceBuffer)>>,
     /// Bytes idle: all, and in slabs.
     held: usize,
     held_slabs: usize,
@@ -208,7 +213,7 @@ impl Pool {
         true
     }
 
-    fn take(&mut self, class: usize) -> Option<Buffer> {
+    fn take(&mut self, class: usize) -> Option<DeviceBuffer> {
         let b = self.idle.get_mut(&class).and_then(Vec::pop)?.1;
         self.held -= class;
         if class >= SLAB_MIN {
@@ -220,7 +225,7 @@ impl Pool {
 
 /// A shared buffer of the pool, returned to it when dropped.
 pub struct Pooled {
-    buffer: Option<Buffer>,
+    buffer: Option<DeviceBuffer>,
     /// Whether it goes back to the pool (a buffer past the largest class is made to size and released).
     keep: bool,
     /// Made for this lease (zero, never written), else recycled (another lease's bytes).
@@ -228,7 +233,13 @@ pub struct Pooled {
 }
 
 impl Pooled {
+    /// The lease's buffer as Metal's (the pool is Metal's while `get` is: the process's device is Metal).
     pub fn buffer(&self) -> &Buffer {
+        self.device_buffer().metal().expect("a pooled buffer is Metal's")
+    }
+
+    /// The lease's buffer in the device layer.
+    pub fn device_buffer(&self) -> &DeviceBuffer {
         self.buffer.as_ref().expect("a leased buffer")
     }
 
@@ -277,7 +288,7 @@ impl rerail_blocks::block::Backing for Pooled {
         self.length() as usize
     }
 
-    fn buffer(&self) -> Option<Buffer> {
+    fn buffer(&self) -> Option<DeviceBuffer> {
         self.buffer.clone()
     }
 }
@@ -353,7 +364,7 @@ fn lease_file(kind: u32, bytes: usize, path: &std::path::Path, for_device: bool)
         Some(old) => std::fs::rename(&old, path).is_err(),
         None => true,
     };
-    let device = if for_device { get().map(|s| s.device.as_ref()) } else { None };
+    let device = if for_device { get().map(|s| &s.layer) } else { None };
     let mut d = rerail_blocks::deferrable::Deferrable::create(path, kind, class, fresh, device).map_err(|e| format!("{}: {e}", path.display()))?;
     LIVE.fetch_add(class, std::sync::atomic::Ordering::Relaxed);
     d.on_release(move || {
@@ -434,7 +445,7 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
         if bytes as u64 > shared.max_buffer {
             return Err(format!("a buffer of {bytes} bytes is past the device's largest ({})", shared.max_buffer));
         }
-        let b = objc::rc::autoreleasepool(|| shared.device.new_buffer(bytes as u64, MTLResourceOptions::StorageModeShared));
+        let b = rerail_device::device::alloc_uninitialized_array_sync::<u8>(&shared.layer, bytes);
         leased(&b);
         return Ok(Pooled { buffer: Some(b), keep: false, fresh: true });
     }
@@ -448,7 +459,7 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
     // A new buffer: idle ones give way to it first, so the budget holds both.
     p.trim(class);
     drop(p);
-    let b = crate::score::phase("new buffer", || objc::rc::autoreleasepool(|| shared.device.new_buffer(class as u64, MTLResourceOptions::StorageModeShared)));
+    let b = crate::score::phase("new buffer", || rerail_device::device::alloc_uninitialized_array_sync::<u8>(&shared.layer, class));
     leased(&b);
     Ok(Pooled { buffer: Some(b), keep: true, fresh: true })
 }
@@ -756,7 +767,7 @@ mod tests {
         cmd.wait_until_completed();
         let t = std::time::Instant::now();
         loop {
-            let back = pool().lock().unwrap().idle.get(&class(27 << 20)).is_some_and(|v| v.iter().any(|(_, b)| b.gpu_address() == addr));
+            let back = pool().lock().unwrap().idle.get(&class(27 << 20)).is_some_and(|v| v.iter().any(|(_, b)| b.device_address() == Some(addr)));
             if back {
                 break;
             }

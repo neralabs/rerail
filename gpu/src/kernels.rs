@@ -5,7 +5,7 @@
 
 use crate::compute_kernel_grid::GridBindContext;
 use crate::device::{alloc_uninitialized_array_sync, transfer_to_host_sync, Buffer, BufferRef, ComputeFunction, ComputeFunctionLibrary, ComputeQueue};
-use crate::Pod;
+use crate::{Pod, Preprocessing};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -96,6 +96,16 @@ impl<B: GridBindContext> Launch<'_, B> {
     pub fn buffer(mut self, name: &str, buffer: &BufferRef) -> Self {
         if let Some(i) = self.index(name) {
             self.ctx.set_buffer(i, buffer);
+        }
+        self
+    }
+
+    /// A buffer row bound from byte `offset` of `buffer` (a block's allocation): the row's index 0 is that byte.
+    pub fn buffer_at(mut self, name: &str, buffer: &BufferRef, offset: u64) -> Self {
+        if let Some(i) = self.index(name)
+            && let Err(e) = self.ctx.set_buffer_at(i, buffer, offset)
+        {
+            self.error.get_or_insert(e);
         }
         self
     }

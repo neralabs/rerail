@@ -12,6 +12,11 @@ rayon = "=1.12.0"
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33.0"
 
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+# A block's device buffer (`Block::device_buffer`, `Backing::buffer`): the device layer's, on every backend
+# (decision 0440 step B).
+rerail-device = { path = "../../../gpu/device" }
+
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # The deallocator of a no-copy Metal buffer (examples/deferrable).
 block = "0.1.6"

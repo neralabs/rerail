@@ -141,31 +141,14 @@ impl Device {
         matches!(self, Device::Cpu(_))
     }
 
-    /// What `rerail_ukl` preprocesses this device's kernels for.
-    pub fn ukl_backend(&self) -> rerail_ukl::Backend {
+    /// The defines a kernel's preprocessing for this device takes (the CPU's knobs, `compute_kernel_cpu::defines`;
+    /// OpenCL's width and largest threadgroup): `rerail_gpu::Preprocessing`.
+    pub fn compile_defines(&self) -> Vec<(&'static str, String)> {
         match self {
-            Device::Cpu(_) => rerail_ukl::Backend::Cpu,
-            Device::OpenCl(_) => rerail_ukl::Backend::OpenCl,
-            #[cfg(target_os = "macos")]
-            Device::Native(_) => rerail_ukl::Backend::Metal { version: 310 },
-            #[cfg(target_os = "linux")]
-            Device::Native(d) => rerail_ukl::Backend::Cuda { sm: d.sm },
-        }
-    }
-
-    /// A preprocessing of UKL for this device: its backend, and the defines its compile takes (the CPU's knobs,
-    /// `compute_kernel_cpu::defines`; OpenCL's width and largest threadgroup).
-    pub fn preprocess(&self) -> rerail_ukl::Preprocess {
-        let mut p = rerail_ukl::Preprocess::new(self.ukl_backend());
-        let defines = match self {
             Device::Cpu(_) => cpu::defines(),
             Device::OpenCl(d) => d.defines(),
             Device::Native(_) => Vec::new(),
-        };
-        for (name, value) in defines {
-            p = p.define(name, Some(&value));
         }
-        p
     }
 
     pub fn new_shared_event(&self) -> SharedEvent {
@@ -467,6 +450,18 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
             (BindContext::Native(c), Buffer::Native(b)) => c.set_buffer(arg_num, b),
             (BindContext::Cpu(c), Buffer::Cpu(b)) => c.set_buffer(arg_num, b),
             (BindContext::OpenCl(c), Buffer::OpenCl(b)) => c.set_buffer(arg_num, b),
+            _ => other(),
+        }
+    }
+
+    fn set_buffer_at(&mut self, arg_num: u64, buffer: &BufferRef, offset: u64) -> Result<(), String> {
+        if offset > buffer.length() {
+            return Err(format!("argument {arg_num} bound at byte {offset} of a {}-byte buffer", buffer.length()));
+        }
+        match (self, buffer) {
+            (BindContext::Native(c), Buffer::Native(b)) => c.set_buffer_at(arg_num, b, offset),
+            (BindContext::Cpu(c), Buffer::Cpu(b)) => c.set_buffer_at(arg_num, b, offset),
+            (BindContext::OpenCl(c), Buffer::OpenCl(b)) => c.set_buffer_at(arg_num, b, offset),
             _ => other(),
         }
     }
