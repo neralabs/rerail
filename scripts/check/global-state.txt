@@ -92,18 +92,15 @@ native/src/code_rule_dsl/facts/vtab.rs::CLOSES	stays	a generation counter: appen
 native/src/code_rule_dsl/facts/vtab.rs::FORGET	stays	code registered at load
 native/src/code_rule_dsl/facts/vtab.rs::NODE_TABLES	stays	code registered at load
 native/src/code_rule_dsl/facts/vtab/demand.rs::NEXT	stays	an id counter: append-only
-native/src/code_rule_dsl/facts/vtab/schema/cache.rs::SCHEMAS	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/facts/vtab/syntax.rs::AST_COMPILER	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/vtab/syntax.rs::BATCHES	stays	a test's record of its batches
 native/src/code_rule_dsl/facts/vtab/syntax.rs::FAMILIES	stays	code registered at load
 native/src/code_rule_dsl/facts/vtab/syntax.rs::PRODUCERS	stays	code registered at load
 native/src/code_rule_dsl/facts/vtab/syntax.rs::SEMANTIC	stays	code a crate above registers at load
-native/src/code_rule_dsl/facts/vtab/syntax/ast_wave.rs::LOWERED	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs::DIALECT_FACTS	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/vtab/syntax/py_families.rs::STRINGS	stays	computed once from the engine's constants
 native/src/code_rule_dsl/fixtures.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/fixtures.rs::SWEPT	stays	a test fixture's sweep, once
-native/src/code_rule_dsl/functors.rs::REGEXES	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/import_target/mod.rs::FALLBACK	stays	computed once from the engine's constants
 native/src/code_rule_dsl/import_target/resolver.rs::INVALID_OR_EMPTY_SEGMENT	stays	a regex of a literal
 native/src/code_rule_dsl/import_target/resolver.rs::INVALID_SEGMENT	stays	a regex of a literal
@@ -133,17 +130,11 @@ native/src/code_rule_dsl/logic/native/setfix.rs::SYMS	shared	shared by design: o
 native/src/code_rule_dsl/logic/native/setfix/device.rs::TICKETS	stays	a ticket counter: append-only
 native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counter: append-only, unique across threads
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
-native/src/code_rule_dsl/logic/plan.rs::KEPT	shared	program analyses kept across a session's runs: the session's or the shared object's (batch 5)
 native/src/code_rule_dsl/logic/plan.rs::RUNS	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid (RERAIL_REL_ROWS's dumps)
-native/src/code_rule_dsl/logic/plan/choices.rs::KEPT	shared	a cache (decision 0104 moves it to facts, in the shared store)
-native/src/code_rule_dsl/logic/plan/corpus.rs::CLOSING	machine	the connections the machine closes beside runs
-native/src/code_rule_dsl/logic/plan/corpus.rs::COMBINED	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/plan/corpus.rs::CROSS_FILE	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/plan/corpus.rs::OFF	stays	a hook registered once
 native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	stays	the default store's path, from the process's working directory (itself the process's), or a test process's tape cache
-native/src/code_rule_dsl/logic/plan/corpus.rs::PREPARED	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/plan/corpus.rs::RUNS_STARTED	stays	an id counter: append-only
-native/src/code_rule_dsl/logic/plan/corpus/phase0.rs::KEPT	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/plan/corpus/phase0.rs::RUNS	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid
 native/src/code_rule_dsl/logic/plan/corpus/session.rs::GENERATION	stays	an id counter: append-only
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::CHANGED	stays	guards the process's environment variables, which the OS keeps per process (a test's switches)
@@ -175,20 +166,14 @@ native/src/code_rule_dsl/logic/profile/memory.rs::START	stays	the process's foot
 native/src/code_rule_dsl/logic/profile/memory.rs::STARTED	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
 native/src/code_rule_dsl/logic/profile/roofline.rs::ROOFS	shared	the machine's measured roofs: a model of the machine, from the shared object
 native/src/code_rule_dsl/logic/rr.rs::CORE	stays	computed once from the engine's own files
-native/src/code_rule_dsl/logic/rr.rs::LIBRARIES	shared	a cache (decision 0104 moves it to facts, in the shared store)
-native/src/code_rule_dsl/logic/rr.rs::PARSED	shared	a cache (decision 0104 moves it to facts, in the shared store)
-native/src/code_rule_dsl/logic/rr.rs::PROGRAMS	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/rr.rs::SHAPE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr/images.rs::SHIPPED	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr/lower.rs::ALL	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/rr/lower.rs::WORLD	stays	a key, holding nothing
 native/src/code_rule_dsl/logic/rr/lower/core.rs::DECLS	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/strings.rs::FUNCTORS	stays	code a crate above registers at load
-native/src/code_rule_dsl/logic/strings.rs::GROUP_REGEXES	shared	a cache (decision 0104 moves it to facts, in the shared store)
-native/src/code_rule_dsl/logic/strings.rs::MATCHERS	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/strings/functions.rs::PY_REPR	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/strings/functions.rs::TO_PRECISION	stays	code a crate above registers at load
-native/src/code_rule_dsl/logic/strings/git.rs::STATE	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/matcher/d_anchors/sql/capture.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/matcher/d_anchors/sql/graph.rs::TOKENS	stays	a regex of a literal
 native/src/code_rule_dsl/matcher/d_anchors/sql/lower/lifetime.rs::IDENTIFIER	stays	a regex of a literal
@@ -196,7 +181,6 @@ native/src/code_rule_dsl/matcher/d_anchors/sql/lower/lifetime.rs::WRITE	stays	a 
 native/src/code_rule_dsl/matcher/d_anchors/sql/lower/render.rs::IDENTIFIER	stays	a regex of a literal
 native/src/code_rule_dsl/matcher/d_anchors/sql/lower/waves.rs::IDENTIFIER	stays	a regex of a literal
 native/src/code_rule_dsl/matcher/format_args.rs::PREPARERS	stays	code registered at load
-native/src/code_rule_dsl/matcher/p_anchors.rs::PLANS	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/matcher/p_anchors/sql/capture.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/matcher/p_anchors/sql/graph.rs::TOKENS	stays	a regex of a literal
 native/src/code_rule_dsl/matcher/p_anchors/sql/lower/lifetime.rs::IDENTIFIER	stays	a regex of a literal
@@ -206,7 +190,6 @@ native/src/code_rule_dsl/matcher/p_anchors/sql/lower/waves.rs::IDENTIFIER	stays	
 native/src/code_rule_dsl/matcher/term.rs::TERMS	stays	code registered at load
 native/src/code_rule_dsl/matcher/transform.rs::NUMBER_TEXT	stays	code a crate above registers at load
 native/src/code_rule_dsl/matcher/value.rs::NEXT_READING_ID	stays	an id counter: append-only
-native/src/code_rule_dsl/module_graph.rs::DISK_SUMMARIES	shared	a cache of files' summaries by path: the caller's
 native/src/code_rule_dsl/module_graph.rs::SERVER_ENTRY	stays	a regex of a literal
 native/src/code_rule_dsl/npm_ignore/mod.rs::BLANK	stays	a regex of a literal
 native/src/code_rule_dsl/npm_ignore/mod.rs::DOUBLE_BACKSLASH	stays	a regex of a literal
@@ -229,8 +212,6 @@ native/src/code_rule_dsl/npm_ignore/mod.rs::TWO_GLOBSTARS	stays	a regex of a lit
 native/src/code_rule_dsl/npm_ignore/mod.rs::UNESCAPE_METACHARACTER	stays	a regex of a literal
 native/src/code_rule_dsl/npm_ignore/mod.rs::WILDCARDS	stays	a regex of a literal
 native/src/code_rule_dsl/package_manifest.rs::DEFAULT_NODE_RANGE	stays	computed once from the engine's constants
-native/src/code_rule_dsl/package_manifest.rs::NODE_SUBSETS	shared	a cache (decision 0104 moves it to facts, in the shared store)
-native/src/code_rule_dsl/prefilter/gates.rs::PLANS	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/prefilter/graph.rs::TOKENS	stays	a regex of a literal
 native/src/code_rule_dsl/prefilter/lab/capture.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/prefilter/lower/lifetime.rs::IDENTIFIER	stays	a regex of a literal
@@ -245,7 +226,6 @@ native/src/code_rule_dsl/profile/sql.rs::SERIAL	stays	an id counter: append-only
 native/src/code_rule_dsl/profile/sql/coverage.rs::WRITE	stays	a lock on a file the profile writes, holding nothing
 native/src/code_rule_dsl/profile/sql/snapshot.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/residency/admission/relational/ast_stage.rs::PRODUCER	stays	code a crate above registers at load
-native/src/code_rule_dsl/residency/admission/relational/schema/cache.rs::SCHEMAS	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/resolution.rs::RESOLUTIONS	stays	code registered at load
 native/src/code_rule_dsl/rule_api.rs::FRONTIER_AUDIT	stays	code a crate above registers at load
 native/src/code_rule_dsl/scope/ecma.rs::SCRIPTS	stays	computed once from the engine's own files
@@ -256,7 +236,6 @@ native/src/code_rule_dsl/scope/php_names.rs::BUILTINS	stays	computed once from t
 native/src/code_rule_dsl/scope/python.rs::PYTHON	stays	computed once from the engine's own files
 native/src/code_rule_dsl/semver/mod.rs::MINIMUM_VERSION	stays	computed once from the engine's constants
 native/src/code_rule_dsl/semver/mod.rs::REGEXES	stays	computed once from the engine's constants
-native/src/code_rule_dsl/slice/memo.rs::HELD	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/sql_executor/documents.rs::SNAPSHOT_FILES	stays	code registered at load
 native/src/code_rule_dsl/sql_executor/work_graph.rs::NEXT_GRAPH	stays	an id counter: append-only
 native/src/code_rule_dsl/suppress/kinds.rs::KINDS	stays	code registered at load
@@ -290,50 +269,29 @@ native/src/code_rule_dsl/tape/token_census.rs::BY_DIALECT	stays	computed once fr
 native/src/code_rule_dsl/tape/tokens.rs::BY_DIALECT	stays	computed once from the engine's own files
 native/src/code_rule_dsl/tape/tokens.rs::KEPT	stays	computed once from the engine's own files
 native/src/code_rule_dsl/tape/vue_lean.rs::IDS	stays	computed once from the engine's own files
-native/src/code_rule_dsl/text.rs::LOWERED	shared	a cache (decision 0104 moves it to facts, in the shared store)
-native/src/code_rule_dsl/text.rs::NAMES	shared	a cache (decision 0104 moves it to facts, in the shared store)
-native/src/code_rule_dsl/text/scan.rs::ALONE	shared	a cache (decision 0104 moves it to facts, in the shared store)
-native/src/code_rule_dsl/text/table.rs::MADE	shared	a cache (decision 0104 moves it to facts, in the shared store)
-native/src/code_rule_dsl/text/table.rs::TABLES	shared	a cache (decision 0104 moves it to facts, in the shared store)
-native/src/code_rule_dsl/text/vocabulary.rs::KEPT	shared	a cache (decision 0104 moves it to facts, in the shared store)
-native/src/code_rule_dsl/transducer/packed/compilation.rs::REQUESTS	shared	the compile queue's requests, by callers' programs
+native/src/code_rule_dsl/text.rs::NAMES	stays	counter names leaked once each (`&'static str`), from the engine's own text productions: an append-only interner of the engine's names
 native/src/code_rule_dsl/transducer/packed/compile/matcher.rs::NAMES	shared	an interner (names are visible to every caller holding it)
 native/src/code_rule_dsl/transducer/packed/device.rs::MATCHER	stays	code a crate above registers at load
 native/src/code_rule_dsl/transducer/packed/json_parser.rs::PARSER	stays	computed once from the engine's own files
 native/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::DOM	stays	code registered at load
 native/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::KINDS	stays	computed once from the engine's own files
 native/src/code_rule_dsl/transducer/packed/metal_join.rs::SOURCE	stays	computed once from the engine's own source
-native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::PATTERN_PIPELINES	shared	the device's pipelines of callers' clauses, by source
-native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::PIPELINES	machine	the device's compiled pipelines
 native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::SOURCE	stays	computed once from the engine's own source
-native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::STARTED	machine	the device's lanes, started once
 native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::TAPE_VIEW	stays	computed once from the engine's own source
-native/src/code_rule_dsl/transducer/packed/metal_lattice.rs::PIPELINE	machine	the device's compiled pipelines
-native/src/code_rule_dsl/transducer/packed/metal_nearest.rs::PIPELINE	machine	the device's compiled pipelines
-native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::INTERPRETER	machine	the device's compiled pipelines
-native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::JIT_CACHE	shared	compiled callers' programs, by source: the caller's
-native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::METAL_WORKSPACE_POOL	machine	the device's workspace pool
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::RESIDENT_PREFIX	stays	computed once from the engine's own source
-native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::SWEEP	machine	the device's compiled pipelines
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::TAPE_PREFIX	stays	computed once from the engine's own source
-native/src/code_rule_dsl/transducer/packed/metal_set_steps.rs::PIPELINES	machine	the device's compiled pipelines
-native/src/code_rule_dsl/transducer/packed/native_cpu.rs::CPU_JIT_CACHE	shared	compiled callers' programs, by source: the caller's
 native/src/code_rule_dsl/typing/rounds.rs::BIGS	shared	an interner (big integers' ids)
 native/src/code_rule_dsl/value/names.rs::TABLE	stays	computed once from the engine's own files
-native/src/code_rule_dsl/waves/matches.rs::WAVE_PLANS	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/waves/owner/database.rs::SETUP	stays	code registered at load
 native/src/code_rule_dsl/waves/relational/pipeline.rs::PURE	stays	a regex of a literal
 native/src/code_rule_dsl/waves/relational/pipeline/readers.rs::IDENTIFIER	stays	a regex of a literal
-native/src/code_rule_dsl/waves/relational/schema/cache.rs::SCHEMAS	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/waves/relational/shared/capture.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/workspace/api.rs::SLOT	machine	the machine's one CPU slot for workspace work
 native/src/code_rule_dsl/workspace/api.rs::WORKSPACE_INSTANCES	stays	an id counter: append-only
-native/src/code_rule_dsl/workspace/calls_state.rs::SHARED_SUMMARIES	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/workspace/calls_state.rs::SUMMARIES_EXTRACTED	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/code_rule_dsl/workspace/ingest.rs::PACKAGE_CONTEXT_PATH_VISITS	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/code_rule_dsl/workspace/ingest.rs::PROJECT	stays	code a crate above registers at load
 native/src/code_rule_dsl/workspace/ingest.rs::REPOSITORY_CONTEXT	stays	code registered at load
-native/src/code_rule_dsl/workspace/persisted.rs::CATALOGS	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/workspace/storage.rs::CONTENT_STORES	shared	shared by design: one per store file
 native/src/content_store/atoms.rs::CANONICAL	shared	shared by design: one per store file
 native/src/content_store/atoms.rs::GIVEN	stays	a test's counter

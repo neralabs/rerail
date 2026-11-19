@@ -24,7 +24,7 @@
             remember(key, Chosen { version: Some(super::super::body::Placed::of_program(&rewritten).unwrap()), inlined: vec!["e".into()], demanded: vec![], nodes: 1000.0 });
         }
         // Another process: nothing kept in memory, the store's entry read back.
-        kept().lock().unwrap().clear();
+        kept().0.lock().unwrap().clear();
         let store = ContentStore::open(&db).unwrap();
         // A new store's first collection sweeps the retired corpus memo schemas: never these entries (the choices
         // were schema 3, one of them, O-kept-strata-flake).

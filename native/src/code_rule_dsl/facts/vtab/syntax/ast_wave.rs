@@ -7,7 +7,8 @@ use std::sync::Mutex;
 
 /// The process's lowered matchers, by their text and their base policy's: lowered once.
 type Lowered = Result<(Arc<crate::code_rule_dsl::transducer::packed::LoweredMatcher>, Vec<crate::code_rule_dsl::matcher::DocumentGate>, Arc<crate::code_rule_dsl::waves::policies::Captor>), String>;
-static LOWERED: std::sync::LazyLock<Mutex<HashMap<(String, String), Lowered>>> = std::sync::LazyLock::new(Default::default);
+#[derive(Default)]
+struct LoweredWaves(Mutex<HashMap<(String, String), Lowered>>);
 
 /// The engine's compiler of `ast` matchers (`waves::policies::lower_matcher`), registered at load.
 pub(crate) struct Compiler;
@@ -28,7 +29,8 @@ fn compiled(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::
         .map(|(rel, text, captures)| {
             let key = (text.clone(), base_text.clone());
             let got = {
-                let mut kept = LOWERED.lock().unwrap_or_else(|p| p.into_inner());
+                let held_ = crate::code_rule_dsl::logic::profile::shared::<LoweredWaves>();
+                let mut kept = held_.0.lock().unwrap_or_else(|p| p.into_inner());
                 kept.entry(key)
                     .or_insert_with(|| crate::code_rule_dsl::waves::policies::lower_matcher(text, base).map(|(m, g, c)| (Arc::new(m), g, Arc::new(c))))
                     .clone()

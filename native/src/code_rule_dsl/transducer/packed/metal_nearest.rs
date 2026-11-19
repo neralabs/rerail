@@ -47,8 +47,10 @@ impl Held {
 }
 
 fn pipeline() -> Result<metal::ComputePipelineState, Error> {
-    static PIPELINE: std::sync::Mutex<Option<metal::ComputePipelineState>> = std::sync::Mutex::new(None);
-    let mut cached = PIPELINE.lock().map_err(|_| Error::BackendFailure)?;
+    #[derive(Default)]
+    struct NearestPipeline(std::sync::Mutex<Option<metal::ComputePipelineState>>);
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<NearestPipeline>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipeline) = &*cached {
         return Ok(pipeline.clone());
     }

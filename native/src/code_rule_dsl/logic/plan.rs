@@ -4944,9 +4944,11 @@ fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAn
     type Kept = Vec<(u128, std::sync::Arc<super::analysis::ProgramAnalysis>)>;
     /// The programs analysed last, newest at the end: a few, as each holds a result per rule.
     const KEEP: usize = 4;
-    static KEPT: std::sync::Mutex<Kept> = std::sync::Mutex::new(Vec::new());
+    #[derive(Default)]
+    struct KeptAnalyses(std::sync::Mutex<Kept>);
     let key = program_digest(prog);
-    let mut kept = KEPT.lock().unwrap();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<KeptAnalyses>();
+    let mut kept = held_.0.lock().unwrap();
     if let Some(at) = kept.iter().position(|(k, _)| *k == key) {
         let hit = kept.remove(at);
         let analysis = std::sync::Arc::clone(&hit.1);
@@ -4957,7 +4959,8 @@ fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAn
     drop(kept);
     super::profile::decision("program analysis", || "analysed".into());
     let analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(prog));
-    let mut kept = KEPT.lock().unwrap();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<KeptAnalyses>();
+    let mut kept = held_.0.lock().unwrap();
     if kept.len() >= KEEP {
         kept.remove(0);
     }

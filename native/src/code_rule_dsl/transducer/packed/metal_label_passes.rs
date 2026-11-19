@@ -997,11 +997,16 @@ const SEGMENT_BYTES: usize = 64 << 20;
 /// a job on the pool, once a process: each is compiled from source, 0.6 s together, and a pass that
 /// needs one before it is ready waits for the rest of its compile (they are cached behind locks).
 pub(in crate::code_rule_dsl) fn warm() {
-    static STARTED: std::sync::Once = std::sync::Once::new();
-    STARTED.call_once(|| {
+    // Once a machine (decision 0442): its pipelines are the machine's.
+    #[derive(Default)]
+    struct Warmed(std::sync::Once);
+    crate::code_rule_dsl::logic::profile::machine::<Warmed>().0.call_once(|| {
+        // The job compiles on this thread's machine: a pool thread holds no run.
+        let shared = crate::code_rule_dsl::logic::profile::shared_here();
         // A panic leaves the kernels to be compiled where they are needed (a job's panic would end
         // the process).
-        rayon::spawn(|| rerail_accel::exec::as_job("the label kernels' warm-up", || {
+        rayon::spawn(move || rerail_accel::exec::as_job("the label kernels' warm-up", || {
+            let _in_run = crate::code_rule_dsl::logic::profile::within(shared);
             let _ = std::panic::catch_unwind(|| {
                 // The set program's kernels first: it runs first in a wave (its candidates). The shared
                 // device is not opened here: on S7 a wave waiting on this job's open waited longer (to
@@ -1020,9 +1025,11 @@ pub(in crate::code_rule_dsl) fn warm() {
 }
 
 /// The label kernels, compiled once per tape format (until the residency's drop).
-static PIPELINES: LazyLock<Mutex<HashMap<u32, Vec<ComputePipelineState>>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct LabelPipelines(Mutex<HashMap<u32, Vec<ComputePipelineState>>>);
 /// The clauses' pattern kernels, by source and tape format (until the residency's drop).
-static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<(String, u32), ComputePipelineState>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct PatternPipelines(Mutex<HashMap<(String, u32), ComputePipelineState>>);
 
 /// A pipeline of a source over [`TAPE_VIEW`] for a batch of tapes in `format` (0: mixed).
 fn pipeline_of(source: &str, name: &str, format: u32) -> Result<ComputePipelineState, Error> {
@@ -1031,16 +1038,19 @@ fn pipeline_of(source: &str, name: &str, format: u32) -> Result<ComputePipelineS
 
 /// Releases the compiled label and pattern kernels (the residency's drop).
 pub(in crate::code_rule_dsl) fn drop_pipelines() {
-    if let Ok(mut pipelines) = PIPELINES.lock() {
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<LabelPipelines>();
+    if let Ok(mut pipelines) = held_.0.lock() {
         pipelines.clear();
     }
-    if let Ok(mut pipelines) = PATTERN_PIPELINES.lock() {
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<PatternPipelines>();
+    if let Ok(mut pipelines) = held_.0.lock() {
         pipelines.clear();
     }
 }
 
 fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
-    let mut cached = PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<LabelPipelines>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipelines) = cached.get(&format) {
         return Ok(pipelines.clone());
     }
@@ -1086,7 +1096,8 @@ fn pattern_pipeline(patterns: &[&PackedPattern], first: usize, format: u32) -> R
         source.hash(&mut hasher);
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{:016x}.metal", hasher.finish())), &source);
     }
-    let mut cached = PATTERN_PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<PatternPipelines>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     let key = (source, format);
     if let Some(pipeline) = cached.get(&key) {
         return Ok((pipeline.clone(), names));

@@ -533,7 +533,8 @@ impl Library {
 pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::ContentStore>) -> Result<std::sync::Arc<Library>, Error> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
-    static LIBRARIES: OnceLock<Mutex<HashMap<Vec<(PathBuf, [u8; 32])>, Arc<Library>>>> = OnceLock::new();
+    #[derive(Default)]
+    struct Libraries(Mutex<HashMap<Vec<(PathBuf, [u8; 32])>, Arc<Library>>>);
     let mut files = Vec::new();
     let mut key = Vec::new();
     for path in paths {
@@ -541,7 +542,8 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
         key.push((path.clone(), file.sha256.unwrap_or_default()));
         files.push((path.clone(), statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect()));
     }
-    let cache = LIBRARIES.get_or_init(Default::default);
+    let cache_held = crate::code_rule_dsl::logic::profile::shared::<Libraries>();
+    let cache = &cache_held.0;
     if let Some(library) = cache.lock().expect("the lowered libraries").get(&key) {
         crate::code_rule_dsl::prof::count("rr.library_reused", 1);
         return Ok(Arc::clone(library));
@@ -1541,9 +1543,11 @@ const ENGINE_FILES: [&str; 1] = ["components.rr"];
 pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>> = OnceLock::new();
+    #[derive(Default)]
+    struct Programs(Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>);
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
-    let cache = PROGRAMS.get_or_init(Default::default);
+    let cache_held = crate::code_rule_dsl::logic::profile::shared::<Programs>();
+    let cache = &cache_held.0;
     if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
         && files.iter().all(|file| LibraryFile::now(&file.path) == *file)
     {
@@ -1939,8 +1943,10 @@ fn read_shared(path: &Path) -> Result<(std::sync::Arc<Vec<syntax::Statement>>, L
     // Each file's statements, kept for the process by its path and bytes' digest: programs that include one library
     // (the Python pack's files) parse it once, not once per program. Phase 0's observer gives the digest by a `stat`
     // while the file is unchanged, so a kept file is not read again. Held shared: a reader copies what it keeps.
-    static PARSED: OnceLock<Mutex<HashMap<PathBuf, ([u8; 32], Arc<Vec<syntax::Statement>>)>>> = OnceLock::new();
-    let cache = PARSED.get_or_init(Default::default);
+    #[derive(Default)]
+    struct ParsedFiles(Mutex<HashMap<PathBuf, ([u8; 32], Arc<Vec<syntax::Statement>>)>>);
+    let cache_held = crate::code_rule_dsl::logic::profile::shared::<ParsedFiles>();
+    let cache = &cache_held.0;
     if let Some(digest) = super::plan::corpus::observe(|o| o.digest(path))
         && let Some((kept, statements)) = cache.lock().expect("the parsed files").get(path)
         && *kept == digest

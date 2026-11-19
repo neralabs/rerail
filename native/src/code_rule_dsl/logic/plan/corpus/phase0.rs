@@ -142,10 +142,12 @@ pub fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
 
 /// The include graphs for `seeds`, each kept in this process while it holds; those not kept are derived by one run
 /// of `bootstrap.rr` over all of them (a pack's programs are one run, not one each).
-static KEPT: OnceLock<Mutex<HashMap<Seed, Arc<Graph>>>> = OnceLock::new();
+#[derive(Default)]
+struct PhaseZeroGraphs(Mutex<HashMap<Seed, Arc<Graph>>>);
 
 pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
-    let kept = KEPT.get_or_init(Default::default);
+    let kept_held = crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>();
+    let kept = &kept_held.0;
     let mut found: Vec<Option<Arc<Graph>>> = {
         let map = kept.lock().expect("phase 0's graphs");
         seeds.iter().map(|s| map.get(s).cloned()).collect()
@@ -298,7 +300,7 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
         whole.phases.insert(text_key(0), named);
     }
     let graph = whole.of(seed, 0);
-    KEPT.get_or_init(Default::default).lock().expect("phase 0's graphs").insert(seed.clone(), Arc::new(graph));
+    crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>().0.lock().expect("phase 0's graphs").insert(seed.clone(), Arc::new(graph));
     true
 }
 

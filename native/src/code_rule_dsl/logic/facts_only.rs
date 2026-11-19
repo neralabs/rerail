@@ -347,33 +347,22 @@ const STATE: &[(&str, &str)] = &[
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
-    ("code_rule_dsl/logic/strings/git.rs", "STATE", "1"),
-    ("code_rule_dsl/logic/rr.rs", "LIBRARIES", "2"),
-    ("code_rule_dsl/logic/rr.rs", "PARSED", "2"),
-    ("code_rule_dsl/logic/rr.rs", "PROGRAMS", "2"),
-    ("code_rule_dsl/logic/plan/corpus/phase0.rs", "KEPT", "2"),
-    ("code_rule_dsl/logic/plan/corpus.rs", "COMBINED", "2"),
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
-    ("code_rule_dsl/logic/plan/choices.rs", "KEPT", "2"),
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
     ("code_rule_dsl/logic/plan.rs", "PLANS", "6"),
     ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),
-    ("code_rule_dsl/logic/plan.rs", "KEPT", "6"),
     ("code_rule_dsl/logic/derived.rs", "MEMO", "6"),
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
     // The observed keeps, a handle a strand enters (decision 0113 §4).
     ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", "6"),
-    ("code_rule_dsl/logic/strings.rs", "MATCHERS", "7"),
     // RER-131's compiled group patterns, where `GROUPS` was.
-    ("code_rule_dsl/logic/strings.rs", "GROUP_REGEXES", "7"),
     ("code_rule_dsl/logic/strings/functions.rs", "CACHE", "7"),
-    ("code_rule_dsl/text.rs", "LOWERED", "7"),
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 20;
+const NOT_YET_MAPS_PIN: usize = 9;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")

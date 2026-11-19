@@ -1842,9 +1842,10 @@ fn combine<'index>(
 #[cfg(feature = "p-anchor-corpus")]
 pub(in crate::code_rule_dsl) fn plan_for(grammar: &super::GrammarMatcher) -> Arc<AnchorPlan> {
     type Plans = std::collections::HashMap<usize, (Arc<super::AnchorPlan>, Arc<AnchorPlan>)>;
-    static PLANS: std::sync::LazyLock<std::sync::Mutex<Plans>> =
-        std::sync::LazyLock::new(Default::default);
-    let mut plans = PLANS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    #[derive(Default)]
+    struct AnchorPlans(std::sync::Mutex<Plans>);
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<AnchorPlans>();
+    let mut plans = held_.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let (_, plan) = plans
         .entry(Arc::as_ptr(&grammar.anchors) as usize)
         .or_insert_with(|| {

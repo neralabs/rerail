@@ -815,7 +815,7 @@ impl<'a> Texts<'a> {
 /// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again.
 fn combine_keyed(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&front::Program>, lists: &front::Lists) -> Result<(front::Program, [u8; 32])> {
     let key = texts_digest(masked, graphs, extra);
-    if let Some(program) = combined_kept().lock().expect("the combined programs").get(&key).and_then(|k| k.tree.clone()) {
+    if let Some(program) = combined_kept().0.lock().expect("the combined programs").get(&key).and_then(|k| k.tree.clone()) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
         return Ok((program, key));
     }
@@ -836,17 +836,21 @@ struct Combined {
     version: Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
-/// The combined programs kept for the process by their texts' digest: a function of the texts alone (`rr::parse`
-/// reads no file), so a session or a test that runs one program over many roots parses and hides it once.
-fn combined_kept() -> &'static std::sync::Mutex<HashMap<[u8; 32], Combined>> {
-    static COMBINED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Combined>>> = std::sync::OnceLock::new();
-    COMBINED.get_or_init(Default::default)
+/// The combined programs kept by their texts' digest, the caller's (decision 0442: the shared object's): a function
+/// of the texts alone (`rr::parse` reads no file), so a session or a test that runs one program over many roots
+/// parses and hides it once.
+#[derive(Default)]
+struct CombinedPrograms(std::sync::Mutex<HashMap<[u8; 32], Combined>>);
+
+fn combined_kept() -> std::sync::Arc<CombinedPrograms> {
+    crate::code_rule_dsl::logic::profile::shared::<CombinedPrograms>()
 }
 
 /// `edit` of the program `key` kept for the process (`combined_kept`). A few programs at a time are kept.
 fn keep_combined(key: [u8; 32], edit: impl FnOnce(&mut Combined)) {
     const KEPT: usize = 32;
-    let mut kept = combined_kept().lock().expect("the combined programs");
+    let held = combined_kept();
+    let mut kept = held.0.lock().expect("the combined programs");
     if kept.len() >= KEPT && !kept.contains_key(&key) {
         kept.clear();
     }
@@ -874,7 +878,7 @@ pub fn combine_handed(read: &front::Program) -> Result<(front::Program, front::P
 /// and kept for the process beside the tree (`COMBINED`), so a run that finds its program combined reads no tree.
 fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&front::Program>, lists: &front::Lists) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, [u8; 32])> {
     let key = texts_digest(masked, graphs, extra);
-    if let Some(v) = combined_kept().lock().expect("the combined programs").get(&key).and_then(|k| k.version.clone()) {
+    if let Some(v) = combined_kept().0.lock().expect("the combined programs").get(&key).and_then(|k| k.version.clone()) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
         return Ok((v, key));
     }
@@ -1346,8 +1350,9 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
 pub fn with_prepared<R>(f: impl FnOnce(&mut HashMap<[u8; 32], Vec<Arc<Prepared>>>) -> R) -> R {
     #[cfg(not(any(test, feature = "test-hooks")))]
     {
-        static PREPARED: std::sync::LazyLock<std::sync::Mutex<HashMap<[u8; 32], Vec<Arc<Prepared>>>>> = std::sync::LazyLock::new(Default::default);
-        f(&mut PREPARED.lock().expect("the prepared programs"))
+        #[derive(Default)]
+        struct PreparedCorpora(std::sync::Mutex<HashMap<[u8; 32], Vec<Arc<Prepared>>>>);
+        f(&mut crate::code_rule_dsl::logic::profile::shared::<PreparedCorpora>().0.lock().expect("the prepared programs"))
     }
     #[cfg(any(test, feature = "test-hooks"))]
     {
@@ -2696,20 +2701,23 @@ impl Drop for ObservedBatch {
 /// sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no lock. Until
 /// it is done the file stays open: a run that replaces its files waits for it first (`closes_done`).
 fn close_beside(db: Connection) {
-    *CLOSING.0.lock().expect("the closes beside") += 1;
-    rerail_accel::exec::drop_beside(Closing(Some(db)));
+    let closing = crate::code_rule_dsl::logic::profile::machine::<ClosingBeside>();
+    *closing.0.0.lock().expect("the closes beside") += 1;
+    rerail_accel::exec::drop_beside(Closing(Some(db), closing));
 }
 
-/// The connections closing beside runs (`close_beside`), and their end.
-static CLOSING: (std::sync::Mutex<usize>, std::sync::Condvar) = (std::sync::Mutex::new(0), std::sync::Condvar::new());
+/// The connections closing beside the machine's runs (`close_beside`), and their end (decision 0442: the machine's,
+/// as the files they hold open are).
+#[derive(Default)]
+struct ClosingBeside((std::sync::Mutex<usize>, std::sync::Condvar));
 
-/// A connection closing beside the run: counted until its close is done.
-struct Closing(Option<Connection>);
+/// A connection closing beside the run: counted until its close is done, in the count it was added to.
+struct Closing(Option<Connection>, std::sync::Arc<ClosingBeside>);
 
 impl Drop for Closing {
     fn drop(&mut self) {
         drop(self.0.take());
-        let (n, done) = &CLOSING;
+        let (n, done) = &self.1.0;
         *n.lock().expect("the closes beside") -= 1;
         done.notify_all();
     }
@@ -2719,7 +2727,8 @@ impl Drop for Closing {
 /// replaced under a connection still closing would be its, and the connection's close deletes its write-ahead log by
 /// name: the new store's. On a thread of the pool it runs the pool's jobs meanwhile (a close may be one of them).
 pub fn closes_done() {
-    let (n, done) = &CLOSING;
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<ClosingBeside>();
+    let (n, done) = &held_.0;
     let mut left = n.lock().expect("the closes beside");
     while *left > 0 {
         if rayon::current_thread_index().is_some() {

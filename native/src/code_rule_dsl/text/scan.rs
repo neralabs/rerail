@@ -35,7 +35,7 @@ use regex_syntax::hir::Hir;
 use regex_syntax::hir::literal::{ExtractKind, Extractor};
 use std::collections::HashMap;
 use std::ops::Range;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 /// The nodes a test is asked about, and how to read them.
 pub struct Nodes<'a> {
@@ -53,9 +53,11 @@ pub struct Nodes<'a> {
 /// backtracking pattern past its limits, an automaton that did not build). A batch of one plan,
 /// built once per plan.
 pub fn bits(lowered: &Arc<Lowered>, nodes: &Nodes<'_>) -> Option<Vec<u64>> {
-    static ALONE: LazyLock<Mutex<HashMap<super::Key, Arc<Batch>>>> = LazyLock::new(Default::default);
+    #[derive(Default)]
+    struct AloneBatches(Mutex<HashMap<super::Key, Arc<Batch>>>);
     let batch = {
-        let mut alone = ALONE.lock().expect("scan batches");
+        let held_ = crate::code_rule_dsl::logic::profile::shared::<AloneBatches>();
+        let mut alone = held_.0.lock().expect("scan batches");
         Arc::clone(alone.entry(lowered.key.clone()).or_insert_with(|| Arc::new(Batch::of(vec![Arc::clone(lowered)]))))
     };
     batch.bits(nodes).pop().flatten()

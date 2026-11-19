@@ -64,13 +64,15 @@ fn hir(plan: &Plan) -> Option<Hir> {
 
 /// The table of `plans` (any of them matching), made once per set of plans.
 pub fn table(plans: &[Arc<Lowered>]) -> Result<Arc<Table>, String> {
-    static TABLES: LazyLock<Mutex<HashMap<String, Result<Arc<Table>, String>>>> = LazyLock::new(Default::default);
+    #[derive(Default)]
+    struct TextTables(Mutex<HashMap<String, Result<Arc<Table>, String>>>);
     let key = plans.iter().map(|p| p.key.0.as_str()).collect::<Vec<_>>().join(",");
-    if let Some(t) = TABLES.lock().expect("tables").get(&key) {
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<TextTables>();
+    if let Some(t) = held_.0.lock().expect("tables").get(&key) {
         return t.clone();
     }
     let made = build(plans).map(Arc::new);
-    TABLES.lock().expect("tables").insert(key, made.clone());
+    crate::code_rule_dsl::logic::profile::shared::<TextTables>().0.lock().expect("tables").insert(key, made.clone());
     made
 }
 
@@ -167,12 +169,14 @@ pub struct Replacer {
 /// pattern that may match the empty text (Rust's rules for empty matches are not the device's), a look other than the
 /// text's start and end, an automaton past `MAX_STATES`.
 pub fn replacer(pattern: &str) -> Result<Arc<Replacer>, String> {
-    static MADE: LazyLock<Mutex<HashMap<String, Result<Arc<Replacer>, String>>>> = LazyLock::new(Default::default);
-    if let Some(r) = MADE.lock().expect("replacers").get(pattern) {
+    #[derive(Default)]
+    struct Replacers(Mutex<HashMap<String, Result<Arc<Replacer>, String>>>);
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<Replacers>();
+    if let Some(r) = held_.0.lock().expect("replacers").get(pattern) {
         return r.clone();
     }
     let made = build_replacer(pattern).map(Arc::new);
-    MADE.lock().expect("replacers").insert(pattern.to_owned(), made.clone());
+    crate::code_rule_dsl::logic::profile::shared::<Replacers>().0.lock().expect("replacers").insert(pattern.to_owned(), made.clone());
     made
 }
 
