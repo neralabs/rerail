@@ -200,6 +200,7 @@ logic::rr::print	rerail-rr
 logic::rr::translate	rerail-rr
 logic::rr::aggregate_demand	rerail-rr
 logic::rr::tape_type	rerail-rr
+logic::rr::from_tape	rerail-rr
 device_metal	rerail-device-metal
 logic::profile::report	rerail-logic
 logic::profile::watch	rerail-logic

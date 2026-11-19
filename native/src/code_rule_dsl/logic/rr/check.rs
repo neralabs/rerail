@@ -10,7 +10,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::lower::{RELATION_ARG, TESTS};
-use rerail_rr_syntax::syntax::{Head, Item, Lit, Statement, Term};
+use super::from_tape::{S, Stmt};
+use rerail_rr_syntax::syntax::{Head, Lit, Term};
 
 fn vars_of(t: &Term) -> BTreeSet<String> {
     let mut out = Vec::new();
@@ -252,40 +253,43 @@ pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTre
 }
 
 /// The relations a file's `fix` lines and `.edit` declarations name.
-pub fn fix_relations(statements: &[Statement]) -> BTreeSet<String> {
+pub fn fix_relations(statements: &[Stmt]) -> BTreeSet<String> {
     statements
         .iter()
-        .flat_map(|(item, _)| match item {
-            Item::Violation { fixes, .. } => fixes.iter().map(|f| f.name.clone()).collect(),
-            Item::Edit { name } => vec![name.clone()],
+        .flat_map(|s| match s.what() {
+            Some(S::Violation(_)) => {
+                let (t, n) = s.tape();
+                t.fixes(n).into_iter().map(str::to_owned).collect()
+            }
+            Some(S::Edit(name)) => vec![name.to_owned()],
             _ => Vec::new(),
         })
         .collect()
 }
 
 /// Ungrounded rules of one file: (line, unbound variables).
-pub fn grounded(statements: &[Statement], given: &BTreeSet<String>) -> Vec<(usize, Vec<String>)> {
+pub fn grounded(statements: &[Stmt], given: &BTreeSet<String>) -> Vec<(usize, Vec<String>)> {
     let mut given = given.clone();
     given.extend(fix_relations(statements));
     statements
         .iter()
-        .filter_map(|(item, line)| match item {
-            Item::Clause { heads, body, edits } => {
-                let bad = unbound(heads, body, edits, &given);
-                (!bad.is_empty()).then_some((*line, bad))
-            }
-            _ => None,
+        .filter(|s| s.what() == Some(S::Clause))
+        .filter_map(|s| {
+            let (t, n) = s.tape();
+            let (heads, body, edits) = t.clause(n).ok()?;
+            let bad = unbound(&heads, &body, &edits, &given);
+            (!bad.is_empty()).then(|| (s.line(), bad))
         })
         .collect()
 }
 
 /// Declarations made more than once in a program, or of a built-in constraint: (relation, files) per problem.
-pub fn declarations(files: &[(String, Vec<Statement>)]) -> Vec<String> {
+pub fn declarations(files: &[(String, Vec<Stmt>)]) -> Vec<String> {
     let mut decls = BTreeMap::<String, Vec<String>>::new();
     for (file, statements) in files {
-        for (item, _) in statements {
-            if let Item::Decl { name, .. } | Item::Edit { name } = item {
-                decls.entry(name.clone()).or_default().push(file.clone());
+        for s in statements {
+            if let Some(S::Decl(name) | S::Edit(name)) = s.what() {
+                decls.entry(name.to_owned()).or_default().push(file.clone());
             }
         }
     }
@@ -401,7 +405,7 @@ fn tarjan(nodes: &BTreeSet<String>, graph: &BTreeMap<String, BTreeSet<String>>) 
 
 /// Relations a program's rules read that none of its files declares, nor the lowering makes (its built-ins): the
 /// syntax-level form of `lowering_tail::Declared`, which a run and check-rr apply to the lowered program.
-pub fn undeclared(statements: &[&Statement]) -> Vec<String> {
+pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
     fn reads(lits: &[Lit], out: &mut Vec<String>) {
         fn term(t: &Term, out: &mut Vec<String>) {
             match t {
@@ -430,51 +434,48 @@ pub fn undeclared(statements: &[&Statement]) -> Vec<String> {
         }
     }
     let mut declared = BTreeSet::new();
-    for (item, _) in statements {
-        match item {
-            Item::Decl { name, .. } | Item::Edit { name } => {
-                declared.insert(name.clone());
-            }
-            Item::Violation { name, .. } => {
-                declared.insert(name.clone());
-            }
-            _ => {}
+    for s in statements {
+        if let Some(S::Decl(name) | S::Edit(name) | S::Violation(name)) = s.what() {
+            declared.insert(name.to_owned());
         }
     }
     let built_in = |rel: &str| TESTS.iter().any(|(t, _)| *t == rel) || RELATION_ARG.iter().any(|(r, _)| *r == rel) || super::lower::BUILT_INS.contains(&rel);
     let mut out = BTreeSet::new();
-    for (item, line) in statements {
-        if let Item::Clause { heads, body, .. } = item {
-            let mut read = Vec::new();
-            reads(body, &mut read);
-            for rel in read.into_iter().filter(|r| !declared.contains(r) && !built_in(r)) {
-                out.insert(format!("line {line}: relation {rel} is read by the rule for {} and not declared", heads[0].rel));
-            }
+    for s in statements.iter().filter(|s| s.what() == Some(S::Clause)) {
+        let (t, n) = s.tape();
+        let Ok((heads, body, _)) = t.clause(n) else { continue };
+        let mut read = Vec::new();
+        reads(&body, &mut read);
+        for rel in read.into_iter().filter(|r| !declared.contains(r) && !built_in(r)) {
+            out.insert(format!("line {}: relation {rel} is read by the rule for {} and not declared", s.line(), heads[0].rel));
         }
     }
     out.into_iter().collect()
 }
 
 /// Stratification problems of one program (every statement of its files): "h depends on d" per problem.
-pub fn strata(statements: &[&Statement]) -> Vec<String> {
+pub fn strata(statements: &[&Stmt]) -> Vec<String> {
     let mut ordered = BTreeMap::new();
     let mut rules = Vec::new();
-    for (item, line) in statements {
-        match item {
-            Item::Decl { name, tail, .. } => {
+    for s in statements {
+        let (t, n) = s.tape();
+        match s.what() {
+            Some(S::Decl(_)) => {
+                let Ok((name, _, tail)) = t.decl(n) else { continue };
                 if let [.., o, b, order] = tail.as_slice()
                     && o == "ordered"
                     && b == "by"
                 {
-                    ordered.insert(name.clone(), order.clone());
+                    ordered.insert(name, order.clone());
                 }
             }
-            Item::Clause { heads, body, .. } if !body.is_empty() => {
+            Some(S::Clause) if s.has_body() => {
+                let Ok((heads, body, _)) = t.clause(n) else { continue };
                 let mut scopes = vec![Scope::new()];
-                binary_atoms(body, &mut scopes[0]);
+                binary_atoms(&body, &mut scopes[0]);
                 let mut ds = Vec::new();
-                deps(body, false, 0, &mut scopes, &mut ds);
-                rules.push((*line, heads[0].rel.clone(), first(&heads[0].args), ds, scopes));
+                deps(&body, false, 0, &mut scopes, &mut ds);
+                rules.push((s.line(), heads[0].rel.clone(), first(&heads[0].args), ds, scopes));
             }
             _ => {}
         }

@@ -1,5 +1,5 @@
 use super::passes::Parts as _;
-use super::fields::{FieldsMut, ProgramFields};
+use super::fields::ProgramFields;
 use super::version::{Made, Version};
 use super::{AtomId, Builder, CmpOp, Extents, Grouped, Image, Lit, R, RelId, RuleId, RuleRef, Strings, T, TermRef};
 use crate::code_rule_dsl::logic::front::{AggOp, LatticeDecl, Native, Value, ast::Gate};

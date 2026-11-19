@@ -290,9 +290,9 @@ fn rule_syntax_files_pass_check_rr() {
         if !program.iter().any(|(p, _)| *p == core) {
             program.push((core.clone(), read(&core).unwrap().0));
         }
-        let named: Vec<(String, Vec<syntax::Statement>)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
+        let named: Vec<(String, Vec<from_tape::Stmt>)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
         problems.extend(check::declarations(&named).into_iter().map(|p| format!("{}: {p}", short(&f))));
-        let all: Vec<&syntax::Statement> = program.iter().flat_map(|(_, s)| s).collect();
+        let all: Vec<&from_tape::Stmt> = program.iter().flat_map(|(_, s)| s).collect();
         problems.extend(check::strata(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
         // A relation read and declared nowhere in the file's program, as check-rr and a run refuse it.
         problems.extend(check::undeclared(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
@@ -303,7 +303,7 @@ fn rule_syntax_files_pass_check_rr() {
 /// The checks find what they are for.
 #[test]
 fn check_rr_finds_problems() {
-    let statements = |src: &str| syntax::Parser::new(src).unwrap().statements().unwrap();
+    let statements = |src: &str| from_tape::RrFile::read(src).unwrap().statements();
     let ungrounded = statements(".decl a(x: number)\n.decl b(x: number)\nb(x) :- !a(x).\nb(y) :- a(x), match(\"(?<y>.*)\", x).\n");
     let bad = check::grounded(&ungrounded, &BTreeSet::new());
     assert_eq!(bad, vec![(3, vec!["x".to_owned()])]);
@@ -314,7 +314,7 @@ fn check_rr_finds_problems() {
     let cat = statements(".decl a(m: symbol)\n.decl b(q: symbol)\nb(q) :- a(m), m = @cat(q, x).\nb(q) :- a(q), m = @cat(q, x).\n");
     assert_eq!(check::grounded(&cat, &BTreeSet::new()), vec![(4, vec!["m".to_owned()])]);
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
-    let refs: Vec<&syntax::Statement> = cyclic.iter().collect();
+    let refs: Vec<&from_tape::Stmt> = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
     let twice = vec![("a.rr".to_owned(), statements(".decl a(x: number)")), ("b.rr".to_owned(), statements(".decl a(x: number)\n.decl glob(x: symbol)"))];
     assert_eq!(check::declarations(&twice).len(), 2);
@@ -3511,7 +3511,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         let Ok((statements, _)) = program(&path) else { return None };
         let Ok(whole) = lower_files_dropping(&path, statements.clone(), false) else { return None };
         let own = path.canonicalize().unwrap();
-        let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|(i, _)| matches!(i, syntax::Item::Clause { .. })).count();
+        let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|s| s.what() == Some(from_tape::S::Clause)).count();
         let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
         let less = lower_files_dropping(&path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
         // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them, and `simplify` the
@@ -3810,7 +3810,7 @@ fn library_modules_link_to_the_lowering_of_them_together() {
         if paths.is_empty() {
             continue;
         }
-        let files: Vec<(PathBuf, Vec<syntax::Statement>)> = paths.iter().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect())).collect();
+        let files: Files = paths.iter().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect())).collect();
         let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
         let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         // Each module read back from its image (decision 0246 §6) links to the same program, on versions (0377).

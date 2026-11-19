@@ -26,7 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
-use rerail_rr_syntax::syntax::{Item, Parser, Term as STerm};
+use rerail_rr_syntax::syntax::Term as STerm;
 use super::{Lowerer, ty};
 use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Rule, Term, is_axis};
 
@@ -35,12 +35,13 @@ const CORE: &str = include_str!("../../../../../../docs/rule-syntax/lib/core.rr"
 /// core.rr's declarations, in the engine's column types.
 pub(super) static DECLS: LazyLock<BTreeMap<String, Vec<(String, String)>>> = LazyLock::new(|| {
     let decls = CORE.lines().filter(|l| l.starts_with(".decl ")).collect::<Vec<_>>().join("\n");
-    let statements = Parser::new(&decls).and_then(|mut p| p.statements()).expect("core.rr's declarations parse");
-    statements
-        .into_iter()
-        .filter_map(|(item, _)| match item {
-            Item::Decl { name, cols, .. } => Some((name, cols.into_iter().map(|(c, t)| (c, ty(&t))).collect())),
-            _ => None,
+    let file = super::super::from_tape::RrFile::read(decls).expect("core.rr's declarations parse");
+    let t = file.tape();
+    file.statements()
+        .iter()
+        .filter_map(|s| {
+            let (name, cols, _) = t.decl(s.node()).ok()?;
+            Some((name, cols.into_iter().map(|(c, t)| (c, ty(&t))).collect()))
         })
         .collect()
 });

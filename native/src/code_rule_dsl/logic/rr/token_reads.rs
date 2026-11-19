@@ -24,7 +24,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::Error;
-use super::syntax::{Head, Item, Lit, Term};
+use super::from_tape::{S, Stmt};
+use super::syntax::{Head, Lit, Term};
 
 /// The relations: the argument holding the node, the one holding the token's text (`None`: the token is the
 /// second argument, a node whose text the program tests), and whether the token is the node's own child.
@@ -304,29 +305,37 @@ impl Columns {
 }
 
 /// Refuses a program whose clauses read a token the tape may leave out (above), for the program's `.language`.
-pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>)]) -> Result<(), Error> {
-    let language = files.iter().flat_map(|(_, statements)| statements).find_map(|(item, _)| match item {
-        Item::Setting { key, text } if key == "language" => Some(text.trim().trim_matches('"').to_owned()),
+pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<Stmt>)]) -> Result<(), Error> {
+    let language = files.iter().flat_map(|(_, statements)| statements).find_map(|s| match s.what()? {
+        S::Setting { key, text } if key == "language" => Some(text.trim().trim_matches('"').to_owned()),
         _ => None,
     });
     let Some(dialect) = language.as_deref().and_then(crate::code_rule_dsl::language::dialect_by_label) else { return Ok(()) };
-    let clauses: Vec<Clause<'_>> = files
+    // Each clause's heads and body, read off its tape.
+    let read: Vec<(&std::path::Path, usize, Vec<Head>, Vec<Lit>)> = files
         .iter()
         .flat_map(|(file, statements)| statements.iter().map(move |s| (file, s)))
-        .filter_map(|(file, (item, line))| match item {
-            Item::Clause { heads, body, .. } => {
-                let (mut all, mut equal) = (Vec::new(), Vec::new());
-                atoms(body, &mut all);
-                eqs(body, &mut equal);
-                Some(Clause { file, line: *line, heads, body, atoms: all, eqs: equal })
-            }
-            _ => None,
+        .filter(|(_, s)| s.what() == Some(S::Clause))
+        .map(|(file, s)| {
+            let (t, n) = s.tape();
+            let (heads, body, _) = t.clause(n)?;
+            Ok((file.as_path(), s.line(), heads, body))
+        })
+        .collect::<Result<_, Error>>()?;
+    let clauses: Vec<Clause<'_>> = read
+        .iter()
+        .map(|(file, line, heads, body)| {
+            let (mut all, mut equal) = (Vec::new(), Vec::new());
+            atoms(body, &mut all);
+            eqs(body, &mut equal);
+            Clause { file, line: *line, heads, body, atoms: all, eqs: equal }
         })
         .collect();
     // `.stored r "why"`: r's rules read tokens the grammar keeps where they look.
     let mut stored = BTreeSet::new();
-    for (item, line) in files.iter().flat_map(|(_, statements)| statements) {
-        if let Item::Setting { key, text } = item
+    for st in files.iter().flat_map(|(_, statements)| statements) {
+        let line = st.line();
+        if let Some(S::Setting { key, text }) = st.what()
             && key == "stored"
         {
             let (rel, why) = text.trim().split_once(char::is_whitespace).unwrap_or((text.trim(), ""));
@@ -408,7 +417,7 @@ mod tests {
     #[test]
     fn a_parent_kind_derived_through_rules_is_named() {
         let refused = |src: &str| {
-            let statements = super::super::from_tape::statements(src).unwrap();
+            let statements = super::super::from_tape::RrFile::read(src).unwrap().statements();
             super::refuse(&[(std::path::PathBuf::from("t.rr"), statements)]).unwrap_err().to_string()
         };
         let direct = refused(".language python\nr(n) :- kind(n, \"if_statement\"), op(n, \":\").\n");

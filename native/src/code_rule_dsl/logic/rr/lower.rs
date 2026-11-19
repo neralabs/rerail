@@ -61,7 +61,8 @@ pub use self::core::is_core;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rerail_rr_syntax::syntax::{Code, Fix, Head, Item, Lit, Statement, Suppress, Term as STerm, quote};
+use super::from_tape::{S, Stmt};
+use rerail_rr_syntax::syntax::{Code, Fix, Head, Lit, Suppress, Term as STerm, quote};
 use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, LatticeDecl, List, Literal, Native, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
@@ -484,19 +485,21 @@ pub fn seeds(scope: &[&Module]) -> Seeds {
 /// `statements` lowered as a module of a scope seeded already (`seeds`), its rules written as a version in the walk
 /// (decision 0377 step 3), which `link_seeded_parts` links without editing its rules and `rr::link_seeded_version`
 /// appends onto its scope.
-pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
+pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Result<Module, Error> {
     let typing = crate::code_rule_dsl::logic::profile::span(|| "type the tapes' terms".to_owned());
     let written: BTreeMap<String, Vec<String>> = statements
         .iter()
-        .filter_map(|(item, _)| match item {
-            Item::Decl { name, cols, .. } => Some((name.clone(), cols.iter().map(|(_, t)| t.clone()).collect())),
-            _ => None,
+        .filter(|s| matches!(s.what(), Some(S::Decl(_))))
+        .filter_map(|s| {
+            let (t, n) = s.tape();
+            let (name, cols, _) = t.decl(n).ok()?;
+            Some((name, cols.into_iter().map(|(_, t)| t).collect()))
         })
         .collect();
     super::tape_type::check_in(&statements, &seeds.given)?;
     drop(typing);
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read the statements".to_owned());
-    let declares_docof = statements.iter().any(|(item, _)| matches!(item, Item::Decl { name, .. } if name == "docof"));
+    let declares_docof = statements.iter().any(|s| s.what() == Some(S::Decl("docof")));
     let mut l = seeds.l.clone();
     let seeded = seeds.seeded.clone();
     let mut clauses = Vec::new();
@@ -507,18 +510,25 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
     let mut layouts: Vec<(String, usize)> = Vec::new();
     // The facts its clauses state, by relation, stated on the header once read.
     let mut own_facts: BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::List<Value>>> = BTreeMap::new();
-    for (item, line) in statements {
+    // Each statement is read off its node as the walk reaches it, and what it states written at once.
+    for st in &statements {
+        let line = st.line();
         let at = |e: Error| match e {
             Error::Syntax(m) => Error::Syntax(format!("line {line}: {m}")),
             e => e,
         };
-        match item {
-            Item::Include(path) => return Err(Error::Syntax(format!("line {line}: #include {path:?} not resolved"))),
-            Item::Decl { name, cols, tail } => l.decl(name, cols, &tail).map_err(at)?,
-            Item::Edit { .. } | Item::Functor { .. } | Item::Type { .. } => {}
+        let (t, node) = st.tape();
+        match st.read().map_err(at)? {
+            S::Include(path) => return Err(Error::Syntax(format!("line {line}: #include {path:?} not resolved"))),
+            S::Decl(_) => {
+                let (name, cols, tail) = t.decl(node).map_err(at)?;
+                l.decl(name, cols, &tail).map_err(at)?
+            }
+            S::Edit(_) | S::Functor(_) | S::Type(_) => {}
             // `.input r(IO=json, filename="…")`: r is an input whose rows come from that file (or artifact), kept
             // as the setting `input r(IO=…)` for the runner; without them r is empty.
-            Item::Io { output, names, params } => {
+            S::Io { .. } => {
+                let (output, names, params) = t.io(node).map_err(at)?;
                 for (name, text) in params {
                     l.prog.push_setting(if output { "output" } else { "input" }.to_owned(), format!("{name}({text})"));
                 }
@@ -526,13 +536,14 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
                     if output { l.prog.add_output(n) } else { l.prog.add_input(n) }
                 }
             }
-            Item::Lattice { name, base, ops } => {
+            S::Lattice(_) => {
+                let (name, base, ops) = t.lattice(node).map_err(at)?;
                 let Some((_, STerm::Call { name: lub, functor: true, .. })) = ops.iter().find(|(op, _)| op == "Lub") else {
                     return Err(at(Error::Syntax(format!(".lattice {name} has no `Lub -> @f`"))));
                 };
                 l.lattices.insert(name, (ty(&base), lub.clone()));
             }
-            Item::Pragma(words) => match words.as_slice() {
+            S::Pragma => match t.pragma(node).map_err(at)?.as_slice() {
                 [magic, relations] if magic == "magic-transform" => {
                     l.prog.edit(|b| b.demand(), |d| Field::Demand(d), |d| d.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned)));
                 }
@@ -544,22 +555,29 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
                 [key, rels] if key == "cross-memo" => {
                     l.prog.push_setting("pragma".to_owned(), format!("\"cross-memo\" \"{rels}\""));
                 }
-                _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
+                words => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
-            Item::Policy(document) => l.prog.edit(|b| b.policies(), |p| Field::Policies(p), |p| p.push(document)),
+            S::Policy => {
+                let document = t.policy(node)?;
+                l.prog.edit(|b| b.policies(), |p| Field::Policies(p), |p| p.push(document))
+            }
             // A test is never the program's (decision 0130): testing mode splices its statements into a program of
             // its own (`rr::testing`).
-            Item::Test { .. } | Item::Fixtures { .. } => {}
-            Item::Setting { key, text } if key == "shape" => {
+            S::Test | S::Fixtures => {}
+            S::Setting { key, text } if key == "shape" => {
                 let Some(heads) = &last_heads else { return Err(Error::Syntax(format!("line {line}: `.shape {text}` follows no rule"))) };
                 for h in heads {
-                    shapes.push((crate::code_rule_dsl::logic::front::Shape::parse(h, &text).map_err(|m| Error::Syntax(format!("line {line}: {m}")))?, line));
+                    shapes.push((crate::code_rule_dsl::logic::front::Shape::parse(h, text).map_err(|m| Error::Syntax(format!("line {line}: {m}")))?, line));
                 }
             }
-            Item::Setting { key, text } if key == "layout" => layouts.push((text, line)),
-            Item::Setting { key, text } => l.prog.push_setting(key, text),
-            Item::Violation { name, cols, code, code_in, tag, suppress, fixes, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?,
-            Item::Clause { heads, body, edits } => {
+            S::Setting { key, text } if key == "layout" => layouts.push((text.to_owned(), line)),
+            S::Setting { key, text } => l.prog.push_setting(key.to_owned(), text.to_owned()),
+            S::Violation(_) => {
+                let super::from_tape::Violation { name, cols, code, code_in, tag, suppress, fixes, message } = t.violation(node).map_err(at)?;
+                l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?
+            }
+            S::Clause => {
+                let (heads, body, edits) = t.clause(node).map_err(at)?;
                 if body.is_empty() && edits.is_empty() && let Some(rows) = facts(&heads) {
                     for (rel, row) in rows {
                         own_facts.entry(rel).or_default().push(row.into());
@@ -654,7 +672,7 @@ fn layout(prog: &(impl ProgramFields + ?Sized), text: &str) -> Result<(String, V
 
 /// A module of the modules `scope` reaches (each once), its rules written as a version in the walk: a library's
 /// module (`rr::lower_library`).
-pub fn lower_module_in_written(statements: Vec<Statement>, scope: &[&Module]) -> Result<Module, Error> {
+pub fn lower_module_in_written(statements: Vec<Stmt>, scope: &[&Module]) -> Result<Module, Error> {
     lower_module_seeded_written(statements, &seeds(scope))
 }
 

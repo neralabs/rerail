@@ -10,7 +10,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rerail_rr_syntax::syntax::{Head, Item, Lit, Statement, Term};
+use super::from_tape::{S, Stmt};
+use rerail_rr_syntax::syntax::{Head, Lit, Term};
 use crate::code_rule_dsl::logic::front::Error;
 
 /// The types a tape is not: a variable in one of these and in a tape column is refused.
@@ -83,26 +84,29 @@ impl Seen {
 
 /// The relations' declared column types, then each clause's variables: an error at the first variable that is a tape
 /// and something else.
-pub(super) fn check(statements: &[Statement]) -> Result<(), Error> {
+pub(super) fn check(statements: &[Stmt]) -> Result<(), Error> {
     check_in(statements, &BTreeMap::new())
 }
 
 /// `check`, with the column types `given` declares besides the statements' own (a module's includes').
-pub(super) fn check_in(statements: &[Statement], given: &BTreeMap<String, Vec<String>>) -> Result<(), Error> {
+pub(super) fn check_in(statements: &[Stmt], given: &BTreeMap<String, Vec<String>>) -> Result<(), Error> {
     let mut decls: BTreeMap<String, Vec<String>> = given.clone();
-    for (item, _) in statements {
-        if let Item::Decl { name, cols, .. } = item {
-            decls.insert(name.clone(), cols.iter().map(|(_, t)| t.clone()).collect());
+    for s in statements.iter().filter(|s| matches!(s.what(), Some(S::Decl(_)))) {
+        let (t, n) = s.tape();
+        if let Ok((name, cols, _)) = t.decl(n) {
+            decls.insert(name, cols.into_iter().map(|(_, t)| t).collect());
         }
     }
     // The guest relations' tapes (`core.rr`), for a program read without it.
     for (rel, cols) in BUILT_IN {
         decls.entry((*rel).to_owned()).or_insert_with(|| cols.iter().map(|t| (*t).to_owned()).collect());
     }
-    for (item, line) in statements {
-        let Item::Clause { heads, body, .. } = item else { continue };
+    for s in statements.iter().filter(|s| s.what() == Some(S::Clause)) {
+        let (t, n) = s.tape();
+        let (heads, body, _) = t.clause(n)?;
+        let line = s.line();
         let mut seen = Seen::default();
-        for Head { rel, args, .. } in heads {
+        for Head { rel, args, .. } in &heads {
             seen.args(decls.get(rel), args);
         }
         let mut stack: Vec<&Lit> = body.iter().collect();

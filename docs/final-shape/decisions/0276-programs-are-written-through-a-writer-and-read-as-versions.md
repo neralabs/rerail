@@ -421,6 +421,15 @@ Progress (2026-11-18):
     statement types go. A2: the clause lowering reads the clause's tape nodes. A disjunction's alternatives are
     positions in the tape, and a rule is written by walking the chosen positions. A3: each rule is written term by
     term with the builder's rule writer, so the lowering builds no `front::Rule`.
+    - *Done (A1, two commits).* The lean image is read in place (`from_tape::Tape`). A file is an `RrFile`: its
+      text, its tape and the tape's code keys, checked once when read, and shared by the process's library cache
+      (`read_shared`). A statement is a `Stmt`, a node of its file's tape. `from_tape` is `rerail-rr`'s, below
+      the lowering. Includes, the program cache, unreached-clause dropping, the closed-library and reserved-name
+      checks, `check`, the tape type check, the token-read refusal, testing's blocks (their statements are nodes
+      of the same tape) and core's declarations all read the nodes. The lowering's walk reads each directive off its
+      node and writes it as it reaches it. Two pieces remain for A2. A clause is still read as the parser's form,
+      by `Tape::clause`, for the lowering and the clause checks. The parser's `syntax::Item` is still built for the
+      tape tests' parser comparison only. The coverage census still parses its files with the text parser.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,

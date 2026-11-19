@@ -1120,14 +1120,59 @@ pub struct View<'a> {
     tail: &'a [u8],
     widths: [u8; 3],
     from_start: bool,
-    /// Each code's key, by id.
-    keys: Vec<u32>,
+    /// Each code's key, by id: read from the code table, or a holder's (`with_keys`).
+    keys: std::borrow::Cow<'a, [u32]>,
+    /// Where the code table starts, and how many codes it holds.
+    table: usize,
+    codes: usize,
 }
 
 impl<'a> View<'a> {
     /// The image `bytes`, checked as `decode` checks it: the header, the columns' lengths, the code table, and
     /// each code id and size in range.
     pub fn new(bytes: &'a [u8]) -> Result<Self, String> {
+        let view = Self::columns(bytes)?;
+        for i in 0..view.n {
+            if usize::from(u16::from_le_bytes([view.code[2 * i], view.code[2 * i + 1]])) >= view.keys.len() {
+                return Err("a node's code is not in the table".into());
+            }
+            if i + view.size(i).max(1) > view.n {
+                return Err("a node's size runs past the tape".into());
+            }
+        }
+        Ok(view)
+    }
+
+    /// An image `new` checked before, `keys` its code table's keys as `keys` gave them then (its holder keeps both,
+    /// unchanged): its header and columns read again, the nodes not checked again and the code table not read.
+    pub fn with_keys(bytes: &'a [u8], keys: &'a [u32]) -> Self {
+        let mut v = Self::columns_only(bytes).expect("an image checked before");
+        debug_assert_eq!(keys.len(), v.codes, "the image's own keys");
+        v.keys = std::borrow::Cow::Borrowed(keys);
+        v
+    }
+
+    /// Each code's key, by id, for a holder to keep (`with_keys`): those `new` read, not copied again.
+    pub fn into_keys(self) -> Box<[u32]> {
+        self.keys.into_owned().into_boxed_slice()
+    }
+
+    /// The header, the columns and the code table.
+    fn columns(bytes: &'a [u8]) -> Result<Self, String> {
+        let mut v = Self::columns_only(bytes)?;
+        let (code_count, mut c) = (v.codes, v.table);
+        let mut keys = Vec::with_capacity(code_count);
+        for _ in 0..code_count {
+            let entry = bytes.get(c..c + 6).ok_or("a short code table")?;
+            keys.push(u32::from(u16::from_le_bytes([entry[0], entry[1]])) | u32::from(entry[2]) << 16);
+            c += 6 + 2 * usize::from(entry[5]);
+        }
+        v.keys = std::borrow::Cow::Owned(keys);
+        Ok(v)
+    }
+
+    /// The header and the columns, and where the code table starts; no key read.
+    fn columns_only(bytes: &'a [u8]) -> Result<Self, String> {
         let u64_at = |at: usize| -> Result<usize, String> {
             let b = bytes.get(at..at + 8).ok_or("a short tape header")?;
             usize::try_from(u64::from_le_bytes(b.try_into().expect("8 bytes"))).map_err(|_| "a tape length overflows".to_owned())
@@ -1152,23 +1197,7 @@ impl<'a> View<'a> {
         };
         let w = widths.map(usize::from);
         let (code, size, base, off, tail) = (column(2, n)?, column(w[0], n)?, column(4, n.div_ceil(CHECKPOINT_STRIDE))?, column(w[1], n)?, column(w[2], n)?);
-        let mut keys = Vec::with_capacity(code_count);
-        let mut c = at;
-        for _ in 0..code_count {
-            let entry = bytes.get(c..c + 6).ok_or("a short code table")?;
-            keys.push(u32::from(u16::from_le_bytes([entry[0], entry[1]])) | u32::from(entry[2]) << 16);
-            c += 6 + 2 * usize::from(entry[5]);
-        }
-        let view = View { n, code, size, base, off, tail, widths, from_start, keys };
-        for i in 0..n {
-            if usize::from(u16::from_le_bytes([code[2 * i], code[2 * i + 1]])) >= code_count {
-                return Err("a node's code is not in the table".into());
-            }
-            if i + view.size(i).max(1) > n {
-                return Err("a node's size runs past the tape".into());
-            }
-        }
-        Ok(view)
+        Ok(View { n, code, size, base, off, tail, widths, from_start, keys: std::borrow::Cow::Borrowed(&[]), table: at, codes: code_count })
     }
 
     #[inline(always)]

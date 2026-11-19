@@ -3070,8 +3070,6 @@ fn the_searchs_own_steps_are_the_records_features() {
     joins::set_pricer(Some(std::sync::Arc::new(NoPrice)));
     let fields = body::Placed::whole(p.clone());
     let fields = fields.fields().unwrap();
-    let r = p.rule(crate::code_rule_dsl::logic::program_image::RuleId(0)).unwrap();
-    let lits: Vec<_> = r.body().collect();
     let b = body::nth(&p, 0);
     // The record made in full, as a profiled run makes it.
     let was = explaining(true);
