@@ -89,11 +89,7 @@ async function checkedFolder(at: PathFolder, machine: PrivateMachine | undefined
   return true;
 }
 
-/**
- * Makes one missing folder of {@link ledgerFolder}'s (`0700`), and those above `.rerail` first. Windows ignores the
- * mode: the folder of session records it makes gets an owner-only ACL, which every record inherits, and a folder in
- * it that every account recording there shares, the entry that lets those accounts add files ({@link shareLikeParent}).
- */
+/** Makes one missing folder of {@link ledgerFolder}'s (`0700`), and those above `.rerail` first. */
 async function makeFolder(at: PathFolder, machine: PrivateMachine): Promise<void> {
   const { segments, start, end } = at;
   const folder = segments.slice(0, end).join(sep);
@@ -102,8 +98,17 @@ async function makeFolder(at: PathFolder, machine: PrivateMachine): Promise<void
     if (errno(error) !== "EEXIST") throw error;
     return false;
   });
-  if (made && end === start + 2) keepFolderPrivate(folder, { ...machine, made });
-  if (made && end === start + 3 && SHARED_FOLDER.test(segments[end - 1] ?? "")) await shareLikeParent(folder, dirname(folder), machine);
+  if (made) await keepMadeFolder(at, folder, machine);
+}
+
+/**
+ * Windows ignores `mkdir`'s mode: the folder of session records this call made gets an owner-only ACL, which every
+ * record inherits, and a folder in it that every account recording there shares, the entry that lets those accounts
+ * add files ({@link shareLikeParent}).
+ */
+async function keepMadeFolder(at: PathFolder, folder: string, machine: PrivateMachine): Promise<void> {
+  if (at.end === at.start + 2) keepFolderPrivate(folder, { ...machine, made: true });
+  else if (at.end === at.start + 3 && SHARED_FOLDER.test(at.segments[at.end - 1] ?? "")) await shareLikeParent(folder, dirname(folder), machine);
 }
 
 /** What {@link makeLedgerFolder} is given: the system the folder is kept private on, and whether it repairs. */
