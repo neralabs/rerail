@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, openSync } from "node:fs";
 import type * as FileSystem from "node:fs/promises";
 import { mkdir, mkdtemp, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +11,8 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as DaemonWaits from "../../../src/runtime/daemon/daemon-waits.js";
 import { DAEMON_PORT_FILE } from "../../../src/daemon/index.js";
-import { LOCKS_DIR } from "../../../src/engine/index.js";
+import { LOCKS_DIR, defaultRerailDatabasePath } from "../../../src/engine/index.js";
+import { enginePipeName } from "../../../src/runtime/daemon/engine-pipe.js";
 import {
   type DaemonState,
   AUTOSTART_CLAIM_FILE,
@@ -38,6 +39,7 @@ import {
   until,
   watchedEnvironment,
 } from "../../support/processes/daemon-home.js";
+import { oneInstanceHolder } from "../../support/platform/one-instance-pipe.js";
 import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
 const execute = promisify(execFile);
@@ -366,6 +368,38 @@ describe("the daemons of a Rerail home", () => {
     const { live, recorded } = await settled();
     expect(live).toEqual([launched]);
     expect(recorded).toBe(live[0]);
+  }, 120_000);
+
+  // Two states of a start met in one home: another program holds the engine pipe's name with a pipe that allows one
+  // instance, and the daemon is slow to come up. The start says the daemon still starts, by its pid, never that it
+  // exited on the pipe or did not become ready, and the next start finds it serving on the fallback pipe.
+  it.runIf(process.platform === "win32")("starts a daemon slow to come up beside a one-instance pipe on its engine pipe's name, and the next start uses it", async () => {
+    await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
+    const slowStart = join(home, "slow-start");
+    env = watchedEnvironment(home, undefined, slowStart);
+    const pipe = enginePipeName(defaultRerailDatabasePath(env));
+    const holder = await oneInstanceHolder(pipe);
+    try {
+      await writeFile(slowStart, "");
+      waits.startMs = 3_000;
+      const first = await startDaemon(control(), { dev: true, env }).then(() => "", (error: unknown) => (error as Error).message);
+      waits.startMs = undefined;
+      await until(() => existsSync(`${slowStart}.held`), 30_000);
+      const [launched] = liveDaemons(home);
+      expect(first).toContain(`Rerail daemon (pid ${launched}) is still starting: it has not answered within 3s`);
+      expect(first).not.toMatch(/EBUSY|exited|did not become ready|end that process/u);
+      releaseSlowStart(slowStart);
+      const second = await startDaemon(control(), { dev: true, env });
+      expect(second).toMatchObject({ started: false, daemon: { state: { pid: launched } } });
+      expect(second.daemon.state.kernelSocketPath.startsWith(`${pipe}-`)).toBe(true);
+      // Nothing took the holder's one instance: a client still opens it.
+      closeSync(openSync(pipe, "r+"));
+      const { live, recorded } = await settled();
+      expect(live).toEqual([launched]);
+      expect(recorded).toBe(launched);
+    } finally {
+      await holder.end();
+    }
   }, 120_000);
 
   it("leaves a daemon started beside a busy one to exit, and keeps the record and the port with the busy one", async () => {

@@ -1,5 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
-import { once } from "node:events";
+import { spawnSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
@@ -12,6 +11,7 @@ import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../..
 import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
+import { oneInstanceHolder } from "../../support/platform/one-instance-pipe.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
 // A TMPDIR longer than any socket path under it can be: a Unix socket path holds at most 107 bytes on Linux and 103 on
@@ -386,34 +386,6 @@ describe("an engine pipe another process holds", () => {
     expect(done).toEqual([]);
   });
 });
-
-/**
- * A stand-in for a process that holds the Windows pipe `path` with one instance at most and does nothing else: Node
- * cannot cap a pipe's instances, so PowerShell makes it. Returns once the instance exists; `end` ends the holder.
- */
-async function oneInstanceHolder(path: string): Promise<{ end: () => Promise<void> }> {
-  const script = [
-    "$ErrorActionPreference = 'Stop'",
-    "Add-Type -AssemblyName System.Core",
-    `$pipe = New-Object System.IO.Pipes.NamedPipeServerStream('${pipeNameOf(path)}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)`,
-    "[void]$pipe.BeginWaitForConnection($null, $null)",
-    "[Console]::Out.WriteLine('holding'); [Console]::Out.Flush()",
-    "[void][Console]::In.ReadLine()",
-  ].join("\n");
-  const holder = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
-    stdio: ["pipe", "pipe", "inherit"],
-    windowsHide: true,
-  });
-  const closed = once(holder, "close");
-  const first = await Promise.race([once(holder.stdout!, "data"), closed]);
-  expect(String(first[0])).toMatch(/^holding/u);
-  return {
-    end: async () => {
-      holder.stdin!.end();
-      await closed;
-    },
-  };
-}
 
 /** Opens the pipe `path` as a client until an open fails, in one turn: the handles it holds, and the code that ended it. */
 function takeEveryInstance(path: string): { taken: number[]; ended: string | undefined } {
