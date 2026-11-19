@@ -1,6 +1,7 @@
 // One timed run of the product's path for the shippability bar (scripts/ship/shipbar.ts): a checkout's shipped JSON
-// rules of one pack, compiled together, over every file of one corpus directory in one production workspace
-// (conformance/languages/runner.ts evaluateWorkspace: the repository audit's batching and paging). The checkout is
+// rules of one pack, compiled together, over every file of one corpus directory that a repository walk reads (none
+// under the engine's IGNORED_DIRECTORIES) in one production workspace (conformance/languages/runner.ts
+// evaluateWorkspace: the repository audit's batching and paging). The checkout is
 // chosen at run time, so main and a candidate run through their own engine and modules; this file imports nothing of
 // either until then.
 //
@@ -47,12 +48,15 @@ const { evaluateWorkspace } = await import(pathToFileURL(join(checkout, "conform
 const loadMs = performance.now() - started;
 
 console.error("shipbar: phase read");
+// The files a repository walk reads: the product's walk enters no folder of IGNORED_DIRECTORIES (dependency, cache and
+// build output, version control's), and neither does a `.rerail` run's corpus.
 const files: { path: string; language: string; source: string }[] = [];
 const walk = (directory: string): void => {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const full = join(directory, entry.name);
-    if (entry.isDirectory()) walk(full);
-    else if (entry.isFile()) {
+    if (entry.isDirectory()) {
+      if (!engine.IGNORED_DIRECTORIES.has(entry.name)) walk(full);
+    } else if (entry.isFile()) {
       const path = relative(corpus, full).split(sep).join("/");
       const language = engine.languageFor(path);
       if (language !== undefined) files.push({ path, language, source: readFileSync(full, "utf8") });
