@@ -3596,6 +3596,31 @@ describe("CodeRuleBridge and Git's own writes", () => {
     ]);
   });
 
+  // A session that closes as the walk asks whether `HEAD` still names what its first reading of Git read, a command having
+  // committed meanwhile: the close waits for the walk's step, which reads Git no more, so its first reading stands.
+  it("starts no Git process once the session closes as a walk finds HEAD moved since its first reading of Git", async () => {
+    const root = await twoBranches();
+    const { bridge } = await opened(root);
+    await bridge.begin("shell-1", "shell", { command: "./run.sh" });
+    await writeFile(join(root, "src", "mine.py"), "mine\n");
+    git(root, "add", "src/mine.py");
+    const close: { committed?: boolean; gitStarted?: number; closing?: Promise<void> } = {};
+    whileVerdictsRead(listsBranches, () => { git(root, "commit", "--quiet", "-m", "mine"); close.committed = true; });
+    const verdicts = asyncGitCalls.before;
+    asyncGitCalls.before = args => {
+      verdicts?.(args);
+      // The first read of `HEAD` after the commit is the one that finds it moved.
+      if (close.committed !== true || close.closing !== undefined || !readsHead(args)) return;
+      close.gitStarted = asyncGitCalls.args.length;
+      close.closing = bridge.close();
+    };
+    // The command's result may answer or find the session closed.
+    await Promise.allSettled([bridge.finish("shell-1")]);
+    await close.closing;
+    expect(close.gitStarted).toBeDefined();
+    expect(asyncGitCalls.args.slice(close.gitStarted)).toEqual([]);
+  });
+
   it("measures a file written in the command that moved the checkout from what Git wrote", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);

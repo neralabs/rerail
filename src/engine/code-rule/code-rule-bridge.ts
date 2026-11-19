@@ -2958,7 +2958,9 @@ export class CodeRuleBridge {
 
   /**
    * The first reading of the verdicts, from `first` on, that holds for one `HEAD`: one that finds no change Git's, or
-   * whose `HEAD` has not moved since it was read. Undefined when none does in `GIT_VERDICT_READS`, or Git cannot say.
+   * whose `HEAD` has not moved since it was read. Undefined when none does in `GIT_VERDICT_READS`, or Git cannot say, and
+   * once the session closes: the walk's step holds the queue that the close waits on, so a reading made then would hold
+   * up the close, and the first reading stands, as one reading would.
    */
   async #settledReading(
     discovery: SourceDiscovery,
@@ -2969,7 +2971,7 @@ export class CodeRuleBridge {
     let reading: VerdictReading | undefined = first;
     for (let reads = 1; reading !== undefined; reads += 1) {
       if (!findsGitWrite(reading.verdicts) || await headStill(discovery, checkout, reading.view.head)) return reading;
-      if (reads === GIT_VERDICT_READS) return undefined;
+      if (reads === GIT_VERDICT_READS || discovery.cancelled) return undefined;
       reading = await this.#readGitVerdicts(discovery, checkout, named);
     }
     return undefined;
