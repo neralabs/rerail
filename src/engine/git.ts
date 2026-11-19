@@ -10,6 +10,10 @@ import { fileStamp } from "./file-stamp.js";
 import {
   CONFIG_LISTING, configEntryVariables, driverOverrides, listedEntries, oldGitNotice, readDriverConfig, worktreeRead, type ListedEntry,
 } from "./git-filter-drivers.js";
+import {
+  nameDiff, outsideSubmodules, withChangedSubmodules, type DiffRepository, type GitFailure, type GuardedRepository, type Places,
+  type SubmoduleOpener,
+} from "./git-submodule-state.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -985,7 +989,7 @@ const SAFE_CONFIG: readonly string[] = [
   "-c", "core.fsmonitor=false", "-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`, "-c", "log.showSignature=false",
 ];
 const DEFAULT_TIMEOUT_MS = 10_000;
-/** The most bytes a listing of a repository's config takes for the guard: past it, the call it guards is not made. */
+/** The most bytes the guard's own questions (a repository's config, its index's submodules) take: past it, the call it guards is not made. */
 const MAX_LISTING_BYTES = 1024 * 1024 * 1024;
 
 /**
@@ -1014,15 +1018,18 @@ function timeLeft(limitMs: number): () => number {
  * {@link gitEnvironment} (no optional locks, no lazy fetch of a partial clone's missing objects), and a 10 s default
  * timeout; throws {@link GitUnavailableError} when Git is missing, never on a non-zero exit. A call that reads worktree
  * files ({@link worktreeRead}) runs with each filter driver the repository's config defines set as the person's own
- * config sets it, or to no program ({@link guardedSync}). A call whose config Git cannot list is not made: its result
- * carries the listing's status and error, and none of its output.
+ * config sets it, or to no program ({@link guardedSync}); a `git diff --name-only -z` that would look into submodules
+ * runs with Git kept out of them, and Rerail asks each through the same guard (`git-submodule-state.ts`). A call
+ * whose config Git cannot list is not made: its result carries the listing's status and error, and none of its output.
  * On a Git older than 2.31 every call runs as it did before the guard, and the process says why once ({@link guardWorks}).
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
   const read = worktreeRead(args);
   if (read === "none" || !guardWorks(cwd)) return startGitSync(cwd, args, options);
   const guarded = guardedSync(cwd, options.env);
-  return "entries" in guarded ? startGitSync(cwd, args, { ...options, env: guarded.env }) : guarded;
+  if (!("entries" in guarded)) return guarded;
+  if (read === "files") return startGitSync(cwd, args, { ...options, env: guarded.env });
+  return diffOutsideSubmodules(cwd, args, options, guarded);
 }
 
 /** The variables a Git call sets over the inherited environment ({@link RunGitOptions.env}). */
@@ -1055,8 +1062,69 @@ function guardedBy(listing: string, env: GitVariables): Guarded {
 }
 
 /** A failed question asked for a call, as that call's result: its status, stderr and error, none of its output. */
-function unanswered(failure: GitResult): GitResult {
+function unanswered(failure: GitFailure): GitResult {
   return { status: failure.status, stdout: "", stderr: failure.stderr, ...(failure.error === undefined ? {} : { error: failure.error }) };
+}
+
+/**
+ * A call that would look into submodules, under `guarded`. A `git diff --name-only -z` is answered as Git answers it
+ * with Git looking into none: run with `--ignore-submodules=dirty`, then each submodule it would have looked into asked
+ * through the guard, opened as Git opens a submodule (`git-submodule-state.ts`). Any other such call (Rerail makes
+ * none) runs as it is, so Git looks into each submodule with that submodule's drivers as they are.
+ */
+function diffOutsideSubmodules(cwd: string, args: readonly string[], options: RunGitOptions, guarded: Guarded): GitResult {
+  const diff = nameDiff(args);
+  if (diff === undefined) return startGitSync(cwd, args, { ...options, env: guarded.env });
+  const outside = startGitSync(cwd, outsideSubmodules(args), { ...options, env: guarded.env });
+  if (outside.status !== 0 || outside.error !== undefined) return outside;
+  const answer = withChangedSubmodules(outside.stdout, diff, diffRepository(cwd, guarded), submoduleOpener(options.env));
+  return typeof answer === "string" ? { ...outside, stdout: answer } : unanswered(answer);
+}
+
+/** Stdout of each question `git -C <cwd> <args>` with `env` set, or how it failed. */
+function asker(cwd: string, env: GitVariables): (args: readonly string[]) => string | GitFailure {
+  return args => {
+    const answer = startGitSync(cwd, args, { env, maxBuffer: MAX_LISTING_BYTES });
+    return answer.status === 0 && answer.error === undefined ? answer.stdout : answer;
+  };
+}
+
+/** The repository a guarded diff runs in, as `git-submodule-state.ts` asks it. */
+function diffRepository(cwd: string, guarded: Guarded): DiffRepository {
+  const ask = asker(cwd, guarded.env);
+  return { entries: guarded.entries, ask, place: () => places(ask) };
+}
+
+/** The top of the worktree a question runs in, and its folder below that top; how asking failed instead. */
+function places(ask: (args: readonly string[]) => string | GitFailure): Places | GitFailure {
+  const answer = ask(["rev-parse", "--show-toplevel", "--show-prefix"]);
+  if (typeof answer !== "string") return answer;
+  const [top = "", prefix = ""] = answer.split("\n");
+  return { top, prefix };
+}
+
+/**
+ * The variables Git clears before it starts a Git in a submodule (`local_repo_env` in Git's environment.c, less the
+ * command-line config that `prepare_other_repo_env` hands on); it then sets `GIT_DIR=.git` in the submodule's folder.
+ */
+const SUBMODULE_CLEARED = [
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE",
+  "GIT_GRAFT_FILE", "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR",
+] as const;
+
+/**
+ * Opens each submodule through the guard as Git opens one for the `git status` it runs there: in the submodule's
+ * folder with the variables of {@link SUBMODULE_CLEARED} cleared and `GIT_DIR=.git`, which also skips the ownership
+ * check, as Git's does; `env` is the variables the diff was asked with.
+ */
+function submoduleOpener(env: GitVariables = {}): SubmoduleOpener {
+  const inSubmodule: GitVariables = { ...env, ...Object.fromEntries(SUBMODULE_CLEARED.map(name => [name, undefined])), GIT_DIR: ".git" };
+  return folder => {
+    const guarded = guardedSync(folder, inSubmodule);
+    if (!("entries" in guarded)) return guarded;
+    const repository: GuardedRepository = { entries: guarded.entries, ask: asker(folder, guarded.env), places: { top: folder, prefix: "" } };
+    return repository;
+  };
 }
 
 /** What this process's Git means for the guard: what Rerail says when it is too old ({@link oldGitNotice}), and whether it said it. */
@@ -1365,7 +1433,7 @@ async function readGit(cwd: string, args: readonly string[], signal: AbortSignal
 /**
  * The variables a read of `args` in `cwd` runs with: for one that reads worktree files, each filter driver the
  * repository's config defines set as {@link guardedSync} sets it, from a listing that does not block; how that listing
- * ended instead.
+ * ended instead. No such read looks into submodules: one that would runs with Git looking into them as it does.
  */
 async function readerGuard(cwd: string, args: readonly string[], signal: AbortSignal | undefined): Promise<{ readonly env: GitVariables } | GitReadEnd> {
   const read = worktreeRead(args);
