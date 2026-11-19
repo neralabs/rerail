@@ -8,6 +8,10 @@ use super::*;
 /// The relations' name's start: `rr_diagnostic_<digest>`, one relation for each finding and form (a node's or a
 /// place's).
 pub const PREFIX: &str = "rr_diagnostic_";
+pub const COMMIT_PREFIX: &str = "rr_diagnostic_commit_";
+
+#[derive(Clone, Copy, PartialEq)]
+enum Location { Document, File, Commit }
 
 /// The columns before a finding's parameters: its policy, clause, code, path, line, place (`at`), message, and
 /// whether it has a tag (`tagged`, then `tag`).
@@ -27,15 +31,16 @@ pub fn is_diagnostic(rel: &str) -> bool {
 
 /// A finding's relation, by its policy, clause and form: the same in every program of a run, and another for each
 /// policy, so a pack's programs share them as they share `violation` (`corpus::own_names`).
-fn diagnostic_name(policy: &str, clause: &str, place: bool) -> String {
+fn diagnostic_name(policy: &str, clause: &str, location: Location) -> String {
     use sha2::Digest as _;
     let mut h = sha2::Sha256::new();
     h.update(policy.as_bytes());
     h.update([0]);
     h.update(clause.as_bytes());
-    h.update([0, u8::from(place)]);
+    h.update([0, location as u8]);
     let d: [u8; 32] = h.finalize().into();
-    format!("{PREFIX}{}", d[..8].iter().map(|b| format!("{b:02x}")).collect::<String>())
+    let prefix = if location == Location::Commit { COMMIT_PREFIX } else { PREFIX };
+    format!("{prefix}{}", d[..8].iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
 /// The setting that keeps a finding's message template beside the program (`.message B101 "…"`): what `rr::print`
@@ -124,10 +129,10 @@ impl Lowerer {
             name: clause.to_owned(), arity: 1, code: FindingCode::Constant(code.to_owned()), node: false,
             places: true, columns: vec![("at".to_owned(), "span".to_owned())], message: String::new(), tag: None,
         };
-        self.diagnostic_rule(policy, &finding, &[Term::Int(0)], Term::Int(0), body, true)
+        self.diagnostic_rule(policy, &finding, &[Term::Int(0)], Term::Int(0), body, Location::File)
     }
 
-    pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation, at_document: bool) -> Result<(), Error> {
+    pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation, at_document: bool, commit_locations: bool) -> Result<(), Error> {
         let cols: Vec<Term> = (0..finding.arity).map(|i| v(&format!("rr_v{i}"))).collect();
         if at_document {
             let mut body = vec![atom(&finding.name, cols.clone())];
@@ -138,18 +143,25 @@ impl Lowerer {
             }
             body.push(atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]));
             body.push(atom("line", vec![cols[0].clone(), v("rr_l")]));
-            self.diagnostic_rule(policy, finding, &cols, cols[0].clone(), body, false)?;
+            self.diagnostic_rule(policy, finding, &cols, cols[0].clone(), body, Location::Document)?;
         }
         if finding.places {
             let mut args = vec![v("rr_p"), v("rr_l")];
             args.extend(cols.iter().skip(1).cloned());
             let body = vec![atom(&place_relation(&finding.name), args)];
-            self.diagnostic_rule(policy, finding, &cols, Term::Int(0), body, true)?;
+            self.diagnostic_rule(policy, finding, &cols, Term::Int(0), body, Location::File)?;
+        }
+        if commit_locations {
+            let mut args = vec![v("rr_repo"), v("rr_commit"), v("rr_has_field"), v("rr_field")];
+            args.extend(cols.iter().skip(1).cloned());
+            let body = vec![atom(&commit_location_relation(&finding.name), args)];
+            self.diagnostic_rule(policy, finding, &cols, Term::Int(0), body, Location::Commit)?;
         }
         Ok(())
     }
 
-    fn diagnostic_rule(&mut self, policy: &str, finding: &Violation, cols: &[Term], at: Term, mut body: Vec<Literal>, place: bool) -> Result<(), Error> {
+    fn diagnostic_rule(&mut self, policy: &str, finding: &Violation, cols: &[Term], at: Term, mut body: Vec<Literal>, location: Location) -> Result<(), Error> {
+        let place = location != Location::Document;
         let column = |key: &str| finding.columns.iter().position(|(name, _)| name == key)
             .ok_or_else(|| Error::Syntax(format!(".violation {} message: no column {key}", finding.name)));
         let string_column = |i: usize| if matches!(finding.columns[i].1.as_str(), "symbol" | "sym") {
@@ -164,6 +176,7 @@ impl Lowerer {
             let term = if let Some((node, property)) = key.split_once('.') {
                 let i = column(node)?;
                 match property {
+                    "line" if i == 0 && location == Location::Commit => return Err(Error::Syntax(format!(".violation {}: a commit location has no source line", finding.name))),
                     "line" if i == 0 => number(v("rr_l")),
                     "line" => { body.push(atom("line", vec![cols[i].clone(), v(&value)])); number(v(&value)) }
                     "name" => {
@@ -210,10 +223,17 @@ impl Lowerer {
         // from the template and the holes, and writes the row without them (`compose_message`, decision 0225 §3).
         let at_type = if place { "int" } else { column_type(&finding.columns[0].1) };
         let mut decl: Vec<(String, String)> = HEAD.iter().zip(["sym", "sym", "sym", "sym", "int", at_type, "sym", "int"]).map(|(c, t)| ((*c).to_owned(), t.to_owned())).collect();
-        let mut args = vec![s(policy), s(&finding.name), code, v("rr_p"), v("rr_l"), at, s(""), Term::Int(i64::from(finding.tag.is_some()))];
+        let (path, line) = if location == Location::Commit { (s(""), Term::Int(0)) } else { (v("rr_p"), v("rr_l")) };
+        let mut args = vec![s(policy), s(&finding.name), code, path, line, at, s(""), Term::Int(i64::from(finding.tag.is_some()))];
         if let Some(i) = finding.tag {
             decl.push(("tag".to_owned(), column_type(&finding.columns[i].1).to_owned()));
             args.push(cols[i].clone());
+        }
+        if location == Location::Commit {
+            for (column, ty, var) in [("repository","sym","rr_repo"), ("commit","sym","rr_commit"), ("has_field","int","rr_has_field"), ("field","sym","rr_field")] {
+                decl.push((column.to_owned(), ty.to_owned()));
+                args.push(v(var));
+            }
         }
         for (i, (name, ty)) in finding.columns.iter().enumerate().skip(1) {
             decl.push((format!("name{i}"), "sym".to_owned()));
@@ -225,7 +245,7 @@ impl Lowerer {
             decl.push((format!("{HOLE}{j}"), "sym".to_owned()));
             args.push(hole);
         }
-        let rel = diagnostic_name(policy, &finding.name, place);
+        let rel = diagnostic_name(policy, &finding.name, location);
         self.prog.decls.insert(rel.clone().into(), decl.into_iter().map(|(c, t)| (c.into(), t.into())).collect::<Vec<_>>().into());
         if !self.prog.outputs.iter().any(|name| *name == rel) {
             self.prog.outputs.push(rel.clone());

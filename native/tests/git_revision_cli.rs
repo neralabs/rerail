@@ -645,6 +645,60 @@ checked(k,id,h,bytes) :- git_object(_,id,k,h), git_content_bytes(h,0,_,bytes).
 }
 
 #[test]
+fn commit_locations_keep_the_bound_repository_commit_and_optional_field_in_reports() {
+    let f = Checkout::new();
+    let parent = f.git(&["rev-parse", "HEAD"]);
+    fs::write(f.repo.join("git"), "file witness\n").unwrap();
+    f.git(&["add", "--", "git"]);
+    f.git(&["commit", "-qm", "WIP file named git"]);
+    let child = f.git(&["rev-parse", "HEAD"]);
+    let policy = f.area.path().join("places.rr");
+    let other = f.area.path().join("other.rr");
+    let out = f.area.path().join("report");
+    let program = r#"#include "git.rr"
+.policy "places" revision 1
+.violation Seen(at: loc, witness: symbol) "{witness}"
+Seen(@git_commit_location(r,p,"message"), "parent") :- git_source_commit(r,c), git_parent(r,c,_,p).
+Seen(@git_commit_location(r,c), "child") :- git_source_commit(r,c).
+Seen(@place("git",1), "file") :- file_line("git",1,"file witness").
+"#;
+    fs::write(&policy, program).unwrap();
+    fs::write(&other, program.replace("\"places\"", "\"other\"")).unwrap();
+    for (name, paths, copies) in [
+        ("run-rr", vec![policy.as_path(), &f.repo, &out], 1),
+        ("run-policies", vec![f.repo.as_path(), &out, &policy, &other], 2),
+    ] {
+        let report = json(f.run(name, &paths, Some("locations")), 0);
+        let rows = report["diagnostics"].as_array().unwrap();
+        assert_eq!(rows.len(), 3 * copies, "{report}");
+        for policy_name in ["places", "other"].into_iter().take(copies) {
+            let find = |witness: &str| rows.iter().find(|r| r["policy"] == policy_name && r["parameters"]["witness"] == witness).unwrap();
+            let file = find("file");
+            assert_eq!(file["path"], "git");
+            assert_eq!(file["line"], 1);
+            assert!(file.get("location").is_none());
+            let repository = &find("parent")["location"]["repository"];
+            assert!(!repository.as_str().unwrap().is_empty());
+            for (witness, id, field) in [("parent", &parent, Some("message")), ("child", &child, None)] {
+                let row = find(witness);
+                assert_eq!(row["location"], serde_json::json!({"kind":"git-commit","repository":repository,"commit":id,"field":field}));
+                assert_eq!(row["message"], witness);
+                for key in ["at", "path", "line"] { assert!(row[key].is_null(), "{row}"); }
+            }
+        }
+    }
+    let example = include_str!("../../docs/rule-syntax/git.md").split("```rr\n")
+        .filter_map(|block| block.split_once("\n```").map(|(text, _)| text))
+        .find(|program| program.contains(".violation WorkInProgress(")).unwrap();
+    fs::write(&policy, example).unwrap();
+    let report = json(f.run("run-rr", &[&policy, &f.repo, &out], Some("locations")), 0);
+    let rows = report["diagnostics"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{report}");
+    assert_eq!(rows[0]["location"]["commit"], child);
+    assert_eq!(rows[0]["location"]["field"], "message");
+}
+
+#[test]
 fn bound_commit_metadata_requests_each_key_and_guards_absence() {
     let f = Checkout::new();
     let root = f.git(&["rev-parse", "HEAD"]);
@@ -977,6 +1031,10 @@ fn incomplete_source_reads_return_partial_results_and_a_failed_exit() {
     );
     assert_eq!(complete["status"], "completed");
     assert_eq!(complete["diagnostics"].as_array().unwrap().len(), 1);
+    fs::write(&metadata, "#include \"git.rr\"\n.policy \"meta\" revision 1\n.violation Commit(at: loc) \"commit\"\nCommit(@git_commit_location(r,c)) :- git_source_commit(r,c).\n").unwrap();
+    let commit_only = json(f.run("run-rr", &[&metadata, &f.repo, &out], Some("metadata")), 0);
+    assert_eq!(commit_only["status"], "completed");
+    assert_eq!(commit_only["diagnostics"][0]["location"]["commit"], f.git(&["rev-parse", "HEAD"]));
     fs::rename(held, object).unwrap();
     let restored = json(
         f.run("run-rr", &[&f.policy, &f.repo, &out], Some("partial")),

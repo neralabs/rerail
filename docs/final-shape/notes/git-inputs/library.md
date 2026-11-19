@@ -219,8 +219,8 @@ Their compatibility treatment needs explicit agreement.
 New public library signatures do not acquire hidden repository arguments to mimic those functions.
 Tree membership and current index membership remain different relations.
 
-A commit diagnostic refers to repository and commit, with an optional metadata field.
-It does not invent a file named `commits` or `COMMIT_EDITMSG`.
+A commit diagnostic refers to the repository and commit supplied by the rule, with an optional metadata field.
 A source diagnostic refers to a source view, path, and span.
 The scan report records its one selected tree and the commit if the revision names one.
-The report schema and display form remain open, rather than overloading the existing path field silently.
+The JSON finding carries a `git-commit` location. The text report names the repository, commit and optional field.
+See [Report a finding on a commit](../../../rule-syntax/git.md#report-a-finding-on-a-commit).

@@ -427,7 +427,7 @@ fn diagnostic_rows(outputs: &crate::code_rule_dsl::logic::plan::output::Outputs)
     let mut all = Vec::new();
     for rel in outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
         for row in outputs.rows(rel) {
-            let mut finding = diagnostic(&row)?;
+            let mut finding = diagnostic(rel, &row)?;
             if matches!(row.get(5), crate::code_rule_dsl::logic::plan::output::Value::Node(_))
                 && let Some(span) = row.get(3).text().and_then(|path| spans.get(&(path, row.raw(5))))
             {
@@ -442,7 +442,7 @@ fn diagnostic_rows(outputs: &crate::code_rule_dsl::logic::plan::output::Outputs)
 /// A finding's row as its JSON object: `policy`, `clause`, `code`, `path`, `line`, `at`, `tag` (`null` for none),
 /// `message`, and `parameters` by name. Each value as its column holds it: a text a string, an integer or a node a
 /// number (a node's value as the run held it), NULL `null`. Nothing is parsed.
-fn diagnostic(row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Result<serde_json::Value, String> {
+fn diagnostic(rel: &str, row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Result<serde_json::Value, String> {
     use crate::code_rule_dsl::logic::plan::output::Value;
     let value = |c: usize| -> serde_json::Value {
         match row.get(c) {
@@ -463,6 +463,19 @@ fn diagnostic(row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Resul
     let tagged = row.get(head.len() - 1).int() == Some(1);
     let mut c = head.len();
     finding.insert("tag".to_owned(), if tagged { c += 1; value(c - 1) } else { serde_json::Value::Null });
+    if rel.starts_with(super::logic::rr::lower::findings::COMMIT_PREFIX) {
+        if c + 4 > row.len() { return Err("incomplete Git commit location".to_owned()); }
+        let repo = row.get(c).text().ok_or("missing Git repository identity")?;
+        let commit = row.get(c+1).text().ok_or("missing Git commit ID")?;
+        let field = match row.get(c+2).int() {
+            Some(0) => None,
+            Some(1) => Some(row.get(c+3).text().ok_or("missing Git commit field")?),
+            _ => return Err("invalid Git commit field indicator".to_owned()),
+        };
+        finding.insert("location".into(), serde_json::json!({"kind": "git-commit", "repository": repo, "commit": commit, "field": field}));
+        for column in ["path", "line", "at"] { finding.insert(column.to_owned(), serde_json::Value::Null); }
+        c += 4;
+    }
     let mut parameters = serde_json::Map::new();
     while c + 1 < row.len() {
         let name = row.get(c).text().ok_or("a finding's parameter name: not a text")?.to_owned();
@@ -759,7 +772,7 @@ fn run_pack(
     for rel in outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
         for row in outputs.rows(rel) {
             let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
-            each[at].push(diagnostic(&row)?);
+            each[at].push(diagnostic(rel, &row)?);
             rows[at].entry(rel.to_owned()).or_default().push(row);
         }
     }

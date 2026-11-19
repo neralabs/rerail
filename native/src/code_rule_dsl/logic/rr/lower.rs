@@ -180,6 +180,10 @@ fn place_relation(v: &str) -> String {
     format!("rr_place_{v}")
 }
 
+fn commit_location_relation(v: &str) -> String {
+    format!("rr_commit_location_{v}")
+}
+
 #[derive(Clone, Default)]
 struct Lowerer {
     prog: Program,
@@ -1508,9 +1512,10 @@ impl Lowerer {
         for f in std::mem::take(&mut self.violations) {
             // A violation defined entirely with direct `@place` heads cannot
             // produce document locations. Keep that input out of the plan.
-            let at_document = !f.places || self.prog.rules.iter().any(|r| r.head.rel == f.name)
+            let commit_locations = self.prog.decls.contains_key(commit_location_relation(&f.name).as_str());
+            let at_document = (!f.places && !commit_locations) || self.prog.rules.iter().any(|r| r.head.rel == f.name)
                 || self.prog.facts.contains_key(f.name.as_str()) || self.prog.inputs.contains(&f.name);
-            self.diagnostics(&policy, &f, at_document)?;
+            self.diagnostics(&policy, &f, at_document, commit_locations)?;
             let code_col = match f.code {
                 FindingCode::Column(i) => Some(i),
                 _ => None,
@@ -1798,7 +1803,25 @@ impl Lowerer {
             // `V(@place(path, line), …)` for a `.violation V`: a row of V's place relation.
             let mut rel = head.rel.clone();
             let mut written = head.args.clone();
-            if let Some(STerm::Call { name, functor: true, args: place }) = head.args.first()
+            if let Some(STerm::Call { name, functor: true, args }) = head.args.first()
+                && name == "git_commit_location"
+            {
+                if !self.violations.iter().any(|v| v.name == head.rel) {
+                    return Err(Error::Syntax("@git_commit_location belongs in a violation head".to_owned()));
+                }
+                let (repo, commit, field) = match args.as_slice() {
+                    [repo, commit] => (repo, commit, None),
+                    [repo, commit, field] => (repo, commit, Some(field)),
+                    _ => return Err(Error::Syntax("@git_commit_location takes a repository, a commit and an optional field".to_owned())),
+                };
+                rel = commit_location_relation(&head.rel);
+                let mut cols: Vec<_> = [("repository","sym"), ("commit","sym"), ("has_field","int"), ("field","sym")]
+                    .into_iter().map(|(name, ty)| (name.into(), ty.into())).collect();
+                cols.extend(self.prog.decls[head.rel.as_str()].iter().skip(1).cloned());
+                self.prog.decls.insert(rel.as_str().into(), cols.into());
+                written = vec![repo.clone(), commit.clone(), STerm::Num(i64::from(field.is_some())), field.cloned().unwrap_or_else(|| STerm::Str(String::new()))];
+                written.extend(head.args.iter().skip(1).cloned());
+            } else if let Some(STerm::Call { name, functor: true, args: place }) = head.args.first()
                 && name == "place"
                 && let Some(k) = self.violations.iter().position(|v| v.name == head.rel)
             {

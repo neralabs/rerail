@@ -598,6 +598,60 @@ Origin(@place(p,1), v, b, g, profile, cat("", t)) :- git_source_file(v, p, _, b)
     expect(await read(["copy.py", "a.py"])).toEqual(both);
   }, 90_000);
 
+  it("reports typed commit locations beside a real file named git", async () => {
+    const root = checkout();
+    writeFileSync(join(root, "git"), "file witness\n");
+    git(root, "add", "--", "git");
+    git(root, "commit", "-qm", "file named git");
+    const parent = git(root, "rev-parse", "HEAD");
+    git(root, "commit", "--allow-empty", "-qm", "child");
+    const child = git(root, "rev-parse", "HEAD");
+    const policy = join(root, "locations.rr");
+    writeFileSync(policy, `#include "git.rr"
+.policy "locations" revision 1
+.violation Seen(at: loc) "witness"
+.decl candidate(repo: symbol, commit: symbol)
+candidate(r,c) :- git_source_commit(r,c).
+candidate(r,p) :- git_source_commit(r,c), git_parent(r,c,_,p).
+Seen(@git_commit_location(r,c,"message")) :- candidate(r,c).
+Seen(@git_commit_location(r,c)) :- git_source_commit(r,c).
+Seen(@place("git",1)) :- file_line("git",1,"file witness").
+`);
+    const read = async (revision: string) => {
+      const report = await scan(root, { revision, analysisScope: "typed", rr: [policy] });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      return { rows: report.violations.filter(v => v.ruleId === "locations"), text: describeScan(report) };
+    };
+    const { rows, text } = await read(child);
+    expect(rows).toHaveLength(4);
+    expect(new Set(rows.map(v => v.fingerprint)).size).toBe(4);
+    const file = rows.find(v => v.path === "git");
+    expect(file?.start).toEqual({ line: 1, column: 1 });
+    expect(file?.location).toBeUndefined();
+    const commits = rows.filter(v => v.location);
+    const repository = commits[0]?.location?.repository;
+    expect(repository).toBeTruthy();
+    for (const v of commits) {
+      expect([v.path, v.start, v.end]).toEqual([null, null, null]);
+      expect(v.location).toMatchObject({ kind: "git-commit", repository });
+    }
+    const match = (id: string, field: string | null) => commits.find(v => v.location?.commit === id && v.location.field === field);
+    expect(match(child, null)).toBeDefined();
+    expect(match(child, "message")).toBeDefined();
+    expect(text).toContain(`commit ${parent} in ${repository} (message)`);
+    expect(text).toContain("git:1:1");
+    const earlier = await read(parent);
+    expect(earlier.rows.find(v => v.location?.commit === parent && v.location.field === "message")?.fingerprint).toBe(match(parent, "message")?.fingerprint);
+    const home = root + "-home";
+    const result = spawnSync(process.execPath, ["--import", "tsx", "src/cli/cli.ts", "--rerail-managed-child", "scan",
+      "--repo", root, "--revision", child, "--analysis-scope", "typed", "--rr", policy, "--no-send", "--fail-on-violations", "--json"], {
+      env: { ...process.env, RERAIL_HOME: home, RERAIL_CONTENT_STORE_PATH: join(home, "store.sqlite") }, encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(SCAN_VIOLATIONS_EXIT);
+    const json = JSON.parse(result.stdout) as ScanReport;
+    expect(json.violations.filter(v => v.ruleId === "locations").map(v => v.fingerprint).sort()).toEqual(rows.map(v => v.fingerprint).sort());
+  }, 60_000);
+
   it("checks for a readable root commit through bound metadata in revision policies", async () => {
     const root = checkout();
     const initial = git(root, "rev-parse", "HEAD");

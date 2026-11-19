@@ -136,6 +136,21 @@ The negative parent test requires a decoded commit. A child, a tree and an unava
 Read `git_object_error(repo, oid, reason)` to report a failed object read.
 To enumerate a batch, you can still derive `git_object_request(repo, oid)` for every key you want to inspect.
 
+### Report a finding on a commit
+
+Use `@git_commit_location(repository, commit, field)` in a violation head. Omit the field for a finding about the entire commit.
+This policy reports a commit message that contains `WIP`.
+
+```rr
+#include "git.rr"
+.policy "work-in-progress" revision 1
+.violation WorkInProgress(at: loc) "Commit message contains WIP"
+WorkInProgress(@git_commit_location(r, c, "message")) :- git_source_commit(r, c), git_message(r, c, msg), contains("WIP", msg).
+```
+
+A rule can supply a commit from any bound relation, including a parent. The JSON report preserves the repository, commit and field.
+File findings keep their path and line. [Scan report fields](../headless-scan.md#locations-for-commit-findings)
+
 ### Read commit trailers
 
 `git_trailer(repo, commit, position, name, value)` returns one row per trailer in a decoded UTF-8 commit message.

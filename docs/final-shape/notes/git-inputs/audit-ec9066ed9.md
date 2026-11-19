@@ -2,13 +2,25 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Twenty-five of the 28 follow-up findings have verified results. Three remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Twenty-six of the 28 follow-up findings have verified results. Two remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
 | Open finding | What still needs to pass |
 | --- | --- |
 | 11. Large Git blobs | Skip a binary after a bounded prefix read. Distinguish large text from an unreadable blob for loose and packed objects. |
 | 42. Removed stores | Retire a route by store identity. Apply its outstanding stop if that store returns. Preserve a different store at the same path. |
-| Commit diagnostic locations | Identify the repository, commit and optional field in the report. Distinguish a commit finding from a finding in a file named `git`. |
+
+## Commit diagnostic locations
+
+The standalone CLI ran the same policy alone and in a two-policy batch. Each policy reported three witnesses.
+The real file `git` had line 1. The selected commit had a repository, its own ID, and a null field.
+The parent commit used the same repository, its own ID, and the field `message`. Both commit findings had null source positions.
+The documented WIP policy reported the message on the correct commit. A commit-only policy succeeded with a missing source subtree.
+
+The headless scan produced four distinct fingerprints for the file and three commit locations.
+The parent message kept its fingerprint when scanned as the selected commit. The text report displayed the full parent ID, repository and field.
+A separate `rerail scan --json --fail-on-violations` process returned the same fingerprints and exit code 3.
+All 17 standalone revision tests passed on macOS. The single-policy and batch location regression also passed on Linux.
+[Rule example](../../../rule-syntax/git.md#report-a-finding-on-a-commit) · [Report format](../../../headless-scan.md#locations-for-commit-findings) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Bound commit metadata
 
