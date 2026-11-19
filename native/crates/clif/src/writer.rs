@@ -47,6 +47,10 @@ pub mod fail {
     pub const NO_OPEN: u32 = 5;
     /// A finish with nodes open.
     pub const UNCLOSED: u32 = 6;
+    /// A node whose key the language's table does not hold (tier 2's, decision 0399 §6, R17).
+    pub const NUMBER: u32 = 7;
+    /// An edit of a node tier 2 already passed to the ops (R17): a commit point that was not final.
+    pub const PASSED: u32 = 8;
     /// A part with no room: `FULL + its number`.
     pub const FULL: u32 = 0x100;
 }
@@ -291,6 +295,39 @@ mod ops {
 
     pub fn op(name: &str) -> Option<&'static Op> {
         OPS.iter().find(|op| op.name == name)
+    }
+
+    /// Every op declared in `module` with `linkage` and defined there, each calling the others by its id there (as
+    /// `declare_func_in_func`): the JIT's (`jit::Writer`), and a module whose own code calls the ops (tier 2's,
+    /// decision 0399 §6, R17). Each op's id and signature, by name.
+    pub fn define_ops<M: cranelift_module::Module>(module: &mut M, linkage: cranelift_module::Linkage) -> Result<std::collections::HashMap<&'static str, (cranelift_module::FuncId, Signature)>, String> {
+        use cranelift_module::FuncId;
+        // An op's call of another: the module's function of that name, by its id.
+        struct ByName<'m> {
+            ids: &'m std::collections::HashMap<&'static str, (FuncId, Signature)>,
+        }
+        impl Callee for ByName<'_> {
+            fn func_ref(&mut self, name: &str, signature: &Signature, func: &mut Function) -> ir::FuncRef {
+                let name = func.declare_imported_user_function(ir::UserExternalName::new(0, self.ids[name].0.as_u32()));
+                let signature = func.import_signature(signature.clone());
+                func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
+            }
+        }
+        let cc = module.isa().default_call_conv();
+        let mut ids = std::collections::HashMap::new();
+        for op in OPS {
+            let s = signature(op, cc);
+            let id = module.declare_function(op.name, linkage, &s).map_err(|e| format!("{}: {e:?}", op.name))?;
+            ids.insert(op.name, (id, s));
+        }
+        for op in OPS {
+            let id = ids[op.name].0;
+            let func = build(op, cc, UserFuncName::user(0, id.as_u32()), &mut ByName { ids: &ids });
+            let mut context = module.make_context();
+            context.func = func;
+            module.define_function(id, &mut context).map_err(|e| format!("{}: {e:?}", op.name))?;
+        }
+        Ok(ids)
     }
 
     /// An op's signature: the state's address, then its parameters.

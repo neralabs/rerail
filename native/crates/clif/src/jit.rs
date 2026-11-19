@@ -85,37 +85,13 @@ pub struct Writer {
 impl Writer {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        use crate::writer::{OPS, build, signature};
-        use cranelift_codegen::ir::UserFuncName;
-        use cranelift_module::{FuncId, Linkage};
-        use cranelift_codegen::ir;
-        // An op's call of another: the module's function of that name, by its id (as `declare_func_in_func`).
-        struct ByName<'m> {
-            ids: &'m std::collections::HashMap<&'static str, FuncId>,
-        }
-        impl crate::reads::Callee for ByName<'_> {
-            fn func_ref(&mut self, name: &str, signature: &ir::Signature, func: &mut ir::Function) -> ir::FuncRef {
-                let name = func.declare_imported_user_function(ir::UserExternalName::new(0, self.ids[name].as_u32()));
-                let signature = func.import_signature(signature.clone());
-                func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
-            }
-        }
         let mut builder = cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
         // One arena, so a call between the ops stays in a `bl`'s reach (as `Reads`).
         builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(16 << 20).unwrap()));
         let mut module = cranelift_jit::JITModule::new(builder);
-        let cc = module.isa().default_call_conv();
-        let ids: std::collections::HashMap<&'static str, FuncId> =
-            OPS.iter().map(|op| (op.name, module.declare_function(op.name, Linkage::Export, &signature(op, cc)).unwrap())).collect();
-        for op in OPS {
-            let id = ids[op.name];
-            let func = build(op, cc, UserFuncName::user(0, id.as_u32()), &mut ByName { ids: &ids });
-            let mut context = module.make_context();
-            context.func = func;
-            module.define_function(id, &mut context).unwrap_or_else(|e| panic!("{}: {e:?}", op.name));
-        }
+        let ids = crate::writer::define_ops(&mut module, cranelift_module::Linkage::Export).unwrap();
         module.finalize_definitions().unwrap();
-        let fns = ids.into_iter().map(|(name, id)| (name, module.get_finalized_function(id))).collect();
+        let fns = ids.into_iter().map(|(name, (id, _))| (name, module.get_finalized_function(id))).collect();
         Self { _module: module, fns }
     }
 

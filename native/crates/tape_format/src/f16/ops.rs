@@ -281,6 +281,37 @@ impl Writer {
         &self.parts[k as usize]
     }
 
+    /// Room for a run of up to `nodes` nodes, `depth` open at once, whose ops code calls itself, with no host
+    /// between them to reserve (tier 2's words, decision 0399 §6, R17): each block's share as `open` reserves it,
+    /// and room for every block made final as `reserve_final` does. A part found full after it is the run's
+    /// failure (`fail::FULL`), and the run goes again with more room.
+    pub fn reserve_run(&mut self, nodes: usize, depth: usize) {
+        let count = nodes.div_ceil(Z).max(1);
+        let stride = self.state.stride as usize;
+        self.reserve(part::OPEN, (depth + 1) * OPEN as usize);
+        if self.z {
+            let rooms = self.len_of(part::ROOMS);
+            self.reserve(part::ROOMS, rooms + count * stride);
+            self.reserve(part::PIECES, 4 * count * w::PIECE as usize);
+            self.reserve(part::CKPT, count * (Z / K) * self.state.cw as usize);
+        } else {
+            self.reserve(part::OUT, w::HEAD16 as usize + count * stride);
+        }
+        self.reserve(part::TABLE, count * TABLE as usize);
+        let sides = self.len_of(part::SIDES);
+        self.reserve(part::SIDES, sides + count * SIDE_AREA as usize);
+        if self.keep_blocks {
+            let words = 8 * (self.presence_words.0 + self.presence_words.1);
+            self.reserve(part::PRESENCE, (count + 1) * words);
+        }
+        self.reserve_final(count);
+    }
+
+    /// The state's address: what code that calls the ops itself passes them (`reserve_run` first).
+    pub fn state_address(&mut self) -> *mut u8 {
+        std::ptr::from_mut::<State>(&mut self.state).cast::<u8>()
+    }
+
     /// The nodes so far.
     pub fn len(&self) -> usize {
         self.state.n as usize

@@ -325,7 +325,35 @@ program's bounds, as its rows are (`Bounds`, `OVERFLOW`): a full part runs the f
 `tier2_writes_format_16_by_the_ops` parses JSON by tier 2 into 16 and 16z and compares each with `write_from` of
 its format 15 tape. Tier 2 on the device (R17's second half) waits on tier 2 on Metal.
 
-Next: tier 2 (R17).
+**Done (2026-11-18): tier 2 writes format 16 by the ops on the CPU (R17's first half).** A tier 2 compiled with
+`compile_with(.., sixteen)` (`Parser::sixteen`, on first use) holds the writer's ops in its module
+(`rerail_clif::writer::define_ops`, which the ops' JIT now uses too) and two functions of its own that call them:
+`native_cpu_tape::pass` (nodes `from..to` in preorder: the ops' open nodes whose subtrees end there closed, each
+node opened by its number and committed) and `native_cpu_tape::retag`. Its run numbers no codes and makes no image:
+at a top-level close it passes the nodes up to the commit point before this one, and at `ACCEPT` the rest, root
+closed. `Parser::image16(bytes, lang, numbers, z)` makes the writer, reserves its room for the bound's nodes and a
+guessed depth (`f16::Writer::reserve_run`), runs, and finishes; a part found full, or tier 2's own room overflowed,
+runs it again with the bound's room. `CompiledStream::numbers(lang)` is the language's numbers by tier 2's keys
+(kind, field and supertype bits), `u32::MAX` for none, which the pass makes the ops' failure (`fail::NUMBER`).
+
+What the build found. (1) 16z lays its blocks in the order they become final, so its bytes depend on when the
+ops commit; the pass commits after each open, as `write_with` does, and the ops' calls are then `write_with`'s,
+whatever the batches. (2) A commit point is not final: a fold of the root's two closed leaves retags the first,
+which is the commit point before the second's. The ops therefore take nodes one commit point behind; an edit before
+the commit point moves it back (`Table::uncode`), and an edit of a node already passed is the ops' failure
+(`fail::PASSED`). (3) The root is passed and still editable (`RETAG` of the innermost open node): a retag of a node
+the ops hold is a `w_retag` too. (4) Format 15 had both faults as stale codes: a fold, and a retag of the root,
+after their nodes were committed left the old kind's code. A retag before the commit point now takes the codes back
+(`Table::retag`), so tier 2's image is the interpreter's.
+
+`tier2_writes_format_16_by_the_ops` checks 16 and 16z, byte for byte, against `write_from` of tier 2's own format
+15 tape on every ladder step's documents, long ones (3,000-element lists, 300 and 400 deep, 1,500 records, 800 JSON
+objects with comments) and ones with 70,000 blanks. `edits_of_nodes_passed_reach_the_ops` runs two hand-written
+programs, a fold before the commit point and a retag of the passed root, and checks the format 15 image against the
+interpreter's nodes and both formats against the writer's. Each fails when the lag, the root's `w_retag`, or the
+fold's taking back is removed. Not yet measured: the run's cost a node against format 15's image plus `write_from`.
+
+Next: R17's second half, tier 2 on the device, needs tier 2 on Metal, which nothing generates yet.
 
 ## Requirements, each with its test
 
@@ -348,7 +376,7 @@ Next: tier 2 (R17).
 | R14 | An op fails as the reference does; a full part fails as full, and nothing is written past its capacity | `the_clif_ops_fail_as_the_reference`, `a_full_writer_writes_nothing_past_its_parts` (step 4) |
 | R15 | The ops in MSL write the same tape on the device | `the_device_writes_the_references_tape` (step 4) |
 | R16 | The host's `Writer` is the generated ops; the hand-written one is the tests' oracle only | `the_writer_is_the_clif_ops` (step 4) |
-| R17 | Tier 2's tape words call the ops, and its GPU path writes its tape on the device | `tier2_writes_format_16_by_the_ops` (step 4) |
+| R17 | Tier 2's tape words call the ops, and its GPU path writes its tape on the device | `tier2_writes_format_16_by_the_ops`, `edits_of_nodes_passed_reach_the_ops` (CPU, done); the device: open |
 
 ## Steps
 
