@@ -38,7 +38,7 @@ struct View {
     directories: identity::Directories,
     scope: Option<String>,
     inventory: Mutex<InventoryState>,
-    observed_trees: Mutex<std::collections::HashMap<gix::ObjectId, ObservedTree>>,
+    observed_trees: Mutex<TreeCache>,
     source_errors: Mutex<std::collections::BTreeMap<String, String>>,
 }
 
@@ -169,6 +169,30 @@ pub struct SourceFailure {
 struct ObservedTree {
     stamp: String,
     entries: Arc<[RawTreeEntry]>,
+    bytes: usize,
+}
+
+const TREE_CACHE_BYTES: usize = 8 * 1024 * 1024;
+type TreeCache = clru::CLruCache<gix::ObjectId, ObservedTree, std::collections::hash_map::RandomState, TreeWeight>;
+
+#[derive(Debug)]
+struct TreeWeight;
+
+impl clru::WeightScale<gix::ObjectId, ObservedTree> for TreeWeight {
+    fn weight(&self, _: &gix::ObjectId, tree: &ObservedTree) -> usize { tree.bytes }
+}
+
+fn tree_cache(bytes: usize) -> TreeCache {
+    TreeCache::with_scale(std::num::NonZeroUsize::new(bytes).expect("positive Git tree cache budget"), TreeWeight)
+}
+
+fn cache_tree(cache: &mut TreeCache, id: gix::ObjectId, stamp: String, entries: Arc<[RawTreeEntry]>) {
+    let bytes = size_of::<(gix::ObjectId, ObservedTree)>() + size_of::<[usize; 2]>() + stamp.capacity()
+        + std::mem::size_of_val(entries.as_ref()) + entries.iter().map(|e| e.name.capacity()).sum::<usize>();
+    if cache.put_with_weight(id, ObservedTree { stamp, entries, bytes }).is_err() {
+        // An oversized tree is served directly. Drop any older observation for this object.
+        cache.pop(&id);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -313,7 +337,7 @@ impl View {
             Some(RawTreeEntry { name, mode: entry.mode, target })
         }).collect::<Option<Vec<_>>>()?;
         let entries = sorted_entries(entries);
-        observed.insert(id, ObservedTree { stamp: stamp.to_owned(), entries: Arc::clone(&entries) });
+        cache_tree(&mut observed, id, stamp.to_owned(), Arc::clone(&entries));
         Some(entries)
     }
 
@@ -324,7 +348,7 @@ impl View {
             return Ok(Arc::clone(&tree.entries));
         }
         let entries = decode_tree(tree)?;
-        trees.insert(id, ObservedTree { stamp: stamp.to_owned(), entries: Arc::clone(&entries) });
+        cache_tree(&mut trees, id, stamp.to_owned(), Arc::clone(&entries));
         Ok(entries)
     }
 
@@ -785,7 +809,7 @@ impl Snapshot {
             prefix,
             scope,
             inventory: Mutex::default(),
-            observed_trees: Mutex::default(),
+            observed_trees: Mutex::new(tree_cache(TREE_CACHE_BYTES)),
             source_errors: Mutex::default(),
             repository: Mutex::new(RepositoryState { epoch: 0, repo: repo.into_sync(), storage }),
         });
@@ -893,8 +917,7 @@ pub fn remember_root(root: &Path, stamp: String, entries: Vec<RawTreeEntry>, rea
         if let Some(reads) = reads {
             *reads.root.lock().unwrap_or_else(|e| e.into_inner()) = Some((v.id, stamp.clone()));
         }
-        v.observed_trees.lock().unwrap_or_else(|err| err.into_inner())
-            .insert(v.tree, ObservedTree { stamp, entries: sorted_entries(entries) });
+        cache_tree(&mut v.observed_trees.lock().unwrap_or_else(|err| err.into_inner()), v.tree, stamp, sorted_entries(entries));
     }
 }
 
@@ -1233,6 +1256,65 @@ mod tests {
     fn sha256(bytes: &[u8]) -> [u8; 32] {
         use sha2::Digest;
         sha2::Sha256::digest(bytes).into()
+    }
+
+    #[test]
+    fn disjoint_selections_bound_decoded_tree_bytes_and_serve_oversized_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = gix::init_bare(dir.path().join("repo.git")).unwrap();
+        let blob = repo.write_blob(b"text").unwrap().detach();
+        let subtree = |name: &str, count| {
+            let entries = (0..count).map(|i| TreeEntry {
+                mode: EntryKind::Blob.into(), filename: format!("{name}-{i:04}.py").into(), oid: blob,
+            }).collect();
+            repo.write_object(&gix::objs::Tree { entries }).unwrap().detach()
+        };
+        let a = subtree("a", 8);
+        let b = subtree("b", 8);
+        let c = subtree("c", 8);
+        let big = subtree("big", 128);
+        let entries = [("a", a), ("b", b), ("big", big), ("c", c)].into_iter()
+            .map(|(name, oid)| TreeEntry { mode: EntryKind::Tree.into(), filename: name.into(), oid }).collect();
+        let root = repo.write_object(&gix::objs::Tree { entries }).unwrap().detach();
+        let source = Snapshot::scoped(repo.git_dir(), &root.to_string(), "bounded").unwrap();
+        let cache = || source.view.observed_trees.lock().unwrap();
+        let read = |name: &str, count: usize| {
+            source.restrict_paths(vec![name.to_owned()]).unwrap();
+            let decodes = || rerail_prof::stages().get("git.tree_decodes").map_or(0, |s| s.1);
+            let before = decodes();
+            let entries = source.directory_entries(name).unwrap().unwrap();
+            assert_eq!(entries.len(), count);
+            assert_eq!(entries[0].0, format!("{name}-0000.py").as_bytes());
+            let trees = cache();
+            let retained = trees.weight() + trees.len();
+            assert!(retained <= trees.capacity());
+            if rerail_prof::on() {
+                eprintln!("directory {name}: {} tree decodes, {retained} retained bytes", decodes() - before);
+            }
+            retained
+        };
+        read("a", 8);
+        // Use the measured size of the root and two equally sized leaves on this architecture.
+        let budget = read("b", 8);
+        *cache() = tree_cache(budget);
+        read("a", 8);
+        read("b", 8);
+        let held_a = Arc::clone(&cache().peek(&a).unwrap().entries);
+        let held_b = Arc::clone(&cache().peek(&b).unwrap().entries);
+        read("a", 8);
+        read("c", 8);
+        assert!(Arc::ptr_eq(&held_a, &cache().peek(&a).unwrap().entries));
+        assert!(!cache().contains(&b));
+        read("b", 8);
+        assert!(!Arc::ptr_eq(&held_b, &cache().peek(&b).unwrap().entries));
+        assert!(!cache().contains(&a));
+        let held_c = Arc::clone(&cache().peek(&c).unwrap().entries);
+        for _ in 0..2 {
+            assert_eq!(read("big", 128), budget);
+            assert!(!cache().contains(&big));
+            assert!(Arc::ptr_eq(&held_c, &cache().peek(&c).unwrap().entries));
+        }
+        assert_eq!(held_a.len(), 8);
     }
 
     #[test]

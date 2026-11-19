@@ -4547,6 +4547,7 @@ dependencies = [
 name = "rerail-store"
 version = "0.1.0"
 dependencies = [
+ "clru",
  "foldhash",
  "gix",
  "hashbrown 0.16.1",

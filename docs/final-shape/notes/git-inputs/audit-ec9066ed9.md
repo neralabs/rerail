@@ -2,7 +2,18 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Thirteen of the 28 follow-up findings have verified repairs. Fifteen remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Fourteen of the 28 follow-up findings have verified repairs. Fourteen remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+
+## Decoded directory cache
+
+Case 18 used one revision view for successive disjoint selections. With a 1,964-byte test budget, the root and two small subtrees fit.
+Revisiting a recent subtree required zero decodes. Reading a third subtree evicted the oldest leaf. Returning to that leaf required one decode.
+The oversized directory returned all 128 entries on both reads. Each read required one decode and left 1,964 bytes in the cache.
+
+With the production 8 MiB limit, a second fixture selected twelve directories with 4,000 entries each. It then read a 40,000-entry directory twice.
+The native allocator reported 8.2 MiB above baseline after the twelve selections, down from 12.5 MiB with the previous addon.
+After both oversized reads, the respective increases were 15.6 MiB and 29.3 MiB. These figures include native allocations outside the decoded directory cache.
+[Cache contract](analysis-scopes.md) · [Snapshot regression](../../../../native/src/git_snapshot.rs)
 
 ## Skipped revision paths
 

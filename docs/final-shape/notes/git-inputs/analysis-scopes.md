@@ -58,6 +58,12 @@ If a referenced tree cannot be read, `git_tree_walk_error` reports the failure.
 The source inventory requires every tree that passes its filter to be readable.
 When a policy asks for a tree that the inventory read, it receives those same
 decoded entries. The request can still reach trees outside the inventory.
+
+A revision view keeps up to 8 MiB of decoded Git directory entries for later lookups.
+The limit counts entry records, filename storage, object IDs, and storage stamps. The view evicts the least recently used trees first.
+A larger tree remains readable. The view gives its entries to the caller and omits that tree from the cache.
+Changing the path selection can reuse recent trees. Eviction leaves the scope's stored Datalog facts available to later runs.
+The current inventory and entries that a caller is still reading have their own lifetimes.
 The inventory also uses verified tree entries from earlier policy requests in the same scan.
 An explicit path under a missing tree gives a source error for that path.
 The scan still checks other requested paths whose trees it can read.
