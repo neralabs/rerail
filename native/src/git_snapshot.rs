@@ -30,6 +30,7 @@ struct View {
     tree: gix::ObjectId,
     commit: Option<gix::ObjectId>,
     cache_root: PathBuf,
+    repository_key: String,
     scope: Option<String>,
     inventory: Mutex<InventoryState>,
     observed_trees: Mutex<std::collections::HashMap<gix::ObjectId, ObservedTree>>,
@@ -470,7 +471,20 @@ pub struct SnapshotKey {
     object: gix::ObjectId,
 }
 
+/// Opaque repository identity shared by Git facts and completed-run records.
+pub fn repository_key(canonical_git_dir: &Path) -> String {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(canonical_git_dir.as_os_str().as_encoded_bytes());
+    format!("repo:{}", crate::content_store::observe::hex(&digest.into()))
+}
+
 impl Snapshot {
+    pub fn run_source(&self) -> crate::content_store::analysis_scope::RunSource {
+        crate::content_store::analysis_scope::RunSource::Git {
+            repository: self.view.repository_key.clone(), tree: self.tree(), commit: self.commit(),
+        }
+    }
+
     pub fn source_key(&self) -> SnapshotKey {
         SnapshotKey { repository_prefix: self.view.cache_root.clone(), object: self.view.commit.unwrap_or(self.view.tree) }
     }
@@ -700,6 +714,7 @@ impl Snapshot {
             root,
             tree,
             commit,
+            repository_key: repository_key(&git_dir),
             cache_root: git_dir.join("rerail-object-facts").join(&prefix),
             prefix,
             scope,

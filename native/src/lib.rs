@@ -402,7 +402,7 @@ pub fn scan_rr_policies_async(
             Err(format!("{path}: select a policy source for this path inspected in multiple revisions"))
         }).collect()
     });
-    let owner = analysis.map(|run| run.owner_for(Path::new(&store))).transpose()?;
+    let owner = analysis.map(|run| run.owner_for(Path::new(&store), Path::new(&root), source)).transpose()?;
     Ok(napi::bindgen_prelude::AsyncTask::new(ScanRrPolicies {
         paths, root, store, output, owner, source_paths,
         snapshot: source.map(|source| source.pinned_snapshot()),

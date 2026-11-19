@@ -56,14 +56,7 @@ impl Git {
             None => (crate::git_workspace::discover_repository(root).ok().map(snapshot::physical_objects), None, None),
         };
         let repository = repo.and_then(|repo| {
-            use sha2::Digest as _;
-            let directory = repo.git_dir().canonicalize().ok()?;
-            let key = format!(
-                "repo:{}",
-                hex(&sha2::Sha256::digest(
-                    directory.as_os_str().as_encoded_bytes()
-                ))
-            );
+            let key = snapshot::repository_key(&repo.git_dir().canonicalize().ok()?);
             Some((key, repo))
         });
         Self {
@@ -418,7 +411,7 @@ pub(super) fn metadata_only(program: &Program) -> bool {
         if requests.is_empty() { break needed; }
         roots.extend(requests);
     };
-    if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str())) {
+    if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str()) || rel == super::analysis_history::INPUT) {
         return false;
     }
     let heads: std::collections::BTreeSet<_> = program.rules.iter().map(|rule| rule.head.rel.as_str()).collect();
@@ -427,6 +420,7 @@ pub(super) fn metadata_only(program: &Program) -> bool {
             && (heads.contains(rel.as_str())
                 || program.facts.contains_key(rel.as_str())
                 || INPUTS.contains(&rel.as_str())
+                || rel == super::analysis_history::INPUT
                 || super::source_languages::is_input(rel)
                 // A declared relation with no producers is empty, unless a phase can supply it.
                 || (program.decls.contains_key(rel.as_str()) && !rel.contains("__") && !program.inputs.contains(rel))

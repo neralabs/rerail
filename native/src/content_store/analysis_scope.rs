@@ -69,12 +69,51 @@ pub struct AnalysisRun {
     pub owner: AnalysisOwner,
     store: ContentStore,
     lease: Option<CollectionLease>,
+    scan_id: String,
+    scope_value: String,
+    source: Option<RunSource>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RunSource {
+    Directory(String),
+    Git { repository: String, tree: String, commit: Option<String> },
+}
+
+impl RunSource {
+    pub fn directory(path: &Path) -> Self {
+        Self::Directory(path.canonicalize().unwrap_or_else(|_| path.to_owned()).to_string_lossy().into_owned())
+    }
+}
+
+pub struct CompletedRun {
+    pub scope: String,
+    pub value: String,
+    pub acquisition: i64,
+    pub scan_id: String,
+    pub directory: Option<String>,
+    pub repository: Option<String>,
+    pub tree: Option<String>,
+    pub commit: Option<String>,
+    pub snapshot: Option<i64>,
 }
 
 impl AnalysisRun {
     pub fn store_path(&self) -> &Path { self.store.database_path() }
 
     pub fn is_open(&self) -> bool { self.lease.is_some() }
+
+    pub fn set_directory_scope(&mut self, path: &Path) {
+        self.scope_value = directory(path)["cwd:".len()..].to_owned();
+    }
+
+    pub fn select_source(&mut self, source: RunSource) -> StoreResult<()> {
+        if !self.is_open() || self.source.as_ref().is_some_and(|previous| previous != &source) {
+            return Err(super::StoreError::Invalid("cannot change the selected source of an analysis run".into()));
+        }
+        self.source = Some(source);
+        Ok(())
+    }
 
     pub fn begin(store: ContentStore, scope: &str, id: &str) -> StoreResult<Self> {
         Self::begin_at(store, scope, id, 0)
@@ -91,7 +130,8 @@ impl AnalysisRun {
         })?;
         owner.pending = Some(pending);
         owner.warning = Some(Default::default());
-        Ok(Self { owner, store, lease: Some(lease) })
+        let value = scope.strip_prefix("named:").or_else(|| scope.strip_prefix("cwd:")).unwrap_or(scope);
+        Ok(Self { owner, store, lease: Some(lease), scan_id: id.to_owned(), scope_value: value.to_owned(), source: None })
     }
 
     pub fn finish(&mut self, succeeded: bool) -> StoreResult<()> {
@@ -103,6 +143,17 @@ impl AnalysisRun {
         self.store.immediate_transaction(|tx| {
             self.store.check_scope_store(tx)?;
             if succeeded && owner.cache_warning().is_none() && owner.current(tx)? {
+                if let Some(source) = &self.source {
+                    let (directory, repo, tree, commit) = match source {
+                        RunSource::Directory(path) => (Some(path), None, None, None),
+                        RunSource::Git { repository, tree, commit } => (None, Some(repository), Some(tree), commit.as_ref()),
+                    };
+                    tx.execute_cached("INSERT OR IGNORE INTO analysis_history_scope(scope,value,stop_scopes) VALUES (?1,?2,?3)",
+                        (&owner.scope, &self.scope_value, receipt_scopes(&owner.scope)))?;
+                    tx.execute_cached("INSERT INTO analysis_scope_run(scope,acquisition,acquired_at,scan_id,directory,repository,tree,git_commit)
+                        VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                        (&owner.scope, owner.acquisition, owner.acquired_at, &self.scan_id, directory, repo, tree, commit))?;
+                }
                 tx.execute_cached("INSERT INTO analysis_scope_manifest(scope,manifest_id,acquired_at,acquisition,recorded_run)
                     SELECT ?1,manifest_id,acquired_at,acquisition,recorded_run FROM analysis_scope_manifest WHERE scope=?2
                     ON CONFLICT(scope,manifest_id) DO UPDATE SET
@@ -113,6 +164,10 @@ impl AnalysisRun {
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 for (workspace, snapshot) in rows {
                     own_snapshot(tx, owner, &workspace, snapshot, &owner.scope)?;
+                    if self.source.is_some() {
+                        tx.execute_cached("INSERT OR IGNORE INTO analysis_run_workspace_snapshot(scope,acquisition,snapshot_id) VALUES (?1,?2,?3)",
+                            (&owner.scope, owner.acquisition, snapshot.0))?;
+                    }
                 }
             }
             release_memberships(tx, "scope=?1", [pending])?;
@@ -173,7 +228,7 @@ pub fn owning_recorded_directory_store(store: &Path, directory: &Path, home: &st
     let scoped = recorded_directory(directory, Some(home));
     let scoped_prefix = scope_prefix(&scoped);
     let legacy_prefix = scope_prefix(&legacy);
-    for table in ["analysis_scope_manifest", "analysis_scope_snapshot", "analysis_scope_workspace_snapshot"] {
+    for table in ["analysis_scope_manifest", "analysis_scope_snapshot", "analysis_scope_workspace_snapshot", "analysis_scope_run"] {
         let exists: bool = db.query_row(
             "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)", [table], |row| row.get(0),
         )?;
@@ -205,6 +260,18 @@ pub(super) fn next_acquisition(tx: &rusqlite::Connection) -> rusqlite::Result<i6
 }
 
 impl ContentStore {
+    pub fn completed_analysis_runs(&self) -> StoreResult<Vec<CompletedRun>> {
+        let db = self.connection.lock().map_err(super::StoreError::Invalid)?;
+        self.check_scope_store(&db)?;
+        let mut statement = db.prepare_cached("SELECT r.scope,h.value,r.acquisition,r.scan_id,r.directory,r.repository,r.tree,r.git_commit,s.snapshot_id
+            FROM analysis_scope_run r JOIN analysis_history_scope h USING(scope)
+            LEFT JOIN analysis_run_workspace_snapshot s USING(scope,acquisition) ORDER BY r.scope,r.acquisition,s.snapshot_id")?;
+        let rows = statement.query_map([], |r| Ok(CompletedRun {
+            scope: r.get(0)?, value: r.get(1)?, acquisition: r.get(2)?, scan_id: r.get(3)?,
+            directory: r.get(4)?, repository: r.get(5)?, tree: r.get(6)?, commit: r.get(7)?, snapshot: r.get(8)?,
+        }))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
     fn check_scope_store(&self, db: &rusqlite::Connection) -> StoreResult<()> {
         let actual: i64 = db.query_row_cached("SELECT id FROM store_identity WHERE singleton=1", [], |row| row.get(0))?;
         if actual != self.identity() {
@@ -215,7 +282,7 @@ impl ContentStore {
 
     pub fn directory_release_cutoff(&self, path: &Path, home: &str) -> StoreResult<Option<i64>> {
         let scope = directory_in(path, Some(home));
-        let db = self.connection.lock().expect("content store connection unavailable");
+        let db = self.connection.lock().map_err(super::StoreError::Invalid)?;
         self.check_scope_store(&db)?;
         Ok(db.query_row_cached("SELECT max(before) FROM analysis_scope_release
             WHERE scope IN (SELECT value FROM json_each(?1))", [receipt_scopes(&scope)], |row| row.get(0))?)
@@ -351,7 +418,7 @@ impl ContentStore {
     }
 
     pub(super) fn analysis_snapshot_due(&self, now: i64) -> StoreResult<bool> {
-        let connection = self.connection.lock().expect("content store connection unavailable");
+        let connection = self.connection.lock().map_err(super::StoreError::Invalid)?;
         Ok(connection.query_row_cached(
             "SELECT EXISTS (SELECT 1 FROM analysis_scope_pending) OR EXISTS (SELECT 1 FROM analysis_scope_manifest WHERE scope GLOB 'pending:*') \
              OR EXISTS (SELECT 1 FROM analysis_scope_workspace_snapshot WHERE scope GLOB 'pending:*') \

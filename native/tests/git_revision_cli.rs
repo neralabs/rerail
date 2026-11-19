@@ -175,6 +175,25 @@ fn failed_batch_reports_each_policy_in_argument_order() {
 }
 
 #[test]
+fn standalone_logic_publishes_each_source_after_its_history_query_finishes() {
+    let f = Checkout::new();
+    let policy = f.area.path().join("history.rr");
+    let out = f.area.path().join("rows");
+    fs::write(&policy, "#include \"analysis.rr\"\n.decl previous(r: symbol)\nprevious(r) :- analysis_scope_run(_,r).\n.output previous\n").unwrap();
+    for (count, scope) in [None, Some("review"), None].into_iter().enumerate() {
+        let result = f.run("logic", &[&policy, &f.repo, &out], scope);
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(String::from_utf8_lossy(&result.stdout).contains(&format!("previous: {count} rows")));
+        let db = f.settled_store();
+        assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_run", [], |r| r.get::<_, i64>(0)).unwrap(), count as i64 + 1);
+    }
+    let db = f.settled_store();
+    let commit = f.git(&["rev-parse", "HEAD"]);
+    assert_eq!(db.query_row("SELECT git_commit FROM analysis_scope_run WHERE scope='named:review'", [], |r| r.get::<_, String>(0)).unwrap(), commit);
+    assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_run WHERE directory IS NOT NULL", [], |r| r.get::<_, u32>(0)).unwrap(), 2);
+}
+
+#[test]
 fn a_failed_working_tree_batch_preserves_the_previous_directory_memberships() {
     let f = Checkout::new();
     let out = f.area.path().join("batch");

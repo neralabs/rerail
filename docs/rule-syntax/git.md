@@ -93,6 +93,22 @@ If the readable history has no match, the search reports its read failure.
 
 ## Relations
 
+Include `analysis.rr` to look up completed scans in the active content store.
+This query returns the commits scanned under `release` in the current repository.
+
+```rr
+#include "analysis.rr"
+#include "git.rr"
+.decl reviewed_commit(scan: symbol, commit: symbol)
+reviewed_commit(id, c) :-
+    git_root_repo(repo), analysis_named_scope("release", s), analysis_scope_run(s, run),
+    analysis_run_scan_id(run, id), analysis_run_commit(run, repo, c).
+.output reviewed_commit
+```
+
+Use `analysis_run_tree` to include scans that selected a tree hash. Use `analysis_run_snapshot` to find runs sharing a retained workspace snapshot.
+The query sees earlier publications. Its own run appears after successful publication. [Run and scope relations](../final-shape/notes/git-inputs/analysis-scopes.md#retention-and-invalidation)
+
 | Relation | Columns after `repo` |
 | --- | --- |
 | `git_repository` | Kind (`worktree` or `bare`), Git hash format |

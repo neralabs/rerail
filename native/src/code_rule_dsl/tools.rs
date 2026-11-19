@@ -332,7 +332,14 @@ impl PolicyInvocation {
         if let Some(path) = super::logic::plan::corpus::tape_cache_path() {
             let id = format!("{}-{}", std::process::id(), analysis_scope::acquisition_time());
             match ContentStore::open(&path).and_then(|store| AnalysisRun::begin(store, &scope, &id)) {
-                Ok(run) => invocation.analysis = Some(run),
+                Ok(mut run) => {
+                    let source = match &invocation.source {
+                        PolicySource::Directory(root) => analysis_scope::RunSource::directory(root),
+                        PolicySource::Revision { snapshot, .. } => snapshot.run_source(),
+                    };
+                    run.select_source(source).map_err(|e| e.to_string())?;
+                    invocation.analysis = Some(run);
+                }
                 Err(error) => invocation.warning = Some(error.to_string()),
             }
         }
@@ -1459,9 +1466,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         let run = || logic_checked(&programs, root, facts, Path::new(out), &modes, metal, chunk, &env);
         if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
     };
-    let Some(revision) = revision.as_deref() else { return eval(Path::new(root)).map_err(|error| error.to_string()) };
-    let scope = analysis_scope.as_deref().ok_or("--revision requires --analysis-scope <name>")?;
-    let mut invocation = PolicyInvocation::begin(Path::new(root), Some(revision), Some(scope))?;
+    let mut invocation = PolicyInvocation::begin(Path::new(root), revision.as_deref(), analysis_scope.as_deref())?;
     let report = invocation.evaluate(eval)?;
     let failures = invocation.source_failures();
     for failure in &failures {

@@ -1309,6 +1309,64 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     }
   });
 
+  it("joins published scan IDs to their actual directory, commit, tree and retained snapshot", async () => {
+    const root = checkout(), home = root + "-home", store = join(home, "runs.sqlite"), databasePath = join(home, "rerail.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      const engine = loadNativeBinding(), head = git(root, "rev-parse", "HEAD"), tree = git(root, "rev-parse", "HEAD^{tree}");
+      const worktree = await scan(root, { databasePath });
+      const release = await scan(root, { databasePath, revision: head, analysisScope: "release" });
+      const comparison = await scan(root, { databasePath, revision: head, analysisScope: "comparison" });
+      for (const report of [worktree, release, comparison]) {
+        expect(report.status).toBe("completed");
+        expect(report.cacheWarnings).toBeUndefined();
+      }
+      const view = new engine.GitRevisionSource(root, head, "release"), bareTree = new engine.GitRevisionSource(root, tree, "comparison");
+      const producer = join(home, "producer.rr"), query = join(home, "history.rr");
+      writeFileSync(producer, '#include "git.rr"\n.policy "source" revision 1\n.violation Seen(at: span, c: symbol) "{c}"\nSeen(@place("git",1), c) :- git_source_commit(_, c).\n');
+      const run = new engine.AnalysisScopeRun(store, "release", false, "native", 0);
+      const evaluate = (analysis: typeof run, source: typeof view) => engine.scanRrPoliciesAsync([producer], root, store, "", analysis, undefined, source);
+      expect(JSON.parse(await evaluate(run, view))[0].diagnostics[0].message).toBe(head);
+      expect(() => evaluate(run, bareTree)).toThrow(/selected source/u);
+      run.finish(true);
+      const treeRun = new engine.AnalysisScopeRun(store, "comparison", false, "tree-only", 0);
+      await evaluate(treeRun, bareTree);
+      treeRun.finish(true);
+      const aborted = new engine.AnalysisScopeRun(store, "release", false, "aborted", 0);
+      await evaluate(aborted, view);
+      aborted.finish(false);
+      writeFileSync(query, `#include "analysis.rr"
+#include "git.rr"
+.policy "history" revision 1
+.violation Seen(at: span, scan: symbol, field: symbol, value: symbol) "{scan} {field} {value}"
+Seen(@place("git",1), id, "scope", name) :- analysis_named_scope(name,s), analysis_scope_run(s,r), analysis_run_scan_id(r,id).
+Seen(@place("git",1), id, "directory", path) :- analysis_directory_scope(path,s), analysis_scope_run(s,r), analysis_run_directory(r,path), analysis_run_scan_id(r,id).
+Seen(@place("git",1), id, "tree", t) :- analysis_run_tree(r,repo,t), git_root_repo(repo), analysis_run_scan_id(r,id).
+Seen(@place("git",1), id, "commit", c) :- analysis_run_commit(r,repo,c), git_root_repo(repo), analysis_run_scan_id(r,id).
+Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis_run_scan_id(r,id).
+`);
+      const read = async () => {
+        const [report] = JSON.parse(await engine.scanRrPoliciesAsync([query], root, store, "", undefined, undefined, view));
+        expect(report.error).toBeUndefined();
+        return (report.diagnostics as { message: string }[]).map(d => d.message);
+      };
+      const messages = await read();
+      const snapshotOf = (id: string) => messages.filter(m => m.startsWith(id + " snapshot ")).map(m => m.slice(id.length + 10));
+      expect(snapshotOf(release.scanId), JSON.stringify(messages)).toHaveLength(1);
+      expect(snapshotOf(comparison.scanId)).toEqual(snapshotOf(release.scanId));
+      expect(snapshotOf(worktree.scanId)).toHaveLength(1);
+      const snapshots = messages.filter(m => m.includes(" snapshot "));
+      expect(messages.sort()).toEqual([
+        worktree.scanId + " directory " + root, release.scanId + " scope release", release.scanId + " tree " + tree,
+        release.scanId + " commit " + head, comparison.scanId + " scope comparison", comparison.scanId + " tree " + tree, comparison.scanId + " commit " + head,
+        "tree-only scope comparison", "tree-only tree " + tree,
+        "native scope release", "native tree " + tree, "native commit " + head, ...snapshots,
+      ].sort());
+      engine.deleteAnalysisScope(store, "release", false);
+      expect((await read()).sort()).toEqual(messages.filter(m => !m.startsWith(release.scanId + " ") && !m.startsWith("native ")).sort());
+    } finally { vi.unstubAllEnvs(); }
+  }, 30_000);
+
   it("releases a stopped checkout's scope without an active watch", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");

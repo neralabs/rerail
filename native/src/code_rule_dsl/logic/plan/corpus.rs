@@ -78,6 +78,7 @@ pub mod constants;
 pub mod inputs;
 pub use inputs::parameters as input_parameters;
 mod git;
+mod analysis_history;
 pub mod source_languages;
 
 pub fn install_git_inventory() {
@@ -484,7 +485,7 @@ fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&fron
     }
     // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
     let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
-    const READERS: [&str; 11] = ["git_object_predicate", "package_marker", "input", "input_dir", "artifact", "base", "git_rev", "git_index", "git_tracking_index", "git_revision_rows", "git_root_repo"];
+    const READERS: [&str; 12] = ["git_object_predicate", "package_marker", "input", "input_dir", "artifact", "base", "git_rev", "git_index", "git_tracking_index", "git_revision_rows", "git_root_repo", analysis_history::INPUT];
     let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
     let mut world = world::World::new(root, &prog);
     let moved = world.changed(&requests);
@@ -1796,7 +1797,7 @@ fn bound(prog: &front::Program) -> Result<()> {
     // `env` is the run's settings (`tools::with_settings`): facts when there are any, else empty. The world's
     // relations (`dir_entry`, `file_line`, …, and `loaded`) are answered by the runner (`world`).
     let world = |rel: &str| rel == world::LOADED || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
-    let given = |rel: &str| GIVEN.contains(&rel) || git::INPUTS.contains(&rel)
+    let given = |rel: &str| GIVEN.contains(&rel) || git::INPUTS.contains(&rel) || rel == analysis_history::INPUT
         || matches!(rel, "env" | "source_grammar_suffix" | "source_grammar_registry" | "source_tape_version")
         || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
     // core.rr's literal parts are made in core.rr's shape only (`syntax::core_rr`): a program that declares its base
@@ -3144,6 +3145,11 @@ fn run_observed(
         phases::facts(&prog, root, modes, binding, chunk_nodes, typing, options)?
     };
     phased.extend(git::inputs(&prog, root, options));
+    if analysis_history::reads(&prog) {
+        let (rows, digest) = analysis_history::records()?;
+        phased.insert(analysis_history::INPUT.to_owned(), rows);
+        source_checks.push((analysis_history::INPUT.to_owned(), String::new(), digest));
+    }
     phased.extend(source_languages::inputs(&prog, root, options));
     let reference_sources = match given.reference_inputs {
         reference_facts::Input::Sources(sources, preparation) => {

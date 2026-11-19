@@ -200,6 +200,50 @@ CREATE TABLE IF NOT EXISTS analysis_scope_release (
     before INTEGER NOT NULL DEFAULT 0
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS analysis_scope_release_by_scope ON analysis_scope_release(scope,before);
+CREATE TABLE IF NOT EXISTS analysis_history_scope (
+    scope TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    stop_scopes TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS analysis_scope_run (
+    scope TEXT NOT NULL REFERENCES analysis_history_scope(scope),
+    acquisition INTEGER NOT NULL,
+    acquired_at INTEGER NOT NULL,
+    scan_id TEXT NOT NULL,
+    directory TEXT,
+    repository TEXT,
+    tree TEXT,
+    git_commit TEXT,
+    PRIMARY KEY(scope,acquisition)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS analysis_run_workspace_snapshot (
+    scope TEXT NOT NULL,
+    acquisition INTEGER NOT NULL,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
+    PRIMARY KEY(scope,acquisition,snapshot_id),
+    FOREIGN KEY(scope,acquisition) REFERENCES analysis_scope_run(scope,acquisition) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_run_workspace_by_snapshot ON analysis_run_workspace_snapshot(snapshot_id);
+-- These triggers also run when an older binary delivers a stop.
+CREATE TRIGGER IF NOT EXISTS analysis_runs_end_generation AFTER UPDATE OF generation ON analysis_scope_generation
+WHEN NEW.generation != OLD.generation BEGIN
+    DELETE FROM analysis_scope_run WHERE scope=NEW.scope;
+END;
+CREATE TRIGGER IF NOT EXISTS analysis_runs_stop_directory AFTER INSERT ON analysis_scope_release
+WHEN NEW.scope != '' BEGIN
+    DELETE FROM analysis_scope_run WHERE acquired_at<=NEW.before AND scope IN (
+        SELECT h.scope FROM analysis_history_scope h, json_each(h.stop_scopes) a
+        WHERE a.value=NEW.scope OR (
+            -- A home-qualified delivery also releases the older unqualified directory.
+            instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0 AND h.scope='cwd:'||h.value
+            AND a.value='cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':'))
+        )
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS analysis_history_forget_empty AFTER DELETE ON analysis_scope_run BEGIN
+    DELETE FROM analysis_history_scope WHERE scope=OLD.scope
+        AND NOT EXISTS (SELECT 1 FROM analysis_scope_run WHERE scope=OLD.scope);
+END;
 CREATE TABLE IF NOT EXISTS workspace_overlay (
     workspace_id INTEGER NOT NULL REFERENCES workspaces(workspace_id),
     path_id INTEGER NOT NULL REFERENCES paths(path_id),

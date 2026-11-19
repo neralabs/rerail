@@ -203,7 +203,16 @@ impl AnalysisScopeRun {
             else { analysis_scope::named(&value).ok_or_else(|| invalid("analysis scope name must not be empty"))? };
         let store = crate::content_store::ContentStore::open(Path::new(&store_path)).map_err(|e| invalid(e.to_string()))?;
         check_store_identity(&store, expected_store.as_deref()).map_err(|err| invalid(err.to_string()))?;
-        AnalysisRun::begin_at(store, &scope, &id, generation).map(|run| Self(Mutex::new(run))).map_err(|e| invalid(e.to_string()))
+        let mut run = AnalysisRun::begin_at(store, &scope, &id, generation).map_err(|e| invalid(e.to_string()))?;
+        if directory { run.set_directory_scope(Path::new(&value)); }
+        Ok(Self(Mutex::new(run)))
+    }
+
+    #[cfg(not(feature = "headless"))]
+    #[napi]
+    pub fn select_source(&self, root: String, source: Option<&GitRevisionSource>) -> Result<()> {
+        let selected = source.map_or_else(|| analysis_scope::RunSource::directory(Path::new(&root)), |view| view.snapshot.run_source());
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).select_source(selected).map_err(|e| invalid(e.to_string()))
     }
 
     #[napi]
@@ -219,9 +228,10 @@ impl AnalysisScopeRun {
     }
 }
 
+#[cfg(not(feature = "headless"))]
 impl AnalysisScopeRun {
-    pub fn owner_for(&self, store: &Path) -> Result<AnalysisOwner> {
-        let run = self.0.lock().unwrap_or_else(|err| err.into_inner());
+    pub fn owner_for(&self, store: &Path, root: &Path, source: Option<&GitRevisionSource>) -> Result<AnalysisOwner> {
+        let mut run = self.0.lock().unwrap_or_else(|err| err.into_inner());
         if !run.is_open() {
             return Err(invalid("analysis scope run has finished"));
         }
@@ -229,6 +239,8 @@ impl AnalysisScopeRun {
             .is_some_and(|(requested, owned)| requested == owned) {
             return Err(invalid("analysis scope run belongs to another content store"));
         }
+        let selected = source.map_or_else(|| analysis_scope::RunSource::directory(root), |s| s.snapshot.run_source());
+        run.select_source(selected).map_err(|e| invalid(e.to_string()))?;
         Ok(run.owner.clone())
     }
 }
@@ -275,7 +287,7 @@ impl CodeRuleDslWorkspace {
         expected_store: Option<String>,
     ) -> Result<AsyncTask<WorkspaceStorageTask>> {
         let generation = analysis_generation(generation.unwrap_or_default())?;
-        let owner = analysis.map(|run| run.owner_for(Path::new(&store_path))).transpose()?;
+        let owner = analysis.map(|run| run.owner_for(Path::new(&store_path), Path::new(&root), None)).transpose()?;
         let mut task = self.storage_task(root, store_path, &secret_names)?;
         task.analysis_owner = owner;
         task.analysis_generation = generation;
@@ -293,7 +305,7 @@ impl CodeRuleDslWorkspace {
         secret_names: SecretNamePatterns,
         analysis: Option<&AnalysisScopeRun>,
     ) -> Result<AsyncTask<WorkspaceStorageTask>> {
-        let owner = analysis.map(|run| run.owner_for(Path::new(&store_path))).transpose()?;
+        let owner = analysis.map(|run| run.owner_for(Path::new(&store_path), source.snapshot.root(), Some(source))).transpose()?;
         let mut task = self.storage_task(
             source.snapshot.root().to_string_lossy().into_owned(),
             store_path,

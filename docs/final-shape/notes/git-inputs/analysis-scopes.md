@@ -64,12 +64,44 @@ The scan still checks other requested paths whose trees it can read.
 
 ## Retention and invalidation
 
+Include `analysis.rr` to query completed scans in the selected content store.
+A run has an opaque key. Its scan ID is the value that the caller supplied or the standalone command assigned.
+Use the run key to join facts. Two calls can supply the same scan ID.
+
+```rr
+#include "analysis.rr"
+.decl reviewed(scan: symbol, repository: symbol, tree: symbol)
+reviewed(id, repo, tree) :-
+    analysis_named_scope("release", scope), analysis_scope_run(scope, run),
+    analysis_run_scan_id(run, id), analysis_run_tree(run, repo, tree).
+.output reviewed
+```
+
+| Relation | Meaning |
+| --- | --- |
+| `analysis_named_scope(name, scope)` | A named scope with a completed run |
+| `analysis_directory_scope(path, scope)` | A directory scope with a completed run |
+| `analysis_scope_run(scope, run)` | A run that the scope published |
+| `analysis_run_scan_id(run, id)` | The caller's scan ID |
+| `analysis_run_directory(run, path)` | The working-tree source directory |
+| `analysis_run_snapshot(run, snapshot)` | Each stored workspace snapshot that the run published and the store still retains |
+| `analysis_run_tree(run, repo, tree)` | The selected Git tree and the repository key used by `git.rr` |
+| `analysis_run_commit(run, repo, commit)` | The selected commit, when the caller selected a commit |
+
+The store publishes a run record in the transaction that publishes its cache ownership.
+Two runs using the same stored snapshot have the same snapshot key. A metadata-only run can have no workspace snapshot.
+Run history does not extend a snapshot's lifetime. Collection removes the link when it removes the snapshot.
+A failed run and a run that loses its publication permit produce zero rows. A metadata-only scan can publish a run.
+Deleting a scope removes its run records. An older store keeps its existing cache owners when it gains this table.
+Run history starts with scans that publish a record. Historical working-tree paths identify the directory as it was named at publication.
+The history query observes the committed records it reads. A later publication or deletion invalidates results that used those records.
+
 Scope membership is a relation. `analysis_scope_manifest(scope, manifest_id)`
 connects a scope to each corpus run manifest. Existing manifest facts connect
 the run to its sources and plans. `analysis_scope_snapshot(scope, snapshot_id)`
 connects a named scope to each of its audit snapshots. A directory scope keeps
 the latest snapshot for each workspace in `analysis_scope_workspace_snapshot`.
-These relations live in the content store's SQLite schema. Policy programs have no public relation for scope membership.
+These cache ownership relations live in the content store's SQLite schema. The rule relations above identify the scans that published under each scope.
 If an index restores a file's results, the current snapshot names its saved source and compatible tape.
 This ownership protects the tape when collection removes an older snapshot.
 

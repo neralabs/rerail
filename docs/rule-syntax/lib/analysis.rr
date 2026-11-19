@@ -1,0 +1,27 @@
+// Completed scans in the content store selected for this invocation.
+.decl analysis_run_record(scope: symbol, kind: symbol, value: symbol, run: symbol, scan: symbol, directory: symbol, repo: symbol, tree: symbol, commit: symbol, snapshot: symbol)
+.input analysis_run_record
+
+.decl analysis_named_scope(name: symbol, scope: symbol)
+analysis_named_scope(name, s) :- analysis_run_record(s, "named", name, _, _, _, _, _, _, _).
+
+.decl analysis_directory_scope(path: symbol, scope: symbol)
+analysis_directory_scope(path, s) :- analysis_run_record(s, "directory", path, _, _, _, _, _, _, _).
+
+.decl analysis_scope_run(scope: symbol, run: symbol)
+analysis_scope_run(s, r) :- analysis_run_record(s, _, _, r, _, _, _, _, _, _).
+
+.decl analysis_run_scan_id(run: symbol, id: symbol)
+analysis_run_scan_id(r, id) :- analysis_run_record(_, _, _, r, id, _, _, _, _, _).
+
+.decl analysis_run_directory(run: symbol, path: symbol)
+analysis_run_directory(r, p) :- analysis_run_record(_, _, _, r, _, p, _, _, _, _), p != "".
+
+.decl analysis_run_tree(run: symbol, repo: symbol, tree: symbol)
+analysis_run_tree(r, repo, t) :- analysis_run_record(_, _, _, r, _, _, repo, t, _, _), t != "".
+
+.decl analysis_run_commit(run: symbol, repo: symbol, commit: symbol)
+analysis_run_commit(r, repo, c) :- analysis_run_record(_, _, _, r, _, _, repo, _, c, _), c != "".
+
+.decl analysis_run_snapshot(run: symbol, snapshot: symbol)
+analysis_run_snapshot(r, s) :- analysis_run_record(_, _, _, r, _, _, _, _, _, s), s != "".

@@ -231,7 +231,7 @@ pub(super) fn wanted(prog: &Program, dir: Option<&Path>) -> Result<BTreeMap<Stri
 /// Whether the runner binds `rel` with phase inputs. These rows are shared by
 /// all programs of the run.
 pub(crate) fn is_phased(rel: &str) -> bool {
-    super::git::INPUTS.contains(&rel) || super::reference_facts::is_input(rel) || super::source_languages::is_input(rel)
+    rel == super::analysis_history::INPUT || super::git::INPUTS.contains(&rel) || super::reference_facts::is_input(rel) || super::source_languages::is_input(rel)
         || rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("typing_") && !p.starts_with("rr_") && !e.contains(SEP))
 }
 

@@ -158,6 +158,55 @@ fn analysis_scope_rejects_finished_and_foreign_run_owners() {
 }
 
 #[test]
+fn completed_analysis_runs_survive_restart_and_scope_deletion_preserves_shared_snapshots() {
+    use crate::content_store::{analysis_scope::{AnalysisRun, RunSource}, GitTree, HashKey};
+    let (path, store) = store("scope-run-history");
+    let tree = HashKey::git_sha1([9; 20]);
+    store.put_git_trees_bulk(&[GitTree { id: tree, prefix: String::new(), entries: Vec::new() }]).unwrap();
+    let snapshot = store.put_snapshot(tree, 1, HashKey::sha256(b"grammar"), 1).unwrap();
+    let source = RunSource::Git { repository: "repo".into(), tree: "tree".into(), commit: None };
+    let begin = |scope: &str| {
+        let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), scope, "caller-id").unwrap();
+        run.select_source(source.clone()).unwrap();
+        store.own_analysis_snapshot(&run.owner, "workspace", snapshot).unwrap();
+        run
+    };
+    for scope in ["named:a", "named:a", "named:b"] { begin(scope).finish(true).unwrap(); }
+    begin("named:aborted").finish(false).unwrap();
+    let mut warned = begin("named:warned");
+    warned.owner.warn("could not retain".into());
+    warned.finish(true).unwrap();
+    let mut stale = begin("named:stale");
+    store.delete_analysis_scope("named:stale").unwrap();
+    stale.finish(true).unwrap();
+    let fresh = ContentStore::open(&path).unwrap();
+    let rows = fresh.completed_analysis_runs().unwrap();
+    assert_eq!(rows.iter().map(|r| r.scope.as_str()).collect::<Vec<_>>(), ["named:a", "named:a", "named:b"]);
+    assert!(rows.windows(2).all(|p| p[0].acquisition < p[1].acquisition));
+    assert!(rows.iter().all(|r| r.scan_id == "caller-id" && r.commit.is_none() && r.snapshot == Some(snapshot.0)));
+    fresh.delete_analysis_scope("named:a").unwrap();
+    let rows = fresh.completed_analysis_runs().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].scope.as_str(), rows[0].snapshot), ("named:b", Some(snapshot.0)));
+}
+
+#[test]
+fn adding_analysis_history_preserves_previous_manifest_owners_without_fabricating_runs() {
+    let (path, store) = store("scope-history-upgrade");
+    let owner = store.begin_analysis_scope("named:legacy").unwrap();
+    assert!(store.record_corpus_run_retaining("/repo", &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(&owner)).unwrap());
+    drop(store);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("DROP TRIGGER analysis_runs_end_generation; DROP TRIGGER analysis_runs_stop_directory;
+        DROP TABLE analysis_run_workspace_snapshot; DROP TABLE analysis_scope_run; DROP TABLE analysis_history_scope;").unwrap();
+    drop(db);
+    let upgraded = ContentStore::open(&path).unwrap();
+    assert!(upgraded.completed_analysis_runs().unwrap().is_empty());
+    let db = upgraded.connection.lock().unwrap();
+    assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_manifest WHERE scope='named:legacy'", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+}
+
+#[test]
 fn numbered_directory_stops_keep_one_cutoff_per_directory() {
     use crate::content_store::analysis_scope;
     let (_path, store) = store("scope-high-water");

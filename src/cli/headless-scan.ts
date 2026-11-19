@@ -758,6 +758,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   let report: ScanReport | undefined;
   try {
     const source = options.revision === undefined ? undefined : new binding.GitRevisionSource(root, options.revision, options.analysisScope!, resolve(options.repo));
+    analysisRun?.selectSource(root, source);
     if (source !== undefined)
       source.setSourceLanguages(JSON.stringify({ suffixes: Object.fromEntries(SOURCE_LANGUAGES), names: Object.fromEntries(SOURCE_NAMES) }));
     const home = openHomeDatabase(homeDatabase);
