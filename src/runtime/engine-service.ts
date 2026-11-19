@@ -1161,23 +1161,25 @@ function endAbandonedSessions(databasePath: string, idleMs: number, now: () => n
  * connection had already closed or ended (a hook past its own limit closes it), or when the write failed or the
  * connection closed before the answer was all handed to it; true once it was, with no error on the connection. Decided
  * by what the connection did, never by a time limit, and it resolves once the answer's close comes, which follows its
- * finish or the connection's close.
+ * finish or the connection's close. An answer queued behind an earlier one on its connection is written, and judged, on
+ * the socket it is handed once that one is written.
  */
 async function answered(response: ServerResponse, body: string): Promise<boolean> {
-  const connection = response.socket;
   // Its close already came: the client went before the event ended.
-  if (connection === null || response.destroyed) {
+  if (response.destroyed) {
     response.end(body);
     return false;
   }
-  const live = connection.writable;
+  let connection: Socket | null = response.socket;
+  response.once("socket", (socket: Socket) => (connection = socket));
+  const live = connection === null || connection.writable;
   let finished = false;
   const closed = new Promise<void>(done => response.once("close", () => done()));
   response.once("finish", () => (finished = true));
   response.end(body);
   await closed;
   // A write the closed connection refused (EPIPE) emits no finish and leaves its error on the connection.
-  return live && finished && connection.errored === null;
+  return live && finished && connection !== null && connection.errored === null;
 }
 
 export async function ingestEngineEvent(
