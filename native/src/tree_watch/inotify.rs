@@ -973,7 +973,10 @@ mod tests {
             notices.start(watched);
         }
         assert!(backend.watch_spare(&spare, &[String::new()]));
-        assert!(!backend.watch(&root, &folders), "it does not fit in the spare room either");
+        assert!(
+            !backend.watch(&root, &folders),
+            "it does not fit in the spare room either"
+        );
         assert!(notice_of(&notices, &spare).ended);
         backend.close();
     }
