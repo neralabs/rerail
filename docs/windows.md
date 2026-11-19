@@ -20,12 +20,12 @@ is reverted.
   `src/runtime/daemon-control.ts`, `RerailDaemonOptions.enginePlatform`. `openNoFollow` takes the no-follow flag, and
   its test passes `0` to run the Windows path against a real symlink on Linux.
 - **On Windows itself.** `build-windows` builds the native engine on Windows once per run and hands it to the
-  `unit-windows` shards, and `rust-windows` runs the engine's `#[cfg(windows)]` Rust tests whenever the change selects
-  the engine's tests. `package.yml`, which `release.yml` and the environment matrix call, builds the engine for Windows
-  x64 and arm64 and refuses one that imports the Visual C++ runtime (`scripts/check/check-windows-runtime.mjs`);
-  `release.yml` then installs the package on a Windows x64 runner with `scripts/host/windows-install-smoke.ps1`. The
-  [environment matrix](environment-matrix.md) installs it on Windows 11 VMs. None of these but the three CI jobs runs
-  on a pull request.
+  `unit-windows` shards, which take the JavaScript package (dist/) from the Linux build job, and `rust-windows` runs the
+  engine's `#[cfg(windows)]` Rust tests whenever the change selects the engine's tests. `package.yml`, which
+  `release.yml` and the environment matrix call, builds the engine for Windows x64 and arm64 and refuses one that
+  imports the Visual C++ runtime (`scripts/check/check-windows-runtime.mjs`); `release.yml` then installs the package
+  on a Windows x64 runner with `scripts/host/windows-install-smoke.ps1`. The [environment matrix](environment-matrix.md)
+  installs it on Windows 11 VMs. None of these but the three CI jobs runs on a pull request.
 
 <details>
 <summary>Windows-safe paths</summary>
