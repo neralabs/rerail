@@ -2029,12 +2029,14 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   think this is mostly fixed by using an accessor"). The reach is descendant images, a level each time a member sits
   below a blocker. A chain's pass went from 0.8–6.8 ms to 22–225 µs, with the rows the same as native.
 
-### Q251. (Q219 until the hub merge) A level's fact constraints are uploaded rows
+### Q251. (Q219 until the hub merge) A level's fact constraints are uploaded rows (done)
 
 - **Found** (2026-11-18, Q271's measurements): `Runner::level` uploaded the facts' `(node, label)` pairs once per
   pattern kernel group, the same buffer each time: 32 MB (8.1 M words) on 15 fixtures. Fixed: once a level (0425).
 - **Left**: the upload itself is a copy of the facts' rows (AGENTS.md, 0353).
 - **Done when**: `Pass::Fact` reads the fact's relation in its block, and the upload is gone.
+- **Done** (2026-11-19, 0446): the findings are written once into the batch's fact block (`FactRows::block`), and
+  the CPU's passes and the pattern kernels read them there. The upload and both host copies are gone.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 

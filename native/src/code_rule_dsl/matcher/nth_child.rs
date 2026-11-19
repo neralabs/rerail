@@ -182,7 +182,7 @@ impl NthChild {
         rows
     }
 
-    /// `rows` as bits over the tape's nodes, for starts of `kinds` (any node where `None`), from
+    /// `rows` as bits over the tape's nodes, into `bits` (zero, a word per 64 nodes), for starts of `kinds` (any node where `None`), from
     /// the counted children of each parent (`Positions`): the child at the position where `An+B`
     /// names one (`B` alone), else each counted child tested. No pass over the tape's nodes.
     pub(in crate::code_rule_dsl) fn bits(
@@ -190,8 +190,8 @@ impl NthChild {
         tape: &crate::code_rule_dsl::tape::TapeDoc,
         positions: &Positions,
         kinds: Option<&std::collections::BTreeSet<u16>>,
-    ) -> Vec<u64> {
-        let mut bits = vec![0_u64; tape.transducer_len().div_ceil(64)];
+        bits: &mut [u64],
+    ) {
         let mut mark = |node: u32| {
             if kinds.is_none_or(|kinds| kinds.contains(&tape.transducer_kind(node))) {
                 bits[node as usize / 64] |= 1 << (node % 64);
@@ -215,7 +215,6 @@ impl NthChild {
                 }
             }
         }
-        bits
     }
 
     /// W's matcher's verdict of `rule` at `child`; `None` where it is unknown.
@@ -366,6 +365,8 @@ impl Positions {
 pub struct SiblingPositions {
     positions: std::sync::Mutex<std::collections::HashMap<Option<String>, std::sync::Arc<Positions>>>,
     answers: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Vec<u64>>>>,
+    /// The answers written in a batch's fact block (`Fact::found`, Q251): each one's byte offset there.
+    placed: std::sync::Mutex<std::collections::HashMap<String, usize>>,
 }
 
 impl SiblingPositions {
@@ -376,6 +377,17 @@ impl SiblingPositions {
         }
         let mut positions = self.positions.lock().expect("sibling positions");
         std::sync::Arc::clone(positions.entry(nth.of_rule_key.clone()).or_insert_with(|| std::sync::Arc::new(Positions::of(nth, tape))))
+    }
+
+    /// Where the answer to `question` is in the fact block: written by `place` the first time it is asked.
+    pub(in crate::code_rule_dsl) fn placed(&self, question: &str, place: impl FnOnce() -> Option<usize>) -> Option<usize> {
+        let mut placed = self.placed.lock().expect("nthChild placed answers");
+        if let Some(&at) = placed.get(question) {
+            return Some(at);
+        }
+        let at = place()?;
+        placed.insert(question.to_owned(), at);
+        Some(at)
     }
 
     /// The answer to `question`, made by `answer` the first time it is asked.

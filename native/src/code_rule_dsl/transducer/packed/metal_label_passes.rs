@@ -59,10 +59,16 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
         roots: std::sync::Arc<Roots>,
         constraints: Vec<(String, u32)>,
     },
-    /// The global roots a semantic predicate's producer reported (O24, decision 0030) whose slots'
-    /// targets each have their label: per root, its (target node, label) pairs. The pattern kernel's
-    /// fact case (`patterns::FACT`) tests them, so a fact settles from scratch as a pattern does.
-    Fact { target: u32, rows: Vec<(u32, Vec<(u32, u32)>)> },
+    /// The roots a semantic predicate's producer reported (O24, decision 0030) whose slots' targets each have their
+    /// label (`labels`, a slot each). The findings are where the host wrote them, in the batch's fact block (Q251):
+    /// per file, its rows (node, then a target per slot, file-local) or its nodes as bits. The pattern kernel's fact
+    /// case (`patterns::FACT`) reads them there and tests them, so a fact settles from scratch as a pattern does.
+    Fact {
+        target: u32,
+        block: std::sync::Arc<rerail_blocks::block::Block>,
+        found: Vec<(u32, crate::code_rule_dsl::matcher::FactFound)>,
+        labels: Vec<u32>,
+    },
     Empty { target: u32 },
     /// A pass whose program is a node-set formula (decision 0036 on Metal, 0365 §9, §10): `formula` evaluated on the
     /// device (`label_formula`) into the pass's scratch row, which settles as a program's does. No walk. A roots
@@ -780,9 +786,9 @@ fn label_rows(plan: &Plan<'_>, micro: bool) -> Option<(Vec<u32>, Vec<u32>)> {
                     mark(*label)?;
                 }
             }
-            Pass::Fact { target, rows } => {
+            Pass::Fact { target, labels, .. } => {
                 mark(*target)?;
-                for (_, label) in rows.iter().flat_map(|(_, targets)| targets) {
+                for label in labels {
                     mark(*label)?;
                 }
             }
@@ -1267,6 +1273,9 @@ struct Runner<'a> {
     /// Every pass's roots as rules (`RootTable`), one buffer for the run (`root_words`).
     root_table: RootTable,
     root_words: Option<MappedBuffer>,
+    /// The batch's fact block (`Pass::Fact`, Q251), bound to the pattern kernels where the facts are read: its
+    /// address, and its device buffer.
+    facts: Option<(usize, Buffer)>,
     /// The rules whose anchors were evaluated this run (`anchors`), by address.
     anchored: std::collections::HashSet<usize>,
     /// Under `RERAIL_PROF`, each `label_formula` group's counts, read after the flush.
@@ -1655,6 +1664,7 @@ fn encode(
         walks: HashMap::new(),
         root_table: RootTable::default(),
         root_words: None,
+        facts: None,
         anchored: Default::default(),
         formula_stats: Vec::new(),
         run_leaves: Vec::new(),
@@ -2755,14 +2765,33 @@ impl Runner<'_> {
                         ..Op::default()
                     }
                 }
-                Pass::Fact { target, rows: reported } => {
-                    for (root, targets) in reported {
-                        let start = (constraints.len() / 2) as u32;
-                        for (node, label) in targets {
-                            constraints.extend([*node, place(label)]);
+                Pass::Fact { target, block, found, labels } => {
+                    // One item a file: a thread a row, or a word of the bits. Its constraints are the file, whether
+                    // its findings are bits, then each slot's label; its root the findings' u32 in the block.
+                    // The block bound whole, as a no-copy wrap of its written extent (made once, and kept by it).
+                    let fact_block = std::sync::Arc::as_ptr(block) as usize;
+                    if self.facts.as_ref().is_none_or(|(at, _)| *at != fact_block) {
+                        self.facts = Some((fact_block, block.gpu_buffer(self.device)));
+                    }
+                    for (file, found) in found {
+                        let (at, threads, bits) = match *found {
+                            crate::code_rule_dsl::matcher::FactFound::Rows { at, n, .. } => (at, n, 0),
+                            crate::code_rule_dsl::matcher::FactFound::Nodes { at, words } => (at, words, 1),
+                        };
+                        if threads == 0 {
+                            continue;
                         }
-                        matches[0].extend([patterns::FACT, row, *root, start, targets.len() as u32, pattern_threads[0]]);
-                        pattern_threads[0] += 1;
+                        let start = (constraints.len() / 2) as u32;
+                        constraints.extend([*file, bits]);
+                        if bits == 0 {
+                            for label in labels {
+                                constraints.extend([0, place(label)]);
+                            }
+                        }
+                        let root = u32::try_from(at / 4).map_err(|_| capacity())?;
+                        let slots = if bits == 0 { labels.len() as u32 } else { 0 };
+                        matches[0].extend([patterns::FACT, row, root, start, slots, pattern_threads[0]]);
+                        pattern_threads[0] += u32::try_from(threads).map_err(|_| capacity())?;
                     }
                     Op {
                         target: place(target),
@@ -2784,8 +2813,9 @@ impl Runner<'_> {
         let labels = self.tapes.supertypes.buffer.clone();
         let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
         let (scratch, counts) = ((&state, self.tapes.scratch_at), (&state, self.tapes.counts_at));
-        // The facts' constraints, once for the level's pattern kernels (each group's binds them; only the first's
-        // tasks read them). copy (0353 step 4): the fact's rows, Q251.
+        // The level's constraints, once for its pattern kernels (each group's binds them): the patterns' (variable,
+        // label) pairs and each fact item's file and slots' labels. copy: not block data (the level's task
+        // description). The facts' findings are read in their block (`facts`, Q251).
         let constraints = if matches.iter().any(|matches| !matches.is_empty()) { Some(self.upload(&constraints)?) } else { None };
         for (group, (matches, pattern_threads)) in matches.iter().zip(pattern_threads).enumerate() {
             if matches.is_empty() {
@@ -2796,6 +2826,7 @@ impl Runner<'_> {
             let (items, constraints) = (self.upload(matches)?, constraints.clone().ok_or(Error::BackendFailure)?);
             let docs = self.tapes.docs.buffer.clone();
             let root_words = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
+            let facts = self.facts.as_ref().map_or(&self.flags.buffer, |(_, buffer)| buffer).clone();
             let shape = Shape {
                 item_count: pattern_threads,
                 task_count,
@@ -2811,6 +2842,7 @@ impl Runner<'_> {
                     (&items, 0),
                     (&constraints, 0),
                     (&root_words, 0),
+                    (&facts, 0),
                 ],
                 shape,
             )?;

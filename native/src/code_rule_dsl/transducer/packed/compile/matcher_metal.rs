@@ -139,17 +139,17 @@ fn metal<'a>(
         Ok(match clause.labels.def(id) {
             Label::Fact(fact, labels) => {
                 let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
-                let mut rows = Vec::new();
-                for (file, (tape, base)) in tapes.iter().zip(&bases).enumerate() {
-                    if !active.is_none_or(|active| active[at][file]) {
-                        continue;
-                    }
-                    let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
-                    for (node, targets) in facts.get(&key).into_iter().flat_map(|found| found.rows()) {
-                        rows.push((base + node, targets.iter().zip(labels).map(|(target, label)| (base + target, index(*label))).collect()));
-                    }
-                }
-                Pass::Fact { target, rows }
+                // Where each active file's findings are in the fact block, which the device reads in place (Q251).
+                let found = tapes
+                    .iter()
+                    .enumerate()
+                    .filter(|&(file, _)| active.is_none_or(|active| active[at][file]))
+                    .filter_map(|(file, tape)| {
+                        let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
+                        facts.get(&key).map(|found| (file as u32, *found))
+                    })
+                    .collect();
+                Pass::Fact { target, block: Arc::clone(&facts.block), found, labels: labels.iter().map(|label| index(*label)).collect() }
             }
             Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
                 let constraints = match clause.labels.def(id) {

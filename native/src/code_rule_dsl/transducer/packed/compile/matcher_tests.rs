@@ -393,6 +393,46 @@ fn seeded_and_copied_labels_match_on_metal() {
     }
 }
 
+/// Facts on Metal read their findings where the host wrote them, in the batch's fact block (Q251): rows with a slot
+/// (a node and its target), rows with none, and a node set as bits (`nthChild`). Each finds W's roots, and the
+/// device's are the CPU's.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn facts_on_metal_are_read_in_their_block() {
+    use super::compile_matcher::Backend;
+    let clause = |id: &str, rule: &str| {
+        format!(
+            r#"{{"id": "{id}", "forbid": {{"ast": {{"language": "python", "rule": {rule}}}}}, "violation": {{"anchor": "witness.span", "code": "X", "message": "x"}}}}"#
+        )
+    };
+    let clauses = [
+        clause("slot", r#"{"kind": "identifier", "binds": {"form": "assignment", "value": {"kind": "integer"}}}"#),
+        clause("no-slot", r#"{"kind": "identifier", "binds": {"form": "assignment"}}"#),
+        clause("bits", r#"{"kind": "identifier", "nthChild": 1}"#),
+    ];
+    let policy = format!(
+        r#"{{"format": "rerail.policy/v1", "id": "facts", "revision": 1, "mode": "steer", "description": "Q251's facts.",
+            "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{}]}}"#,
+        clauses.join(", ")
+    );
+    let compiled = CodeRuleDslRuntime::compile(policy, "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let tapes = vec![
+        python_tape("x = 1\ny = \"s\"\nz = 2\nprint(x, y)\n"),
+        python_tape("def f(a, b):\n    c = 3\n    d = a\n    return c\n"),
+    ];
+    let mut seen = BTreeSet::new();
+    for (clause, grammar) in python_matchers(&compiled) {
+        let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+        assert!(program.labels.defs.iter().any(|label| matches!(label, Label::Fact(..))), "{clause}: a fact label");
+        let cpu = program.roots_batch(Backend::Cpu, &tapes).unwrap();
+        assert!(cpu.iter().all(|roots| !roots.is_empty()), "{clause}: roots on every tape");
+        let (metal, _) = program.roots_metal(&tapes).unwrap();
+        assert_eq!(metal, cpu, "{clause}");
+        seen.insert(clause.to_owned());
+    }
+    assert_eq!(seen.len(), 3);
+}
+
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
 /// fixtures, in one command buffer (plus one per extra round of a recursive group), and give the
 /// CPU interpreter's root sets on every fixture.
