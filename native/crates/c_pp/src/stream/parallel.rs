@@ -170,9 +170,16 @@ pub struct DirRow {
     pub name: Option<Vec<u8>>,
 }
 
-/// `src`'s P0 directives and its groups' number, read alone under `opts`: the cross-check of the
-/// evaluator's file pass.
-pub fn tables(opts: crate::Options, src: &[u8]) -> (Vec<DirRow>, u32) {
+/// A file's P0 tables, as the evaluator's file pass makes them: its directives, its groups'
+/// number, and its include guard's name.
+pub struct Tables {
+    pub dirs: Vec<DirRow>,
+    pub groups: u32,
+    pub guard: Option<Vec<u8>>,
+}
+
+/// `src`'s P0 tables, read alone under `opts`: the cross-check of the evaluator's file pass.
+pub fn tables(opts: crate::Options, src: &[u8]) -> Tables {
     let mut io = crate::files::Search::new(Vec::new(), |_: &str| None);
     let mut null = Null;
     let mut pp = Pp::new(Config::new(opts), &mut io, &mut null);
@@ -199,7 +206,7 @@ pub fn tables(opts: crate::Options, src: &[u8]) -> (Vec<DirRow>, u32) {
             DirRow { kind: crate::tape::kind_id(dir.kind), text_before: dir.text_before, group: dir.group, after: dir.after, chain: chain[d], name }
         })
         .collect();
-    (rows, tab.groups.len() as u32)
+    Tables { dirs: rows, groups: tab.groups.len() as u32, guard: tab.guard.map(|g| pp.syms.text(g).to_vec()) }
 }
 
 /// Runs `f` with `pp` read as at position `pos` of the instance whose files, outermost first,

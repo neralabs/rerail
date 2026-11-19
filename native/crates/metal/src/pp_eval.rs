@@ -89,6 +89,8 @@ pub struct Evaluated {
     pub rows: Vec<PpDir>,
     pub dir_keys: Vec<u64>,
     pub groups: Vec<u32>,
+    /// Each file's include guard's key (0: none).
+    pub guards: Vec<u64>,
 }
 
 /// A directive's row (`PpDir` in the MSL): its node in its file's tape, its kind, the text tokens
@@ -111,19 +113,21 @@ pub struct PpDir {
 ///   scan's;
 /// - the directives: `pp_dir_counts` (one thread a file walks its tape), `pp_scan`, `pp_dirs`
 ///   (the same walk, each file's rows from its first);
-/// - the directives' names: `pp_dir_keys`, one thread a row, their number the second scan's.
+/// - the directives' names: `pp_dir_keys`, one thread a row, their number the second scan's;
+/// - each file's include guard: `pp_guards`, one thread a file.
 pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
     let device = crate::device()?;
     let n = unit.table.len();
     let per_file = || MappedBuffer::zeroed::<u32>(&device, n.max(1));
     let one = |k: usize| MappedBuffer::zeroed::<u32>(&device, k);
-    let (counts, bases, dir_counts, dir_bases, groups) = (per_file()?, per_file()?, per_file()?, per_file()?, per_file()?);
+    let (counts, bases, dir_counts, dir_bases, groups, guarded) = (per_file()?, per_file()?, per_file()?, per_file()?, per_file()?, per_file()?);
+    let guards = MappedBuffer::zeroed::<u64>(&device, n.max(1))?;
     let (bad, total, args, dir_total, dir_args) = (one(1)?, one(1)?, one(4)?, one(1)?, one(4)?);
     let keys = MappedBuffer::zeroed::<u64>(&device, unit.node_bound)?;
     let out = MappedBuffer::zeroed::<[u32; 4]>(&device, if nodes { unit.node_bound } else { 1 })?;
     let rows = MappedBuffer::zeroed::<PpDir>(&device, unit.dir_bound)?;
     let dir_keys = MappedBuffer::zeroed::<u64>(&device, unit.dir_bound)?;
-    let names = ["pp_counts", "pp_scan", "pp_names", "pp_nodes", "pp_dir_counts", "pp_dirs", "pp_dir_keys"];
+    let names = ["pp_counts", "pp_scan", "pp_names", "pp_nodes", "pp_dir_counts", "pp_dirs", "pp_dir_keys", "pp_guards"];
     let pipes = names.iter().map(|n| pipeline_named(SOURCE, n)).collect::<Result<Vec<_>, _>>()?;
     let pipe = |name: &str| &pipes[names.iter().position(|&n| n == name).expect("a pass of the list")];
     let n32 = n as u32;
@@ -168,8 +172,9 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
     }
     by_file("pp_dir_counts", &[u_files, u_data, &dir_counts.buffer, &bad.buffer], 4);
     scan(&dir_counts, &dir_bases, &dir_total, &dir_args);
-    by_file("pp_dirs", &[u_files, u_data, &dir_bases.buffer, &rows.buffer, &groups.buffer, &bad.buffer], 6);
+    by_file("pp_dirs", &[u_files, u_data, &dir_bases.buffer, &rows.buffer, &groups.buffer, &guarded.buffer, &bad.buffer], 7);
     indirect("pp_dir_keys", &[u_files, u_data, &bases.buffer, &keys.buffer, &dir_bases.buffer, &dir_total.buffer, &rows.buffer, &dir_keys.buffer], &dir_args);
+    by_file("pp_guards", &[&guarded.buffer, &dir_bases.buffer, &dir_keys.buffer, &guards.buffer], 4);
     if let Err(refused) = commit_checked(command) {
         crate::launch::release_refused(command);
         return Err(refused);
@@ -192,6 +197,7 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
             rows: std::slice::from_raw_parts(rows.host().cast::<PpDir>(), dir_total).to_vec(),
             dir_keys: std::slice::from_raw_parts(dir_keys.host().cast::<u64>(), dir_total).to_vec(),
             groups: read(&groups),
+            guards: std::slice::from_raw_parts(guards.host().cast::<u64>(), n).to_vec(),
         })
     }
 }

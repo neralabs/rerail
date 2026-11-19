@@ -70,16 +70,23 @@ fn the_names_pass_reads_the_tapes_in_place() {
 /// the spike's P0 tables do (`parallel::tables`): kind, text tokens before, the group each is
 /// read in and the one after it, its chain; and each file's groups. Each row's node is a
 /// directive of its kind in the tape, and its name key (`pp_dir_keys`) is the key of the name
-/// the spike's directive defines, undefines or tests.
+/// the spike's directive defines, undefines or tests. Each file's guard key is the spike's
+/// guard's name's.
 #[test]
 fn the_directives_pass_gives_the_spikes_tables() {
-    let shapes: [&[u8]; 7] = [
+    let shapes: [&[u8]; 13] = [
         b"#define F(a) a\nint y = F(1);\n",
         b"#ifndef G\n#define G\n#if A\nx y\n#elif B\n#if C\nz\n#endif\n#else\nw\n#endif\n#endif\n",
         b"#else\n#endif\n#elif X\nt\n#if A\n#else\n#else\nu\n",
         b"",
         b"a\n#\n#pragma once\n#include <x.h>\nb c d\n",
         b"#if A\n#if B\n#endif\n",
+        b"#ifndef G\n#define G 1\n#if A\n#else\n#endif\n#endif\n",
+        b"#ifndef G\n#define G 1\n#endif\nx\n",
+        b"#ifndef G\n#else\n#endif\n",
+        b"#ifndef G\n#endif\n#define H\n",
+        b"x\n#ifndef G\n#endif\n",
+        b"#ifndef 1\n#endif\n",
         b"#define\n#define 1\n#define G(x) x\n#undef\n#undef G H\n#ifdef\n#elifdef X\n#endif\n#ifndef abcdefghijklmnopqrs\n#elifndef Y\n#endif\n#elifdef Z\n",
     ];
     let mut files: Vec<(Vec<u8>, Vec<u8>, bool)> = shapes.iter().map(|s| (s.to_vec(), image(s, crate::pp::options(false)), false)).collect();
@@ -88,7 +95,9 @@ fn the_directives_pass_gives_the_spikes_tables() {
     let got = evaluate(&unit, false).unwrap();
     let mut rows = 0usize;
     for (f, (src, tape, cpp)) in files.iter().enumerate() {
-        let (want, groups) = rerail_c_pp::stream::parallel::tables(crate::pp::options(*cpp), src);
+        let tables = rerail_c_pp::stream::parallel::tables(crate::pp::options(*cpp), src);
+        let (want, groups) = (&tables.dirs, tables.groups);
+        same(got.guards[f], tables.guard.as_deref().map_or(0, name_key), format!("file {f}'s guard {:?}", tables.guard.as_deref().map(String::from_utf8_lossy)));
         let v = View::new(tape).unwrap();
         same(got.dir_bases[f] as usize, rows, format!("file {f}'s first row"));
         same(got.groups[f], groups, format!("file {f}'s groups"));
@@ -102,5 +111,5 @@ fn the_directives_pass_gives_the_spikes_tables() {
     }
     same(got.rows.len(), rows, "the rows");
     same(got.dir_keys.len(), rows, "the rows' keys");
-    eprintln!("{} files, {rows} directives", files.len());
+    eprintln!("{} files, {rows} directives, {} guarded", files.len(), got.guards.iter().filter(|&&g| g != 0).count());
 }

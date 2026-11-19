@@ -192,11 +192,18 @@ constant uint MAX_OPEN = 128u;
 struct PpDir { uint node, kind, text_before, group, after, chain; };
 
 // File `t`'s walk: each directive's row to `out` (where `out` is set) from row `at`; the number
-// of rows, and the file's groups in `groups`.
-inline uint walk_dirs(Tape t, device PpDir* out, uint at, thread uint& groups, device atomic_uint* bad) {
+// of rows, the file's groups in `groups`, and in `guarded` whether it has an include guard's
+// shape: its first directive an `#ifndef` with no text before it, of one arm, its `#endif` the
+// last directive with no text after it, every directive between inside it (the spike's
+// `files::guard`; the name is the first row's key, `pp_guards`).
+inline uint walk_dirs(Tape t, device PpDir* out, uint at, thread uint& groups, thread bool& guarded, device atomic_uint* bad) {
     uint ends[MAX_OPEN], outer[MAX_OPEN], chain_of[MAX_OPEN];
     uint depth = 0u, cur = 0u, chains = 0u, text = 0u, rows = 0u;
     groups = 1u;
+    // The guard's shape: the first row's, the arms of its chain after it, the rows after the
+    // first outside a group, and the last row.
+    bool first_ok = false, more_arms = false, last_violates = false;
+    uint outside = 0u, last_kind = 0u, last_after = 0u, last_text = 0u;
     // Node 0 is the file's root (`pp`).
     for (uint i = 1u; i < t.n;) {
         while (depth > 0u && i >= ends[depth - 1u]) {
@@ -244,10 +251,22 @@ inline uint walk_dirs(Tape t, device PpDir* out, uint at, thread uint& groups, d
                 d.after = cur;
             }
             if (out) out[at + rows] = d;
+            if (rows == 0u) {
+                first_ok = k == K_IFNDEF && text == 0u;
+            } else {
+                more_arms |= d.chain == 0u && k != K_ENDIF;
+                last_violates = d.group == 0u || d.after == 0u;
+                outside += last_violates ? 1u : 0u;
+            }
+            last_kind = k;
+            last_after = d.after;
+            last_text = text;
             rows++;
         }
         i += size;
     }
+    guarded = rows >= 2u && first_ok && !more_arms && last_kind == K_ENDIF && last_after == 0u && last_text == text
+              && outside == (last_violates ? 1u : 0u);
     return rows;
 }
 
@@ -257,18 +276,22 @@ kernel void pp_dir_counts(device const PpFile* files [[buffer(0)]], device const
                           constant uint& n_files [[buffer(4)]], uint f [[thread_position_in_grid]]) {
     if (f >= n_files) return;
     uint groups;
-    counts[f] = walk_dirs(tape_at(data, files[f].tape), (device PpDir*)nullptr, 0u, groups, bad);
+    bool guarded;
+    counts[f] = walk_dirs(tape_at(data, files[f].tape), (device PpDir*)nullptr, 0u, groups, guarded, bad);
 }
 
-// Each file's rows from its first (`pp_scan`'s), and its groups.
+// Each file's rows from its first (`pp_scan`'s), its groups, and whether it has a guard's shape.
 kernel void pp_dirs(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
                     device const uint* dir_bases [[buffer(2)]], device PpDir* rows [[buffer(3)]],
-                    device uint* groups [[buffer(4)]], device atomic_uint* bad [[buffer(5)]],
-                    constant uint& n_files [[buffer(6)]], uint f [[thread_position_in_grid]]) {
+                    device uint* groups [[buffer(4)]], device uint* guarded [[buffer(5)]],
+                    device atomic_uint* bad [[buffer(6)]],
+                    constant uint& n_files [[buffer(7)]], uint f [[thread_position_in_grid]]) {
     if (f >= n_files) return;
     uint g;
-    walk_dirs(tape_at(data, files[f].tape), rows, dir_bases[f], g, bad);
+    bool shaped;
+    walk_dirs(tape_at(data, files[f].tape), rows, dir_bases[f], g, shaped, bad);
     groups[f] = g;
+    guarded[f] = shaped ? 1u : 0u;
 }
 
 // --- The directives' names: a line pass ---------------------------------------------------------
@@ -298,4 +321,13 @@ kernel void pp_dir_keys(device const PpFile* files [[buffer(0)]], device const u
         if (node_kind(t, j) == K_IDENTIFIER) key = keys[bases[f] + j];
     }
     dir_keys[r] = key;
+}
+
+// Each file's include guard's key (0: none): its first directive's name, where the file has a
+// guard's shape. One thread a file.
+kernel void pp_guards(device const uint* guarded [[buffer(0)]], device const uint* dir_bases [[buffer(1)]],
+                      device const ulong* dir_keys [[buffer(2)]], device ulong* guards [[buffer(3)]],
+                      constant uint& n_files [[buffer(4)]], uint f [[thread_position_in_grid]]) {
+    if (f >= n_files) return;
+    guards[f] = guarded[f] != 0u ? dir_keys[dir_bases[f]] : 0ul;
 }
