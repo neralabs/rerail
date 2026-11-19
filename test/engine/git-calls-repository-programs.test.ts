@@ -139,6 +139,19 @@ describe("Rerail's Git calls start no filter program only a repository's own con
     expect([status.status, status.stdout.split("\0").filter(entry => entry !== "").map(entry => entry.split(" ").at(-1))]).toEqual([0, ["notes.txt"]]);
   }, 60_000);
 
+  it("nor in a call that does not block and is no name-only diff", async () => {
+    const root = await folder();
+    const marker = join(root, "filter-ran");
+    const work = await repository(root, "work", { ".gitattributes": "*.txt filter=probe\n", "notes.txt": "one\n" });
+    git(work, "config", "filter.probe.clean", recording(marker));
+    await writeFile(join(work, "notes.txt"), "two\n");
+
+    const modified = await runGitWithoutBlocking(work, ["ls-files", "-z", "--modified"]);
+
+    expect(runs(marker)).toBe(0);
+    expect([modified.status, modified.stdout]).toEqual([0, "notes.txt\0"]);
+  }, 60_000);
+
   it("runs the person's own driver where the repository defines one of the same name, and answers as their Git does", async () => {
     const root = await folder();
     const [own, repositorys] = [join(root, "own-ran"), join(root, "repository-ran")];

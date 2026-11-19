@@ -1247,7 +1247,7 @@ function submoduleOpener(git: LaterGit, env: GitVariables = {}): SubmoduleOpener
     const opened = { ...cleared, GIT_DIR: gitFolder };
     const guarded = await guardedLater(git, folder, opened);
     if (!("entries" in guarded)) return guarded;
-    if (!guarded.entries.some(entry => entry.scope === "local") && !(await holdsNoEntry(git, folder, gitFolder, opened))) return UNASKED;
+    if (!guarded.entries.some(entry => entry.scope === "local") && !(await holdsNoEntry(git, folder, gitFolder))) return UNASKED;
     const repository: GuardedRepository = { entries: guarded.entries, ask: asker(git, folder, guarded.env), places: { top: folder, prefix: "" } };
     return repository;
   };
@@ -1259,12 +1259,13 @@ function submoduleOpener(git: LaterGit, env: GitVariables = {}): SubmoduleOpener
  * no config of the repository's own also for a Git folder a writer took away while Git read it: one put back since,
  * which holds an entry, or one still away is not asked, so a status never opens a config no listing read as empty.
  */
-async function holdsNoEntry(git: LaterGit, folder: string, gitFolder: string, env: GitVariables): Promise<boolean> {
+async function holdsNoEntry(git: LaterGit, folder: string, gitFolder: string): Promise<boolean> {
   const config = repositoryConfig(gitFolder);
   if (config === undefined) return false;
   if (!existsSync(config)) return true;
-  const listed = await git(folder, ["config", "-z", "--list", "--file", config], { env, maxBuffer: MAX_LISTING_BYTES });
-  return listed.status === 0 && listed.error === undefined && listed.stdout === "";
+  // `--file` reads that one file and no other config, whatever the environment names.
+  const listed = await git(folder, ["config", "-z", "--list", "--file", config], { maxBuffer: MAX_LISTING_BYTES });
+  return listed.status === 0 && listed.stdout === "";
 }
 
 /** What this process's Git means for the guard: what Rerail says when it is too old ({@link oldGitNotice}), and whether it said it. */
