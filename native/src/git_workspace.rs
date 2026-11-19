@@ -1467,7 +1467,11 @@ mod tests {
             matches!(memory.proof("a.py", blob, &recalled), Proof::Held),
             "a file with attributes {attributes:#x} is taken by its stat"
         );
-        assert_eq!(worktree_stat::queries_made(), 0, "no query: {attributes:#x}");
+        assert_eq!(
+            worktree_stat::queries_made(),
+            0,
+            "no query: {attributes:#x}"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

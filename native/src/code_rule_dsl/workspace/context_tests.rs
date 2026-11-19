@@ -4168,7 +4168,11 @@ fn a_warm_index_restores_a_file_whose_data_is_offline_with_no_read() {
         git_workspace::reset_source_alias_hashes();
         let indexed = index_workspace(&warm);
         assert_eq!(indexed["restoredFiles"], json!(2), "{indexed}");
-        assert_eq!(git_workspace::source_alias_hashes(), hashed, "{why}: {indexed}");
+        assert_eq!(
+            git_workspace::source_alias_hashes(),
+            hashed,
+            "{why}: {indexed}"
+        );
         assert_eq!(located(&all_pages(&warm, MAXIMUM_PAGE_BYTES)), found);
         warm.close();
     };
