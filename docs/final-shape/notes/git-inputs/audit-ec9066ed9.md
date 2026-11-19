@@ -9,7 +9,10 @@ Twelve of the 28 follow-up findings have verified repairs. Sixteen remain open. 
 For case 46, the CLI previously listed both `SRC/A.PY` and `src/a.py` as selected paths on a case-insensitive volume.
 After the repair, selecting either spelling returned one finding at `src/a.py`. The report preserved each supplied spelling in `requestedPaths`.
 On a case-sensitive APFS volume, the CLI reported separate findings for `src/A.py` and `src/a.py`. It skipped the absent `SRC/A.PY`.
-Revision scans required the exact Git tree spelling on both volumes. Selecting a working-tree symlink or a path below one skipped the selection.
+Revision scans required the exact Git tree spelling on both volumes. The Windows CLI also passed the spelling check on NTFS at `209ce53ce`.
+That first repair skipped working-tree symlinks. Running the earlier CLI showed that it accepted both a file link and a path below a directory link.
+The corrected regression preserves both selected link names and the single finding at their shared target. It passed on both APFS volumes and on NTFS.
+The Windows guest also passed the selector, object invalidation, and checked source-read tests in the same run. All four tests completed in 20.86 seconds.
 [Headless CLI regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Declared outputs with constant rows

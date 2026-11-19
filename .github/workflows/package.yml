@@ -171,7 +171,7 @@ jobs:
           node -p "process.platform + ' ' + process.arch + ' ' + process.version"
           ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "compares Git message selectors" --reporter=verbose
 
-      - name: Check Git object invalidation on Windows
+      - name: Check Git object invalidation, source reads, and path spelling on Windows
         if: matrix.windows_runtime_smoke
         shell: pwsh
         run: |
@@ -179,7 +179,7 @@ jobs:
           $format = [System.IO.DriveInfo]::new($drive).DriveFormat
           Write-Output "Temporary directory filesystem: $format"
           if ($format -ne 'NTFS') { throw "This object-invalidation check requires NTFS." }
-          ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "same-size rewrite" --reporter=verbose
+          ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "same-size rewrite|distinguishes a missing source path|uses the filesystem spelling" --reporter=verbose
 
       - name: Check directory scope identity and concurrent Git evaluations on Linux
         if: runner.os == 'Linux'

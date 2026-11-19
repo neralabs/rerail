@@ -791,7 +791,7 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
     if (!insensitive) writeFileSync(join(root, "src/A.py"), "NEEDLE\n");
     git(root, "add", "--", "src");
     git(root, "commit", "-qm", "case of tracked names");
-    const check = (paths: string[], revision: boolean, selected: string[], skipped: string[]) => {
+    const check = (paths: string[], revision: boolean, selected: string[], skipped: string[], findings = selected) => {
       const text = execFileSync(process.execPath, ["--import", "tsx", "src/cli/cli.ts", "--rerail-managed-child", "scan",
         "--repo", root, "--json", "--no-send", ...(revision ? ["--revision", "HEAD", "--analysis-scope", "case"] : []),
         ...paths.flatMap(path => ["--path", path])], {
@@ -800,18 +800,22 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
       const report: ScanReport = JSON.parse(text);
       expect(report).toMatchObject({ status: "completed", requestedPaths: paths, skippedPaths: skipped, failures: [] });
       expect(report.paths?.sort()).toEqual([...selected].sort());
-      expect(report.violations.map(row => row.path).sort()).toEqual([...selected].sort());
+      expect(report.violations.map(row => row.path).sort()).toEqual([...findings].sort());
     };
     const paths = ["SRC/A.PY", "src/a.py", ...(insensitive ? [] : ["src/A.py"])];
     const actual = insensitive ? ["src/a.py"] : ["src/A.py", "src/a.py"];
     check(paths, false, actual, insensitive ? [] : ["SRC/A.PY"]);
     check(paths, true, actual, ["SRC/A.PY"]);
     if (insensitive) check(["SRC/A.PY"], false, ["src/a.py"], []);
-    if (process.platform !== "win32") {
-      symlinkSync("src", join(root, "alias"));
-      symlinkSync("src/a.py", join(root, "file.py"));
-      check(["alias/a.py", "file.py"], false, [], ["alias/a.py", "file.py"]);
+    try {
+      symlinkSync("src", join(root, "alias"), "dir");
+      symlinkSync("src/a.py", join(root, "file.py"), "file");
+    } catch (error) {
+      if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
     }
+    const links = ["alias/a.py", "file.py"];
+    check(insensitive ? ["ALIAS/A.PY", "FILE.PY"] : links, false, links, [], ["src/a.py"]);
   }, 60_000);
 
   it("normalizes repository-relative selections before both lookup and rule evaluation", async () => {

@@ -13,12 +13,12 @@
  *   session's: content no one approved in the Rerail home (`rerail rules approve`) runs in Log.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync } from "node:fs";
-import { dirname, join, parse, posix, relative, resolve, sep } from "node:path";
+import { type Dirent, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, join, parse, posix, relative, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from "../engine/audit/audit.js";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
-import { textRealPath, withinCheckout } from "../engine/catalog/checkout-control.js";
+import { textRealPath } from "../engine/catalog/checkout-control.js";
 import { checkoutStatus, lookupCheckout, parentCheckouts, recordCheckout, standaloneRepository } from "../engine/catalog/repository-registry.js";
 import type { RrPolicySource, RuleCatalog } from "../engine/catalog/repository-model.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -428,18 +428,37 @@ function scanRoot(options: HeadlessScanOptions): { root: string; requested: stri
   return { root, requested };
 }
 
-/** Use the same directory-entry names as the inventory without following a selection through a symlink. */
-function worktreeSelection(root: string, path: string, directory: boolean): string | undefined {
-  const parts = path.split("/");
-  let candidate = root;
-  for (const [i, part] of parts.entries()) {
-    candidate = join(candidate, part);
-    const entry = lstatSync(candidate, { throwIfNoEntry: false });
-    if (entry?.isDirectory()) continue;
-    if (!entry?.isFile() || directory || i < parts.length - 1) return undefined;
+/** Get the actual name of a link itself. A realpath of the link would name its target. */
+function worktreeLinkName(parent: string, part: string, ino: bigint, dev: bigint): string {
+  let entries: Dirent<Buffer>[];
+  try { entries = readdirSync(parent, { encoding: "buffer", withFileTypes: true }); }
+  catch (error) {
+    // A searchable directory can allow a named lookup without allowing a listing.
+    if (["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) return part;
+    throw error;
   }
-  const stored = textRealPath(candidate);
-  return withinCheckout(root, stored) ? relative(root, stored).split(sep).join("/") : undefined;
+  const requested = Buffer.from(part), folded = part.normalize().toLowerCase();
+  if (entries.some(entry => entry.name.equals(requested))) return part;
+  const aliases = entries.filter(entry => entry.isSymbolicLink() && isUtf8(entry.name))
+    .map(entry => entry.name.toString()).filter(name => {
+      const entry = lstatSync(join(parent, name), { bigint: true, throwIfNoEntry: false });
+      return entry?.ino === ino && entry.dev === dev;
+    });
+  return aliases.length === 1 ? aliases[0]! : aliases.find(name => name.normalize().toLowerCase() === folded) ?? part;
+}
+
+/** Match filesystem spelling while keeping a selected link distinct from a selection of its target. */
+function worktreeSelection(root: string, path: string, directory: boolean): string | undefined {
+  const requested = join(root, path);
+  if (!existsSync(requested) || (directory && !statSync(requested).isDirectory())) return undefined;
+  if (realpathSync.native(requested, { encoding: "buffer" }).equals(Buffer.from(requested))) return path;
+  let candidate = root;
+  return path.split("/").map(part => {
+    const parent = candidate;
+    candidate = join(parent, part);
+    const entry = lstatSync(candidate, { bigint: true });
+    return entry.isSymbolicLink() ? worktreeLinkName(parent, part, entry.ino, entry.dev) : basename(realpathSync.native(candidate));
+  }).join("/");
 }
 
 /** What the scan covers: the paths asked for, what differs from the base or HEAD, or null for the whole repository. */
