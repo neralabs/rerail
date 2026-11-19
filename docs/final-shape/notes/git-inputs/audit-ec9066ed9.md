@@ -21,7 +21,7 @@ An ordinary transaction rollback and termination before commit both preserved th
 After commit, the journal retained both original store identities even when their live routes were removed.
 Restoring the control backup then delivered the outstanding release. A new run in the first store survived replay of the original cutoff.
 Restoring a backup that still listed the completed release preserved both newer runs. The journal retained zero releases and zero targets.
-On macOS, 31 scope, stop, restart, and recovery tests passed. The four release tests also passed on Windows 11 ARM64 with NTFS in 41.49 seconds.
+On macOS, 31 scope, stop, restart, and recovery tests passed. At `9486d62f78`, all four release tests passed on Windows 11 ARM64 with NTFS in 41.44 seconds.
 Two older tests simulated an unavailable store by its path. They now use the native Windows spelling so their injected failures reach that store.
 [Public recovery regression](../../../../test/cli/headless-scan.test.ts) · [Backup and restore contract](analysis-scopes.md#recovery-contract-for-a-stopped-directory)
 
