@@ -151,11 +151,12 @@ describe("an owner-only ACL on Windows", () => {
     await makeLedgerFolder(join(sessions, "claude-code-locks"), windows);
     expect(acl.read).toEqual([]);
     await makeLedgerFolder(join(sessions, "a".repeat(64)), { ...windows, repair: true });
-    expect(acl.restricted).toEqual([[sessions, true]]);
-    // Once per folder in a daemon's life: the next session there reads nothing.
+    expect(acl.restricted).toContainEqual([sessions, true]);
+    const restricted = acl.restricted.length;
+    // Once per folder in a daemon's life: the next session there, once the repair has ended, reads and sets nothing.
     await makeLedgerFolder(join(sessions, "b".repeat(64)), { ...windows, repair: true });
     expect(acl.read).toEqual([sessions]);
-    expect(acl.restricted).toHaveLength(1);
+    expect(acl.restricted).toHaveLength(restricted);
   });
 
   it("reads a session records folder again once another folder has taken its place", async () => {
@@ -169,7 +170,7 @@ describe("an owner-only ACL on Windows", () => {
     await rename(sessions, `${sessions}.aside`);
     await mkdir(sessions);
     await makeLedgerFolder(join(sessions, "a".repeat(64)), windows);
-    expect(acl.restricted).toEqual([[sessions, true], [sessions, true]]);
+    expect(acl.restricted.filter(([path]) => path === sessions)).toHaveLength(2);
   });
 
   it("reads no ACL of a records folder outside any .rerail folder, which the person named and may keep their own files in", async () => {
@@ -208,30 +209,36 @@ describe("an owner-only ACL on Windows", () => {
     expect(written).toHaveBeenCalledWith(`rerail: could not keep ${sessions} to this user alone, so other accounts may read what Rerail writes there: Access is denied.\n`);
   });
 
-  it("has a session that opens while its records folder is repaired wait for that one repair, and start no second", async () => {
+  it("lets sessions that open while their records folder is repaired go on at once, each one's folder its owner's first", async () => {
     const checkout = await temporaryRoot();
     const sessions = join(checkout, ".rerail", "sessions");
     await mkdir(sessions, { recursive: true });
-    const repairs: string[] = [];
+    const started: string[] = [];
+    const ownersAlone: string[] = [];
+    // The records folder's repair stays under way until the case releases it, as one over many earlier records does.
     const { promise: passedOn, resolve: passOn } = Promise.withResolvers<undefined>();
-    const acl: WindowsAcl = { ...recordingAcl(), restrictFolderToOwner: path => {
-      repairs.push(path);
-      return passedOn;
+    const acl: WindowsAcl = { ...recordingAcl(), restrictFolderToOwner: async path => {
+      started.push(path);
+      if (path === sessions) return passedOn;
+      // A session's own folder, new or nearly empty, has its ACL a turn of the event loop later.
+      await new Promise(resolve => setImmediate(resolve));
+      ownersAlone.push(path);
     } };
     const windows = { acl, platform: "win32" as const, profile: ELSEWHERE, repair: true };
-    const opened: string[] = [];
-    const sessionsOpening = ["a", "b"].map(async id => {
-      await makeLedgerFolder(join(sessions, id.repeat(64)), windows);
-      opened.push(id);
-    });
-    await vi.waitFor(() => expect(repairs).toEqual([sessions]));
-    // Neither session goes on to write while Windows passes the folder's new ACL on.
-    await new Promise(resolve => setImmediate(resolve));
-    expect(opened).toEqual([]);
+    const open = async (id: string): Promise<void> => {
+      const folder = join(sessions, id.repeat(64));
+      await makeLedgerFolder(folder, windows);
+      // What the session writes next goes into a folder that is already its owner's alone.
+      expect(ownersAlone).toContain(folder);
+    };
+    // The session that starts the repair, and a second one opening meanwhile, each go on while it is held.
+    await Promise.all([open("a"), open("b")]);
+    expect(started.filter(path => path === sessions)).toHaveLength(1);
     passOn(undefined);
-    await Promise.all(sessionsOpening);
-    expect(opened.toSorted()).toEqual(["a", "b"]);
-    expect(repairs).toEqual([sessions]);
+    await new Promise(resolve => setImmediate(resolve));
+    // Once the repair has ended, a session there takes the folder's ACL and starts no icacls of its own.
+    await makeLedgerFolder(join(sessions, "c".repeat(64)), windows);
+    expect(started).toHaveLength(3);
   });
 
   it("tells an inherited entry from what icacls prints, in any language and whatever the path", () => {

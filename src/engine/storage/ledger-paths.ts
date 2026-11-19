@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { type FileHandle, lstat, mkdir, open, rm } from "node:fs/promises";
 import { renameWithRetry } from "../file-replace.js";
 import { openNoFollow } from "../no-follow.js";
-import { keepFolderPrivate, keepFoundFolderPrivate, type PrivateMachine } from "./private-files.js";
+import { type FoundFolderRepair, keepFolderPrivate, keepFoundFolderPrivate, type PrivateMachine } from "./private-files.js";
 import { resolve, sep } from "node:path";
 
 /**
@@ -79,15 +79,16 @@ export interface LedgerFolderOptions extends PrivateMachine {
   readonly repair?: boolean;
 }
 
-/** The session records folders this process keeps private: each one's file id then, and its repair, ended or under way. */
-const keptRecordsFolders = new Map<string, { readonly ino: bigint; readonly kept: Promise<void> }>();
+/** The session records folders this process keeps private: each one's file id then, and its repair once its ACL is read. */
+const keptRecordsFolders = new Map<string, { readonly ino: bigint; readonly repair: Promise<FoundFolderRepair> }>();
 
 /**
  * Keeps the session records folder on `directory`, the one just below the innermost `.rerail`, its owner's alone
  * whoever made it ({@link keepFoundFolderPrivate}), once per folder in this process: again only when a folder with
- * another file id has taken its place. A session that opens there while the repair runs waits for that one repair.
- * Git makes that folder for a repository that commits a file in it, and a person or a release before 0.1.5 may have
- * made it, each with its parent's ACL on Windows, which every record in it took.
+ * another file id has taken its place. A session that opens there waits for the folder's ACL to be read, not for the
+ * repair: while that runs, shared by every session that opens there meanwhile, the session's own folder gets the
+ * owner-only ACL of its own first. Git makes that folder for a repository that commits a file in it, and a person or a
+ * release before 0.1.5 may have made it, each with its parent's ACL on Windows, which every record in it took.
  */
 async function keepRecordsFolderPrivate(directory: string, machine: PrivateMachine): Promise<void> {
   const segments = resolve(directory).split(sep);
@@ -95,12 +96,14 @@ async function keepRecordsFolderPrivate(directory: string, machine: PrivateMachi
   if (start <= 0 || segments.length < start + 2) return;
   const folder = segments.slice(0, start + 2).join(sep);
   const { ino } = await lstat(folder, { bigint: true });
-  let repair = keptRecordsFolders.get(folder);
-  if (repair?.ino !== ino) {
-    repair = { ino, kept: keepFoundFolderPrivate(folder, machine) };
-    keptRecordsFolders.set(folder, repair);
+  let kept = keptRecordsFolders.get(folder);
+  if (kept?.ino !== ino) {
+    kept = { ino, repair: keepFoundFolderPrivate(folder, machine) };
+    keptRecordsFolders.set(folder, kept);
   }
-  await repair.kept;
+  const repair = await kept.repair;
+  // A storage root that is `.rerail` itself makes each session's folder the records folder, whose repair is its own.
+  await (segments.length === start + 2 ? repair.kept : repair.keepInside(directory));
 }
 
 /**

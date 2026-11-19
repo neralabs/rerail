@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RerailRuntime } from "../../src/runtime/index.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { startTestRepository } from "../support/started-repository.js";
@@ -99,10 +100,14 @@ describe("session records in a checkout", () => {
     if (POSIX_MODES) await openToOtherAccounts(storageRoot);
     expect(await readableByOthers(storageRoot)).toBe(true);
     await openOneSession(checkout, storageRoot, databasePath);
-    expect(await readableByOthers(storageRoot)).toBe(false);
-    // Elsewhere than Windows the folder's 0700 keeps other users from reaching a record in it; on Windows the record
-    // takes the folder's new ACL.
-    if (process.platform === "win32") expect(await readableByOthers(earlier)).toBe(false);
+    // The session's own record is private at once; on Windows the folder's repair goes on after the session opens.
+    expect(await readableByOthers(join(storageRoot, createHash("sha256").update("gitignore").digest("hex"), "events.jsonl"))).toBe(false);
+    await vi.waitFor(async () => {
+      expect(await readableByOthers(storageRoot)).toBe(false);
+      // Elsewhere than Windows the folder's 0700 keeps other users from reaching a record in it; on Windows the record
+      // takes the folder's new ACL.
+      if (process.platform === "win32") expect(await readableByOthers(earlier)).toBe(false);
+    }, { timeout: 30_000, interval: 200 });
     // Windows PowerShell's Get-Acl, which reads each ACL, can take seconds to start on a cold machine.
   }, 60_000);
 

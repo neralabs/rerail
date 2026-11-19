@@ -59,29 +59,64 @@ export function keepFolderPrivate(folder: string, options: KeepFolderPrivate = {
   }
 }
 
+/** The repair {@link keepFoundFolderPrivate} starts on a folder, once it has read the folder's ACL. */
+export interface FoundFolderRepair {
+  /** Settles once the folder has its owner-only ACL and Windows has passed it to everything in it, or has failed to. */
+  readonly kept: Promise<void>;
+  /**
+   * Resolves once `inner`, a folder inside the repaired one, is its owner's alone, so what is written there next is
+   * private from its first byte: at once when no new ACL is being passed on, since `inner` then has the folder's; while
+   * one is, after one `icacls` gives `inner` the owner-only ACL of its own, which takes time in step with what is in
+   * `inner` alone.
+   */
+  keepInside(inner: string): Promise<void>;
+}
+
+const NOTHING_TO_REPAIR: FoundFolderRepair = { kept: Promise.resolve(), keepInside: () => Promise.resolve() };
+
+/** Names on stderr, which a daemon writes to its log, a folder Rerail could not keep its owner's alone. */
+function cannotKeep(folder: string, error: unknown): false {
+  process.stderr.write(`rerail: could not keep ${folder} to this user alone, so other accounts may read what Rerail writes there: ${
+    error instanceof Error ? error.message : String(error)}\n`);
+  return false;
+}
+
+/** Gives `folder` the owner-only ACL in the background, and each folder inside it one of its own while that runs. */
+function repairUnderWay(folder: string, acl: WindowsAcl): FoundFolderRepair {
+  let passingOn = true;
+  const kept = acl.restrictFolderToOwner(folder).catch((error: unknown) => {
+    cannotKeep(folder, error);
+  }).finally(() => {
+    passingOn = false;
+  });
+  return {
+    kept,
+    async keepInside(inner) {
+      if (passingOn) await acl.restrictFolderToOwner(inner).catch((error: unknown) => cannotKeep(inner, error));
+    },
+  };
+}
+
 /**
  * Keeps a folder that another program may have made its owner's alone. Elsewhere than Windows, as
  * {@link keepFolderPrivate} does. On Windows, outside the profile folder, it reads the folder's ACL (one `icacls`) and,
  * when the folder still takes entries from its parent's, as one Git, `mkdir` or an earlier release made does, gives it
  * the owner-only ACL, which everything already in it then inherits. An entry set on the folder itself for another
  * account is someone's choice and stays, and a folder with an ACL of its own is left as it is.
- * Both `icacls` runs hold no thread, so a daemon answers other sessions while Windows passes the new ACL on.
+ * It resolves once the ACL is read: Windows passes a new one on in the background, in time in step with what is in
+ * the folder, and {@link FoundFolderRepair.keepInside} keeps a folder in it private meanwhile, so nobody waits for that.
  * A folder it cannot read or change (another account's, or one on a file system with no ACLs) is named on stderr,
  * which a daemon writes to its log, and never fails the caller.
  */
-export async function keepFoundFolderPrivate(folder: string, machine: PrivateMachine = {}): Promise<void> {
+export async function keepFoundFolderPrivate(folder: string, machine: PrivateMachine = {}): Promise<FoundFolderRepair> {
   const { acl = WINDOWS_ACL, platform = process.platform, profile = homedir() } = machine;
   if (platform !== "win32") {
     keepPrivate(folder);
-    return;
+    return NOTHING_TO_REPAIR;
   }
-  if (insideProfile(folder, profile)) return;
-  try {
-    if (await acl.inherits(folder)) await acl.restrictFolderToOwner(folder);
-  } catch (error) {
-    process.stderr.write(`rerail: could not keep ${folder} to this user alone, so other accounts may read what Rerail writes there: ${
-      error instanceof Error ? error.message : String(error)}\n`);
-  }
+  if (insideProfile(folder, profile)) return NOTHING_TO_REPAIR;
+  const inherits = await acl.inherits(folder).catch((error: unknown) => cannotKeep(folder, error));
+  return inherits ? repairUnderWay(folder, acl) : NOTHING_TO_REPAIR;
 }
 
 /** What {@link openToOthers} reads a path's access with; tests pass their own. */
