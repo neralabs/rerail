@@ -1489,6 +1489,59 @@ mod tests {
         not_all_on_disk_is_taken_by_its_stat("stat-offline", 0x0000_1000);
     }
 
+    /// A volume that keeps no change time (FAT and exFAT answer 0), or a file whose stat's call
+    /// answered no times, leaves each clean file to its stat with no query beyond the stat's own
+    /// call, on every restore.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_with_no_change_time_is_taken_by_its_stat_with_no_query() {
+        let (root, path, _) = committed_long_ago("stat-no-change-time", b"print(1)\n");
+        let blob = HashKey::git_sha1([7; 20]);
+        let mut memory = VerifiedFiles::new(None, &root);
+        worktree_stat::queries_made();
+        for times in [Some((0, 1)), None] {
+            let current = WorktreeStat::as_if(&path, times, 0);
+            for _ in 0..2 {
+                assert!(
+                    matches!(memory.proof("a.py", blob, &current), Proof::Held),
+                    "{times:?}"
+                );
+            }
+        }
+        assert_eq!(worktree_stat::queries_made(), 0);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A restore asks a volume whether it keeps change times once: for files that give their
+    /// identity, once per volume, and for files that give none, once in all. Every other proof
+    /// makes the file id query alone.
+    #[cfg(windows)]
+    #[test]
+    fn a_restore_asks_a_volume_about_its_change_times_once() {
+        let (root, path, _) = committed_long_ago("stat-volume-once", b"print(1)\n");
+        let blob = HashKey::git_sha1([7; 20]);
+        let moved = WorktreeStat::as_if(&path, Some((2, 1)), 0);
+        for (identified, proof) in [(true, "Read(Some)"), (false, "Read(None)")] {
+            let mut memory = VerifiedFiles::new(None, &root);
+            worktree_stat::file_ids_answer(identified);
+            worktree_stat::queries_made();
+            for _ in 0..3 {
+                let read = match memory.proof("a.py", blob, &moved) {
+                    Proof::Read(stamp) => stamp.is_some() == identified,
+                    Proof::Held => false,
+                };
+                assert!(read, "{proof}");
+            }
+            worktree_stat::file_ids_answer(true);
+            assert_eq!(
+                worktree_stat::queries_made(),
+                3 + 2,
+                "three file id queries and the volume's two, once: {proof}"
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// A change time not older than the read that hashed the file is not remembered: a write
     /// after the read could carry the same time. Each restore reads such a file.
     #[cfg(windows)]

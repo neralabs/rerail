@@ -64,6 +64,13 @@ pub(super) fn queries_made() -> usize {
     platform::QUERIES.replace(0)
 }
 
+/// Makes the file id query answer nothing on this thread, as a volume that gives no file id, or
+/// answer again.
+#[cfg(all(test, windows))]
+pub(super) fn file_ids_answer(answer: bool) {
+    platform::NO_FILE_ID.set(!answer);
+}
+
 /// A file's identity and change time: every write through any of its names, every time set and
 /// every change of its permissions moves the change time, and a file a rename put in its place has
 /// another identity.
@@ -115,8 +122,9 @@ pub struct VerifiedFiles<'a> {
     known: Option<HashMap<String, VerifiedWorktreeFile>>,
     learned: Vec<VerifiedWorktreeFile>,
     /// Whether each volume, by its serial number, keeps a change time to trust: asked once per
-    /// volume, since every file on it gives the same answer.
-    volumes: HashMap<u64, bool>,
+    /// volume, since every file on it gives the same answer; under `None`, once for the files
+    /// that give no identity.
+    volumes: HashMap<Option<u64>, bool>,
 }
 
 impl<'a> VerifiedFiles<'a> {
@@ -140,22 +148,19 @@ impl<'a> VerifiedFiles<'a> {
         if change.unchanged_since_written() || change.leaves_the_stat_to_decide() {
             return Proof::Held;
         }
-        let Some(stamp) = change.stamp() else {
-            // No identity to remember the file by: where change times count, a read decides.
-            return if change.volume_keeps_change_times() {
-                Proof::Read(None)
-            } else {
-                Proof::Held
-            };
-        };
-        if !self.trusts(stamp.volume, change) || self.remembers(path, &stamp, blob) {
+        // A file with no identity is remembered by none: where change times count, a read decides.
+        let stamp = change.stamp();
+        if !self.trusts(stamp.map(|stamp| stamp.volume), change)
+            || stamp.is_some_and(|stamp| self.remembers(path, &stamp, blob))
+        {
             return Proof::Held;
         }
-        Proof::Read(Some(stamp))
+        Proof::Read(stamp)
     }
 
-    /// Whether the volume whose serial number is `volume` keeps a change time to trust.
-    fn trusts(&mut self, volume: u64, change: &platform::Change) -> bool {
+    /// Whether the volume whose serial number is `volume` keeps a change time to trust; `None`
+    /// stands for the volume of the files that gave no identity.
+    fn trusts(&mut self, volume: Option<u64>, change: &platform::Change) -> bool {
         *self
             .volumes
             .entry(volume)
@@ -362,9 +367,11 @@ mod platform {
         }
 
         /// Whether what the stat's own call answered leaves the stat to decide, with no other
-        /// query: the file's data is not all on this disk (`recalls_data`).
+        /// query: it gave no change time, or a change time of 0, which a volume that keeps none
+        /// gives (FAT and exFAT), or the file's data is not all on this disk (`recalls_data`).
         pub(super) fn leaves_the_stat_to_decide(&self) -> bool {
-            super::recalls_data(self.attributes)
+            self.times.is_none_or(|(changed, _)| changed == 0)
+                || super::recalls_data(self.attributes)
         }
 
         /// Whether the file's volume is on this machine and keeps a change time every write
@@ -404,11 +411,16 @@ mod platform {
     thread_local! {
         /// The queries beyond the stat's own call this thread made (`super::queries_made`).
         pub(super) static QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        /// Whether the file id query answers nothing on this thread, as on a volume that gives
+        /// no file id.
+        pub(super) static NO_FILE_ID: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
+    /// Counts a query; whether it is a file id query this thread's volume does not answer.
     #[cfg(test)]
-    fn queried() {
+    fn queried(file_id: bool) -> bool {
         QUERIES.set(QUERIES.get() + 1);
+        file_id && NO_FILE_ID.get()
     }
 
     /// The times and attributes NTFS keeps for `file`.
@@ -429,7 +441,9 @@ mod platform {
     /// The serial number of `file`'s volume and its 128-bit id there, as NTFS and ReFS give them.
     fn identity(file: &File) -> Option<(u64, [u8; 16])> {
         #[cfg(test)]
-        queried();
+        if queried(true) {
+            return None;
+        }
         let mut info = FILE_ID_INFO::default();
         // SAFETY: an open handle, and a buffer of the size given that lives across the call.
         let read = unsafe {
@@ -447,7 +461,7 @@ mod platform {
     /// is reached by.
     fn is_local(file: &File) -> bool {
         #[cfg(test)]
-        queried();
+        queried(false);
         // Larger than `FILE_REMOTE_PROTOCOL_INFO`, and aligned as it is.
         let mut info = [0_u64; 32];
         // SAFETY: an open handle, and a buffer of the size given that lives across the call.
@@ -465,7 +479,7 @@ mod platform {
     /// The name of the file system that holds `file`, such as `NTFS`; empty where it is not told.
     fn file_system(file: &File) -> String {
         #[cfg(test)]
-        queried();
+        queried(false);
         let mut name = [0_u16; 32];
         // SAFETY: an open handle; every other out-parameter is null, and the name buffer has the
         // length given.
