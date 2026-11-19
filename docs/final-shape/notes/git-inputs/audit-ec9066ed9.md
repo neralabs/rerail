@@ -2,11 +2,27 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Twenty-seven of the 28 follow-up findings have verified results. One remains open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+All 28 follow-up findings from the two reviews have verified results. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
-| Open finding | What still needs to pass |
-| --- | --- |
-| 42. Removed stores | Retire a route by store identity. Apply its outstanding stop if that store returns. Preserve a different store at the same path. |
+## Retiring an offline content store
+
+Case 42 passed through the public CLI. Two directories and one named revision scope used the original store.
+One directory stopped before retirement. The second stopped twice while the store was offline.
+The journal kept one receipt per directory. Repeating retirement removed zero additional routes.
+Maintenance skipped the retired path even when an explicit override pointed there and the path existed.
+
+A replacement database registered at the former path and retained its owner.
+When the original database returned elsewhere, a filesystem scan delivered both stops.
+Its newly acquired run survived, and the named scope could be released at the new location.
+
+A second test interrupted delivery after the native store had accepted the stop.
+The journal retained the receipt. A named revision scan replayed it and restored the route for a surviving directory.
+Stopping that directory reached the moved database. The replacement kept its owner.
+Eight successive retirements of unused stores left zero active routes, retired routes, archived directory owners or pending deliveries.
+All 13 selected macOS scope and recovery tests passed. The Windows 11 Pro ARM64 guest ran seven tests on NTFS at `0276dee45e`.
+All seven passed in 119.15 seconds, including both orders of store replacement and the interrupted replay.
+The volume-swap fixture closes each scan process before moving its directory so that NTFS can release the SQLite handles.
+[CLI commands](../../../headless-scan.md#scan-historical-source) · [Recovery contract](analysis-scopes.md#retire-an-offline-store) · [Regression tests](../../../../test/cli/headless-scan.test.ts)
 
 ## Oversized Git blobs
 

@@ -421,7 +421,9 @@ The last run compiled all three programs again. The tape counter also includes p
 Retirement leaves the database and its scope memberships intact. Repeating the command has no further effect.
 
 A directory stop can occur before or after retirement. The release journal retains the original directory, cutoff and destination identity.
-Maintenance stops polling the retired route. A different database at the former path cannot receive the old stop.
+For repeated stops of the same directory by the same installation, the journal keeps the latest cutoff and its original release ID.
+Older receipt formats remain separate. Maintenance stops polling the retired route.
+A different database at the former path cannot receive the old stop.
 When a scan registers the original database again, Rerail delivers its outstanding stops at the new or original path.
 The returning database checks its own identity before accepting each stop. Surviving directory and named owners then use its current path.
 A run acquired after the stop cutoff survives replay. An unused store with no owners or deliveries needs no retained route.
