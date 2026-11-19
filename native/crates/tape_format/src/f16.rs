@@ -1257,6 +1257,8 @@ macro_rules! writer_ops {
 }
 writer_ops!(Writer<'_>);
 writer_ops!(ops::OpsWriter);
+#[cfg(all(test, target_os = "macos"))]
+writer_ops!(ops::device::DeviceOps);
 
 pub fn write(lang: &Lang, n: usize, source: &[u8], tag: u8, z: bool, node: impl FnMut(usize) -> Node) -> Result<Written, String> {
     write_with(Writer::new(lang, source, tag, z, false, n), n, node)
@@ -2879,6 +2881,32 @@ mod tests {
     /// and `set_start`, a presence a block; and a tape of one node, and of none.
     #[test]
     fn the_clif_ops_write_the_references_tape() {
+        writes_the_references_tape(|lang, source, z, blocks, nodes| ops::OpsWriter::new(lang, source, 3, z, blocks, nodes / 3));
+    }
+
+    /// Decision 0399 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:
+    /// R13's cases.
+    #[test]
+    fn the_jit_ops_write_the_references_tape() {
+        let jit = ops::Jit::leaked();
+        writes_the_references_tape(|lang, source, z, blocks, nodes| {
+            let mut w = ops::OpsWriter::new(lang, source, 3, z, blocks, nodes / 3);
+            w.jit = Some(jit);
+            w
+        });
+    }
+
+    /// Decision 0399 §6, R15: the writer's ops in MSL, on the device, write the reference writer's tape and
+    /// presence: R13's cases.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_metal_ops_write_the_references_tape() {
+        let Some(device) = metal::Device::system_default() else { return };
+        writes_the_references_tape(|lang, source, z, blocks, nodes| ops::device::DeviceOps::new(&device, lang, source, 3, z, blocks, nodes / 3));
+    }
+
+    /// R13's cases: `make(lang, source, z, blocks, nodes)`'s writer and the reference, from the same ops.
+    fn writes_the_references_tape<W: WriterOps>(make: impl Fn(&Lang, &[u8], bool, bool, usize) -> W) {
         let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
         let table = CodeTable::new(entries);
         let lang = lang_of(&table);
@@ -2927,7 +2955,7 @@ mod tests {
                 }
                 let mut r = Writer::new(&lang, source, 3, z, blocks, nodes.len());
                 by_ops_of(&mut r, nodes, every, late);
-                let mut c = ops::OpsWriter::new(&lang, source, 3, z, blocks, nodes.len() / 3);
+                let mut c = make(&lang, source, z, blocks, nodes.len());
                 by_ops_of(&mut c, nodes, every, late);
                 let what = format!("{label}: 16z {z}, commit every {every}, late {late}, blocks {blocks}");
                 match (r.finish(), c.finish()) {

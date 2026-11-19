@@ -272,7 +272,20 @@ host reserves only where an op can need room (a close only when its node's block
 that gap is R16's to close before the host's writer becomes the ops. The compressor inserts each position into its hash chain, as
 liblz4's does: the codec's work, not a scan of the text.
 
-Next: the ops on the JIT and in MSL (R15), the host's `Writer` as the ops (R16), tier 2 (R17).
+**Done (2026-11-18): the ops on the JIT and on the device (R15).** `rerail_clif::writer::msl_source` writes the
+ops as MSL, `rerail-tape-format`'s `writer.metal` (`WRITER_MSL`, checked by `the_tape_crates_writer_kernels_are_these`),
+through the MSL translator the relation reads use: each op takes the region's buffer and the state's offset in it,
+so a part's place, an offset from the state, is an offset in the buffer. The ops' function numbers start past the
+reads' (`ID_BASE`), since the translators look a function's family up by its number. `rerail_clif::jit::Writer`
+compiles every op into one JIT module, each calling the others. R13's cases run three ways against the reference
+writer, byte for byte in 16 and 16z with the presence: the generated Rust (`the_clif_ops_write_the_references_tape`),
+the JIT (`the_jit_ops_write_the_references_tape`, `OpsWriter` calling the JIT's ops in place of the Rust's), and
+Metal (`the_metal_ops_write_the_references_tape`: one kernel thread replays the recorded calls over the state and
+its parts in one shared buffer). Each fails when the tail's padding write is taken out of the CLIF. On the device
+the region does not grow: the test gives each part the room the host's run of the same calls reserved; sizing the
+region from bounds before a parse is tier 2's (R17), with a part found full the device's failure (fail::FULL).
+
+Next: the host's `Writer` as the ops (R16), tier 2 (R17).
 
 ## Requirements, each with its test
 

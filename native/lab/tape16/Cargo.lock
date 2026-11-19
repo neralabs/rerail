@@ -3132,6 +3132,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-clif"
+version = "0.1.0"
+
+[[package]]
 name = "rerail-rr-syntax"
 version = "0.1.0"
 dependencies = [
@@ -3200,6 +3204,10 @@ version = "0.1.0"
 name = "rerail-tape-format"
 version = "0.1.0"
 dependencies = [
+ "lz4-sys",
+ "memchr",
+ "rerail-clif",
+ "rerail-simd8",
  "sha2 0.10.9",
 ]
 

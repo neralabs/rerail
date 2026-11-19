@@ -4619,6 +4619,7 @@ version = "0.1.0"
 dependencies = [
  "lz4-sys",
  "memchr",
+ "metal",
  "rerail-clif",
  "rerail-simd8",
  "sha2 0.10.9",

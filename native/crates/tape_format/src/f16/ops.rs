@@ -7,6 +7,54 @@ use super::{Finished, K, Lang, Presence, Tape16, Tape16Z, Written, Z, before, by
 use crate::generated_writer as ops;
 use rerail_clif::writer::{self as w, LAID_AT, OPEN, Part, SIDE_AREA, State, TABLE, part};
 
+/// An op called by its generated Rust; in a test, by the JIT's where the writer has it (`Jit`).
+macro_rules! call {
+    ($w:expr, $op:ident($($a:expr),*)) => {{
+        #[cfg(test)]
+        // SAFETY: the op's own: the JIT's function is the same op, of the same signature.
+        let r = match $w.jit { Some(j) => unsafe { (j.$op)($($a),*) }, None => unsafe { ops::$op($($a),*) } };
+        // SAFETY: the op's own (its caller's).
+        #[cfg(not(test))]
+        let r = unsafe { ops::$op($($a),*) };
+        r
+    }};
+}
+
+/// The ops compiled by the JIT (decision 0399 §6, R15), a test's: what `OpsWriter` calls in place of their Rust.
+#[cfg(test)]
+pub(super) struct Jit {
+    _module: rerail_clif::jit::Writer,
+    w_open: unsafe extern "C" fn(*const u8, u32, u64) -> u32,
+    w_close: unsafe extern "C" fn(*const u8, u64) -> u32,
+    w_commit: unsafe extern "C" fn(*const u8) -> u32,
+    w_retag: unsafe extern "C" fn(*const u8, u32, u32) -> u32,
+    w_set_start: unsafe extern "C" fn(*const u8, u32, u64) -> u32,
+    w_finish_blocks: unsafe extern "C" fn(*const u8) -> u32,
+    w_finish_tail: unsafe extern "C" fn(*const u8) -> u32,
+}
+
+#[cfg(test)]
+impl Jit {
+    /// The JIT's ops, for the test's life.
+    pub(super) fn leaked() -> &'static Jit {
+        let m = rerail_clif::jit::Writer::new();
+        // SAFETY: each function is the op of that name, compiled to the signature it is typed with here
+        // (`writer::signature`: the state's address, then the op's parameters), in the C convention.
+        unsafe {
+            Box::leak(Box::new(Jit {
+                w_open: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u32, u64) -> u32>(m.function("w_open")),
+                w_close: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u64) -> u32>(m.function("w_close")),
+                w_commit: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8) -> u32>(m.function("w_commit")),
+                w_retag: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u32, u32) -> u32>(m.function("w_retag")),
+                w_set_start: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u32, u64) -> u32>(m.function("w_set_start")),
+                w_finish_blocks: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8) -> u32>(m.function("w_finish_blocks")),
+                w_finish_tail: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8) -> u32>(m.function("w_finish_tail")),
+                _module: m,
+            }))
+        }
+    }
+}
+
 /// The most a block's four side-list parts take, laid (`w_lay`): each a u16 a sub-block, a byte and 8 bytes an
 /// entry, and 8 bytes of room.
 const LAID_MAX: usize = 4 * (2 * (Z / 256) + 9 * Z) + 8;
@@ -29,6 +77,9 @@ pub struct OpsWriter {
     /// A part held at its capacity (a test's: the device's region, which the host does not grow).
     #[cfg(test)]
     fixed: Option<(u32, u64)>,
+    /// The JIT's ops, called in place of their Rust (a test's).
+    #[cfg(test)]
+    pub(super) jit: Option<&'static Jit>,
 }
 
 impl OpsWriter {
@@ -102,7 +153,7 @@ impl OpsWriter {
         }
         parts[part::OUT as usize].fill(FRESH);
         parts[part::SEEN as usize].fill(0xff);
-        let mut wr = OpsWriter { state: Box::new(State::default()), parts, presence_words: (kind_words, field_words), keep_blocks: blocks, z, #[cfg(test)] fixed: None };
+        let mut wr = OpsWriter { state: Box::new(State::default()), parts, presence_words: (kind_words, field_words), keep_blocks: blocks, z, #[cfg(test)] fixed: None, #[cfg(test)] jit: None };
         for (k, &len) in lens.iter().enumerate() {
             *wr.part_mut(&mut state, k) = Part { at: 0, cap: 0, len };
         }
@@ -262,7 +313,7 @@ impl OpsWriter {
         }
         let desc = self.desc();
         // SAFETY: the state's parts lie in their buffers, each with the room the op can need, reserved above.
-        unsafe { ops::w_open(desc, number, start) };
+        call!(self, w_open(desc, number, start));
         i
     }
 
@@ -279,7 +330,7 @@ impl OpsWriter {
         }
         let desc = self.desc();
         // SAFETY: as `open`'s.
-        unsafe { ops::w_close(desc, end) };
+        call!(self, w_close(desc, end));
     }
 
     /// `f16::Writer::leaf`.
@@ -295,21 +346,21 @@ impl OpsWriter {
         self.reserve_final(blocks);
         let desc = self.desc();
         // SAFETY: as `open`'s.
-        unsafe { ops::w_commit(desc) };
+        call!(self, w_commit(desc));
     }
 
     /// `f16::Writer::retag`.
     pub fn retag(&mut self, i: usize, number: u32) {
         let desc = self.desc();
         // SAFETY: as `open`'s; a code's entry takes no room past its list's.
-        unsafe { ops::w_retag(desc, i as u32, number) };
+        call!(self, w_retag(desc, i as u32, number));
     }
 
     /// `f16::Writer::set_start`.
     pub fn set_start(&mut self, i: usize, start: u64) {
         let desc = self.desc();
         // SAFETY: as `open`'s.
-        unsafe { ops::w_set_start(desc, i as u32, start) };
+        call!(self, w_set_start(desc, i as u32, start));
     }
 
     /// The failure the ops kept, as a code and its node.
@@ -319,35 +370,47 @@ impl OpsWriter {
 
     /// `f16::Writer::finish`: the tape and its presence.
     pub fn finish(mut self) -> Result<Finished, String> {
+        self.finish_ops()?;
+        let count = (self.state.n as usize).div_ceil(Z);
+        let end = self.len_of(part::OUT);
+        let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
+        out.truncate(end);
+        finished(out, &self.parts[part::PRESENCE as usize], self.presence_words, self.keep_blocks.then_some(count), self.z)
+    }
+
+    /// `finish`'s ops, each with the room it can need reserved first.
+    fn finish_ops(&mut self) -> Result<(), String> {
         let count = (self.state.n as usize).div_ceil(Z);
         self.reserve_final(count);
         let desc = self.desc();
         // SAFETY: as `open`'s.
-        let mut r = unsafe { ops::w_finish_blocks(desc) };
+        let mut r = call!(self, w_finish_blocks(desc));
         if r == 0 {
             // The tail's room, the blocks' laid parts now known.
             let need = self.len_of(part::OUT) + self.len_of(part::LAID) + 16 * (count + 1) + self.len_of(part::LINES) + self.len_of(part::CKPT) + 9 * 4 * count + 64;
             self.reserve(part::OUT, need);
             let desc = self.desc();
             // SAFETY: as `open`'s.
-            r = unsafe { ops::w_finish_tail(desc) };
+            r = call!(self, w_finish_tail(desc));
         }
         if r != 0 {
             return Err(format!("the writer's ops failed: {r:#x} at node {}", self.state.bad_node as i32));
         }
-        let (kind_words, field_words) = self.presence_words;
-        let words = kind_words + field_words;
-        // The presence leaves the writer as the store keeps it, words in a `Vec` (`Presence`).
-        let word = |k: usize| u64::from_le_bytes(self.parts[part::PRESENCE as usize][8 * k..8 * k + 8].try_into().expect("8 bytes"));
-        let doc = (0..words).map(word).collect();
-        let blocks = if self.keep_blocks { (words..words * (1 + count)).map(word).collect() } else { Vec::new() };
-        let presence = Presence { kind_words, field_words, doc, blocks };
-        let end = self.len_of(part::OUT);
-        let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
-        out.truncate(end);
-        let tape = if self.z { Written::F16Z(Tape16Z::from_bytes(out)?) } else { Written::F16(Tape16::from_bytes(out)?) };
-        Ok(Finished { tape, presence })
+        Ok(())
     }
+}
+
+/// A finished writer's tape (`out`, its OUT part at its length) and its presence, from its PRESENCE part: a
+/// presence a block where `blocks` counts them.
+fn finished(out: Vec<u8>, presence: &[u8], (kind_words, field_words): (usize, usize), blocks: Option<usize>, z: bool) -> Result<Finished, String> {
+    let words = kind_words + field_words;
+    // The presence leaves the writer as the store keeps it, words in a `Vec` (`Presence`).
+    let word = |k: usize| u64::from_le_bytes(presence[8 * k..8 * k + 8].try_into().expect("8 bytes"));
+    let doc = (0..words).map(word).collect();
+    let blocks = blocks.map_or_else(Vec::new, |count| (words..words * (1 + count)).map(word).collect());
+    let presence = Presence { kind_words, field_words, doc, blocks };
+    let tape = if z { Written::F16Z(Tape16Z::from_bytes(out)?) } else { Written::F16(Tape16::from_bytes(out)?) };
+    Ok(Finished { tape, presence })
 }
 
 /// `f16::write_from` by the ops in CLIF.
@@ -382,5 +445,139 @@ impl Lz {
         // SAFETY: the piece and the output lie in `room`, with the bytes the op reads and writes past each.
         let len = unsafe { ops::w_lz4(desc, s as u64, n as u64, d as u64) } as usize;
         room[8 + n + 8..8 + n + 8 + len].to_vec()
+    }
+}
+
+/// The ops in MSL on the device (decision 0399 §6, R15), a test's: the calls are recorded, then replayed by one
+/// thread of a kernel over the region in one buffer, the state at its start and each part at its offset from it, as
+/// the host names them. The device's region does not grow: each part gets the room the host's run of the same calls
+/// reserved (sizing it from bounds is tier 2's, R17).
+#[cfg(all(test, target_os = "macos"))]
+pub(super) mod device {
+    use super::{FRESH, OpsWriter, State, Z, finished, part};
+    use crate::f16::{Finished, Lang};
+    use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
+
+    /// The kernel: the calls `c` (an op and up to three arguments each) through the ops, then `finish`.
+    const REPLAY: &str = r#"
+kernel void replay(device uchar* r [[buffer(0)]], device const ulong* c [[buffer(1)]], constant uint& n [[buffer(2)]],
+                   device uint* out [[buffer(3)]], uint id [[thread_position_in_grid]]) {
+    if (id != 0u) return;
+    device const uchar* t = r;
+    for (uint k = 0u; k < n; k++) {
+        device const ulong* e = c + 4u * k;
+        switch (uint(e[0])) {
+            case 0u: clif_w_open(t, 0ul, uint(e[1]), e[2]); break;
+            case 1u: clif_w_close(t, 0ul, e[1]); break;
+            case 2u: clif_w_leaf(t, 0ul, uint(e[1]), e[2], e[3]); break;
+            case 3u: clif_w_commit(t, 0ul); break;
+            case 4u: clif_w_retag(t, 0ul, uint(e[1]), uint(e[2])); break;
+            default: clif_w_set_start(t, 0ul, uint(e[1]), e[2]); break;
+        }
+    }
+    out[0] = clif_w_finish(t, 0ul);
+}
+"#;
+
+    pub(in crate::f16) struct DeviceOps {
+        device: Device,
+        /// The host's run of the calls, for the room each part needs; and the writer as made, for the region.
+        host: OpsWriter,
+        made: OpsWriter,
+        calls: Vec<[u64; 4]>,
+    }
+
+    impl DeviceOps {
+        pub(in crate::f16) fn new(device: &Device, lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+            DeviceOps { device: device.clone(), host: OpsWriter::new(lang, source, tag, z, blocks, nodes), made: OpsWriter::new(lang, source, tag, z, blocks, nodes), calls: Vec::new() }
+        }
+        pub(in crate::f16) fn open(&mut self, number: u32, start: u64) -> usize {
+            self.calls.push([0, number.into(), start, 0]);
+            self.host.open(number, start)
+        }
+        pub(in crate::f16) fn close(&mut self, end: u64) {
+            self.calls.push([1, end, 0, 0]);
+            self.host.close(end);
+        }
+        pub(in crate::f16) fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize {
+            self.calls.push([2, number.into(), start, end]);
+            self.host.leaf(number, start, end)
+        }
+        pub(in crate::f16) fn commit(&mut self) {
+            self.calls.push([3, 0, 0, 0]);
+            self.host.commit();
+        }
+        pub(in crate::f16) fn retag(&mut self, i: usize, number: u32) {
+            self.calls.push([4, i as u64, number.into(), 0]);
+            self.host.retag(i, number);
+        }
+        pub(in crate::f16) fn set_start(&mut self, i: usize, start: u64) {
+            self.calls.push([5, i as u64, start, 0]);
+            self.host.set_start(i, start);
+        }
+
+        pub(in crate::f16) fn finish(mut self) -> Result<Finished, String> {
+            self.host.finish_ops()?;
+            // The region: the state, then each part at a 64-byte boundary, as long as the host's buffer for it.
+            let mut offsets = [0usize; part::COUNT];
+            let mut end = size_of::<State>().next_multiple_of(64);
+            for (k, at) in offsets.iter_mut().enumerate() {
+                *at = end;
+                end = (end + self.host.parts[k].len()).next_multiple_of(64);
+            }
+            let region = self.device.new_buffer(end as u64, MTLResourceOptions::StorageModeShared);
+            // SAFETY: the buffer is `end` bytes, shared with the host, and no command uses it yet.
+            let bytes = unsafe { std::slice::from_raw_parts_mut(region.contents().cast::<u8>(), end) };
+            let mut state = *self.made.state;
+            for (k, &at) in offsets.iter().enumerate() {
+                let len = self.host.parts[k].len();
+                // A part's fresh bytes as the host's: the tape's marked, the seen buckets empty; the kinds' table
+                // and the newline index as made.
+                bytes[at..at + len].fill(match k as u32 {
+                    part::OUT => FRESH,
+                    part::SEEN => 0xff,
+                    _ => 0,
+                });
+                if matches!(k as u32, part::KINDS | part::LINES) {
+                    let made = &self.made.parts[k];
+                    bytes[at..at + made.len()].copy_from_slice(made);
+                }
+                let p = self.made.part_mut(&mut state, k);
+                p.at = at as i64;
+                p.cap = len.saturating_sub(8) as u64;
+            }
+            // SAFETY: the state is plain integers (`repr(C)`), and the region starts with its room.
+            unsafe { std::ptr::write_unaligned(bytes.as_mut_ptr().cast::<State>(), state) };
+            let source = format!("#include <metal_stdlib>\nusing namespace metal;\n{}{REPLAY}", crate::WRITER_MSL);
+            let lib = self.device.new_library_with_source(&source, &CompileOptions::new()).expect("the writer's ops compile in MSL");
+            let pipe = self.device.new_compute_pipeline_state_with_function(&lib.get_function("replay", None).expect("the kernel")).expect("its pipeline");
+            let n = self.calls.len() as u32;
+            // At least one call's room: a buffer is never empty.
+            self.calls.push([0; 4]);
+            let calls = self.device.new_buffer_with_data(self.calls.as_ptr().cast(), 32 * self.calls.len() as u64, MTLResourceOptions::StorageModeShared);
+            let result = self.device.new_buffer(4, MTLResourceOptions::StorageModeShared);
+            let queue = self.device.new_command_queue();
+            let cmd = queue.new_command_buffer();
+            let enc = cmd.new_compute_command_encoder();
+            enc.set_compute_pipeline_state(&pipe);
+            enc.set_buffer(0, Some(&region), 0);
+            enc.set_buffer(1, Some(&calls), 0);
+            enc.set_bytes(2, 4, (&raw const n).cast());
+            enc.set_buffer(3, Some(&result), 0);
+            enc.dispatch_threads(MTLSize::new(1, 1, 1), MTLSize::new(1, 1, 1));
+            enc.end_encoding();
+            cmd.commit();
+            cmd.wait_until_completed();
+            // SAFETY: the command completed; the kernel wrote the result's u32 and the region.
+            let r = unsafe { *result.contents().cast::<u32>() };
+            let state: State = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<State>()) };
+            if r != 0 {
+                return Err(format!("the writer's ops failed on the device: {r:#x} at node {}", state.bad_node as i32));
+            }
+            let (at, len) = (state.out.at as usize, state.out.len as usize);
+            let count = (state.n as usize).div_ceil(Z);
+            let presence = &bytes[state.presence.at as usize..][..self.host.parts[part::PRESENCE as usize].len()];
+            finished(bytes[at..at + len].to_vec(), presence, self.made.presence_words, self.made.keep_blocks.then_some(count), self.made.z)
+        }
     }
 }

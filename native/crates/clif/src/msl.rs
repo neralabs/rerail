@@ -144,7 +144,7 @@ fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::
                 // Whether the use of argument `k` reads only its low 32 bits.
                 let reads_low = |k: usize| -> bool {
                     match data.opcode() {
-                        Opcode::Iadd | Opcode::Isub | Opcode::Imul | Opcode::Band | Opcode::Bor | Opcode::Bxor | Opcode::Bnot => result_low,
+                        Opcode::Iadd | Opcode::Isub | Opcode::Imul | Opcode::Band | Opcode::BandNot | Opcode::Bor | Opcode::Bxor | Opcode::Bnot => result_low,
                         Opcode::IaddImm | Opcode::ImulImm | Opcode::IrsubImm | Opcode::BandImm | Opcode::BorImm | Opcode::BxorImm | Opcode::IshlImm => result_low,
                         Opcode::Ishl => k == 1 || result_low,
                         Opcode::Ushr | Opcode::Sshr => k == 1,
@@ -626,6 +626,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             | Opcode::Isub
             | Opcode::Imul
             | Opcode::Band
+            | Opcode::BandNot
             | Opcode::Bor
             | Opcode::Bxor
             | Opcode::Bnot
@@ -691,6 +692,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Udiv => set(format!("{}/{}", args[0], args[1])),
         Opcode::Urem => set(format!("{}%{}", args[0], args[1])),
         Opcode::Band => set(format!("{}&{}", args[0], args[1])),
+        Opcode::BandNot => set(format!("{}&~{}", args[0], args[1])),
         Opcode::Bor => set(format!("{}|{}", args[0], args[1])),
         Opcode::Bxor => set(format!("{}^{}", args[0], args[1])),
         Opcode::Bnot => set(format!("~{}", args[0])),
