@@ -6,7 +6,7 @@ For [pull request #826](https://github.com/neralabs/rerail/pull/826), head 731e6
 
 **May the evaluator ask for a tool call's steer as soon as that call's own edits are checked, rather than once every queued edit is?**
 
-**We recommend:** approve it: a finding already in the Log reaches the agent at the next hook, where on `main` it waited up to six hooks; every check, record and steer `main` makes is made here too.
+**We recommend:** approve it: a recorded finding reaches the agent at the first hook after its tool call's last file is checked, where `main` waited up to six hooks; every check, record and steer of `main` stays.
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
@@ -60,7 +60,7 @@ One change, low risk: when a recorded steer is asked for; every check, record an
 
 | Option | What a user gets | Cost | What it breaks |
 |---|---|---|---|
-| Per tool call, once its own edits are checked **(chosen)** | Every recorded finding at the next hook; one call's files in one steer, unless one is still being stored. | One pass over the queue after each check: a few entries. | A call with a file spooled to disk can be told in two steers, as on `main` when nothing else is queued. |
+| Per tool call, once its own edits are checked **(chosen)** | Every recorded finding at the first hook after its tool call's last file is checked; one call's files in one steer, unless one is still being stored. | One pass over the queue after each check: a few entries. | A call with a file spooled to disk can be told in two steers, as on `main` when nothing else is queued. |
 | The same, also counting a call's edits still being stored | One steer per call even when a file is spooled to disk. | A second record of what is queued, a publish when the queue empties, and a second pass when a store ends during it. | One of those missed and a steer waits with nothing to send it, the fault this fixes. |
 | Keep the empty-queue rule; the hook waits for the queue | The steer under the edit. | Every tool call waits for unrelated checks. | The one-second wait that keeps tool calls fast. |
 
