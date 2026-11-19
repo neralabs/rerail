@@ -1000,6 +1000,37 @@ Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
     }
   });
 
+  it("matches Git's choice among equally recent message matches across refs and HEAD", async () => {
+    const root = checkout(), tree = git(root, "rev-parse", "HEAD^{tree}");
+    const ids = ["alpha", "beta", "gamma"].map(word => execFileSync("git", [
+      "-c", "user.name=Test", "-c", "user.email=t@example.test", "commit-tree", tree, "-m", "tie " + word,
+    ], {
+      cwd: root, encoding: "utf8",
+      env: { ...process.env, GIT_AUTHOR_DATE: "2025-03-03T00:00:00Z", GIT_COMMITTER_DATE: "2025-03-03T00:00:00Z" },
+    }).trim());
+    git(root, "branch", "a", ids[0]!);
+    git(root, "branch", "b", ids[1]!);
+    git(root, "tag", "latest-ref", ids[2]!);
+    git(root, "pack-refs", "--all");
+    const expressions = [":/tie", ":/tie (alpha|gamma)", ":/tie beta", "b^{/tie}"];
+    const policy = join(root, "equal-time.rr");
+    writeFileSync(policy, `#include "git.rr"
+.policy "equal-time" revision 1
+.violation Match(at: span, expression: symbol, object: symbol) "{expression} {object}"
+${expressions.map(expr => `git_revision_request(r, ${JSON.stringify(expr)}) :- git_root_repo(r).`).join("\n")}
+Match(@place("git",1), expr, object) :- git_revision(_,expr,object).
+`);
+    const Source = loadNativeBinding().GitRevisionSource;
+    for (const head of ["b", ids[0]!]) {
+      git(root, "checkout", "--quiet", head);
+      const expected = expressions.map(expr => git(root, "rev-parse", "--verify", expr));
+      expect(expressions.map(expr => new Source(root, expr, "tie").commit)).toEqual(expected);
+      const report = await scan(root, { rr: [policy] });
+      expect(report.failures).toEqual([]);
+      expect(report.violations.map(row => row.message).sort()).toEqual(expressions.map((expr, i) => expr + " " + expected[i]).sort());
+    }
+  });
+
   it("resolves refs, IDs, reflogs and index entries through the same rule relation", async () => {
     const root = checkout();
     mkdirSync(join(root, "src"));

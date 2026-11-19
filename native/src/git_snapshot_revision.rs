@@ -527,12 +527,10 @@ impl delegate::Navigate for Revision<'_> {
                 revision.matching_commit(vec![commit], pattern, &matcher, negated)
             });
         }
-        let mut tips = Vec::new();
+        let mut starts = Vec::new();
         let mut first_error = None;
-        let mut tip_ids = HashSet::new();
         let mut collect_refs = || -> Result<()> {
-            let references = self.repo.references()?;
-            for entry in references.all()? {
+            for entry in self.repo.references()?.all()? {
                 let mut reference = match entry {
                     Ok(reference) => reference,
                     Err(error) => {
@@ -541,20 +539,8 @@ impl delegate::Navigate for Revision<'_> {
                         continue;
                     }
                 };
-                let name = reference.name().to_owned();
-                let result = reference.follow_to_object().and_then(|id| {
-                    let id = id.detach();
-                    if tip_ids.insert(id) { self.peel(id, None).map(Some) } else { Ok(None) }
-                });
-                match result {
-                    Ok(Some(object)) if object.kind == Kind::Commit => tips.push(object.into_commit()),
-                    Ok(_) => {}
-                    Err(error) => {
-                        let error = self.read_failure.borrow_mut().take().unwrap_or(error);
-                        eprintln!("Git message search skipped {name}: {}", failure_detail(&error));
-                        first_error.get_or_insert(error);
-                    }
-                }
+                let name = reference.name().as_bstr().to_owned();
+                starts.push((name, reference.follow_to_object().map(|id| id.detach())));
             }
             Ok(())
         };
@@ -562,14 +548,28 @@ impl delegate::Navigate for Revision<'_> {
             eprintln!("Git message search could not enumerate refs: {}", failure_detail(&error));
             first_error.get_or_insert(error);
         }
-        match self.repo.head().and_then(|head| head.id().map(gix::Id::detach)
-            .filter(|id| tip_ids.insert(*id)).map(|id| self.peel(id, None)).transpose()) {
-            Ok(Some(object)) if object.kind == Kind::Commit => tips.push(object.into_commit()),
-            Ok(_) => {}
-            Err(error) => {
-                let error = self.read_failure.borrow_mut().take().unwrap_or(error);
-                eprintln!("Git message search skipped HEAD: {}", failure_detail(&error));
-                first_error.get_or_insert(error);
+        match self.repo.head().map(|head| head.id().map(gix::Id::detach)) {
+            Ok(None) => {}
+            Ok(Some(id)) => starts.push(("HEAD".into(), Ok(id))),
+            Err(error) => starts.push(("HEAD".into(), Err(error))),
+        }
+
+        // Git prepends each ref and then HEAD before its stable sort by commit date.
+        // Deduplicate in that order so a second ref at the same object keeps its precedence.
+        let mut tip_ids = HashSet::new();
+        let mut tips = Vec::new();
+        for (name, start) in starts.into_iter().rev() {
+            let result = start.and_then(|id| {
+                if tip_ids.insert(id) { self.peel(id, None).map(Some) } else { Ok(None) }
+            });
+            match result {
+                Ok(Some(object)) if object.kind == Kind::Commit => tips.push(object.into_commit()),
+                Ok(_) => {}
+                Err(error) => {
+                    let error = self.read_failure.borrow_mut().take().unwrap_or(error);
+                    eprintln!("Git message search skipped {name}: {}", failure_detail(&error));
+                    first_error.get_or_insert(error);
+                }
             }
         }
         let found = self.matching_commit(tips, pattern, &matcher, negated).map_err(|error| {

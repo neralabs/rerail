@@ -63,6 +63,8 @@ Rerail accepts a single object wherever a revision is required. Git can interpre
 For example, if `HEAD:./src/` exists, `HEAD:./src/..` names a range. Use `HEAD:./src/../` to select the parent tree.
 Commit message searches accept POSIX extended regular expressions.
 For example, `:/^release [[:digit:]]+` selects a commit by its message.
+When multiple tips match at the same committer time, a global message search tries HEAD first.
+It then tries the other starting refs in reverse ref-name order. An anchored search starts at its named commit.
 The package tests compare message selectors with the installed Git on each host platform.
 The `git_revision_error` reason is one of these symbols.
 
