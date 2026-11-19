@@ -597,6 +597,22 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     for (const sequence of events.values()) expect(sequence).toEqual(["closed", "detected"]);
   });
 
+  it.each(["dismissal", "turn-off"] as const)("hands the kept `detected` of a scan that ended within the stop's wait before the `closed` of a %s in a service opened after", async change => {
+    const ws = await workspace();
+    await conflictsNew(ws);
+    const heard = await loggedHook(ws);
+    await scanEndingWithinStop(ws, "--name-only", []);
+    const next = ws.service();
+    const [dismissed = ""] = (await next.status(ws.repo)).conflicts.map(conflict => conflict.id);
+
+    await (change === "dismissal" ? next.dismissConflict(ws.repo, dismissed) : next.setEnabled(ws.repo, false));
+    await next.settled();
+
+    const events = byConflict(heard());
+    expect(events.size).toBe(PEERS);
+    for (const [id, sequence] of events) expect(sequence).toEqual(change === "turn-off" || id === dismissed ? ["detected", "closed"] : ["detected"]);
+  });
+
   it("resolves a stop with no wait whose release of a scan's mark meets another process's write lock without waiting for the lock, and leaves the mark to go stale, as when its process ends", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     addPeers(ws);
