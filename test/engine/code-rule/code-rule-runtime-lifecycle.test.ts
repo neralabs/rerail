@@ -502,11 +502,15 @@ describe("source-scoped steers", () => {
     /**
      * Makes every walk fail to open each folder of `denied` (by its code there) as a folder the user may not read does.
      * With `released` (`releasedInOrder`), the denial of the folder at index i of `order` at its call k waits for it as
-     * call i of round k, so the walks meet them in the orders it names.
+     * call i of round k, so the walks meet them in the orders it names. Returns each denial in the order the walks met
+     * them: the folder's index in `order` and its call.
      */
-    async function denyFolders(denied: ReadonlyMap<string, string>, order: readonly string[] = [], released?: ReleasedInOrder): Promise<void> {
+    async function denyFolders(
+      denied: ReadonlyMap<string, string>, order: readonly string[] = [], released?: ReleasedInOrder,
+    ): Promise<ReadonlyArray<{ slot: number; call: number }>> {
       const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
       const calls = new Map<string, number>();
+      const met: Array<{ slot: number; call: number }> = [];
       vi.mocked(opendir).mockImplementation(async (...args) => {
         const folder = String(args[0]);
         const code = denied.get(folder);
@@ -514,14 +518,16 @@ describe("source-scoped steers", () => {
         const call = calls.get(folder) ?? 0;
         calls.set(folder, call + 1);
         await released?.(call, order.indexOf(folder));
+        met.push({ slot: order.indexOf(folder), call });
         throw Object.assign(new Error(denial(folder, code)), { code });
       });
+      return met;
     }
     afterEach(() => {
       vi.mocked(opendir).mockRestore();
     });
 
-    it("records each of ten places that stay unreadable once, over 200 turn ends whose walks meet them in other orders", async () => {
+    it("records each of ten places that stay unreadable once, over ten turn ends whose walks each meet them in another order", async () => {
       const root = await realpath(await temporaryDirectory());
       // Rerail's own files outside the session's folder, as its home is: the walk reads only the folder's.
       const store = await realpath(await temporaryDirectory());
@@ -531,9 +537,11 @@ describe("source-scoped steers", () => {
         await writeFile(join(folder, "a.py"), "a = 1\n");
       }
       const denied = new Map<string, string>();
-      // No two walks in a row meet them in one order: walk k ends folder k % 10's denial first, then the next ones in turn.
-      const released = releasedInOrder(folders.length, walk => folders.map((_, turn) => (turn + walk) % folders.length));
-      await denyFolders(denied, folders, released);
+      // Walk k ends folder k's denial first, then the next ones in turn: these ten orders are all the rounds give, so
+      // ten turn ends meet each of them once.
+      const orderOf = (walk: number) => folders.map((_, turn) => (turn + walk) % folders.length);
+      const released = releasedInOrder(folders.length, orderOf);
+      const met = await denyFolders(denied, folders, released);
       const runtime = gapRuntime(root, store);
       const reader = new SqliteSessionReader(join(store, "rerail.sqlite"));
       try {
@@ -541,7 +549,10 @@ describe("source-scoped steers", () => {
         expect(await turnEnd(runtime, 0)).toEqual([]);
         for (const folder of folders) denied.set(folder, "EACCES");
         // The turn end's answer is what it was before: each place goes on the record, not to the agent.
-        for (let turn = 1; turn <= 200; turn += 1) expect(await turnEnd(runtime, turn)).toEqual([]);
+        for (let turn = 1; turn <= folders.length; turn += 1) expect(await turnEnd(runtime, turn)).toEqual([]);
+        const walks: number[][] = [];
+        for (const { slot, call } of met) (walks[call] ??= []).push(slot);
+        expect(walks).toEqual(folders.map((_, walk) => orderOf(walk)));
         expect(gapRows(store).map(row => row.payload)).toEqual(folders.map((folder, index) => ({ boundary: "turn", path: `pkg${index}`, reason: denial(folder) })));
         expect(reader.gaps(session.sessionId)).toMatchObject({ discoveryGaps: 10, uncheckedBoundaries: 0 });
       } finally {
@@ -549,7 +560,7 @@ describe("source-scoped steers", () => {
         await runtime.dispose();
         reader.close();
       }
-    }, 120_000);
+    }, 60_000);
 
     it("records no second copy of a place whose files it saw, after the session reopens and after a restart", async () => {
       const root = await realpath(await temporaryDirectory());
