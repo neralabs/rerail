@@ -258,3 +258,44 @@ fn refusals_are_at_the_interpreters_operation() {
     // A device refusal before a host one: the earlier operation's.
     same(&program("shape 2 0\n%0 = input 0\n%1 = input 1\n%2 = gather %0 %1\n%3 = compact %2\n%4 = map add %0 %3\noutput %4\n"), &[&x, &bad], &[]);
 }
+
+/// Many small units, keys with many equals: each unit's sorts stable and its own.
+#[test]
+fn a_batch_of_many_units_sorts_each_stably() {
+    let p = program(
+        "shape 2 0
+        %0 = input 0
+        %1 = input 1
+        %2 = sort %0
+        %3 = sort %0 %1
+        %4 = sort %1
+        %5 = gather %0 %4
+        %6 = scan add %5 seg %1
+        %7 = compact %1
+        %8 = gather %0 %7
+        %9 = sort %8
+        output %2
+        output %3
+        output %4
+        output %6
+        output %9
+        ",
+    );
+    let mut r = Rng(29);
+    for round in 0..4 {
+        let units: Vec<(Vec<i64>, Vec<i64>)> = (0..60).map(|k| {
+            let n = (r.next() % [5, 40, 300, 700][round]) as usize + usize::from(k % 7 == 0) * 257;
+            (r.column(n, 0, 4), r.column(n, 0, 2))
+        }).collect();
+        let want: Vec<super::Outcome> = units.iter().map(|(x, f)| p.values_at(&[x, f], &[], &mut ()).map(|v| p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect())).collect();
+        let mut hosts: Vec<()> = units.iter().map(|_| ()).collect();
+        let mut jobs: Vec<Job> = units.iter().zip(hosts.iter_mut()).map(|((x, f), h)| Job { inputs: vec![x, f], params: vec![], calls: h }).collect();
+        let (got, _) = run_batch(&p, &mut jobs).expect("a device");
+        for (u, (w, g)) in want.iter().zip(&got).enumerate() {
+            if w != g {
+                eprintln!("round {round} unit {u} of {} (length {})", units.len(), units[u].0.len());
+            }
+            check(w, g);
+        }
+    }
+}

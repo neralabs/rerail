@@ -449,10 +449,18 @@ pub fn run_batch(p: &ArrayProgram, jobs: &mut [Job<'_>]) -> Result<(Vec<Outcome>
     if !jobs.iter().all(shaped) {
         return Ok((jobs.iter().map(|j| if shaped(j) { Err((0, "a batch with a unit of another shape")) } else { Err((0, "the run's columns or parameters are not the program's")) }).collect(), DeviceRun::default()));
     }
-    metal::objc::rc::autoreleasepool(|| run_in(p, jobs))
+    metal::objc::rc::autoreleasepool(|| run_in(p, jobs, None))
 }
 
-fn run_in(p: &ArrayProgram, jobs: &mut [Job<'_>]) -> Result<(Vec<Outcome>, DeviceRun), Error> {
+/// Every value of a batch's run, each unit's (`None` where it was refused): a debugging aid,
+/// for the first operation whose value is not the interpreter's.
+pub fn values_batch(p: &ArrayProgram, jobs: &mut [Job<'_>]) -> Result<Vec<Vec<Option<Vec<i64>>>>, Error> {
+    let mut all = Vec::new();
+    metal::objc::rc::autoreleasepool(|| run_in(p, jobs, Some(&mut all)))?;
+    Ok(all)
+}
+
+fn run_in(p: &ArrayProgram, jobs: &mut [Job<'_>], mut keep: Option<&mut Vec<Vec<Option<Vec<i64>>>>>) -> Result<(Vec<Outcome>, DeviceRun), Error> {
     let nb = jobs.len();
     let err = Rc::new(crate::pool::upload(&vec![u32::MAX; nb])?);
     let ones: Vec<i64> = (0..=nb as i64).collect();
@@ -471,6 +479,9 @@ fn run_in(p: &ArrayProgram, jobs: &mut [Job<'_>]) -> Result<(Vec<Outcome>, Devic
     }
     for &o in &p.outputs {
         last[usize::from(o)] = n;
+    }
+    if keep.is_some() {
+        last.fill(n);
     }
     let mut v: Vec<Option<Arr>> = vec![None; n];
     let mut parts: Vec<Vec<Arr>> = vec![Vec::new(); n];
@@ -491,6 +502,10 @@ fn run_in(p: &ArrayProgram, jobs: &mut [Job<'_>]) -> Result<(Vec<Outcome>, Devic
         }
     }
     g.sync("end")?;
+    if let Some(keep) = keep.as_mut() {
+        let arrays: Vec<Option<(Vec<i64>, Rc<Dom>)>> = v.iter().map(|a| a.as_ref().map(|a| (g.read(a), a.dom.clone()))).collect();
+        **keep = (0..nb).map(|u| arrays.iter().map(|a| a.as_ref().filter(|_| g.dead[u].is_none()).map(|(x, d)| x[d.off[u]..d.off[u + 1]].to_vec())).collect()).collect();
+    }
     let outs: Vec<Arr> = p.outputs.iter().map(|&o| v[usize::from(o)].clone().unwrap()).collect();
     let all: Vec<Vec<i64>> = outs.iter().map(|a| g.read(a)).collect();
     let outcomes = (0..nb)

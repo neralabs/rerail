@@ -371,7 +371,10 @@ impl Words {
             if more {
                 continue;
             }
+            // By name: the memo compares a test's pairs in order, and a map's order is its seed's.
+            let at = looked.len();
             looked.extend(given.iter().map(|(&s, &v)| (i64::from(s), v)));
+            looked[at..].sort_unstable();
             let mut out = spell;
             if let Some(s) = sentinel {
                 // The `)` after it, read as it was: no call left open.

@@ -1168,6 +1168,29 @@ struct Runner {
 }
 
 impl Prog {
+    /// The first operation whose value for unit `u` of a batch's device run is not its
+    /// interpreter's, printed with its operands (`RERAIL_PP_ORACLE_OPS`).
+    #[cfg(target_os = "macos")]
+    fn first_difference(&self, inputs: &[Vec<&[i64]>], hosts: &mut [Host], u: usize) {
+        let want = self.p.values_at(&inputs[u], &[], &mut hosts[u]).ok().expect("the interpreter's run");
+        let mut jobs: Vec<rerail_metal::array_program::Job> = inputs.iter().zip(hosts.iter_mut()).map(|(i, h)| rerail_metal::array_program::Job { inputs: i.clone(), params: Vec::new(), calls: h }).collect();
+        let got = rerail_metal::array_program::values_batch(&self.p, &mut jobs).expect("a device");
+        let show = |v: &[i64]| format!("{} long {:?}", v.len(), &v[..v.len().min(24)]);
+        for (i, w) in want.arrays.iter().enumerate() {
+            let g = got[u][i].as_deref().unwrap_or(&[]);
+            if w.as_slice() != g {
+                eprintln!("oracle: unit {u}: %{i} = {} differs\n  interpreter {}\n  device      {}", self.p.ops[i].text(), show(w), show(g));
+                for o in self.p.ops[i].operands() {
+                    let o = usize::from(o);
+                    let same = want.arrays[o].as_slice() == got[u][o].as_deref().unwrap_or(&[]);
+                    eprintln!("  %{o} = {} ({}): {}", self.p.ops[o].text(), if same { "the same" } else { "DIFFERS" }, show(&want.arrays[o]));
+                }
+                return;
+            }
+        }
+        eprintln!("oracle: unit {u}: every value the same");
+    }
+
     /// A run for each unit of a batch on its named columns, its calls answered by its host: its
     /// outputs by name.
     fn run(&self, cols: &[HashMap<&'static str, Vec<i64>>], hosts: &mut [Host], runner: &mut Runner) -> Vec<Result<HashMap<&'static str, Vec<i64>>, &'static str>> {
@@ -1180,6 +1203,28 @@ impl Prog {
                 match rerail_metal::array_program::run_batch(&self.p, &mut jobs) {
                     Ok((out, r)) => {
                         runner.device.add(&DeviceStats { runs: 1, gpu_seconds: r.gpu_seconds, dispatches: r.dispatches, syncs: r.syncs, calls: r.calls, syncs_by: r.syncs_by });
+                        if std::env::var_os("RERAIL_PP_ORACLE").is_some() {
+                            // Each unit's run against the interpreter's, output by output.
+                            drop(jobs);
+                            for (u, (i, h)) in inputs.iter().zip(hosts.iter_mut()).enumerate() {
+                                let want = self.p.values_at(i, &[], h).map(|v| self.p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect::<Vec<_>>());
+                                match (&want, &out[u]) {
+                                    (Ok(w), Ok(g)) => {
+                                        for (k, (w, g)) in w.iter().zip(g).enumerate() {
+                                            if w != g {
+                                                eprintln!("oracle: unit {u} of {}: output {} differs ({} and {} long): {:?} / {:?}", out.len(), self.outputs[k], w.len(), g.len(), &w[..w.len().min(8)], &g[..g.len().min(8)]);
+                                            }
+                                        }
+                                        if w != g && std::env::var_os("RERAIL_PP_ORACLE_OPS").is_some() {
+                                            self.first_difference(&inputs, hosts, u);
+                                            std::process::exit(3);
+                                        }
+                                    }
+                                    _ if want.as_ref().err() != out[u].as_ref().err() => eprintln!("oracle: unit {u}: {:?} / {:?}", want.as_ref().err(), out[u].as_ref().err()),
+                                    _ => {}
+                                }
+                            }
+                        }
                         out
                     }
                     Err(_) => return cols.iter().map(|_| Err("the device failed")).collect(),
