@@ -262,11 +262,12 @@
 .decl sub_tape(at: node, grammar: symbol, t: tape)       // the tape (content key) of the guest at `at`
 .decl guest(g: number, host: number, at: node, grammar: symbol)  // document g is the code at host node `at`
 .decl doc_role(d: number, role: symbol)                  // "primary" (a file), "fragment", or an embed's role
+.decl doc_grammar(d: number, grammar: symbol)                // the grammar used to parse this document
 .decl doc_root(d: number, n: node)                       // the root of document d's tree
 .decl tape_of(d: number, t: tape)                        // document d places tape t; equal texts share a tape
 .decl guest_policy(k: symbol, v: symbol)                 // the program's `.guests` and `.on guest_error` settings
 .decl host_node(n: node, h: node)                        // h is the innermost host node over guest node n
-.input sub_tape, guest, doc_role, doc_root, tape_of, host_node
+.input sub_tape, guest, doc_role, doc_grammar, doc_root, tape_of, host_node
 // What a rule sees (decision 0058): files, and guests in the run's language unless `.guests off`. A rule that
 // reaches a guest through one of the relations above sees it whatever its grammar, and names its kinds in that
 // grammar: guest(g, _, _, "sql"), node(g, n, "object_reference", _, _) is SQL's object_reference ("sql:…" also

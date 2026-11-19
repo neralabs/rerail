@@ -2,7 +2,7 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Twenty-two of the 28 follow-up findings have verified results. Six remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Twenty-three of the 28 follow-up findings have verified results. Five remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
 | Open finding | What still needs to pass |
 | --- | --- |
@@ -11,7 +11,18 @@ Twenty-two of the 28 follow-up findings have verified results. Six remain open. 
 | Bound commit metadata | Request the bound commit when a rule reads its metadata. Verify root commits, non-root commits and unavailable objects under negation. |
 | Commit diagnostic locations | Identify the repository, commit and optional field in the report. Distinguish a commit finding from a finding in a file named `git`. |
 | Content handles | Read verified content through a rule-visible handle. Check reuse across revisions and the result for a missing object. |
-| Selected document provenance | Join the selected path, blob, grammar, tape and document. Test two paths with identical bytes and a scan that excludes one. |
+
+## Selected document provenance
+
+The standalone CLI found two Python files with identical committed bytes after the working copy of one file changed.
+Both file entries had Git's blob ID and mode 33188. The two document rows reported the Python grammar and one shared tape. Each path had a different document ID.
+A policy filter excluded the nested document. The Git inventory still listed both files. A scan from the subdirectory reported the path relative to that directory.
+The raw inventory reader answered the request for the selected repository and filter. Two requests with a foreign repository or filter returned zero rows.
+
+The headless scan selected both paths, then selected one path under the same analysis scope. The file selection changed the view ID and preserved the tape.
+After Git repacked the objects, selecting both paths in reverse order restored the original view ID and findings.
+All 13 standalone revision tests passed on Linux. Five related headless tests passed on macOS.
+[Rule example](../../../rule-syntax/git.md#find-the-git-blob-behind-a-parsed-document) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Recovery of a committed directory stop
 

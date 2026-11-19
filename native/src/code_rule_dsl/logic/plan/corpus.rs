@@ -3145,7 +3145,7 @@ fn run_observed(
     } else {
         phases::facts(&prog, root, modes, binding, chunk_nodes, typing, options)?
     };
-    phased.extend(git::inputs(&prog, root, options));
+    phased.extend(git::inputs(&prog, root, options, &mut source_checks));
     if let Some(history) = analysis_history::Read::needed(&prog) {
         let (rows, digest) = history.records()?;
         phased.extend(rows);
@@ -7104,8 +7104,9 @@ fn run_observed(
                     return false;
                 }
                 if req == git::INVENTORY_CHILD {
-                    return key.get(1).and_then(|&atom| sym_text(atom)).as_ref()
-                        == git_selection.get_or_init(|| crate::git_workspace::snapshot::inventory_selection(&git_root)).as_ref();
+                    let [repo, selection, ..] = key else { return false };
+                    return git_selection.get_or_init(|| crate::git_workspace::snapshot::inventory_request_key(&git_root)).as_ref()
+                        .is_some_and(|(r, s)| sym_text(*repo).as_ref() == Some(r) && sym_text(*selection).as_ref() == Some(s));
                 }
                 if matches!(req, reference_facts::REQUEST | reference_facts::SIBLINGS_REQUEST | reference_facts::FILE_REQUEST) {
                     return !rows.is_empty();
@@ -7225,6 +7226,7 @@ fn run_observed(
         // Where an answer's time goes (decision 0114 §6): reported once the cone ends.
         let times = std::cell::RefCell::new(AnswerTimes::default());
         let reference_paths: HashMap<_, _> = reference_sources.iter().map(|source| (source.digest.as_str(), source.path.as_str())).collect();
+        let active_inventory = std::cell::OnceCell::new();
         let mut answer_one = |rel: &str, rows: &[Vec<i64>], process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             pauses += 1;
             let t_call = std::time::Instant::now();
@@ -7270,9 +7272,11 @@ fn run_observed(
             if rel == git::INVENTORY_CHILD {
                 let mut out = Vec::new();
                 for row in rows {
-                    let [_, _, directory, name, mode, encoding] = row.as_slice() else {
+                    let [repo, selection, directory, name, mode, encoding] = row.as_slice() else {
                         return Err(Error::Plan(format!("{rel}: invalid child request")));
                     };
+                    let Some((r, s)) = active_inventory.get_or_init(|| crate::git_workspace::snapshot::inventory_request_key(root)) else { continue };
+                    if text(*repo)? != *r || text(*selection)? != *s { continue; }
                     if let Some(path) = world.inventory_child(
                         &text(*directory)?, &text(*name)?, *mode, text(*encoding)? == "bytes",
                     ).map_err(Error::Plan)? {

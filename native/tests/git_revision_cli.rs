@@ -166,6 +166,90 @@ per_document(s) :- marker(s), kind(_, "identifier").
 }
 
 #[test]
+fn selected_documents_keep_each_git_placement_of_a_shared_tape() {
+    let f = Checkout::new();
+    fs::copy(f.repo.join("a.py"), f.repo.join("sub/b.py")).unwrap();
+    fs::write(f.repo.join("sub/ignored.py"), "ignored = True\n").unwrap();
+    fs::write(f.repo.join(".rerailignore"), "sub/ignored.py\n").unwrap();
+    f.git(&["add", "--", "sub/b.py", "sub/ignored.py", ".rerailignore"]);
+    f.git(&["commit", "-qm", "two selected paths share one blob"]);
+    let blob = f.git(&["rev-parse", "HEAD:a.py"]);
+    let tree = f.git(&["rev-parse", "HEAD^{tree}"]);
+    fs::write(f.repo.join("a.py"), "edited = 'working tree'\n").unwrap();
+    let example = include_str!("../../docs/rule-syntax/git.md").split("```rr\n")
+        .map(|block| block.split("\n```").next().unwrap())
+        .find(|program| program.lines().any(|line| line == ".output origin")).unwrap();
+    let policy = f.area.path().join("origin.rr");
+    let out = f.area.path().join("origin-output");
+    let query = |root: &Path, scope: &str| {
+        fs::write(&policy, format!("{example}\n{scope}\n.output git_source_file\n.output git_source_view\n")).unwrap();
+        let result = f.run("logic", &[&policy, root, &out], Some("origins"));
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(f.run("csv", &[&out], None).status.success());
+        let rows = |name: &str| {
+            let csv = fs::read_to_string(out.join(format!("{name}.csv"))).unwrap();
+            let mut rows: Vec<Vec<String>> = csv.lines().map(|row| row.split('\t').map(str::to_owned).collect()).collect();
+            rows.sort();
+            rows
+        };
+        let views = rows("git_source_view");
+        assert_eq!(views.len(), 1, "{views:?}");
+        assert_eq!(views[0][2], tree);
+        let files = rows("git_source_file");
+        for row in &files { assert_eq!(row[0], views[0][0]); }
+        let selected = files.into_iter().filter(|row| row[1].ends_with(".py")).map(|row| {
+            assert_eq!(row[2], "33188");
+            assert_eq!(row[3], blob);
+            row[1].clone()
+        }).collect::<Vec<_>>();
+        let documents = rows("origin");
+        for row in &documents {
+            assert_eq!(row[1], blob);
+            assert_eq!(row[2], "python");
+            assert!(selected.contains(&row[0]));
+        }
+        (views[0].clone(), selected, documents)
+    };
+    let (view, files, both) = query(&f.repo, "");
+    assert_eq!(view[3], "");
+    assert_eq!(files, ["a.py", "sub/b.py"]);
+    assert_eq!(both.iter().map(|r| r[0].as_str()).collect::<Vec<_>>(), ["a.py", "sub/b.py"]);
+    assert_eq!(both[0][3], both[1][3], "equal content and grammar share a tape");
+    assert_ne!(both[0][4], both[1][4], "each path places its own document");
+    let (same_view, same_files, narrowed) = query(&f.repo, ".scope exclude \"sub/**\"");
+    assert_eq!((same_view, same_files), (view.clone(), files));
+    assert_eq!(narrowed.len(), 1);
+    assert_eq!(narrowed[0][..4], both[0][..4]);
+    let (subtree, files, nested) = query(&f.repo.join("sub"), "");
+    assert_ne!(subtree[0], view[0]);
+    assert_eq!(subtree[3], "sub");
+    assert_eq!(files, ["b.py"]);
+    assert_eq!(nested.len(), 1);
+    assert_eq!(nested[0][0], "b.py");
+    assert_eq!(nested[0][1..4], both[1][1..4]);
+
+    // Exercise the raw filter reader with one valid key and two keys from outside the selected view.
+    fs::write(&policy, r#"#include "git.rr"
+.decl git_inventory_selection(s: symbol)
+.input git_inventory_selection
+.decl git_inventory_child_request(r: symbol, s: symbol, directory: symbol, name: symbol, mode: number, encoding: symbol)
+.decl git_inventory_child_of(r: symbol, s: symbol, directory: symbol, name: symbol, mode: number, encoding: symbol, path: symbol)
+git_inventory_child_request(r, s, "", "a.py", 33188, "utf8") :- git_root_repo(r), git_inventory_selection(s).
+git_inventory_child_request("another-repository", s, "", "a.py", 33188, "utf8") :- git_inventory_selection(s).
+git_inventory_child_request(r, "another-selection", "", "a.py", 33188, "utf8") :- git_root_repo(r).
+.decl chosen(repo: symbol, path: symbol)
+chosen(r,p) :- git_inventory_child_request(r,s,d,n,m,c), git_inventory_child_of(r,s,d,n,m,c,p).
+.output chosen
+"#).unwrap();
+    let run = f.run("logic", &[&policy, &f.repo, &out], Some("origins"));
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert!(f.run("csv", &[&out], None).status.success());
+    let children = fs::read_to_string(out.join("chosen.csv")).unwrap();
+    assert_eq!(children.lines().count(), 1, "{children}");
+    assert!(children.starts_with(&view[1]) && children.trim_end().ends_with("\ta.py"), "{children}");
+}
+
+#[test]
 fn nested_rule_evaluations_preserve_existing_output_files() {
     let f = Checkout::new();
     let out = f.area.path().join("output");

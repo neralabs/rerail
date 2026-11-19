@@ -18,7 +18,8 @@ const TREE: &str = "git_source_tree";
 const COMMIT: &str = "git_source_commit";
 const SELECTION: &str = "git_inventory_selection";
 const SOURCE_BLOB: &str = "git_selected_source_blob";
-pub(super) const INPUTS: [&str; 8] = [ROOT, VIEW, REPOSITORY, LOCATION, TREE, COMMIT, SELECTION, SOURCE_BLOB];
+pub(super) const SELECTED_DIRECTORY: &str = "git_selected_directory";
+pub(super) const INPUTS: [&str; 9] = [ROOT, VIEW, REPOSITORY, LOCATION, TREE, COMMIT, SELECTION, SOURCE_BLOB, SELECTED_DIRECTORY];
 
 #[derive(Default)]
 pub(super) struct Git {
@@ -312,7 +313,9 @@ pub(super) fn observation(program: &Program, root: &Path) -> Option<(&'static st
     })
 }
 
-pub(super) fn inputs(program: &Program, root: &Path, options: &serde_json::Value) -> std::collections::BTreeMap<String, Vec<Vec<Value>>> {
+pub(super) fn inputs(
+    program: &Program, root: &Path, options: &serde_json::Value, consulted: &mut Vec<(String, String, String)>,
+) -> std::collections::BTreeMap<String, Vec<Vec<Value>>> {
     let mut inputs = std::collections::BTreeMap::new();
     if !observes_git(program) {
         return inputs;
@@ -331,6 +334,13 @@ pub(super) fn inputs(program: &Program, root: &Path, options: &serde_json::Value
     }
     if let Some((identity, repo)) = &source.repository {
         let key = &identity.repository;
+        if let Some(rows) = inputs.get_mut(SELECTED_DIRECTORY) {
+            let context = snapshot::selection_context(root);
+            consulted.push((SELECTED_DIRECTORY.to_owned(), String::new(), serde_json::to_string(&context).expect("selection strings")));
+            if let (Some(tree), Some((prefix, config, selection))) = (source.tree, context) {
+                rows.push([key.clone(), tree.to_string(), prefix, config, selection].into_iter().map(|s| Value::Str(s.into())).collect());
+            }
+        }
         if let Some(rows) = inputs.get_mut(LOCATION) {
             rows.extend(location_rows(repo).into_iter().map(|(role, encoding, value)| {
                 vec![Value::Str(key.as_str().into()), Value::Str(identity.view.as_str().into()), Value::Str(role.into()), Value::Str(encoding.into()), Value::Str(value.into())]
@@ -459,6 +469,10 @@ pub(super) fn verify_sources(
     Ok(())
 }
 
+pub(super) fn selection_stamp(root: &Path) -> String {
+    serde_json::to_string(&snapshot::selection_context(root)).expect("selection strings")
+}
+
 pub(super) fn still(root: &Path, input: &str, previous: &str) -> bool {
     Git::new(root).identity(input == LOCATION) == previous
 }
@@ -541,6 +555,7 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>, own
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/git.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/source-language.rr"), "\n",
+        include_str!("../../../../../../docs/rule-syntax/lib/git/selected-tree.rr"), "\n",
         include_str!("../../../typing/programs/git-inventory.rr"),
     );
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });

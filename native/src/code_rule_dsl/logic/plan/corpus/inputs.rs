@@ -527,6 +527,7 @@ pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String,
             "git_object_predicate" => return crate::code_rule_dsl::logic::strings::git::predicate_still(root, path, digest),
             super::analysis_history::INPUT => return super::analysis_history::Read::from_key(path)
                 .is_some_and(|read| read.records().is_ok_and(|(_, current)| current == *digest)),
+            super::git::SELECTED_DIRECTORY => super::git::selection_stamp(root),
             "git_root_repo" => return super::git::still(root, path, digest),
             "git_rev" | "git_index" | "git_tracking_index" | "git_revision_rows" => return crate::code_rule_dsl::logic::strings::git::still(root, what, path, digest),
             "base" => {

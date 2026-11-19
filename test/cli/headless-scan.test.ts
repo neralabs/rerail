@@ -563,6 +563,41 @@ Edge(n, via) :- reference_edge(n, _, via).
     expect(partial.violations.map(finding => finding.path)).toEqual(["a.py", "data/a/b.py"]);
   });
 
+  it("joins only the requested Git paths to their parsed documents across scans of the same tree", async () => {
+    const root = checkout();
+    const policy = join(root, "origins.rr");
+    cpSync(join(root, "a.py"), join(root, "copy.py"));
+    git(root, "add", "--", "copy.py");
+    git(root, "commit", "-qm", "same blob at two paths");
+    const blob = git(root, "rev-parse", "HEAD:a.py");
+    writeFileSync(policy, `#include "git/documents.rr"
+.language python
+.policy "origins" revision 1
+.violation Origin(at: span, view: symbol, blob: symbol, grammar: symbol, profile: symbol, parsed: symbol) "{view} {blob} {grammar} {profile} {parsed}"
+Origin(@place(p,1), v, b, g, profile, cat("", t)) :- git_source_file(v, p, _, b), source_document(v, p, _, g, profile, t, _).
+`);
+    const read = async (paths: string[]) => {
+      const report = await scan(root, { revision: "HEAD", analysisScope: "paths", paths, rr: [policy] });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      return report.violations.filter(f => f.ruleId === "origins").map(f => ({ path: f.path ?? "", fields: f.message.split(" ") }))
+        .sort((a, b) => a.path.localeCompare(b.path));
+    };
+    const both = await read(["a.py", "copy.py"]);
+    expect(both.map(r => r.path)).toEqual(["a.py", "copy.py"]);
+    expect(both[1]!.fields).toEqual(both[0]!.fields);
+    const [view, id, grammar, profile, tape] = both[0]!.fields;
+    expect([id, grammar]).toEqual([blob, "python"]);
+    expect(view).toMatch(/^[a-f0-9]{64}$/u);
+    expect(profile).toMatch(/.+\/[0-9]+$/u);
+    expect(tape).toMatch(/^[a-f0-9]{64}$/u);
+    const one = await read(["copy.py"]);
+    expect(one.map(r => r.path)).toEqual(["copy.py"]);
+    expect(one[0]!.fields[0]).not.toBe(view);
+    expect(one[0]!.fields.slice(1)).toEqual(both[0]!.fields.slice(1));
+    git(root, "repack", "-ad");
+    expect(await read(["copy.py", "a.py"])).toEqual(both);
+  }, 90_000);
+
   it("reports completeness for the requested tree and exposes failures for an incomplete walk", async () => {
     const root = checkout();
     const missing = "1".repeat(40);

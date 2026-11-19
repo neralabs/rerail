@@ -1037,9 +1037,33 @@ pub fn inventory_filter(root: &Path) -> Result<InventoryFilter, String> {
     Ok(InventoryFilter { rules, coverage, paths, prefix: v.prefix.clone() })
 }
 
+/// Logical selection identity. The tree identifies its ignore file. Storage stamps are checked separately.
+pub fn selection_context(root: &Path) -> Option<(String, String, String)> {
+    let v = view(root)?;
+    let prefix = v.prefix.join(root.strip_prefix(&v.root).ok()?);
+    let slash_path = |p: &Path| {
+        let parts = p.components().map(|part| part.as_os_str().to_str()).collect::<Option<Vec<_>>>()?;
+        Some(parts.join("/"))
+    };
+    let paths = v.inventory.lock().unwrap_or_else(|e| e.into_inner()).paths.clone();
+    let selection = inventory_stamp(&v, &paths)?;
+    let normalized = match &paths {
+        Some(paths) => Some(paths.iter().map(|p| Some((slash_path(&p.path)?, p.directory_only))).collect::<Option<Vec<_>>>()?),
+        None => None,
+    };
+    let config = serde_json::to_string(&(INVENTORY_FILTER_VERSION, normalized)).expect("serializable selection");
+    Some((slash_path(&prefix)?, config, selection))
+}
+
+const INVENTORY_FILTER_VERSION: &str = "ignore-v7";
+
 pub fn inventory_selection(root: &Path) -> Option<String> {
     let v = view(root)?;
     let paths = v.inventory.lock().unwrap_or_else(|err| err.into_inner()).paths.clone();
+    inventory_stamp(&v, &paths)
+}
+
+fn inventory_stamp(v: &View, paths: &Option<Vec<SelectedPath>>) -> Option<String> {
     let ignores = match v.ignore_blob() {
         Ok(Some(id)) => v.with_repo(|repo, storage, _| {
             storage.and_then(|storage| storage.object(id)).filter(|_| repo.has_object(id))
@@ -1052,7 +1076,12 @@ pub fn inventory_selection(root: &Path) -> Option<String> {
         Ok(None) => String::new(),
         Err(_) => format!("unreadable:{}", v.tree),
     };
-    serde_json::to_string(&("ignore-v7", ignores, &v.prefix, &paths)).ok()
+    serde_json::to_string(&(INVENTORY_FILTER_VERSION, ignores, &v.prefix, paths)).ok()
+}
+
+/// The only repository and filter the active inventory can answer for.
+pub fn inventory_request_key(root: &Path) -> Option<(String, String)> {
+    Some((pinned_identity(root)?.repository, inventory_selection(root)?))
 }
 
 pub fn source_languages(root: &Path) -> Option<SourceLanguages> {

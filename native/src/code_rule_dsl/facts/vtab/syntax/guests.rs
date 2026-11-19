@@ -22,6 +22,7 @@ use super::{Document, Guest, Made, Placement, Projected, Relation};
 pub struct GuestRows {
     guest: Vec<[i64; 4]>,
     role: Vec<[i64; 2]>,
+    grammar: Vec<[i64; 2]>,
     root: Vec<[i64; 2]>,
     tape: Vec<[i64; 2]>,
     parsed: Vec<[i64; 3]>,
@@ -45,6 +46,12 @@ impl GuestRows {
         let tape = string(&hex(&d.digest)) as i64;
         self.tape.push([key, tape]);
         self.role.push([key, string(guest.map_or("primary", |g| g.role.as_str())) as i64]);
+        if let Some(grammar) = guest.map(|g| g.grammar.as_str()).or_else(|| {
+            d.facts.tape.as_ref()?;
+            crate::code_rule_dsl::language::from_tape_tag(d.facts.tag).and_then(crate::code_rule_dsl::language::label)
+        }) {
+            self.grammar.push([key, string(grammar) as i64]);
+        }
         let root = (!withheld && p.len() > 0).then(|| p.global(0));
         if let Some(r) = root {
             self.root.push([key, r]);
@@ -102,6 +109,7 @@ impl GuestRows {
         };
         vec![
             ("guest", rel(&["g", "host", "at", "grammar"], &mut self.guest.iter().map(|&[g, h, a, s]| vec![g, h, a, atom(s)]))),
+            ("doc_grammar", rel(&["d", "g"], &mut self.grammar.iter().map(|&[d, g]| vec![d, atom(g)]))),
             ("doc_role", rel(&["d", "r"], &mut self.role.iter().map(|&[d, r]| vec![d, atom(r)]))),
             ("doc_root", rel(&["d", "n"], &mut self.root.iter().map(|r| r.to_vec()))),
             ("tape_of", rel(&["d", "t"], &mut self.tape.iter().map(|&[d, t]| vec![d, atom(t)]))),
