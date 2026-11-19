@@ -70,6 +70,6 @@ describe("shards and outputs", () => {
     expect(outputs({ unit: "none", tests: [], all: 449, windowsExtra: true })).toEqual({ unit: "none", "unit-tests": "", "unit-shards": "[]", "windows-shards": "[1]" });
     expect(outputs({ unit: "none", tests: [], all: 449, windowsExtra: false })["windows-shards"]).toBe("[]");
     expect(outputs({ unit: "some", tests: ["test/a.test.ts"], all: 449, windowsExtra: false })).toEqual({ unit: "some", "unit-tests": "test/a.test.ts", "unit-shards": "[1]", "windows-shards": "[1]" });
-    expect(outputs({ unit: "all", tests: [], all: 449, windowsExtra: true })["unit-shards"]).toBe("[1,2]");
+    expect(outputs({ unit: "all", tests: [], all: 449, windowsExtra: true })["unit-shards"]).toBe("[1,2,3]");
   });
 });

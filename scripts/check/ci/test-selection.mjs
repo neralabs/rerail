@@ -46,7 +46,7 @@ export const WINDOWS_EXTRA = ["integration/claude-hook-rules.test.ts"];
 const ENGINE_INPUTS = ["native/", "accel/", "forest/", "languages/", ".cargo/", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 
 /** The shards each unit job runs when it runs every test file (ci.yml's matrices before selection). */
-export const SHARDS = { linux: 2, windows: 5 };
+export const SHARDS = { linux: 3, windows: 5 };
 
 /**
  * The longest list of selected paths a job takes on its command line, which node gets whole from bash (Windows'

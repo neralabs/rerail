@@ -423,7 +423,7 @@ jobs:
     outputs:
       unit: ${{ steps.select.outputs.unit || 'all' }}
       unit-tests: ${{ steps.select.outputs.unit == 'some' && steps.select.outputs.unit-tests || '' }}
-      unit-shards: ${{ steps.select.outputs.unit-shards || '[1, 2]' }}
+      unit-shards: ${{ steps.select.outputs.unit-shards || '[1, 2, 3]' }}
       windows-shards: ${{ steps.select.outputs.windows-shards || '[1, 2, 3, 4, 5]' }}
     steps:
       - name: Checkout repository
@@ -1050,9 +1050,13 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Both shards read every pack's test data (packs.test.ts, complexity-rules.test.ts and the native tests share them),
+  # Every shard reads every pack's test data (packs.test.ts, complexity-rules.test.ts and the native tests share them),
   # restored from what the test-data job saved. Runs the test files select-tests chose (all of them, or `unit-tests`),
-  # on its `unit-shards`; none when it chose none.
+  # on its `unit-shards`; none when it chose none. The shards split the files by how long each takes in CI, not by their
+  # count (test/support/shards/time-balanced-sequencer.ts, from the times in unit-test-times.generated.ts beside it,
+  # which `node scripts/generate/tests/unit-test-times.mjs` rewrites from CI's logs: scripts/generate/README.md). With
+  # vitest's split by a hash of each path, one of two shards held 57% of the test time; three even ones end with the
+  # Windows shards. The count is the matrix's alone: the name and `--shard` read it as `strategy.job-total`.
   unit:
     name: Unit tests (${{ matrix.shard }}/${{ strategy.job-total }})
     needs: [build, test-data, select-tests]
@@ -1102,7 +1106,8 @@ jobs:
           npm test -- --passWithNoTests --shard=${{ matrix.shard }}/${{ strategy.job-total }} "${tests[@]}"
 
       # Every statement, branch and function of reading a repository's own lint config is run by its tests, file by
-      # file (package.json `test:coverage:lint-config`). Once, on the first shard.
+      # file (package.json `test:coverage:lint-config`). Once, on the first shard, which the split gives that much less
+      # of the suite (`firstShardExtraMs` in the times).
       - name: Lint config coverage gate
         if: matrix.shard == 1
         run: npm run test:coverage:lint-config
@@ -1277,13 +1282,12 @@ jobs:
           dir: ${{ steps.compile-cache.outputs.dir }}
 
   # The unit suite on Windows, the one job that runs it there: paths, shells, process starts and file locks behave
-  # differently on Windows, and every other test job runs on Linux or macOS. Five shards where Linux has two: the suite
-  # runs more than twice as slowly here, and vitest splits the files by a hash of their path, not by how long they
-  # take, so with two shards one held nearly two thirds of the test time and CI result waited about 10 minutes for it.
-  # With five, the slowest shard's tests take about 4 minutes, so Windows ends with the Linux unit job. The count is
-  # the matrix's alone: the name and `--shard` read it as `strategy.job-total`. Gated as the unit job is, and reads the
-  # same test data: the test-data job's artifact, downloaded and verified against the locks as on Linux. The engine is
-  # build-windows' artifact; the package is built here, which takes seconds.
+  # differently on Windows, and every other test job runs on Linux or macOS. Five shards where Linux has three: the
+  # suite runs more than twice as slowly here. The shards split the files by how long each takes on Windows in CI, as
+  # the unit job's do; with vitest's split by a hash of each path the slowest of the five held nearly twice the
+  # fastest's test time. The count is the matrix's alone: the name and `--shard` read it as `strategy.job-total`. Gated
+  # as the unit job is, and reads the same test data: the test-data job's artifact, downloaded and verified against the
+  # locks as on Linux. The engine is build-windows' artifact; the package is built here, which takes seconds.
   unit-windows:
     name: Unit tests (Windows, ${{ matrix.shard }}/${{ strategy.job-total }})
     needs: [test-data, build-windows, select-tests]
@@ -1364,7 +1368,8 @@ jobs:
       # The integration job runs on Linux only. This file replays a Claude Code session through the built hook as
       # Claude Code runs it on Windows (dist/harness/hook-launcher.js), against a daemon of this build, including a
       # session VS Code opens with a lower-case `c:`; it needs the engine and dist/ the steps above made, and takes
-      # about a minute, so one shard runs it.
+      # about a minute, so one shard runs it, which the split gives that much less of the suite (`firstShardExtraMs`
+      # in the times).
       - name: Claude Code hook integration test
         if: matrix.shard == 1
         env:
