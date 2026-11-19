@@ -62,7 +62,21 @@ fn lock_file(store: &Path) -> std::io::Result<File> {
     if let Some(dir) = store.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(beside(store, "-owner.lock"))
+    open_lock(store, true)
+}
+
+/// `store`'s lock file, opened (made where missing and `make`). On Windows it is opened without sharing its deletion,
+/// so no cleanup removes it while a process has it open (`remove_lock`); std's default shares it.
+fn open_lock(store: &Path, make: bool) -> std::io::Result<File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(make).truncate(false);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_SHARE_READ | FILE_SHARE_WRITE: not FILE_SHARE_DELETE.
+        options.share_mode(0x1 | 0x2);
+    }
+    options.open(beside(store, "-owner.lock"))
 }
 
 /// Whether `file` (locked) is still the lock file at `store`'s path: a cleanup unlinks a lock file last, holding it
@@ -78,7 +92,7 @@ fn still_there(file: &File, store: &Path) -> bool {
     }
     #[cfg(not(unix))]
     {
-        // Elsewhere no cleanup removes a lock file (`remove_lock`): the file locked is the path's.
+        // Elsewhere a lock file is not removed while a process has it open (`open_lock`): the file locked is the path's.
         let _ = (file, store);
         true
     }
@@ -297,23 +311,28 @@ fn unowned(store: &Path) -> Option<Option<File>> {
     if claims().contains_key(store) {
         return None;
     }
-    match std::fs::OpenOptions::new().read(true).write(true).open(beside(store, "-owner.lock")) {
+    match open_lock(store, false) {
         Ok(file) => file.try_lock().ok().map(|()| Some(file)),
         Err(_) => Some(None),
     }
 }
 
-/// Removes the lock file at `lock`, held (`held`) by the cleanup: a process that opened it before and locks it after
-/// finds it gone (`still_there`) and takes the new one. Only where a file's identity says so (unix): elsewhere std
-/// opens files sharing their deletion, so a process could lock a file already gone, and the empty lock file stays.
+/// Removes the lock file at `lock`, held (`held`) by the cleanup. On unix it is unlinked while held: a process that
+/// opened it before and locks it after finds it gone (`still_there`) and takes the new one. Elsewhere it is let go
+/// first, then removed: a process that opened it meanwhile keeps it there (`open_lock` shares no deletion), and the
+/// removal fails.
 fn remove_lock(lock: &Path, held: Option<File>) {
+    let Some(held) = held else { return };
     #[cfg(unix)]
-    if held.is_some() {
+    {
         let _ = std::fs::remove_file(lock);
+        drop(held);
     }
     #[cfg(not(unix))]
-    let _ = lock;
-    drop(held);
+    {
+        drop(held);
+        let _ = std::fs::remove_file(lock);
+    }
 }
 
 #[cfg(test)]
@@ -443,8 +462,8 @@ mod tests {
         assert_eq!(super::named_within(&store, Duration::from_millis(50)), Ok(()), "asked again, the same answer");
     }
 
-    /// A cleanup removes an unused store's files, its lock file with them (on unix), and leaves every file of a store
-    /// another process owns (here an open file of the test's own, locked, as the OS sees another process's).
+    /// A cleanup removes an unused store's files, its lock file with them, and leaves every file of a store another
+    /// process owns (here an open file of the test's own, locked, as the OS sees another process's).
     #[test]
     fn a_cleanup_leaves_a_store_another_process_owns() {
         let dir = tempfile::tempdir().unwrap();
@@ -459,10 +478,6 @@ mod tests {
         let mut left: Vec<String> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         left.sort();
         all = names("held.sqlite");
-        // Only where a file's identity is known does the free store's lock file go too (`remove_lock`).
-        if cfg!(not(unix)) {
-            all.push("free.sqlite-owner.lock".to_owned());
-        }
         all.sort();
         assert_eq!(left, all, "the held store's files stay; the free store's and the loose file go");
     }
