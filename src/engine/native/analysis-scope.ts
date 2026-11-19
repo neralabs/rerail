@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { and, eq, lte } from "drizzle-orm";
@@ -7,7 +7,7 @@ import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../
 import { loadNativeBinding } from "./native.js";
 import { contentStoreOverride, contentStorePath } from "./rerail-build.js";
 import { assertContentStoreOwner } from "./main-instance.js";
-import { storedPath, withinCheckout } from "../catalog/checkout-control.js";
+import { storedPath } from "../catalog/checkout-control.js";
 
 export function scanContentStore(databasePath: string): string {
   return contentStoreOverride() ?? defaultScanStore(databasePath);
@@ -52,11 +52,17 @@ export function readAnalysisScopeGeneration(databasePath: string): number {
   } finally { index.$client.close(); }
 }
 
-/** Register the route and obtain its generation in one transaction of the registry. */
+export interface DirectoryAnalysisRegistration { generation: number; identity: string }
+
 export async function acquireDirectoryAnalysisGeneration(databasePath: string, directory: string, store: string): Promise<number> {
-  const cutoff = await loadNativeBinding().prepareDirectoryAnalysisStoreAsync(store, directory, analysisScopeHome(databasePath));
+  return (await acquireDirectoryAnalysisRegistration(databasePath, directory, store)).generation;
+}
+
+/** Register the observed store and obtain its generation in one registry transaction. */
+export async function acquireDirectoryAnalysisRegistration(databasePath: string, directory: string, store: string): Promise<DirectoryAnalysisRegistration> {
+  const { cutoff, identity } = await loadNativeBinding().prepareAnalysisStoreRegistrationAsync(store, directory, analysisScopeHome(databasePath));
   const floor = Math.max(readControlGeneration(databasePath), (cutoff ?? 0) + 1);
-  return registerDirectoryAnalysisStore(databasePath, directory, store, floor);
+  return { generation: registerDirectoryAnalysisStore(databasePath, directory, store, identity, floor), identity };
 }
 
 function recordRegistryGeneration(index: RerailDatabase, floor: number, increment: 0 | 1): number {
@@ -68,42 +74,113 @@ function recordRegistryGeneration(index: RerailDatabase, floor: number, incremen
   return generation;
 }
 
-function registerDirectoryAnalysisStore(databasePath: string, directory: string, store: string, floor = INITIAL_GENERATION): number {
+interface StoreRoute { directory: string; path: string; identity: string | null }
+
+function registerDirectoryAnalysisStore(databasePath: string, directory: string, store: string, identity: string, floor?: number): number {
   const index = openSqliteDatabase(storeRegistryPath(databasePath));
   try {
     return index.$client.transaction(() => {
       index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_directory_store (directory TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(directory,path)) STRICT");
-      index.$client.prepare("INSERT OR IGNORE INTO analysis_directory_store VALUES (?,?)").run(storedPath(directory), storedPath(store));
-      return recordRegistryGeneration(index, floor, 0);
+      index.$client.exec(`CREATE TABLE IF NOT EXISTS analysis_directory_store_identity (
+        directory TEXT NOT NULL, path TEXT NOT NULL, identity TEXT NOT NULL, first_generation INTEGER NOT NULL, last_generation INTEGER NOT NULL,
+        PRIMARY KEY(directory,path,identity), FOREIGN KEY(directory,path) REFERENCES analysis_directory_store(directory,path) ON DELETE CASCADE ON UPDATE CASCADE) STRICT`);
+      index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_maintenance_store (path TEXT PRIMARY KEY) STRICT");
+      const root = storedPath(directory), path = storedPath(store);
+      index.$client.prepare("INSERT OR IGNORE INTO analysis_directory_store VALUES (?,?)").run(root, path);
+      index.$client.prepare("INSERT OR IGNORE INTO analysis_maintenance_store VALUES (?)").run(path);
+      const generation = floor === undefined ? 0 : recordRegistryGeneration(index, floor, 0);
+      index.$client.prepare(`INSERT INTO analysis_directory_store_identity VALUES (?,?,?,?,?)
+        ON CONFLICT(directory,path,identity) DO UPDATE SET first_generation=min(first_generation,excluded.first_generation),
+          last_generation=max(last_generation,excluded.last_generation)`).run(root, path, identity, generation, generation);
+      return generation;
     }).immediate();
   } finally {
     index.$client.close();
   }
 }
 
-function analysisStores(databasePath: string): { fallback: Set<string>; registered: { directory: string; path: string }[] } {
+function analysisStores(databasePath: string, root?: string, cutoff = Number.MAX_SAFE_INTEGER): { fallback: Set<string>; registered: StoreRoute[] } {
   const fallback = new Set([defaultScanStore(databasePath), contentStorePath()]
     .filter(path => existsSync(path)).map(path => storedPath(path)));
   const configured = contentStoreOverride();
   if (configured !== undefined) fallback.add(storedPath(configured));
-  const registered: { directory: string; path: string }[] = [];
+  const registered: StoreRoute[] = [];
   const indexPath = storeRegistryPath(databasePath);
   if (!existsSync(indexPath)) return { fallback, registered };
   const index = openSqliteDatabase(indexPath, { readonly: true });
   try {
-    const tables = index.$client.prepare("SELECT name FROM sqlite_schema WHERE name IN ('analysis_store', 'analysis_directory_store')").pluck().all();
+    const tables = index.$client.prepare("SELECT name FROM sqlite_schema WHERE type='table'").pluck().all();
     if (tables.includes("analysis_store")) {
       for (const path of index.$client.prepare("SELECT path FROM analysis_store").pluck().all() as string[]) fallback.add(path);
     }
     if (tables.includes("analysis_directory_store")) {
-      for (const row of index.$client.prepare("SELECT directory,path FROM analysis_directory_store").all() as typeof registered) {
-        registered.push(row);
-      }
+      const identified = tables.includes("analysis_directory_store_identity");
+      const query = identified ? "SELECT d.directory,d.path,i.identity FROM analysis_directory_store d LEFT JOIN analysis_directory_store_identity i USING(directory,path)"
+        : "SELECT d.directory,d.path,NULL AS identity FROM analysis_directory_store d";
+      const prefix = root === undefined ? "" : root.endsWith(sep) ? root : root + sep;
+      // All descendants share this byte prefix. The next character after the separator is its exclusive upper bound.
+      const end = prefix.slice(0, -1) + String.fromCharCode(sep.charCodeAt(0) + 1);
+      const conditions = root === undefined ? "" : " WHERE (d.directory=? OR (d.directory>=? AND d.directory<?))"
+        + (identified ? " AND (i.first_generation IS NULL OR i.first_generation<=?)" : "");
+      const args = root === undefined ? [] : [root, prefix, end, ...(identified ? [cutoff] : [])];
+      for (const row of index.$client.prepare(query + conditions).iterate(...args)) registered.push(row as StoreRoute);
+    }
+    if (root === undefined && tables.includes("analysis_maintenance_store")) {
+      for (const path of index.$client.prepare("SELECT path FROM analysis_maintenance_store").pluck().all() as string[]) fallback.add(path);
     }
   } finally {
     index.$client.close();
   }
   return { fallback, registered };
+}
+
+/** Advance only routes this delivery covered. A concurrent new acquisition keeps its registration. */
+function acknowledgeRoutes(databasePath: string, routes: StoreRoute[], cutoff: number | undefined): void {
+  if (cutoff === undefined || routes.length === 0) return;
+  const index = openSqliteDatabase(storeRegistryPath(databasePath));
+  try {
+    index.$client.transaction(() => {
+      const identified = index.$client.prepare("SELECT 1 FROM sqlite_schema WHERE name='analysis_directory_store_identity'").get();
+      index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_maintenance_store (path TEXT PRIMARY KEY) STRICT");
+      for (const { directory, path, identity } of routes) {
+        index.$client.prepare("INSERT OR IGNORE INTO analysis_maintenance_store VALUES (?)").run(path);
+        if (identified) {
+          index.$client.prepare("DELETE FROM analysis_directory_store_identity WHERE directory=? AND path=? AND identity=? AND last_generation<=?").run(directory, path, identity, cutoff);
+          index.$client.prepare("UPDATE analysis_directory_store_identity SET first_generation=? WHERE directory=? AND path=? AND identity=? AND first_generation<=?")
+            .run(cutoff + 1, directory, path, identity, cutoff);
+        }
+        const live = identified ? " AND NOT EXISTS (SELECT 1 FROM analysis_directory_store_identity i WHERE i.directory=d.directory AND i.path=d.path)" : "";
+        index.$client.prepare("DELETE FROM analysis_directory_store AS d WHERE directory=? AND path=?" + live).run(directory, path);
+      }
+    }).immediate();
+  } finally { index.$client.close(); }
+}
+
+function releaseCutoff(id: string): number | undefined {
+  const colon = id.indexOf(":");
+  if (colon < 0) return undefined;
+  const prefix = id.slice(0, colon);
+  const cutoff = Number(prefix);
+  if (!/^\d+$/u.test(prefix) || !Number.isSafeInteger(cutoff)) throw new Error("Invalid analysis scope release cutoff");
+  return cutoff;
+}
+
+function discoverReleaseRoute(databasePath: string, directory: string, store: string, home: string): StoreRoute[] {
+  const identity = loadNativeBinding().owningDirectoryAnalysisStore(store, directory, home);
+  if (identity == null) return [];
+  registerDirectoryAnalysisStore(databasePath, directory, store, identity);
+  return [{ directory, path: store, identity }];
+}
+
+function deliverRelease(databasePath: string, root: string, store: string, id: string, routes: StoreRoute[]): void {
+  let failure: unknown;
+  for (const identity of new Set(routes.map(route => route.identity))) {
+    try {
+      loadNativeBinding().deleteAnalysisScope(store, root, true, id, identity || undefined);
+      acknowledgeRoutes(databasePath, routes.filter(route => route.identity === identity), releaseCutoff(id));
+    } catch (error) { failure = error; }
+  }
+  if (failure !== undefined) throw failure;
 }
 
 type Transaction = Parameters<Parameters<RerailDatabase["transaction"]>[0]>[0];
@@ -143,7 +220,7 @@ export async function collectAnalysisCaches(databasePath: string): Promise<void>
 }
 
 function settleAnalysisScopeReleaseProbes(database: RerailDatabase, home: string, limit: number): void {
-  const binding = loadNativeBinding();
+  const databasePath = database.$client.name;
   const probes = database.select().from(analysisScopeReleaseProbes)
     .where(limit < 0 ? undefined : lte(analysisScopeReleaseProbes.nextAttemptAt, Date.now()))
     .orderBy(analysisScopeReleaseProbes.nextAttemptAt, analysisScopeReleaseProbes.releaseId, analysisScopeReleaseProbes.store)
@@ -152,11 +229,9 @@ function settleAnalysisScopeReleaseProbes(database: RerailDatabase, home: string
     const row = and(eq(analysisScopeReleaseProbes.releaseId, releaseId), eq(analysisScopeReleaseProbes.store, store));
     try {
       assertContentStoreOwner(store);
-      if (!existsSync(store)) throw new Error("The legacy store is unavailable");
-      if (binding.existingDirectoryAnalysisOwnership(store, directory, home)) {
-        registerDirectoryAnalysisStore(database.$client.name, directory, store);
-        binding.deleteAnalysisScope(store, directory, true, releaseId);
-      }
+      let routes = analysisStores(databasePath, directory, releaseCutoff(releaseId)).registered.filter(route => route.path === store);
+      if (routes.length === 0) routes = discoverReleaseRoute(databasePath, directory, store, home);
+      deliverRelease(databasePath, directory, store, releaseId, routes);
     } catch {
       database.update(analysisScopeReleaseProbes).set({ nextAttemptAt: Date.now() + RELEASE_RETRY_DELAY_MS }).where(row).run();
       continue;
@@ -186,30 +261,19 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
       .where(limit < 0 ? undefined : lte(analysisScopeReleases.nextAttemptAt, Date.now()))
       .orderBy(analysisScopeReleases.nextAttemptAt, analysisScopeReleases.id).limit(limit).all();
     if (pending.length === 0) return;
-    const { fallback, registered } = analysisStores(databasePath);
-    const binding = loadNativeBinding();
     const failed = new Map<string, unknown>();
     for (const { id, directory } of pending) {
       const root = storedPath(directory);
-      const routes = new Set(registered.filter(row => withinCheckout(root, row.directory)).map(row => row.path));
+      const { fallback, registered } = analysisStores(databasePath, root, releaseCutoff(id));
+      const routes = new Set(registered.map(row => row.path));
       let acknowledged = true;
       for (const store of new Set([...routes, ...fallback])) {
         let deliveryTarget = routes.has(store);
         try {
           assertContentStoreOwner(store);
-          if (!deliveryTarget) {
-            if (!existsSync(store)) throw new Error("The legacy store is unavailable");
-            if (!binding.existingDirectoryAnalysisOwnership(store, root, home)) continue;
-            deliveryTarget = true;
-            registerDirectoryAnalysisStore(databasePath, root, store);
-            registered.push({ directory: root, path: store });
-          }
-          if (failed.has(store)) {
-            acknowledged = false;
-            continue;
-          }
-          if (!existsSync(store)) throw new Error("The registered store is unavailable");
-          binding.deleteAnalysisScope(store, directory, true, id);
+          const targets = deliveryTarget ? registered.filter(row => row.path === store) : discoverReleaseRoute(databasePath, root, store, home);
+          deliveryTarget = targets.length > 0;
+          deliverRelease(databasePath, root, store, id, targets);
         } catch (error) {
           if (!deliveryTarget) {
             database.insert(analysisScopeReleaseProbes).values({

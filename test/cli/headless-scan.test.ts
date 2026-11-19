@@ -1064,6 +1064,93 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     } finally { vi.unstubAllEnvs(); }
   });
 
+  it("waits for the original store after a swap and releases both identities that used one path", async () => {
+    const root = checkout(), home = root + "-home", databasePath = join(home, "home.sqlite");
+    const mounted = join(home, "mount"), first = mounted + "-first", second = mounted + "-second";
+    const store = join(mounted, "content.sqlite"), binding = loadNativeBinding();
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    const unmount = (destination: string) => {
+      binding.retireUpkeepUnder?.(mounted);
+      renameSync(mounted, destination);
+    };
+    const stop = () => {
+      const db = openRerailDatabase(databasePath);
+      try { db.transaction(tx => queueAnalysisScopeReleases(tx, [root], databasePath)); } finally { db.$client.close(); }
+    };
+    const pending = () => {
+      const db = openRerailDatabase(databasePath);
+      try { return db.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get(); }
+      finally { db.$client.close(); }
+    };
+    try {
+      expect((await scan(root, { databasePath })).status).toBe("completed");
+      expect(directoryOwnerCount(store)).toBe(1);
+      unmount(first);
+      // A valid replacement with no registration must never acknowledge the first store's stop.
+      await binding.prepareAnalysisStoreAsync(store);
+      stop();
+      expect(() => settleAnalysisScopeReleases(databasePath, -1)).toThrow(/identity changed/u);
+      expect(queryContentStore(store, "SELECT id FROM analysis_scope_release")).toEqual([]);
+      expect(pending()).toBe(1);
+      expect((await scan(root, { databasePath })).status).toBe("completed");
+      unmount(second);
+      expect(() => settleAnalysisScopeReleases(databasePath, -1)).toThrow();
+      expect(existsSync(mounted)).toBe(false);
+      renameSync(first, mounted);
+      settleAnalysisScopeReleases(databasePath, -1);
+      expect(directoryOwnerCount(store)).toBe(0);
+      expect(pending()).toBe(0);
+      expect((await scan(root, { databasePath })).status).toBe("completed");
+      stop(); // Both stores now own this directory in the ended generation.
+      expect(() => settleAnalysisScopeReleases(databasePath, -1)).toThrow(/identity changed/u);
+      expect(directoryOwnerCount(store)).toBe(0);
+      expect(pending()).toBe(1);
+      unmount(first);
+      renameSync(second, mounted);
+      expect(directoryOwnerCount(store)).toBe(1);
+      settleAnalysisScopeReleases(databasePath, -1);
+      expect(directoryOwnerCount(store)).toBe(0);
+      expect(pending()).toBe(0);
+      const index = new Database(databasePath + ".analysis-stores.sqlite", { readonly: true });
+      try {
+        expect(index.prepare("SELECT count(*) FROM analysis_directory_store").pluck().get()).toBe(0);
+        expect(index.prepare("SELECT path FROM analysis_maintenance_store").pluck().all()).toEqual([store]);
+      } finally { index.close(); }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("keeps a registration acquired between delivery and acknowledgement and skips unrelated routes", async () => {
+    const root = checkout(), home = root + "-home", databasePath = join(home, "rerail.sqlite"), store = join(home, "content.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      expect((await scan(root, { databasePath })).status).toBe("completed");
+      const registry = new Database(databasePath + ".analysis-stores.sqlite");
+      const db = openRerailDatabase(databasePath);
+      try {
+        registry.prepare(`WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4096)
+          INSERT INTO analysis_directory_store SELECT ? || i, ? || i FROM n`).run(root + "-other/", home + "/other-");
+        db.transaction(tx => queueAnalysisScopeReleases(tx, [root], databasePath));
+        const binding = loadNativeBinding(), release = binding.deleteAnalysisScope;
+        const delivery = vi.spyOn(binding, "deleteAnalysisScope").mockImplementationOnce((...args) => {
+          expect(args[0]).toBe(store);
+          release(...args);
+          execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", databasePath, root, store], {
+            input: 'import {acquireDirectoryAnalysisGeneration} from "./src/engine/native/analysis-scope.ts"; const [db,dir,store]=process.argv.slice(2); await acquireDirectoryAnalysisGeneration(db,dir,store);',
+          });
+        });
+        try {
+          settleAnalysisScopeReleases(databasePath);
+          expect(delivery).toHaveBeenCalledTimes(1);
+        } finally { delivery.mockRestore(); }
+        const registrations = () => registry.prepare("SELECT count(*) FROM analysis_directory_store").pluck().get();
+        expect(registrations()).toBe(4097);
+        db.transaction(tx => queueAnalysisScopeReleases(tx, [root], databasePath));
+        settleAnalysisScopeReleases(databasePath);
+        expect(registrations()).toBe(4096);
+      } finally { db.$client.close(); registry.close(); }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("requires safe integer generations before acquiring a run or attaching its workspace", async () => {
     const root = checkout(), engine = loadNativeBinding(), store = join(root + "-home", "generation.sqlite");
     const workspace = new engine.CodeRuleDslWorkspace();
@@ -1531,8 +1618,8 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     writeFileSync(legacy, "");
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", legacy);
     const binding = loadNativeBinding();
-    const lookup = binding.existingDirectoryAnalysisOwnership;
-    const probe = vi.spyOn(binding, "existingDirectoryAnalysisOwnership").mockImplementation((store, ...args) => {
+    const lookup = binding.owningDirectoryAnalysisStore;
+    const probe = vi.spyOn(binding, "owningDirectoryAnalysisStore").mockImplementation((store, ...args) => {
       if (store === legacy) throw new Error("disk I/O error during ownership check");
       return lookup(store, ...args);
     });
@@ -1555,7 +1642,7 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     const legacy = join(`${root}-home`, "legacy.sqlite");
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", legacy);
     const binding = loadNativeBinding();
-    const lookup = binding.existingDirectoryAnalysisOwnership;
+    const lookup = binding.owningDirectoryAnalysisStore;
     try {
       expect((await scan(root, { databasePath })).status).toBe("completed");
       expect(directoryOwnerCount(legacy)).toBe(1);
@@ -1567,7 +1654,7 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
       const database = openRerailDatabase(databasePath);
       try {
         database.transaction(tx => queueAnalysisScopeReleases(tx, [root], databasePath));
-        const probe = vi.spyOn(binding, "existingDirectoryAnalysisOwnership").mockImplementation((store, ...args) => {
+        const probe = vi.spyOn(binding, "owningDirectoryAnalysisStore").mockImplementation((store, ...args) => {
           if (store === legacy) throw new Error("temporary I/O error during ownership check");
           return lookup(store, ...args);
         });

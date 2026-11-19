@@ -98,7 +98,10 @@ Each directory membership records its acquisition sequence and the manifest's or
 Only successful publication can advance that order. An aborted run or a read in another scope can still use the same manifest.
 
 Deleting a named scope releases its memberships. The store retains a generation row to reject older writers.
-The home also keeps directory-to-store registrations after a stop. One-time scope names and directories can accumulate these bookkeeping rows.
+One-time named scopes can accumulate generation rows.
+After a numbered stop, the home removes the directory registrations that the delivery covered.
+A concurrent acquisition in a later generation keeps its registration.
+The home keeps one maintenance address per store so the collector can still visit a released store.
 
 The home records each directory and its analysis stores in a separate SQLite database.
 A scan or watch opens the store and registers it before acquiring a generation.
@@ -115,6 +118,10 @@ It must register the store before it can publish ownership.
 This order lets a stop find every store that can hold an ended generation.
 If the store fails to open, the run uses memory and adds no registration.
 The stop remains pending until each store for the directory accepts its release.
+Directory registrations record the store's SQLite identity as well as its path.
+A numbered release opens an existing database and checks its identity on the connection that delivers the release.
+If a different store occupies that path, the original store keeps its pending release.
+An older registration contains only the path. It cannot identify a store replaced before identity registration.
 For a store from before directory registration, the stop first checks for matching ownership rows.
 A store can hold these rows for one directory and have registrations for other directories.
 A legacy candidate outside the current process's store access does not delay a stop.

@@ -194,11 +194,12 @@ fn analysis_generation(value: f64) -> Result<i64> {
 #[napi]
 impl AnalysisScopeRun {
     #[napi(constructor)]
-    pub fn new(store_path: String, value: String, directory: bool, id: String, generation: f64, home: Option<String>) -> Result<Self> {
+    pub fn new(store_path: String, value: String, directory: bool, id: String, generation: f64, home: Option<String>, expected_store: Option<String>) -> Result<Self> {
         let generation = analysis_generation(generation)?;
         let scope = if directory { analysis_scope::directory_in(Path::new(&value), home.as_deref()) }
             else { analysis_scope::named(&value).ok_or_else(|| invalid("analysis scope name must not be empty"))? };
         let store = crate::content_store::ContentStore::open(Path::new(&store_path)).map_err(|e| invalid(e.to_string()))?;
+        check_store_identity(&store, expected_store.as_deref()).map_err(|err| invalid(err.to_string()))?;
         AnalysisRun::begin_at(store, &scope, &id, generation).map(|run| Self(Mutex::new(run))).map_err(|e| invalid(e.to_string()))
     }
 
@@ -227,6 +228,13 @@ impl AnalysisScopeRun {
         }
         Ok(run.owner.clone())
     }
+}
+
+fn check_store_identity(store: &crate::content_store::ContentStore, expected: Option<&str>) -> std::result::Result<(), StoreError> {
+    if expected.is_some_and(|id| id.parse::<i64>().ok() != Some(store.identity())) {
+        return Err(StoreError::Invalid(format!("analysis store identity changed at {}", store.database_path().display())));
+    }
+    Ok(())
 }
 
 #[napi]
@@ -261,6 +269,7 @@ impl CodeRuleDslWorkspace {
         analysis: Option<&AnalysisScopeRun>,
         generation: Option<f64>,
         home: Option<String>,
+        expected_store: Option<String>,
     ) -> Result<AsyncTask<WorkspaceStorageTask>> {
         let generation = analysis_generation(generation.unwrap_or_default())?;
         let owner = analysis.map(|run| run.owner_for(Path::new(&store_path))).transpose()?;
@@ -268,6 +277,7 @@ impl CodeRuleDslWorkspace {
         task.analysis_owner = owner;
         task.analysis_generation = generation;
         task.analysis_home = home;
+        task.expected_store = expected_store;
         Ok(AsyncTask::new(task))
     }
 
@@ -307,6 +317,7 @@ impl CodeRuleDslWorkspace {
             snapshot: None,
             analysis_owner: None,
             analysis_generation: 0,
+            expected_store: None,
             analysis_home: None,
             store_path: PathBuf::from(store_path),
             secret_names: Arc::new(SecretNames::compile(secret_names)?),
@@ -1009,6 +1020,7 @@ pub struct WorkspaceStorageTask {
     snapshot: Option<Arc<crate::git_workspace::snapshot::Snapshot>>,
     analysis_owner: Option<AnalysisOwner>,
     analysis_generation: i64,
+    expected_store: Option<String>,
     analysis_home: Option<String>,
     /// The store file the host named.
     store_path: PathBuf,
@@ -1046,6 +1058,7 @@ impl Task for WorkspaceStorageTask {
                     Ok(store) => store,
                     Err(error) => return Ok(cache_failed(error)),
                 };
+                if let Err(error) = check_store_identity(&store, self.expected_store.as_deref()) { return Ok(cache_failed(error)); }
                 let scope = crate::git_workspace::snapshot::analysis_scope(Path::new(&self.root))
                     .unwrap_or_else(|| analysis_scope::directory_in(Path::new(&self.root), self.analysis_home.as_deref()));
                 match store.begin_analysis_scope_at(&scope, self.analysis_generation) {

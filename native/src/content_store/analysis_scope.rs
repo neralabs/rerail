@@ -9,6 +9,8 @@ pub struct AnalysisOwner {
     pub scope: String,
     generation: i64,
     #[serde(default)]
+    store_identity: Option<i64>,
+    #[serde(default)]
     pending: Option<String>,
     /// Acquisition generation from the control database. Keeps its original serialized field name.
     #[serde(default)]
@@ -42,8 +44,9 @@ impl AnalysisOwner {
         tx.query_row_cached(
             "SELECT EXISTS (SELECT 1 FROM analysis_scope_generation WHERE scope=?1 AND generation=?2) \
                 AND (?5 IS NULL OR EXISTS (SELECT 1 FROM analysis_scope_pending WHERE id=?5)) \
+                AND (?6 IS NULL OR (SELECT id FROM store_identity WHERE singleton=1)=?6) \
                 AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE scope IN (SELECT value FROM json_each(?4)) AND before>=?3)",
-            (&self.scope, self.generation, self.acquired_at, receipt_scopes(&self.scope), self.pending.as_deref()), |row| row.get(0),
+            (&self.scope, self.generation, self.acquired_at, receipt_scopes(&self.scope), self.pending.as_deref(), self.store_identity), |row| row.get(0),
         )
     }
 }
@@ -82,6 +85,7 @@ impl AnalysisRun {
         let mut owner = store.begin_analysis_scope_at(scope, acquired_at)?;
         let pending = format!("pending:{}:{}:{id}", store.connection.identity(), owner.acquisition);
         store.immediate_transaction(|tx| {
+            store.check_scope_store(tx)?;
             tx.execute_cached("INSERT INTO analysis_scope_pending(id) VALUES (?1)", [&pending])?;
             Ok(())
         })?;
@@ -97,6 +101,7 @@ impl AnalysisRun {
         let owner = &self.owner;
         let pending = owner.membership();
         self.store.immediate_transaction(|tx| {
+            self.store.check_scope_store(tx)?;
             if succeeded && owner.cache_warning().is_none() && owner.current(tx)? {
                 tx.execute_cached("INSERT INTO analysis_scope_manifest(scope,manifest_id,acquired_at,acquisition,recorded_run)
                     SELECT ?1,manifest_id,acquired_at,acquisition,recorded_run FROM analysis_scope_manifest WHERE scope=?2
@@ -150,6 +155,11 @@ fn scope_prefix(scope: &str) -> String {
 /// A route from before the directory registry must have actual ownership rows.
 /// Only a successful query can establish that an old store holds no matching rows.
 pub fn existing_directory_ownership(store: &Path, directory: &Path, home: &str) -> rusqlite::Result<bool> {
+    Ok(owning_directory_store(store, directory, home)?.is_some())
+}
+
+// Some(None) identifies a real owner from before store identities were recorded.
+pub fn owning_directory_store(store: &Path, directory: &Path, home: &str) -> rusqlite::Result<Option<Option<i64>>> {
     let db = rusqlite::Connection::open_with_flags(store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let legacy = directory_in(directory, None);
     let scoped = directory_in(directory, Some(home));
@@ -169,10 +179,12 @@ pub fn existing_directory_ownership(store: &Path, directory: &Path, home: &str) 
                 OR substr(scope,1,length(?4)) = ?4)"
         ), (&scoped, &legacy, &scoped_prefix, &legacy_prefix), |row| row.get(0))?;
         if has_owner {
-            return Ok(true);
+            let identified: bool = db.query_row("SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type='table' AND name='store_identity')", [], |row| row.get(0))?;
+            let identity = if identified { Some(db.query_row("SELECT id FROM store_identity WHERE singleton=1", [], |row| row.get(0))?) } else { None };
+            return Ok(Some(identity));
         }
     }
-    Ok(false)
+    Ok(None)
 }
 
 pub fn acquisition_time() -> i64 {
@@ -185,12 +197,23 @@ pub(super) fn next_acquisition(tx: &rusqlite::Connection) -> rusqlite::Result<i6
 }
 
 impl ContentStore {
+    fn check_scope_store(&self, db: &rusqlite::Connection) -> StoreResult<()> {
+        let actual: i64 = db.query_row_cached("SELECT id FROM store_identity WHERE singleton=1", [], |row| row.get(0))?;
+        if actual != self.identity() {
+            return Err(super::StoreError::Invalid(format!("analysis store identity changed at {}", self.database_path().display())));
+        }
+        Ok(())
+    }
+
     pub fn directory_release_cutoff(&self, path: &Path, home: &str) -> StoreResult<Option<i64>> {
         let scope = directory_in(path, Some(home));
         let db = self.connection.lock().expect("content store connection unavailable");
+        self.check_scope_store(&db)?;
         Ok(db.query_row_cached("SELECT max(before) FROM analysis_scope_release
             WHERE scope IN (SELECT value FROM json_each(?1))", [receipt_scopes(&scope)], |row| row.get(0))?)
     }
+
+    pub fn identity(&self) -> i64 { self.connection.identity() }
 
     pub fn begin_analysis_scope(&self, scope: &str) -> StoreResult<AnalysisOwner> {
         self.begin_analysis_scope_at(scope, 0)
@@ -198,12 +221,13 @@ impl ContentStore {
 
     pub fn begin_analysis_scope_at(&self, scope: &str, acquired_at: i64) -> StoreResult<AnalysisOwner> {
         self.immediate_transaction(|tx| {
+            self.check_scope_store(tx)?;
             tx.execute_cached("INSERT OR IGNORE INTO analysis_scope_generation VALUES (?1,0)", [scope])?;
             let generation = tx.query_row_cached(
                 "SELECT generation FROM analysis_scope_generation WHERE scope=?1", [scope], |row| row.get(0),
             )?;
             let acquisition = next_acquisition(tx)?;
-            Ok(AnalysisOwner { scope: scope.to_owned(), generation, pending: None, acquired_at, acquisition, warning: None })
+            Ok(AnalysisOwner { scope: scope.to_owned(), generation, store_identity: Some(self.identity()), pending: None, acquired_at, acquisition, warning: None })
         })
     }
 
@@ -270,55 +294,47 @@ impl<'a> DirectoryRelease<'a> {
         Ok(Self { id, before: Some(before), home })
     }
 
-    pub fn is_numbered(&self) -> bool { self.before.is_some() }
-
-    pub fn apply(&self, store: &ContentStore, path: &Path) -> StoreResult<usize> {
+    fn apply_to(&self, tx: &rusqlite::Connection, path: &Path) -> StoreResult<usize> {
         let scope = directory_in(path, self.home);
         let subtree = scope_prefix(&scope);
         let legacy = self.home.map(|_| directory(path));
-        store.release_analysis_scopes(&scope, Some(&subtree), self.id, self.before, legacy.as_deref())
+        release_analysis_scopes(tx, &scope, Some(&subtree), self.id, self.before, legacy.as_deref())
+    }
+
+    /// Pin this existing database for identity validation, schema upgrade and release.
+    pub fn deliver(&self, file: &Path, directory: &Path, expected: Option<i64>) -> StoreResult<usize> {
+        let mut db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        super::connection::retry_busy(&mut super::BusyRetries::default(), || {
+            if let Some(expected) = expected {
+                let actual: i64 = db.query_row_cached("SELECT id FROM store_identity WHERE singleton=1", [], |row| row.get(0))?;
+                if actual != expected {
+                    return Err(super::StoreError::Invalid(format!("analysis store identity changed at {}", file.display())));
+                }
+            } else {
+                let known: bool = db.query_row_cached("SELECT EXISTS (SELECT 1 FROM sqlite_schema
+                    WHERE type='table' AND name IN ('store_identity','analysis_scope_manifest'))", [], |row| row.get(0))?;
+                if !known { return Err(super::StoreError::Invalid("expected an existing analysis store".into())); }
+            }
+            let identity = ContentStore::initialize(&mut db)?;
+            let atoms = super::atoms::Atoms::for_database(file, Some(identity));
+            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let count = self.apply_to(&tx, directory)?;
+            let upto = atoms.write_pending(&tx)?;
+            tx.commit()?;
+            atoms.committed(upto);
+            Ok(count)
+        })
     }
 }
 
 impl ContentStore {
     pub fn delete_analysis_scope(&self, scope: &str) -> StoreResult<usize> {
-        self.release_analysis_scopes(scope, None, None, None, None)
+        self.immediate_transaction(|tx| release_analysis_scopes(tx, scope, None, None, None, None))
     }
 
     pub fn delete_directory_analysis_scopes(&self, path: &Path, release: Option<&str>) -> StoreResult<usize> {
-        DirectoryRelease::parse(release)?.apply(self, path)
-    }
-
-    fn release_analysis_scopes(&self, scope: &str, subtree: Option<&str>, release: Option<&str>, before: Option<i64>, legacy: Option<&str>) -> StoreResult<usize> {
-        self.immediate_transaction(|tx| {
-            if let Some(cutoff) = before {
-                let covered: bool = tx.query_row_cached("SELECT EXISTS (SELECT 1 FROM analysis_scope_release
-                    WHERE scope=?1 AND before>=?2)", (scope, cutoff), |row| row.get(0))?;
-                if covered { return Ok(0); }
-                tx.execute_cached("DELETE FROM analysis_scope_release WHERE scope=?1 AND before<?2", (scope, cutoff))?;
-            }
-            if let Some(release) = release
-                && tx.execute_cached("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES (?1,?2,?3)",
-                    (release, if before.is_some() { scope } else { "" }, before.unwrap_or_default()))? == 0
-            {
-                return Ok(0);
-            }
-            const RELEASING: &str = "(scope=?1 OR (?2 IS NOT NULL AND substr(scope,1,length(?2))=?2))";
-            if let Some(before) = before {
-                let predicate = format!("{RELEASING} AND acquired_at<=?3");
-                let mut released = release_memberships(tx, &predicate, (scope, subtree, before))?;
-                // Entries made before scopes recorded their home still use the bare directory.
-                if let Some(legacy) = legacy {
-                    let subtree = scope_prefix(legacy);
-                    released += release_memberships(tx, &predicate, (legacy, Some(subtree.as_str()), before))?;
-                }
-                Ok(released)
-            } else {
-                let args = (scope, subtree);
-                tx.execute_cached(&format!("UPDATE analysis_scope_generation SET generation=generation+1 WHERE {RELEASING}"), args)?;
-                Ok(release_memberships(tx, RELEASING, args)?)
-            }
-        })
+        let receipt = DirectoryRelease::parse(release)?;
+        self.immediate_transaction(|tx| receipt.apply_to(tx, path))
     }
 
     pub(super) fn analysis_snapshot_due(&self, now: i64) -> StoreResult<bool> {
@@ -332,6 +348,36 @@ impl ContentStore {
                AND NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.snapshot_id=q.snapshot_id AND w.lease_until>=?1 AND w.state_id=1))",
             [now], |row| row.get(0),
         )?)
+    }
+}
+
+fn release_analysis_scopes(tx: &rusqlite::Connection, scope: &str, subtree: Option<&str>, release: Option<&str>, before: Option<i64>, legacy: Option<&str>) -> StoreResult<usize> {
+    if let Some(cutoff) = before {
+        let covered: bool = tx.query_row_cached("SELECT EXISTS (SELECT 1 FROM analysis_scope_release
+            WHERE scope=?1 AND before>=?2)", (scope, cutoff), |row| row.get(0))?;
+        if covered { return Ok(0); }
+        tx.execute_cached("DELETE FROM analysis_scope_release WHERE scope=?1 AND before<?2", (scope, cutoff))?;
+    }
+    if let Some(release) = release
+        && tx.execute_cached("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES (?1,?2,?3)",
+            (release, if before.is_some() { scope } else { "" }, before.unwrap_or_default()))? == 0
+    {
+        return Ok(0);
+    }
+    const RELEASING: &str = "(scope=?1 OR (?2 IS NOT NULL AND substr(scope,1,length(?2))=?2))";
+    if let Some(before) = before {
+        let predicate = format!("{RELEASING} AND acquired_at<=?3");
+        let mut released = release_memberships(tx, &predicate, (scope, subtree, before))?;
+        // Entries made before scopes recorded their home still use the bare directory.
+        if let Some(legacy) = legacy {
+            let subtree = scope_prefix(legacy);
+            released += release_memberships(tx, &predicate, (legacy, Some(subtree.as_str()), before))?;
+        }
+        Ok(released)
+    } else {
+        let args = (scope, subtree);
+        tx.execute_cached(&format!("UPDATE analysis_scope_generation SET generation=generation+1 WHERE {RELEASING}"), args)?;
+        Ok(release_memberships(tx, RELEASING, args)?)
     }
 }
 

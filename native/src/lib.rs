@@ -482,18 +482,47 @@ pub fn prepare_directory_analysis_store_async(store: String, directory: String, 
 
 pub struct PrepareDirectoryAnalysisStore { store: String, directory: String, home: String }
 
+#[napi(object)]
+pub struct AnalysisStoreRegistration {
+    pub identity: String,
+    pub cutoff: Option<f64>,
+}
+
+impl PrepareDirectoryAnalysisStore {
+    fn registration(&self) -> Result<AnalysisStoreRegistration> {
+        let store = content_store::ContentStore::open(Path::new(&self.store)).map_err(|error| Error::from_reason(error.to_string()))?;
+        let cutoff = store.directory_release_cutoff(Path::new(&self.directory), &self.home).map_err(|error| Error::from_reason(error.to_string()))?;
+        Ok(AnalysisStoreRegistration { identity: store.identity().to_string(), cutoff: cutoff.map(|n| n as f64) })
+    }
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn prepare_analysis_store_registration_async(store: String, directory: String, home: String) -> napi::bindgen_prelude::AsyncTask<PrepareRegistration> {
+    napi::bindgen_prelude::AsyncTask::new(PrepareRegistration(PrepareDirectoryAnalysisStore { store, directory, home }))
+}
+
+#[cfg(not(feature = "headless"))]
+pub struct PrepareRegistration(PrepareDirectoryAnalysisStore);
+
+#[cfg(not(feature = "headless"))]
+impl napi::Task for PrepareRegistration {
+    type Output = AnalysisStoreRegistration;
+    type JsValue = AnalysisStoreRegistration;
+    fn compute(&mut self) -> Result<Self::Output> { self.0.registration() }
+    fn resolve(&mut self, _env: napi::Env, registration: Self::Output) -> Result<Self::JsValue> { Ok(registration) }
+}
+
 impl napi::Task for PrepareDirectoryAnalysisStore {
-    type Output = Option<i64>;
+    type Output = Option<f64>;
     type JsValue = Option<f64>;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        content_store::ContentStore::open(Path::new(&self.store))
-            .and_then(|store| store.directory_release_cutoff(Path::new(&self.directory), &self.home))
-            .map_err(|error| Error::from_reason(error.to_string()))
+        Ok(self.registration()?.cutoff)
     }
 
     fn resolve(&mut self, _env: napi::Env, cutoff: Self::Output) -> Result<Self::JsValue> {
-        Ok(cutoff.map(|value| value as f64))
+        Ok(cutoff)
     }
 }
 
@@ -535,6 +564,13 @@ pub fn existing_directory_analysis_ownership(store_path: String, directory: Stri
         .map_err(|error| Error::from_reason(error.to_string()))
 }
 
+#[napi]
+pub fn owning_directory_analysis_store(store_path: String, directory: String, home: String) -> Result<Option<String>> {
+    content_store::analysis_scope::owning_directory_store(Path::new(&store_path), Path::new(&directory), &home)
+        .map(|owner| owner.map(|identity| identity.map_or_else(String::new, |id| id.to_string())))
+        .map_err(|error| Error::from_reason(error.to_string()))
+}
+
 #[cfg(any(test, feature = "test-hooks"))]
 #[napi]
 pub fn retire_upkeep_under(directory: String) {
@@ -544,20 +580,21 @@ pub fn retire_upkeep_under(directory: String) {
 }
 
 #[napi]
-pub fn delete_analysis_scope(store_path: String, value: String, directory: bool, release: Option<String>) -> Result<()> {
+pub fn delete_analysis_scope(store_path: String, value: String, directory: bool, release: Option<String>, expected_store: Option<String>) -> Result<()> {
     use content_store::analysis_scope;
     let path = std::path::Path::new(&store_path);
     let receipt = directory.then(|| analysis_scope::DirectoryRelease::parse(release.as_deref())).transpose()
         .map_err(|error| Error::new(Status::InvalidArg, error.to_string()))?;
     if !path.try_exists().map_err(|error| Error::from_reason(error.to_string()))?
-        && !receipt.as_ref().is_some_and(|receipt| receipt.is_numbered()) {
+        && !(directory && release.is_some()) {
         return Ok(());
     }
-    let store = content_store::ContentStore::open(path).map_err(|err| Error::new(Status::GenericFailure, err.to_string()))?;
     if let Some(receipt) = receipt {
-        receipt.apply(&store, std::path::Path::new(&value))
+        let expected = expected_store.as_deref().map(str::parse::<i64>).transpose().map_err(|_| Error::new(Status::InvalidArg, "invalid analysis store identity"))?;
+        receipt.deliver(path, Path::new(&value), expected)
     } else {
         let scope = analysis_scope::named(&value).ok_or_else(|| Error::new(Status::InvalidArg, "analysis scope name must not be empty"))?;
+        let store = content_store::ContentStore::open(path).map_err(|err| Error::new(Status::GenericFailure, err.to_string()))?;
         store.delete_analysis_scope(&scope)
     }.map_err(|err| Error::new(Status::GenericFailure, err.to_string()))?;
     Ok(())

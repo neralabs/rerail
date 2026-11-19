@@ -1,3 +1,4 @@
+import type { DirectoryAnalysisRegistration } from "../native/analysis-scope.js";
 import { type Dirent, type Stats } from "node:fs";
 import { lstat, mkdtemp, opendir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -592,7 +593,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #revisionSource: NativeGitRevisionSource | undefined;
   readonly #analysisStore: string | undefined;
   readonly #analysisRun: NativeAnalysisScopeRun | undefined;
-  readonly #analysisGeneration: ((store: string) => Promise<number>) | undefined;
+  readonly #analysisGeneration: ((store: string) => Promise<number | DirectoryAnalysisRegistration>) | undefined;
   readonly #analysisHome: string | undefined;
   /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
@@ -677,7 +678,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       revisionSource?: NativeGitRevisionSource;
       analysisStore?: string;
       analysisRun?: NativeAnalysisScopeRun;
-      analysisGeneration?: (store: string) => Promise<number>;
+      analysisGeneration?: (store: string) => Promise<number | DirectoryAnalysisRegistration>;
       analysisHome?: string;
     },
   ) {
@@ -1062,17 +1063,18 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       const source = this.#revisionSource;
       const attach = async () => {
         let storePath = configuredStore;
-        let generation: number | undefined;
+        let registration: DirectoryAnalysisRegistration | number | undefined;
         if (this.#analysisStore === undefined && this.#analysisGeneration !== undefined) {
           try {
-            generation = await this.#analysisGeneration(storePath);
+            registration = await this.#analysisGeneration(storePath);
           } catch (error) {
             process.stderr.write(`rerail: analysis ownership is unavailable: ${errorMessage(error)}\n`);
             storePath = ":memory:";
           }
         }
         const result = source === undefined
-          ? await workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames, this.#analysisRun, generation, this.#analysisHome)
+          ? await workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames, this.#analysisRun,
+            typeof registration === "number" ? registration : registration?.generation, this.#analysisHome, typeof registration === "object" ? registration.identity : undefined)
           : await workspace.enableRevisionStorageAsync(source, storePath, secretNames, this.#analysisRun);
         if (!result.cacheUnavailable || storePath === ":memory:" || source === undefined) return result;
         const warning = result.reason ?? "The durable cache is unavailable";

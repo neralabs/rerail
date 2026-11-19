@@ -145,7 +145,7 @@ export interface NativeCodeRuleDslWorkspace {
    * binding never chooses a store itself and refuses an empty path. A file `secretNames` names is evaluated but never
    * written to the store (not its source, syntax trees or results): it stays in the workspace's memory instead.
    */
-  enableStorageAsync(root: string, storePath: string, secretNames: NativeSecretNames, analysis?: NativeAnalysisScopeRun, generation?: number, home?: string): Promise<NativeStorageAttachment>;
+  enableStorageAsync(root: string, storePath: string, secretNames: NativeSecretNames, analysis?: NativeAnalysisScopeRun, generation?: number, home?: string, expectedStore?: string): Promise<NativeStorageAttachment>;
   /**
    * `placement`, when given, is a JSON `CodeRulePlacement` (repository-model.ts): this workspace runs the code rule per folder
    * at the entry's mode (`null` is off there), and a linter's suppression comment silences its violations there unless the
@@ -423,8 +423,9 @@ export interface NativeLoadedRrPolicies {
 }
 
 export interface NativeBinding {
-  AnalysisScopeRun: new (store: string, scope: string, directory: boolean, id: string, generation: number, home?: string) => NativeAnalysisScopeRun;
+  AnalysisScopeRun: new (store: string, scope: string, directory: boolean, id: string, generation: number, home?: string, expectedStore?: string) => NativeAnalysisScopeRun;
   prepareAnalysisStoreAsync(store: string): Promise<void>;
+  prepareAnalysisStoreRegistrationAsync(store: string, directory: string, home: string): Promise<{ identity: string; cutoff?: number }>;
   prepareDirectoryAnalysisStoreAsync(store: string, directory: string, home: string): Promise<number | null>;
   collectAnalysisCacheAsync(store: string): Promise<void>;
   inspectRrPolicy(path: string, source?: NativeGitRevisionSource): string;
@@ -471,7 +472,8 @@ export interface NativeBinding {
   spawnDetached(program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string): number;
   /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
-  deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string): void;
+  deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string, expectedStore?: string): void;
+  owningDirectoryAnalysisStore(storePath: string, directory: string, home: string): string | null;
   existingDirectoryAnalysisOwnership(storePath: string, directory: string, home: string): boolean;
   retireUpkeepUnder?(directory: string): void;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
