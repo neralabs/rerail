@@ -591,12 +591,19 @@ impl Observer {
             return None;
         }
         let e = self.known(path)?;
-        // Recorded within the journal's settle window: its silence may hide a merged event (Q189).
-        if self.settling(&e) {
+        // Recorded within the journal's settle window: its silence may hide a merged event (Q189). Not under a root
+        // checked by its listings (decision 0400): no silence of the journal's vouches for it there, its own check
+        // did, racy rule and all (`listed_holds`).
+        if self.settling(&e) && !self.listed_root(path) {
             return None;
         }
         self.counts.trusted += 1;
         Some(e)
+    }
+
+    /// Whether `path` is under a root this run checked by its directories' listings (decision 0400).
+    fn listed_root(&self, path: &Path) -> bool {
+        self.roots.iter().any(|r| r.trusted && r.listed && r.asked == self.flushes && under(&path, &r.path))
     }
 
     /// Whether `e` was recorded within the journal's settle window ([`JOURNAL_SETTLE_NS`]).
@@ -682,7 +689,8 @@ impl Observer {
             return false;
         }
         // A listing recorded within the journal's settle window is not trusted for an absence (Q189): `stat` says.
-        if self.known(dir).is_some_and(|e| self.settling(&e)) {
+        // Under a root checked by its listings, the listing was checked this run (decision 0400).
+        if !self.listed_root(dir) && self.known(dir).is_some_and(|e| self.settling(&e)) {
             return false;
         }
         let listing = match self.known(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
@@ -2362,6 +2370,9 @@ mod tests {
         let store = base.join("store.files");
         let run = |settle: i64| {
             let mut o = Observer::open(Some(&store));
+            // Asked of the journal: a root this small is otherwise checked by its listings (decision 0400), which
+            // reads the edit whatever the journal says.
+            o.list_max = 0;
             o.settle_ns = settle;
             o.wait_least_ns = 2_000_000_000;
             o.begin();
@@ -2375,15 +2386,24 @@ mod tests {
         let (_, first) = run(0);
         std::thread::sleep(std::time::Duration::from_millis(300));
         run(0);
-        // The edit, then the cursor moved past its event: the journal names nothing since.
+        // The edit, then the root's cursor moved past its event: the journal names nothing since. A cursor is one a
+        // sync gave, whose question is told what came after that sync's cookie (the journal answers by arrival); an
+        // id of no sync is told everything the stream saw. So the cursor stored is a sync's taken after the edit,
+        // which is what a merged event amounts to: the edit came before the cursor, and is never named.
         let edit_and_hide = |text: &str| {
             std::fs::write(&file, text).unwrap();
             aged(&file);
             std::thread::sleep(std::time::Duration::from_millis(500));
             let volume = super::super::journal::volume(&root).expect("a volume");
-            let id = super::super::journal::current_id().to_string();
             let db = Connection::open(&store).unwrap();
-            db.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![cursor_key(&root, volume), id]).unwrap();
+            // Asked from the root's own cursor, of the stream the observer asks: a sync's id is that stream's.
+            let was: String = db.query_row("SELECT CAST(value AS TEXT) FROM observer_meta WHERE key = ?1", params![cursor_key(&root, volume)], |r| r.get(0)).expect("the root holds a cursor");
+            super::super::journal::next_epoch();
+            let after = match super::super::journal::since(std::slice::from_ref(&root), Some(&was), &cookie_dir(&store), std::time::Duration::from_secs(5)) {
+                super::super::journal::Since::Changed { cursor, .. } | super::super::journal::Since::Behind { cursor } | super::super::journal::Since::Lost { cursor: Some(cursor), .. } => cursor,
+                super::super::journal::Since::Lost { why, .. } => panic!("the journal gave no cursor: {why}"),
+            };
+            db.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![cursor_key(&root, volume), after]).unwrap();
         };
         edit_and_hide("x = 22\n");
         let (missed, stale) = run(0);

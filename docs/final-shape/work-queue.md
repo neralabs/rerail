@@ -5149,3 +5149,15 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   none are wanted).
 - **To do:** run them on this Mac to tell a host's journal from the code. Then bisect from 718434dca, the last
   merge into `journal.rs` and `observe.rs`.
+- **Done** (2026-11-19). The same four fail on this Mac, so the cause was the code. Two merged rules met:
+  - Q189's settle window (`settling`: an answer recorded in the last 120 s is checked by `stat`, since the
+    journal's silence may hide a merged event) was applied under roots checked by their listings (0400) too. No
+    silence of the journal's vouches for an answer there; its own listing check does, racy rule and all
+    (`listed_holds`). So 0400's tests, which run twice within seconds, statted every path. The window now applies
+    only where the journal vouches (`Observer::listed_root`).
+  - The settle test hid its edit by storing `current_id()` as the root's cursor. Since 718434dca a replay answers
+    by arrival: a cursor that is no sync's is told everything the stream saw, so nothing was hidden. Its small
+    root was also checked by listings, which read the edit anyway. It now asks the journal (`list_max = 0`) and
+    stores the cursor of a sync taken after the edit, which is what a merged event amounts to.
+  - All 34 `observe` and journal tests pass on this Mac, twice. On the M3 at load 35, four more failed on timing:
+    a run there sees the journal late.
