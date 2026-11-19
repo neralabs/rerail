@@ -5311,3 +5311,25 @@ Open:
   `required_text.rs`, `language.rs`, `probes.rs` and `lib.rs` hunks came with the merge; token_census.rs,
   token_automata.rs, tokens.rs and tokens_tests.rs are the hub's.
 - **Done when**: the four are ported onto the hub's token tests, or measured on the hub and judged not worth it.
+
+### Q252. Two Metal parity tests fail at the hub's tip on the M3
+
+- **Seen** (2026-11-19, the M3, both at the pre-merge hub 5fbc02057 and after #508's merge, so not the merge's):
+  - `rr_parser::tests::a_refused_files_records_stop_on_metal`: `"x = 1.2.3."` is not refused on both (Metal and
+    the CPU disagree on the refusal); `"\u{1}"` and `` "````a````." `` code 0 tokens on Metal, 5 on the CPU.
+  - `parser_tests::metal_tests::every_step_on_metal_equals_the_interpreter`: 182 of 2,206 files differ over the 13
+    steps Metal runs (step `01-vrai`'s mutations first: `"vra^"`, `"\nvra="`), where Q183 left none.
+- **Done when**: both pass on a Mac with Metal.
+
+### Q253. The journal's wait bound (Q221) is gone, and the FSEvents tests disturb each other
+
+- **Seen** (2026-11-19): `fsevents::since_within` takes the caller's `wait` and never reads it (a warning on macOS):
+  89f4abfec waited `wait.unwrap_or(WAIT)` and answered `Late::Slower` as a `Lost` keeping the stream; 718434dca
+  (rr-align, after a hub merge) made it `WAIT.max(settle)`. Putting the bound back (`min` of the two) fails 4 observer
+  tests on the M3 one at a time (`a_canonical_path_…`, `a_watched_root_…`, `an_inner_root_…`,
+  `rerails_own_files_…`), which expect the journal's answer within the bound's 2 ms floor.
+- **Also seen**: run in one nextest process set, the 20 `tree_watch` tests (main's, new to the hub) and the 31
+  observer tests fail each other's notices on the M3 (11 failed); each set alone passes, the observer's at `-j 1`
+  (at `-j 4` one to three of its own fail, a different set each run, also at 5fbc02057).
+- **Done when**: Q221's bound reads `wait` again with the observer tests passing, and the FSEvents tests pass
+  together (a test group of their own, or streams that do not share `fseventsd`'s latency).
