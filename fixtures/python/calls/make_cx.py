@@ -93,6 +93,8 @@ rep('extb(e) :- basex(_, e), qn(e, q), !qknown(q).',
     '.decl xknown(e: node, q: symbol)\nxknown(e, q) :- basex(_, e), qn(e, q), qv(m9, q, _, _), ' + R.format(a='e', b='m9') + '.')
 rep('ext_import(s, x) :- rifrom(s, x, m, _), !isqmod(m).', 'ext_import(s, x) :- rifrom(s, x, m, _), docof(s, d9), !rr_cx_sees(d9, m).')
 rep('ext_import(s, x) :- ribind(s, x, q), !rifrom(s, x, _, _), !isqmod(q).', 'ext_import(s, x) :- ribind(s, x, q), !rifrom(s, x, _, _), docof(s, d9), !rr_cx_sees(d9, q).')
+rep('run_import(s, x) :- rifrom(s, x, m, _), isqmod(m).', 'run_import(s, x) :- rifrom(s, x, m, _), docof(s, d9), rr_cx_sees(d9, m).')
+rep('run_import(s, x) :- ribind(s, x, q), !rifrom(s, x, _, _), isqmod(q).', 'run_import(s, x) :- ribind(s, x, q), !rifrom(s, x, _, _), docof(s, d9), rr_cx_sees(d9, q).')
 rep('.decl tqv(q: symbol, k: symbol, v: node)', '.decl tqv(m: node, q: symbol, k: symbol, v: node)')
 rep('tqv(@dot(q, x), k, v) :- modname(m, q), tbv(m, x, k, v).', 'tqv(m, @dot(q, x), k, v) :- modname(m, q), tbv(m, x, k, v).')
 rep('tbv(s, x, k, v) :- ibind(s, x, q), tqv(q, k, v).', 'tbv(s, x, k, v) :- ibind(s, x, q), tqv(m9, q, k, v), ' + R.format(a='s', b='m9') + '.')
