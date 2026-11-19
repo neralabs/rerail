@@ -61,8 +61,11 @@ static GLOBAL: Sampled = Sampled;
 #[cfg_attr(test, allow(dead_code))]
 struct Sampled;
 
+// Every allocation of every crate calls these through the allocator shim (`__rust_alloc`): inlined into it, as
+// jemalloc's own are, they cost the shim one load more an allocation and not a call of their own.
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 unsafe impl std::alloc::GlobalAlloc for Sampled {
+    #[inline]
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
         if rerail_prof::heap::on() {
@@ -70,6 +73,7 @@ unsafe impl std::alloc::GlobalAlloc for Sampled {
         }
         p
     }
+    #[inline]
     unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
         let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
         if rerail_prof::heap::on() {
@@ -77,12 +81,14 @@ unsafe impl std::alloc::GlobalAlloc for Sampled {
         }
         p
     }
+    #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
         if rerail_prof::heap::on() {
             rerail_prof::heap::free(ptr as usize);
         }
         unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
     }
+    #[inline]
     unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
         let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
         if rerail_prof::heap::on() && !q.is_null() {

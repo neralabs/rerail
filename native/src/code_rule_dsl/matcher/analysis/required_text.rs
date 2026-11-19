@@ -175,8 +175,29 @@ fn util_needs(util: &UtilRef, utilities: &mut Utilities, reach: Reach) -> Vec<Cl
 }
 
 /// The literals every match of `pattern` begins with, where there are finitely many and none is
-/// empty.
+/// empty. Found once a process per pattern (`FOUND`): every grammar matcher of every rule reads
+/// the regexes it reaches (`RequiredText::of`), a pack's shared utilities' among them, and parsing a
+/// regex is most of what that costs.
 fn regex_clause(pattern: &str) -> Option<Clause> {
+    /// Past this many, a pattern's literals are found and not kept: a daemon that compiles rule after
+    /// rule keeps a bounded set.
+    const KEPT: usize = 1 << 14;
+    type Found = std::collections::HashMap<Box<str>, Option<Clause>>;
+    static FOUND: std::sync::LazyLock<std::sync::Mutex<Found>> = std::sync::LazyLock::new(Default::default);
+    if let Some(found) = FOUND.lock().ok().and_then(|found| found.get(pattern).cloned()) {
+        return found;
+    }
+    let found = literals(pattern);
+    if let Ok(mut kept) = FOUND.lock()
+        && kept.len() < KEPT
+    {
+        kept.insert(pattern.into(), found.clone());
+    }
+    found
+}
+
+/// `regex_clause`, found.
+fn literals(pattern: &str) -> Option<Clause> {
     let hir = regex_syntax::parse(pattern).ok()?;
     let literals = Extractor::new().extract(&hir).literals()?.to_vec();
     if literals.is_empty() || literals.len() > MAX_ALTERNATIVES {

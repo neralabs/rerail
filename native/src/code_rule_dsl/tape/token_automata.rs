@@ -602,10 +602,14 @@ impl<'b> Reader<'b> {
         self.u().map(|v| v as usize)
     }
     fn text(&mut self) -> Option<String> {
+        self.str().map(str::to_owned)
+    }
+    /// A text, read where it lies.
+    fn str(&mut self) -> Option<&'b str> {
         let n = self.n()?;
         let (text, rest) = (self.0.get(..n)?, self.0.get(n..)?);
         self.0 = rest;
-        String::from_utf8(text.to_vec()).ok()
+        std::str::from_utf8(text).ok()
     }
     fn label(&mut self) -> Option<Label> {
         Some(Label { token: self.u()? != 0, name: self.u()?, field: self.u()? })
@@ -615,6 +619,10 @@ impl<'b> Reader<'b> {
     }
     fn texts<T: FromIterator<String>>(&mut self) -> Option<T> {
         (0..self.n()?).map(|_| self.text()).collect()
+    }
+    /// Texts, read where they lie.
+    fn strs<T: FromIterator<&'b str>>(&mut self) -> Option<T> {
+        (0..self.n()?).map(|_| self.str()).collect()
     }
     /// Past `n` bytes, unread.
     fn skip(&mut self, n: usize) -> Option<()> {
@@ -771,15 +779,24 @@ pub(crate) fn encode_census(census: &Census) -> Vec<u8> {
     w.0
 }
 
-/// The census `encode_census` wrote; `None` for bytes it did not write.
-pub(crate) fn decode_census(bytes: &[u8]) -> Option<Census> {
+/// A census as `encode_census` wrote it, its names read where they lie (`decode_census`).
+pub(crate) struct CensusIn<'b> {
+    pub(crate) implied: BTreeMap<&'b str, BTreeSet<(&'b str, &'b str)>>,
+    pub(crate) parents: BTreeMap<&'b str, BTreeSet<&'b str>>,
+    pub(crate) tokens: BTreeSet<&'b str>,
+    pub(crate) extras: BTreeSet<&'b str>,
+}
+
+/// The census `encode_census` wrote, its names read in place, not copied (it is read once a dialect, as a rule of
+/// it first compiles); `None` for bytes it did not write.
+pub(crate) fn decode_census(bytes: &[u8]) -> Option<CensusIn<'_>> {
     let mut r = Reader(bytes);
     if r.u()? != FORMAT {
         return None;
     }
-    let implied = (0..r.n()?).map(|_| Some((r.text()?, (0..r.n()?).map(|_| Some((r.text()?, r.text()?))).collect::<Option<_>>()?))).collect::<Option<_>>()?;
-    let parents = (0..r.n()?).map(|_| Some((r.text()?, r.texts()?))).collect::<Option<_>>()?;
-    let tokens = r.texts()?;
-    let extras = r.texts()?;
-    r.0.is_empty().then_some(Census { implied, parents, tokens, extras })
+    let implied = (0..r.n()?).map(|_| Some((r.str()?, (0..r.n()?).map(|_| Some((r.str()?, r.str()?))).collect::<Option<_>>()?))).collect::<Option<_>>()?;
+    let parents = (0..r.n()?).map(|_| Some((r.str()?, r.strs()?))).collect::<Option<_>>()?;
+    let tokens = r.strs()?;
+    let extras = r.strs()?;
+    r.0.is_empty().then_some(CensusIn { implied, parents, tokens, extras })
 }

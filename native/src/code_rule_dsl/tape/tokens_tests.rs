@@ -58,11 +58,15 @@ fn the_automata_built_with_the_build_are_the_grammars() {
         assert_eq!(built.kind_count(), fresh.kind_count(), "{lang:?}");
         assert_eq!(built.automata_text(), fresh.automata_text(), "{lang:?}");
         assert_eq!(built.implied_tokens(), fresh.implied_tokens(), "{lang:?}");
-        // The census the token tests read, as the build wrote it.
+        // The census the token tests read, as the build wrote it (its names read in place).
         let census = crate::code_rule_dsl::tape::token_census::Lang::of(lang).unwrap_or_else(|| panic!("{lang:?}: no census"));
-        assert_eq!(census.implied, fresh.implied_tokens(), "{lang:?}");
-        assert_eq!(census.parents, fresh.parents(), "{lang:?}");
-        assert_eq!(census.tokens, fresh.token_texts(), "{lang:?}");
+        let owned = |set: &std::collections::BTreeSet<&str>| set.iter().map(|&text| text.to_owned()).collect::<std::collections::BTreeSet<String>>();
+        let implied: std::collections::BTreeMap<String, std::collections::BTreeSet<(String, String)>> =
+            census.implied.iter().map(|(&kind, pairs)| (kind.to_owned(), pairs.iter().map(|&(token, field)| (token.to_owned(), field.to_owned())).collect())).collect();
+        let parents: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> = census.parents.iter().map(|(&kind, parents)| (kind.to_owned(), owned(parents))).collect();
+        assert_eq!(implied, fresh.implied_tokens(), "{lang:?}");
+        assert_eq!(parents, fresh.parents(), "{lang:?}");
+        assert_eq!(owned(&census.tokens), fresh.token_texts(), "{lang:?}");
         compared += 1;
     }
     assert!(compared >= 8, "{compared} grammars compared");

@@ -185,31 +185,23 @@ impl<'a> Walk<'a> {
 
     fn token_test(&mut self, regex: &str, rel: &Rel, from: &Frame, frame: &Frame, negated: bool, declared: bool, path: &str) {
         let Some(lang) = self.lang() else { return };
-        use crate::code_rule_dsl::regexes::Regex;
-        let Ok(compiled) = Regex::new(regex) else { return };
-        if !lang.tokens.iter().any(|token| compiled.is_match(token)) {
-            return;
-        }
-        // Compiled only for a regex that reaches a token: it is the test's own, which no term holds.
-        let Ok(whole) = Regex::new(&format!("^(?:{regex})$")) else { return };
-        // A regex that matches a token without spanning it tests a node's text, and reaches a
-        // token only by accident (`.`, `^[rub]*f`): `incidental`.
-        let incidental = !lang.tokens.iter().any(|token| whole.is_match(token)) || ["x", "foo_bar", "0"].iter().any(|text| compiled.is_match(text));
-        let compiled = if incidental { compiled } else { whole };
-        let parents_of = |kind: &Option<String>| kind.as_ref().and_then(|kind| lang.parents.get(kind)).cloned();
+        let Some(reach) = Reach::of(lang, regex) else { return };
+        let incidental = reach.incidental;
+        let matches = |token: &str| reach.tokens.contains(token);
+        let parents_of = |kind: &Option<String>| kind.as_ref().and_then(|kind| lang.parents_of(kind));
         let (category, relation, implied) = match rel {
             Rel::Inside => ("never", "inside".to_owned(), BTreeSet::new()),
             // The token matched itself: under the neighbour `inside` names, where one does.
-            Rel::Root(tag) => ("root", (*tag).to_owned(), lang.implied_in(frame.parent.clone().map(|kind| BTreeSet::from([kind])).as_ref(), &compiled, None)),
-            Rel::Has { end: true, field } => ("below", "has end".to_owned(), lang.implied_in(None, &compiled, field.as_deref())),
+            Rel::Root(tag) => ("root", (*tag).to_owned(), lang.implied_where(frame.parent.clone().map(|kind| BTreeSet::from([kind])).as_ref(), &matches, None)),
+            Rel::Has { end: true, field } => ("below", "has end".to_owned(), lang.implied_where(None, &matches, field.as_deref())),
             Rel::Has { end: false, field } => {
                 let parents = from.kind.clone().map(|kind| BTreeSet::from([kind]));
-                (if parents.is_some() { "gap" } else { "gap?" }, "has".to_owned(), lang.implied_in(parents.as_ref(), &compiled, field.as_deref()))
+                (if parents.is_some() { "gap" } else { "gap?" }, "has".to_owned(), lang.implied_where(parents.as_ref(), &matches, field.as_deref()))
             }
             Rel::Sibling { end, field } => {
                 let parents = frame.parent.clone().map(|kind| BTreeSet::from([kind])).or_else(|| parents_of(&from.kind));
                 let relation = if *end { "sibling end" } else { "sibling" }.to_owned();
-                (if parents.is_some() { "gap" } else { "gap?" }, relation, lang.implied_in(parents.as_ref(), &compiled, field.as_deref()))
+                (if parents.is_some() { "gap" } else { "gap?" }, relation, lang.implied_where(parents.as_ref(), &matches, field.as_deref()))
             }
         };
         // A token test that is a lowered relation's target, or an `any` alternative or `all` item
@@ -236,7 +228,7 @@ impl<'a> Walk<'a> {
 
     fn layout(&mut self, side: &str, frame: &Frame, negated: bool, path: &str) {
         let Some(lang) = self.lang() else { return };
-        let parents = frame.parent.clone().map(|kind| BTreeSet::from([kind])).or_else(|| frame.kind.as_ref().and_then(|kind| lang.parents.get(kind)).cloned());
+        let parents = frame.parent.clone().map(|kind| BTreeSet::from([kind])).or_else(|| frame.kind.as_ref().and_then(|kind| lang.parents_of(kind)));
         let any = crate::code_rule_dsl::regexes::Regex::new(".").unwrap();
         let implied = lang.implied_in(parents.as_ref(), &any, None);
         let category = if implied.is_empty() { "stored" } else { "layout" };
@@ -268,6 +260,52 @@ impl<'a> Walk<'a> {
         });
         self.lowered.insert(path.to_owned(), lowered);
         lowered
+    }
+}
+
+/// What a token test's regex is in a dialect, wherever it stands (`Walk::token_test`): whether it reaches a token
+/// only by accident (`incidental`), and the implied tokens it matches, the one it reads the gaps with (itself where
+/// incidental, else spanning a whole token). Found once a process per dialect and regex (`of`): a pack's rules test
+/// the same tokens rule after rule, and finding it compiles a regex of its own (`^(?:…)$`) no term holds.
+struct Reach {
+    incidental: bool,
+    tokens: BTreeSet<String>,
+}
+
+impl Reach {
+    /// `None` where `regex` does not compile or reaches no token of `lang`.
+    fn of(lang: &Lang, regex: &str) -> Option<std::sync::Arc<Self>> {
+        type Found = std::collections::HashMap<(crate::code_rule_dsl::language::GrammarDialect, String), Option<std::sync::Arc<Reach>>>;
+        /// Past this many, a regex's reach is found and not kept: a daemon that compiles rule after rule keeps a
+        /// bounded set.
+        const KEPT: usize = 1 << 14;
+        static FOUND: std::sync::LazyLock<std::sync::Mutex<Found>> = std::sync::LazyLock::new(Default::default);
+        let key = (lang.dialect, regex.to_owned());
+        if let Some(found) = FOUND.lock().ok().and_then(|found| found.get(&key).cloned()) {
+            return found;
+        }
+        let found = Self::find(lang, regex).map(std::sync::Arc::new);
+        if let Ok(mut kept) = FOUND.lock()
+            && kept.len() < KEPT
+        {
+            kept.insert(key, found.clone());
+        }
+        found
+    }
+
+    fn find(lang: &Lang, regex: &str) -> Option<Self> {
+        use crate::code_rule_dsl::regexes::Regex;
+        let compiled = Regex::new(regex).ok()?;
+        if !lang.tokens.iter().any(|token| compiled.is_match(token)) {
+            return None;
+        }
+        let whole = Regex::new(&format!("^(?:{regex})$")).ok()?;
+        // A regex that matches a token without spanning it tests a node's text, and reaches a
+        // token only by accident (`.`, `^[rub]*f`): `incidental`.
+        let incidental = !lang.tokens.iter().any(|token| whole.is_match(token)) || ["x", "foo_bar", "0"].iter().any(|text| compiled.is_match(text));
+        let reads = if incidental { compiled } else { whole };
+        let tokens = lang.distinct().iter().filter(|&&(token, _)| reads.is_match(token)).map(|&(token, _)| token.to_owned()).collect();
+        Some(Self { incidental, tokens })
     }
 }
 
