@@ -2608,29 +2608,6 @@ impl Lowerer {
 
     /// Literal `lit`, writing its alternative `pick` (`alt`; none past its count): its count of alternatives.
     fn literal_put(&mut self, lit: &LitAt, outer: &BTreeSet<String>, pick: usize) -> Result<usize, Error> {
-        if let L::Atom { rel, args, neg } = self.lit(lit)
-            && matches!(rel.as_str(), "within" | "within_stop")
-            && !(matches!(rel.as_str(), "within_stop") && args.len() == 3 && self.node_set(&args[2]).is_some())
-        {
-            return self.within_put(&rel, &args, neg, pick);
-        }
-        if let L::Group { alts, neg: false } = self.lit(lit) {
-            if let Some(set) = self.test_set(&alts, false)? {
-                return self.put_alts(vec![set], pick);
-            }
-            // `(a ; b)`: each alternative's combinations, in turn.
-            let mut offset = 0;
-            for alt in &alts {
-                let k = pick.checked_sub(offset).unwrap_or(usize::MAX);
-                offset += self.conjunction_put(alt, outer, k)?;
-            }
-            return Ok(offset);
-        }
-        let alts = self.literal(lit, outer)?;
-        self.put_alts(alts, pick)
-    }
-
-    fn literal(&mut self, lit: &LitAt, outer: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
         let str_of = |me: &Self, a: &At| match me.tv(a) {
             T::Str(s) => Some(s),
             _ => None,
@@ -2639,13 +2616,30 @@ impl Lowerer {
             T::Var(v) => Some(v),
             _ => None,
         };
-        Ok(match self.lit(lit) {
+        // A literal of one alternative: its lowering writes it when it is the one picked.
+        let one = |me: &mut Self, f: &mut dyn FnMut(&mut Self) -> Result<(), Error>| -> Result<usize, Error> {
+            me.alt(0, pick, |me| f(me))?;
+            Ok(1)
+        };
+        match self.lit(lit) {
+            L::Group { alts, neg: false } => {
+                if let Some(set) = self.test_set(&alts, false)? {
+                    return self.put_alts(vec![set], pick);
+                }
+                // `(a ; b)`: each alternative's combinations, in turn.
+                let mut offset = 0;
+                for alt in &alts {
+                    let k = pick.checked_sub(offset).unwrap_or(usize::MAX);
+                    offset += self.conjunction_put(alt, outer, k)?;
+                }
+                Ok(offset)
+            }
             L::Group { alts, neg: true } => {
                 if let Some(mut set) = self.test_set(&alts, true)? {
                     if let Some(Literal::Cmp { r, .. }) = set.last_mut() {
                         *r = Term::Int(0);
                     }
-                    return Ok(vec![set]);
+                    return self.put_alts(vec![set], pick);
                 }
                 // `!(a, b)`: no row of the conjunction, through a helper relation of the variables it shares with the
                 // rule; `!(a ; b)` is `!a, !b`.
@@ -2653,22 +2647,22 @@ impl Lowerer {
                 for alt in &alts {
                     out.push(self.negated_conjunction(alt, outer)?);
                 }
-                vec![out]
+                self.put_alts(vec![out], pick)
             }
-            L::Group { neg: false, .. } => unreachable!("`literal_put` lowers a disjunction"),
-            L::Pattern { subject, pattern, selector, neg } => self.pattern(&subject, &pattern, selector.as_deref(), neg)?,
+            L::Pattern { subject, pattern, selector, neg } => one(self, &mut |me| me.pattern(&subject, &pattern, selector.as_deref(), neg)),
             L::Atom { rel, args, neg } if matches!(rel.as_str(), "nearest" | "inside" | "has" | "within_stop") && args.len() == 3 && self.node_set(&args[2]).is_some() => {
-                self.node_axis(&rel, &args, neg, outer)?
+                let alts = self.node_axis(&rel, &args, neg, outer)?;
+                self.put_alts(alts, pick)
             }
-            L::Atom { rel, .. } if matches!(rel.as_str(), "within" | "within_stop") => unreachable!("`literal_put` lowers {rel}"),
-            L::Atom { rel, args, neg } if rel == "split_dot" => self.split_dot(&args, neg)?,
+            L::Atom { rel, args, neg } if matches!(rel.as_str(), "within" | "within_stop") => self.within_put(&rel, &args, neg, pick),
+            L::Atom { rel, args, neg } if rel == "split_dot" => self.split_dot(&args, neg, pick),
             // `match_all("re", sp, m)` (three arguments: each match in span sp, a span m, as the linter's regex finds
             // them) and `match_group` are relations the batches make (`facts::vtab::syntax`'s `Extra`); the symbol
             // forms of `match_all` (two or five arguments) and a `match` with captures are the text layer's (0054).
             L::Atom { rel, args, neg: false }
                 if rel == "match_all" && args.len() != 3 || rel == "match" && args.len() == 2 && str_of(self, &args[0]).is_some_and(|re| !groups(&re).is_empty()) =>
             {
-                self.text_matches(&rel, &args)?
+                one(self, &mut |me| me.text_matches(&rel, &args))
             }
             // `match_all("re", n, m)` over a node a sibling binds to a kind (`kind(n, "arguments")`): `rx_span`'s
             // matches in the node, m each match, its groups bound with it. A `source`, `src_line` or comment span, or a
@@ -2679,57 +2673,54 @@ impl Lowerer {
                     && str_of(self, &args[0]).is_some()
                     && var_of(self, &args[1]).is_some_and(|n| self.span_container(&n).is_none() && self.kind_bound(&n)) =>
             {
-                self.node_matches(&args)?
+                one(self, &mut |me| me.node_matches(&args))
             }
             // A text test on a node or span tests its text (`core.rr`).
             L::Atom { rel, args, neg } if test_of(&rel).is_some() && args.len() == 2 && var_of(self, &args[1]).is_some_and(|v| self.span_container(&v).is_some() || self.node_typed(&v)) => {
-                self.text_test(&rel, &args, neg)?
+                one(self, &mut |me| me.text_test(&rel, &args, neg))
             }
             // `!match_all("re", s)`: no match anywhere in s, a search (captures bind nothing outside the `!`).
             L::Atom { rel, args, neg: true } if rel == "match_all" && args.len() != 3 => {
                 let (Some(re), [_, s]) = (args.first().and_then(|a| str_of(self, a)), args.as_slice()) else {
                     return Err(Error::Syntax("match_all takes a regex and a text".to_owned()));
                 };
-                vec![vec![Literal::Cmp { l: Term::Call("rx".into(), [self.term(s)?, Term::Str(re.into())].into()), op: "=", r: Term::Int(0) }]]
+                let l = Literal::Cmp { l: Term::Call("rx".into(), [self.term(s)?, Term::Str(re.into())].into()), op: "=", r: Term::Int(0) };
+                one(self, &mut |me| me.emit(l.clone()))
             }
-            L::Atom { rel, args, neg } => {
-                // core.rr's tree arithmetic (`earlier`, `precedes`, …) as the relations the engine has (`core`).
-                if let Some(literals) = self.rewrite(&rel, &args, neg)? {
-                    return Ok(vec![literals]);
-                }
-                if !neg && matches!(rel.as_str(), "parsed" | "sub_tape") {
-                    self.embed_demand(&args)?;
-                }
-                if !neg && matches!(rel.as_str(), "parse_of" | "splice_of") {
-                    self.value_demand(&rel, &args)?;
-                }
-                if let Some(demand) = world_demand(&rel) {
-                    self.world_demand(demand, &args)?;
-                }
-                // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
-                // variables (`front::finish_checks_on`'s computed-term check).
-                let mut atom = self.atom(&rel, &args, neg)?;
-                let mut out = Vec::new();
-                if let Literal::Atom(a) = &mut atom {
-                    for t in &mut a.args {
-                        if matches!(t, Term::Call(..)) {
-                            let v = self.fresh("t");
-                            out.push(Literal::Cmp { l: Term::Var(v.clone().into()), op: "=", r: std::mem::replace(t, Term::Var(v.into())) });
-                        }
-                    }
-                }
-                out.push(atom);
-                vec![out]
-            }
-            L::Cmp { l, op, r } => self.comparison(&l, op, &r, outer)?,
-        })
+            L::Atom { rel, args, neg } => one(self, &mut |me| me.atom_literal(&rel, &args, neg)),
+            L::Cmp { l, op, r } => one(self, &mut |me| me.comparison(&l, op, &r, outer)),
+        }
     }
 
-
-
-
-
-
+    /// Atom `rel(args)` (negated: `neg`), and the demands it makes.
+    fn atom_literal(&mut self, rel: &str, args: &[At], neg: bool) -> Result<(), Error> {
+        // core.rr's tree arithmetic (`earlier`, `precedes`, …) as the relations the engine has (`core`).
+        if let Some(literals) = self.rewrite(rel, args, neg)? {
+            return literals.into_iter().try_for_each(|l| self.emit(l));
+        }
+        if !neg && matches!(rel, "parsed" | "sub_tape") {
+            self.embed_demand(args)?;
+        }
+        if !neg && matches!(rel, "parse_of" | "splice_of") {
+            self.value_demand(rel, args)?;
+        }
+        if let Some(demand) = world_demand(rel) {
+            self.world_demand(demand, args)?;
+        }
+        // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
+        // variables (`front::finish_checks_on`'s computed-term check).
+        let mut atom = self.atom(rel, args, neg)?;
+        if let Literal::Atom(a) = &mut atom {
+            for t in &mut a.args {
+                if matches!(t, Term::Call(..)) {
+                    let v = self.fresh("t");
+                    let bound = Literal::Cmp { l: Term::Var(v.clone().into()), op: "=", r: std::mem::replace(t, Term::Var(v.into())) };
+                    self.emit(bound)?;
+                }
+            }
+        }
+        self.emit(atom)
+    }
 
     /// `parsed(s, "g", r)` or `sub_tape(s, "g", t)` asks for the guest at s (decision 0055): `rr_embed_req(s, "g")`.
     /// A grammar that is not a constant asks for nothing: the atom reads the guests other rules or libraries asked for.
@@ -3365,7 +3356,7 @@ impl Lowerer {
     /// - Over a symbol, `match`'s groups are `@rx_group` (`captures`); `match_all`'s rows are made natively from the
     ///   texts the rule asks about, a context relation of its other literals (`front::Native::MatchAll`). Without
     ///   groups, `match_all` is a search.
-    fn text_matches(&mut self, rel: &str, args: &[At]) -> Result<Vec<Vec<Literal>>, Error> {
+    fn text_matches(&mut self, rel: &str, args: &[At]) -> Result<(), Error> {
         let first = args.first().map(|a| self.tv(a));
         let (re, s, positions) = match (first, args) {
             (Some(T::Str(re)), [_, s]) => (re, s, &[][..]),
@@ -3388,16 +3379,20 @@ impl Lowerer {
             let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".into(), args: args.into(), neg: false, gated: false });
             let (p, c) = (Term::Str(pattern.into()), Term::Var(v.clone().into()));
             if gs.is_empty() {
-                return Ok(vec![vec![atom(vec![p, c, Term::Wild, Term::Str(String::new().into()), Term::Wild])]]);
+                return self.emit(atom(vec![p, c, Term::Wild, Term::Str(String::new().into()), Term::Wild]));
             }
             let j = Term::Var(self.fresh("j").into());
-            return Ok(vec![gs.iter().map(|g| atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone().into()), Term::Var(g.clone().into())])).collect()]);
+            for g in &gs {
+                self.emit(atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone().into()), Term::Var(g.clone().into())]))?;
+            }
+            return Ok(());
         }
         if !all {
             return self.captures(args);
         }
         if gs.is_empty() && positions.is_empty() {
-            return Ok(vec![vec![Literal::Cmp { l: Term::Call("rx".into(), [self.term(s)?, Term::Str(re.clone().into())].into()), op: "=", r: Term::Int(1) }]]);
+            let l = Literal::Cmp { l: Term::Call("rx".into(), [self.term(s)?, Term::Str(re.clone().into())].into()), op: "=", r: Term::Int(1) };
+            return self.emit(l);
         }
         let T::Var(v) = self.tv(s) else { return not_yet(format!("match_all over a computed text, {:?} (bind it to a variable first)", self.tv(s))) };
         let v = &v;
@@ -3422,12 +3417,12 @@ impl Lowerer {
         self.match_all_native(&name, &ctx.rel, re, &gs, !positions.is_empty());
         let args = std::iter::once(Term::Var(v.clone().into())).chain(gs.iter().map(|g| Term::Var(g.clone().into())))
             .map(Ok).chain(positions.iter().map(|p| self.term(p))).collect::<Result<Vec<_>, Error>>()?;
-        Ok(vec![vec![Literal::Atom(Atom { rel: name.into(), args: args.into(), neg: false, gated: false })]])
+        self.emit(Literal::Atom(Atom { rel: name.into(), args: args.into(), neg: false, gated: false }))
     }
 
     /// `match_all("re", n, m)` over node n: each match j of re in n's source is `rx_span(re, n, j, "", m)`, and each
     /// named group g of that match `rx_span(re, n, j, g, g)`, as `match_all` over a span binds them.
-    fn node_matches(&mut self, args: &[At]) -> Result<Vec<Vec<Literal>>, Error> {
+    fn node_matches(&mut self, args: &[At]) -> Result<(), Error> {
         let ([re, n, m], ) = (args,) else { unreachable!("a node match_all") };
         let (T::Str(re), T::Var(n)) = (self.tv(re), self.tv(n)) else { unreachable!("a node match_all") };
         let (re, n) = (&re, &n);
@@ -3435,16 +3430,18 @@ impl Lowerer {
         let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".into(), args: args.into(), neg: false, gated: false });
         let (p, c, j) = (Term::Str(re.clone().into()), Term::Var(n.clone().into()), Term::Var(self.fresh("j").into()));
         let m = self.term(m)?;
-        let mut out = vec![atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(String::new().into()), m])];
-        out.extend(groups(re).into_iter().map(|g| atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone().into()), Term::Var(g.into())])));
-        Ok(vec![out])
+        self.emit(atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(String::new().into()), m]))?;
+        for g in groups(re) {
+            self.emit(atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone().into()), Term::Var(g.into())]))?;
+        }
+        Ok(())
     }
 
     /// A text test (`match`, `glob`, `contains`, …) on node or span `v`: a test of its text. `match` over a `source`
     /// or `src_line` span is `rx_span`'s whole match of the anchored pattern, a scan of the file's bytes, so a line
     /// past `text`'s inline bound is tested too; any other is `text(v, t)` and the test on t, so a node with no
     /// `text` row (a long one, not token-like) passes neither the test nor its negation.
-    fn text_test(&mut self, rel: &str, args: &[At], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+    fn text_test(&mut self, rel: &str, args: &[At], neg: bool) -> Result<(), Error> {
         let [p, v] = args else { unreachable!("a test of a variable") };
         let T::Var(v) = self.tv(v) else { unreachable!("a test of a variable") };
         let v = &v;
@@ -3454,12 +3451,13 @@ impl Lowerer {
         {
             self.rx_span_input();
             let args = vec![Term::Str(format!("^(?:{re})$").into()), Term::Var(v.clone().into()), Term::Wild, Term::Str(String::new().into()), Term::Wild];
-            return Ok(vec![vec![Literal::Atom(Atom { rel: "rx_span".into(), args: args.into(), neg, gated: false })]]);
+            return self.emit(Literal::Atom(Atom { rel: "rx_span".into(), args: args.into(), neg, gated: false }));
         }
         let t = self.fresh("text");
         let text = Literal::Atom(Atom { rel: "text".into(), args: [Term::Var(v.clone().into()), Term::Var(t.clone().into())].into(), neg: false, gated: false });
         let test = self.atom(rel, &[p.clone(), At::Var(t)], neg)?;
-        Ok(vec![vec![text, test]])
+        self.emit(text)?;
+        self.emit(test)
     }
 
     /// ``n ~ `pattern` ``: node n is a match of the AST pattern (ast-grep's syntax, in the program's language), and
@@ -3467,7 +3465,7 @@ impl Lowerer {
     /// document (`core_rr::CoreRows::patterns`) and makes `ast_match(p, n, g, c)`: capture g of the match at n is
     /// node c, and capture "" is n itself. A negated pattern binds nothing: no match at n. A `$$$X` (a run of
     /// nodes) and a `$_X` capture nothing.
-    fn pattern(&mut self, subject: &At, pattern: &str, selector: Option<&str>, neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+    fn pattern(&mut self, subject: &At, pattern: &str, selector: Option<&str>, neg: bool) -> Result<(), Error> {
         let key = crate::code_rule_dsl::language::pattern_key(pattern, selector);
         let T::Var(n) = self.tv(subject) else {
             return Err(Error::Syntax(format!("`{pattern}`: a pattern's subject is a variable")));
@@ -3481,11 +3479,13 @@ impl Lowerer {
             Literal::Atom(Atom { rel: "ast_match".into(), args: [Term::Str(key.clone().into()), Term::Var(n.clone().into()), Term::Str(g.to_owned().into()), c].into(), neg, gated: false })
         };
         if neg {
-            return Ok(vec![vec![atom("", Term::Wild, true)]]);
+            return self.emit(atom("", Term::Wild, true));
         }
-        let mut out = vec![atom("", Term::Wild, false)];
-        out.extend(super::single_metavars(pattern).into_iter().map(|x| atom(&x, Term::Var(x.clone().into()), false)));
-        Ok(vec![out])
+        self.emit(atom("", Term::Wild, false))?;
+        for x in super::single_metavars(pattern) {
+            self.emit(atom(&x, Term::Var(x.clone().into()), false))?;
+        }
+        Ok(())
     }
 
     /// `rx_span` as an input of the program (`facts::vtab::syntax`'s `Extra` makes it).
@@ -3557,7 +3557,7 @@ impl Lowerer {
 
     /// `match("(?<x>…)", s)`: s matches, and each named group binds the variable of its name to its text:
     /// `x = @rx_group(s, "^(?:…)$", "x")`, which has no value when s does not match (`strings::group`).
-    fn captures(&mut self, args: &[At]) -> Result<Vec<Vec<Literal>>, Error> {
+    fn captures(&mut self, args: &[At]) -> Result<(), Error> {
         let [re, s] = args else { unreachable!("match with a pattern") };
         let T::Str(re) = self.tv(re) else { unreachable!("match with a pattern") };
         let re = &re;
@@ -3565,11 +3565,11 @@ impl Lowerer {
         let s = self.term(s)?;
         // The test as well as the groups: a group the head alone reads is a column, which SQL does not filter on, so
         // a text that does not match would make a row with no value (`pct_rest`'s `%%` step).
-        let mut out = vec![Literal::Cmp { l: Term::Call("rx".into(), [s.clone(), whole.clone()].into()), op: "=", r: Term::Int(1) }];
+        self.emit(Literal::Cmp { l: Term::Call("rx".into(), [s.clone(), whole.clone()].into()), op: "=", r: Term::Int(1) })?;
         for g in groups(re) {
-            out.push(Literal::Cmp { l: Term::Var(g.clone().into()), op: "=", r: Term::Call("rx_group".into(), [s.clone(), whole.clone(), Term::Str(g.into())].into()) });
+            self.emit(Literal::Cmp { l: Term::Var(g.clone().into()), op: "=", r: Term::Call("rx_group".into(), [s.clone(), whole.clone(), Term::Str(g.into())].into()) })?;
         }
-        Ok(vec![out])
+        Ok(())
     }
 
     /// `(glob("a", s) ; glob("b", s))` as one test of the set, and `(s = "a" ; s = "b")` as one membership. `neg`: the
@@ -3908,13 +3908,14 @@ impl Lowerer {
         }
     }
 
-    fn comparison(&mut self, l: &At, op: &'static str, r: &At, outer: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
+    fn comparison(&mut self, l: &At, op: &'static str, r: &At, outer: &BTreeSet<String>) -> Result<(), Error> {
         // A float compared with a whole number: the number as a float (`to_float(t) > 86400`).
         let (lf, rf) = (self.is_float(l), self.is_float(r));
         let (l_float, r_float) = (!lf && rf, lf);
         match (self.tv(l), self.tv(r)) {
             (T::Var(v), T::Agg { op: agg, over, by, sep, body }) | (T::Agg { op: agg, over, by, sep, body }, T::Var(v)) if op == "=" => {
-                Ok(vec![self.aggregate(&v, &agg, over.as_ref(), &by, &sep, &body, outer)?])
+                let out = self.aggregate(&v, &agg, over.as_ref(), &by, &sep, &body, outer)?;
+                out.into_iter().try_for_each(|l| self.emit(l))
             }
             (T::Agg { op: agg, over, by, sep, body }, _) | (_, T::Agg { op: agg, over, by, sep, body }) => {
                 let left = matches!(self.tv(l), T::Agg { .. });
@@ -3926,9 +3927,12 @@ impl Lowerer {
                 // before the aggregate: an equality is written `0 = $v`, a test that waits for the aggregate.
                 let (l, r) = if left && op != "=" { (Term::Var(v.into()), other) } else { (other, Term::Var(v.into())) };
                 out.push(Literal::Cmp { l, op, r });
-                Ok(vec![out])
+                out.into_iter().try_for_each(|l| self.emit(l))
             }
-            _ => Ok(vec![vec![Literal::Cmp { l: self.term_as(l, l_float)?, op, r: self.term_as(r, r_float)? }]]),
+            _ => {
+                let c = Literal::Cmp { l: self.term_as(l, l_float)?, op, r: self.term_as(r, r_float)? };
+                self.emit(c)
+            }
         }
     }
 
@@ -4740,7 +4744,7 @@ impl Lowerer {
     /// `split_dot(q, m, x)`: q is m.x split at its last dot, so x has no dot: `q = @cat(m, x), !contains(".", x)`
     /// (a bound q splits at every dot, `@cat` run backwards, which takes variables: a constant is bound to one
     /// first). Negated, every column named: q is not m.x, or x has a dot.
-    fn split_dot(&mut self, args: &[At], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+    fn split_dot(&mut self, args: &[At], neg: bool, pick: usize) -> Result<usize, Error> {
         if args.len() != 3 {
             return not_yet(format!("split_dot/{}", args.len()));
         }
@@ -4748,6 +4752,7 @@ impl Lowerer {
             return not_yet("`!split_dot` with a column unnamed");
         }
         let (mut out, mut terms) = (Vec::new(), Vec::new());
+        // The constants' parts, bound in the (one) positive alternative.
         for a in args {
             let t = self.term(a)?;
             terms.push(match t {
@@ -4765,10 +4770,13 @@ impl Lowerer {
         let dotted = |b: i64| Literal::Cmp { l: Term::Call("contains".into(), [x.clone(), Term::Str(".".into())].into()), op: "=", r: Term::Int(b) };
         let cat = Term::Call("cat".into(), [m, x.clone()].into());
         if neg {
-            return Ok(vec![vec![Literal::Cmp { l: q, op: "!=", r: cat }], vec![dotted(1)]]);
+            self.alt(0, pick, |me| me.emit(Literal::Cmp { l: q, op: "!=", r: cat }))?;
+            self.alt(1, pick, |me| me.emit(dotted(1)))?;
+            return Ok(2);
         }
         out.extend([Literal::Cmp { l: q, op: "=", r: cat }, dotted(0)]);
-        Ok(vec![out])
+        self.alt(0, pick, |me| out.into_iter().try_for_each(|l| me.emit(l)))?;
+        Ok(1)
     }
 
 }
