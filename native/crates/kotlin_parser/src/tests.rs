@@ -989,8 +989,25 @@ fn tier1_cones() {
     for (o, k) in &by {
         eprintln!("  {k:5} made by {o}");
     }
-    // The biggest group's operations by kind, and the outputs whose cones they are in.
-    if let Some((big, _)) = by.first() {
+    // What the CPU's body keeps (`BlockNative::cpu_form`, roughly): the cones of every output but
+    // the record pass's starts and lasts, by statement.
+    let kept: Vec<bool> = (0..n).map(|i| cones.iter().enumerate().any(|(k, cn)| cn[i] && !c.labels.iter().any(|l| usize::from(l.1) == k && (l.0 == "stream start" || l.0 == "stream last")))).collect();
+    let mut cpu: std::collections::HashMap<&str, usize> = Default::default();
+    for (i, o) in c.origin.iter().enumerate().filter(|&(i, _)| kept[i]) {
+        let _ = i;
+        *cpu.entry(o.as_str()).or_default() += 1;
+    }
+    let mut cpu: Vec<_> = cpu.into_iter().collect();
+    cpu.sort_by(|a, b| b.1.cmp(&a.1));
+    eprintln!("the CPU body's, roughly: {} operations", kept.iter().filter(|&&k| k).count());
+    for (o, k) in cpu.iter().take(40) {
+        eprintln!("  {k:5} cpu, made by {o}");
+    }
+    // The biggest group's operations by kind, and the outputs whose cones they are in; or the
+    // group `RERAIL_CONES_OF` names (`mask two_start`).
+    let named = std::env::var("RERAIL_CONES_OF").ok();
+    let pick = named.as_deref().or(by.first().map(|b| b.0));
+    if let Some(big) = pick {
         let mut kinds: std::collections::BTreeMap<String, usize> = Default::default();
         for (i, o) in c.origin.iter().enumerate() {
             if o == big {
@@ -1005,7 +1022,8 @@ fn tier1_cones() {
         for (i, o) in c.origin.iter().enumerate() {
             if o == big {
                 for (k, cn) in cones.iter().enumerate() {
-                    if cn[i] && users[i] == 1 {
+                    // A named group: every output that reads them, shared or not.
+                    if cn[i] && (users[i] == 1 || named.is_some()) {
                         outs[k] += 1;
                     }
                 }

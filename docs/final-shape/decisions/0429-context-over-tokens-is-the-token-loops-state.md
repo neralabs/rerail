@@ -122,3 +122,23 @@ The escape for comments that go on the line had the same breadth. Its `after_blk
 comment the lean lexer reads is one that starts the line after a line break (`asked_blk`). All
 its tests now ask for that comment (`after_asked`). The corpus: 447 the same, 44 refused,
 0 differ.
+
+## What is left, and the construct each needs (2026-11-18)
+
+`tier1_cones` now counts what the CPU body keeps: the cones of every output except the record
+pass's starts and lasts. It found 1,417 operations, against 1,413 in the CPU form.
+`RERAIL_CONES_OF=<statement>` lists the outputs that read a statement's operations. The
+measurements behind the table:
+
+- The settling marks' masks (`fill(m, gs)`) and the code's token marks keep `grammar_starts`,
+  but only 5 operations depend on it there.
+- `jat` and `two_start` are read by the token end rules' masks (`mask_of`, under the "stream
+  mark" label), not by the marks.
+
+| What is left | Operations | What it needs |
+|---|---|---|
+| The `return@` and `as?` tokens: `simple_identifier` ends at the mask `last name_last` (`jat`, `asq`, `name_tok`, `name_last`) | about 90 | an end rule `run` that goes one byte further where the longer text is one of its kind's keywords (`return@`, `as?`), as the lean lexer's word reader does. Metal keeps the derived mask |
+| `punct`'s pairs where another kind starts at the same byte (`.` with a number): `EndRule::Pair` reads `two_start`, plus `three`, `p_start` | about 80 | the byte's rule picked by its next byte (a number's digit or a pair's second byte), as the lean lexer's switch does |
+| The class header's context (`class_head`, `head_stop`, `class_kw`, `ctor_w`, `vis_w`, `line_mod`, `ctor_stop`) | about 250 | `semi` split no more. The class rule takes a hidden mark before `[primary_constructor]`, as the lean parser asks once after the name. `class A⏎private⏎constructor()` (the lean lexer reads a modifier and `constructor` on one line) still needs a refusal, so a token pattern needs a test for a line break between two tokens |
+| The comments that go on the line (`goes_now`, `ann_blk`, `ann_ctor`, `else_next`) | about 65 | a mark clause that makes the pending comment zero-width at the token where the mark is tested and not taken, as the lean lexer's `lost` does. No corpus file hits the escape now |
+| The regions and strings (`regions hidden`, `string_content`, the template's tokens) | about 250 | already walked (`Walk`). What remains is the masks the readers' parts read; not yet looked at |
