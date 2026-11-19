@@ -21,6 +21,8 @@ An ordinary transaction rollback and termination before commit both preserved th
 After commit, the journal retained both original store identities even when their live routes were removed.
 Restoring the control backup then delivered the outstanding release. A new run in the first store survived replay of the original cutoff.
 Restoring a backup that still listed the completed release preserved both newer runs. The journal retained zero releases and zero targets.
+On macOS, 31 scope, stop, restart, and recovery tests passed. The four release tests also passed on Windows 11 ARM64 with NTFS in 41.49 seconds.
+Two older tests simulated an unavailable store by its path. They now use the native Windows spelling so their injected failures reach that store.
 [Public recovery regression](../../../../test/cli/headless-scan.test.ts) · [Backup and restore contract](analysis-scopes.md#recovery-contract-for-a-stopped-directory)
 
 ## Compiled Git policies
@@ -38,7 +40,7 @@ The scan published to a second store. These are the observed counts from the pol
 
 The final check initially failed. Two manifests for the rule library had claimed the Git policy during compiler startup.
 The consuming scan now records ownership of the inspected policy.
-Five catalog and scope tests passed on macOS and on Windows 11 ARM64 with NTFS. The Windows guest used the addon built from `1993d043da` and two workers.
+Five catalog and scope tests passed on macOS and on Windows 11 ARM64 with NTFS. The Windows run at `9b244c465c` took 66.15 seconds with two workers and the addon built from `1993d043da`.
 The Windows fixture cleanup runs after workers close their database handles. The include assertions compare the canonical path to the selected file.
 Four tests of the compiled-program store passed on Linux. [Public catalog regression](../../../../test/cli/headless-scan.test.ts) · [Cache contract](analysis-scopes.md)
 

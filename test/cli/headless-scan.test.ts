@@ -49,7 +49,7 @@ function writeRule(root: string, name: string, document: unknown): void {
 
 /** A committed checkout on `main` with one NEEDLE rule and `a.py`, which breaks it on line 2. */
 function checkout(): string {
-  const root = realpathSync(mkdtempSync(join(fixtureParent, "rerail-headless-scan-")));
+  const root = realpathSync.native(mkdtempSync(join(fixtureParent, "rerail-headless-scan-")));
   roots.push(root, `${root}-home`);
   git(root, "init", "--quiet", "--initial-branch=main");
   writeRule(root, "needle.json", needle("needle", "NEEDLE"));
@@ -2460,7 +2460,7 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
       expect(readAnalysisScopeGeneration(databasePath)).toBeGreaterThan(generation);
       await run();
     } finally { vi.unstubAllEnvs(); }
-  });
+  }, 60_000);
 
   it("recovers committed directory stops after restoring the control database across worker crashes", async () => {
     const root = checkout(), home = root + "-home", control = join(home, "rerail.sqlite"), backup = control + ".backup", pending = control + ".pending";
@@ -2771,7 +2771,7 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
         expect(directoryOwnerCount(unrelated)).toBe(1);
       } finally { homeDb.$client.close(); }
     } finally { vi.unstubAllEnvs(); }
-  });
+  }, 60_000);
 
   it.each(["missing", "corrupt"])("leaves a stop clear of a %s store that never opened", async kind => {
     const root = checkout();
@@ -3259,7 +3259,7 @@ Seen(n) :- kind(n, "identifier").
         expect(directoryOwnerCount(legacy)).toBe(1);
       } finally { database.$client.close(); }
     } finally { vi.unstubAllEnvs(); }
-  });
+  }, 60_000);
 
   it("releases an unregistered store after its directory comes back online", async () => {
     const root = checkout();
