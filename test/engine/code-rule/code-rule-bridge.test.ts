@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   CodeRuleBridge,
   filesystemClock,
@@ -1423,9 +1423,11 @@ describe("CodeRuleBridge", () => {
     await writeFile(path, "x = 2\ny = 3\n");
     await awaitClockAfter(path);
     const { rm: actualRm } = await vi.importActual<typeof FileSystem>("node:fs/promises");
-    // The first command's end is sampled from the clock, and counted once its probe is removed.
+    // The first command's end is sampled from the clock, and counted once its probe is removed. The clean-up lets the
+    // removal go on before the bridges close, and puts `rm` and `finish` back, though this test times out.
     const sampled = Promise.withResolvers<void>();
     const counted = Promise.withResolvers<void>();
+    releases.push(counted.resolve);
     let held = false;
     vi.mocked(rm).mockImplementation(async (target, options) => {
       if (!held && /rerail-clock-[^\\/]+$/u.test(String(target))) {
@@ -1436,26 +1438,24 @@ describe("CodeRuleBridge", () => {
       return await actualRm(target, options);
     });
     const finished = vi.spyOn(ToolCallWindows.prototype, "finish");
-    try {
-      const firstResult = bridge.finish("shell-1");
-      await sampled.promise;
-      const now = await mkdtemp(join(tmpdir(), "rerail-policy-now-"));
-      directories.push(now);
-      await awaitClockAfter(now);
-      // The walk at the second command's result begins while the first still runs, and reads the clock after its end.
-      const reading = holdDiscovery("reads", path);
-      await bridge.begin("shell-2", "Bash", { command: "ls" });
-      const secondResult = bridge.finish("shell-2");
-      await reading.entered;
-      counted.resolve();
-      await vi.waitFor(() => expect(finished).toHaveBeenCalledWith("shell-1", expect.any(Number)));
-      reading.release();
-      await Promise.all([firstResult, secondResult]);
-    } finally {
-      counted.resolve();
+    onTestFinished(() => {
       finished.mockRestore();
       vi.mocked(rm).mockReset();
-    }
+    });
+    const firstResult = bridge.finish("shell-1");
+    await sampled.promise;
+    const now = await mkdtemp(join(tmpdir(), "rerail-policy-now-"));
+    directories.push(now);
+    await awaitClockAfter(now);
+    // The walk at the second command's result begins while the first still runs, and reads the clock after its end.
+    const reading = holdDiscovery("reads", path);
+    await bridge.begin("shell-2", "Bash", { command: "ls" });
+    const secondResult = bridge.finish("shell-2");
+    await reading.entered;
+    counted.resolve();
+    await vi.waitFor(() => expect(finished).toHaveBeenCalledWith("shell-1", expect.any(Number)));
+    reading.release();
+    await Promise.all([firstResult, secondResult]);
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
       { generatedText: "x = 2\n", previousText: "x = 1\n" },
       { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n" },
