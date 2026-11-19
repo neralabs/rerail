@@ -1,0 +1,26 @@
+{
+  "format": "rerail.language/v1",
+  "id": "css",
+  "status": "supported",
+  "family": "css",
+  "dialects": [
+    {
+      "label": "css",
+      "variant": "Css",
+      "suffixes": [
+        ".css"
+      ],
+      "parser": "tree-sitter",
+      "grammar": "ast-grep:Css",
+      "tapeTag": 21
+    }
+  ],
+  "capabilities": {
+    "scope": "not-supported-yet",
+    "value": "not-supported-yet",
+    "arguments": "not-supported-yet",
+    "calls": "not-supported-yet",
+    "formatArgs": "not-supported-yet"
+  },
+  "suppressions": []
+}

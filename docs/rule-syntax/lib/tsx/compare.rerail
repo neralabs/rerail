@@ -1,0 +1,64 @@
+// tsx/compare: the text a JSON rule's `compare` reads in its `key` and `unquoted` modes, as main's matcher reads it
+// (decision 0222). The translator writes `cmp_key(l, t), cmp_key(r, t)` for `text: "key"`, and likewise
+// `cmp_unquoted`.
+//   cmp_key(n, x)        ESLint's getStaticPropertyName of n (main's `value/key.rs`)
+//   cmp_unquoted(n, x)   n's text, one pair of matching outer quotes taken off
+
+// cmp_key(n, x): the static name of a property, method, field, signature or member access, or of a key node itself.
+// A plain key is its name; a literal key, computed or not, is String(value); a template without `${…}` its string.
+//   ({ a() {}, "a": 1, ["a"]: 2, [`a`]() {} })     all four are "a"
+//   props: ['foo']                                 the string is "foo"
+//   ({ [x]: 1 })   a.#b                            no name
+.decl cmp_key(n: node, x: symbol)
+cmp_key(n, x) :- cmp_key_holder(n, k), cmp_key_of(k, x).
+cmp_key(n, x) :- node(_, n, _, _, _), !cmp_key_holder(n, _), cmp_key_of(n, x).
+
+// cmp_key_holder(n, k): the key node k of a holder n.
+.decl cmp_key_holder(n: node, k: node)
+cmp_key_holder(n, k) :- (kind(n, "pair") ; kind(n, "pair_pattern")), field(n, "key", k).
+cmp_key_holder(n, k) :- (kind(n, "method_definition") ; kind(n, "public_field_definition")
+    ; kind(n, "method_signature") ; kind(n, "property_signature")), field(n, "name", k).
+cmp_key_holder(n, k) :- (kind(n, "field_definition") ; kind(n, "member_expression")), field(n, "property", k).
+cmp_key_holder(n, k) :- kind(n, "subscript_expression"), field(n, "index", k).
+
+// cmp_key_of(k, x): the name key node k gives. An identifier key is its text; a computed key's expression, without
+// its parentheses, is what it folds to; any other key is the literal it is.
+.decl cmp_key_of(k: node, x: symbol)
+cmp_key_of(k, x) :- (kind(k, "property_identifier") ; kind(k, "shorthand_property_identifier")
+    ; kind(k, "shorthand_property_identifier_pattern")), text(k, x).
+cmp_key_of(k, x) :- kind(k, "computed_property_name"), child(k, e, _), cmp_bare(e, s), cmp_static(s, x).
+cmp_key_of(k, x) :- cmp_bare(k, s), cmp_static(s, x).
+
+// cmp_bare(e, x): e without the parentheses around it.   (("a"))  is the string "a"
+.decl cmp_bare(e: node, x: node)
+cmp_bare(e, e) :- node(_, e, _, _, _), !kind(e, "parenthesized_expression").
+cmp_bare(e, x) :- kind(e, "parenthesized_expression"), child(e, c, _), !kind(c, "comment"), cmp_bare(c, x).
+
+// cmp_static(s, x): ESLint's getStaticStringValue. "a" is a, 0x10 is 16, `a` is a, true is true, /x/g is /x/g.
+.decl cmp_static(s: node, x: symbol)
+cmp_static(s, x) :- (kind(s, "string") ; kind(s, "number")), value(s, x).
+cmp_static(s, x) :- kind(s, "template_string"), value(s, x),
+    count : { child(s, c, _), kind(c, "template_substitution") } = 0.
+cmp_static(s, x) :- (kind(s, "true") ; kind(s, "false") ; kind(s, "null") ; kind(s, "regex")), text(s, x).
+
+// cmp_unquoted(n, x): n's text, without one pair of matching quotes around it.
+//   'foo'  "foo"  `foo`     all three are foo;   foo is foo;   'foo" is 'foo"
+.decl cmp_unquoted(n: node, x: symbol)
+cmp_unquoted(n, x) :- text(n, t), l = strlen(t), l >= 2, q = substr(t, 0, 1), q = substr(t, l - 1, 1),
+    (q = "'" ; q = "\"" ; q = "`"), x = substr(t, 1, l - 2).
+cmp_unquoted(n, t) :- text(n, t), !cmp_quoted(n).
+.decl cmp_quoted(n: node)
+cmp_quoted(n) :- text(n, t), l = strlen(t), l >= 2, q = substr(t, 0, 1), q = substr(t, l - 1, 1),
+    (q = "'" ; q = "\"" ; q = "`").
+
+// cmp_value(n, x): what a transform's `value: true` reads: n's value as a string, else, where n has no known value
+// and is not a string, the name ESTree gives it (an identifier's; a private name's without its `#`).
+//   'a'  is a;   0x10  is 16;   foo  is foo;   #foo  is foo;   f()  has none
+.decl cmp_value(n: node, x: symbol)
+cmp_value(n, x) :- value(n, x).
+cmp_value(n, x) :- (kind(n, "identifier") ; kind(n, "property_identifier") ; kind(n, "shorthand_property_identifier")
+    ; kind(n, "shorthand_property_identifier_pattern") ; kind(n, "type_identifier") ; kind(n, "statement_identifier")
+    ; kind(n, "undefined")), !cmp_valued(n), text(n, x).
+cmp_value(n, x) :- kind(n, "private_property_identifier"), !cmp_valued(n), text(n, t), x = substr(t, 1, strlen(t) - 1).
+.decl cmp_valued(n: node)
+cmp_valued(n) :- value(n, _).

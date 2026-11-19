@@ -1,0 +1,7 @@
+(?:abstractmethod|property|legacy_sync|legacy_module_sync|direct_legacy_module_sync|legacy_async|legacy_module_async|direct_legacy_module_async)$
+(?i)^(?:databaseconnection|syncdatabaseconnection|lazyresult|lazyseq|readtransaction|serverplan|syncversioneddatabaseconnection|versioneddatabaseconnection|versionedreadtransaction|versionedwritetransaction|writetransaction)$
+^(?:_fetchall|_fetchone|execute|execute_async|execute_fire_and_forget|execute_grammar|execute_grammar_fetchall|execute_grammar_fetchone|execute_raw|fetchall|fetchall_raw|fetchone|fetchone_raw|grammar_effect_lazy|grammar_fetchall|grammar_fetchall_async|grammar_fetchone|grammar_fetchone_async|grammar_row_lazy|grammar_rows_lazy|raw_execute)$
+^(?:cls|self)$
+^(?:deleter|setter)$
+^(?:execute_grammar|grammar_fetch)
+lazy$

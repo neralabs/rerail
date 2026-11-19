@@ -1,7 +1,8 @@
 use super::super::Steps;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::oracle;
 use crate::code_rule_dsl::scope::rust::build_for_test;
+use crate::code_rule_dsl::scope::usage::lang_rust::RustUsage as _;
 use crate::code_rule_dsl::scope::usage::{BindingId, Usage};
 use crate::code_rule_dsl::scope::{Form, ScopeKind};
 use ast_grep_core::tree_sitter::LanguageExt;
@@ -232,7 +233,7 @@ fn module_binding_used(text: &str, name: &str) -> Option<bool> {
 /// walk per reference.
 #[test]
 fn a_long_file_is_indexed_in_one_walk() {
-    use crate::code_rule_dsl::test_support::{Walk, reset_walks, walks};
+    use crate::code_rule_dsl::walks::{Walk, reset_walks, walks};
     let mut text = String::from("fn f0(a: i32, b: i32) -> i32 {\n    a + b\n}\n");
     for n in 1..301 {
         text.push_str(&format!(

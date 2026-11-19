@@ -1,0 +1,52 @@
+execution-authority-bypass     authority-sites                  in= 5 st= 7 part=file  syn=- ref=- rec= 1 reach=- xf=- sep=0.89s rows=  166,126 cells=    332,235 sqlKB=3
+impl-direct-execution          direct-execution-lines           in= 4 st= 3 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=0.29s rows=      448 cells=        876 sqlKB=3
+internal-dead-code             unreachable-internal-symbols     in=13 st=25 part=-     syn=- ref=Y rec= 6 reach=- xf=Y sep=1.82s rows=  554,273 cells=  1,646,165 sqlKB=14
+legacy-execution-surfaces      legacy-execution-graphs          in=27 st=23 part=file  syn=- ref=- rec= 3 reach=- xf=- sep=7.99s rows=3,745,156 cells= 71,441,190 sqlKB=33
+public-api-triples             exported-families                in=11 st=22 part=-     syn=- ref=- rec= 3 reach=- xf=Y sep=1.15s rows=  551,130 cells=  1,643,022 sqlKB=15
+serverplan-dispatch-architecture executor-provenance              in=25 st=22 part=file  syn=- ref=- rec= 5 reach=- xf=- sep=1.26s rows=   24,598 cells=    700,445 sqlKB=35
+serverplan-quality             quality-contracts-1              in= 7 st=54 part=file  syn=Y ref=- rec= 5 reach=Y xf=- sep=0.78s rows=  121,653 cells=    168,107 sqlKB=115
+serverplan-quality             quality-contracts-2              in= 1 st=12 part=file  syn=Y ref=- rec= 0 reach=- xf=- sep=0.07s rows=      399 cells=        399 sqlKB=13
+serverplan-quality             quality-contracts-3              in= 1 st= 8 part=file  syn=Y ref=- rec= 0 reach=- xf=- sep=0.07s rows=       69 cells=         69 sqlKB=13
+serverplan-quality             quality-local-taxonomy           in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=0.11s rows=       48 cells=         48 sqlKB=0
+serverplan-quality             quality-project-taxonomy         in= 1 st= 0 part=-     syn=- ref=- rec= 0 reach=- xf=Y sep=0.25s rows=      245 cells=        245 sqlKB=0
+serverplan-quality             quality-conditional-1            in=20 st=32 part=-     syn=- ref=- rec= 6 reach=Y xf=Y sep=29.34s rows=2,093,271 cells= 69,214,416 sqlKB=42
+serverplan-state-tripwires     queue-auth-definitions           in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=0.29s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     queue-auth-calls                 in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.04s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     terminal-hydration-definitions   in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=0.30s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     large-column-reentry             in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.02s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     large-column-hydration           in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.11s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     direct-planning-io               in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=1.88s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     query-planning-io                in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=1.78s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     preprocess-io                    in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=1.88s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     provider-io                      in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.00s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     nested-plan-execution            in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.36s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     executor-plan-execution          in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=1.88s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     queue-udf-symbols                in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=1.51s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     materialized-pipeline            in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=1.84s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     context-authority                in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=1.85s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     resolved-ref-access              in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.15s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     production-ir-class              in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=0.08s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     production-ir-construction       in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.17s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     compiled-ir-value                in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.30s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     test-only-acknowledgement        in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.16s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     executor-ir-dispatch             in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.30s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     step-aware-eager-helper          in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.39s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     graph-id-config                  in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=1.51s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     legacy-preop                     in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.72s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     serverplan-ddl                   in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.50s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     mcp-default-graph                in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.61s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     private-lazy-ref                 in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.96s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     graph-terminal-chain             in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.64s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     lazy-callback-terminal           in= 1 st= 0 part=file  syn=- ref=- rec= 0 reach=- xf=- sep=2.69s rows=        0 cells=          0 sqlKB=0
+serverplan-state-tripwires     state-signatures-1               in= 1 st=18 part=file  syn=Y ref=- rec= 3 reach=Y xf=- sep=0.06s rows=       74 cells=         74 sqlKB=10
+serverplan-state-tripwires     state-flow-1                     in= 5 st=25 part=repository syn=Y ref=- rec= 7 reach=Y xf=Y sep=7.81s rows=  161,551 cells=    161,551 sqlKB=41
+serverplan-state-tripwires     state-projection-recovery-2      in= 4 st= 7 part=repository syn=Y ref=- rec= 1 reach=Y xf=Y sep=3.60s rows=    7,056 cells=      7,056 sqlKB=5
+serverplan-state-tripwires     state-flow-project-1             in= 5 st=27 part=repository syn=Y ref=- rec= 6 reach=Y xf=Y sep=8.85s rows=  161,551 cells=    161,551 sqlKB=31
+serverplan-steps               step-contracts-1                 in= 2 st=31 part=file  syn=- ref=- rec= 3 reach=- xf=- sep=4.73s rows=  152,170 cells=  6,391,140 sqlKB=21
+serverplan-steps               step-contracts-2                 in= 2 st=24 part=file  syn=- ref=- rec= 2 reach=- xf=- sep=2.29s rows=   82,154 cells=  3,696,930 sqlKB=10
+serverplan-steps               step-contracts-3                 in= 2 st=18 part=file  syn=- ref=- rec= 3 reach=- xf=- sep=3.99s rows=   81,534 cells=  3,179,826 sqlKB=7
+serverplan-steps               step-contracts-4                 in= 2 st=20 part=file  syn=- ref=- rec= 4 reach=- xf=- sep=2.00s rows=   34,625 cells=  1,350,375 sqlKB=12
+serverplan-steps               step-contracts-5                 in= 2 st=16 part=file  syn=- ref=- rec= 3 reach=- xf=- sep=4.47s rows=  200,417 cells=  6,613,761 sqlKB=8
+serverplan-steps               step-contracts-6                 in= 2 st=16 part=file  syn=- ref=- rec= 3 reach=- xf=- sep=8.60s rows=      563 cells=     20,831 sqlKB=6
+serverplan-steps               runtime-reference-summaries      in=10 st= 7 part=file  syn=- ref=- rec= 2 reach=- xf=- sep=0.40s rows=  266,163 cells=  1,495,436 sqlKB=5
+serverplan-target-architecture required-contracts               in=10 st=14 part=-     syn=- ref=- rec= 0 reach=- xf=Y sep=0.89s rows=  103,306 cells=    315,653 sqlKB=11

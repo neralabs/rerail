@@ -1,26 +1,27 @@
 //! Vue template expressions and regions, matching compiler-dom 3.5.43.
 
-#[cfg(test)]
+use crate::code_rule_dsl::embed::{
+    self,
+    host::{Host, HostNode},
+};
 use crate::code_rule_dsl::language::GrammarDialect;
-#[cfg(test)]
-use ast_grep_language::LanguageExt;
+use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use std::ops::Range;
-use tree_sitter::{Node, Parser};
 
 #[derive(Clone)]
-pub(crate) enum Arg {
+pub enum Arg {
     None,
     Static(Range<usize>),
     Dynamic(Range<usize>),
 }
 /// A normalized Vue directive.
-pub(crate) struct Directive<'t> {
-    pub(crate) node: Node<'t>,
-    pub(crate) name: &'t str,
+pub struct Directive<'t> {
+    pub node: HostNode<'t>,
+    pub name: &'t str,
     pub(crate) arg: Arg,
-    pub(crate) value: Option<Range<usize>>,
+    pub value: Option<Range<usize>>,
 }
-fn text<'t>(n: Node<'t>, s: &'t str) -> &'t str {
+fn text<'t>(n: HostNode<'t>, s: &'t str) -> &'t str {
     &s[n.byte_range()]
 }
 /// `r` without its matching ASCII quotes, compared as bytes: an unquoted value may start or end
@@ -43,7 +44,7 @@ fn unquote(r: Range<usize>, s: &str) -> Range<usize> {
 /// to it: HTML's tokenizer, and vue-eslint-parser's, read a tag name up to whitespace, `/` or
 /// `>`, but tree-sitter-vue ends `tag_name` at a `.` and reads the rest as `.` shorthand
 /// attributes (`<ElTable.TableColumn>` as `ElTable` and `.TableColumn`).
-fn in_tag_name(node: Node<'_>) -> bool {
+fn in_tag_name(node: HostNode<'_>) -> bool {
     let mut current = node;
     while let Some(previous) = current.prev_named_sibling() {
         if previous.end_byte() != current.start_byte() {
@@ -59,7 +60,7 @@ fn in_tag_name(node: Node<'_>) -> bool {
 
 /// The bytes of the tag name `tag_name` starts, as vue-eslint-parser reads it: with the start
 /// tag children that belong to it (`in_tag_name`), `ElTable.TableColumn`.
-pub(crate) fn tag_name(tag_name: Node<'_>) -> Range<usize> {
+pub(crate) fn tag_name(tag_name: HostNode<'_>) -> Range<usize> {
     let mut end = tag_name;
     while let Some(next) = end.next_named_sibling()
         && next.start_byte() == end.end_byte()
@@ -73,7 +74,7 @@ impl<'t> Directive<'t> {
     /// Reads a grammar directive attribute, including Vue 2 scope aliases: `slot-scope` on any
     /// element, `scope` on a `<template>` only (vue-eslint-parser's reading; `<th scope="col">`
     /// is HTML's attribute). An attribute that belongs to the tag name (`in_tag_name`) is none.
-    pub(crate) fn read(node: Node<'t>, source: &'t str) -> Option<Self> {
+    pub fn read(node: HostNode<'t>, source: &'t str) -> Option<Self> {
         if in_tag_name(node) {
             return None;
         }
@@ -83,9 +84,8 @@ impl<'t> Directive<'t> {
             let name = text(n, source);
             let on_template = || {
                 let start = node.parent()?;
-                let mut cursor = start.walk();
                 let tag = start
-                    .named_children(&mut cursor)
+                    .named_children()
                     .find(|child| child.kind() == "tag_name")?;
                 Some(text(tag, source) == "template")
             };
@@ -103,8 +103,7 @@ impl<'t> Directive<'t> {
         if kind != "directive_attribute" {
             return None;
         }
-        let mut c = node.walk();
-        let children: Vec<_> = node.named_children(&mut c).collect();
+        let children: Vec<_> = node.named_children().collect();
         let dn = children
             .iter()
             .find(|n| n.kind() == "directive_name")
@@ -166,7 +165,7 @@ pub(crate) struct ForParse {
     pub(crate) alias: Range<usize>,
     pub(crate) parenthesized: bool,
     /// The value, key and index, as `parseFor` finds them (the oracle's `for-alias` regions).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     pub(crate) items: Vec<Range<usize>>,
     pub(crate) source: Range<usize>,
 }
@@ -236,12 +235,12 @@ pub(crate) fn parse_for(source: &str, value: Range<usize>) -> Option<ForParse> {
     })
 }
 /// How compiler-dom treats a directive expression.
-pub(crate) enum Parse {
+pub enum Parse {
     /// An expression (the oracle's regions; the view writes expressions without asking).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     Expression,
     /// Parameters (the oracle's regions).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     Params,
     HandlerMember,
     HandlerFunction,
@@ -253,28 +252,36 @@ pub(crate) enum Parse {
 /// anything else (a call, an assignment, several statements, text that is no expression) runs as
 /// inline statements. Both checks look through parentheses and TypeScript's `as`, `satisfies`,
 /// `!`, `<T>x` and `x<T>` (`unwrapTSNode`).
-#[cfg(test)]
-pub(crate) fn handler(text: &str, dialect: GrammarDialect) -> Parse {
-    let mut parser = Parser::new();
-    if parser.set_language(&dialect.get_ts_language()).is_err() {
-        return Parse::Statements;
-    }
-    handler_with(&mut parser, text)
-}
-
-/// `handler` with a parser already set to the dialect, for callers classifying many values.
-pub(crate) fn handler_with(parser: &mut Parser, text: &str) -> Parse {
+pub(crate) fn handler(text: &str, dialect: GrammarDialect, budget: &dyn Fn() -> bool) -> Parse {
     // The newline keeps a trailing `//` comment from swallowing the `)`.
     let wrapped = format!("({text}\n)");
-    let Some(tree) = parser.parse(&wrapped, None) else {
+    let Ok(grammar) = Grammar::embedded(dialect) else {
         return Parse::Statements;
     };
-    let root = tree.root_node();
-    if root.has_error() || root.named_child_count() != 1 {
+    let tape = match embed::Parse::read(dialect, &wrapped, budget) {
+        // The lean parser refuses every syntax error.
+        Some(embed::Parse::Tape(tape)) => tape,
+        Some(embed::Parse::Tree(tree)) if !tree.root_node().has_error() => {
+            match TapeImage::encode_tree_image(tree.root_node(), &grammar, &wrapped, None, &budget)
+            {
+                Ok(tape) => tape,
+                Err(_) => return Parse::Statements,
+            }
+        }
+        _ => return Parse::Statements,
+    };
+    Host::new(&tape, &grammar)
+        .root()
+        .map_or(Parse::Statements, |root| classified(root, &wrapped))
+}
+
+/// `handler`'s classes, read off the tape of `({text}\n)` whose root is `root`.
+fn classified(root: HostNode<'_>, wrapped: &str) -> Parse {
+    let mut statements = root.named_children();
+    let (Some(statement), None) = (statements.next(), statements.next()) else {
         return Parse::Statements;
-    }
-    let Some(mut expression) = root
-        .named_child(0)
+    };
+    let Some(mut expression) = Some(statement)
         .filter(|statement| statement.kind() == "expression_statement")
         .and_then(|statement| statement.named_child(0))
     else {
@@ -292,10 +299,9 @@ pub(crate) fn handler_with(parser: &mut Parser, text: &str) -> Parse {
 }
 
 /// The expression a parenthesized expression or a TypeScript wrapper (`unwrapTSNode`) holds.
-fn unwrapped(node: Node<'_>) -> Option<Node<'_>> {
-    let mut cursor = node.walk();
+fn unwrapped(node: HostNode<'_>) -> Option<HostNode<'_>> {
     let mut operands = node
-        .named_children(&mut cursor)
+        .named_children()
         .filter(|child| child.kind() != "comment");
     match node.kind() {
         "parenthesized_expression"
@@ -310,15 +316,15 @@ fn unwrapped(node: Node<'_>) -> Option<Node<'_>> {
 }
 
 /// A template expression as the view oracle lists it.
-#[cfg(test)]
-pub(crate) struct Region {
-    pub(crate) kind: String,
-    pub(crate) range: Range<usize>,
-    pub(crate) parse: Parse,
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct Region {
+    pub kind: String,
+    pub range: Range<usize>,
+    pub parse: Parse,
 }
 /// The template's expressions as the view oracle lists them, sorted.
-#[cfg(test)]
-pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> Vec<Region> {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn regions(root: HostNode<'_>, source: &str, dialect: GrammarDialect) -> Vec<Region> {
     let mut out = Vec::new();
     fn trim(r: Range<usize>, s: &str) -> Option<Range<usize>> {
         let t = s[r.clone()].trim();
@@ -329,7 +335,7 @@ pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> 
             Some(r.start + a..r.start + a + t.len())
         }
     }
-    fn walk(n: Node<'_>, s: &str, d: GrammarDialect, o: &mut Vec<Region>) {
+    fn walk(n: HostNode<'_>, s: &str, d: GrammarDialect, o: &mut Vec<Region>) {
         if n.kind() == "interpolation"
             && let Some(x) = n.named_child(0)
             && let Some(r) = trim(x.byte_range(), s)
@@ -375,7 +381,7 @@ pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> 
                         } else if di.name == "on" && matches!(di.arg, Arg::None) {
                             ("on".to_string(), Parse::Expression)
                         } else if di.name == "on" {
-                            ("on".to_string(), handler(&s[v.clone()], d))
+                            ("on".to_string(), handler(&s[v.clone()], d, &|| false))
                         } else {
                             (di.name.to_string(), Parse::Expression)
                         };
@@ -387,8 +393,7 @@ pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> 
                 }
             }
         }
-        let mut c = n.walk();
-        for x in n.named_children(&mut c) {
+        for x in n.named_children() {
             walk(x, s, d, o);
         }
     }
@@ -397,7 +402,7 @@ pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> 
     out
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn for_cases() {
@@ -405,6 +410,8 @@ mod tests {
         assert!(parse_for("n in 10", 0..7).is_some());
     }
 
+    /// Each handler is classified as compiler-core does, from the lean parser's tape, and the same
+    /// from tree-sitter's.
     #[test]
     fn handlers() {
         use GrammarDialect::{JavaScript, TypeScript};
@@ -414,7 +421,10 @@ mod tests {
             ("a[b == c]", JavaScript, true, false),
             ("(foo)", JavaScript, true, false),
             ("foo as any", TypeScript, true, false),
+            ("foo satisfies Handler", TypeScript, true, false),
             ("foo!", TypeScript, true, false),
+            ("<Handler>foo", TypeScript, true, false),
+            ("go<Event>", TypeScript, true, false),
             ("undefined", JavaScript, false, false),
             ("() => x", JavaScript, false, true),
             ("async (e) => go(e)", JavaScript, false, true),
@@ -425,14 +435,38 @@ mod tests {
             ("a = b", JavaScript, false, false),
             ("a++; b()", JavaScript, false, false),
             ("foo // comment", JavaScript, true, false),
+            ("/* c */ foo", JavaScript, true, false),
+            ("a b", JavaScript, false, false),
         ] {
-            let parse = handler(text, dialect);
+            let parse = handler(text, dialect, &|| false);
             assert_eq!(
                 (
                     matches!(parse, Parse::HandlerMember),
                     matches!(parse, Parse::HandlerFunction)
                 ),
                 (member, function),
+                "{text}"
+            );
+            let wrapped = format!("({text}\n)");
+            let grammar = Grammar::embedded(dialect).expect("grammar");
+            let tree = embed::Parse::tree_sitter(dialect, &wrapped).expect("a tree");
+            let read = embed::Parse::read(dialect, &wrapped, &|| false).expect("read");
+            assert_eq!(
+                read.is_lean(),
+                !tree.root_node().has_error(),
+                "the lean parser reads {text:?}"
+            );
+            if tree.root_node().has_error() {
+                continue;
+            }
+            let tape =
+                TapeImage::encode_tree_image(tree.root_node(), &grammar, &wrapped, None, &|| false)
+                    .expect("a tape");
+            let from_tree =
+                classified(Host::new(&tape, &grammar).root().expect("a root"), &wrapped);
+            assert_eq!(
+                std::mem::discriminant(&from_tree),
+                std::mem::discriminant(&parse),
                 "{text}"
             );
         }

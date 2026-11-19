@@ -1,0 +1,16 @@
+{
+ "rules": {
+  "data-layer-sync-async-signatures": {
+   "compileMs": 11.275417000000004,
+   "wallMs": 8.801958999999954,
+   "cpuMs": 7.97,
+   "violations": 1,
+   "keys": [
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_shadow.py\",58,\"sync_async_signature_mismatch\"]"
+   ],
+   "failures": [],
+   "nFailures": 0,
+   "peakRssBytes": 219660288
+  }
+ }
+}

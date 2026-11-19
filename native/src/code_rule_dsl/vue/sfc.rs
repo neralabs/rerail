@@ -1,28 +1,27 @@
 //! Vue single-file component block metadata, matching compiler-sfc 3.5.43.
 
+use crate::code_rule_dsl::embed::host::HostNode;
 use crate::code_rule_dsl::language::GrammarDialect;
 use std::ops::Range;
-use tree_sitter::Node;
 
 /// One top-level SFC block as compiler-sfc 3.5.43 reads it.
-pub(crate) struct Block<'t> {
+pub struct Block<'t> {
     /// The top-level element node.
-    pub(crate) node: Node<'t>,
+    pub node: HostNode<'t>,
     /// The tag name as written.
-    pub(crate) name: &'t str,
+    pub name: &'t str,
     /// The optional `lang` attribute value.
-    pub(crate) lang: Option<&'t str>,
+    pub lang: Option<&'t str>,
     /// Whether the block has a `setup` attribute.
-    pub(crate) setup: bool,
+    pub setup: bool,
     /// The optional `src` attribute value.
-    pub(crate) src: Option<&'t str>,
+    pub src: Option<&'t str>,
     /// The content range between start and end tags.
-    pub(crate) content: Range<usize>,
+    pub content: Range<usize>,
 }
 
-fn attr<'t>(start: Node<'t>, source: &'t str, wanted: &str) -> Option<&'t str> {
-    let mut cursor = start.walk();
-    start.named_children(&mut cursor).find_map(|n| {
+fn attr<'t>(start: HostNode<'t>, source: &'t str, wanted: &str) -> Option<&'t str> {
+    start.named_children().find_map(|n| {
         if n.kind() != "attribute" {
             return None;
         }
@@ -34,9 +33,8 @@ fn attr<'t>(start: Node<'t>, source: &'t str, wanted: &str) -> Option<&'t str> {
         Some(unquote(&source[value.byte_range()]))
     })
 }
-fn has_attr(start: Node<'_>, source: &str, wanted: &str) -> bool {
-    let mut c = start.walk();
-    start.named_children(&mut c).any(|n| {
+fn has_attr(start: HostNode<'_>, source: &str, wanted: &str) -> bool {
+    start.named_children().any(|n| {
         n.kind() == "attribute"
             && n.named_child(0)
                 .map(|x| &source[x.byte_range()] == wanted)
@@ -52,17 +50,14 @@ fn unquote(value: &str) -> &str {
 }
 
 /// Extracts every top-level element in source order, as compiler-sfc `parse` does.
-pub(crate) fn blocks<'t>(root: Node<'t>, source: &'t str) -> Vec<Block<'t>> {
-    let mut c = root.walk();
-    root.named_children(&mut c)
+pub fn blocks<'t>(root: HostNode<'t>, source: &'t str) -> Vec<Block<'t>> {
+    root.named_children()
         .filter_map(|node| {
             let start = node
-                .named_children(&mut node.walk())
+                .named_children()
                 .find(|n| n.kind() == "start_tag" || n.kind() == "self_closing_tag")?;
             let tag = start.named_child(0)?;
-            let end = node
-                .named_children(&mut node.walk())
-                .find(|n| n.kind() == "end_tag");
+            let end = node.named_children().find(|n| n.kind() == "end_tag");
             let content = start.end_byte()..end.map_or(node.end_byte(), |n| n.start_byte());
             Some(Block {
                 node,
@@ -77,7 +72,7 @@ pub(crate) fn blocks<'t>(root: Node<'t>, source: &'t str) -> Vec<Block<'t>> {
 }
 
 /// Selects the ECMAScript dialect used by the script block, or JavaScript by default.
-pub(crate) fn script_dialect(blocks: &[Block<'_>]) -> Option<GrammarDialect> {
+pub fn script_dialect(blocks: &[Block<'_>]) -> Option<GrammarDialect> {
     let script = blocks
         .iter()
         .find(|b| b.name == "script" && b.setup)
@@ -100,7 +95,7 @@ fn lang_dialect(lang: Option<&str>) -> Option<GrammarDialect> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn dialect_defaults_to_javascript() {

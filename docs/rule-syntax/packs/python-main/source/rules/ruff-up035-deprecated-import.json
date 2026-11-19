@@ -1,0 +1,1885 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-up035-deprecated-import",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Import names from the module that now provides them instead of a deprecated location, such as collections.abc rather than collections or typing.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "coll-abc": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:AsyncGenerator|AsyncIterable|AsyncIterator|Awaitable|ByteString|Callable|Collection|Container|Coroutine|Generator|Hashable|ItemsView|Iterable|Iterator|KeysView|Mapping|MappingView|MutableMapping|MutableSequence|MutableSet|Reversible|Sequence|Set|Sized|ValuesView)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:AsyncGenerator|AsyncIterable|AsyncIterator|Awaitable|ByteString|Callable|Collection|Container|Coroutine|Generator|Hashable|ItemsView|Iterable|Iterator|KeysView|Mapping|MappingView|MutableMapping|MutableSequence|MutableSet|Reversible|Sequence|Set|Sized|ValuesView)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "pipes-shlex": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:quote)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:quote)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "te-abc": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:Buffer)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:Buffer)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "te-warnings": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:deprecated)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:deprecated)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "te-types-312": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:get_original_bases)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:get_original_bases)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "te-types-313": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:CapsuleType)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:CapsuleType)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "te-typing-base": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:AbstractSet|AnyStr|AsyncIterable|AsyncIterator|Awaitable|BinaryIO|Callable|ClassVar|Collection|Container|Coroutine|DefaultDict|Dict|FrozenSet|Generic|Hashable|IO|ItemsView|Iterable|Iterator|KeysView|List|Mapping|MappingView|Match|MutableMapping|MutableSequence|MutableSet|Optional|Pattern|Reversible|Sequence|Set|Sized|TYPE_CHECKING|Text|TextIO|Tuple|Type|Union|ValuesView|cast|no_type_check|ChainMap|Counter|Deque|ForwardRef|NoReturn)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:AbstractSet|AnyStr|AsyncIterable|AsyncIterator|Awaitable|BinaryIO|Callable|ClassVar|Collection|Container|Coroutine|DefaultDict|Dict|FrozenSet|Generic|Hashable|IO|ItemsView|Iterable|Iterator|KeysView|List|Mapping|MappingView|Match|MutableMapping|MutableSequence|MutableSet|Optional|Pattern|Reversible|Sequence|Set|Sized|TYPE_CHECKING|Text|TextIO|Tuple|Type|Union|ValuesView|cast|no_type_check|ChainMap|Counter|Deque|ForwardRef|NoReturn)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "te-typing-38": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:Final|OrderedDict)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:Final|OrderedDict)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "up-to-te-typing-base": {
+      "any": [
+       {
+        "matches": "te-typing-base"
+       }
+      ]
+     },
+     "te-typing-39": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:Annotated)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:Annotated)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "up-to-te-typing-38": {
+      "any": [
+       {
+        "matches": "te-typing-base"
+       },
+       {
+        "matches": "te-typing-38"
+       }
+      ]
+     },
+     "te-typing-310": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:Concatenate|Literal|NewType|ParamSpecArgs|ParamSpecKwargs|TypeAlias|TypeGuard|get_args|get_origin)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:Concatenate|Literal|NewType|ParamSpecArgs|ParamSpecKwargs|TypeAlias|TypeGuard|get_args|get_origin)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "up-to-te-typing-39": {
+      "any": [
+       {
+        "matches": "te-typing-base"
+       },
+       {
+        "matches": "te-typing-38"
+       },
+       {
+        "matches": "te-typing-39"
+       }
+      ]
+     },
+     "te-typing-311": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:Any|LiteralString|Never|NotRequired|Required|Self|assert_never|assert_type|clear_overloads|final|get_overloads|overload|reveal_type)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:Any|LiteralString|Never|NotRequired|Required|Self|assert_never|assert_type|clear_overloads|final|get_overloads|overload|reveal_type)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "up-to-te-typing-310": {
+      "any": [
+       {
+        "matches": "te-typing-base"
+       },
+       {
+        "matches": "te-typing-38"
+       },
+       {
+        "matches": "te-typing-39"
+       },
+       {
+        "matches": "te-typing-310"
+       }
+      ]
+     },
+     "te-typing-312": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:Protocol|SupportsAbs|SupportsBytes|SupportsComplex|SupportsFloat|SupportsIndex|SupportsInt|SupportsRound|TypeAliasType|Unpack|NamedTuple|dataclass_transform|override)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:Protocol|SupportsAbs|SupportsBytes|SupportsComplex|SupportsFloat|SupportsIndex|SupportsInt|SupportsRound|TypeAliasType|Unpack|NamedTuple|dataclass_transform|override)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "up-to-te-typing-311": {
+      "any": [
+       {
+        "matches": "te-typing-base"
+       },
+       {
+        "matches": "te-typing-38"
+       },
+       {
+        "matches": "te-typing-39"
+       },
+       {
+        "matches": "te-typing-310"
+       },
+       {
+        "matches": "te-typing-311"
+       }
+      ]
+     },
+     "te-typing-313": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:get_protocol_members|is_protocol|NoDefault|ReadOnly|TypeIs|get_type_hints|ContextManager|Generator|AsyncContextManager|AsyncGenerator|Protocol|runtime_checkable|ParamSpec|TypeVar|TypeVarTuple)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:get_protocol_members|is_protocol|NoDefault|ReadOnly|TypeIs|get_type_hints|ContextManager|Generator|AsyncContextManager|AsyncGenerator|Protocol|runtime_checkable|ParamSpec|TypeVar|TypeVarTuple)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "up-to-te-typing-312": {
+      "any": [
+       {
+        "matches": "te-typing-base"
+       },
+       {
+        "matches": "te-typing-38"
+       },
+       {
+        "matches": "te-typing-39"
+       },
+       {
+        "matches": "te-typing-310"
+       },
+       {
+        "matches": "te-typing-311"
+       },
+       {
+        "matches": "te-typing-312"
+       }
+      ]
+     },
+     "mypy-37": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:NoReturn)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:NoReturn)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "mypy-38": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:TypedDict)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:TypedDict)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "typing-io": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:BinaryIO|IO|TextIO)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:BinaryIO|IO|TextIO)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "typing-re": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:Match|Pattern)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:Match|Pattern)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "backports-strenum": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:StrEnum)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:StrEnum)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "typing-abc-39": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:AsyncGenerator|AsyncIterable|AsyncIterator|Awaitable|Collection|Container|Coroutine|Generator|Hashable|ItemsView|Iterable|Iterator|KeysView|Mapping|MappingView|MutableMapping|MutableSequence|MutableSet|Reversible|Sequence|Sized|ValuesView)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:AsyncGenerator|AsyncIterable|AsyncIterator|Awaitable|Collection|Container|Coroutine|Generator|Hashable|ItemsView|Iterable|Iterator|KeysView|Mapping|MappingView|MutableMapping|MutableSequence|MutableSet|Reversible|Sequence|Sized|ValuesView)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "typing-abc-310": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:Callable)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:Callable)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "typing-collections": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:ChainMap|Counter|OrderedDict)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:ChainMap|Counter|OrderedDict)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     },
+     "typing-re-39": {
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^(?:Match|Pattern)$",
+         "not": {
+          "nthChild": 1
+         }
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "kind": "dotted_name",
+          "regex": "^(?:Match|Pattern)$",
+          "stopBy": "neighbor"
+         }
+        }
+       ]
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "collections-to-abc",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^collections$"
+      },
+      "all": [
+       {
+        "matches": "coll-abc"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import the abstract base classes from `collections.abc` instead of `collections`; names that live in `collections` (such as `Counter`) stay in the original import.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "pipes-to-shlex",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^pipes$"
+      },
+      "all": [
+       {
+        "matches": "pipes-shlex"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import `quote` from `shlex` instead of the removed `pipes` module; names `shlex` lacks (such as `Template`) stay imported from `pipes`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-extensions-to-collections-abc",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.12"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing_extensions$"
+      },
+      "all": [
+       {
+        "matches": "te-abc"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import `Buffer` from `collections.abc`, which provides it on this Python version; keep any other names imported from `typing_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-extensions-to-warnings",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.13"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing_extensions$"
+      },
+      "all": [
+       {
+        "matches": "te-warnings"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import `deprecated` from `warnings`, which provides it on this Python version; keep any other names imported from `typing_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-extensions-to-types-312",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.12"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing_extensions$"
+      },
+      "all": [
+       {
+        "matches": "te-types-312"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `types`, which provides them on this Python version; keep any other names imported from `typing_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-extensions-to-types-313",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.13"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing_extensions$"
+      },
+      "all": [
+       {
+        "matches": "te-types-313"
+       },
+       {
+        "not": {
+         "matches": "te-types-312"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `types`, which provides them on this Python version; keep any other names imported from `typing_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-extensions-to-typing",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing_extensions$"
+      },
+      "all": [
+       {
+        "matches": "te-typing-base"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-extensions-to-typing-38",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.8"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing_extensions$"
+      },
+      "all": [
+       {
+        "matches": "te-typing-38"
+       },
+       {
+        "not": {
+         "matches": "up-to-te-typing-base"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-extensions-to-typing-39",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing_extensions$"
+      },
+      "all": [
+       {
+        "matches": "te-typing-39"
+       },
+       {
+        "not": {
+         "matches": "up-to-te-typing-38"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-extensions-to-typing-310",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.10"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing_extensions$"
+      },
+      "all": [
+       {
+        "matches": "te-typing-310"
+       },
+       {
+        "not": {
+         "matches": "up-to-te-typing-39"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-extensions-to-typing-311",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.11"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing_extensions$"
+      },
+      "all": [
+       {
+        "matches": "te-typing-311"
+       },
+       {
+        "not": {
+         "matches": "up-to-te-typing-310"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-extensions-to-typing-312",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.12"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing_extensions$"
+      },
+      "all": [
+       {
+        "matches": "te-typing-312"
+       },
+       {
+        "not": {
+         "matches": "up-to-te-typing-311"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-extensions-to-typing-313",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.13"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing_extensions$"
+      },
+      "all": [
+       {
+        "matches": "te-typing-313"
+       },
+       {
+        "not": {
+         "matches": "up-to-te-typing-312"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "mypy-extensions-to-typing",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^mypy_extensions$"
+      },
+      "all": [
+       {
+        "matches": "mypy-37"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `typing` instead of `mypy_extensions`; keep any other names imported from `mypy_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "mypy-extensions-to-typing-38",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.8"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^mypy_extensions$"
+      },
+      "all": [
+       {
+        "matches": "mypy-38"
+       },
+       {
+        "not": {
+         "matches": "mypy-37"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `typing` instead of `mypy_extensions`; keep any other names imported from `mypy_extensions`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-io-to-typing",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing\\s*\\.\\s*io$"
+      },
+      "all": [
+       {
+        "matches": "typing-io"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `typing` instead of the `typing.io` namespace; keep any other names imported from `typing.io`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-re-to-re",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing\\s*\\.\\s*re$"
+      },
+      "all": [
+       {
+        "matches": "typing-re"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import `Match` and `Pattern` from `re` instead of the `typing.re` namespace; keep any other names imported from `typing.re`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-re-to-typing",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "max": "3.8"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing\\s*\\.\\s*re$"
+      },
+      "all": [
+       {
+        "matches": "typing-re"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import `Match` and `Pattern` from `typing` instead of the `typing.re` namespace; keep any other names imported from `typing.re`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "backports-strenum-to-enum",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.11"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^backports\\s*\\.\\s*strenum$"
+      },
+      "all": [
+       {
+        "matches": "backports-strenum"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import `StrEnum` from `enum`, which provides it on this Python version, instead of `backports.strenum`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-to-collections-abc",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing$"
+      },
+      "all": [
+       {
+        "matches": "typing-abc-39"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `collections.abc` instead of `typing`; keep any other names imported from `typing`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-to-collections-abc-310",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.10"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing$"
+      },
+      "all": [
+       {
+        "matches": "typing-abc-310"
+       },
+       {
+        "not": {
+         "matches": "typing-abc-39"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import `Callable` from `collections.abc` instead of `typing`; keep any other names imported from `typing`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-to-collections",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing$"
+      },
+      "all": [
+       {
+        "matches": "typing-collections"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import these names from `collections` instead of `typing`; keep any other names imported from `typing`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-to-re",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing$"
+      },
+      "all": [
+       {
+        "matches": "typing-re-39"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "Import `Match` and `Pattern` from `re` instead of `typing`; keep any other names imported from `typing`.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-builtin-generics",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing$"
+      },
+      "all": [
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "any": [
+          {
+           "kind": "dotted_name",
+           "regex": "^(?:Tuple|List|FrozenSet|Dict|Type|Set)$",
+           "pattern": "$NAME",
+           "not": {
+            "nthChild": 1
+           }
+          },
+          {
+           "kind": "aliased_import",
+           "has": {
+            "kind": "dotted_name",
+            "regex": "^(?:Tuple|List|FrozenSet|Dict|Type|Set)$",
+            "pattern": "$NAME",
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     },
+     "transform": {
+      "LOWER": {
+       "convert": {
+        "source": "$NAME",
+        "toCase": "lowerCase"
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "`typing.$NAME` is deprecated; use the built-in `$LOWER` in annotations and drop the `typing` import once nothing else uses it.",
+    "each": "NAME",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-asynccontextmanager",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing$"
+      },
+      "all": [
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "any": [
+          {
+           "kind": "dotted_name",
+           "regex": "^(?:AsyncContextManager)$",
+           "pattern": "$NAME",
+           "not": {
+            "nthChild": 1
+           }
+          },
+          {
+           "kind": "aliased_import",
+           "has": {
+            "kind": "dotted_name",
+            "regex": "^(?:AsyncContextManager)$",
+            "pattern": "$NAME",
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "`typing.AsyncContextManager` is deprecated; use `contextlib.AbstractAsyncContextManager` instead and drop the `typing` import once nothing else uses it.",
+    "each": "NAME",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-contextmanager",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing$"
+      },
+      "all": [
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "any": [
+          {
+           "kind": "dotted_name",
+           "regex": "^(?:ContextManager)$",
+           "pattern": "$NAME",
+           "not": {
+            "nthChild": 1
+           }
+          },
+          {
+           "kind": "aliased_import",
+           "has": {
+            "kind": "dotted_name",
+            "regex": "^(?:ContextManager)$",
+            "pattern": "$NAME",
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "`typing.ContextManager` is deprecated; use `contextlib.AbstractContextManager` instead and drop the `typing` import once nothing else uses it.",
+    "each": "NAME",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-abstractset",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing$"
+      },
+      "all": [
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "any": [
+          {
+           "kind": "dotted_name",
+           "regex": "^(?:AbstractSet)$",
+           "pattern": "$NAME",
+           "not": {
+            "nthChild": 1
+           }
+          },
+          {
+           "kind": "aliased_import",
+           "has": {
+            "kind": "dotted_name",
+            "regex": "^(?:AbstractSet)$",
+            "pattern": "$NAME",
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "`typing.AbstractSet` is deprecated; use `collections.abc.Set` instead and drop the `typing` import once nothing else uses it.",
+    "each": "NAME",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-deque",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing$"
+      },
+      "all": [
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "any": [
+          {
+           "kind": "dotted_name",
+           "regex": "^(?:Deque)$",
+           "pattern": "$NAME",
+           "not": {
+            "nthChild": 1
+           }
+          },
+          {
+           "kind": "aliased_import",
+           "has": {
+            "kind": "dotted_name",
+            "regex": "^(?:Deque)$",
+            "pattern": "$NAME",
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "`typing.Deque` is deprecated; use `collections.deque` instead and drop the `typing` import once nothing else uses it.",
+    "each": "NAME",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "typing-defaultdict",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "when": {
+      "pythonVersion": {
+       "min": "3.9"
+      }
+     },
+     "rule": {
+      "kind": "import_from_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "module_name",
+       "kind": "dotted_name",
+       "regex": "^typing$"
+      },
+      "all": [
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "any": [
+          {
+           "kind": "dotted_name",
+           "regex": "^(?:DefaultDict)$",
+           "pattern": "$NAME",
+           "not": {
+            "nthChild": 1
+           }
+          },
+          {
+           "kind": "aliased_import",
+           "has": {
+            "kind": "dotted_name",
+            "regex": "^(?:DefaultDict)$",
+            "pattern": "$NAME",
+            "stopBy": "neighbor"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "UP035",
+    "message": "`typing.DefaultDict` is deprecated; use `collections.defaultdict` instead and drop the `typing` import once nothing else uses it.",
+    "each": "NAME",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP035"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -20,10 +20,10 @@ use super::setup::{GitSetup, installed};
 
 /// The largest config, exclude or attribute file a read takes: Git's own limit for an attributes
 /// file since 2.39.1 (`ATTR_MAX_FILE_SIZE`). Real ones are a few kilobytes.
-pub(crate) const MAX_GIT_FILE_BYTES: u64 = 100 << 20;
+pub const MAX_GIT_FILE_BYTES: u64 = 100 << 20;
 
 #[derive(Debug)]
-pub(crate) enum OpenError {
+pub enum OpenError {
     /// No Git repository holds the path.
     NoRepository(String),
     /// A repository holds the path, and Git would refuse it or it cannot be read.
@@ -57,14 +57,14 @@ fn no_repository(error: &gix::discover::upwards::Error) -> bool {
 
 /// Tests only: discovery takes every repository for one another user owns, as Git does under
 /// `GIT_TEST_ASSUME_DIFFERENT_OWNER`. Set in a test's own child process, never in a shared one.
-#[cfg(test)]
-pub(crate) static ASSUME_ANOTHER_OWNER: std::sync::atomic::AtomicBool =
+#[cfg(any(test, feature = "test-hooks"))]
+pub static ASSUME_ANOTHER_OWNER: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 fn upwards_options() -> gix::discover::upwards::Options<'static> {
     #[allow(unused_mut, reason = "only the test build assumes another owner")]
     let mut options = gix::discover::upwards::Options::default();
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if ASSUME_ANOTHER_OWNER.load(std::sync::atomic::Ordering::Relaxed) {
         options.trust = gix::discover::upwards::TrustPolicy::Assume(gix::sec::Trust::Reduced);
     }
@@ -73,7 +73,7 @@ fn upwards_options() -> gix::discover::upwards::Options<'static> {
 
 /// [`discover`] on a thread of its own under the Git read time limit ([`super::pool`]), for a
 /// caller that then reads the repository itself.
-pub(crate) fn open(root: &Path) -> Result<gix::Repository, OpenError> {
+pub fn open(root: &Path) -> Result<gix::Repository, OpenError> {
     let owned = root.to_path_buf();
     super::pool::run(
         "opening the Git repository",
@@ -85,7 +85,7 @@ pub(crate) fn open(root: &Path) -> Result<gix::Repository, OpenError> {
 }
 
 /// The Git repository around `root`, opened as Git would open it from there.
-pub(crate) fn discover(root: &Path) -> Result<gix::Repository, OpenError> {
+pub fn discover(root: &Path) -> Result<gix::Repository, OpenError> {
     let setup = installed();
     let sources = Sources::new(setup.as_deref());
     let (found, trust) = gix::discover::upwards_opts(root, upwards_options()).map_err(|error| {
@@ -197,7 +197,7 @@ fn unreadable(path: &Path, error: &std::io::Error) -> OpenError {
 /// finish), or when it cannot be looked at. A missing file passes, as Git reads it as empty, and so
 /// do a folder, which gix reads as no file, and the null device (`GIT_CONFIG_GLOBAL=/dev/null`,
 /// `core.excludesFile=/dev/null`), which reads as empty.
-pub(crate) fn check_size(path: &Path) -> Result<(), OpenError> {
+pub fn check_size(path: &Path) -> Result<(), OpenError> {
     if null_device_name(path) {
         return Ok(());
     }
@@ -270,7 +270,7 @@ fn xdg_file(name: &str) -> Option<PathBuf> {
 /// worktree file to Git's form (a status of a file whose stat changed) runs no program the
 /// repository or the user configured: a file under a driver (Git LFS) then reads as changed, and
 /// the reader takes its bytes from disk as for any changed file.
-pub(crate) fn without_filter_programs(repository: &mut gix::Repository) -> Result<(), String> {
+pub fn without_filter_programs(repository: &mut gix::Repository) -> Result<(), String> {
     let mut config = repository.config_snapshot_mut();
     let drivers = config
         .sections_and_ids_by_name("filter")
@@ -286,7 +286,11 @@ pub(crate) fn without_filter_programs(repository: &mut gix::Repository) -> Resul
 
 /// The system attributes file of Rerail's Git: `Ok(None)` where Git reads none, `Err` where it
 /// cannot be named without starting a Git (Windows, with no system file reported).
-pub(crate) fn system_attributes() -> Result<Option<PathBuf>, ()> {
+#[allow(
+    clippy::result_unit_err,
+    reason = "main's signature: the error says only that the file cannot be named; public because its callers are in other crates"
+)]
+pub fn system_attributes() -> Result<Option<PathBuf>, ()> {
     if env_flag("GIT_ATTR_NOSYSTEM") {
         return Ok(None);
     }

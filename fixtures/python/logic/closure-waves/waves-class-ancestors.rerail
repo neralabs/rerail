@@ -1,0 +1,14 @@
+.policy "waves-class-ancestors" revision 1
+.description "A class that inherits, directly or not, from a class of the same file named Base: the inheritance graph, as a closure."
+.language python
+.mode steer
+.scope include "**/*"
+// Inheritance within a file: c's superclass list names b, a class of the same document.
+.decl wa_sub(c: node, b: node)
+wa_sub(c, b) :- kind(c, "class_definition"), field(c, "superclasses", l), child(l, e, _), kind(e, "identifier"), text(e, x),
+    docof(c, d), kind(b, "class_definition"), field(b, "name", nm), text(nm, x), docof(b, d).
+.decl wa_anc(c: node, b: node)
+wa_anc(c, b) :- wa_sub(c, b).
+wa_anc(c, a) :- wa_anc(c, b), wa_sub(b, a).
+.violation WA1(at: node) code "WA1" "this class inherits from a class of this file, directly or not, through another"
+WA1(c) :- wa_anc(c, a), !wa_sub(c, a).
