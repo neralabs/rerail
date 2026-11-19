@@ -109,7 +109,25 @@ unit still moving, then one TEXT run for all.
 - reads a count where a length is made by data (compact, expand, a scatter's `n`);
 - reads which bytes of a sort key vary;
 - reads each local fixed point's verdict;
-- answers calls: reads the elements, runs the words on the CPU, sends the rows back.
+- answers calls: reads the elements, makes each element's file, sends the rows back.
+
+**The calls' readings on the device** (`Exec::MetalWords`). A call op hands every live unit's
+elements to one host at once (`array::UnitCalls::call_units`; `Each` answers unit by unit
+through `Calls::call_many`). The passes answer tests and expansions with
+`words::tests_across` / `expands_across`: every element's file is made, and each wave of
+readings, every unit's, runs as one lockstep batch of the words on the device
+(`expand::on_metal_counted`, 0408's `pp_on`). An element that asked for names is made again
+and read in the next wave, up to 8 readings. So a round costs about one word batch for each
+call op, however many units the batch has.
+
+Two things in `pp_on` were sized for TUs, not elements:
+- `Bounds::rung` counted every tokenless file as embedded data, two tokens a byte. An
+  element's headers are tokenless, carried for their text only, so a 30-token element got
+  rooms for its headers' whole text (2 MB a job). A file counts as data now only if a file
+  reaches it (`includes`, `named`). `Bounds::within` holds a rung at the job's own bounds.
+- A batch's arena started at 64 MB and doubled while full. It now starts from the batch's
+  measured need, and is split before any lease when the need is past the largest arena
+  (256 MB). One call of 300 elements had made 6.6 GB of arenas that could not fit.
 
 **The launch ledger.** Each command buffer is one execution under the launch ledger (200
 launches, the user's bound of 2026-11-03). An array program runs many command buffers, with
@@ -121,7 +139,7 @@ per command buffer, and ends a buffer at the ledger's bound. The bound itself is
 **Correct, the interpreter, the lean calls** (the serial pass's own expansion per element),
 both corpora under clang's profile:
 - C: 1,572 of 1,574 the same, 2 refused (`#line`; a call past its stretch), 0 differ.
-- C++: the first 750 units the same, 0 differ (the rest running).
+- C++: 1,560 of 1,561 the same, 1 refused (`#line`), 0 differ.
 
 **Correct, the calls on the words:** the passes' unit tests, 10 C units and 2 C++ units the
 same. The heaviest C++ unit: 38 rounds, 40,450 tests, 18,763 expansions; under 13 s on the
@@ -155,6 +173,19 @@ calls 89, the rest 60.
 | Device bytes at the peak | 47 MB | 95 MB | 374 MB |
 | Elements the host called | 29,657 | 29,657 | 141,641 |
 
+With the readings on the device too (`Exec::MetalWords`), all the same:
+
+| | 10, one batch | 50, one batch |
+|---|---:|---:|
+| Word batches (a wave of every unit's readings) | 38 | 40 |
+| Their dispatches | 43 | 63 |
+| Their GPU time | 0.24 s | 0.48 s |
+| Readings (tests, expansions, again) | 10,881 | 51,441 |
+| The programs' GPU time | 0.26 s | 0.36 s |
+
+Before the readings were batched across units, the 10 units took 157 word batches (177
+dispatches, 0.67 s of GPU time).
+
 A batch costs about what its deepest unit costs alone: the launches, not the data. At 50 units
 that is 7 ms of GPU time a unit. 0408's gate is about 0.15 s for the whole corpus on one core,
 so the launches are still the cost to cut.
@@ -178,8 +209,8 @@ first operation whose value differs):
 2. **Fewer launches and syncs:** scans in one launch (a single-pass scan), elementwise runs
    fused into one kernel, a sort's varying bytes and a fixed point's verdict kept on the
    device.
-3. **The calls on the device**, through 0408's lockstep batch, once the element's file is made
-   by array operations.
+3. ~~The calls on the device, through 0408's lockstep batch~~ (built, above). The element's
+   files are still made on the host; making them by array operations is next.
 4. **Cranelift**, the CPU path.
 5. **Timing** through `quiet-run`, warm, against rustc's build of the serial pass.
 6. P0 (each file's tables) on the device; merges; an expansion cache.
