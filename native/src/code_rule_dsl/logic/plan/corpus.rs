@@ -7978,6 +7978,24 @@ fn run_observed(
     // The changed files' documents now, guests with them (decision 0458): a base relation's new version.
     let mut changed_docs: Vec<syntax::Document> = Vec::new();
     let mut corpus_digest = 0u64;
+    // The corpus batch makes the chunks' projection (decision 0458): a span the cross part reads (a line's `line`,
+    // a comment's `col`) is made only where its relation is, and the file-local part names them. Not what makes no
+    // span and the cross part does not read: the tree digests (every node's hash), the text tests and the `ast`
+    // matchers. The old and new batches of an edit are made the same way, so their columns are the batch's.
+    let cross_reads: BTreeSet<String> = stored.iter().map(|(r, _)| r.clone()).collect();
+    let cross_projection = {
+        let mut p = projection.clone();
+        if let Some(reads) = &mut p.reads {
+            reads.retain(|r| !matches!(r.as_str(), "tree_digest" | "def_digest") || cross_reads.contains(r));
+        }
+        p
+    };
+    let cross_vocabulary = if vocabulary.tests.iter().any(|(t, _)| cross_reads.contains(t)) {
+        Arc::clone(&vocabulary)
+    } else {
+        Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::from_parts(Vec::new(), Vec::new(), vocabulary.matches.clone(), vocabulary.markers.clone()))
+    };
+    let cross_matchers = if cross_reads.iter().any(|r| r.starts_with(matchers::PREFIX)) { chunk_matchers.clone() } else { syntax::Matchers::default() };
     let corpus_sources: HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = if stored.is_empty() || docs.is_empty() {
         HashMap::new()
     } else {
@@ -8010,7 +8028,7 @@ fn run_observed(
             [i64::from(d.key), at(0), at(1), at(2), at(3)]
         };
         corpus_digest = all.iter().map(|d| super::row_digest(&words(d))).fold(0u64, u64::wrapping_add);
-        let sources = syntax::with_matchers(&store, all, &sets, &chunk_matchers, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
+        let sources = syntax::with_matchers(&store, all, &sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection).map_err(|e| Error::Plan(e.to_string()))?;
         sources.into_iter().filter(|(r, _)| stored.iter().any(|(s, _)| s == r)).collect()
     };
     // A base relation's digest: its documents', under its name (decision 0458).
@@ -8049,7 +8067,7 @@ fn run_observed(
                 }
                 docs.sort_by_key(|d| d.key);
                 docs.dedup_by_key(|d| d.key);
-                Ok(syntax::with_matchers(&store, docs, &sets, &chunk_matchers, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect())
+                Ok(syntax::with_matchers(&store, docs, &sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect())
             };
             let changed_keys: BTreeSet<i64> = old_docs.iter().chain(changed_docs.iter()).map(|d| i64::from(d.key)).collect();
             let (old_batch, new_batch) = (batch_of(old_docs)?, batch_of(std::mem::take(&mut changed_docs))?);
