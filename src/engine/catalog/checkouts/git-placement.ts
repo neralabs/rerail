@@ -324,8 +324,8 @@ function readAsGitReads(inputs: PlacementInputs): boolean {
 }
 
 /**
- * Whether Git takes `gitFolder/HEAD` for a `HEAD`: a regular file naming a ref under `refs/`, or an object id.
- * Undefined for a link, which Git takes by the name it holds.
+ * Whether Git takes `gitFolder/HEAD` for a `HEAD`: a regular file whose first bytes, as many as Git reads, name a ref
+ * under `refs/` or an object id ({@link headTaken}). Undefined for a link, which Git takes by the name it holds.
  */
 function validHead(gitFolder: string): boolean | undefined {
   const path = join(gitFolder, "HEAD");
@@ -334,9 +334,19 @@ function validHead(gitFolder: string): boolean | undefined {
   return looked !== "none" && headTaken(fileText(path));
 }
 
-/** Git skips only a space, a tab and line ends after `ref:` (its `isspace`), not a vertical tab, a form feed or a Unicode space. */
+/**
+ * How much of a `HEAD` Git reads to take it (`validate_headref`): a ref named past it is not taken. The text Git can
+ * take is ASCII up to the end of `refs/` or of the object id, so these characters are the bytes Git reads.
+ */
+const HEAD_READ = 255;
+
+/**
+ * Whether Git takes this `HEAD` text: `ref:`, then only a space, a tab or line ends (Git's `isspace`, not a vertical tab,
+ * a form feed or a Unicode space), then `refs/`; or an object id. Read in its first {@link HEAD_READ} characters.
+ */
 function headTaken(head: FileText | "none" | undefined): boolean {
-  return isText(head) && (/^ref:[\t\n\r ]*refs\//u.test(head.text) || /^(?:[0-9a-f]{64}|[0-9a-f]{40})/iu.test(head.text));
+  const text = isText(head) ? head.text.slice(0, HEAD_READ) : undefined;
+  return text !== undefined && (/^ref:[\t\n\r ]*refs\//u.test(text) || /^(?:[0-9a-f]{64}|[0-9a-f]{40})/iu.test(text));
 }
 
 /**

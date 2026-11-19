@@ -449,6 +449,9 @@ async function deepRoot(): Promise<string> {
   return root;
 }
 
+/** A `HEAD` naming `refs/heads/main` after `ref:` and 260 spaces: Git reads 255 bytes of a `HEAD`, and so takes no ref here. */
+const LATE_REF = `ref:${" ".repeat(260)}refs/heads/main\n`;
+
 describe("the read before Git places a folder ends in the folder where Git's search ends", () => {
   it("reads no folder above the repository a checkout is placed in, six folders or more below the root", async () => {
     const root = await deepRoot();
@@ -474,6 +477,7 @@ describe("the read before Git places a folder ends in the folder where Git's sea
    */
   const HALF_MADE: ReadonlyArray<readonly [string, (gitFolder: string, root: string) => Promise<void>]> = [
     ["a HEAD Git does not take", gitFolder => writeFile(join(gitFolder, "HEAD"), "ref:\vrefs/heads/main\n")],
+    ["a HEAD naming its ref past the 255 bytes Git reads of it", gitFolder => writeFile(join(gitFolder, "HEAD"), LATE_REF)],
     ["no objects", gitFolder => removeFolder(join(gitFolder, "objects"))],
     ["no refs", gitFolder => removeFolder(join(gitFolder, "refs"))],
     ["a commondir naming a folder with neither objects nor refs", async (gitFolder, root) => {
@@ -497,6 +501,25 @@ describe("the read before Git places a folder ends in the folder where Git's sea
     await rename(join(outer, ".git"), join(root, "outer.git"));
     expect(gitsAnswer(inner).git).toBe(false);
     expect(worktreeRegistry(inner)).toBeUndefined();
+  });
+
+  it("lists the list of a folder made a repository above a folder between whose HEAD names its ref past the 255 bytes Git reads of it", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const above = join(outer, "above");
+    const half = join(above, "half");
+    const inner = join(half, "inner");
+    mkdirSync(inner, { recursive: true });
+    git(half, "init", "--quiet");
+    await writeFile(join(half, ".git", "HEAD"), LATE_REF);
+    expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
+    expect(registryPlacements(inner)).toBe(1);
+
+    // Git passed over the folder with that HEAD, so the folder above it that becomes a repository is the one Git lists.
+    repository(above);
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toEqual(gitsRegistry(above));
   });
 });
 
