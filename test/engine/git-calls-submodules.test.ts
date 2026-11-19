@@ -744,6 +744,8 @@ async function startedLate<T>(root: string, wait: (args: readonly string[]) => n
   let running = 0;
   let most = 0;
   vi.mocked(started.spawn).mockImplementation(((file: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+    // Only a Git starts late: on Windows ending a Git's process tree starts `taskkill` too.
+    if (!args.includes("-C")) return actualChildProcess.spawn(file, args, options);
     const child = actualChildProcess.spawn(process.execPath, [late, String(wait(args)), file, ...args], options);
     running += 1;
     most = Math.max(most, running);
