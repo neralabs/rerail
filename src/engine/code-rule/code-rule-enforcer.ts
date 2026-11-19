@@ -1379,7 +1379,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     // Recorded before the publish, which waits for the runtime and may throw, so neither holds this audit open.
     this.#readFailures.set(path, problem);
     this.#finishAudit(stored.auditId, "failed", [], [problem]);
-    await this.#publishReady();
+    try {
+      await this.#publishReady();
+    } catch (publishError) {
+      // Recorded as `#run` records a publish that throws after a check or a read failure, so the evaluator goes on to
+      // the next queued edit. The publish it makes again asks only for revisions that became ready since.
+      await this.#recordPendingEvaluationError(path, stored, publishError);
+    }
   }
   /**
    * Where the edit of `path` measures what it generated: from the preimage of the source's oldest edit whose lines may

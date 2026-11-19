@@ -725,15 +725,22 @@ describe("mechanical code rule regressions", () => {
       }
     });
 
-    it.each(ends)("finishes b.py's audit, ended by $end, when the steer it releases fails", async ({ id, b, failing, status }) => {
-      const { root, enforcer, requestSteer, audits } = await ordered();
+    it.each(ends)("finishes b.py's audit, ended by $end, and still checks and steers c.py when the steer it releases fails", async ({ id, b, failing, status }) => {
+      const { root, enforcer, order, requestSteer, audits } = await ordered();
       requestSteer.mockRejectedValueOnce(new Error("injected steer failure"));
       const binding = failing ? failingApply("api/b.py") : undefined;
       try {
         for (const name of ["a", "b", "c"]) await writeFile(join(root, "api", `${name}.py`), "NEEDLE\n");
-        await twoCalls(enforcer, `failed-steer-${id}`, b);
+        await queueTwoCalls(enforcer, `failed-steer-${id}`, b);
+        const { failures } = await settled(enforcer);
 
-        expect(auditForPath(audits, "api/b.py")?.result?.status).toBe(status);
+        // The failed request is listed among the answer's failures, and the next queued edit is checked and steered.
+        expect({
+          b: auditForPath(audits, "api/b.py")?.result?.status,
+          c: auditForPath(audits, "api/c.py")?.result?.status,
+          steeredC: order.includes("steered api/c.py"),
+          listed: failures.some(item => item.message.includes("injected steer failure")),
+        }).toEqual({ b: status, c: "completed", steeredC: true, listed: true });
       } finally {
         binding?.mockRestore();
         await enforcer.close();
