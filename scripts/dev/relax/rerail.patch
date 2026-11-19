@@ -525,6 +525,94 @@ index eb9e99f2..fff2cdde 100644
 +        fn st_blocks(&self) -> u64 { self.stat().st_blocks as u64 }
 +    }
 +}
+diff --git a/libs/relax/compiler/std/std/panic.rs b/libs/relax/compiler/std/std/panic.rs
+index 2e0416b4..70db549e 100644
+--- a/libs/relax/compiler/std/std/panic.rs
++++ b/libs/relax/compiler/std/std/panic.rs
+@@ -179,7 +179,33 @@ pub(crate) fn record_payload(message: fmt::Arguments<'_>) {
+     });
+ }
+ 
++thread_local! {
++    /// Where this thread's panic was, as `file:line:col` (the payload's companion): what the test
++    /// harness says of a failed test, as libtest's captured output does.
++    static LOCATION: core::cell::RefCell<Option<String>> = const { core::cell::RefCell::new(None) };
++}
++
++/// Called with the payload (sys::rt): the latest panic's location (one a test caught itself is
++/// replaced by the one that failed it).
++pub(crate) fn record_location(loc: &core::panic::Location<'_>) {
++    let _ = LOCATION.try_with(|c| {
++        if let Ok(mut c) = c.try_borrow_mut() {
++            *c = Some(alloc::format!("{}:{}:{}", loc.file(), loc.line(), loc.column()));
++        }
++    });
++}
++
++/// The location of the panic that just ended this thread's catch point (taken).
++pub(crate) fn take_location() -> Option<String> {
++    LOCATION.try_with(|c| c.try_borrow_mut().ok().and_then(|mut c| c.take())).ok().flatten()
++}
++
+ pub(crate) fn clear_payload() {
++    let _ = LOCATION.try_with(|c| {
++        if let Ok(mut c) = c.try_borrow_mut() {
++            *c = None;
++        }
++    });
+     let _ = PAYLOAD.try_with(|c| {
+         if let Some(p) = c.take() {
+             drop(unsafe { Box::from_raw(p.as_ptr()) });
+diff --git a/libs/relax/compiler/std/std/relax/test.rs b/libs/relax/compiler/std/std/relax/test.rs
+index 920e21e6..3e20c3e4 100644
+--- a/libs/relax/compiler/std/std/relax/test.rs
++++ b/libs/relax/compiler/std/std/relax/test.rs
+@@ -177,6 +177,16 @@ fn calc_result(d: &Desc, panic: Option<&(dyn crate::any::Any + Send)>) -> Outcom
+     }
+ }
+ 
++/// libtest's text of a test's panic: `thread '<test>' panicked at <file:line:col>:` then the message.
++fn panic_text(name: &str, p: &(dyn crate::any::Any + Send)) -> String {
++    let msg = p.downcast_ref::<String>().map(|e| e.as_str()).or_else(|| p.downcast_ref::<&'static str>().copied())
++        .unwrap_or("Box<dyn Any>");
++    match crate::panic::take_location() {
++        Some(at) => format!("thread '{}' panicked at {}:\n{}", name, at, msg),
++        None => format!("thread '{}' panicked:\n{}", name, msg),
++    }
++}
++
+ fn run_one(d: &Desc, fault: usize, reach: usize, verbose: bool) -> Outcome {
+     let record: Option<extern "C" fn(usize, u32)> = if reach == 0 { None } else { Some(unsafe { crate::mem::transmute(reach) }) };
+     if let Some(record) = record { record(d.index, 0); }
+@@ -204,7 +214,13 @@ fn run_one(d: &Desc, fault: usize, reach: usize, verbose: bool) -> Outcome {
+     } else { false };
+     let result = if faulted { Outcome::Failed(Some(String::from("a hardware fault in test code"))) } else { match r {
+         Ok(()) => calc_result(d, None),
+-        Err(p) => calc_result(d, Some(&*p)),
++        Err(p) => match calc_result(d, Some(&*p)) {
++            // A failing panic: what libtest's captured output shows of it (std's panic hook prints
++            // it there), its message and where it was. Relax captures no output, and its runtime's
++            // report of the panic is a JSON line; without this the failures section was empty.
++            Outcome::Failed(None) => Outcome::Failed(Some(panic_text(&d.name, &*p))),
++            o => o,
++        },
+     } };
+     if let (Some(began), Some(caught), Some(body_begin)) = (began, caught, body_begin.get()) {
+         let body_end = body_end.get().unwrap_or(caught);
+diff --git a/libs/relax/compiler/std/std/sys/rt.rs b/libs/relax/compiler/std/std/sys/rt.rs
+index 85681d4b..48464759 100644
+--- a/libs/relax/compiler/std/std/sys/rt.rs
++++ b/libs/relax/compiler/std/std/sys/rt.rs
+@@ -41,6 +41,9 @@ fn report_panic(message: core::fmt::Arguments<'_>, location: Option<&core::panic
+     #[cfg(not(relax_web))]
+     {
+     crate::panic::record_payload(message);
++    if let Some(loc) = location {
++        crate::panic::record_location(loc);
++    }
+     if crate::panic::take_resuming() {
+         return;
+     }
 diff --git a/libs/relax/compiler/tests/cast_open_slice_referent.rs b/libs/relax/compiler/tests/cast_open_slice_referent.rs
 new file mode 100644
 index 00000000..a3a893dd

@@ -181,8 +181,20 @@ def main(argv):
     pushed = [None]
 
     def show():
+        # A failed test's section (`---- NAME stdout ----` to the blank line after it): its panic's
+        # message and place, an assertion's left and right. Only the lines naming a panic were
+        # shown before, and a test's difference had to be printed by the test itself.
+        failure = False
         for line in proc.stdout:
-            if line.startswith("testverdict"):
+            if line.startswith("---- ") and line.rstrip().endswith(" stdout ----"):
+                failure = True
+            if failure:
+                print(line.rstrip(), flush=True)
+                failure = line.strip() != "" or line.startswith("---- ")
+                continue
+            if line.startswith("test ") and line.rstrip().endswith("FAILED"):
+                print(line.rstrip(), flush=True)
+            elif line.startswith("testverdict"):
                 since = f" ({time.time() - pushed[0]:.1f} s after the save)" if pushed[0] else \
                     f" ({time.time() - started:.0f} s after the start)"
                 print(line.rstrip() + since, flush=True)

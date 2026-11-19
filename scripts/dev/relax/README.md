@@ -237,6 +237,17 @@ from the code, as the "item not ready" case never showed in 20 runs here.
 Measured on a Spark (`plan::corpus::tests`): before, 19 left out in 12 runs and 41 refused takes
 in one traced run; after, none left out in 8 runs and no refused take.
 
+### 12. A failed test's panic is shown, as libtest shows it
+
+A test that failed on an assert or a `panic!` had an empty section under `failures:`. libtest
+shows the test's captured output there, where std's panic hook printed `thread 'NAME' panicked
+at FILE:LINE:COL:` and the message (an `assert_eq!`'s left and right). Relax captures no output,
+and its runtime reports the panic as a JSON `report:` line, so agents had their tests print the
+difference themselves before failing. The harness now writes libtest's text from the panic's
+payload and the location the panic hook records beside it (`std::panic::record_location`). The
+same section reaches `live-test-remote`, which now prints each failure's section whole (it
+showed only the lines naming a panic).
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every
