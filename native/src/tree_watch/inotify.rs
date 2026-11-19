@@ -956,6 +956,29 @@ mod tests {
     }
 
     #[test]
+    fn a_root_past_the_budget_with_the_spare_room_too_is_refused() {
+        let scratch = Scratch::new("spare-past");
+        let [spare, root] = folders_of(&scratch, ["spare", "root"]);
+        let notices = Arc::new(Notices::default());
+        let budget = just_fits(&[(&spare, vec![String::new()])]);
+        let mut backend = Inotify::open_with_budget(Arc::clone(&notices), budget).expect("opens");
+        // One folder more than the whole budget.
+        let mut folders = vec![String::new()];
+        for index in 0..budget {
+            let name = format!("f{index}");
+            std::fs::create_dir(scratch.path(&format!("root/{name}"))).expect("create folder");
+            folders.push(name);
+        }
+        for watched in [&spare, &root] {
+            notices.start(watched);
+        }
+        assert!(backend.watch_spare(&spare, &[String::new()]));
+        assert!(!backend.watch(&root, &folders), "it does not fit in the spare room either");
+        assert!(notice_of(&notices, &spare).ended);
+        backend.close();
+    }
+
+    #[test]
     fn the_watcher_watches_a_spare_root_only_with_room_left() {
         let scratch = Scratch::new("spare-watcher");
         let [spare, root] = folders_of(&scratch, ["spare", "root"]);

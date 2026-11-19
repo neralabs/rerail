@@ -41,7 +41,7 @@ export class StampTreeWatch implements TreeWatch {
   readonly #lost = new Set<string>();
   readonly #ended = new Set<string>();
   readonly #held = new Set<string>();
-  /** What `until` waits for, each checked again after a watch or an unwatch. */
+  /** What `until` waits for, each checked again after a watch. */
   readonly #waiting: Array<{ readonly met: () => boolean; readonly resolve: () => void }> = [];
   closed = false;
 
@@ -53,7 +53,7 @@ export class StampTreeWatch implements TreeWatch {
     return true;
   }
 
-  /** Resolves once `met` holds, read now and after each watch and unwatch: a test waits for that fact, not for a time. */
+  /** Resolves once `met` holds, read now and after each watch: a test waits for that fact, not for a time. */
   until(met: () => boolean): Promise<void> {
     if (met()) return Promise.resolve();
     const { promise, resolve } = Promise.withResolvers<void>();
@@ -75,7 +75,6 @@ export class StampTreeWatch implements TreeWatch {
     this.#lost.delete(root);
     this.#ended.delete(root);
     this.unwatched.push(root);
-    this.#settle();
   }
 
   take(): TreeNotice[] {

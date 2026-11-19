@@ -806,8 +806,8 @@ describe("a walk of the other worktrees with change notices", () => {
     git(main, "worktree", "add", "--quiet", "--force", "--detach", w3);
     watch.end(w3);
     watch.release(w3);
-    await watch.until(() => watch.unwatched.includes(w3));
-    await watch.until(() => watch.folders.has(w3));
+    // Its watch let go, then watched again: the new folder.
+    await watch.until(() => watch.unwatched.includes(w3) && watch.folders.has(w3));
     const delivered = nextAudit(watching);
     await writeFile(join(w3, "src", "a.py"), "old\nmine\n");
     await delivered;
