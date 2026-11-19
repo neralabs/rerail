@@ -270,6 +270,15 @@ class PendingEdits extends Map<string, StoredEdit> {
     return new Set([...this.values()].map(stored => stored.revision));
   }
 }
+/** What `#repackagedSources` reads an edit's rechecked sources with. */
+type RecheckContext = { packages: ReadonlyMap<string, string>; cache: SourceFactsCache; serverGraph: boolean; overlay: SourceOverlay | undefined };
+/** One apply of several edits (`#applyTogether`): its evaluation, and the sources each edit repackaged. */
+type AppliedTogether = {
+  evaluation: Evaluation;
+  repackaged: ReadonlyMap<string, CodeRuleEdit[]>;
+  /** Marks `sources` as sent with facts no later edit matches, as `#apply`'s `unreported` does for a superseded edit. */
+  unreported: (sources: readonly CodeRuleEdit[]) => void;
+};
 type PreparedWorkspace = {
   workspace: NativeCodeRuleDslWorkspace;
   version: string;
@@ -490,12 +499,6 @@ function ignoreFileDirectory(path: string): string | undefined {
 function isModuleConfig(path: string): boolean {
   return /^(?:ts|js)config[^/]*\.json$/.test(posix.basename(path));
 }
-
-/** Whether an edit of `path` makes the engine read other applied sources again by its name alone (`#recheckedFolder`). */
-function rechecksByName(path: string): boolean {
-  return manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path);
-}
-
 /** Whether `path` lies in a folder named `app`, which a Next package's server module graph reads the presence of. */
 function inAppFolder(path: string): boolean {
   return /(?:^|\/)app\//.test(path);
@@ -1279,20 +1282,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * What of `entry` and the `log` edits `ahead` of it is checked next. Where no rule of the lane reads other files,
    * `entry` alone, before them: its findings do not depend on theirs. Where one does (`crossFile`), all of them in one
    * engine call (`#checkTogether`): `entry` is checked with their texts held, as in the order they came, and waits for
-   * one apply, not one per edit. While one of them makes the engine read other sources again (`#rechecksOthers`), the
-   * oldest alone, as each is checked in that order.
+   * one apply, not one per edit.
    */
   #takenWith(entry: [string, StoredEdit], ahead: [string, StoredEdit][]): [string, StoredEdit][] {
-    if (this.#workspace?.crossFile === false) return [entry];
-    const together = [...ahead, entry];
-    return together.some(([path, stored]) => this.#rechecksOthers(path, stored.language)) ? [together[0]!] : together;
-  }
-
-  /** Whether an edit of `path` may make the engine read other applied sources again (`#recheckedFolder`). */
-  #rechecksOthers(path: string, language: CodeRuleEdit["language"]): boolean {
-    if (rechecksByName(path)) return true;
-    if (this.#workspace?.workspace.readsServerGraph() !== true) return false;
-    return loadNativeBinding().readsPackageManifests(language) || inAppFolder(path);
+    return this.#workspace?.crossFile === false ? [entry] : [...ahead, entry];
   }
 
   /** Checks `taken`, an edit that may steer and the `log` edits queued ahead of it, in one engine call. */
@@ -1331,21 +1324,22 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (prepared === undefined) throw new Error("Policy workspace could not be initialized");
     for (const [path] of loaded) this.#readFailures.delete(path);
     this.#readFailures.delete("worker");
-    const evaluation = await this.#applyTogether(prepared.workspace, loaded.map(([, , edit]) => edit));
+    const applied = await this.#applyTogether(prepared.workspace, loaded.map(([, , edit]) => edit));
     for (const [path, stored, edit] of loaded) this.#replaceAppliedEdit(path, stored, edit);
     this.#unfinished = loaded.map(([, stored]) => stored);
     const [steering, ...others] = [loaded.at(-1)!, ...loaded.slice(0, -1)];
-    await this.#finishTogether(steering!, evaluation);
+    await this.#finishTogether(steering!, applied);
     // The edit that may steer is checked: a result's wait for such edits (`settleGeneratedEdits`) ends here.
     this.#checking = undefined;
     this.#endCheck();
-    for (const checked of others) await this.#finishTogether(checked, evaluation);
+    for (const checked of others) await this.#finishTogether(checked, applied);
   }
 
-  /** One edit of a check of several: its findings read from the evaluation of all of them. */
-  async #finishTogether([path, stored, edit]: [string, StoredEdit, CodeRuleEdit], evaluation: Evaluation): Promise<void> {
+  /** One edit of a check of several: its findings, and those of the sources it repackaged, read from their evaluation. */
+  async #finishTogether([path, stored, edit]: [string, StoredEdit, CodeRuleEdit], applied: AppliedTogether): Promise<void> {
     this.#unfinished = this.#unfinished.filter(other => other !== stored);
-    await this.#finishPendingEvaluation(path, stored, edit, evaluation, [], () => undefined);
+    const repackaged = applied.repackaged.get(path) ?? [];
+    await this.#finishPendingEvaluation(path, stored, edit, applied.evaluation, repackaged, () => applied.unreported(repackaged));
   }
 
   /** The edits of `taken` with their text; each whose text could not be read fails as `#evaluatePendingEdit` fails it. */
@@ -2111,23 +2105,47 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
 
   /**
-   * One apply of every text of `edits`, the deletions among them removed: what `#apply` sends for each, in one engine
-   * call. None of them makes the engine read other applied sources again (`#takenWith`), so none sends another file.
+   * One apply of what `#apply` sends for each of `edits`, in one engine call: each text with its facts, the deletions
+   * removed, and the applied sources an edit gives other facts (`#recheckedFolder`), each once, none of `edits` again.
    */
-  async #applyTogether(workspace: NativeCodeRuleDslWorkspace, edits: readonly CodeRuleEdit[]): Promise<Evaluation> {
+  async #applyTogether(workspace: NativeCodeRuleDslWorkspace, edits: readonly CodeRuleEdit[]): Promise<AppliedTogether> {
     const packages = this.#workspacePackages.get(workspace);
     if (packages === undefined) throw new Error("Policy workspace was disposed");
-    const serverGraph = workspace.readsServerGraph();
-    const cache = sourceFactsCache();
+    const context = { packages, cache: sourceFactsCache(), serverGraph: workspace.readsServerGraph(), sent: new Set(edits.map(edit => edit.path)) };
     const files: WorkspaceFile[] = [];
-    for (const edit of edits.filter(hasGeneratedText)) {
-      const facts = await sourceFileFacts(this.#workspaceRoot, edit.path, edit.language, cache, serverGraph, overlayOf(edit));
-      files.push({ path: edit.path, language: edit.language, source: edit.generatedText, ...facts });
+    const repackaged = new Map<string, CodeRuleEdit[]>();
+    for (const edit of edits) {
+      const overlay = overlayOf(edit);
+      if (hasGeneratedText(edit))
+        files.push({ path: edit.path, language: edit.language, source: edit.generatedText, ...(await sourceFileFacts(this.#workspaceRoot, edit.path, edit.language, context.cache, context.serverGraph, overlay)) });
+      repackaged.set(edit.path, await this.#recheckedTogether(edit, files, { ...context, overlay }));
     }
     const evaluation = await this.#applyRequest(workspace, { files, removed: edits.filter(edit => edit.deleted).map(edit => edit.path) });
-    for (const edit of edits) recordSentPackages(packages, edit, files.filter(file => file.path === edit.path));
+    for (const edit of edits) recordSentPackages(packages, edit, []);
+    for (const file of files) recordSentPackages(packages, { path: file.path, language: file.language }, [file]);
     workspace.evictInactive();
-    return evaluation;
+    const unreported = (sources: readonly CodeRuleEdit[]) => {
+      for (const { path } of sources) if (packages.has(path)) packages.set(path, UNREPORTED_FACTS);
+    };
+    return { evaluation, repackaged, unreported };
+  }
+
+  /**
+   * The applied sources `edit` gives other facts, put in `files` unless sent already (an edit of the batch, or a source
+   * an earlier edit of it repackaged): what `#apply` sends again for it.
+   */
+  async #recheckedTogether(edit: CodeRuleEdit, files: WorkspaceFile[], context: RecheckContext & { sent: Set<string> }): Promise<CodeRuleEdit[]> {
+    const directory = this.#recheckedFolder(edit, context.serverGraph, undefined);
+    if (directory === undefined) return [];
+    const found = await this.#repackagedSources(edit, directory, context);
+    const repackaged: CodeRuleEdit[] = [];
+    for (const [index, file] of found.files.entries()) {
+      if (context.sent.has(file.path)) continue;
+      context.sent.add(file.path);
+      files.push(file);
+      repackaged.push(found.repackaged[index]!);
+    }
+    return repackaged;
   }
 
   async #sendFiles(workspace: NativeCodeRuleDslWorkspace, edit: CodeRuleEdit, files: WorkspaceFile[], pass: SourceFactsCache | undefined): Promise<Evaluation> {
