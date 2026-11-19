@@ -79,7 +79,13 @@ interface StoreRoute { directory: string; path: string; identity: string | null 
 
 function maintenanceRegistration(index: RerailDatabase) {
   index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_maintenance_store (path TEXT PRIMARY KEY) STRICT");
-  return index.$client.prepare("INSERT OR IGNORE INTO analysis_maintenance_store VALUES (?)");
+  index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_maintenance_identity (path TEXT NOT NULL, identity TEXT NOT NULL, PRIMARY KEY(path,identity)) STRICT");
+  const remember = index.$client.prepare("INSERT OR IGNORE INTO analysis_maintenance_store VALUES (?)");
+  const identify = index.$client.prepare("INSERT OR IGNORE INTO analysis_maintenance_identity VALUES (?,?)");
+  return (path: string, identity: string | null) => {
+    remember.run(path);
+    if (identity) identify.run(path, identity);
+  };
 }
 
 export function acquireNamedAnalysisRun(databasePath: string, name: string, store: string, scanId: string) {
@@ -90,7 +96,7 @@ export function acquireNamedAnalysisRun(databasePath: string, name: string, stor
       ensureNamedRoutes(index);
       run = new (loadNativeBinding().AnalysisScopeRun)(store, name, false, scanId, 0);
       const path = storedPath(store);
-      maintenanceRegistration(index).run(path);
+      maintenanceRegistration(index)(path, run.storeIdentity);
       index.$client.prepare("INSERT OR IGNORE INTO analysis_named_store(name,path,identity) VALUES (?,?,?)").run(name, path, run.storeIdentity);
       return run;
     }).immediate();
@@ -128,7 +134,7 @@ export async function deleteNamedAnalysisScope(databasePath: string, name: strin
     }).immediate();
   } finally { index.$client.close(); }
   if (released.result) {
-    try { await binding.collectAnalysisCacheAsync(released.store); }
+    try { await binding.collectAnalysisCacheAsync(released.store, [released.result.identity]); }
     catch (error) { throw new Error(`Scope release completed in ${released.store}. Cache collection failed. ${String(error)}`); }
   }
   return { store: released.store, hadMembers: released.result?.hadMembers ?? false };
@@ -144,7 +150,7 @@ function registerDirectoryAnalysisStore(databasePath: string, root: string, stor
         PRIMARY KEY(directory,path,identity), FOREIGN KEY(directory,path) REFERENCES analysis_directory_store(directory,path) ON DELETE CASCADE ON UPDATE CASCADE) STRICT`);
       const path = storedPath(store);
       index.$client.prepare("INSERT OR IGNORE INTO analysis_directory_store VALUES (?,?)").run(root, path);
-      maintenanceRegistration(index).run(path);
+      maintenanceRegistration(index)(path, identity);
       const generation = floor === undefined ? 0 : recordRegistryGeneration(index, floor, 0);
       index.$client.prepare(`INSERT INTO analysis_directory_store_identity VALUES (?,?,?,?,?)
         ON CONFLICT(directory,path,identity) DO UPDATE SET first_generation=min(first_generation,excluded.first_generation),
@@ -156,14 +162,15 @@ function registerDirectoryAnalysisStore(databasePath: string, root: string, stor
   }
 }
 
-function analysisStores(databasePath: string, root?: string, cutoff = Number.MAX_SAFE_INTEGER): { fallback: Set<string>; registered: StoreRoute[] } {
+function analysisStores(databasePath: string, root?: string, cutoff = Number.MAX_SAFE_INTEGER) {
   const fallback = new Set([defaultScanStore(databasePath), contentStorePath()]
     .filter(path => existsSync(path)).map(path => storedPath(path)));
   const configured = contentStoreOverride();
   if (configured !== undefined) fallback.add(storedPath(configured));
   const registered: StoreRoute[] = [];
+  const maintenance = new Map<string, string[]>();
   const indexPath = storeRegistryPath(databasePath);
-  if (!existsSync(indexPath)) return { fallback, registered };
+  if (!existsSync(indexPath)) return { fallback, registered, maintenance };
   const index = openSqliteDatabase(indexPath, { readonly: true });
   try {
     const tables = index.$client.prepare("SELECT name FROM sqlite_schema WHERE type='table'").pluck().all();
@@ -186,11 +193,21 @@ function analysisStores(databasePath: string, root?: string, cutoff = Number.MAX
     }
     if (root === undefined && tables.includes("analysis_maintenance_store")) {
       for (const path of index.$client.prepare("SELECT path FROM analysis_maintenance_store").pluck().all() as string[]) fallback.add(path);
+      const sources = ["analysis_maintenance_identity", "analysis_directory_store_identity", "analysis_named_store"].filter(name => tables.includes(name));
+      if (sources.length > 0) {
+        const rows = index.$client.prepare(sources.map(name => "SELECT path,identity FROM " + name).join(" UNION ")).iterate();
+        for (const { path, identity } of rows as Iterable<{ path: string; identity: string }>) {
+          if (!identity) continue;
+          const identities = maintenance.get(path);
+          if (identities) identities.push(identity);
+          else maintenance.set(path, [identity]);
+        }
+      }
     }
   } finally {
     index.$client.close();
   }
-  return { fallback, registered };
+  return { fallback, registered, maintenance };
 }
 
 /** Advance only routes this delivery covered. A concurrent new acquisition keeps its registration. */
@@ -202,7 +219,7 @@ function acknowledgeRoutes(databasePath: string, routes: StoreRoute[], cutoff: n
       const identified = index.$client.prepare("SELECT 1 FROM sqlite_schema WHERE name='analysis_directory_store_identity'").get();
       const remember = maintenanceRegistration(index);
       for (const { directory, path, identity } of routes) {
-        remember.run(path);
+        remember(path, identity);
         if (identified) {
           index.$client.prepare("DELETE FROM analysis_directory_store_identity WHERE directory=? AND path=? AND identity=? AND last_generation<=?").run(directory, path, identity, cutoff);
           index.$client.prepare("UPDATE analysis_directory_store_identity SET first_generation=? WHERE directory=? AND path=? AND identity=? AND first_generation<=?")
@@ -265,12 +282,12 @@ export function queueAnalysisScopeReleases(tx: Transaction, directories: readonl
 
 export async function collectAnalysisCaches(databasePath: string): Promise<void> {
   const failures: string[] = [];
-  const { fallback: stores } = analysisStores(databasePath);
+  const { fallback: stores, maintenance } = analysisStores(databasePath);
   for (const store of stores) {
     try {
       if (statSync(store, { throwIfNoEntry: false }) === undefined) continue;
       assertContentStoreOwner(store);
-      await loadNativeBinding().collectAnalysisCacheAsync(store);
+      await loadNativeBinding().collectAnalysisCacheAsync(store, maintenance.get(store));
     } catch (error) {
       failures.push(`${store}: ${error instanceof Error ? error.message : String(error)}`);
     }

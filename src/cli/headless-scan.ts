@@ -801,7 +801,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     throw error;
   } finally {
     if (analysisRun !== undefined) try {
-      await binding.collectAnalysisCacheAsync(durableStore);
+      await binding.collectAnalysisCacheAsync(durableStore, [analysisRun.storeIdentity]);
       cache.collection = "completed";
     } catch (error) {
       cache.collection = "failed";

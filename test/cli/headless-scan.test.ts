@@ -1328,7 +1328,7 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
       input: `import { collectAnalysisCaches } from "./src/engine/native/analysis-scope.ts";
 import { loadNativeBinding } from "./src/engine/native/native.ts";
 const binding = loadNativeBinding(), collect = binding.collectAnalysisCacheAsync, visited = [];
-binding.collectAnalysisCacheAsync = async path => { visited.push(path); await collect(path); };
+binding.collectAnalysisCacheAsync = async (path, identities) => { visited.push(path); await collect(path, identities); };
 await collectAnalysisCaches(process.argv[2]);
 process.stdout.write(JSON.stringify(visited));`,
     })) as string[];
@@ -1337,6 +1337,40 @@ process.stdout.write(JSON.stringify(visited));`,
     expect(queryContentStore(store, "SELECT scope FROM analysis_scope_snapshot")).toEqual([]);
     expect(collect()).toContain(store);
   }, 30_000);
+
+  it("leaves a replacement database alone during collection and resumes when its registered store returns", async () => {
+    const root = checkout(), home = root + "-home", databasePath = join(home, "rerail.sqlite");
+    const mount = join(home, "mounted"), offline = join(home, "offline"), store = join(mount, "content.sqlite");
+    mkdirSync(mount, { recursive: true });
+    const binding = loadNativeBinding();
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      expect((await scan(root, { databasePath, revision: "HEAD", analysisScope: "review" })).cache.collection).toBe("completed");
+      const [id] = queryContentStore<{ id: string }>(store, "SELECT CAST(id AS TEXT) AS id FROM store_identity");
+      binding.retireUpkeepUnder?.(mount);
+      renameSync(mount, offline);
+      await expect(binding.collectAnalysisCacheAsync(store, [id!.id])).rejects.toThrow();
+      expect(existsSync(mount)).toBe(false);
+      mkdirSync(mount);
+      const unrelated = new Database(store);
+      unrelated.exec("CREATE TABLE unrelated(value TEXT)");
+      unrelated.close();
+      chmodSync(store, 0o644);
+      const content = readFileSync(store), mode = statSync(store).mode;
+      await expect(collectAnalysisCaches(databasePath)).rejects.toThrow();
+      await expect(binding.collectAnalysisCacheAsync(store)).rejects.toThrow(/existing analysis store/u);
+      expect(readFileSync(store)).toEqual(content);
+      expect(statSync(store).mode).toBe(mode);
+      renameSync(store, join(mount, "unrelated.sqlite"));
+      await binding.prepareAnalysisStoreAsync(store);
+      await expect(collectAnalysisCaches(databasePath)).rejects.toThrow(/identity changed/u);
+      binding.retireUpkeepUnder?.(mount);
+      renameSync(mount, join(home, "replacement"));
+      renameSync(offline, mount);
+      await collectAnalysisCaches(databasePath);
+      expect(queryContentStore(store, "SELECT scan_id FROM analysis_scope_run")).toHaveLength(1);
+    } finally { vi.unstubAllEnvs(); }
+  });
 
   it("routes named scope deletion across override changes and requires a store for duplicate names", async () => {
     const root = checkout(), home = root + "-home", databasePath = join(home, RERAIL_DATABASE_FILE);

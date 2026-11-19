@@ -276,6 +276,25 @@ fn an_offline_scope_store_returns_read_errors_on_a_new_worker() {
 }
 
 #[test]
+#[cfg(unix)]
+fn collection_keeps_the_database_it_verified_after_its_path_changes() {
+    let area = tempfile::tempdir().unwrap();
+    let mount = area.path().join("mounted");
+    std::fs::create_dir(&mount).unwrap();
+    let file = mount.join("store.sqlite");
+    let id = ContentStore::open(&file).unwrap().identity();
+    let collector = ContentStore::open_for_collection(&file, &[id]).unwrap();
+    std::fs::rename(&mount, area.path().join("original")).unwrap();
+    std::fs::create_dir(&mount).unwrap();
+    let other = rusqlite::Connection::open(&file).unwrap();
+    other.execute("CREATE TABLE unrelated(value TEXT)", []).unwrap();
+    let rows = collector.completed_analysis_runs().unwrap();
+    assert!(rows.is_empty());
+    assert!(ContentStore::open_for_collection(&file, &[]).is_err());
+    assert_eq!(other.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+}
+
+#[test]
 fn numbered_directory_stops_keep_one_cutoff_per_directory() {
     use crate::content_store::analysis_scope;
     let (_path, store) = store("scope-high-water");

@@ -423,20 +423,9 @@ pub fn release_named_scope(file: &Path, name: &str, expected: &[i64]) -> StoreRe
 
 // Validate and modify the same open database throughout release, even if another file replaces it.
 fn with_existing_release_store<T>(file: &Path, expected: &[i64], release: impl Fn(&rusqlite::Connection, i64) -> StoreResult<T>) -> StoreResult<T> {
-    let mut db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    let (mut db, identity) = existing_analysis_store(file, expected)?;
+    let atoms = super::atoms::Atoms::for_database(file, Some(identity));
     super::connection::retry_busy(&mut super::BusyRetries::default(), || {
-        if !expected.is_empty() {
-            let actual: i64 = db.query_row_cached("SELECT id FROM store_identity WHERE singleton=1", [], |row| row.get(0))?;
-            if !expected.contains(&actual) {
-                return Err(super::StoreError::Invalid(format!("analysis store identity changed at {}", file.display())));
-            }
-        } else {
-            let known: bool = db.query_row_cached("SELECT EXISTS (SELECT 1 FROM sqlite_schema
-                WHERE type='table' AND name IN ('store_identity','analysis_scope_manifest'))", [], |row| row.get(0))?;
-            if !known { return Err(super::StoreError::Invalid("expected an existing analysis store".into())); }
-        }
-        let identity = ContentStore::initialize(&mut db)?;
-        let atoms = super::atoms::Atoms::for_database(file, Some(identity));
         let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let result = release(&tx, identity)?;
         let upto = atoms.write_pending(&tx)?;
@@ -446,7 +435,32 @@ fn with_existing_release_store<T>(file: &Path, expected: &[i64], release: impl F
     })
 }
 
+fn existing_analysis_store(file: &Path, expected: &[i64]) -> StoreResult<(rusqlite::Connection, i64)> {
+    let mut db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    let identity = super::connection::retry_busy(&mut super::BusyRetries::default(), || {
+        if !expected.is_empty() {
+            let actual: i64 = db.query_row_cached("SELECT id FROM store_identity WHERE singleton=1", [], |row| row.get(0))?;
+            if !expected.contains(&actual) {
+                return Err(super::StoreError::Invalid(format!("analysis store identity changed at {}", file.display())));
+            }
+        } else {
+            let known: bool = db.query_row_cached("SELECT count(*)=3 FROM sqlite_schema
+                WHERE type='table' AND name IN ('source_objects','corpus_state','corpus_manifests')", [], |row| row.get(0))?;
+            if !known { return Err(super::StoreError::Invalid("expected an existing analysis store".into())); }
+        }
+        ContentStore::initialize(&mut db)
+    })?;
+    Ok((db, identity))
+}
+
 impl ContentStore {
+    /// Open a maintenance target without creating a file or changing an unrelated database.
+    pub fn open_for_collection(file: &Path, expected: &[i64]) -> StoreResult<Self> {
+        let (db, identity) = existing_analysis_store(file, expected)?;
+        let connection = super::connection::ThreadConnection::pinned(file.to_owned(), db, identity);
+        Ok(Self::with_connection(file.to_owned(), connection, super::atoms::Atoms::for_database(file, Some(identity)), None))
+    }
+
     pub fn delete_analysis_scope(&self, scope: &str) -> StoreResult<usize> {
         self.immediate_transaction(|tx| release_analysis_scopes(tx, scope, None, None, None, None))
     }

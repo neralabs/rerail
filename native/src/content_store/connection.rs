@@ -262,7 +262,7 @@ static HANDLES: std::sync::LazyLock<ParkingMutex<HashMap<PathBuf, usize>>> =
 /// store is closed (a run's store is deleted and created again at its path).
 pub(super) struct ThreadConnection {
     database_path: PathBuf,
-    memory: Option<SharedConnection>,
+    pinned: Option<SharedConnection>,
     /// The store's identity when opened: a thread's connection to a store since created again at the path is not
     /// this store's.
     identity: i64,
@@ -287,11 +287,18 @@ impl std::ops::DerefMut for ConnectionGuard {
 impl ThreadConnection {
     pub(super) fn new(database_path: PathBuf, identity: i64) -> Self {
         *HANDLES.lock().entry(database_path.clone()).or_default() += 1;
-        Self { database_path, identity, memory: None }
+        Self { database_path, identity, pinned: None }
+    }
+
+    /// Keep the verified file open for all phases of collection, including after a path replacement.
+    pub(super) fn pinned(database_path: PathBuf, connection: Connection, identity: i64) -> Self {
+        let mut counted = Self::new(database_path, identity);
+        counted.pinned = Some(Arc::new(ParkingMutex::new(Some(connection))));
+        counted
     }
 
     pub(super) fn memory(connection: Connection, identity: i64) -> Self {
-        Self { database_path: PathBuf::new(), identity, memory: Some(Arc::new(ParkingMutex::new(Some(connection)))) }
+        Self { database_path: PathBuf::new(), identity, pinned: Some(Arc::new(ParkingMutex::new(Some(connection)))) }
     }
 
     /// The store's identity when this handle opened it (a sibling handle shares it).
@@ -302,7 +309,7 @@ impl ThreadConnection {
     /// The handle closes (`ContentStore::drop`). Returns whether it was the store's last: then every thread's idle
     /// connection to it is closed.
     pub(super) fn close(&self) -> bool {
-        if self.memory.is_some() {
+        if self.database_path.as_os_str().is_empty() {
             return true;
         }
         let last = {
@@ -322,8 +329,8 @@ impl ThreadConnection {
     }
 
     pub(super) fn lock(&self) -> Result<ConnectionGuard, String> {
-        if let Some(memory) = &self.memory {
-            return Ok(ConnectionGuard(memory.lock_arc()));
+        if let Some(connection) = &self.pinned {
+            return Ok(ConnectionGuard(connection.lock_arc()));
         }
         let connection = THREAD_CONNECTIONS.with(|connections| {
             let mut connections = connections.borrow_mut();
@@ -351,7 +358,7 @@ impl ThreadConnection {
 
     /// Closes every thread's idle connection to this database; one in use stays open.
     pub(super) fn release_all(&self) {
-        if self.memory.is_none() {
+        if !self.database_path.as_os_str().is_empty() {
             release_all_at(&self.database_path);
         }
     }

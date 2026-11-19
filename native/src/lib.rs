@@ -575,11 +575,11 @@ impl napi::Task for PrepareDirectoryAnalysisStore {
 }
 
 #[napi]
-pub fn collect_analysis_cache_async(store_path: String) -> napi::bindgen_prelude::AsyncTask<CollectAnalysisCache> {
-    napi::bindgen_prelude::AsyncTask::new(CollectAnalysisCache(store_path))
+pub fn collect_analysis_cache_async(store_path: String, identities: Option<Vec<String>>) -> napi::bindgen_prelude::AsyncTask<CollectAnalysisCache> {
+    napi::bindgen_prelude::AsyncTask::new(CollectAnalysisCache(store_path, identities.unwrap_or_default()))
 }
 
-pub struct CollectAnalysisCache(String);
+pub struct CollectAnalysisCache(String, Vec<String>);
 
 impl napi::Task for CollectAnalysisCache {
     type Output = ();
@@ -587,9 +587,11 @@ impl napi::Task for CollectAnalysisCache {
 
     fn compute(&mut self) -> Result<()> {
         let path = Path::new(&self.0);
-        if !path.try_exists().map_err(|error| Error::from_reason(error.to_string()))? { return Ok(()); }
+        if self.1.is_empty() && !path.try_exists().map_err(|error| Error::from_reason(error.to_string()))? { return Ok(()); }
+        let expected = self.1.iter().map(|id| id.parse::<i64>()).collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|_| Error::new(Status::InvalidArg, "invalid analysis store identity"))?;
         let collect = || -> content_store::StoreResult<()> {
-            let store = content_store::ContentStore::open(path)?;
+            let store = content_store::ContentStore::open_for_collection(path, &expected)?;
             let policy = content_store::CorpusPolicy::default();
             let now = content_store::unix_seconds()?;
             if store.corpus_pass_wanted(&policy, now)? {

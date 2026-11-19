@@ -185,6 +185,10 @@ The stop records the physical directory path when it enters the queue.
 Delivery and later probes use that path as a stored scope key, even if a symlink replaces the directory.
 The generation cutoff preserves a new watch that acquires the same path after the stop.
 Directory registrations record the store's SQLite identity as well as its path.
+Maintenance also records the store identity. Collection checks the open database before it can change its schema or data.
+The collector uses that same connection for its work. A missing store remains eligible for the next maintenance pass.
+After a scan or named release, a missing expected store produces a collection error.
+Registrations from older versions can contain only a path. The collector checks for an existing content-store schema at those paths.
 A numbered release opens an existing database and checks its identity on the connection that delivers the release.
 If a different store occupies that path, the original store keeps its pending release.
 An older registration contains only the path. It cannot identify a store replaced before identity registration.
