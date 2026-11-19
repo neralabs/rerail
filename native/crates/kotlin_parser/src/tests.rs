@@ -101,6 +101,16 @@ fn statements_and_expressions_are_the_lean_parsers() {
     ]);
 }
 
+/// A block comment that starts a line before a token that goes on the line before (`.`, `?:`,
+/// `as`, `+`…): where the lean parser asks for a semicolon there (`asi`, at a statement's level),
+/// the comment is lost, of no width after the token; inside brackets it is any comment
+/// (`semi`'s `loses`, decision 0451).
+#[test]
+fn lost_comments_are_the_lean_parsers() {
+    let texts = crate::lost_comment_texts();
+    same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+}
+
 /// Step 3: strings, with `$name` templates.
 #[test]
 fn strings_are_the_lean_parsers() {
@@ -658,7 +668,8 @@ fn what_step_20_does_not_read_is_refused() {
         "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
         "val a = b as java.util.List<Int>\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
-        "fun f() {\n    a\n    /* c */ .b()\n}\n",
+        // A comment lost before `catch`, `finally` or `else` (not `else ->`): not read yet.
+        "fun f() {\n    try { a() }\n    /* c */ catch (e: E) {}\n}\n",
     ]);
 }
 

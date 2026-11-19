@@ -44,6 +44,9 @@ pub struct Token {
     /// whether its `drops` mask holds at the token's start (Q220). The extras before the bit
     /// are the nodes' that it is taken in; where it drops, the extra before the token goes.
     pub settle: Option<(usize, bool)>,
+    /// The marks whose `loses` mask holds at this token's start: where a level asks for one
+    /// of them here, the extra before the token is of no width, at its start (`tree`).
+    pub lose: Vec<String>,
 }
 
 /// A `tree` section's grammar (docs/parser-generators/18-tree-as-grammar.md).
@@ -130,6 +133,8 @@ pub struct Ev<'a> {
     unless: HashMap<usize, Vec<Vec<u8>>>,
     /// A settling mark's `drops` mask, where it has one (`Stmt::Mark`), by its index in `marks`.
     settles: HashMap<usize, Option<Mask>>,
+    /// Each mark's `loses` mask, by its index in `marks`.
+    loses: HashMap<usize, Mask>,
     /// A mark's `else escape` reason (`Stmt::Mark`), by its index in `marks`.
     unplaced: HashMap<usize, String>,
     /// A mark's `before`s and `unless before`s (`Stmt::Mark`), by its index in `marks`: the
@@ -210,6 +215,7 @@ impl<'a> Ev<'a> {
             unless: HashMap::new(),
             unplaced: HashMap::new(),
             settles: HashMap::new(),
+            loses: HashMap::new(),
             tables,
             tree: None,
             byte_classes: HashMap::new(),
@@ -447,8 +453,12 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
-            Stmt::Mark { kind, at, end, unless, unplaced, checks, next, settles, drops, .. } => {
+            Stmt::Mark { kind, at, end, unless, unplaced, checks, next, settles, drops, loses, .. } => {
                 let m = self.mask(at)?;
+                if let Some(l) = loses {
+                    let l = self.mask(l)?;
+                    self.loses.insert(self.marks.len(), l);
+                }
                 if *settles {
                     let d = match drops {
                         Some(d) => Some(self.mask(d)?),
@@ -1153,7 +1163,7 @@ impl<'a> Ev<'a> {
             for j in i..end {
                 covered.set(j)
             }
-            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: None, mark: false, settle: None });
+            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: None, mark: false, settle: None, lose: vec![] });
         }
         // A token that starts inside the one before (tier 2 refuses it too).
         if let Some(w) = toks.windows(2).find(|w| w[1].start < w[0].end) {
@@ -1305,10 +1315,13 @@ impl<'a> Ev<'a> {
         self.errors.extend(escapes);
         let settle = |k: usize, bit: usize, at: usize| self.settles.get(&k).map(|d| (bit, d.as_ref().is_some_and(|d| at < self.n && d.get(at))));
         let mut out = Vec::with_capacity(toks.len());
-        for (t, tok) in toks.into_iter().enumerate() {
+        for (t, mut tok) in toks.into_iter().enumerate() {
             for (k, (kind, _, _)) in self.marks.iter().enumerate() {
                 if before[t][k] {
-                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: None, mark: true, settle: settle(k, least[t][k].min(tok.start), tok.start) });
+                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: None, mark: true, settle: settle(k, least[t][k].min(tok.start), tok.start), lose: vec![] });
+                }
+                if self.loses.get(&k).is_some_and(|l| tok.start < self.n && l.get(tok.start)) {
+                    tok.lose.push(kind.clone());
                 }
             }
             out.push(tok);
@@ -1316,7 +1329,7 @@ impl<'a> Ev<'a> {
         // A bit after the last grammar token's start puts no mark; `, end` puts one at the end.
         for (k, (kind, _, end)) in self.marks.iter().enumerate() {
             if *end {
-                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: None, mark: true, settle: settle(k, least_end[k], self.n) });
+                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: None, mark: true, settle: settle(k, least_end[k], self.n), lose: vec![] });
             }
         }
         Ok(out)

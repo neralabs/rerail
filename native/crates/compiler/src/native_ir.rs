@@ -169,6 +169,10 @@ pub enum StructuralOperation {
     /// `SETTLE m=1`: where mask `mask` holds at the token's start, the extra pending last
     /// dropped.
     DropLast { mask: u16 },
+    /// `SETTLE m=2`, and `m=3+f` with flag `f` set: where mask `mask` holds at the token's
+    /// start, the extra pending last lost, made again by the next `TOKEN` after the token's
+    /// leaf, of no width (a mark's `loses`).
+    LoseLast { mask: u16, flag: Option<u16> },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
@@ -241,6 +245,7 @@ impl StructuralOperation {
             Self::Check { check } => (crate::program::CHECK, 0, check),
             Self::SettleBefore { mask } => (crate::program::SETTLE, 0, mask),
             Self::DropLast { mask } => (crate::program::SETTLE, 1, mask),
+            Self::LoseLast { mask, flag } => (crate::program::SETTLE, flag.map_or(2, |f| 3 + f as u8), mask),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
@@ -504,6 +509,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             },
             crate::program::CHECK => StructuralOperation::Check { check: operand },
             crate::program::SETTLE if mode == 1 => StructuralOperation::DropLast { mask: operand },
+            crate::program::SETTLE if mode >= 2 => StructuralOperation::LoseLast { mask: operand, flag: (mode > 2).then(|| u16::from(mode - 3)) },
             crate::program::SETTLE => StructuralOperation::SettleBefore { mask: operand },
             crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },
             RETURN => StructuralOperation::Return { again: mode != 0 },

@@ -614,10 +614,29 @@ enum Mem {
     /// (0: none), and its closer's last byte.
     PartAt,
     PartEnd,
+    /// An extra a mark lost (`SETTLE m=2`): its kind and field, plus one (0: none), made again
+    /// by the next `TOKEN` that takes a token, of no width at the token taken.
+    Lost,
 }
 
 impl Mem {
-    const COUNT: u32 = 29;
+    const COUNT: u32 = 30;
+}
+
+/// `TOKEN`, taking a token: the extra a mark lost at it (`Mem::Lost`), made again after its
+/// leaf, of no width at its start, as the lean lexer's `asi` places it.
+fn lost_leaf(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, wrapping: bool) {
+    let lost = (e.get)(f, Mem::Lost);
+    let (remake, done) = (f.create_block(), f.create_block());
+    f.ins().brif(lost, remake, &[], done, &[]);
+    f.switch_to_block(remake);
+    f.set_cold_block(remake);
+    let zero = f.ins().iconst(types::I64, 0);
+    (e.set)(f, Mem::Lost, zero);
+    let kind = f.ins().iadd_imm(lost, -1);
+    leaf_word(f, e, t, kind, true, true, EndAt::Untaken, wrapping);
+    f.ins().jump(done, &[]);
+    f.switch_to_block(done);
 }
 
 /// `Ctx::state`'s slots (`rust_stream` writes `Ctx` field for field).
@@ -932,6 +951,8 @@ enum WordFn {
     Here,
     /// `MERGE m=1`.
     Fold,
+    /// `SETTLE m=2`: the extra pending last made again at the token, of no width.
+    Lose,
     /// `REMEMBER #WORD_KIND`: the level's word, its token's word's kind.
     RememberWord,
     Merge { end: EndAt },
@@ -2489,6 +2510,8 @@ struct TokenShape {
     more: MoreExtras,
     /// The program has wraps (`framed`): a leaf's frame slot too.
     wrapping: bool,
+    /// A mark loses an extra (`SETTLE m=2`): the token taken makes it again (`lost_leaf`).
+    lost: bool,
 }
 
 /// The extras' kinds after the first (`Words::extras`), each with its mark bit: at most
@@ -2732,6 +2755,13 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
     f.switch_to_block(go);
     let (next, end) = (field_get(f, ctx, Mem::Next), field_get(f, ctx, Mem::Limit));
     field_set(f, ctx, Mem::LastEnd, end);
+    if t.lost {
+        let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+        let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+        let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+        let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a leaf does not refuse");
+        lost_leaf(f, &WordEnv { get: &get, set: &set, ctx: &at, guard: &guard }, table, t.wrapping);
+    }
     let zero = f.ins().iconst(types::I64, 0);
     // A region tier 2 splits (decision 0323): its next part, where one is pending; else the
     // next record, and a record that is a whole region its opener's byte, its parts pending.
@@ -3704,6 +3734,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         // Programs without `WRAP` or a `relabel` pay nothing for them: no frames, no chains, no
         // reorder (which runs only once a wrap was made).
         let wrapping = framed(words);
+        let loses = words.iter().any(|b| matches!(b.operation, Op::LoseLast { .. }));
 
         f.switch_to_block(entry);
         // `ctx`: read from its register where the function is entered, else its first argument.
@@ -4093,7 +4124,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             f.ins().jump(fall, &[]);
                             continue;
                         }
-                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, more, wrapping };
+                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, more, wrapping, lost: loses };
                         let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, &native.token_marks, pinned_ctx)?;
                         let c = pinned(&mut f);
                         let open_calls: Vec<Value> = if on_stack { vec![] } else { vec![mget(&mut f, Mem::Ret)] };
@@ -4154,6 +4185,9 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     let next = mget(&mut f, Mem::Next);
                     let end = if flagged { mget(&mut f, Mem::End) } else { mget(&mut f, Mem::Limit) };
                     mset(&mut f, Mem::LastEnd, end);
+                    if loses {
+                        lost_leaf(&mut f, &env, table, wrapping);
+                    }
                     // The stream's end: once a file, a cold block (the lean parser's index past
                     // its tokens). The token's fields stay; every mark is live (a mark the end
                     // has is there).
@@ -4696,6 +4730,58 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     mset(&mut f, Mem::Nodes, n);
                     f.ins().jump(fall, &[]);
                 }
+                Op::LoseLast { mask, flag } => {
+                    // `loses`: where the mask holds at the token's start, the extra pending last
+                    // taken out, its kind kept: the `TOKEN` that takes this token makes it again
+                    // after the token's leaf (`lost_leaf`).
+                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                    let start = mget(&mut f, Mem::Start);
+                    let w = f.ins().ushr_imm(start, 6);
+                    let off = f.ins().imul_imm(output_stride, output as i64);
+                    let base = f.ins().iadd(outputs_p, off);
+                    let word = mask_word(&mut f, base, lasts_stride, w);
+                    let s = f.ins().band_imm(start, 63);
+                    let bit = f.ins().ushr(word, s);
+                    let bit = f.ins().band_imm(bit, 1);
+                    // One a token: a second test at it (a nested level's) finds it taken out.
+                    let pending = mget(&mut f, Mem::Pending);
+                    let some = f.ins().icmp_imm(IntCC::NotEqual, pending, 0);
+                    let lost = mget(&mut f, Mem::Lost);
+                    let none = f.ins().icmp_imm(IntCC::Equal, lost, 0);
+                    let some = f.ins().band(some, none);
+                    let some = f.ins().uextend(types::I64, some);
+                    let both = f.ins().band(bit, some);
+                    // Where a caller's level is the mark's: its flag.
+                    let both = match flag {
+                        Some(k) => {
+                            let fl = mget(&mut f, Mem::Flags);
+                            let fl = f.ins().ushr_imm(fl, i64::from(k));
+                            let fl = f.ins().band_imm(fl, 1);
+                            f.ins().band(both, fl)
+                        }
+                        None => both,
+                    };
+                    let lose = f.create_block();
+                    f.ins().brif(both, lose, &[], fall, &[]);
+                    f.switch_to_block(lose);
+                    word!(WordFn::Lose, &[], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, _: &[Value]| {
+                        let p = (e.get)(g, Mem::Pending);
+                        let p = g.ins().iadd_imm(p, -1);
+                        (e.set)(g, Mem::Pending, p);
+                        let n = (e.get)(g, Mem::Nodes);
+                        let n = g.ins().iadd_imm(n, -1);
+                        (e.set)(g, Mem::Nodes, n);
+                        let rows = (e.ctx)(g, ROWS);
+                        let row = NodeCol::row(g, rows, n);
+                        let kind = g.ins().uload32(MemFlags::trusted(), row, AT_KIND);
+                        let kind = g.ins().iadd_imm(kind, 1);
+                        (e.set)(g, Mem::Lost, kind);
+                        // None left pending: the nodes closed next end at the token before.
+                        let (keep, le) = ((e.get)(g, Mem::Keep), (e.get)(g, Mem::LastEnd));
+                        let le = g.ins().select(p, le, keep);
+                        (e.set)(g, Mem::LastEnd, le);
+                    });
+                }
                 // A keyword's: its token's word's kind (`WORD_KIND`), in a word of its own.
                 Op::Remember { kind: WORD_KIND } => {
                     let word_kinds = &native.word_kinds;
@@ -5116,7 +5202,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             Some(k) => Some(native.block_programs.first().and_then(|b| b.masks.get(usize::from(k)).copied()).ok_or(Error::UnsupportedBackend)?),
                             None => None,
                         };
-                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, more, wrapping };
+                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, more, wrapping, lost: loses };
                         let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, &native.token_marks, pinned_ctx)?;
                         let c = pinned(&mut f);
                         let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
@@ -5941,6 +6027,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::Mark { .. } | Op::Row { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
         Op::SettleBefore { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE, ROWS],
         Op::DropLast { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
+        Op::LoseLast { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE, ROWS],
         Op::Open { .. } => vec![ROWS, OPEN],
         Op::Close { .. } => vec![OPEN, ROWS],
         Op::Leaf { .. } => vec![ROWS],
@@ -5953,7 +6040,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::Empty { .. } => vec![TOTALS, TOTALS_STRIDE, TOTALS_MASK],
         _ => vec![],
     };
-    if wrapping && matches!(op, Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Merge { .. }) {
+    if wrapping && matches!(op, Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Merge { .. } | Op::LoseLast { .. }) {
         r.extend([FRAME_BASE, HEAD, LINK, PLACE]);
     }
     r

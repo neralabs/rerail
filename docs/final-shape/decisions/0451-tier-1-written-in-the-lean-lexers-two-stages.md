@@ -159,3 +159,62 @@ against the lean parser: `as?`, `as String?`, `return@run`, `return@forEach`, `t
 **What `token_level_probe` lists now:** the keyword tests read by the comment escape `goes_now`
 (`ctor_w`, `finally_w`, `where_w`, `catch_w`, `by_w`, `as_w`), by `awe_word` and `else_blk`
 (`else_w`), and `three` (`===`, `!==`, `..<`), read by `p_start`.
+
+## Gap B, step 2: a comment the lean lexer loses, lost where the lean parser asks (2026-11-19)
+
+Stage 1 refused a file wherever a block comment that starts a line came before a token that goes
+on the line before (`.`, `?:`, `as`, `where`, `by`, `!=`, …): the escape "a block comment before
+a token that goes on the line", over `goes_now`. The lean parser takes such files. Its `asi()`
+reads the comment through when it asks for a semicolon there, finds that the line goes on, and
+tree-sitter loses the comment's bytes: a comment of no width, at the token after it, placed after
+that token (`lost`). It asks only at a statement's level (`self.stmt`), so inside brackets the
+comment is any other.
+
+**The construct: `, loses W`** on a gap mark. Where a level asks for the mark at a token where
+`W` holds, the extra pending last is lost: of no width at the token's start, and placed after the
+token. `W` holds only where the mark does not. Kotlin's `semi` loses at `lost_at`, the first
+solid byte after such a comment where the lean lexer loses it (a byte of `goes_on`, `!=`, `as`,
+`where`, `by`). The escape keeps the cases `asi` does not lose: `catch`, `finally`, a header's
+`constructor`, `else` but a `when` entry's, and annotations before a constructor.
+
+**Where a level asks.** A state asks where it takes the mark, or where its level may end at the
+mark (an `, ends` test) and its call returns to a level that is the mark's. That second part is
+the lean parser's `stmt`, and the compiler derives it as a flag, one past the grammar's own
+(`Mark::lose_flag`). A call sets it where the state it returns to takes the mark, keeps its
+caller's where that state may end at it, and clears it elsewhere (`lose_flags`). So inside
+`foo(…)` the expression's level does not ask: `value_arguments` takes no `semi`.
+
+**Tier 2: `SETTLE m=2` and `m=3+f`**, right before the mark's `MARK`. Mode 2 sits in a state that
+takes the mark, mode `3+f` in one that may end at it, with flag `f`. Where the mask holds and an
+extra is pending, the extra is taken out and its kind kept in one state slot (`lost`). The next
+`TOKEN` that takes a token makes it again, after the token's leaf, of no width at its start, before
+the gap's extras: the lean parser's placement. With none left pending, a node that closes before
+that ends at the token before (`keep`). The state shape (`stream::validate`) allows the one word
+before a `MARK`. Every executor:
+- the interpreter (`stream::run`);
+- Cranelift (`Op::LoseLast`, `Mem::Lost`, `lost_leaf` in `TOKEN`'s both paths);
+- the generated Rust (`S::lose`, and `TOKEN`'s remake).
+
+**Bitlex's reference** asks after each token, where the follow holds the mark. A nested level's
+follow now holds `END` where its rule may end there. With `END`, it asks for the marks its level
+is the mark's for: those its call site's follow held, and the caller's own where the caller
+could end there (`Parser::asked`). That is tier 2's flag.
+`Token::lose` names the marks whose `W` holds at a token. A lost extra goes after the token at
+its place, in the deepest node holding that token and the next.
+
+**Tests:**
+- `ladder_tests::a_mark_that_loses_in_the_reference`: the reference, the interpreter and Cranelift
+  on 136 generated documents and fixed ones. A comment in a statement's chain is lost (width 0);
+  one inside `(` keeps its 7 bytes.
+- `lost_comments_are_the_lean_parsers`: 13 texts against the lean parser, chains, `?:`, `as`, `+`,
+  `!=`, two lost comments in one chain, and `foo(…)`, `if (…)` inside brackets.
+- `aot_tapes_are_the_jits` reads the same texts too (the corpus has none): 508 files, the
+  generated Rust's tapes the JIT's.
+- `what_step_20_does_not_read_is_refused` now lists a comment before `catch`.
+- The compiler (129), Kotlin (52), Bitlex (11) and `rr_aot` (15) tests pass. The corpus is
+  unchanged: 448 the same, 43 refused, 0 differ (no corpus file has the case).
+
+**Stage 1 is unchanged by this step** (1,655 values a block, from 1,656). The escape's keyword
+tests moved into `lost_at`, which tier 2 reads at the token. The token-level shape is next:
+`lost_at` asks whether the token after the comment is one of the tokens of `semi`'s `unless
+before`, and the token loop knows that from the record's kind and word, as it knows a `before`.

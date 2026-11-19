@@ -181,3 +181,26 @@ pub fn lean_text(src: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+
+/// Texts with a block comment that starts a line before a token that goes on the line before:
+/// lost where the lean parser asks for a semicolon there, any comment inside brackets (decision
+/// 0451). This crate's tests check them against the lean parser, `kotlin_aot`'s against the JIT.
+#[doc(hidden)]
+pub fn lost_comment_texts() -> Vec<String> {
+    let bodies = [
+        "val a = b\n            /* c */ .d()",
+        "val a = b\n            /* c */ ?: d",
+        "val a = b\n            /* c */ as String",
+        "val a = b\n            /* c */ + d",
+        "foo(b\n            /* c */ .d)",
+        "val a = listOf(1)\n            /* c */ .map { it }\n            /* e */ .size",
+        "val a = b\n            /* c */ != d",
+        "if (b\n            /* c */ .d) return 1",
+        "return b\n            /* c */ .d",
+        "b\n            /* c */ .d()",
+        "val a = b /* c */\n            .d()",
+        "val a = b\n            /* c */\n            .d()",
+        "a\n        /* c */ .b()",
+    ];
+    bodies.iter().map(|b| format!("class A {{\n    fun f(b: Any?): Int {{\n        {b}\n        return 0\n    }}\n}}\n")).collect()
+}

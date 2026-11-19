@@ -377,6 +377,9 @@ pub struct Lowering {
     pub settles: Vec<usize>,
     /// The marks that drop the extra pending last (`, drops W`), by their index in `marks`: `W`.
     pub drops: HashMap<usize, Val>,
+    /// The marks that lose the extra pending last where a level asks for them (`, loses W`), by
+    /// their index in `marks`: `W` (`program::SETTLE` mode 2).
+    pub loses: HashMap<usize, Val>,
     /// The marks a level that may end ends at (`, ends`), by their index in `marks`.
     pub ends: Vec<usize>,
     /// Each token test (`Stmt::TokenEscape`): its kind, whether a count, its mask and count
@@ -503,6 +506,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         unplaced: Vec::new(),
         settles: Vec::new(),
         drops: HashMap::default(),
+        loses: HashMap::default(),
         ends: Vec::new(),
         token_escapes: Vec::new(),
         tested_only: Vec::new(),
@@ -970,10 +974,14 @@ impl Lowering {
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops } => {
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses } => {
                     if let Some(d) = drops {
                         let v = self.expr(d)?;
                         self.drops.insert(self.marks.len(), v);
+                    }
+                    if let Some(l) = loses {
+                        let v = self.expr(l)?;
+                        self.loses.insert(self.marks.len(), v);
                     }
                     if !next.is_empty() {
                         self.mark_next.insert(self.marks.len(), next.clone());
@@ -3339,7 +3347,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 _ => None,
             };
             let words = seq[0].iter().map(|c| if let TokenElem::Word(w) = c { Some(w.clone()) } else { None }).collect();
-            marks.push(bitlex_tier2::Mark { settle: None, drop: None, ends: false, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: vec![], unless: vec![] });
+            marks.push(bitlex_tier2::Mark { settle: None, drop: None, lose: None, lose_flag: 0, ends: false, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: vec![], unless: vec![] });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -3576,7 +3584,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes, words {:?}", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>(), words.as_ref().map(|ws| ws.iter().map(|w| String::from_utf8_lossy(w).into_owned()).collect::<Vec<_>>()));
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, settle: None, drop: None, ends: low.ends.contains(&k) });
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, settle: None, drop: None, lose: None, lose_flag: 0, ends: low.ends.contains(&k) });
         if low.settles.contains(&k) {
             // From each bit up to the next grammar token's start: an extra that starts there is
             // after the mark's bit. Its mask after the marks' (below).
@@ -3607,6 +3615,17 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         if let Some(&v) = low.drops.get(&k) {
             mark_masks.push(v);
             marks[k].drop = Some(mark_masks.len() as u16 - 1);
+        }
+        if let Some(&v) = low.loses.get(&k) {
+            mark_masks.push(v);
+            marks[k].lose = Some(mark_masks.len() as u16 - 1);
+            // Its flag: one past the grammar's (`flags`) and the marks' before it.
+            let named = low.tree.iter().map(|s| if let Stmt::Flags(n) = s { n.len() } else { 0 }).sum::<usize>();
+            let flag = named + marks[..k].iter().filter(|m| m.lose.is_some()).count();
+            if flag >= 16 {
+                return Err(format!("mark {k}'s `loses`: more than 16 flags"));
+            }
+            marks[k].lose_flag = flag as u16;
         }
     }
     let row_masks = mark_masks.len() as u16;

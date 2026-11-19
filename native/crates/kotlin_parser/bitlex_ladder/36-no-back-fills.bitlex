@@ -276,16 +276,19 @@ mask close_at   = lf_end | code & rbrace & (prev(after_semi) | prev(code & semic
 # string, or a comment inside a line, is no such comment.
 mask asked_blk  = fill(o_block & prev(fill(lf_end & prev(fill(solid, lf)), solid)), block_end)
 mask after_asked = solid & prev(fill(block_end & prev(asked_blk), solid))
-# Where what follows goes on, tree-sitter loses the comment (a comment of no width): not read
-# yet. What goes on, at the first solid byte after the comment: a byte of `goes_on`, `!=`, `as`,
-# `where`, `catch`, `finally`, `by`, `constructor` in a class's header, `else` but a `when`
-# entry's (`else ->`), and an annotation or a visibility modifier before a header's `constructor`.
-mask goes_now   = code & goes_on | code & text("!=") | as_w | where_w | catch_w | finally_w | by_w | ctor_w & class_head
+# Where what follows goes on, the scanner reads the comment as part of the line, and tree-sitter
+# loses its bytes: a comment of no width at the token after it (`asi`'s `lost`). The token, where
+# the lean lexer's `asi` loses it: a byte of `goes_on`, `!=`, `as`, `where`, `by`. `semi` loses
+# the comment there wherever tier 2 asks for it (`loses`), as the lean parser asks `asi` only
+# where its state takes a semicolon; elsewhere the comment is any other.
+mask lost_at    = after_asked & (code & goes_on | code & text("!=") | as_w | where_w | by_w)
+# Not read yet: `catch`, `finally`, a header's `constructor`, `else` but a `when` entry's
+# (`else ->`), and an annotation or a visibility modifier before a header's `constructor`.
 mask else_blk   = else_w & after_asked
 mask else_next  = solid & (prev(else_blk, 4) | prev(fill(prev(else_blk, 4) & ~solid, solid)))
 mask ann_blk    = code & (at_sign | vis_w) & class_head & after_asked
 mask ann_ctor   = ctor_w & class_head & prev(fill(ann_blk, ctor_stop))
-escape "a block comment before a token that goes on the line" when goes_now & after_asked | else_next & ~text("->") | ann_ctor
+escape "a block comment before a token that goes on the line" when (catch_w | finally_w | ctor_w & class_head) & after_asked | else_next & ~text("->") | ann_ctor
 # After a token's line, before another comment, the scanner reads it through and the tree keeps
 # a comment of no width where the next one starts: not read yet.
 escape "a block comment that starts a line, before a comment" when (o_line | o_block) & prev(fill(block_end & prev(asked_blk), ~ws))
@@ -440,7 +443,7 @@ skip ws
 # `constructor` on its line (`without semi`), as the lean lexer reads them; annotations may end
 # theirs.
 mark head_ctor  = lf & code, before "constructor", before "public" | "private" | "internal" | "protected" "constructor" without semi, before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor" | "public" | "private" | "internal" | "protected"))* nest ("(" to ")") "constructor", before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor"))* nest ("(" to ")") ending ("public" | "private" | "internal" | "protected") "constructor" without semi
-mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends, drops swallow_at
+mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends, drops swallow_at, loses lost_at
 mark semi_close = close_at, before "}", settles, ends
 # Something between two tokens: a blank or a comment. A token without it touches the token
 # before, as the lean parser's `adjacent(0)` asks.

@@ -38,7 +38,8 @@ fn both() -> (&'static rerail_kotlin_parser::Compiled, rerail_kotlin_parser::Com
 #[ignore = "reads RERAIL_KOTLIN_CORPUS: run by name"]
 fn aot_tapes_are_the_jits() {
     let (jit, aot) = both();
-    let files = corpus();
+    // The corpus has no lost comment (`SETTLE m=2`): the texts that have one too.
+    let files: Vec<String> = corpus().into_iter().chain(rerail_kotlin_parser::lost_comment_texts()).collect();
     let native = rerail_compiler::block_native::BlockNative::lower(&jit.program.block_programs[0]);
     let unmade = native.records_made();
     let read: Vec<usize> = native.masks.iter().copied().filter(|o| !unmade.contains(o)).collect();

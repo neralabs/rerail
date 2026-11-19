@@ -69,7 +69,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         FLAG => mode <= 2 && operand < 16,
         COUNT => mode <= 1 && usize::from(operand) < program.counts.len(),
         CHECK => mode == 0 && usize::from(operand) < program.local_checks.len(),
-        SETTLE => mode <= 1 && usize::from(operand) < masks,
+        // `m=2`, `m=3+f`: a mark's `loses`, the second where flag `f` is set.
+        SETTLE => mode < 3 + 16 && usize::from(operand) < masks,
         CLOSE => mode <= 1 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
         PUSH => mode <= 32 && usize::from(operand) < words,
@@ -124,13 +125,16 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         .collect();
     // A state: `TOKEN`, a `MARK` and its way (`GOTO` or `STOP`) per mark it tests, `SWITCH`.
     // After the `TOKEN`, a call's field on the node it made (`NODE_FIELD m=4`), where both
-    // returns land (`RETURN m=0` at the `TOKEN`, `m=1` past it).
+    // returns land (`RETURN m=0` at the `TOKEN`, `m=1` past it). A mark that loses (`, loses`)
+    // has its `SETTLE m=2` right before its `MARK`.
+    let lose = |q: usize| words.get(q).is_some_and(|&w| split(w).0 == SETTLE && split(w).1 >= 2);
     let state = |p: usize| {
         let mut q = p + 1;
         if words.get(q).is_some_and(|&w| split(w).0 == NODE_FIELD && split(w).1 == 4) {
             q += 1;
         }
-        while words.get(q).is_some_and(|&w| split(w).0 == MARK) {
+        while words.get(q + usize::from(lose(q))).is_some_and(|&w| split(w).0 == MARK) {
+            q += usize::from(lose(q));
             if words.get(q + 1).is_none_or(|&w| !matches!(split(w).0, GOTO | STOP)) {
                 return false;
             }
@@ -403,6 +407,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     let mut flags: u16 = 0;
     // The counts of tokens (`COUNT`).
     let mut counts: Vec<u32> = vec![0; program.counts.len()];
+    // An extra a mark lost (`SETTLE m=2`), made again by the next `TOKEN`.
+    let mut lost: Option<u16> = None;
     // A refusal at the token being read.
     macro_rules! refuse {
         ($pc:expr, $why:expr) => {
@@ -420,6 +426,15 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     return refuse!(pc - 1, "a token past the stream's end");
                 }
                 need = false;
+                // An extra a mark lost at the token taken (`SETTLE m=2`): after its leaf, of
+                // no width at its start.
+                if let Some(kind) = lost.take() {
+                    if pending == 0 {
+                        keep = end;
+                    }
+                    pending += 1;
+                    nodes.push(Node { kind, field: 0, supers: vec![], start, end: start, size: 1 });
+                }
                 loop {
                     last_end = end;
                     // The record pass checked the records (the totals' flag, `EMPTY`): as many
@@ -557,6 +572,21 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             ROW => {
                 if !mask_bit(operand, start) {
                     pc += 1;
+                }
+            }
+            SETTLE if mode >= 2 => {
+                // `loses`: where the mask holds at the token, the extra pending last is lost (the
+                // lean lexer's `asi`): of no width, after the token.
+                // Taken out, its kind kept: the `TOKEN` that takes this token makes it again after
+                // the token's leaf. One a token: a second test at it finds it taken out.
+                let at_level = mode == 2 || flags >> (mode - 3) & 1 == 1;
+                if at_level && pending > 0 && lost.is_none() && mask_bit(operand, start) {
+                    lost = nodes.pop().map(|x| x.kind);
+                    pending -= 1;
+                    // None left pending: the nodes closed next end at the token before.
+                    if pending == 0 {
+                        last_end = keep;
+                    }
                 }
             }
             SETTLE if mode == 1 => {

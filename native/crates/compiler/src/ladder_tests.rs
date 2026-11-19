@@ -124,6 +124,73 @@ tree kotlin {
     assert_eq!(check_documents("drops", &c, b"pai.*\n/ ", &[], &fixed, &|_, _, _, _| None), None);
 }
 
+/// A mark that loses (`, loses W`, decision 0451): where a level asks for the line break and
+/// the next line goes on after a block comment that starts it (`W`), the comment is lost: of no
+/// width at the token after it, and placed after that token, as the lean lexer's `asi` loses it.
+/// A level asks where it takes the mark, or where it may end and its call returns to one that
+/// does (tier 2's flag, the lean parser's `stmt`): in a statement's call chain, not inside `(`.
+/// Bitlex's reference and every executor.
+#[test]
+fn a_mark_that_loses_in_the_reference() {
+    let source = r#"lexer t
+class ws        = ' ' '\t' '\n'
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class word      = 'a'..'z' '0'..'9' '_'
+class alpha     = 'a'..'z' '_'
+class punct     = '.' '(' ')' ','
+class dot       = '.'
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+regions hidden {
+  block = block_open .. block_end
+}
+mask code       = ~hidden & ~o_block
+mask w          = code & word
+mask name       = fill(w & alpha, ~w)
+mask solid      = code & ~ws
+mask lf_end     = lf & code
+mask asked_blk  = fill(o_block & prev(fill(lf_end & prev(fill(solid, lf)), solid)), block_end)
+mask after_asked = solid & prev(fill(block_end & prev(asked_blk), solid))
+mask lost_at    = after_asked & dot
+error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
+mask last_byte  = ~next(~empty)
+error "a block comment open at the end" by tokens when f_block & last_byte
+token comment = start slash & o_block read block
+token simple_identifier = start alpha & name & ~prev(name) run word
+token punct     = start code & punct
+keywords punct { "." "(" ")" "," } required
+skip ws
+mark line       = lf & code, unless before ".", end, settles, ends, loses lost_at
+tree t {
+  node source_file whole = [line] [statements]
+  node statements nested = (call line)+
+  node call nested = simple_identifier ('.' simple_identifier | args)*
+  node args = '(' [call (',' call)*] ')'
+  hidden line
+  extra comment
+}
+"#;
+    let c = compile_step("loses", source);
+    let fixed = [
+        "a\n/* c */.b\n",
+        "a\n  /* c */ .b(x)\n/* d */ .e\nf\n",
+        "a(b\n/* c */.d)\n",
+        "a(b\n/* c */.d)\n/* e */.f\n",
+        "a /* c */\n.b\n",
+        "a\n/* c */\nb\n",
+        "a\n/* c */ /* d */.b\n",
+    ];
+    // The comment before a line's `.` is lost in a statement's chain, of no width at the `.`;
+    // inside `(` it keeps its bytes.
+    let widths = |d: &str| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == c.ids.of("comment")).map(|n| n.4 - n.3).collect::<Vec<_>>();
+    assert_eq!(widths(fixed[0]), [0]);
+    assert_eq!(widths(fixed[2]), [7]);
+    assert_eq!(widths(fixed[3]), [7, 0]);
+    assert_eq!(check_documents("loses", &c, b"ab.(),/* \n", &[], &fixed, &|_, _, _, _| None), None);
+}
+
 /// A token mark's run that counts depths (Q222), as the lean parser's `type_args_end` does: a
 /// `<` opens type arguments where its `>` closes the depth and a `(` follows, with `<` `>` and
 /// `(` `)` counted between. The reference's nodes equal the interpreter's and Cranelift's.

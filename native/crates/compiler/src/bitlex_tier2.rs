@@ -208,6 +208,13 @@ pub struct Mark {
     /// `, drops W`: `W`'s mask, at whose tokens its arms drop the extra pending last
     /// (`SETTLE m=1`).
     pub drop: Option<u16>,
+    /// `, loses W`: `W`'s mask, at whose tokens each test of the mark gives the extra pending
+    /// last no width, at the token (`SETTLE m=2`), as the lean lexer's `asi` loses it.
+    pub lose: Option<u16>,
+    /// With `lose`: the flag set where a level is at the mark's level (decision 0451), the lean
+    /// parser's `stmt`. A call sets it where the state it returns to takes the mark, keeps its
+    /// caller's where that state ends at it, and clears it elsewhere (`lose_flags`).
+    pub lose_flag: u16,
     /// `, ends`: hidden, and a level that may end where it holds and does not take it ends
     /// there, its caller to take it.
     pub ends: bool,
@@ -571,6 +578,7 @@ impl Emit<'_> {
                 self.push("NODE_SUPER", 0, Arg::Kind(s));
             }
         }
+        self.lose_flags(&ret, &mut flags);
         // The calls, outermost first. When the innermost call's level ends at its first token:
         // that level's closes, at this token's end, and on to the state it returns to; that call
         // is not made.
@@ -889,6 +897,16 @@ impl Emit<'_> {
             // An arm that calls: the mark kept, for the callee, which tests it again and takes it.
             // At a level's end, kept: the caller takes it.
             let keep = arm.is_some_and(|a| self.arms[a].call) || at == AtMark::End;
+            // `loses`: asked here, where its mask holds (and so the mark does not), the extra
+            // before the token has no width.
+            // At the mark's level (it takes the mark): always; where the level may end at it,
+            // where the flag says a caller's level is the mark's; never where it refuses.
+            match (m.lose, at) {
+                (Some(l), AtMark::Arm(_)) => self.push("SETTLE", 2, Arg::Num(l)),
+                (Some(l), AtMark::End) => self.push("SETTLE", 3 + m.lose_flag as u8, Arg::Num(l)),
+                _ => {}
+            }
+            let m = &self.marks[k];
             self.push("MARK", k as u8 | if m.end { 32 } else { 0 } | if keep { MARK_KEEP } else { 0 }, Arg::Num(m.mask));
             match at {
                 AtMark::Arm(a) => {
@@ -909,6 +927,56 @@ impl Emit<'_> {
         self.at_switch[s]
     }
 
+
+    /// State `s`'s mark tests, in order: each mark it takes, a test and its arm; each not hidden
+    /// that it does not take, and each its level refuses, a refusal; a mark that ends levels,
+    /// or one not hidden, where this nested level may end and takes none, its end.
+    /// Entered only by taking a mark, at the token it was taken at: the level has made the
+    /// gap's decision there, so a hidden mark that ends levels does not end it, as the lean
+    /// parser asks `asi` once at a line break.
+    fn tests_at(&self, s: usize) -> Vec<(usize, AtMark)> {
+        let st = &self.states[s];
+        let nested = st.level != self.root;
+        let mine: Vec<usize> = (0..self.arms.len()).filter(|&a| usize::from(self.arms[a].from) == s).collect();
+        let mark_kinds: Vec<u16> = self.marks.iter().map(|m| m.kind).collect();
+        let into: Vec<&ArmRow> = self.arms.iter().filter(|a| usize::from(a.to) == s).collect();
+        let returned_to = self.arms.iter().any(|a| a.push.iter().any(|&p| usize::from(p) == s));
+        let after_mark_only = !into.is_empty() && !returned_to && into.iter().all(|a| !a.call && mark_kinds.contains(&a.token));
+        (0..self.marks.len())
+            .filter_map(|k| {
+                let m = &self.marks[k];
+                let arm = mine.iter().copied().find(|&a| self.arms[a].token == m.kind);
+                if refusing(m, self.arms) {
+                    return None;
+                }
+                // A mark not hidden, as one that ends levels, ends a nested level that may end
+                // here: its caller takes it or refuses the file (the reference's `past_marks`).
+                // Elsewhere, it refuses the file; so does a mark the level refuses.
+                match arm {
+                    Some(a) => Some((k, AtMark::Arm(a))),
+                    None if st.refuses.contains(&m.kind) => Some((k, AtMark::Refuse)),
+                    None if (m.ends && !after_mark_only || !m.hidden) && nested && st.end.is_some() => Some((k, AtMark::End)),
+                    None if !m.hidden => Some((k, AtMark::Refuse)),
+                    None => None,
+                }
+            })
+            .collect()
+    }
+
+    /// The flags of the marks that lose (`Mark::lose_flag`) each call of an arm runs with, call
+    /// `i` returning to state `ret[i]`: set where that state takes the mark (the level it returns
+    /// to is the mark's), kept where it ends at it (its caller decides), else cleared.
+    fn lose_flags(&self, ret: &[u16], flags: &mut Vec<(u8, u16, bool)>) {
+        for (k, m) in self.marks.iter().enumerate().filter(|(_, m)| m.lose.is_some()) {
+            for (i, &p) in ret.iter().enumerate() {
+                match self.tests_at(usize::from(p)).iter().find(|t| t.0 == k).map(|t| t.1) {
+                    Some(AtMark::Arm(_)) => flags.push((i as u8, m.lose_flag, true)),
+                    Some(AtMark::End) => {}
+                    _ => flags.push((i as u8, m.lose_flag, false)),
+                }
+            }
+        }
+    }
 
     fn state(&mut self, s: usize) -> Result<(), String> {
         let st = self.states[s].clone();
@@ -951,29 +1019,7 @@ impl Emit<'_> {
         // Entered only by taking a mark, at the token it was taken at: the level has made the
         // gap's decision there, so a hidden mark that ends levels does not end it, as the lean
         // parser asks `asi` once at a line break.
-        let mark_kinds: Vec<u16> = self.marks.iter().map(|m| m.kind).collect();
-        let into: Vec<&ArmRow> = self.arms.iter().filter(|a| usize::from(a.to) == s).collect();
-        let returned_to = self.arms.iter().any(|a| a.push.iter().any(|&p| usize::from(p) == s));
-        let after_mark_only = !into.is_empty() && !returned_to && into.iter().all(|a| !a.call && mark_kinds.contains(&a.token));
-        let tests: Vec<(usize, AtMark)> = (0..self.marks.len())
-            .filter_map(|k| {
-                let m = &self.marks[k];
-                let arm = mine.iter().copied().find(|&a| self.arms[a].token == m.kind);
-                if refusing(m, self.arms) {
-                    return None;
-                }
-                // A mark not hidden, as one that ends levels, ends a nested level that may end
-                // here: its caller takes it or refuses the file (the reference's `past_marks`).
-                // Elsewhere, it refuses the file; so does a mark the level refuses.
-                match arm {
-                    Some(a) => Some((k, AtMark::Arm(a))),
-                    None if st.refuses.contains(&m.kind) => Some((k, AtMark::Refuse)),
-                    None if (m.ends && !after_mark_only || !m.hidden) && nested && st.end.is_some() => Some((k, AtMark::End)),
-                    None if !m.hidden => Some((k, AtMark::Refuse)),
-                    None => None,
-                }
-            })
-            .collect();
+        let tests = self.tests_at(s);
         // A refusal tested on its token's bytes only (`Mark::first`), in the switch's arms for
         // them, as the lean parser looks for a mark where it reads its token: where every test
         // after it refuses too, or is of a mark that never holds at a token it holds at (their
