@@ -313,6 +313,9 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // length after it is set.
     let parts = src.matches("let (i, closer) = s.part_stop(at)?;").count();
     assert!(parts > 0 && src.contains("p += 32;") && !src.contains("matches!(s.byte(i)") && src.matches("}\nif closer {").count() == parts && !src.contains("!= s.rec_end"), "a string's stops as copy_and_find's");
+    // Each node's code written as it is made (`code_now`), no commit pass over the nodes after.
+    let made = src.matches("s.open(").count() + src.matches("s.leaf::<").count();
+    assert!(!src.contains("self.commit(") && src.matches("s.code_now(").count() == made, "each node's code as it is made");
     // No dispatch's arm only sets `d` again for its own loop (`Shape::threaded`).
     let resets = dispatch_resets(&src);
     assert!(resets.is_empty(), "a dispatch's arm only re-sets d: {resets:?}");
@@ -328,9 +331,13 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         let show = || String::from_utf8_lossy(&f[..f.len().min(80)]).into_owned();
         let want = ours(&jit, f);
         assert_eq!(ours(&aot, f), want, "file {k} ({:?}): the Rust's nodes", show());
+        // The tape's bytes alike too: each code, its supertypes' classes, the columns.
+        if want.is_some() {
+            assert!(aot.parser.image(f).ok() == jit.parser.image(f).ok(), "file {k} ({:?}): the Rust's tape image", show());
+        }
         if want.is_some() { parsed += 1 } else { refused += 1 }
     }
-    eprintln!("{} files: {parsed} parsed, {refused} refused, by the Rust and the JIT alike", inputs.len());
+    eprintln!("{} files: {parsed} parsed, {refused} refused, by the Rust and the JIT alike, tape bytes and all", inputs.len());
 }
 
 /// `src`, tier 2's Rust, built by rustc (optimized, as the ahead-of-time build) into a library

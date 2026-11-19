@@ -73,6 +73,8 @@ struct Facts<'a> {
     unchecked: bool,
     /// Where the program is one function, as `walk_document` (`OneFn`): its calls and returns.
     one: Option<OneFn>,
+    /// Each node's code written as it is made (`coded`), no commit pass after.
+    coded: bool,
     /// The stream's end as a start: past the last token, `TOKEN` gives the file's length as its
     /// start, with no branch (`sentinel`), as simdjson's index ends with one past the last.
     sentinel: bool,
@@ -123,6 +125,67 @@ struct OneFn {
     /// The calls nested as the containers (`stacked`): a call's number kept in its container's
     /// row, and no `CLOSE` that can find no node open.
     stacked: bool,
+}
+
+/// Whether each node's code can be written as it is made (`Facts::coded`): no word edits a
+/// node made (`stacked`'s words; a field only on the node made last), and every `NODE_SUPER` and
+/// `NODE_FIELD` is reached only from a node's `OPEN` or `LEAF` by words that make no node
+/// (`GOTO`, `SPAN`, another of them), so the node's key is its own and the words after it
+/// (`key_after`), known when it is made.
+fn coded(x: &Facts<'_>) -> bool {
+    let words = &x.native.structural;
+    if !x.one.as_ref().is_some_and(|o| o.stacked) || words.iter().any(|w| matches!(w.operation, Op::NodeField { on, .. } if on != On::Here)) {
+        return false;
+    }
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); words.len()];
+    for pc in 0..words.len() {
+        for t in plain_succ(x, pc) {
+            preds[t].push(pc);
+        }
+    }
+    // A straight word's way back reaches a node's word on every path.
+    let mut ok: Vec<Option<bool>> = vec![None; words.len()];
+    fn back(x: &Facts<'_>, preds: &[Vec<usize>], ok: &mut Vec<Option<bool>>, q: usize) -> bool {
+        if let Some(v) = ok[q] {
+            return v;
+        }
+        ok[q] = Some(false);
+        let words = &x.native.structural;
+        let v = !preds[q].is_empty()
+            && preds[q].iter().all(|&p| match words[p].operation {
+                Op::Open { .. } | Op::Leaf { .. } => plain_succ(x, p).len() == 1,
+                Op::Goto { .. } | Op::Span { .. } | Op::NodeSuper { .. } | Op::NodeField { on: On::Here, .. } => plain_succ(x, p).len() == 1 && back(x, preds, ok, p),
+                _ => false,
+            });
+        ok[q] = Some(v);
+        v
+    }
+    (0..words.len()).filter(|&q| matches!(words[q].operation, Op::NodeSuper { .. } | Op::NodeField { .. })).all(|q| back(x, &preds, &mut ok, q))
+}
+
+/// The key bits node word `pc`'s key gets from the words after it that make no node (`coded`):
+/// each supertype's class (`native_cpu_tape::commit`'s), and a field set there (in `kf`'s
+/// place, above its kind). Of a node with its field in the next word (`field_after`), that one
+/// is its own already.
+fn key_after(x: &Facts<'_>, pc: usize) -> (u32, u32) {
+    let words = &x.native.structural;
+    let (mut bits, mut field) = (0u32, 0u32);
+    let mut q = pc;
+    for _ in 0..words.len() {
+        let &[t] = plain_succ(x, q).as_slice() else { break };
+        match words[t].operation {
+            Op::NodeSuper { kind } => {
+                if let Some(j) = x.classes.iter().position(|&c| c == kind) {
+                    bits |= 1 << (16 + j);
+                }
+            }
+            Op::NodeField { field: f, on: On::Here } => field = u32::from(f) << 16,
+            Op::Goto { .. } | Op::Span { .. } => {}
+            _ => break,
+        }
+        q = t;
+    }
+    (field, bits)
 }
 
 /// Whether the calls nest as the nodes (`OneFn::stacked`): each `PUSH` right after its
@@ -330,7 +393,7 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
     let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
-    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false };
+    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false };
     facts.sentinel = sentinel(&facts);
     // Where tier 2 makes the records, the program is one function, as `walk_document`.
     if facts.fetch.is_some() && !facts.context {
@@ -341,6 +404,7 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
         if let Some(one) = &mut facts.one {
             one.stacked = st;
         }
+        facts.coded = coded(&facts);
     }
     if let Some(fx) = &facts.fetch {
         for pc in 0..words.len() {
@@ -974,10 +1038,7 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         $CLOSE_MADE
         let kept = self.nodes - self.pending;
         self.close_cells(at, kept - at, kept - 1, end);
-        if self.nopen == 1 {
-            self.commit(at);
-        }
-        Ok(())
+$COMMIT_CLOSE        Ok(())
     }
 
     /// `LEAF`: its key (its kind, with its field above it or none), its bytes; its offset, its
@@ -1288,7 +1349,31 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
             format!("\n                let mut k = k;\n                while sk < self.supers && *Self::col(self.snode, sk) == i {{\n                    k |= match *Self::col(self.skind, sk) {{ {}, _ => 0 }};\n                    sk += 1;\n                }}", arms.join(", ")),
         )
     };
-    out.push_str(&s.replace("$CLASS_FIRST", &first).replace("$CLASS_BITS", &bits));
+    out.push_str(&s.replace("$CLASS_FIRST", &first).replace("$CLASS_BITS", &bits).replace("$COMMIT_CLOSE", if x.coded { "" } else { "        if self.nopen == 1 {\n            self.commit(at);\n        }\n" }));
+    if x.coded {
+        out.push_str(
+            "    /// A node's code as it is made (`Facts::coded`): its key's id (its kind, its field, its
+    /// supertypes' classes), numbered by first use, as `commit_from` numbers them, in one pass.
+    #[inline(always)]
+    fn code_now(&mut self, kf: u32, classes: u32) {
+        let i = self.nodes - 1;
+        let k = (kf & 0x3ff) | ((kf >> 16) & 0x3f) << KIND_BITS | classes;
+        unsafe {
+            let slot = self.id_of.add(k as usize);
+            let mut id = u32::from(*slot);
+            if id == NO_CODE {
+                id = self.ncodes;
+                *slot = id as u16;
+                *self.code_kf.add(id as usize) = k;
+                *self.code_first.add(id as usize) = i;
+                self.ncodes = id + 1;
+            }
+            *(self.image.add(HEADER_BYTES) as *mut u16).add(i as usize) = id as u16;
+        }
+    }
+",
+        );
+    }
 }
 
 /// `ACCEPT`: the root closed at the file's end; no provisional field left; no value past its
@@ -1321,8 +1406,7 @@ fn accept(out: &mut String, x: &Facts<'_>) {
 $PROVISIONAL        if self.wide != 0 {
             return Err(false);
         }$FEW
-        self.commit(nodes);
-        let total = self.finish(nodes);
+$COMMIT_ALL        let total = self.finish(nodes);
         unsafe {
             *self.counts_out = nodes as u64;
             *self.counts_out.add(1) = self.supers as u64;
@@ -1403,7 +1487,7 @@ $PROVISIONAL        if self.wide != 0 {
         .enumerate()
         .map(|(j, cl)| format!("\n                (place as *mut u16).write_unaligned({cl});\n                if key >> {} & 1 != 0 {{\n                    place = place.add(2);\n                    count += 1;\n                }}", 16 + j))
         .collect();
-    out.push_str(&src.replace("$AT_END", &x.at_end("self")).replace("$PROVISIONAL", &provisional).replace("$FEW", few).replace("$IS_EXTRA", &is_extra).replace("$CLASS_PUT", &put));
+    out.push_str(&src.replace("$COMMIT_ALL", if x.coded { "" } else { "        self.commit(nodes);\n" }).replace("$AT_END", &x.at_end("self")).replace("$PROVISIONAL", &provisional).replace("$FEW", few).replace("$IS_EXTRA", &is_extra).replace("$CLASS_PUT", &put));
 }
 
 /// `RETAG m=3`: reading `i` over the node made last at the innermost level and the nodes inside
@@ -1943,7 +2027,17 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
         Op::Empty { total } => format!("if s.total({total}) != 0 {{ return Err(false); }}\n{}", jump(0)?),
         Op::Word { string, test: true } => format!("if s.word() == {} {{ {} }} else {{ {} }}", u32::from(string) + 1, jump(0)?, jump(1)?),
         Op::Word { string, test: false } => format!("if s.word() != {} {{ return Err(false); }}\n{}", u32::from(string) + 1, jump(0)?),
-        Op::Open { kind } => format!("s.open({});\n{}", u32::from(kind) | u32::from(field_after(x, pc).unwrap_or(0)) << 16, jump(0)?),
+        Op::Open { kind } => {
+            let kf = u32::from(kind) | u32::from(field_after(x, pc).unwrap_or(0)) << 16;
+            let code = if x.coded {
+                let (field, classes) = key_after(x, pc);
+                let kf = if field != 0 { kf & 0xffff | field } else { kf };
+                format!("s.code_now({kf}, {classes:#x});\n")
+            } else {
+                String::new()
+            };
+            format!("s.open({kf});\n{code}{}", jump(0)?)
+        }
         Op::Close { this } => {
             let sure = x.one.as_ref().is_some_and(|o| o.stacked);
             // The `CLOSE` before a `RETURN`: the call's number from its container's row first.
@@ -1961,6 +2055,11 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
                 (true, f) => format!("s.word_kind()? | {f}"),
                 (false, f) => format!("{}", u32::from(kind) | f),
             };
+            if x.coded {
+                let (field, classes) = key_after(x, pc);
+                let kf = if field != 0 { format!("kf & 0xffff | {field}") } else { "kf".into() };
+                return Ok(format!("let kf = {k};\ns.leaf::<{deferred}, {extra}>(kf, {end});\ns.code_now({kf}, {classes:#x});\n{}", jump(0)?));
+            }
             format!("s.leaf::<{deferred}, {extra}>({k}, {end});\n{}", jump(0)?)
         }
         Op::Settle { .. } => format!("s.pending = 0;\n{}", jump(0)?),

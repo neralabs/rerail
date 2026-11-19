@@ -593,6 +593,37 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 24, done: each node's code as it is made, in the generated Rust
+
+simdjson writes each tape word once, in place. Our image was written in three passes:
+- the rows and columns as each node is made;
+- the codes in `commit_from`, after the top value closed: over every node again, its key read
+  back from its row, its supertypes' classes from the supertype records, then `id_of`;
+- the columns copied after the code column by `finish`.
+
+A node's key is its kind and field, plus the classes of the supertypes after it. Where these
+are known when the node is made, its code is written then (`code_now`, `Facts::coded`). That
+holds where:
+- no word edits a node made (`stacked`'s words, and a field set only on the node made last);
+- every `NODE_SUPER` and `NODE_FIELD` is reached only from a node's `OPEN` or `LEAF`, by words that
+  make no node (`coded`).
+
+The words after the node give its classes and its field (`key_after`). Ids are numbered by first
+use, in node order, as `commit_from` numbers them. No commit is left, in `close` or in `accept`.
+
+The first try missed the field an object's value gets after its supertype (`NODE_FIELD` after
+`NODE_SUPER`). `commit_from` read the key late enough to see it. The trees test caught that
+(`{"k":false,"t":true}`). But it compared nodes, whose supertypes come from the supertype records,
+so a code without its classes passed it. **The test now compares the tape's bytes too:** on all 82
+parsed files the Rust's image equals the JIT's. Dropping the classes fails it at the first file,
+and so does dropping the later field.
+
+**Open, a format decision: the columns where the image has them.** The image's columns follow
+the code column one after another, and a reader finds each from the node count (`padded(2n) +
+padded(size·n) + …`, `tape_format`). So a column's place is known only once the parse ends, and
+`finish` copies the columns there. Writing them in place in one pass needs each column's offset
+in the header, from the tape's capacity: a new format version for every reader.
+
 ## Step 23, done: a string as `copy_and_find`, in the generated Rust
 
 Three differences in a string's code:
@@ -758,7 +789,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 | `parse_string`: `copy_and_find`, 32 bytes a step, then one branch on `has_quote_first`; the stop handled in the same pass | `part_stop`, 32 bytes a step, the closer's and the escape's masks, the stop's kind from them; content, then its stop in the same pass | yes, since step 23 |
 | an escape: `escape_map[c]`, the `\u` work only after a `u` | `CODES2[c]`, then `\u` to its two checks and the eight others, one range, past them | yes, since step 16 |
 | the closing quote ends the string | the closer's arm goes on at once | yes, since step 16 |
-| the tape: a word a value | the node rows (`open`, `leaf`, `close`, the supertype's record), committed to the tape's columns | the output's form, not a difference to remove |
+| the tape: a word a value, written once, in place | each node's row and its columns as it is made, its code too (`code_now`); at the end the columns copied after the code column | the codes since step 24; the columns' copy not (a format decision) |
 
 What follows, in order, each change made in `rust_stream` or in the compiler, and judged on
 the Rust it writes:
@@ -775,7 +806,8 @@ The next six, from reading the Rust after step 19 (each a step, its assertion an
 3. Done in step 22.
 4. Done in step 23.
 5. Done in step 23.
-6. The tape written once: each node's code as it is made, the columns where the image has them.
+6. The tape written once: each node's code as it is made, done in step 24. The columns where the
+   image has them: open, a format decision (step 24).
 
 ## Order
 
