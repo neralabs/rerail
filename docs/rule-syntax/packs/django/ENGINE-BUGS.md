@@ -14,7 +14,7 @@ The last column is each bug on main after the final-shape engine landed (2026-11
 | 2 | A huge module of string literals never finishes | engine guests / `python/names.rerail` annotations | Reproduced | Likely fixed: python/names asks for annotation guests only in annotation contexts (`ann_ctx`); not re-run on netbox |
 | 3 | Module names are taken from the repository root (src layouts) | engine `doc` facts vs Python imports | Reproduced with a 3-file probe | Fixed: a module is named from its package root (probe passes); a folder without `__init__.py` keeps its path's name |
 | 4 | `sym_of` drops relative imports of two or more dots | `lib/python/imports.rerail` | Reproduced; root cause found | Fixed: `impmod` resolves any number of dots through `rel_base` (probe passes) |
-| 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced | Partly: the default store is per build and working directory; runs started from one directory still share it |
+| 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced; root cause found | Partly; #876 fixes it: a store is one process's at a time, so runs at once from one directory and `test-rr` processes each own a store, and a named store is waited for |
 | 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog) | Not re-measured |
 | 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Present (probe fails as described) |
 | 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Present (probe fails as described) |
@@ -226,6 +226,14 @@ behind a file lock.
 
 **Suggested fix.** Wait for the writer lock with a timeout instead of failing, or key the default cache by the scanned
 root.
+
+**Cause and fix (#876).** Processes on one store share its atoms lease (decision 0049), which a run keeps across its
+waves; a second process's run waited for it in `Atoms::acquire` for 60 s (`LEASE_WAIT`) and failed busy (eight
+concurrent `run-rr` of count-not-len from one directory: 3 to 5 of 8 failed). The engine now keeps the product's
+discipline, one process per store (`corpus::owner`): the project's store and testing mode's are the first of their
+slots (`<name>.sqlite`, `<name>-2.sqlite`, …) no other process owns, and a store `RERAIL_TAPE_CACHE` names is waited
+for, the waiting process saying which process holds it. After it, the same eight runs, eight over eight repositories
+and four concurrent `test-rr` of this pack all finish. Neither workaround above is needed.
 
 **Related, not reproduced.** Authors reported that after a `run-rr` was killed, the next run into the same output
 directory failed with "content store writer is busy" even with `RERAIL_TAPE_CACHE=off`, with
