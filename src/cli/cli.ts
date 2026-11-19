@@ -78,6 +78,7 @@ import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
+import { ENGINE_USAGE, runEngineCommand } from "./engine-cli.js";
 import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
 import { runMergeAssistCommand } from "./merge-assist-cli.js";
@@ -264,7 +265,7 @@ function usage(): string {
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json> [--approve]",
     "  rerail rules show <rule id> [--repo <dir>]",
-    "  rerail rules test <draft.json | rule.json> [--repo <dir>] [--json]",
+    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail rules approve [<rule id | pack> …] [--repo <dir>]",
@@ -286,6 +287,7 @@ function usage(): string {
     "  rerail remote remove <name|url>",
     "  rerail remote push [--json]",
     "  rerail remote exclude|include [--repo <dir>]",
+    ...ENGINE_USAGE,
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail merge-assist [status|on|off|scan|conflicts|dismiss <conflict-id>] [--repo <dir>] [--json]   experimental: needs RERAIL_EXPERIMENTAL_MERGE_ASSIST=1",
     "  rerail merge-assist settings [--hook-command '<json argv>' | --no-hook] [--hook-timeout <seconds>] [--repo <dir>] [--json]   experimental: needs RERAIL_EXPERIMENTAL_MERGE_ASSIST=1",
@@ -977,6 +979,7 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
     case "packs": return await runPacksCommand(args, usage);
     case "reset": return runResetCommand(args, usage);
     case "feedback": return await runFeedbackCommand(args, usage, { packageVersion });
+    case "engine": return runEngineCommand(args, usage);
     case "scrub": return await runScrubCommand(args, usage);
     case "start":
     case "stop":

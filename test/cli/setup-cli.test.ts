@@ -253,9 +253,17 @@ describe("rerail install --root", () => {
     await mkdir(dirname(store));
     await writeFile(store, "cached");
     await writeFile(`${store}-wal`, "cached");
+    await writeFile(`${store}.collection.lock`, "");
+    // The engine's segments, in folders beside the store.
+    const segments = [".frames", ".memo", ".objects"].map(suffix => `${store}${suffix}`);
+    for (const folder of segments) {
+      await mkdir(folder);
+      await writeFile(join(folder, "1.seg"), "cached");
+    }
+    await writeFile(join(dirname(store), "beside.txt"), "not Rerail's to delete");
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
     const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const deleted = [join(plain, ".rerail"), join(linked, ".rerail", "sessions"), backup, cache, store, `${store}-wal`];
+    const deleted = [join(plain, ".rerail"), join(linked, ".rerail", "sessions"), backup, cache, store, `${store}-wal`, `${store}.collection.lock`, ...segments];
 
     expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data", "--dry-run"], context)).toBe(0);
     expect(output.mock.calls.join("")).toContain(`Would delete ${join(plain, ".rerail", "sessions")}`);
@@ -270,6 +278,7 @@ describe("rerail install --root", () => {
     expect(existsSync(context.home)).toBe(false);
     expect((await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"))).toEqual([]);
     expect(await readFile(join(elsewhere, "sessions", "keep.jsonl"), "utf8")).toBe("not Rerail's to delete");
+    expect(await readFile(join(dirname(store), "beside.txt"), "utf8")).toBe("not Rerail's to delete");
     expect(await readlink(join(linkedFolder, ".rerail"))).toBe(elsewhere);
     // A `.rerail` that holds more than the ledgers stays, and an unrecorded checkout is not Rerail's to know.
     expect(existsSync(join(linked, ".rerail", "content-v1.sqlite"))).toBe(true);

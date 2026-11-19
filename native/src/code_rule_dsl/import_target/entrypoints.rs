@@ -301,7 +301,7 @@ pub(super) fn imports(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn json(text: &str) -> Json {
