@@ -67,6 +67,8 @@ pub struct AnalysisRun {
 impl AnalysisRun {
     pub fn store_path(&self) -> &Path { self.store.database_path() }
 
+    pub fn is_open(&self) -> bool { self.lease.is_some() }
+
     pub fn begin(store: ContentStore, scope: &str, id: &str) -> StoreResult<Self> {
         Self::begin_at(store, scope, id, 0)
     }

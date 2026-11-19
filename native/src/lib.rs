@@ -355,8 +355,9 @@ pub fn scan_rr_policies_async(
         let programs = loaded.programs.lock().unwrap_or_else(|error| error.into_inner());
         paths.iter().map(|path| programs.get(path).cloned().ok_or_else(|| format!("{path}: policy was not loaded"))).collect()
     });
+    let owner = analysis.map(|run| run.owner_for(Path::new(&store))).transpose()?;
     Ok(napi::bindgen_prelude::AsyncTask::new(ScanRrPolicies {
-        paths, root, store, output, owner: analysis.map(|run| run.owner()), source_paths,
+        paths, root, store, output, owner, source_paths,
         snapshot: source.map(|source| source.pinned_snapshot()),
         policy_snapshot: policy_source.map(|source| source.pinned_snapshot()),
         policies,

@@ -203,12 +203,22 @@ impl AnalysisScopeRun {
 
     #[napi]
     pub fn warn(&self, message: String) {
-        self.owner().warn(message);
+        self.0.lock().unwrap_or_else(|err| err.into_inner()).owner.warn(message);
     }
 }
 
 impl AnalysisScopeRun {
-    pub fn owner(&self) -> AnalysisOwner { self.0.lock().unwrap_or_else(|err| err.into_inner()).owner.clone() }
+    pub fn owner_for(&self, store: &Path) -> Result<AnalysisOwner> {
+        let run = self.0.lock().unwrap_or_else(|err| err.into_inner());
+        if !run.is_open() {
+            return Err(invalid("analysis scope run has finished"));
+        }
+        if store != run.store_path() && !store.canonicalize().ok().zip(run.store_path().canonicalize().ok())
+            .is_some_and(|(requested, owned)| requested == owned) {
+            return Err(invalid("analysis scope run belongs to another content store"));
+        }
+        Ok(run.owner.clone())
+    }
 }
 
 #[napi]
@@ -244,8 +254,9 @@ impl CodeRuleDslWorkspace {
         generation: Option<f64>,
         home: Option<String>,
     ) -> Result<AsyncTask<WorkspaceStorageTask>> {
+        let owner = analysis.map(|run| run.owner_for(Path::new(&store_path))).transpose()?;
         let mut task = self.storage_task(root, store_path, &secret_names)?;
-        task.analysis_owner = analysis.map(AnalysisScopeRun::owner);
+        task.analysis_owner = owner;
         task.analysis_generation = generation.unwrap_or_default() as i64;
         task.analysis_home = home;
         Ok(AsyncTask::new(task))
@@ -260,13 +271,14 @@ impl CodeRuleDslWorkspace {
         secret_names: SecretNamePatterns,
         analysis: Option<&AnalysisScopeRun>,
     ) -> Result<AsyncTask<WorkspaceStorageTask>> {
+        let owner = analysis.map(|run| run.owner_for(Path::new(&store_path))).transpose()?;
         let mut task = self.storage_task(
             source.snapshot.root().to_string_lossy().into_owned(),
             store_path,
             &secret_names,
         )?;
         task.snapshot = Some(Arc::clone(&source.snapshot));
-        task.analysis_owner = analysis.map(AnalysisScopeRun::owner);
+        task.analysis_owner = owner;
         Ok(AsyncTask::new(task))
     }
 

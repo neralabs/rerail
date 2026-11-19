@@ -987,7 +987,10 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
       this: typeof prototype, source, store, secrets, analysis,
     ) {
       observed.push(source);
-      return attach.call(this, source, store === ":memory:" ? store : broken, secrets, analysis);
+      if (store === ":memory:") return attach.call(this, source, store, secrets, analysis);
+      expect(analysis).toBeDefined();
+      // The injected store fails to open. The real run's owner belongs to the original store.
+      return attach.call(this, source, broken, secrets);
     });
     try {
       const report = await scan(root, { revision: "HEAD", analysisScope: "attach" });
@@ -1189,9 +1192,13 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
       const policy = join(home, name + ".rr");
       writeFileSync(policy, `#include "git.rr"\n.policy "${name}" revision 1\n.violation Seen(at: span) "${name}"\nSeen(@place("git",1)) :- git_source_tree(_, _).\n`);
       const run = new engine.AnalysisScopeRun(store, "reuse", false, name, 0);
+      expect(() => engine.scanRrPoliciesAsync([policy], root, join(home, "other.sqlite"), "", run, undefined, source))
+        .toThrow(/another content store/u);
       const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, join(home, name), run, undefined, source));
       expect(report.diagnostics.map((row: { message: string }) => row.message)).toEqual([name]);
       expect(run.finish(true)).toBeNull();
+      expect(() => engine.scanRrPoliciesAsync([policy], root, store, "", run, undefined, source))
+        .toThrow(/has finished/u);
       const rows = manifests();
       expect(rows.map(row => row.scope)).toEqual(rows.map(() => "named:reuse"));
       const ids = rows.map(row => row.manifest_id);
