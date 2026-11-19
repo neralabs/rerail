@@ -1,16 +1,16 @@
 # Daemon: starting Git no longer stalls every hook on Linux
 
-For [pull request #756](https://github.com/neralabs/rerail/pull/756), head 374bdf726. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #756](https://github.com/neralabs/rerail/pull/756), head 6eb9fbf17. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
 **Does any Git the daemon starts now answer, end or take a signal differently from one Node's `spawn` or `spawnSync` starts?**
 
-**We recommend:** approve it: every read answers as through Node in 9 repository states, every limit and kill ends Git as Node does; a hook beside 2,000 Git reads waits 144 to 154 ms, main's 4.6 s.
+**We recommend:** approve it: every read answers as through Node in 9 repository states, every limit and kill ends Git as Node does; hooks beside 2,000 reads wait 150 to 230 ms, main's 0.4 to 6.5 s.
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 2,233 lines in 11 files: 1,488 ship, 745 are tests and text | Fast. Fast lane: no high-risk path; the automated reviewer can approve. | Nothing. It stands alone on `main`; no pull request needs it. | 3 |
+| 2,259 lines in 11 files: 1,489 ship, 770 are tests and text | Fast. Fast lane: no high-risk path; the automated reviewer can approve. | Nothing. It stands alone on `main`; no pull request needs it. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -45,7 +45,7 @@ Start with `run.rs`: the blocking run holds the daemon's thread, so its ends at 
 
 | Change | Check | It holds with this limit |
 |---|---|---|
-| Git start | CI at this head | CI's integration job and the change's 79 test files ran on Linux x64 at this head; GitHub's CI is the pull request's own run. |
+| Git start | CI at this head | CI's integration job and the change's 93 test files ran on Linux x64 at this head; GitHub's CI is the pull request's own run. |
 
 </details>
 
@@ -84,9 +84,9 @@ Before: Before 86208776f a blocking run through the engine sent SIGTERM at its l
 
 <details><summary><b>7. How it fits</b></summary>
 
-Nothing has to merge first: the head holds `main` with #801, whose look for a moved Git now wraps each start in `git.ts`. #813, #807 and the draft #508 each add lines where this does: one conflict a file, keep both. #816, #812 and #621 gain none.
+Nothing has to merge first: the head holds `main` with #621, whose asks of Rerail's Git now start through `git-start.ts` with the variables each sets. #813, #807 and the draft #508 each add lines where this does: one conflict a file, keep both. #816 and #812 gain none.
 
-**Shared files and trial merges.** Trial merges with 374bdf726 at the pull requests' heads of 19 November, 02:21 UTC. #813 (ours): 1 conflict in `native.ts`, both adding an optional engine function. #807: 1 in `daemon-entry.ts`'s imports, both changing one line. #508 (draft): 1 each in `native.ts` and `lib.rs`. Keep both sides in each. #816 and #812 (ours) and #621 share `git.ts` or `native.ts` and gain no conflict.
+**Shared files and trial merges.** Trial merges with 6eb9fbf17 at the pull requests' heads of 19 November 2026. #813 (ours): 1 conflict in `native.ts`, both adding an optional engine function. #807: 1 in `daemon-entry.ts`'s imports, both changing one line. #508 (draft): 1 in `native.ts`. Keep both sides in each. #816 and #812 (ours) share `git.ts` or `native.ts` with no conflict this head adds.
 
 </details>
 
