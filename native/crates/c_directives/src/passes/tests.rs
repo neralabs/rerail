@@ -47,12 +47,12 @@ fn both(files: &[(&str, &str)]) -> (Outcome, Stats) {
     }
     // The programs on the device: the interpreter's outcome.
     #[cfg(target_os = "macos")]
-    {
-        let (m_out, _, _, device) = run_on(cfg, &mut io(files), "main.c", rerail_compiler::pp_words::run, Exec::Metal);
+    for exec in [Exec::Metal, Exec::MetalWords] {
+        let (m_out, _, _, device) = run_on(cfg.clone(), &mut io(files), "main.c", rerail_compiler::pp_words::run, exec);
         match (&w_out, &m_out) {
-            (Ok(a), Ok(b)) => assert_eq!(show(b), show(a), "the device's runs against the interpreter's"),
-            (Err(a), Err(b)) => assert_eq!(b, a, "the device's refusal against the interpreter's"),
-            _ => panic!("the interpreter: {:?}\nthe device: {:?}", w_out.as_ref().map(|o| show(o)), m_out.as_ref().map(|o| show(o))),
+            (Ok(a), Ok(b)) => assert_eq!(show(b), show(a), "{exec:?}'s runs against the interpreter's"),
+            (Err(a), Err(b)) => assert_eq!(b, a, "{exec:?}'s refusal against the interpreter's"),
+            _ => panic!("the interpreter: {:?}\n{exec:?}: {:?}", w_out.as_ref().map(|o| show(o)), m_out.as_ref().map(|o| show(o))),
         }
         assert!(device.runs > 0 && device.dispatches > 0, "{device:?}");
     }
@@ -179,7 +179,7 @@ fn a_batch_reads_each_unit_as_alone() {
     assert!(alone.iter().filter(|o| o.is_err()).count() == 2, "{:?}", alone.iter().map(|o| o.as_ref().err()).collect::<Vec<_>>());
     let mut execs = vec![Exec::Interpreter];
     #[cfg(target_os = "macos")]
-    execs.push(Exec::Metal);
+    execs.extend([Exec::Metal, Exec::MetalWords]);
     for exec in execs {
         let mut ios: Vec<_> = units.iter().map(|f| io(f)).collect();
         let batch: Vec<(Config, &mut dyn Files, &str)> = ios.iter_mut().map(|io| (cfg.clone(), io as &mut dyn Files, "main.c")).collect();
@@ -214,10 +214,15 @@ fn the_corpus_by_the_programs() {
     let words = env("RERAIL_PP_WORDS").is_some();
     // The programs on the device (`RERAIL_PP_EXEC=metal`, the calls on the words), else the interpreter.
     #[cfg(target_os = "macos")]
-    let exec = if env("RERAIL_PP_EXEC").as_deref() == Some("metal") { Exec::Metal } else { Exec::Interpreter };
+    let exec = match env("RERAIL_PP_EXEC").as_deref() {
+        Some("metal") => Exec::Metal,
+        Some("metal-words") => Exec::MetalWords,
+        _ => Exec::Interpreter,
+    };
     #[cfg(not(target_os = "macos"))]
     let exec = Exec::Interpreter;
-    let mut device = DeviceStats::default();
+    let mut results_words: Vec<words::WordStats> = Vec::new();
+        let mut device = DeviceStats::default();
     // Units a batch (`run_batch`): their rounds and their text in the same runs.
     let batch: usize = env("RERAIL_PP_BATCH").and_then(|s| s.parse().ok()).unwrap_or(1).max(1);
     let mut wrong = 0;
@@ -256,6 +261,7 @@ fn the_corpus_by_the_programs() {
                 }
             }
             for (((out, st, ws), settled), p) in results.into_iter().zip(&settled).zip(&paths) {
+                results_words.push(ws.clone());
                 if each {
                     println!("{p}: {ms} ms (its batch); {}; {st:?} {ws:?}", out.as_ref().map_or_else(|w| w.to_string(), |o| if *o == settled.tokens { "same".into() } else { "DIFFERS".into() }));
                 }
@@ -274,6 +280,8 @@ fn the_corpus_by_the_programs() {
         println!("{lang}: {same} the same, {differ} differ, refused {refused:?}");
         if exec != Exec::Interpreter {
             println!("  the device: {device:?}");
+            let w = |f: fn(&words::WordStats) -> u64| results_words.iter().map(f).sum::<u64>();
+            println!("  the words on the device: {} batches, {} dispatches, {:.3} s GPU; {} tests, {} expansions, {} again; words' wall {:.3} s, files' {:.3} s", w(|s| s.batches), w(|s| s.dispatches), w(|s| s.gpu_us) as f64 / 1e6, w(|s| s.tests), w(|s| s.expansions), w(|s| s.again), w(|s| s.run_us) as f64 / 1e6, w(|s| s.make_us) as f64 / 1e6);
             #[cfg(target_os = "macos")]
             println!("  the pool: {:?} blocks and bytes made", rerail_metal::pool::made());
         }

@@ -343,16 +343,38 @@ impl Bounds {
     /// batch of TUs on Metal, where every room is pages taken. A run refused past a room's bound
     /// (`is_room`) below the last rung is run again at the next. The last is `of`, so a TU's
     /// answer, and its refusal at a real bound, are the CPU's. Each rung's tokens a token of the
-    /// TU, and its depths; an embedded file (data, no tokens) still makes two tokens a byte.
+    /// TU, and its depths; an embedded file (data, no tokens, a file reaches it) still makes two
+    /// tokens a byte.
     pub fn rung(files: &[File], r: usize) -> Bounds {
         const RUNG: [(usize, usize); RUNGS - 1] = [(2, 32), (4, 64), (8, 64), (16, 128)];
         let of = Bounds::of(files);
         let Some(&(per, depth)) = RUNG.get(r) else { return of };
         let toks: usize = files.iter().map(|f| f.toks.len()).sum();
         let bytes: usize = files.iter().map(|f| f.bytes.len()).sum();
-        let data: usize = files.iter().filter(|f| f.toks.is_empty()).map(|f| f.bytes.len()).sum();
+        // An embedded file is one a file includes or names, tokenless; a file no file reaches
+        // is text only (an element's headers, 0430: its tokens' spellings), no room.
+        let reached: std::collections::HashSet<u32> = files.iter().flat_map(|f| f.includes.iter().map(|i| i.1).chain(f.named.iter().map(|n| n.to))).collect();
+        let data: usize = files.iter().enumerate().filter(|(k, f)| f.toks.is_empty() && reached.contains(&(*k as u32))).map(|(_, f)| f.bytes.len()).sum();
         let tokens = per * toks + 2 * data + 256;
         Bounds { arena: tokens, scratch: per * bytes + 256, depth, macros: of.macros, output: tokens, steps: of.steps, calls: tokens / 8 + 256, lists: tokens / 16 + 64, list_bytes: per * 256 }
+    }
+
+    /// This rung held within `last` (the job's own bounds, its last rung), bound by bound: a
+    /// rung past the last is room no run needs. A tokenless file counts as embedded data, so a
+    /// job whose files carry text only for spellings (the passes' elements, 0430) would get
+    /// rooms by its files' bytes.
+    pub fn within(self, last: &Bounds) -> Bounds {
+        Bounds {
+            arena: self.arena.min(last.arena),
+            scratch: self.scratch.min(last.scratch),
+            depth: self.depth.min(last.depth),
+            macros: self.macros.min(last.macros),
+            output: self.output.min(last.output),
+            steps: self.steps.min(last.steps),
+            calls: self.calls.min(last.calls),
+            lists: self.lists.min(last.lists),
+            list_bytes: self.list_bytes.min(last.list_bytes),
+        }
     }
 
     /// Whether a refusal is a room's: past a store's bound, which a larger rung may hold. The

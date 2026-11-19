@@ -268,11 +268,27 @@ pub fn on_metal(program: &Words, files: &[File], env: &pp_words::Env, bounds: &B
 /// runner of `expand_tus_with`.
 #[cfg(target_os = "macos")]
 pub fn on_metal_batch(jobs: &[Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> {
-    let refused = |why: &'static str| jobs.iter().map(|_| Err(pp_words::Refused { pc: 0, why })).collect();
+    on_metal_counted(jobs).0
+}
+
+/// `on_metal_batch`, and the batch's GPU seconds and dispatches.
+#[cfg(target_os = "macos")]
+pub fn on_metal_counted(jobs: &[Job<'_>]) -> (Vec<Result<pp_words::Expanded, pp_words::Refused>>, f64, usize) {
+    let refused = |why: &'static str| (jobs.iter().map(|_| Err(pp_words::Refused { pc: 0, why })).collect(), 0.0, 0);
     let Ok(source) = msl() else { return refused("the words do not translate to MSL") };
     match rerail_metal::pp_on::run_batch(source, jobs, jobs.len()) {
-        Ok(ran) => ran.results,
-        Err(_) => refused("the device refused the batch"),
+        Ok(ran) => {
+            if std::env::var_os("RERAIL_PP_DEVICE_TRACE").is_some() {
+                eprintln!("on_metal_batch: {} jobs, arena {} KB, {} dispatches, rungs {:?}, pool made {:?}", jobs.len(), ran.arena_bytes >> 10, ran.dispatches, ran.rungs, rerail_metal::pool::made());
+            }
+            (ran.results, ran.gpu_seconds, ran.dispatches)
+        }
+        Err(e) => {
+            if std::env::var_os("RERAIL_PP_DEVICE_TRACE").is_some() {
+                eprintln!("on_metal_batch: {} jobs refused: {e:?}", jobs.len());
+            }
+            refused("the device refused the batch")
+        }
     }
 }
 

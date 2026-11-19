@@ -1102,8 +1102,8 @@ fn the_corpus_on_metal_timed() {
 }
 
 /// A run that asks (`Env::asks`, decision 0430) records each name a lookup did not find, by
-/// `LOOKUP` and by `defined`, and starts `__COUNTER__` from `Env::counter`: on the interpreter
-/// and the compiled words alike. A run that does not ask records none.
+/// `LOOKUP` and by `defined`, and starts `__COUNTER__` from `Env::counter`: on the interpreter,
+/// the compiled words and the device alike. A run that does not ask records none.
 #[test]
 fn a_run_that_asks_records_the_names_it_missed() {
     let src = b"#ifdef A\n#endif\n#if defined B || C\n#endif\n#define Y 1\nX __COUNTER__ Y __COUNTER__ defined\n";
@@ -1127,6 +1127,8 @@ fn a_run_that_asks_records_the_names_it_missed() {
             // SAFETY: `aot_build` checked the build is these words' for this interface.
             runs.push(("rustc's build", unsafe { rerail_compiler::native_cpu_pp::run_aot(b.run, program().unwrap(), &files, &env, &bounds) }));
         }
+        #[cfg(target_os = "macos")]
+        runs.push(("the device", crate::expand::on_metal(program().unwrap(), &files, &env, &bounds)));
         for (who, r) in runs {
             let e = r.unwrap_or_else(|r| panic!("{who}: {r:?}"));
             let out: Vec<&[u8]> = e.toks.iter().map(|t| e.text(&files, t)).collect();

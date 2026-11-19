@@ -38,22 +38,24 @@ struct Back {
     bytes: usize,
 }
 
-/// The arena's bytes a batch starts with; a batch that needs more is laid out again in twice,
-/// up to `MAX_ARENA`, past which it is split.
-const FIRST_ARENA: usize = 64 << 20;
+/// The arena's bytes past which a batch is split.
 const MAX_ARENA: usize = 256 << 20;
 
 /// `jobs` run by `source`'s kernel `pp_batch`, on `workers` threads (at most the jobs), each from
 /// the smallest rung up.
 pub fn run_batch(source: &str, jobs: &[Job<'_>], workers: usize) -> Result<Ran, Error> {
     let pipeline = crate::runtime::pipeline_named(source, "pp_batch")?;
+    if std::env::var_os("RERAIL_PP_DEVICE_TRACE").is_some() {
+        let toks: usize = jobs.iter().map(|j| j.1.iter().map(|f| f.toks.len()).sum::<usize>()).sum();
+        eprintln!("pp_on: {} jobs, {} tokens, footprint {} MB", jobs.len(), toks, rerail_blocks::footprint() >> 20);
+    }
     let n = jobs.len();
     let mut results: Vec<Option<Result<Expanded, Refused>>> = (0..n).map(|_| None).collect();
     let mut rung = vec![0usize; n];
     let mut pending: Vec<usize> = (0..n).collect();
     let mut all = Ran { results: Vec::new(), gpu_seconds: 0.0, arena_bytes: 0, dispatches: 0, rungs: [0; RUNGS] };
     while !pending.is_empty() {
-        let bounds: Vec<Bounds> = pending.iter().map(|&i| if rung[i] + 1 < RUNGS { Bounds::rung(jobs[i].1, rung[i]) } else { jobs[i].3.clone() }).collect();
+        let bounds: Vec<Bounds> = pending.iter().map(|&i| if rung[i] + 1 < RUNGS { Bounds::rung(jobs[i].1, rung[i]).within(jobs[i].3) } else { jobs[i].3.clone() }).collect();
         let these: Vec<Job<'_>> = pending.iter().zip(&bounds).map(|(&i, b)| (jobs[i].0, jobs[i].1, jobs[i].2, b)).collect();
         let ran = fitted(&pipeline, &these, workers)?;
         (all.gpu_seconds, all.arena_bytes, all.dispatches) = (all.gpu_seconds + ran.gpu_seconds, all.arena_bytes.max(ran.arena_bytes), all.dispatches + ran.dispatches);
@@ -73,12 +75,42 @@ pub fn run_batch(source: &str, jobs: &[Job<'_>], workers: usize) -> Result<Ran, 
         pending = next;
     }
     all.results = results.into_iter().map(|r| r.expect("each job ran")).collect();
+    if std::env::var_os("RERAIL_PP_DEVICE_TRACE").is_some() {
+        eprintln!("pp_on: footprint {} MB", rerail_blocks::footprint() >> 20);
+    }
     Ok(all)
 }
 
-/// `jobs` in arenas that fit: one, twice as large while it is full, else the jobs split in halves.
+/// The arena bytes `jobs` take laid out (`laid_out`'s placement, read-only buffers once,
+/// nothing copied): the first arena's size, so that a batch of small jobs leases a small arena.
+fn need(jobs: &[Job<'_>]) -> usize {
+    let mut used = 0usize;
+    let mut shared: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let (mut slots, mut runnable) = (0, 0);
+    {
+        let mut place = |b: Buf| -> u64 {
+            if b.write || shared.insert((b.ptr as usize, b.len)) {
+                used = used.next_multiple_of(16) + b.room;
+            }
+            0
+        };
+        for &(program, files, env, bounds) in jobs {
+            if let Ok(p) = pp_words::prepare(program, files, env, bounds, &mut place) {
+                slots = p.ctx_bytes().len() / 8;
+                runnable += 1;
+            }
+        }
+    }
+    used.next_multiple_of(16) + 8 * slots * runnable + 64
+}
+
+/// `jobs` in arenas that fit: one of the batch's need, twice as large while it is full, else
+/// the jobs split in halves. A batch whose need is past `MAX_ARENA` is split before any arena is
+/// leased (a lease is pages made: a lease that cannot fit is waste).
 fn fitted(pipeline: &metal::ComputePipelineState, jobs: &[Job<'_>], workers: usize) -> Result<Ran, Error> {
-    let mut size = FIRST_ARENA;
+    // The batch's own need, a power of two from 1 MB.
+    let need = need(jobs);
+    let mut size = if need > MAX_ARENA && jobs.len() > 1 { 2 * MAX_ARENA } else { need.next_power_of_two().max(1 << 20) };
     loop {
         let laid = if size > MAX_ARENA { Err(Error::BackendCapacity) } else { laid_out(pipeline, jobs, workers, size) };
         match laid {
@@ -106,8 +138,16 @@ fn laid_out(pipeline: &metal::ComputePipelineState, jobs: &[Job<'_>], workers: u
     let mut prepared = Vec::with_capacity(jobs.len());
     let table_at;
     {
-        // Each buffer at the next 16 bytes, its written part copied in; its address the GPU's.
+        // Each buffer at the next 16 bytes, its written part copied in; its address the GPU's. A
+        // read-only buffer is placed once a batch: the jobs that read the same slice (a header's
+        // text, which every element of a unit reads) read one copy.
+        let mut shared: std::collections::HashMap<(usize, usize), u64> = std::collections::HashMap::new();
         let mut place = |b: Buf| -> u64 {
+            if !b.write
+                && let Some(&at) = shared.get(&(b.ptr as usize, b.len))
+            {
+                return at;
+            }
             let at = used.next_multiple_of(16);
             if at + b.room + 16 > size {
                 full = true;
@@ -118,6 +158,8 @@ fn laid_out(pipeline: &metal::ComputePipelineState, jobs: &[Job<'_>], workers: u
             unsafe { std::ptr::copy_nonoverlapping(b.ptr, base.add(at), b.len) };
             if b.write {
                 backs.push(Back { host: b.ptr, at, bytes: b.room });
+            } else {
+                shared.insert((b.ptr as usize, b.len), gpu + at as u64);
             }
             gpu + at as u64
         };

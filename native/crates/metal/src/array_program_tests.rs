@@ -288,7 +288,7 @@ fn a_batch_of_many_units_sorts_each_stably() {
             (r.column(n, 0, 4), r.column(n, 0, 2))
         }).collect();
         let want: Vec<super::Outcome> = units.iter().map(|(x, f)| p.values_at(&[x, f], &[], &mut ()).map(|v| p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect())).collect();
-        let mut hosts: Vec<()> = units.iter().map(|_| ()).collect();
+        let mut hosts: Vec<()> = vec![(); units.len()];
         let mut jobs: Vec<Job> = units.iter().zip(hosts.iter_mut()).map(|((x, f), h)| Job { inputs: vec![x, f], params: vec![], calls: h }).collect();
         let (got, _) = run_batch(&p, &mut jobs).expect("a device");
         for (u, (w, g)) in want.iter().zip(&got).enumerate() {

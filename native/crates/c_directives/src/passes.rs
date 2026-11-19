@@ -1128,6 +1128,62 @@ impl Calls for Host<'_, '_> {
         }
         Ok(())
     }
+
+    /// Tests and expansions on the words read together (`Words::test_many`, `expand_many`): a
+    /// wave of readings in one batch. Every other call one by one.
+    fn call_many(&mut self, f: u16, fun: &Fun, args: &[&[i64]], w: usize, env: &[&[i64]], out: &mut Vec<Vec<i64>>) -> Result<(), &'static str> {
+        let a = |k: usize, j: usize| if args[k].len() == 1 { args[k][0] } else { args[k][j] };
+        match (f, self.words.as_deref_mut()) {
+            (F_TEST, Some(words)) => {
+                let (keys, vals) = (env[0], env[1]);
+                let arms: Vec<(i64, i64, i64)> = (0..w).map(|j| (a(0, j), a(1, j), a(2, j))).collect();
+                let mut looked: Vec<Vec<(i64, i64)>> = vec![Vec::new(); w];
+                let vs = words.test_many(self.unit, &arms, keys, vals, &mut looked);
+                for ((v, r), l) in vs.into_iter().zip(looked) {
+                    let mut rows = vec![0, i64::from(v), r];
+                    for (s, d) in l {
+                        rows.extend([1, s, d]);
+                    }
+                    out.push(rows);
+                }
+                Ok(())
+            }
+            (F_EXPAND, Some(words)) => {
+                let (keys, vals) = (env[0], env[1]);
+                let calls: Vec<[i64; 6]> = (0..w).map(|j| std::array::from_fn(|k| a(k, j))).collect();
+                let mut toks: Vec<Vec<i64>> = vec![Vec::new(); w];
+                let rs = words.expand_many(self.unit, &calls, keys, vals, &mut toks);
+                for (r, t) in rs.into_iter().zip(toks) {
+                    let mut rows = Vec::with_capacity(2 * t.len() + 2);
+                    match r {
+                        Ok(counted) => {
+                            for h in t {
+                                rows.extend([h, 0]);
+                            }
+                            rows.extend([counted, 1]);
+                        }
+                        Err(r) => {
+                            self.refused = self.refused.max(r);
+                            rows.extend([0, 1]);
+                        }
+                    }
+                    out.push(rows);
+                }
+                Ok(())
+            }
+            _ => {
+                let mut one = Vec::with_capacity(args.len());
+                for j in 0..w {
+                    one.clear();
+                    one.extend((0..args.len()).map(|k| a(k, j)));
+                    let mut rows = Vec::new();
+                    self.call(f, fun, &one, env, &mut rows)?;
+                    out.push(rows);
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 /// Which executor runs the programs: the interpreter (their meaning), or the device's launches
@@ -1137,6 +1193,10 @@ pub enum Exec {
     Interpreter,
     #[cfg(target_os = "macos")]
     Metal,
+    /// The programs on Metal, and the words' readings too: a wave of a call's readings in one
+    /// lockstep batch (`expand::on_metal_batch`, 0408).
+    #[cfg(target_os = "macos")]
+    MetalWords,
 }
 
 /// The device's account of a unit's runs (`Exec::Metal`).
@@ -1205,7 +1265,7 @@ impl Prog {
         let outputs: Vec<Result<Vec<Vec<i64>>, (usize, &'static str)>> = match runner.exec {
             Exec::Interpreter => inputs.iter().zip(hosts.iter_mut()).map(|(i, h)| self.p.values_at(i, &[], h).map(|v| self.p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect())).collect(),
             #[cfg(target_os = "macos")]
-            Exec::Metal => {
+            Exec::Metal | Exec::MetalWords => {
                 let mut jobs: Vec<rerail_metal::array_program::Job> = inputs.iter().zip(hosts.iter_mut()).map(|(i, h)| rerail_metal::array_program::Job { inputs: i.clone(), params: Vec::new(), calls: h }).collect();
                 match rerail_metal::array_program::run_batch(&self.p, &mut jobs) {
                     Ok((out, r)) => {
@@ -1308,6 +1368,8 @@ pub fn run_batch(units: Vec<(Config, &mut dyn Files, &str)>, run_words: words::R
         .into_iter()
         .map(|(cfg, io, path)| {
             let w = words::Words::new(&cfg, run_words)?;
+            #[cfg(target_os = "macos")]
+            let w = if exec == Exec::MetalWords { w.with_batch(crate::expand::on_metal_counted) } else { w };
             Ok((Unit::new(cfg, io, path)?, w))
         })
         .collect();

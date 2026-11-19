@@ -748,7 +748,6 @@ fn step(g: &mut Gpu, p: &ArrayProgram, i: usize, v: &mut [Option<Arr>], parts: &
             let mut cols: Vec<Vec<i64>> = vec![Vec::new(); fields];
             let mut part_lens = vec![0usize; nb];
             let mut rows = Vec::new();
-            let mut one = Vec::with_capacity(xs.len());
             for (u, job) in jobs.iter_mut().enumerate() {
                 if g.dead[u].is_some() {
                     continue;
@@ -767,25 +766,22 @@ fn step(g: &mut Gpu, p: &ArrayProgram, i: usize, v: &mut [Option<Arr>], parts: &
                 };
                 rows.clear();
                 let mut mine = Vec::with_capacity(w);
-                let mut refused = None;
-                for j in 0..w {
-                    one.clear();
-                    one.extend(xr.iter().map(|x| if x.len() == 1 { x[0] } else { x[j] }));
-                    let before = rows.len();
-                    if let Err(e) = job.calls.call(*f, fun, &one, &er, &mut rows) {
-                        refused = Some(e);
-                        break;
-                    }
-                    let made = rows.len() - before;
-                    if fields == 0 || made % fields != 0 {
-                        if fields == 0 && made == 0 {
-                            mine.push(0);
-                            continue;
+                // The unit's elements at once: its host may read them together.
+                let mut each: Vec<Vec<i64>> = Vec::with_capacity(w);
+                let mut refused = job.calls.call_many(*f, fun, &xr, w, &er, &mut each).err();
+                if refused.is_none() {
+                    for made in each {
+                        if fields == 0 || made.len() % fields != 0 {
+                            if fields == 0 && made.is_empty() {
+                                mine.push(0);
+                                continue;
+                            }
+                            refused = Some("a call's results are not whole rows");
+                            break;
                         }
-                        refused = Some("a call's results are not whole rows");
-                        break;
+                        mine.push((made.len() / fields) as i64);
+                        rows.extend(made);
                     }
-                    mine.push((made / fields) as i64);
                 }
                 if let Some(e) = refused {
                     g.kill(u, (i, e));

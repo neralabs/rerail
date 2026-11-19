@@ -501,6 +501,22 @@ pub fn array_rows(out: &mut String, at: usize, p: &ArrayProgram) {
 /// values).
 pub trait Calls {
     fn call(&mut self, f: u16, fun: &Fun, args: &[i64], env: &[&[i64]], out: &mut Vec<i64>) -> Result<(), &'static str>;
+
+    /// The calls of `f` on `w` elements at once (element `j`'s arguments `args[k][j]`, an
+    /// argument of one element broadcast): each one's results to `out[j]`. By default one `call`
+    /// an element, in order; a host that reads many elements together (a batch on the device)
+    /// answers them at once, as one by one would. A refusal is the first failing element's.
+    fn call_many(&mut self, f: u16, fun: &Fun, args: &[&[i64]], w: usize, env: &[&[i64]], out: &mut Vec<Vec<i64>>) -> Result<(), &'static str> {
+        let mut one = Vec::with_capacity(args.len());
+        for j in 0..w {
+            one.clear();
+            one.extend(args.iter().map(|x| if x.len() == 1 { x[0] } else { x[j] }));
+            let mut rows = Vec::new();
+            self.call(f, fun, &one, env, &mut rows)?;
+            out.push(rows);
+        }
+        Ok(())
+    }
 }
 
 /// No functions: a program without calls.
