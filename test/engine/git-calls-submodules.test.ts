@@ -1,8 +1,8 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runGit } from "../../src/engine/git.js";
@@ -129,6 +129,67 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect(answers.map(answer => listed(answer.stdout))).toEqual([["top.txt"], ["top.txt"]]);
   }, 60_000);
 
+  it("and ask a checkout whose index records no submodule nothing more than that", async () => {
+    const root = await folder();
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    await writeFile(join(work, "top.txt"), "changed\n");
+    // Asked once first: each process asks Git's version once, at its first call that reads worktree files.
+    runGit(work, AUDIT_DIFF);
+    const trace = join(root, "trace");
+    await mkdir(trace);
+    vi.stubEnv("GIT_TRACE2_EVENT", trace);
+
+    const audit = runGit(work, AUDIT_DIFF);
+
+    vi.stubEnv("GIT_TRACE2_EVENT", undefined);
+    // Each Git process writes its events to a file of its own: the config listing, the diff, and the index's submodules.
+    expect(readdirSync(trace)).toHaveLength(3);
+    expect(listed(audit.stdout)).toEqual(["top.txt"]);
+  }, 60_000);
+
+  it("and fail a diff where a submodule's `.git` file names no repository, as Git's own diff fails", async () => {
+    const root = await folder();
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", source, "sub");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    await writeFile(join(work, "sub", ".git"), "gitdir: ../missing\n");
+
+    const audit = runGit(work, AUDIT_DIFF);
+
+    expect(() => git(work, ...AUDIT_DIFF)).toThrow();
+    expect([audit.status === 0, audit.stdout]).toEqual([false, ""]);
+  }, 60_000);
+
+  it.skipIf(process.platform === "win32")("in the Git folder a submodule's `.git` named when Rerail looked, though it names a placed one by the status", async () => {
+    const root = await folder();
+    const marker = join(root, "filter-ran");
+    const { work, placed } = await submoduleWithPlacedCopy(root, marker);
+    const gitfile = join(work, "sub", ".git");
+
+    const audit = await afterSubmoduleListing(root, work, `printf 'gitdir: ../placed\\n' > '${gitfile}'`);
+
+    expect(readFileSync(gitfile, "utf8")).toBe("gitdir: ../placed\n");
+    expect(existsSync(placed)).toBe(true);
+    expect(runs(marker)).toBe(0);
+    expect([audit.status, listed(audit.stdout)]).toEqual([0, ["sub"]]);
+  }, 60_000);
+
+  it.skipIf(process.platform === "win32")("in a Git folder placed where a submodule's `.git` names one only after Rerail listed its config", async () => {
+    const root = await folder();
+    const marker = join(root, "filter-ran");
+    const { work, placed } = await submoduleWithPlacedCopy(root, marker);
+    const kept = join(root, "kept");
+    renameSync(placed, kept);
+    await writeFile(join(work, "sub", ".git"), "gitdir: ../placed\n");
+
+    const audit = await afterSubmoduleListing(root, work, `cp -R '${kept}' '${placed}'`);
+
+    expect(existsSync(placed)).toBe(true);
+    expect(runs(marker)).toBe(0);
+    expect([audit.status === 0, audit.stdout]).toEqual([false, ""]);
+  }, 60_000);
+
   it("in a checked-out submodule or one inside it, and list them as Git does", async () => {
     const root = await folder();
     const marker = join(root, "driver-ran");
@@ -181,6 +242,40 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect(runs(marker)).toBe(0);
   }, 120_000);
 });
+
+/**
+ * A checkout `work` with a checked-out submodule `sub`, and `work/placed`: a copy of the submodule's Git folder, as a
+ * writer of the worktree alone could place one, whose config names a driver for the submodule's changed `inner.txt`.
+ */
+async function submoduleWithPlacedCopy(root: string, marker: string): Promise<{ work: string; placed: string }> {
+  const source = await repository(root, "source", { ".gitattributes": "*.txt filter=inner\n", "inner.txt": "one\n" });
+  const work = await repository(root, "work", { "top.txt": "top\n" });
+  git(work, "submodule", "add", "--quiet", source, "sub");
+  git(work, "commit", "--quiet", "-m", "submodule");
+  const placed = join(work, "placed");
+  cpSync(join(work, ".git", "modules", "sub"), placed, { recursive: true });
+  git(work, "config", "--file", join(placed, "config"), "--unset", "core.worktree");
+  git(work, "config", "--file", join(placed, "config"), "filter.inner.clean", recording(marker));
+  await writeFile(join(work, "sub", "inner.txt"), "two\n");
+  return { work, placed };
+}
+
+/**
+ * The audit's diff in `work`, run by a Rerail loaded with a Git that runs `command` right after the guard has listed
+ * the config of the submodule `sub`: what a writer of the worktree alone could do between that listing and the status.
+ */
+async function afterSubmoduleListing(root: string, work: string, command: string): Promise<{ status: number | null; stdout: string }> {
+  const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const bin = join(root, "bin");
+  await mkdir(bin);
+  const listing = `-C ${realpathSync.native(join(work, "sub"))} config -z --show-scope --list`;
+  await writeFile(join(bin, "git"), ["#!/bin/sh", `'${real}' "$@"; code=$?`, `case " $* " in *" ${listing} "*) ${command};; esac`, "exit $code", ""].join("\n"));
+  chmodSync(join(bin, "git"), 0o755);
+  vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
+  vi.resetModules();
+  const fresh = await import("../../src/engine/git.js");
+  return fresh.runGit(work, AUDIT_DIFF);
+}
 
 /** Makes `file` hold `text`, then removes it, as fast as it can. */
 const APPEAR_VANISH = String.raw`
@@ -254,6 +349,9 @@ const CONFIGS: ReadonlyArray<readonly [string, (work: string, root: string) => P
     const person = join(root, "person.gitconfig");
     await writeFile(person, "[status]\n\tshowUntrackedFiles = no\n");
     vi.stubEnv("GIT_CONFIG_GLOBAL", person);
+  }],
+  ["status.showUntrackedFiles = no in the submodules that hold one", work => {
+    for (const middle of ["nested-modified", "nested-untracked"]) git(join(work, middle), "config", "status.showUntrackedFiles", "no");
   }],
   ["submodule.leaf.ignore = all in the submodules that hold one", work => {
     for (const middle of ["nested-modified", "nested-untracked"]) git(join(work, middle), "config", "submodule.leaf.ignore", "all");

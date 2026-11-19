@@ -11,7 +11,7 @@ import {
   CONFIG_LISTING, configEntryVariables, driverOverrides, listedEntries, oldGitNotice, readDriverConfig, worktreeRead, type ListedEntry,
 } from "./git-filter-drivers.js";
 import {
-  nameDiff, outsideSubmodules, withChangedSubmodules, type DiffRepository, type GitFailure, type GuardedRepository, type Places,
+  nameDiff, notARepository, outsideSubmodules, withChangedSubmodules, type DiffRepository, type GitFailure, type GuardedRepository, type Places,
   type SubmoduleOpener,
 } from "./git-submodule-state.js";
 
@@ -1114,14 +1114,19 @@ const SUBMODULE_CLEARED = [
 
 /**
  * Opens each submodule through the guard as Git opens one for the `git status` it runs there: in the submodule's
- * folder with the variables of {@link SUBMODULE_CLEARED} cleared and `GIT_DIR=.git`, which also skips the ownership
- * check, as Git's does; `env` is the variables the diff was asked with.
+ * folder with the variables of {@link SUBMODULE_CLEARED} cleared and `GIT_DIR` set, which also skips the ownership
+ * check, as Git's does. Git sets `GIT_DIR=.git` and its status reads the `.git` file; Rerail names the Git folder that
+ * file named when it looked, so the guard's listing and the status open the same one. `env` is the variables the diff
+ * was asked with.
  */
 function submoduleOpener(env: GitVariables = {}): SubmoduleOpener {
-  const inSubmodule: GitVariables = { ...env, ...Object.fromEntries(SUBMODULE_CLEARED.map(name => [name, undefined])), GIT_DIR: ".git" };
-  return folder => {
-    const guarded = guardedSync(folder, inSubmodule);
+  const cleared: GitVariables = { ...env, ...Object.fromEntries(SUBMODULE_CLEARED.map(name => [name, undefined])) };
+  return (folder, gitFolder) => {
+    const guarded = guardedSync(folder, { ...cleared, GIT_DIR: gitFolder });
     if (!("entries" in guarded)) return guarded;
+    // Git lists no config of the repository's own outside one: a Git folder that holds none when listed is refused,
+    // so one placed there between the listing and the status is never opened.
+    if (!guarded.entries.some(entry => entry.scope === "local")) return notARepository(gitFolder);
     const repository: GuardedRepository = { entries: guarded.entries, ask: asker(folder, guarded.env), places: { top: folder, prefix: "" } };
     return repository;
   };

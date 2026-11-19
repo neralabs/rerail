@@ -11,8 +11,8 @@
  * `repo_diff_setup`; for the submodules inside a submodule, `wt_status_collect_changes_worktree`) and for what makes a
  * submodule changed (`is_submodule_modified`): any entry its status lists.
  */
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, statSync, type Stats } from "node:fs";
+import { join, resolve } from "node:path";
 import { lastValue, type ListedEntry } from "./git-filter-drivers.js";
 
 /** How a diff treats a submodule's worktree: Git's `--ignore-submodules` values. */
@@ -49,8 +49,11 @@ export interface DiffRepository extends Omit<GuardedRepository, "places"> {
   readonly place: () => Places | GitFailure;
 }
 
-/** Opens the submodule checked out at `folder` through the guard, as Git opens one for its status; how that failed instead. */
-export type SubmoduleOpener = (folder: string) => GuardedRepository | GitFailure;
+/**
+ * Opens the submodule checked out at `folder`, whose Git folder is `gitFolder` ({@link submoduleGitFolder}), through the
+ * guard, as Git opens one for its status; how that failed instead.
+ */
+export type SubmoduleOpener = (folder: string, gitFolder: string) => GuardedRepository | GitFailure;
 
 /** A `git diff --name-only -z` this module answers for submodules. */
 export interface NameDiff {
@@ -381,10 +384,52 @@ function byteOrder(left: string, right: string): number {
  * failed when it cannot be asked, as Git's diff fails then.
  */
 export function submoduleChanged(folder: string, untrackedLeftOut: boolean, open: SubmoduleOpener, depth: number): boolean | GitFailure {
-  if (!existsSync(join(folder, ".git"))) return false;
+  const gitFolder = submoduleGitFolder(folder);
+  if (typeof gitFolder !== "string") return gitFolder ?? false;
   if (depth === 0) return failed(new Error(`Rerail follows submodules ${MAX_DEPTH} levels deep, and ${folder} is deeper`));
-  const repository = open(folder);
+  const repository = open(folder, gitFolder);
   return "ask" in repository ? changedThroughGuard(repository, untrackedLeftOut, { open, depth }) : repository;
+}
+
+/** The most bytes of a `.git` file Rerail reads for the Git folder it names. */
+const MAX_GITFILE_BYTES = 64 * 1024;
+
+/**
+ * The Git folder of the submodule checked out at `folder`, as `is_submodule_modified` finds it: `.git` when it is a
+ * folder, else the folder a `.git` file's `gitdir: <path>` names, relative to `folder`. Undefined when there is no
+ * `.git`, or it went before it could be read: the submodule is not checked out. How it failed for a `.git` file Git
+ * cannot read as one, which fails Git's diff. Read once for each question and never handed to Git as a file, so the
+ * guard's listing and the status after it open this one folder whatever `.git` names by then.
+ */
+export function submoduleGitFolder(folder: string): string | GitFailure | undefined {
+  const dotGit = join(folder, ".git");
+  const stats = statOf(dotGit);
+  if (stats === undefined) return undefined;
+  if (stats.isDirectory()) return dotGit;
+  const text = stats.isFile() && stats.size <= MAX_GITFILE_BYTES ? textOf(dotGit) : "";
+  if (text === undefined) return undefined;
+  return text.startsWith("gitdir: ") ? resolve(folder, text.slice("gitdir: ".length).replace(/[\r\n]+$/u, "")) : notARepository(dotGit);
+}
+
+function statOf(path: string): Stats | undefined {
+  try {
+    return statSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function textOf(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/** How a question fails in `gitFolder`, which holds no repository, as Git fails it. */
+export function notARepository(gitFolder: string): GitFailure {
+  return { status: 128, stdout: "", stderr: `fatal: not a git repository: ${gitFolder}\n` };
 }
 
 /**
