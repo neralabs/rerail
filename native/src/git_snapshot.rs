@@ -40,8 +40,38 @@ struct View {
 struct InventoryState {
     generation: u64,
     saved: Option<(u64, Arc<Inventory>)>,
-    paths: Option<Vec<PathBuf>>,
+    paths: Option<Vec<SelectedPath>>,
     host_languages: Option<SourceLanguages>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, serde::Serialize)]
+struct SelectedPath {
+    path: PathBuf,
+    directory_only: bool,
+}
+
+impl SelectedPath {
+    fn includes(&self, path: &Path, directory: bool) -> bool {
+        path.starts_with(&self.path) && (directory || !self.directory_only || path != self.path)
+    }
+}
+
+fn requires_directory(path: &Path) -> bool {
+    let bytes = path.as_os_str().as_encoded_bytes();
+    matches!(bytes.rsplit(|&b| std::path::is_separator(char::from(b))).next(), Some(b"" | b"." | b".."))
+}
+
+fn relative_path(path: &Path) -> io::Result<PathBuf> {
+    let mut under = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(name) => under.push(name),
+            Component::CurDir => {}
+            Component::ParentDir if under.pop() => {}
+            _ => return Err(io::Error::new(io::ErrorKind::PermissionDenied, "expected a repository-relative path within the selected root")),
+        }
+    }
+    Ok(under)
 }
 
 /// The embedded programs that have already run with this evaluation's store and owner.
@@ -381,15 +411,14 @@ impl View {
 
     fn entry(&self, path: &Path) -> io::Result<Entry> {
         let relative = path.strip_prefix(&self.root).map_err(error)?;
-        let mut under = PathBuf::new();
-        for component in relative.components() {
-            match component {
-                Component::Normal(name) => under.push(name),
-                Component::CurDir => {}
-                Component::ParentDir if under.pop() => {}
-                _ => return Err(io::Error::from(io::ErrorKind::PermissionDenied)),
-            }
-        }
+        self.relative_entry(&relative_path(relative)?, requires_directory(path))
+    }
+
+    fn source_entry(&self, path: &Path) -> io::Result<Entry> {
+        self.relative_entry(&relative_path(path)?, requires_directory(path))
+    }
+
+    fn relative_entry(&self, under: &Path, directory_only: bool) -> io::Result<Entry> {
         let full = self.prefix.join(under);
         if full.as_os_str().is_empty() {
             return Ok(Entry::Dir(self.tree));
@@ -398,6 +427,8 @@ impl View {
             let entry = self.lookup_tree_entry(repo, storage, &full)?.ok_or_else(missing)?;
             if entry.is_tree() {
                 Ok(Entry::Dir(entry.target))
+            } else if entry.is_blob() && directory_only {
+                Err(io::Error::from(io::ErrorKind::NotADirectory))
             } else if entry.is_blob() {
                 Ok(Entry::File(entry.target))
             } else {
@@ -450,16 +481,28 @@ impl Snapshot {
         self.view.inventory.lock().unwrap_or_else(|e| e.into_inner()).host_languages.as_ref() == Some(languages)
     }
 
-    pub fn restrict_paths(&self, paths: Vec<String>) {
-        let paths = paths.iter().map(|path| {
-            Path::new(path).components().filter(|part| *part != Component::CurDir).collect()
-        }).collect();
+    pub fn restrict_paths(&self, paths: Vec<String>) -> io::Result<()> {
+        let mut paths = paths.iter().map(|name| {
+            let input = Path::new(name);
+            Ok(SelectedPath { path: relative_path(input)?, directory_only: requires_directory(input) })
+        }).collect::<io::Result<Vec<_>>>()?;
+        paths.sort_unstable();
+        // Path ordering groups each parent with its descendants. For equal paths the unrestricted spelling comes first.
+        let mut selected = Vec::<SelectedPath>::new();
+        for path in paths {
+            if !selected.last().is_some_and(|parent| parent.includes(&path.path, path.directory_only)) {
+                selected.push(path);
+            }
+        }
+        let root_selected = selected.first().is_some_and(|entry| entry.path.as_os_str().is_empty());
+        let paths = (!root_selected).then_some(selected);
         let mut state = self.view.inventory.lock().unwrap_or_else(|e| e.into_inner());
-        if state.paths.as_ref() != Some(&paths) {
-            state.paths = Some(paths);
+        if state.paths != paths {
+            state.paths = paths;
             state.generation += 1;
             state.saved = None;
         }
+        Ok(())
     }
 
     pub fn root(&self) -> &Path {
@@ -489,7 +532,7 @@ impl Snapshot {
         let paths = self.view.inventory.lock().unwrap_or_else(|e| e.into_inner()).paths.clone();
         let unreadable = self.view.source_errors.lock().unwrap_or_else(|e| e.into_inner());
         invalid.chain(tree_failures).chain(unreadable.iter().filter(|(path, _)| paths.as_ref().is_none_or(|selected|
-            selected.iter().any(|wanted| Path::new(path.as_str()).starts_with(wanted)))).map(|(path, message)| SourceFailure {
+            selected.iter().any(|wanted| wanted.includes(Path::new(path.as_str()), false)))).map(|(path, message)| SourceFailure {
             path: path.clone(), message: message.clone(),
         })).collect()
     }
@@ -531,24 +574,17 @@ impl Snapshot {
     }
 
     pub fn contains_path(&self, path: &Path) -> io::Result<bool> {
-        if !path.is_relative() || path.components().any(|part| !matches!(part, Component::Normal(_) | Component::CurDir)) {
-            return Ok(false);
-        }
-        let bytes = path.as_os_str().as_encoded_bytes();
-        let directory = bytes.strip_suffix(b".").unwrap_or(bytes).last()
-            .is_some_and(|byte| std::path::is_separator(char::from(*byte)));
-        match self.view.entry(&self.view.root.join(path)) {
-            Ok(Entry::Dir(_)) => Ok(true),
-            Ok(Entry::File(_)) => Ok(!directory),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+        let Ok(under) = relative_path(path) else { return Ok(false) };
+        match self.view.relative_entry(&under, requires_directory(path)) {
+            Ok(_) => Ok(true),
+            Err(err) if matches!(err.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => Ok(false),
             Err(err) => Err(err),
         }
     }
 
     /// List raw entry modes without opening any of their objects.
     pub fn directory_entries(&self, path: &str) -> io::Result<Option<Vec<(Vec<u8>, u16)>>> {
-        super::check_source_path(path)?;
-        let directory = match self.view.entry(&self.view.root.join(path)) {
+        let directory = match self.view.source_entry(Path::new(path)) {
             Ok(Entry::Dir(id)) => id,
             Ok(Entry::File(_)) => return Err(io::Error::from(io::ErrorKind::NotADirectory)),
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -570,15 +606,17 @@ impl Snapshot {
         path: &str,
         f: impl FnOnce(u64, &dyn Fn() -> io::Result<Vec<u8>>) -> io::Result<T>,
     ) -> io::Result<T> {
-        super::check_source_path(path)?;
-        let Entry::File(id) = self.view.entry(&self.view.root.join(path))? else {
+        let path = Path::new(path);
+        let under = relative_path(path)?;
+        let Entry::File(id) = self.view.relative_entry(&under, requires_directory(path))? else {
             return Err(io::Error::from(io::ErrorKind::IsADirectory));
         };
         self.view.with_repo(|repo, _, _| {
             let header = repo.find_header(id).map_err(error)?;
             f(header.size(), &|| {
                 let bytes = verified_blob(repo, id)?.data.clone();
-                self.view.source_errors.lock().unwrap_or_else(|err| err.into_inner()).remove(path);
+                let key = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(under.as_path()).map_err(error)?);
+                self.view.source_errors.lock().unwrap_or_else(|err| err.into_inner()).remove(key.to_str().map_err(error)?);
                 Ok(bytes)
             })
         })?
@@ -775,7 +813,7 @@ pub fn with_repository<T>(root: &Path, f: impl FnOnce(&gix::Repository, Option<&
 
 pub struct InventoryFilter {
     prefix: PathBuf,
-    paths: Option<Vec<PathBuf>>,
+    paths: Option<Vec<SelectedPath>>,
     rules: super::IgnoreRules,
     coverage: ignore_coverage::IgnoreCoverage,
 }
@@ -789,7 +827,7 @@ impl InventoryFilter {
         }
         if let Some(paths) = &self.paths {
             let under = relative.strip_prefix(&self.prefix).ok()?;
-            if !paths.iter().any(|p| under.starts_with(p) || (directory && p.starts_with(under))) {
+            if !paths.iter().any(|p| p.includes(under, directory) || (directory && p.path.starts_with(under))) {
                 return None;
             }
         }
@@ -799,7 +837,7 @@ impl InventoryFilter {
     /// An invalid name can only be in scope when its valid parent is in scope.
     pub fn invalid_child(&self, parent: &str, name: &str, directory: bool) -> Option<String> {
         let relative = Path::new(parent).strip_prefix(&self.prefix).ok()?;
-        if self.paths.as_ref().is_some_and(|paths| !paths.iter().any(|path| relative.starts_with(path))) {
+        if self.paths.as_ref().is_some_and(|paths| !paths.iter().any(|path| path.includes(relative, true))) {
             return None;
         }
         let mut bytes = parent.as_bytes().to_vec();
@@ -852,7 +890,7 @@ pub fn inventory_selection(root: &Path) -> Option<String> {
         Ok(None) => String::new(),
         Err(_) => format!("unreadable:{}", v.tree),
     };
-    serde_json::to_string(&("ignore-v6", ignores, &v.prefix, &paths)).ok()
+    serde_json::to_string(&("ignore-v7", ignores, &v.prefix, &paths)).ok()
 }
 
 pub fn source_languages(root: &Path) -> Option<SourceLanguages> {
@@ -1091,6 +1129,34 @@ mod tests {
     fn sha256(bytes: &[u8]) -> [u8; 32] {
         use sha2::Digest;
         sha2::Sha256::digest(bytes).into()
+    }
+
+    #[test]
+    fn equivalent_path_sets_keep_the_inventory_key_and_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = gix::init_bare(dir.path().join("repo.git")).unwrap();
+        let tree = gix::ObjectId::empty_tree(repo.object_hash()).to_string();
+        let snapshot = Snapshot::scoped(repo.git_dir(), &tree, "selection").unwrap();
+        let state = || (inventory_selection(snapshot.root()).unwrap(), snapshot.view.inventory.lock().unwrap().generation);
+        let restrict = |paths: &[&str]| snapshot.restrict_paths(paths.iter().map(|s| s.to_string()).collect());
+        let all = state();
+        restrict(&["./", "dir/a"]).unwrap();
+        assert_eq!(state(), all);
+        restrict(&["dir/", "dir-other", "z.py"]).unwrap();
+        let selected = state();
+        restrict(&["z.py", "dir/child", "./dir/.", "dir-other", "dir-other", "abc/../z.py"]).unwrap();
+        assert_eq!(state(), selected);
+        assert!(restrict(&["dir", "../outside"]).is_err());
+        assert_eq!(state(), selected);
+        let filter = inventory_filter(snapshot.root()).unwrap();
+        assert_eq!(filter.child("", "dir", false), None);
+        assert_eq!(filter.child("", "dir", true).as_deref(), Some("dir"));
+        assert_eq!(filter.child("dir", "child", false).as_deref(), Some("dir/child"));
+        restrict(&[]).unwrap();
+        assert_ne!(state().0, all.0);
+        assert_eq!(inventory_filter(snapshot.root()).unwrap().child("", "z.py", false), None);
+        restrict(&["."]).unwrap();
+        assert_eq!(state().0, all.0);
     }
 
     #[test]

@@ -156,8 +156,11 @@ impl GitRevisionSource {
 
     /// An oversized file has no result. A read failure is an error.
     #[napi]
-    pub fn read_file(&self, path: String, limit: u32) -> Result<Option<Buffer>> {
-        match self.snapshot.read_source(&path, u64::from(limit)) {
+    pub fn read_file(&self, path: String, limit: f64) -> Result<Option<Buffer>> {
+        if !(0.0..=f64::from(u32::MAX)).contains(&limit) || limit.fract() != 0.0 {
+            return Err(invalid("file byte limit must be an integer between 0 and 4294967295"));
+        }
+        match self.snapshot.read_source(&path, limit as u64) {
             Ok(bytes) => Ok(Some(bytes.into())),
             Err(err) if err.kind() == std::io::ErrorKind::FileTooLarge => Ok(None),
             Err(err) => Err(invalid(err.to_string())),
@@ -170,8 +173,8 @@ impl GitRevisionSource {
     }
 
     #[napi]
-    pub fn restrict_paths(&self, paths: Vec<String>) {
-        self.snapshot.restrict_paths(paths);
+    pub fn restrict_paths(&self, paths: Vec<String>) -> Result<()> {
+        self.snapshot.restrict_paths(paths).map_err(|err| invalid(err.to_string()))
     }
 
     #[napi]

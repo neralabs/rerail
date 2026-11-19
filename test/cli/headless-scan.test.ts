@@ -612,6 +612,21 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
     const source = new (loadNativeBinding().GitRevisionSource)(root, "HEAD", "paths");
     for (const path of ["a.py/", "a.py/."]) expect(source.containsPath(path)).toBe(false);
     for (const path of ["src/", "src/.", "./"]) expect(source.containsPath(path)).toBe(true);
+    expect(source.containsPath("src/../a.py")).toBe(true);
+    expect(source.readFile("src/../a.py", 100)).toEqual(source.readFile("a.py", 100));
+    expect(source.readFile("src//b.py", 100)).toEqual(source.readFile("src/b.py", 100));
+    expect(source.readDirectory("src/")).toEqual(source.readDirectory("src"));
+    expect(source.readDirectory("./")).toEqual(source.readDirectory("."));
+    expect(source.containsPath("../outside")).toBe(false);
+    expect(() => source.readFile("../outside", 100)).toThrow();
+    expect(() => source.readDirectory("../outside")).toThrow();
+    expect(() => source.readFile("a.py/.", 100)).toThrow();
+    expect(() => source.readDirectory("a.py/.")).toThrow();
+    for (const limit of [-1, 1.9, 2 ** 32, NaN, Infinity]) {
+      expect(() => source.readFile("a.py", limit)).toThrow(/byte limit/u);
+    }
+    expect(source.readFile("a.py", 0)).toBeNull();
+    expect(source.readFile("a.py", 2 ** 32 - 1)).toEqual(readFileSync(join(root, "a.py")));
     for (const input of [{}, { revision: "HEAD", analysisScope: "paths" }]) {
       const paths = ["a.py/", "a.py/.", "src/"];
       const report = await scan(root, { ...input, paths });
@@ -620,7 +635,7 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
       expect(report.skippedPaths).toEqual(["a.py/", "a.py/."]);
       expect(report.violations.map(row => row.path)).toEqual(["src/b.py"]);
     }
-  });
+  }, 30_000);
 
   it("normalizes repository-relative selections before both lookup and rule evaluation", async () => {
     const root = checkout();

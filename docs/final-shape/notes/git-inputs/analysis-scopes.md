@@ -86,6 +86,12 @@ Each evaluation that uses a Git inventory records the root and inventory program
 A reused source view can supply their verified tree entries. The programs publish their manifests under the current acquisition.
 Repeated inventory requests within that evaluation can use the same materialized result.
 After scope deletion, a new acquisition must retain the same plans as a fresh view of that source.
+The inventory key uses the set of selected paths. Reordering paths, repeating one, or adding a child of a selected directory preserves the key.
+Selecting the root has the same key as an unrestricted walk. An empty selection covers no files.
+Native path restrictions preserve a trailing directory requirement. A read of a regular file with a final `/.` fails.
+Membership, listing, and file reads accept the same repository-relative spellings.
+For example, `src/` lists a directory, and `src/../src/a.py` reads the file at `src/a.py`.
+The native checked file reader accepts integer byte limits from zero through 4,294,967,295.
 Within one generation, the directory keeps the snapshot from the most recently acquired successful run.
 A run in that generation can finish its report. Only the current generation can
 publish ownership.
