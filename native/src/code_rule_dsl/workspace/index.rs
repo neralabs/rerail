@@ -355,7 +355,16 @@ impl WorkspaceIndexTask {
             .collect::<HashSet<_>>();
         let max_files = self.options.max_files as usize;
         let mut git_ignore = if self.options.follow_gitignore {
-            crate::git_ignore::GitIgnore::open(&repository.worktree_root).map_err(invalid)?
+            // Under the Git read time limit, as every engine open of a repository.
+            let root = repository.worktree_root.clone();
+            crate::git_access::pool::run(
+                "opening Git's ignore rules",
+                &repository.worktree_root,
+                crate::git_access::pool::GIT_READ_TIME_LIMIT,
+                move || crate::git_ignore::GitIgnore::open(&root),
+            )
+            .map_err(|error| invalid(error.message))?
+            .map_err(invalid)?
         } else {
             None
         };

@@ -1000,11 +1000,21 @@ describe("the reread of a worktree no notice told of a change in", () => {
     const { worktrees, checkouts } = await repository();
     const watch = new StampTreeWatch();
     const watching = await session(worktrees[0]!, checkouts, noticedWalks(watch, { fullWalkMs: 300 }));
+    // The edit the reread finds reaches the session's auditor. That reread is due 300 ms after the last read, and its
+    // walk then waits as long as the walk before it took (the walks' gap): on a loaded Windows runner that was more
+    // than the 5 s this test once waited. So the test waits for the delivery itself, up to the test's own limit.
+    const delivered = Promise.withResolvers<void>();
+    const audit = watching.auditGeneratedEdits.getMockImplementation()!;
+    watching.auditGeneratedEdits.mockImplementation(async (sessionId, batch) => {
+      delivered.resolve();
+      return await audit(sessionId, batch);
+    });
     // A write through a hard link: the system tells of none.
     await writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n");
     watch.silence(worktrees[2]!);
     // No event of the session's asks for a walk from here on.
-    await vi.waitFor(() => expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]), { timeout: 5_000 });
+    await delivered.promise;
+    expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]);
   });
 
   it("walks no worktree while every session is idle when no notice tells of a change, as every walk reads them all", async () => {
