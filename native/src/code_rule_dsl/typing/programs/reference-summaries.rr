@@ -19,8 +19,12 @@ reference_source_summary(path, b) :- reference_source(path, c, m, s, e), referen
 .decl reference_file_settings(settings: symbol)
 .input reference_file_settings
 
+.decl reference_siblings_request(summary: symbol, settings: symbol)
+reference_siblings_request(b, s) :- reference_source_summary(_, b), reference_file_settings(s).
+.decl reference_siblings_of(summary: symbol, settings: symbol, targets: symbol)
+
 .decl reference_file_key(path: symbol, summary: symbol, settings: symbol, version: symbol)
-reference_file_key(p, b, s, "bindings-v1") :- reference_source_summary(p, b), reference_file_settings(s).
+reference_file_key(p, b, targets, "bindings-v2") :- reference_source_summary(p, b), reference_file_settings(s), reference_siblings_of(b, s, targets).
 
 .decl reference_file_request(path: symbol, summary: symbol, settings: symbol, version: symbol)
 reference_file_request(p, b, s, v) :- reference_file_key(p, b, s, v).

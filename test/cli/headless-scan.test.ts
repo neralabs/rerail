@@ -1635,6 +1635,32 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
     expect(measure("distinct")).toBe(shared + 1);
   }, 30_000);
 
+  it("reuses reference bindings until a decorator changes a file's sibling target", () => {
+    const root = checkout(), home = root + "-home";
+    mkdirSync(home);
+    writeFileSync(join(root, "tasks.py"), "class Jobs:\n    @task\n    def run_one(self):\n        pass\n    def do_one(self):\n        pass\n");
+    writeFileSync(join(root, "other.py"), "def unrelated():\n    pass\n");
+    git(root, "add", "tasks.py", "other.py");
+    git(root, "commit", "-qm", "decorated method and sibling");
+    const policy = join(home, "links.rr");
+    const evaluate = (decorator: string, phase: string) => {
+      const settings = { siblingLinks: [{ decorator, name: { replace: "^run_", by: "do_" } }] };
+      writeFileSync(policy, `#include "core.rr"\n.policy "links" revision 1\n.language python\n.references ${JSON.stringify(settings)}\n.violation Linked(at: node) "sibling"\nLinked(n) :- reference_edge(n,_, "sibling").\n`);
+      const profile = join(home, phase);
+      const script = 'import {runHeadlessScan} from "./src/cli/headless-scan.ts"; const [repo,rr,databasePath] = process.argv.slice(2); console.log(JSON.stringify(await runHeadlessScan({repo,rr:[rr],databasePath,scope:"repository",revision:"HEAD",analysisScope:"links",packs:[],version:"test"})));';
+      const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, policy, join(home, "home.sqlite")], {
+        input: script, encoding: "utf8", env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(home, "store.sqlite") },
+      })) as ScanReport;
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      const count = readFileSync(join(profile, "profile.txt"), "utf8").match(/^\s*count\s+(\d+)\s+reference\.binding_contributions$/mu)?.[1];
+      return [report.violations.map(v => v.path), Number(count ?? 0)];
+    };
+    expect(evaluate("never", "cold")).toEqual([[], 3]);
+    expect(evaluate("never", "warm")).toEqual([[], 0]);
+    expect(evaluate("absent", "unused")).toEqual([[], 0]);
+    expect(evaluate("task", "matched")).toEqual([["tasks.py"], 1]);
+  }, 90_000);
+
   it("shares verified trees in either policy order and reuses independent reference links across revisions", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-tree-order-")));
     roots.push(root);

@@ -168,10 +168,15 @@ impl Files {
             }).collect();
             let prepared = reference_facts::run(root, &sources, &reference_facts::Preparation {
                 settings: &self.config.bindings,
-                prepare: &|path, bytes| {
+                siblings: &|bytes| {
+                    let summary = decode_summary(bytes).ok_or_else(|| Error::Plan("invalid reference summary".into()))?;
+                    serde_json::to_string(&summary.sibling_targets(key)).map_err(|error| Error::Plan(error.to_string()))
+                },
+                prepare: &|path, bytes, targets| {
                     let summary = decode_summary(bytes)
                         .ok_or_else(|| Error::Plan(format!("{path}: invalid reference summary")))?;
-                    Ok(ReferenceFile::prepare(path, &summary, key))
+                    let siblings = serde_json::from_str(targets).map_err(|error| Error::Plan(format!("{path}: invalid sibling targets: {error}")))?;
+                    Ok(ReferenceFile::prepare(path, &summary, siblings))
                 },
             })?;
             let prepared = files.iter().map(|(path, _, _)| {

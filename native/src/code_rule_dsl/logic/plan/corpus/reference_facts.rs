@@ -8,6 +8,8 @@ use std::{collections::HashMap, path::Path, sync::{Arc, OnceLock}};
 pub(super) const INPUT: &str = "reference_source";
 pub(super) const REQUEST: &str = "reference_summary_request";
 pub(super) const ANSWER: &str = "reference_summary_of";
+pub(super) const SIBLINGS_REQUEST: &str = "reference_siblings_request";
+pub(super) const SIBLINGS_ANSWER: &str = "reference_siblings_of";
 pub(super) const FILE_REQUEST: &str = "reference_file_request";
 pub(super) const FILE_ANSWER: &str = "reference_file_of";
 pub(super) const LINK_REQUEST: &str = "reference_link_request";
@@ -35,7 +37,8 @@ pub struct LinkProvider<'a> {
 
 pub struct Preparation<'a> {
     pub settings: &'a str,
-    pub prepare: &'a (dyn Fn(&str, &str) -> Result<String> + Sync),
+    pub siblings: &'a (dyn Fn(&str) -> Result<String> + Sync),
+    pub prepare: &'a (dyn Fn(&str, &str, &str) -> Result<String> + Sync),
 }
 
 #[derive(Clone)]

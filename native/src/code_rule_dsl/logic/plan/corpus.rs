@@ -7063,7 +7063,7 @@ fn run_observed(
                         == git_selection.get_or_init(|| crate::git_workspace::snapshot::inventory_selection(&git_root)).as_ref();
                 }
                 if req == git::INVENTORY_TRAIL { return true; }
-                if matches!(req, reference_facts::REQUEST | reference_facts::FILE_REQUEST) {
+                if matches!(req, reference_facts::REQUEST | reference_facts::SIBLINGS_REQUEST | reference_facts::FILE_REQUEST) {
                     return !rows.is_empty();
                 }
                 let Some((roots, named, _)) = journal else { return false };
@@ -7254,14 +7254,29 @@ fn run_observed(
                 }
                 return Ok(vec![(reference_facts::ANSWER.to_owned(), out)]);
             }
+            if rel == reference_facts::SIBLINGS_REQUEST {
+                let reference_facts::Input::Sources(_, preparation) = given.reference_inputs else {
+                    return Err(Error::Plan("reference settings are unavailable".into()));
+                };
+                let mut out = Vec::with_capacity(rows.len());
+                for row in rows {
+                    let [summary, settings] = row.as_slice() else { return Err(Error::Plan("invalid reference sibling request".into())) };
+                    if text(*settings)? != preparation.settings { return Err(Error::Plan("reference settings changed".into())); }
+                    let targets = (preparation.siblings)(&text(*summary)?)?;
+                    let mut answer = row.clone();
+                    answer.extend(atoms(&[&targets])?);
+                    out.push(answer);
+                }
+                return Ok(vec![(reference_facts::SIBLINGS_ANSWER.to_owned(), out)]);
+            }
             if rel == reference_facts::FILE_REQUEST {
                 let reference_facts::Input::Sources(_, preparation) = given.reference_inputs else {
                     return Err(Error::Plan("reference file inputs are unavailable".into()));
                 };
                 let mut out = Vec::with_capacity(rows.len());
                 for row in rows {
-                    let [path, summary, _, _] = row.as_slice() else { return Err(Error::Plan("invalid reference file key".into())) };
-                    let result = (preparation.prepare)(&text(*path)?, &text(*summary)?)?;
+                    let [path, summary, targets, _] = row.as_slice() else { return Err(Error::Plan("invalid reference file key".into())) };
+                    let result = (preparation.prepare)(&text(*path)?, &text(*summary)?, &text(*targets)?)?;
                     let mut answer = row.clone();
                     answer.extend(atoms(&[&result])?);
                     out.push(answer);
@@ -11484,7 +11499,7 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
     let mut parts = crate::code_rule_dsl::logic::answers::split(&whole).expect("the program has answers");
     // Git answers start empty and are produced by the fixpoint. Unlike a
     // document load's exports, they have no caller-supplied seed rows.
-    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | "git_inventory_trail_of" | reference_facts::ANSWER | reference_facts::FILE_ANSWER | reference_facts::LINK_ANSWER));
+    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | "git_inventory_trail_of" | reference_facts::ANSWER | reference_facts::SIBLINGS_ANSWER | reference_facts::FILE_ANSWER | reference_facts::LINK_ANSWER));
     // The rest reads the answers as inputs: the runner binds what it gave.
     for rel in answers.values().flatten().filter(|r| !exports.contains(r)) {
         if !parts.rest_inputs.contains(rel) {

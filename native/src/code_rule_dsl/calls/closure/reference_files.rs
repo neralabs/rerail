@@ -33,9 +33,9 @@ fn restore<T, U>(rows: BTreeMap<String, Vec<T>>, convert: impl Fn(T) -> U) -> Ha
 }
 
 impl ReferenceFile {
-    pub fn prepare(path: &str, source: &Summary, contracts: super::super::contracts::Key) -> String {
+    pub fn prepare(path: &str, source: &Summary, siblings: Vec<(u32, String)>) -> String {
         rerail_prof::count("reference.binding_contributions", 1);
-        let summary = source.as_references(contracts);
+        let summary = source.as_references_with(siblings);
         let contribution = Contribution::of(path, &summary);
         let text = |name: Name| name.text().to_owned();
         let saved = SavedFile {
