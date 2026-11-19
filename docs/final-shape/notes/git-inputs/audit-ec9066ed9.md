@@ -2,6 +2,106 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Run history audit from `757d01c18`
+
+The fixtures used the macOS addon and executable built from the checkout with the unfinished run history changes.
+The history reader and its rule library were local changes during this audit.
+
+There are 22 known implementation findings. Eighteen come from the [previous audit](#status-at-c1093d9a5), including case 13 below.
+Cases 59–62 are additional findings. Two Windows checks still need execution results. A separate directory-name check needs a filesystem that accepts arbitrary filename bytes.
+
+### What a rule can recover about a completed run (case 13)
+
+I created two commits and evaluated this policy three times against the second commit.
+Each native call used the same store and named scope. Each run had a distinct scan ID.
+
+```rr
+#include "git.rr"
+.policy "source" revision 1
+.violation Seen(at: span, oid: symbol) "{oid}"
+Seen(@place("git", 1), id) :- git_source_commit(_, id).
+```
+
+| Source declared on the run | Finding from the policy | Commit in SQLite | Result from a second policy joining the scan ID to its commit |
+| --- | --- | --- | --- |
+| Omitted, as existing native callers do | Second commit | NULL | No row |
+| First commit | Second commit | First commit | First commit |
+| Second commit | Second commit | Second commit | Second commit |
+
+All three calls to `finish(true)` returned `null`. The second policy used `analysis_named_scope`, `analysis_scope_run`, `analysis_run_scan_id` and `analysis_run_commit`.
+The binding accepts a run and a revision view separately. It checks which store owns the run.
+It can then evaluate a different revision from the one the run records.
+Bind the actual source when evaluation acquires its owner. Reject a conflicting source before evaluation. Check both workspace attachment methods and the explicit policy API.
+
+The standalone `logic` command also differs by source. A rule reading the three scan IDs returned three rows in both modes.
+The filesystem command exited 0 with three records remaining. The revision command exited 0 with four records remaining.
+Acquire the directory owner for working-tree `logic` and use the same publication boundary as a revision invocation.
+
+The draft records a Git tree or a directory path. A directory path cannot identify which stored workspace snapshot supplied a run.
+Record the run-to-snapshot relation when publishing staged snapshots. Check the join after reopening the store and after deleting one of two scopes with shared data.
+Keep existing owners on schema upgrade. An earlier store has no completed scan IDs to backfill.
+[Native policy evaluation](../../../../native/src/lib.rs) · [Workspace attachment](../../../../native/src/code_rule_dsl/workspace/api.rs) · [Standalone invocation](../../../../native/src/code_rule_dsl/tools.rs)
+
+### A stopped directory can regain an owner (cases 59 and 60)
+
+Two directory runs evaluated the same policy against the same store. Each found the repository and staged a manifest.
+The first used the older native constructor without a home. The second specified home `fixture` and generation 5.
+I delivered the numbered stop `10:receipt:fixture` before either call to `finish(true)`.
+
+| Point in the test | Completed runs | Published manifest memberships | Return from finish |
+| --- | --- | --- | --- |
+| Immediately after the stop | 0 | 0 | — |
+| After finishing the run with a home | 0 | 0 | `null` |
+| After finishing the run without a home | 1 | 1 | `null` |
+
+A control test first published a run without a home. The same stop removed it. A new run at generation 11 with the matching home could publish.
+I repeated the manifest check with the addon from the previous selector tests. It also returned `null` for both calls and republished one manifest.
+
+- **59. Late publication after a stop.** The release removes existing directory owners without a home. Its eligibility check misses an earlier pending owner with the same directory. Record which store acquisitions the release covers. Apply the same cutoff to published owners and writers that finish later. Check descendants, a different home, a new acquisition and duplicate delivery.
+- **60. A caller cannot tell whether publication occurred.** Both calls returned the same value despite different durable outcomes. Return a publication outcome from the transaction and carry it into the report. Distinguish a successful analysis whose scope was released from a failure to write the store. Test a stop after evaluation and before publication.
+
+Case 59 also affects the manifest that the collector uses. Case 60 concerns publication. The older case 30 concerns a separate failure during subsequent collection.
+[Publication permit and scope release](../../../../native/src/content_store/analysis_scope.rs) · [Binding result](../../../../native/src/code_rule_dsl/workspace/api.rs)
+
+### An unrelated scope changes the input to a history query (case 61)
+
+I published one run in `release`, followed by 64 runs in `other`. The query for `release` still needs one row.
+The draft history reader's SQL returned one row before the additions and 65 afterward.
+`EXPLAIN QUERY PLAN` showed a scan of the run table and a primary-key lookup of each scope.
+The reader hashes all returned rows. A change under `other` therefore changes the observation used to validate the `release` query.
+This fixture measured input rows. It did not profile source parsing.
+
+Give rules a scope-keyed history request and observe the rows that answer that request.
+Keep an explicit way to enumerate all scopes. Check that a second scope can publish or disappear without invalidating the first scope's query.
+A change inside the requested scope must still invalidate it. Check both answers and the cache hit.
+
+### A queued stop deletes another checkout's ownership (case 62)
+
+This fixture used the previous selector addon and the existing JavaScript release worker.
+Two separate checkouts, `A` and `B`, each registered the same store and published one manifest membership.
+I committed a stop for `A` while it was an ordinary directory. Before delivery, I renamed `A` and put a symlink to `B` at its former path.
+
+| | Memberships under A | Memberships under B | Queued releases |
+| --- | ---: | ---: | ---: |
+| After committing the stop | 1 | 1 | 1 |
+| After delivery | 1 | 0 | 0 |
+| Expected after delivery | 0 | 1 | 0 |
+
+The worker resolves the queued path against the live filesystem before looking up store routes.
+The native release also canonicalizes the path before choosing ownership rows.
+Capture the directory scope key when queuing the stop. Use that exact key for route lookup, delivery and acknowledgement.
+Repeat the test with the path missing, replaced by a symlink and reused for a new watch. The new watch must keep its later ownership.
+[Release worker](../../../../src/engine/native/analysis-scope.ts) · [Directory release](../../../../native/src/content_store/analysis_scope.rs)
+
+### Directory names that require byte identity
+
+The native directory key uses `to_string_lossy()` on the canonical path. An invalid UTF-8 byte and a real replacement character can then produce the same key.
+I attempted the two-directory fixture on macOS. The volume rejected the invalid byte with `EILSEQ` during setup, before Rerail ran.
+Repeat on Linux with valid UTF-8 symlink names that point to the two byte paths. Publish one run through each link and delete one scope.
+Use a lossless scope key or reject an unsupported canonical name before accepting ownership. [Scope key](../../../../native/src/content_store/analysis_scope.rs)
+
+Five existing headless regressions passed against the rebuilt addon during this audit. They cover shared snapshot ownership, collection warnings, cross-revision reuse, language classification and parser version changes.
+
 ## Status at `c1093d9a5`
 
 Three more cases have repairs. Eighteen implementation findings remain, including the partial performance repair for case 53.
