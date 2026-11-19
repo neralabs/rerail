@@ -402,7 +402,7 @@ fn load_saved(path: &PathBuf, fit: bool) {
 }
 
 /// Trains a model on `samples` (oldest first) on a thread of its own, unless one is training: in a pool of two
-/// threads at the utility quality of service, apart from the engine's. With `saved`, the saved model is put in
+/// threads at the utility quality of service, apart from the engine's, once no run of the process is under way. With `saved`, the saved model is put in
 /// place first ([`load_saved`]). A model that wins is put in place and saved; else the model in place, and the
 /// saved one, are taken out.
 #[cfg(target_os = "macos")]
@@ -426,7 +426,19 @@ fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>, saved: bool, 
             TRAINING.store(false, Ordering::Release);
             return;
         }
-        self::fit(&path, &samples, false, &|| false);
+        // Behind the runs (decision 0190): a training beside a run held the run's memory (Q230: the device's arrays
+        // and the kernels' compile, 345 MB of ep2's 610 MB peak) and, in a process that exits with its run, never
+        // finished, so every run trained again. It begins once no run of this process is under way, and a run that
+        // begins stops it between its phases (as upkeep's training is stopped); it waits again then.
+        let active = || rerail_accel::upkeep::runs_active(None);
+        loop {
+            while active() {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            if !self::fit(&path, &samples, false, &active) {
+                break;
+            }
+        }
         TRAINING.store(false, Ordering::Release);
     });
     if spawned.is_err() {

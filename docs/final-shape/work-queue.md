@@ -1551,6 +1551,21 @@ pass.
   submission, or read after its command buffers completed), so none outlives an access. The device tests
   (`rerail-logic` 17, `rerail-device-metal` 11, on the M1 Max) pass.
 
+### Q253. A store shared by a run of one program and runs of all 317 gives the full set's run another program's rows
+
+- **Found** (2026-11-19, ep2 on m3, fb5de313d and the binary before it alike): a state warmed by runs of all 317
+  programs (a0 cold, a1, a2), then two runs of B101's program alone (the farm had pruned the state's other rule
+  files), then a run of all 317 again (B101's constant new to the store): 1,528 rows where h1 has 1,334, all 194
+  extra rows B101's, in files h1's B101 has none in (`benchmarks/bench_binary_diff.py:1109.61` and others). The
+  run was checked under `RERAIL_COMBINE_LINK=check`: its program is the whole link's, so the rows come from
+  something kept per file or per part whose key leaves out the policy's scope or the program set (300 of 300
+  files read from the per-file memo; B101 alone read 214 files by its scope).
+- **Keep**: every warm run's rows equal a cold run's, whatever ran on the store before (0077, 0117); the per-file
+  memo's and the parts' reuse.
+- **Done when**: the sequence above (317 programs, then B101's alone, then 317) gives h1's rows; a test with two
+  programs, run alone then together on one store, compares with a cold run.
+- **Record**: open.
+
 ### Q158. (a second Q21 until 2026-11-18; Q89 on Typing-support) Red tests that predate 0281 step 4
 
 - **Found** (2026-11-16, while testing 0281 step 4's slices; both fail at 38d1272f5, before them):
@@ -5075,6 +5090,18 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Next**: the writer opens only to append, and each warm run appended one atom. Compare a warm run that appends
   none on the same store. `vmmap` and `footprint` cannot attach over the farm's ssh, so take the footprint from
   inside the process (`task_info(TASK_VM_INFO)`) before and after the append.
+- **Answered** (2026-11-19, ep2 on m3 after the hub merge). The atom a warm run appends is the edit's own new
+  string (B101's constant `qqN`): a run back to a constant the store has appends 0. The peak, 604 to 612 MB on
+  every warm run with or without the profile, was the cost model's training. With no saved model, each process
+  trained one at once (`costs::train`) beside its run, on the device: the forest's arrays (184 MB, the "Metal
+  driver" holder) and its kernels compiled from source in the process (about 160 MB, "the rest"). A CLI process
+  exits with its run, so the training never finished and none was saved: every run trained again. It was charged
+  to whatever span the main thread had open (`stratum chain_below`, "views and tables"). The training now begins
+  once no run of the process is under way, and a run that begins stops it. The profile's holders no longer open
+  the device to read its memory (`gpu::shared::opened_device`). a1 24.9 G and 292 MB, a2 21.7 G and 235 MB, two
+  more warm runs 21.2 G and 231 to 232 MB (were 24.0 G and 609 MB); Metal driver 0 MB; rows 0 differing.
+  `RERAIL_DEVICE_TRACE` prints where the device is opened and where its large buffers, wrapped blocks and libraries
+  are made.
 
 ### Q231. (Q215 on final-rerail-shape-rr-align) `rerail-logic`'s test target did not compile, so its table and map guards had stopped checking
 
