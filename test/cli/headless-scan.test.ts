@@ -1696,7 +1696,9 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
         input: script, encoding: "utf8", env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(home, "store.sqlite") },
       })) as ScanReport;
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
-      const count = readFileSync(join(profile, "profile.txt"), "utf8").match(/^\s*count\s+(\d+)\s+reference\.binding_contributions$/mu)?.[1];
+      const trace = readFileSync(join(profile, "profile.txt"), "utf8");
+      if (phase === "warm") expect(trace).not.toMatch(/^\s*count\s+[1-9]\d*\s+source_tape\.parses$/mu);
+      const count = trace.match(/^\s*count\s+(\d+)\s+reference\.binding_contributions$/mu)?.[1];
       return [report.violations.map(v => v.path), Number(count ?? 0)];
     };
     expect(evaluate("never", "cold")).toEqual([[], 3]);

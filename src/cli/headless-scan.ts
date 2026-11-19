@@ -590,7 +590,7 @@ async function scanReport(
 ): Promise<ScanReport> {
   const databasePath = options.databasePath ?? defaultRerailDatabasePath();
   const explicitRr = (options.rr?.length ?? 0) > 0;
-  const loadedRr = new (loadNativeBinding().LoadedRrPolicies)();
+  const loadedRr = new (loadNativeBinding().LoadedRrPolicies)(analysisStore);
   const refRules = options.rulesRef === undefined ? undefined : rulesAtRef(root, options.rulesRef, loadedRr, resolve(options.repo));
   const installed = loadRuleCatalog();
   const catalog = options.rulesRef !== undefined ? refRules?.rr?.catalog

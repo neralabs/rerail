@@ -427,7 +427,7 @@ export interface NativeBinding {
   prepareAnalysisStoreAsync(store: string): Promise<void>;
   collectAnalysisCacheAsync(store: string): Promise<void>;
   inspectRrPolicy(path: string, source?: NativeGitRevisionSource): string;
-  LoadedRrPolicies: new () => NativeLoadedRrPolicies;
+  LoadedRrPolicies: new (store?: string) => NativeLoadedRrPolicies;
   GitRevisionSource: new (root: string, revision: string, analysisScope: string, invocation?: string) => NativeGitRevisionSource;
   scanRrPoliciesAsync(paths: string[], root: string, store: string, output: string, analysis: NativeAnalysisScopeRun | undefined, sourcePaths: string[] | undefined, source: NativeGitRevisionSource | undefined, policySource?: NativeGitRevisionSource, loaded?: NativeLoadedRrPolicies): Promise<string>;
   CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;

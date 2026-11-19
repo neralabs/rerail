@@ -302,21 +302,28 @@ impl LoadedRrPolicy {
 #[cfg(not(feature = "headless"))]
 #[napi]
 #[derive(Default)]
-pub struct LoadedRrPolicies(std::sync::Mutex<std::collections::HashMap<String, LoadedRrPolicy>>);
+pub struct LoadedRrPolicies {
+    store: Option<std::path::PathBuf>,
+    programs: std::sync::Mutex<std::collections::HashMap<String, LoadedRrPolicy>>,
+}
 
 #[cfg(not(feature = "headless"))]
 #[napi]
 impl LoadedRrPolicies {
     #[napi(constructor)]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(store: Option<String>) -> Self {
+        Self { store: store.map(Into::into), ..Self::default() }
     }
 
     #[napi]
     pub fn load(&self, path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
-        let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()).as_deref())?;
+        let read = || LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()).as_deref());
+        let policy = match &self.store {
+            Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, read),
+            None => read(),
+        }?;
         let inspection = policy.inspection()?;
-        self.0.lock().unwrap_or_else(|error| error.into_inner()).insert(path, policy);
+        self.programs.lock().unwrap_or_else(|error| error.into_inner()).insert(path, policy);
         Ok(inspection)
     }
 }
@@ -345,7 +352,7 @@ pub fn scan_rr_policies_async(
     loaded: Option<&LoadedRrPolicies>,
 ) -> Result<napi::bindgen_prelude::AsyncTask<ScanRrPolicies>> {
     let policies = loaded.map(|loaded| {
-        let programs = loaded.0.lock().unwrap_or_else(|error| error.into_inner());
+        let programs = loaded.programs.lock().unwrap_or_else(|error| error.into_inner());
         paths.iter().map(|path| programs.get(path).cloned().ok_or_else(|| format!("{path}: policy was not loaded"))).collect()
     });
     Ok(napi::bindgen_prelude::AsyncTask::new(ScanRrPolicies {

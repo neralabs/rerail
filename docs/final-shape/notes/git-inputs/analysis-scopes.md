@@ -160,3 +160,7 @@ An unchanged scan ran zero classification strata and zero source parsers.
 A registry edit selected a new file for parsing.
 A parser version change with the same registry parsed the two selected files.
 It ran zero classification strata.
+
+The headless runner uses the selected content store when it first reads the policy and its includes.
+In a two-file Python reference fixture, the cold profile counted nine tape parses.
+A second process using the same scope and store reported the same finding with zero tape parses.
