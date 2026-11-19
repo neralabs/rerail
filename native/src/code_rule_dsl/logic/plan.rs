@@ -1948,6 +1948,11 @@ pub fn prepared_stored(id: &[u8; 32]) -> Option<Arc<prepared::Prepared>> {
 /// Keeps `made`, the prepared plans this run made of the version whose identity is `id`, for the store.
 #[doc(hidden)]
 pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
+    // A version with no plans to prepare has nothing to keep (its entry holds no rows of it): made again by every
+    // process, it changes nothing the store holds, and a warm run that made one wrote the kept plans.
+    if made.0.is_empty() {
+        return;
+    }
     PLANS.with(|p| {
         if let Some(p) = p.borrow().as_ref() {
             p.prepared.rcu(|m| {

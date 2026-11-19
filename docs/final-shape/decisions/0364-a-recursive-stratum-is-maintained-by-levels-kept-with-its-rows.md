@@ -458,8 +458,6 @@ against the forms' figures (t43, "Measurements").
   reads from the frames into columns (0353 row 12) and checks them by hashing every row against the frame's
   documents (O125 step 05, kept: inside "the kept part's rows, from the frames", 1.4-1.7 s). The rows of a changed
   document alone are needed, read where the frame holds them.
-- **A warm run writes "the kept plans".** `the_run_after_a_cold_one_writes_nothing` fails at 48c787dc7 too (before
-  t43 step 14): the warm run gathers a write of the kept plans.
 - **A dump artifact.** In the data-layer history's first state, the run split into 2 chunks and dumped 210
   `dotted_expr` rows that no `drv` rule derives. It is a file-local relation, and the rows measured are the heads,
   but the cause is not known (`REC_LAX`).
