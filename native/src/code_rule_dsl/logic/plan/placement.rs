@@ -203,6 +203,18 @@ pub fn worth_waiting(work: f64) -> f64 {
     ((CPU_PER_STRATUM + CPU_PER_WORK * work) - (GPU_PER_SUBMISSION + GPU_PER_WORK * work)).max(0.0)
 }
 
+/// The most work placed on the device waits for the device's memory (`gpu::shared::admit`), whatever the CPU's price
+/// for it: a wait past it is a wave held up, not a choice of the work's.
+const ADMIT_MAX: f64 = 0.5;
+
+/// How long work placed on the device (a stratum's tables, a matcher wave's workspace) waits for the device's memory to
+/// be admitted, for `work` units of its planned work: what waiting is worth (`worth_waiting`), at most `ADMIT_MAX`.
+/// Past it the work runs on the CPU, the price having chosen it (0334); the admission refuses at once where no lease
+/// coming back makes the room.
+pub fn admission_patience(work: f64) -> f64 {
+    worth_waiting(work).min(ADMIT_MAX)
+}
+
 /// `GPU_BIAS`, or `RERAIL_GPU_BIAS` when set: a measurement aid only, to refit the bias over runs at several.
 pub(in crate::code_rule_dsl) fn gpu_bias() -> f64 {
     static BIAS: std::sync::OnceLock<f64> = std::sync::OnceLock::new();

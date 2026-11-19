@@ -65,6 +65,19 @@ pub(super) fn release_workspaces() -> bool {
     let released = METAL_WORKSPACE_POOL.lock().map(|mut pool| std::mem::take(&mut *pool)).unwrap_or_default();
     !released.is_empty()
 }
+
+/// The pool's evictor for the kept workspaces (`gpu::shared::set_evictor`, Q203): one released, the largest, where
+/// the pool is not being taken from now (it is called from inside allocations, the pool's lock perhaps this thread's).
+/// Kept between waves, they held the budget's room until a wave was refused and freed them all.
+fn evict_workspace() -> bool {
+    let Ok(mut pool) = METAL_WORKSPACE_POOL.try_lock() else { return false };
+    let Some(at) = (0..pool.len()).max_by_key(|&i| MetalWorkspace::bytes_for(pool[i].totals, pool[i].scheduler_bytes, pool[i].output_storage_bytes, pool[i].task_capacity)) else { return false };
+    let gone = pool.swap_remove(at);
+    drop(pool);
+    drop(gone);
+    crate::code_rule_dsl::prof::count("residency.workspace_evicted", 1);
+    true
+}
 pub use rerail_metal::METAL_DEVICE;
 
 struct MetalWorkspace {
@@ -216,6 +229,8 @@ impl MetalWorkspaceLease {
             .and_then(|tasks| tasks.checked_add(1))
             .and_then(|tasks| tasks.checked_mul(2))
             .ok_or(Error::BackendCapacity)?;
+        static EVICTOR: std::sync::Once = std::sync::Once::new();
+        EVICTOR.call_once(|| rerail_accel::gpu::shared::set_evictor(evict_workspace));
         let mut pool = METAL_WORKSPACE_POOL.lock().unwrap();
         let reusable = pool.iter().position(|workspace| {
             workspace.generation <= u32::MAX - generation_span

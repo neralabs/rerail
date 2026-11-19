@@ -43,10 +43,6 @@ pub use crate::code_rule_dsl::logic::device::{Report};
 
 /// The most rows a table is given before its stage has run once (a guess; an overflow runs it again exactly).
 const GUESS_MAX: usize = 1 << 21;
-/// The most a stratum waits for the device's memory (`admit`), whatever the CPU's price for it: a wait past it is
-/// a wave held up, not a stratum's choice.
-const ADMIT_MAX: f64 = 0.5;
-
 impl Plan {
     /// The bytes its tables are expected to take and the rows its stages are expected to make (its planned work),
     /// from the planner's estimates (`est`, sized as `table_rows` sizes them): what its stratum reserves before it
@@ -62,7 +58,7 @@ impl Plan {
 /// them (`placement::worth_waiting`); its wait counted in `rep`.
 fn admitted(rules: &[(&Plan, &JoinRule, usize)], rep: &mut Report) -> Result<rerail_accel::gpu::shared::Admitted, String> {
     let (bytes, work) = rules.iter().map(|r| r.0.expected()).fold((0, 0.0), |(b, w), (pb, pw)| (b + pb, w + pw));
-    let patience = crate::code_rule_dsl::logic::plan::placement::worth_waiting(work).min(ADMIT_MAX);
+    let patience = crate::code_rule_dsl::logic::plan::placement::admission_patience(work);
     let got = rerail_accel::gpu::shared::admit(bytes, patience)?;
     if got.waited > 0.0 {
         rep.admit_waits += 1;

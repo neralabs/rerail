@@ -2387,8 +2387,33 @@ impl Runner<'_> {
         }
         if let Some((totals, scheduler_bytes, output_bytes, tasks)) = widest_seen {
             // Lanes times states is the arena: one over the buffer budget runs again with fewer states.
-            let mut lease = crate::code_rule_dsl::prof::time("size.lease", || MetalWorkspaceLease::acquire(self.device, totals, scheduler_bytes, output_bytes, tasks))
-                .map_err(|error| if error == Error::BackendCapacity { Error::BackendBudget } else { error })?;
+            let acquire = || crate::code_rule_dsl::prof::time("size.lease", || MetalWorkspaceLease::acquire(self.device, totals, scheduler_bytes, output_bytes, tasks));
+            let mut lease = match acquire() {
+                // Not room now: admitted as a stratum's tables are (Q180, Q203), its need in bytes, waiting for what
+                // threads that go on hold to come back while waiting is worth it; its buffers are then drawn from the
+                // reservation. Refused, the run goes on with fewer states (`run_batch`), then the wave splits.
+                Err(Error::BackendCapacity) => {
+                    let bytes = MetalWorkspace::bytes_for(totals, scheduler_bytes, output_bytes, tasks);
+                    match rerail_accel::gpu::shared::admit(bytes, crate::code_rule_dsl::logic::plan::placement::admission_patience(self.nodes as f64)) {
+                        Ok(admitted) => {
+                            crate::code_rule_dsl::prof::count("wave.admitted", 1);
+                            if admitted.waited > 0.0 {
+                                crate::code_rule_dsl::prof::count("wave.admission_waits", 1);
+                            }
+                            let lease = acquire();
+                            drop(admitted);
+                            lease
+                        }
+                        Err(why) => {
+                            crate::code_rule_dsl::prof::count("wave.admission_refused", 1);
+                            crate::code_rule_dsl::logic::profile::decision("a matcher wave's workspace not admitted (Q203)", || format!("{} MB: {why}", bytes >> 20));
+                            Err(Error::BackendCapacity)
+                        }
+                    }
+                }
+                got => got,
+            }
+            .map_err(|error| if error == Error::BackendCapacity { Error::BackendBudget } else { error })?;
             crate::code_rule_dsl::prof::count("size.lease_mb", lease.bytes() >> 20);
             // Each encoded level advances the generation itself.
             lease.generation_span = 0;
@@ -3437,14 +3462,39 @@ fn fit_lanes(batch: &mut PackedBatch, programs: &[Program], specs: &[[u32; 5]], 
         Ok(MetalWorkspace::bytes_for(totals, batch.header.scheduler_byte_count, batch.header.workspace_byte_count, batch.evaluation_lanes.len().max(1)))
     };
     let (one, two) = (bytes(1)?, bytes(2)?);
+    // Of the room a reservation can have now, not of the budget less the ledger alone (Q180).
+    lanes_in(one, two, metal_backend::buffer_room(), wanted)
+}
+
+/// The lanes, up to `wanted`, whose workspace fits `LANE_SHARE` of `room`, a workspace being `one` bytes at one lane
+/// and `two` at two (a fixed part and a part per lane): a level larger than the room runs in fewer lanes, its tasks
+/// in turn, rather than off the device. `BackendBudget` where not even one lane fits.
+fn lanes_in(one: usize, two: usize, room: usize, wanted: usize) -> Result<usize, Error> {
     let per_lane = two.saturating_sub(one).max(1);
     let fixed = one.saturating_sub(per_lane);
-    // Of the room a reservation can have now, not of the budget less the ledger alone (Q180).
-    let share = metal_backend::buffer_room() / LANE_SHARE.1 * LANE_SHARE.0;
+    let share = room / LANE_SHARE.1 * LANE_SHARE.0;
     if fixed + per_lane > share {
         return Err(Error::BackendBudget);
     }
     Ok(((share - fixed) / per_lane).clamp(1, wanted.max(1)))
+}
+
+#[cfg(test)]
+mod lanes_tests {
+    use super::*;
+
+    /// A level whose lanes outgrow the room runs in as many as fit (its tasks in turn), down to one; only a fixed part
+    /// past the room is refused.
+    #[test]
+    fn a_level_larger_than_the_room_runs_in_the_lanes_that_fit() {
+        // 10 MB fixed, 1 MB a lane: 4/3 of 40 MB is 30 MB of room, 20 lanes.
+        let (one, two) = (11 << 20, 12 << 20);
+        assert_eq!(lanes_in(one, two, 40 << 20, 1024).unwrap(), 20);
+        assert_eq!(lanes_in(one, two, 40 << 20, 8).unwrap(), 8, "no more than wanted");
+        // Room for the fixed part and one lane: one lane.
+        assert_eq!(lanes_in(one, two, (11 << 20) * 4 / 3 + 4, 1024).unwrap(), 1);
+        assert_eq!(lanes_in(one, two, 12 << 20, 1024), Err(Error::BackendBudget), "not even one lane");
+    }
 }
 
 /// A level's programs: (program, roots per file, sink mode, scratch label or count slot).

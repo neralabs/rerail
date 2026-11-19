@@ -40,6 +40,31 @@ fn pool_peak() -> &'static AtomicUsize {
     &METAL_BUFFER_PEAK
 }
 
+/// Whether the driver refuses a buffer of `length` more: past the device's largest buffer, or past the OS's working
+/// set for the device (`recommendedMaxWorkingSetSize`) with what the driver holds. Not past the Metal budget: the
+/// driver's figure counts every buffer Metal knows of, the no-copy wraps of the run's host blocks (row blocks, tapes,
+/// journals) with them, which are the host budget's pages, not device memory the budget bounds. Compared with the
+/// budget, a 1-node wave's buffer was refused with 337 MB of a 2 GB budget free (the driver at 3.7 GB, the pool's own
+/// at 1.7 GB; t62, Q203). The budget is the pool's ledger and leases, checked where they are reserved (`acquire`,
+/// `make_room`).
+fn driver_refuses(device: &metal::DeviceRef, length: usize) -> bool {
+    let length = length as u64;
+    let driver = driver_bytes(device);
+    if rerail_prof::on() && driver.saturating_add(length) > metal_buffer_limit() as u64 {
+        rerail_prof::count("capacity.driver_past_budget", 1);
+    }
+    length > device.max_buffer_length() || driver.saturating_add(length) > working_set(device)
+}
+
+/// The OS's working set for the device: what it can hold resident at once.
+fn working_set(device: &metal::DeviceRef) -> u64 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(bytes) = test_pool::working_set() {
+        return bytes;
+    }
+    device.recommended_max_working_set_size()
+}
+
 /// What the driver has allocated for the device, beside the pool's own reservations.
 #[cfg(not(any(test, feature = "test-hooks")))]
 fn driver_bytes(device: &metal::DeviceRef) -> u64 {
@@ -106,12 +131,6 @@ static METAL_ALLOCATION_LOCK: Mutex<()> = Mutex::new(());
 static PRIVATE_RESERVATION_KEY: u8 = 0;
 const METAL_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 
-pub fn available_buffer_bytes(device: &Device) -> usize {
-    let reserved = pool().load(Ordering::Acquire);
-    let driver = usize::try_from(driver_bytes(device)).unwrap_or(usize::MAX);
-    metal_buffer_limit().saturating_sub(reserved.max(driver))
-}
-
 pub fn buffer_usage() -> (usize, usize) {
     (
         pool().load(Ordering::Acquire),
@@ -167,10 +186,16 @@ impl BufferReservation {
         // the device blocks, relational work: 0266 §16), so a reservation counts them; room is made in the pool's one
         // order (idle buffers, then the residency's least recently used slabs).
         let pooled = std::ptr::eq(ledger, pool());
+        // One account (Q203): the pool's leases and the admissions' reservations not yet leased (`bound_bytes`), as
+        // `make_room` counts them; counting the leases alone, a reservation took room a stratum had been admitted to.
+        // A test's ledger is its thread's, the pool's leases the process's: tests are bounded by `test_pool`.
+        let bound = || if pooled && !cfg!(any(test, feature = "test-hooks")) { rerail_accel::gpu::shared::bound_bytes() } else { 0 };
+        // Drawn from this thread's admission (a wave's workspace, admitted as a stratum's tables are): its room was
+        // made when it was admitted.
+        let drawn = pooled && rerail_accel::gpu::shared::draw_reserved(bytes);
         let take = || {
-            // A test's ledger is its thread's, the pool's leases the process's: tests are bounded by `test_pool`.
-            let live = if pooled && !cfg!(any(test, feature = "test-hooks")) { rerail_accel::gpu::shared::held_bytes().0 } else { 0 };
-            ledger.try_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| *next + live <= limit))
+            let bound = if drawn { 0 } else { bound() };
+            ledger.try_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| drawn || *next + bound <= limit))
         };
         let previous = take()
             .or_else(|used| if pooled && rerail_accel::gpu::shared::make_room(bytes) { take() } else { Err(used) })
@@ -449,10 +474,7 @@ impl MappedBuffer {
         }
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
         let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if mapping.length as u64 > device.max_buffer_length()
-            || driver_bytes(device)
-                .saturating_add(mapping.length as u64)
-                > metal_buffer_limit() as u64
+        if driver_refuses(device, mapping.length)
         {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
@@ -515,10 +537,7 @@ impl MappedBuffer {
     ) -> Result<Self, Error> {
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
         let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if length as u64 > device.max_buffer_length()
-            || driver_bytes(device)
-                .saturating_add(length as u64)
-                > metal_buffer_limit() as u64
+        if driver_refuses(device, length)
         {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
@@ -770,6 +789,31 @@ pub fn pipelines_compiled_here() -> usize {
 #[cfg(test)]
 mod memory_budget_tests {
     use super::*;
+
+    /// Q203: the run's host pages wrapped for the device (row blocks, tapes: no-copy buffers) are the host budget's,
+    /// not device memory the Metal budget bounds. With the driver holding them past the budget, a buffer within the
+    /// budget is still given; the driver's figure refuses only past the OS's working set for the device.
+    #[test]
+    fn host_pages_wrapped_past_the_budget_leave_the_budgets_buffers() {
+        let Some(device) = crate::METAL_DEVICE.as_ref() else { return };
+        test_pool::measure_driver();
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        let len = (metal_buffer_limit() + (64 << 20)).div_ceil(page) * page;
+        // An anonymous mapping, never touched: the host's pages, wrapped as a run's row blocks are.
+        let host = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
+        assert_ne!(host, libc::MAP_FAILED);
+        let wrap = device.new_buffer_with_bytes_no_copy(host.cast_const(), len as u64, MTLResourceOptions::StorageModeShared, None);
+        assert!(driver_bytes(device) > metal_buffer_limit() as u64, "the driver counts the wrap: {} MB", driver_bytes(device) >> 20);
+        let given = MappedBuffer::zeroed::<u8>(device, 1 << 20);
+        assert!(given.is_ok(), "a 1 MB buffer within the budget, the driver at {} MB of a {} MB budget", driver_bytes(device) >> 20, metal_buffer_limit() >> 20);
+        drop(given);
+        // Past the working set the driver's figure refuses.
+        test_pool::set_working_set(Some(driver_bytes(device) + (1 << 19)));
+        assert_eq!(MappedBuffer::zeroed::<u8>(device, 1 << 20).err(), Some(Error::BackendCapacity), "past the working set");
+        test_pool::set_working_set(None);
+        drop(wrap);
+        unsafe { libc::munmap(host, len) };
+    }
 
     /// What relational work may still lease counts its own leases (held and idle in the pool), not only the
     /// buffer pool's reservations: a wave of device joins that checks it stops once its leases fill it.

@@ -1205,16 +1205,16 @@ impl LoweredWave {
     /// file).
     fn roots_metal_split(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
         let found = super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active)));
-        // Past the device's room at one tape: a capacity refusal is replanned, as a stratum's is (0334), and the
-        // tape's roots are found on the cores at once, counted and named. A Metal failure of any other kind still
-        // stops the run (0382 §6). The room is held by the device joins and the row blocks' slabs (0342), which fill
-        // the budget whatever it is, for the run; the residency's slab for a document not resident is refused
-        // (Q180). So it is not waited for: a wait of up to 5 s a tape for room to come back held the chunks'
-        // pipeline 215 s on the 300-file job and found none (t62, 2026-11-19).
+        // Past the device's room at one tape, in as few lanes and states as it runs in: its workspace was admitted as
+        // a stratum's tables are and refused (`label_passes`: no lease coming back makes the room, or waiting for it
+        // costs more than the cores take, `placement::admission_patience`), so the price has chosen the cores (0334).
+        // Its roots are found there, counted and named. A Metal failure of any other kind still stops the run (0382
+        // §6). The room is the pool's ledger and leases alone: the driver's figure, which counts the host pages
+        // wrapped for the device, refused 43 tapes with a third of a 2 GB budget free (t62, Q203).
         if tapes.len() == 1 && matches!(found, Err(Error::BackendCapacity)) {
             crate::code_rule_dsl::prof::count("wave.tape_on_cpu", 1);
             #[cfg(target_os = "macos")]
-            crate::code_rule_dsl::logic::profile::decision("a matcher wave's tape past the device's room, its roots found on the cores (0334)", || {
+            crate::code_rule_dsl::logic::profile::decision("a matcher wave's tape not admitted to the device, its roots found on the cores (0334)", || {
                 format!("{} nodes; the device: {}", tapes[0].transducer_len(), rerail_accel::gpu::shared::describe())
             });
             return self.roots_batch_budgeted(Backend::Cpu, tapes, active, WorkBudget::current());

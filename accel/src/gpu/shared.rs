@@ -15,8 +15,8 @@
 //!   rest leaves, no more: past it, the least recently returned are released first. `set_slab_idle_limit` caps idle
 //!   slabs further, when set.
 //! - **One eviction order.** Room for a buffer (`make_room`) is made by releasing idle buffers, least recently
-//!   returned first, then by retiring what the evictor holds (`set_evictor`: the residency's least recently used
-//!   slab), whose memory comes back as idle buffers once its last reader lets go.
+//!   returned first, then by retiring what the evictors hold that no batch reads (`set_evictor`: the residency's
+//!   least recently used slab, a matcher wave's kept workspace), whose memory comes back once its last reader lets go.
 //! - **Returning.** A lease goes back when it is dropped. Its holder drops it once every command buffer that reads
 //!   it has completed (the host's next write into it is not ordered after a GPU read), or hands it to a command
 //!   buffer (`Pooled::after`), which returns it when the command buffer completes.
@@ -484,18 +484,28 @@ pub fn set_other_reserved(reader: fn() -> usize) {
     let _ = OTHER_RESERVED.set(reader);
 }
 
-/// What gives way when the budget is short, after the idle buffers (`set_evictor`): it retires one thing it holds
-/// (the residency's least recently used slab) and says whether it did. It must not wait for a lock (it is called
-/// from inside allocations): a holder it cannot reach now is skipped.
-static EVICTOR: OnceLock<fn() -> bool> = OnceLock::new();
+/// What gives way when the budget is short, after the idle buffers (`set_evictor`), in the order they were set: each
+/// retires one thing it holds that no batch reads (the residency's least recently used slab, a matcher wave's kept
+/// workspace) and says whether it did. None may wait for a lock (they are called from inside allocations): a holder
+/// one cannot reach now is skipped.
+static EVICTORS: Mutex<Vec<fn() -> bool>> = Mutex::new(Vec::new());
 
-/// Sets the evictor (once per process; a second call is ignored).
+/// Adds an evictor (each once; a second call with the same one is ignored).
 pub fn set_evictor(f: fn() -> bool) {
-    let _ = EVICTOR.set(f);
+    let mut e = EVICTORS.lock().expect("the evictors");
+    if !e.iter().any(|g| std::ptr::fn_addr_eq(*g, f)) {
+        e.push(f);
+    }
+}
+
+/// Retires one holding of the first evictor that has one; whether one did.
+fn evict_one() -> bool {
+    let evictors: Vec<fn() -> bool> = EVICTORS.lock().expect("the evictors").clone();
+    evictors.iter().any(|f| f())
 }
 
 /// Makes room in the Metal budget for `need` more bytes: idle buffers released, least recently returned first, then
-/// the evictor's holdings retired one at a time while it has any. Whether the ledger's reservations, the live leases
+/// the evictors' holdings retired one at a time while they have any. Whether the ledger's reservations, the live leases
 /// and `need` fit the budget now. A retired holding reached by a batch still running comes back later.
 pub fn make_room(need: usize) -> bool {
     let fits = || other() + LIVE.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need <= crate::budget::metal();
@@ -504,7 +514,7 @@ pub fn make_room(need: usize) -> bool {
         if fits() {
             return true;
         }
-        if !EVICTOR.get().is_some_and(|f| f()) {
+        if !evict_one() {
             return false;
         }
     }
@@ -530,6 +540,20 @@ pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
         ));
     }
     lease(bytes).map(held_here)
+}
+
+/// Takes `bytes` out of this thread's reservation (`admit`) where it holds that much, and says whether it did: for a
+/// buffer another ledger reserves (`rerail-metal`'s: a matcher wave's workspace), whose room the admission made. The
+/// bytes are then that ledger's, no longer the reservation's: counted once.
+pub fn draw_reserved(bytes: usize) -> bool {
+    RESERVE_LEFT.with(|r| {
+        if bytes == 0 || r.get() < bytes {
+            return false;
+        }
+        r.set(r.get() - bytes);
+        RESERVED.fetch_sub(bytes, std::sync::atomic::Ordering::Relaxed);
+        true
+    })
 }
 
 /// Admission (Q180): a stratum placed on the device reserves the bytes its tables are expected to take, whole, before
@@ -816,6 +840,38 @@ mod tests {
         assert!(t0.elapsed().as_secs_f64() < 1.0, "refused at once, not at its patience");
         drop(mine);
         assert!(admit(64 << 20, 0.0).is_ok(), "fits once its own lease is back");
+        crate::budget::METAL_TEST.with(|m| m.set(0));
+    }
+
+    /// Q203: two works that together pass the budget both run on the device, in turn: the second (a matcher wave's
+    /// workspace, which another ledger reserves) is admitted once the first's lease is back, and its buffers are drawn
+    /// from the reservation, counted once.
+    #[test]
+    fn two_works_past_the_budget_together_both_run_on_the_device_in_turn() {
+        if get().is_none() {
+            return;
+        }
+        let _big = big_leases();
+        let (live, _) = held_bytes();
+        crate::budget::METAL_TEST.with(|m| m.set(live + (96 << 20)));
+        let (held, go) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        let first = std::thread::spawn(move || {
+            let lease = lease_within(64 << 20).expect("64 MB, the first work's");
+            held.0.send(()).unwrap();
+            go.1.recv().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(lease);
+        });
+        held.1.recv().unwrap();
+        go.0.send(()).unwrap();
+        let room = admit(64 << 20, 10.0).expect("the second, once the first's lease is back");
+        assert!(room.waited > 0.1, "it waited for the first: {} s", room.waited);
+        first.join().unwrap();
+        assert!(draw_reserved(48 << 20), "a buffer of another ledger drawn from the reservation");
+        assert_eq!(reserved(), 16 << 20, "counted once: the drawn part is the other ledger's");
+        assert!(!draw_reserved(32 << 20), "no more than is left");
+        drop(room);
+        assert_eq!(reserved(), 0, "what was not drawn goes back");
         crate::budget::METAL_TEST.with(|m| m.set(0));
     }
 
