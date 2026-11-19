@@ -55,7 +55,9 @@ mod aot {
 }
 
 /// The fewest floating-point operations (dense) a model's prediction must do: below about this, Core ML places a
-/// model on the CPU whatever the Neural Engine supports (the spike's A1), so the lane does not compile one.
+/// model on the CPU whatever the Neural Engine supports (the spike's A1), so the lane does not compile one. A floor,
+/// not the cutoff: above it, the chip's planner decides, and the placement check (`coreml::check_placement`) refuses
+/// a constant it puts elsewhere (the M3 placed 0.46e9 operations on the CPU, Q265).
 pub const MIN_FLOPS: f64 = 0.25e9;
 /// Loaded models kept at once (Core ML holds at most about 119 compiled models per process).
 pub const MAX_LOADED: usize = 64;

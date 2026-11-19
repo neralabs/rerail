@@ -1,7 +1,8 @@
 //! The Neural Engine lane against the reference, its writer against coremltools', and its refusals.
 //!
-//! Shapes are kept small enough to compile in well under a second each, yet above [`super::MIN_FLOPS`] so that Core
-//! ML places them on the Neural Engine. The timing tests at the real workloads' sizes are ignored; run each alone:
+//! Shapes are kept small enough to compile in well under a second each, yet above [`super::MIN_FLOPS`], so that Core
+//! ML may place them on the Neural Engine; whether it does is the chip's planner's (the M3's cutoff is higher, Q265),
+//! and a test of random shapes allows the placement check's refusals. The timing tests at the real workloads' sizes are ignored; run each alone:
 //! `cargo test -p rerail-accel --no-default-features --features ane ane::tests::time_w1 -- --ignored --nocapture`.
 
 use super::package::{self, Template};
@@ -174,15 +175,23 @@ fn exact_random_shapes() {
             ks.push(product(&a, &b, Some(min)));
         }
     }
-    let refs: Vec<&Kernel> = ks.iter().collect();
-    for k in &refs {
-        assert_eq!(lane.refusal(k), None);
+    // Where Core ML runs a model is the chip's planner's choice, and its CPU cutoff differs by generation: on the
+    // M3 a constant of 0.46e9 operations (over `MIN_FLOPS`) goes to the CPU (Q265). A constant it places off the
+    // Neural Engine is refused by the placement check, so no launch is placed here to fail; every other is exact.
+    let mut refs: Vec<&Kernel> = Vec::new();
+    for k in &ks {
+        match lane.refusal(k) {
+            None => refs.push(k),
+            Some(why) => assert!(why.contains("Core ML would not run every operation on the Neural Engine"), "refused other than by placement: {why}"),
+        }
     }
+    assert!(!refs.is_empty(), "no shape ran on the Neural Engine");
     let got = lane.submit(&refs).unwrap();
     for (k, g) in refs.iter().zip(&got) {
         assert_eq!(*g, crate::cpu::run(k));
     }
-    assert_eq!(lane.state.lock().unwrap().loaded.len(), 2);
+    let constants: std::collections::BTreeSet<_> = refs.iter().map(|k| match k { Kernel::BitProduct { b, .. } => b.fixed, _ => None }).collect();
+    assert_eq!(lane.state.lock().unwrap().loaded.len(), constants.len(), "one model a constant run");
 }
 
 #[test]
