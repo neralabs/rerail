@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   CodeRuleBridge,
   filesystemClock,
@@ -1401,6 +1401,66 @@ describe("CodeRuleBridge", () => {
       { generatedText: "x = 2\n", previousText: "x = 1\n" },
       { generatedText: "x = 3\ny = 4\n", previousText: "x = 2\n" },
     ]);
+  });
+
+  // A walk that began while a command ran left the file the command wrote to the walk after it, but read the clock as it
+  // began only after the command had ended. Taken as answered by that walk, the command's run was forgotten, so the walk
+  // after took its write for another writer's: audited in Log, as if the agent wrote none of it.
+  it("credits a command with the file a walk left to the walk after it, though that walk read the clock after the command ended", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 2\n");
+    await bridge.finish("write-1");
+    // No walk runs from here until the second command's result.
+    await bridge.checkpoint("turn");
+
+    await bridge.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await writeFile(path, "x = 2\ny = 3\n");
+    await awaitClockAfter(path);
+    const { rm: actualRm } = await vi.importActual<typeof FileSystem>("node:fs/promises");
+    // The first command's end is sampled from the clock, and counted once its probe is removed. The clean-up lets the
+    // removal go on before the bridges close, and puts `rm` and `finish` back, though this test times out.
+    const sampled = Promise.withResolvers<void>();
+    const counted = Promise.withResolvers<void>();
+    releases.push(counted.resolve);
+    let held = false;
+    vi.mocked(rm).mockImplementation(async (target, options) => {
+      if (!held && /rerail-clock-[^\\/]+$/u.test(String(target))) {
+        held = true;
+        sampled.resolve();
+        await counted.promise;
+      }
+      return await actualRm(target, options);
+    });
+    const finished = vi.spyOn(ToolCallWindows.prototype, "finish");
+    onTestFinished(() => {
+      finished.mockRestore();
+      vi.mocked(rm).mockReset();
+    });
+    const firstResult = bridge.finish("shell-1");
+    await sampled.promise;
+    const now = await mkdtemp(join(tmpdir(), "rerail-policy-now-"));
+    directories.push(now);
+    await awaitClockAfter(now);
+    // The walk at the second command's result begins while the first still runs, and reads the clock after its end.
+    const reading = holdDiscovery("reads", path);
+    await bridge.begin("shell-2", "Bash", { command: "ls" });
+    const secondResult = bridge.finish("shell-2");
+    await reading.entered;
+    counted.resolve();
+    await vi.waitFor(() => expect(finished).toHaveBeenCalledWith("shell-1", expect.any(Number)));
+    reading.release();
+    await Promise.all([firstResult, secondResult]);
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
+      { generatedText: "x = 2\n", previousText: "x = 1\n" },
+      { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n" },
+    ]);
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.mode)).not.toContain("log");
   });
 
   it("delivers committed full-file snapshots in deterministic batches", async () => {
@@ -3820,15 +3880,18 @@ describe("CodeRuleBridge and another session's writes", () => {
 });
 
 describe("ToolCallWindows", () => {
-  it("forgets the calls a walk answered for, never one still running, and ends an interrupted call at a turn's end", () => {
+  it("forgets the calls that ended before a walk began, never one that ended since or still runs, and ends an interrupted call at a turn's end", () => {
     const windows = new ToolCallWindows();
     windows.begin("answered", 10);
     windows.finish("answered", 20);
+    const walk = windows.ends;
+    // Ended after the walk began, though the walk may read the clock after this end.
     windows.begin("late", 25);
-    windows.finish("late", 40);
+    windows.finish("late", 28);
     windows.begin("running", 30);
-    windows.answered(30);
+    windows.answered(walk);
     expect(windows.ranDuring(15, 15)).toBe(false);
+    expect(windows.ranDuring(26, 26)).toBe(true);
     expect(windows.ranDuring(35, 35)).toBe(true);
     expect(windows.ranDuring(1_000, 1_000)).toBe(true);
     windows.finishAll(50);
