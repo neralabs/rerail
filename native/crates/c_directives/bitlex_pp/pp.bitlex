@@ -151,95 +151,6 @@ mask dir_hash   = code & hash & bol_at & ~next(hash)
 # A directive's line: from its `#` to its line's end (a line break in a block comment aside).
 mask dir_line   = fill(dir_hash, eol)
 mask dir_end    = eol & prev(dir_line)
-# A directive's word's first byte: after its `#` and the blanks after it.
-mask hash_lead  = fill(dir_hash, ~(blank | hash))
-mask word0      = code & prev(hash_lead) & ~hash_lead
-class c_i       = 'i'
-class c_f       = 'f'
-class c_d       = 'd'
-class c_e       = 'e'
-class c_n       = 'n'
-class c_l       = 'l'
-class c_s       = 's'
-# The conditional words, each a whole word, at a directive's word's first byte.
-mask w_if       = word0 & c_i & next(c_f)
-mask w_elif     = word0 & c_e & next(c_l) & next(c_i, 2) & next(c_f, 3)
-mask wk_if      = (w_if & ~next(wordc, 2))
-                | (w_if & next(c_d, 2) & next(c_e, 3) & next(c_f, 4) & ~next(wordc, 5))
-                | (w_if & next(c_n, 2) & next(c_d, 3) & next(c_e, 4) & next(c_f, 5) & ~next(wordc, 6))
-mask wk_next    = (w_elif & ~next(wordc, 4))
-                | (w_elif & next(c_d, 4) & next(c_e, 5) & next(c_f, 6) & ~next(wordc, 7))
-                | (w_elif & next(c_n, 4) & next(c_d, 5) & next(c_e, 6) & next(c_f, 7) & ~next(wordc, 8))
-                | (word0 & c_e & next(c_l) & next(c_s, 2) & next(c_e, 3) & ~next(wordc, 4))
-mask wk_end     = word0 & c_e & next(c_n) & next(c_d, 2) & next(c_i, 3) & next(c_f, 4) & ~next(wordc, 5)
-# Each at its directive's `#`: the word 16 bytes after it at most, every byte between a blank
-# of its lead (`lead_k`: the `k` bytes after the `#` are).
-mask lead_bl    = hash_lead & ~hash
-mask lead_1      = next(lead_bl, 1)
-mask lead_2      = lead_1 & next(lead_bl, 2)
-mask lead_3      = lead_2 & next(lead_bl, 3)
-mask lead_4      = lead_3 & next(lead_bl, 4)
-mask lead_5      = lead_4 & next(lead_bl, 5)
-mask lead_6      = lead_5 & next(lead_bl, 6)
-mask lead_7      = lead_6 & next(lead_bl, 7)
-mask lead_8      = lead_7 & next(lead_bl, 8)
-mask lead_9      = lead_8 & next(lead_bl, 9)
-mask lead_10     = lead_9 & next(lead_bl, 10)
-mask lead_11     = lead_10 & next(lead_bl, 11)
-mask lead_12     = lead_11 & next(lead_bl, 12)
-mask lead_13     = lead_12 & next(lead_bl, 13)
-mask lead_14     = lead_13 & next(lead_bl, 14)
-mask lead_15     = lead_14 & next(lead_bl, 15)
-escape "a directive's word far from its `#`" when word0 & ~nl & ~(prev(dir_hash, 1) | prev(dir_hash, 2) | prev(dir_hash, 3) | prev(dir_hash, 4) | prev(dir_hash, 5) | prev(dir_hash, 6) | prev(dir_hash, 7) | prev(dir_hash, 8) | prev(dir_hash, 9) | prev(dir_hash, 10) | prev(dir_hash, 11) | prev(dir_hash, 12) | prev(dir_hash, 13) | prev(dir_hash, 14) | prev(dir_hash, 15) | prev(dir_hash, 16))
-mask at_if      = dir_hash & (next(wk_if, 1)
-                  | (lead_1 & next(wk_if, 2))
-                  | (lead_2 & next(wk_if, 3))
-                  | (lead_3 & next(wk_if, 4))
-                  | (lead_4 & next(wk_if, 5))
-                  | (lead_5 & next(wk_if, 6))
-                  | (lead_6 & next(wk_if, 7))
-                  | (lead_7 & next(wk_if, 8))
-                  | (lead_8 & next(wk_if, 9))
-                  | (lead_9 & next(wk_if, 10))
-                  | (lead_10 & next(wk_if, 11))
-                  | (lead_11 & next(wk_if, 12))
-                  | (lead_12 & next(wk_if, 13))
-                  | (lead_13 & next(wk_if, 14))
-                  | (lead_14 & next(wk_if, 15))
-                  | (lead_15 & next(wk_if, 16)))
-mask at_next    = dir_hash & (next(wk_next, 1)
-                  | (lead_1 & next(wk_next, 2))
-                  | (lead_2 & next(wk_next, 3))
-                  | (lead_3 & next(wk_next, 4))
-                  | (lead_4 & next(wk_next, 5))
-                  | (lead_5 & next(wk_next, 6))
-                  | (lead_6 & next(wk_next, 7))
-                  | (lead_7 & next(wk_next, 8))
-                  | (lead_8 & next(wk_next, 9))
-                  | (lead_9 & next(wk_next, 10))
-                  | (lead_10 & next(wk_next, 11))
-                  | (lead_11 & next(wk_next, 12))
-                  | (lead_12 & next(wk_next, 13))
-                  | (lead_13 & next(wk_next, 14))
-                  | (lead_14 & next(wk_next, 15))
-                  | (lead_15 & next(wk_next, 16)))
-mask at_end     = dir_hash & (next(wk_end, 1)
-                  | (lead_1 & next(wk_end, 2))
-                  | (lead_2 & next(wk_end, 3))
-                  | (lead_3 & next(wk_end, 4))
-                  | (lead_4 & next(wk_end, 5))
-                  | (lead_5 & next(wk_end, 6))
-                  | (lead_6 & next(wk_end, 7))
-                  | (lead_7 & next(wk_end, 8))
-                  | (lead_8 & next(wk_end, 9))
-                  | (lead_9 & next(wk_end, 10))
-                  | (lead_10 & next(wk_end, 11))
-                  | (lead_11 & next(wk_end, 12))
-                  | (lead_12 & next(wk_end, 13))
-                  | (lead_13 & next(wk_end, 14))
-                  | (lead_14 & next(wk_end, 15))
-                  | (lead_15 & next(wk_end, 16)))
-mask plain_dir  = dir_hash & ~at_if & ~at_next & ~at_end
 
 # --- Numbers -------------------------------------------------------------------------------------
 
@@ -332,18 +243,19 @@ mark qstr     = lit_start & dquote & dir_line
 hidden qstr
 # A line of text's first token: the tokens with `BOL` but a directive's `#`.
 mark cline    = starts & bol_at & ~dir_hash
-# A directive whose word is no conditional one; a conditional one, by its word after the `#`.
-mark dline    = plain_dir
-mark if_on    = at_if
-mark next_on  = at_next
-mark end_on   = at_end
+# A conditional directive, by its word after the `#` on its line (no line's first token, `cline`,
+# between): one that opens a group, one that goes on with its chain, the one that ends it; and
+# a directive whose word is no conditional one.
+mark if_on    = dir_hash, before hash "if" | "ifdef" | "ifndef" without cline
+mark next_on  = dir_hash, before hash "elif" | "elifdef" | "elifndef" | "else" without cline
+mark end_on   = dir_hash, before hash "endif" without cline
+mark dline    = dir_hash, unless before hash "if" | "ifdef" | "ifndef" | "elif" | "elifdef" | "elifndef" | "else" | "endif" without cline
 
 # --- The tree ------------------------------------------------------------------------------------
 
 tree c_pp {
-  # The items, inline (a choice of them would be a level the parser calls, and leaves only at a
-  # token): an `#elif…`, `#else` or `#endif` no group is open for is a directive (the lean scan's
-  # unmatched).
+  # The items: an `#elif…`, `#else` or `#endif` no group is open for is a directive (the lean
+  # scan's unmatched).
   node pp whole = (if_on group | next_on directive | end_on directive | dline directive | cline code)*
   # Its opener, the items in its first branch, each further branch (an `#elif…` or `#else`, then
   # its items), and its `#endif`. A file that does not close a group is refused.
@@ -354,39 +266,35 @@ tree c_pp {
   # A directive's node is `unknown` until its word names it.
   node unknown = hash (retag null eol_mark | named)
   choice directive = unknown
-  # Each directive's tail takes its line's end itself (a called level ends at a token it takes),
-  # and takes a token first (a level that returns with none is refused): a directive with no
-  # operands is its word, then its line's end.
-  choice named = retag define ('define' as identifier) (define_tail | eol_mark)
-               | retag undef ('undef' as identifier) (name: identifier (any)* eol_mark | not_ident (any)* eol_mark | eol_mark)
-               | retag include ('include' as identifier) (include_tail | eol_mark)
-               | retag include_next ('include_next' as identifier) (include_tail | eol_mark)
-               | retag import ('import' as identifier) (include_tail | eol_mark)
-               | retag embed ('embed' as identifier) (include_tail | eol_mark)
-               | retag if ('if' as identifier) (cond_tail | eol_mark) | retag ifdef ('ifdef' as identifier) (cond_tail | eol_mark)
-               | retag ifndef ('ifndef' as identifier) (cond_tail | eol_mark) | retag elif ('elif' as identifier) (cond_tail | eol_mark)
-               | retag elifdef ('elifdef' as identifier) (cond_tail | eol_mark) | retag elifndef ('elifndef' as identifier) (cond_tail | eol_mark)
-               | retag else ('else' as identifier) (cond_tail | eol_mark) | retag endif ('endif' as identifier) (cond_tail | eol_mark)
-               | retag line ('line' as identifier) (rest: line_rest eol_mark | eol_mark)
+  # Its word, then what it has, then its line's end.
+  choice named = retag define ('define' as identifier) [define_tail] eol_mark
+               | retag undef ('undef' as identifier) [name: identifier (any)* | not_ident (any)*] eol_mark
+               | retag include ('include' as identifier) [include_tail] eol_mark
+               | retag include_next ('include_next' as identifier) [include_tail] eol_mark
+               | retag import ('import' as identifier) [include_tail] eol_mark
+               | retag embed ('embed' as identifier) [include_tail] eol_mark
+               | retag if ('if' as identifier) [expr: operands] eol_mark | retag ifdef ('ifdef' as identifier) [expr: operands] eol_mark
+               | retag ifndef ('ifndef' as identifier) [expr: operands] eol_mark | retag elif ('elif' as identifier) [expr: operands] eol_mark
+               | retag elifdef ('elifdef' as identifier) [expr: operands] eol_mark | retag elifndef ('elifndef' as identifier) [expr: operands] eol_mark
+               | retag else ('else' as identifier) [expr: operands] eol_mark | retag endif ('endif' as identifier) [expr: operands] eol_mark
+               | retag line ('line' as identifier) [rest: line_rest] eol_mark
                | retag line_marker rest: marker_rest eol_mark
-               | retag pragma ('pragma' as identifier) (text: pragma_text eol_mark | eol_mark)
-               | retag error ('error' as identifier) (text_tail | eol_mark) | retag warning ('warning' as identifier) (text_tail | eol_mark)
-               | retag ident ('ident' as identifier) (text_tail | eol_mark) | retag sccs ('sccs' as identifier) (text_tail | eol_mark)
-               | retag assert ('assert' as identifier) (text_tail | eol_mark) | retag unassert ('unassert' as identifier) (text_tail | eol_mark)
-               | not_number (text_tail | eol_mark)
+               | retag pragma ('pragma' as identifier) [text: pragma_text] eol_mark
+               | retag error ('error' as identifier) [text: operands] eol_mark | retag warning ('warning' as identifier) [text: operands] eol_mark
+               | retag ident ('ident' as identifier) [text: operands] eol_mark | retag sccs ('sccs' as identifier) [text: operands] eol_mark
+               | retag assert ('assert' as identifier) [text: operands] eol_mark | retag unassert ('unassert' as identifier) [text: operands] eol_mark
+               | not_number [text: operands] eol_mark
   # A name, then a parameter list where a `(` touches it, then the replacement list. No name: no
   # macro (the lean scan's malformed `#define`).
-  choice define_tail = name: identifier (touch params: params [body: operands] | [body: operands]) eol_mark | not_ident (any)* eol_mark
+  choice define_tail = name: identifier (touch params: params [body: operands] | [body: operands]) | not_ident (any)*
   node params = ('(' as punct) [param_list] (')' as punct)
   # `...`, or a parameter then GNU's `...`, or a `,` and the rest: nothing after a `...`.
   choice param_list nested = variadic: ('...' as punct) | param: identifier [variadic: ('...' as punct) | (',' as punct) param_list]
   # The header: `"…"`, `<…>` (to its first `>`), or tokens a macro makes one of. (`#embed`'s
   # parameters after its header are not the header's: `(any)*`.)
-  choice include_tail = qstr spelled: literal (any)* eol_mark | spelled: header (any)* eol_mark | spelled: macro_header eol_mark
+  choice include_tail = qstr spelled: literal (any)* | spelled: header (any)* | spelled: macro_header
   node header = ('<' as punct) (any except '>')* ('>' as punct)
   node macro_header = (any except '<') (any)*
-  choice cond_tail = expr: operands eol_mark
-  choice text_tail = text: operands eol_mark
   # A pragma's first word, and its second where the first is one.
   node pragma_text = first: identifier [second: identifier (any)* | not_ident (any)*] | not_ident (any)*
   # A line's number, then its file where the next token is a `"…"`.

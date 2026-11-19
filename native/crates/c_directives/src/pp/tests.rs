@@ -57,6 +57,11 @@ fn the_grammars_pp_tape_is_the_lean_writers() {
         b"",
         b"// c\n",
         b"#define X 1",
+        // A conditional's word past 16 bytes of blanks, after a comment, on the next line (no
+        // conditional: a null directive, then text), and one only its start is (`ifx`).
+        b"#                       if A\n#\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\telse\n#  endif\n",
+        b"# /* c */ if A\n#/**/endif\n",
+        b"#\nif (x) y;\n#ifx\n#endif_\na # if b\n",
     ] {
         must(src, true);
         must(src, false);
