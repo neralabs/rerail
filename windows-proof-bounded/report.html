@@ -315,13 +315,13 @@ td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px;
   <div class="eyebrow">Decision report &middot; Rerail pull request #677</div>
   <h1>A busy Windows daemon is kept; a stop ends only its daemon</h1>
   <div class="q"><div class="ql">1. The one question</div>
-  <p>Does a stop now end only processes a fact shows are this home&#x27;s daemon, with every lookup, start and hook at <code>main</code>&#x27;s result or better?</p>
+  <p>Does a stop now end only processes a fact shows are this home&#x27;s daemon, lookups and starts no worse than <code>main</code>, hooks per Decision 6?</p>
   <ol><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>A busy Windows daemon reads <code>alive but not answering</code> on every lookup.</li><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>A stop ends nothing when no fact shows the process is the daemon.</li></ol></div>
   <p class="rec"><b>We recommend:</b> rule on #663 whether 2 s is the right wait, then review the squashed diff.</p>
   <div class="big">
-    <div><b class="w">2,053 lines</b><span>in 22 files. 659 ship, 1,394 are tests and text.</span></div><div><b class="w">Fast review</b><span>One question on #663, then the stop&#x27;s rule.</span></div><div><b class="w">Waits on #663&#x27;s answer</b><span>CI&#x27;s result shows on this pull request&#x27;s checks.</span></div><div><b class="w">4 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+    <div><b class="w">2,520 lines</b><span>in 22 files. 745 ship, 1,775 are tests and text.</span></div><div><b class="w">Fast review</b><span>One question on #663, then the stop&#x27;s rule.</span></div><div><b class="w">Waits on #663&#x27;s answer</b><span>CI&#x27;s result shows on this pull request&#x27;s checks.</span></div><div><b class="w">4 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
   </div>
-  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/677">GitHub</a> on 18 November 2026, at head 8e504a719.</p>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/677">GitHub</a> on 19 November 2026, at head d5c88bebe.</p>
 </header>
 <section id="intent"><h2>2. Intent, and the gap</h2>
 <figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><b>A busy daemon&#x27;s record</b></td><td class="in" data-l="Intended">&quot;An engine that does not answer the proof in time is taken for a busy daemon: its state file is kept&quot;. <span class="tagx">docs</span></td><td class="fo" data-l="Found">From its fifth lookup, a suspended daemon read <code>not running</code> after 30.3 s and lost <code>daemon.json</code>. <span class="tagx">real daemon, suspended</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 1.</b> The proof&#x27;s limit counts from the ask; a pipe with no free instance reads <code>silent</code>, so the record stays.</td></tr><tr><td class="k"><b>What a stop ends</b></td><td class="in" data-l="Intended">A stop ends the home&#x27;s daemon; &quot;stale state from a crash or reboot is cleared&quot;. <span class="tagx">docs</span></td><td class="fo" data-l="Found">A dead daemon&#x27;s record named a live program, and <code>main</code>&#x27;s stop ended it: 167 ms on Linux x64. <span class="tagx">real daemon, killed</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 2.</b> a stop signals only a pid holding the home&#x27;s lock as recorded holder, or started no later than <code>startedAt</code>.</td></tr></tbody></table>
@@ -357,19 +357,20 @@ td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px;
 <li><b>Real-daemon rows:</b> a probe measured them, no test.</li>
 <li><b>macOS</b> never ran; it reads no start time.</li>
 </ul>
-<details class="ev"><summary>Six smaller gaps, three limits that stay</summary><ul class="facts">
+<details class="ev"><summary>Six smaller gaps, four limits that stay</summary><ul class="facts">
 <li><b>On Windows, a start read failing after the lookup&#x27;s proof:</b> the stop ends nothing and says so, where <code>main</code> ends it; 0 of 20 stops met it.</li>
 <li><b>A lookup on Windows</b> reads a start only with time left of its limit: after a silent proof <code>rerail status</code> keeps the record and a hook waits its 12 s, as at <code>main</code>. The stop decides.</li>
 <li><b>A holder record naming the pid <code>daemon.json</code> names</b> beside a lock another daemon holds without recording itself reads as ours, as at <code>main</code>. A start after <code>daemon.json</code>&#x27;s record would overrule it, at one more PowerShell process per Windows stop of a busy daemon.</li>
 <li><b>A healthy 0.1.4 daemon on Windows</b> is not seen, as at <code>main</code>: its engine predates the proof.</li>
 <li><b>No <code>daemon.json</code> and a holder record naming an ended pid:</b> the stop says not running while the home&#x27;s stalled daemon holds the lock, as at <code>main</code>.</li>
-<li><b>Sixty-six commits, one diff.</b> Three merge <code>main</code>, four replace the proof&#x27;s first design and three settle the engine start&#x27;s wait. Pushed commits are not rewritten.</li>
+<li><b>Seventy-eight commits, one diff.</b> Nine merge <code>main</code>, four replace the proof&#x27;s first design and three settle the engine start&#x27;s wait. Pushed commits are not rewritten.</li>
 </ul>
 <p><b>Limits that stay.</b></p>
 <ul class="facts">
 <li>The engine start can wait 30 s for a free instance and then 2 s for the answer, past the 15 s <code>rerail daemon start</code> gives the daemon, as at <code>main</code>.</li>
 <li><code>ingestEngineEvent</code> arms its timeout on a pipe connect, so an event can meet Node&#x27;s 30 s wait for a free instance.</li>
-<li>A hook beside a busy daemon still waits out its own 12 s before it gives up, and logs its event as lost to a daemon that did not answer.</li>
+<li>An event a hook sends on Windows while every instance of the engine pipe stays taken for more than about 12 s is lost; <code>main</code>&#x27;s hook waits up to 30 s and delivers it (Decision 6, which waits on #663).</li>
+<li>A hook beside a daemon that never frees an instance gives up at about 12 s each time and keeps <code>daemon.json</code>; at <code>main</code> the first waits 60 s and deletes it, then each answers in about 0.15 s (Decision 6).</li>
 </ul></details>
 </section><section id="asks"><h2>9. What we ask of you</h2>
 <p class="sub">Ask 1 rules on answer 1.</p>

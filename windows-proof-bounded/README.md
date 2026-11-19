@@ -1,10 +1,10 @@
 # A busy Windows daemon is kept; a stop ends only its daemon
 
-For [pull request #677](https://github.com/neralabs/rerail/pull/677), head 8e504a719. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #677](https://github.com/neralabs/rerail/pull/677), head d5c88bebe. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
-**Does a stop now end only processes a fact shows are this home's daemon, with every lookup, start and hook at `main`'s result or better?**
+**Does a stop now end only processes a fact shows are this home's daemon, lookups and starts no worse than `main`, hooks per Decision 6?**
 
 1. A busy Windows daemon reads `alive but not answering` on every lookup.
 2. A stop ends nothing when no fact shows the process is the daemon.
@@ -13,7 +13,7 @@ For [pull request #677](https://github.com/neralabs/rerail/pull/677), head 8e504
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 2,053 lines in 22 files: 659 ship, 1,394 are tests and text | Fast. One question on #663, then the stop's rule. | #663's answer. CI's result shows on this pull request's checks. | 4 |
+| 2,520 lines in 22 files: 745 ship, 1,775 are tests and text | Fast. One question on #663, then the stop's rule. | #663's answer. CI's result shows on this pull request's checks. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -95,7 +95,7 @@ It stands on `main` alone and holds `main` at cf5ab9083. Merging waits on #663. 
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 4 not verified, 6 smaller gaps, 3 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 4 not verified, 6 smaller gaps, 4 limits that stay</summary>
 
 1. **Clock steps on Linux:** a lockless busy daemon reads as another program after a forward step over 10 s; a program started before `startedAt` is ended, as at `main`.
 2. **Where policy blocks `powershell.exe`:** a busy 0.1.4 daemon's stops end nothing, where `main`'s ended it.
@@ -109,13 +109,14 @@ It stands on `main` alone and holds `main` at cf5ab9083. Merging waits on #663. 
 - **A holder record naming the pid `daemon.json` names** beside a lock another daemon holds without recording itself reads as ours, as at `main`. A start after `daemon.json`'s record would overrule it, at one more PowerShell process per Windows stop of a busy daemon.
 - **A healthy 0.1.4 daemon on Windows** is not seen, as at `main`: its engine predates the proof.
 - **No `daemon.json` and a holder record naming an ended pid:** the stop says not running while the home's stalled daemon holds the lock, as at `main`.
-- **Sixty-six commits, one diff.** Three merge `main`, four replace the proof's first design and three settle the engine start's wait. Pushed commits are not rewritten.
+- **Seventy-eight commits, one diff.** Nine merge `main`, four replace the proof's first design and three settle the engine start's wait. Pushed commits are not rewritten.
 
 **Limits that stay**
 
 - The engine start can wait 30 s for a free instance and then 2 s for the answer, past the 15 s `rerail daemon start` gives the daemon, as at `main`.
 - `ingestEngineEvent` arms its timeout on a pipe connect, so an event can meet Node's 30 s wait for a free instance.
-- A hook beside a busy daemon still waits out its own 12 s before it gives up, and logs its event as lost to a daemon that did not answer.
+- An event a hook sends on Windows while every instance of the engine pipe stays taken for more than about 12 s is lost; `main`'s hook waits up to 30 s and delivers it (Decision 6, which waits on #663).
+- A hook beside a daemon that never frees an instance gives up at about 12 s each time and keeps `daemon.json`; at `main` the first waits 60 s and deletes it, then each answers in about 0.15 s (Decision 6).
 
 </details>
 
