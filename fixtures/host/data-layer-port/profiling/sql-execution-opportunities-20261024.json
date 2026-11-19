@@ -1,0 +1,441 @@
+{
+  "format": "rerail.sql-execution-opportunities/v1",
+  "date": "2026-10-24",
+  "baselineCommit": "188fb8f4",
+  "workloadScope": "complete fixed state-tripwire guard: positive and clean observations through snapshot and workspace paths; not full data-layer repository",
+  "engineSubmissions": 7733,
+  "sqliteInternalExecutions": 994,
+  "unknownOrigins": 0,
+  "fixedLimit": 100,
+  "measuredByPhase": {
+    "connectionSetup": 372,
+    "filePublication": 36,
+    "catalogPublication": 12,
+    "candidatePreparation": 3316,
+    "cleanup": 2216,
+    "relationalEvaluation": 1781
+  },
+  "measuredByOpportunityRole": {
+    "other": 839,
+    "candidateTableConstruction": 1588,
+    "candidateIndexConstruction": 1588,
+    "candidateTableRetirement": 1588,
+    "relationalObjectConstruction": 1192,
+    "relationalObjectRetirement": 628,
+    "relationalAnalyze": 310
+  },
+  "candidateFrontiers": [
+    {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/raw/candidate-9213-0.json",
+      "sha256": "289a2f46720365dd6828b2c290d4f23fb4982822e6295fe05851e7dacad8e489",
+      "temporaryTables": 393,
+      "releaseGroups": 255
+    },
+    {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/raw/candidate-9213-1.json",
+      "sha256": "e0b50d98a95064efff94bfcf2a0a67da8ce027146fb310216eca6f1fbe0bc816",
+      "temporaryTables": 393,
+      "releaseGroups": 255
+    },
+    {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/raw/candidate-9213-2.json",
+      "sha256": "8216500d800d801d2c894186008221f9c1e8395a6c456f6b5ed205b2998719c5",
+      "temporaryTables": 401,
+      "releaseGroups": 259
+    },
+    {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/raw/candidate-9213-3.json",
+      "sha256": "896be48da7bc7695624946ec600027353c92433f09cfce92375c5b09dcfcb473",
+      "temporaryTables": 401,
+      "releaseGroups": 259
+    }
+  ],
+  "sourceEvidence": [
+    {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/execution-inventory.json",
+      "sha256": "7b18159d7d5a369d2c716785fcb00034b69a3a4f96aca627312e54bea2f9df7e"
+    },
+    {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/execution-budget.json",
+      "sha256": "d40bd5fa1e59a225e397bbdafb4de3fefdb1b6467d2dfd8e2f8001ddb1df842c"
+    },
+    {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/profile.json",
+      "sha256": "76941b2f08e71f6b05dad2f16f95dec657f4878038e253ef0e75a59a572fc2ad"
+    }
+  ],
+  "orderedDeliveryChunks": [
+    {
+      "id": "R5-A",
+      "name": "Stable candidate storage and typed operation batching",
+      "currentExecutions": 4764,
+      "replacementBudget": {
+        "storeCreate": 4,
+        "storeIndexCreate": 4,
+        "populationStatements": 250,
+        "retirementStatements": 1028,
+        "finalStoreDrop": 4
+      },
+      "netRemovalTarget": 3474,
+      "wholeJobAfterTarget": 4259,
+      "estimateStatus": "implemented; 4048 net removals measured on the complete fixed guard",
+      "subOpportunities": [
+        {
+          "name": "maintain one candidate key index per execution context",
+          "before": 1588,
+          "afterBudget": 4,
+          "netRemovalTarget": 1584
+        },
+        {
+          "name": "typed batched population plus initial store creation",
+          "before": 1588,
+          "afterBudget": 254,
+          "netRemovalTarget": 1334
+        },
+        {
+          "name": "bulk retire at existing release boundaries plus final store retirement",
+          "before": 1588,
+          "afterBudget": 1032,
+          "netRemovalTarget": 556
+        }
+      ],
+      "assumptions": [
+        "four observed candidate execution contexts; incompatible snapshots remain separate",
+        "typed integer fid/pre storage with a producer/domain key and a nonunique composite index",
+        "population budget counts request publication and maintenance; no hidden extra statements",
+        "1028 existing retirement frontiers retained, with one DELETE per frontier instead of one DROP per producer",
+        "operators compiled before SQL rendering; do not concatenate separately rendered SELECT trees",
+        "empty results complete their producer; failure and source-generation invalidation remain atomic"
+      ],
+      "confidence": "index and existing-boundary retirement arithmetic is tight; the 250-statement population cap requires operator planning proof",
+      "measuredResult": {
+        "engineSubmissions": 3685,
+        "sqliteInternalExecutions": 994,
+        "unknownOrigins": 0,
+        "netRemoval": 4048,
+        "fullTargetMet": true,
+        "replacementActual": {
+          "storeCreate": 4,
+          "storeIndexCreate": 4,
+          "populationStatements": 380,
+          "retirementStatements": 324,
+          "finalStoreDrop": 4
+        },
+        "replacementTotal": 716,
+        "note": "380 fills exceed the original 250 planning cap; 324 retirements beat the 1028 model. Full net delivery target and total replacement budget are met.",
+        "evidence": "candidate-ownership-recovery-20261024.json"
+      }
+    },
+    {
+      "id": "R5-B",
+      "name": "Shared relational backing and complete session lifetimes",
+      "baseline": "after measured R5-A: 3685 complete-job engine submissions",
+      "addressableAtModelBoundary": 2658,
+      "netRemovalTarget": 1296,
+      "wholeJobAfterTarget": 2389,
+      "estimateStatus": "implemented; 1435 net removals against the full 1296 target on the complete fixed guard",
+      "subOpportunities": [
+        {
+          "name": "shared relational object/index/statistics/retirement lifecycle",
+          "current": 2130,
+          "afterBudget": 1130,
+          "netRemovalTarget": 1000,
+          "composition": {
+            "createTablesViewsIndexes": 1192,
+            "analyze": 310,
+            "drops": 628
+          },
+          "caution": "identical SQL does not prove shared data; separate bindings with incompatible inputs, schemas, options or domains"
+        },
+        {
+          "name": "coalesce candidate retirement after producer batching",
+          "currentAfterR5A": 324,
+          "afterBudget": 200,
+          "netRemovalTarget": 124
+        },
+        {
+          "name": "bounded clause-reader connection pool",
+          "beforePragmas": 136,
+          "afterBudget": 32,
+          "netRemovalTarget": 104,
+          "assumption": "at most four reader connections in each of the four observed execution contexts; additional publication or isolation statements count against the net target"
+        },
+        {
+          "name": "prepare-only syntax projection metadata",
+          "beforeEmptyCtas": 68,
+          "afterBudget": 0,
+          "netRemovalTarget": 68,
+          "assumption": "use validated cached schemas while preserving SQLite column names and affinities"
+        }
+      ],
+      "confidence": "Measured complete execution, parity, and matched CPU/memory controls; not a full-repository recovery claim.",
+      "measuredResult": {
+        "engineSubmissions": 2250,
+        "sqliteInternalExecutions": 181,
+        "unknownOrigins": 0,
+        "netRemoval": 1435,
+        "fullTargetMet": true,
+        "runtimeClauseSql": {
+          "before": 2409,
+          "after": 1252,
+          "netRemoval": 1157
+        },
+        "readerPragmas": {
+          "before": 136,
+          "after": 8,
+          "netRemoval": 128
+        },
+        "candidateRetirement": {
+          "before": 324,
+          "after": 174,
+          "netRemoval": 150
+        },
+        "compilerEmptyCtas": {
+          "before": 68,
+          "after": 68,
+          "netRemoval": 0
+        },
+        "note": "Full net target exceeded. Replacement INSERTs and DELETEs count; the planned 68 compiler-probe removals remain unimplemented.",
+        "evidence": "relational-storage-recovery-20261024.json"
+      }
+    },
+    {
+      "id": "R5-C",
+      "name": "State syntax domains and complete-empty admission",
+      "baseline": "after measured R5-B: 2250 complete-job engine submissions",
+      "netRemovalTarget": 1261,
+      "wholeJobAfterTarget": 989,
+      "estimateStatus": "delivered: 1275 actual removals; original target 1261 retained",
+      "clauses": [
+        "state-signatures-1",
+        "state-flow-1",
+        "state-projection-recovery-2",
+        "state-flow-project-1"
+      ],
+      "replacementBudget": {
+        "frontendExperimentActual": 1489,
+        "emptySessionRetirement": 500,
+        "gateAdditionalSql": 0,
+        "wholeJobMaximum": 989
+      },
+      "scope": {
+        "rules": [
+          "data-layer-serverplan-state-tripwires"
+        ],
+        "clauses": [
+          "state-signatures-1",
+          "state-flow-1",
+          "state-projection-recovery-2",
+          "state-flow-project-1"
+        ],
+        "generatorChange": "Replace 25 syntax projections and five reconstruction stages in each selected frontend with the existing native syntax domain.",
+        "languageChange": "relational.requireNonemptyInput: one declared input name. Complete empty evidence skips SQL admission.",
+        "integration": "Gate/body preparation in stateless and workspace paths, including eligible evicted repository documents.",
+        "outOfScope": [
+          "job-wide SQL service",
+          "cross-workspace row ownership",
+          "new producer-library language",
+          "new graph scheduler",
+          "cross-clause derived SQL sharing",
+          "detector clause merging",
+          "compiler affinity redesign",
+          "conditional candidate-frontier construction",
+          "FTS index redesign"
+        ]
+      },
+      "specification": "docs/sql-execution-chunk-c.md",
+      "evidencePlan": "sql-execution-chunk-c-20261024.json",
+      "measuredResult": {
+        "engineSubmissions": 975,
+        "sqliteInternalExecutions": 106,
+        "unknownOrigins": 0,
+        "netRemoval": 1275,
+        "wholeTargetMet": true,
+        "fixedLimit": 100,
+        "fixedLimitAccepted": false,
+        "excess": 875,
+        "evidence": "state-domain-admission-recovery-20261024.json",
+        "byPhase": {
+          "connectionSetup": 229,
+          "filePublication": 36,
+          "catalogPublication": 12,
+          "candidatePreparation": 308,
+          "cleanup": 24,
+          "relationalEvaluation": 366
+        }
+      }
+    }
+  ],
+  "remainingAfterBothTargets": {
+    "engineSubmissions": 2250,
+    "overFixedLimit": 2150,
+    "status": "measured after A and B; bounded C targets 1261 removals to 989, leaving 889 above the unchanged final limit"
+  },
+  "deliveryRules": [
+    "each implementation delivery must remove its chunk's full expected number of actual engine submissions against the preceding checkpoint; bounded R5-C requires at least 1261 and at most 989 total; final limit remains 100",
+    "TDD commits may be smaller, but do not stop the delivery phase at a micro-optimization",
+    "net targets include replacement inserts, deletes, setup, transactions, publication and cleanup",
+    "validate complete parity, CPU and memory; a count reduction does not permit a CPU or memory regression",
+    "no counter reset, query reclassification, omitted contexts, or findings truncation",
+    "rerank after each accepted chunk and subtract overlap already removed"
+  ],
+  "overlapNotes": [
+    "R5-A credits candidate DROP replacement down to 324 DELETE statements plus four final store drops",
+    "R5-B credits only the measured 324-to-174 candidate DELETE reduction; original candidate DROP savings remain with R5-A",
+    "R5-B relational lifecycle excludes the configuration PRAGMAs and 68 empty schema CTAS counted separately",
+    "no source-input, vocabulary, or universal-fact caching benefit is added without a measured net execution reduction",
+    "SQLite internal executions fall from 994 to 181 in R5-B; reported separately and excluded from engine savings"
+  ],
+  "witnesses": {
+    "other": [
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 0,
+        "executions": 1,
+        "sql": "PRAGMA foreign_keys=ON;"
+      },
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 1,
+        "executions": 1,
+        "sql": " PRAGMA journal_mode=WAL;"
+      },
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 2,
+        "executions": 1,
+        "sql": "\n        PRAGMA synchronous=NORMAL;"
+      }
+    ],
+    "candidateTableConstruction": [
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 70,
+        "executions": 1,
+        "sql": "CREATE TEMP TABLE \"r7\" AS WITH RECURSIVE cf(fid) AS MATERIALIZED (SELECT f.fid FROM file f JOIN fk k ON k.fid=f.fid WHERE k.lang=?1 AND f.fid IN (SELECT fid FROM request_file)),r7(fid,pre) AS NOT MATERIALIZED (SELECT k.fid,p.pre FROM cf CROSS JOIN file_kind_counts k ON k.fid=cf.fid CROSS JOIN nera_postings(k.postings) p WHERE k.code IN (?1)) SELECT CAST(fid AS INTEGER) AS fid,CAST(pre AS INTEGER) AS pre FROM r7"
+      },
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 72,
+        "executions": 1,
+        "sql": "CREATE TEMP TABLE \"r8\" AS WITH RECURSIVE cf(fid) AS MATERIALIZED (SELECT f.fid FROM file f JOIN fk k ON k.fid=f.fid WHERE k.lang=?1 AND f.fid IN (SELECT fid FROM request_file)),r8(fid,pre) AS NOT MATERIALIZED (SELECT k.fid,p.pre FROM cf CROSS JOIN file_kind_counts k ON k.fid=cf.fid CROSS JOIN nera_postings(k.postings) p WHERE k.code IN (?1,?24)) SELECT CAST(fid AS INTEGER) AS fid,CAST(pre AS INTEGER) AS pre FROM r8"
+      },
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 74,
+        "executions": 1,
+        "sql": "CREATE TEMP TABLE \"r11\" AS WITH RECURSIVE cf(fid) AS MATERIALIZED (SELECT f.fid FROM file f JOIN fk k ON k.fid=f.fid WHERE k.lang=?1 AND f.fid IN (SELECT fid FROM request_file)),r11(fid,pre) AS NOT MATERIALIZED (SELECT k.fid,p.pre FROM cf CROSS JOIN file_kind_counts k ON k.fid=cf.fid CROSS JOIN nera_postings(k.postings) p WHERE k.code IN (?2,?3,?4,?5,?6)) SELECT CAST(fid AS INTEGER) AS fid,CAST(pre AS INTEGER) AS pre FROM r11"
+      }
+    ],
+    "candidateIndexConstruction": [
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 71,
+        "executions": 1,
+        "sql": "CREATE INDEX temp.\"r7_keys\" ON \"r7\"(fid,pre)"
+      },
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 73,
+        "executions": 1,
+        "sql": "CREATE INDEX temp.\"r8_keys\" ON \"r8\"(fid,pre)"
+      },
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 75,
+        "executions": 1,
+        "sql": "CREATE INDEX temp.\"r11_keys\" ON \"r11\"(fid,pre)"
+      }
+    ],
+    "candidateTableRetirement": [
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 128,
+        "executions": 1,
+        "sql": "DROP TABLE temp.\"r58\";"
+      },
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 161,
+        "executions": 1,
+        "sql": "DROP TABLE temp.\"r489\";"
+      },
+      {
+        "session": "profile-9213-100.json",
+        "globalQueryId": 162,
+        "executions": 1,
+        "sql": "DROP TABLE temp.\"r4\";"
+      }
+    ],
+    "relationalObjectConstruction": [
+      {
+        "session": "profile-9213-101.json",
+        "globalQueryId": 1297,
+        "executions": 1,
+        "sql": "CREATE TABLE \"events\" (__path TEXT NOT NULL, __start INTEGER NOT NULL, __end INTEGER NOT NULL,\"line\",\"scope\",\"terminal\")"
+      },
+      {
+        "session": "profile-9213-102.json",
+        "globalQueryId": 1297,
+        "executions": 1,
+        "sql": "CREATE TABLE \"events\" (__path TEXT NOT NULL, __start INTEGER NOT NULL, __end INTEGER NOT NULL,\"line\",\"scope\",\"terminal\")"
+      },
+      {
+        "session": "profile-9213-103.json",
+        "globalQueryId": 1297,
+        "executions": 1,
+        "sql": "CREATE TABLE \"events\" (__path TEXT NOT NULL, __start INTEGER NOT NULL, __end INTEGER NOT NULL,\"line\",\"scope\",\"terminal\")"
+      }
+    ],
+    "relationalObjectRetirement": [
+      {
+        "session": "profile-9213-129.json",
+        "globalQueryId": 1328,
+        "executions": 1,
+        "sql": "DROP TABLE \"syntax_0\""
+      },
+      {
+        "session": "profile-9213-129.json",
+        "globalQueryId": 1329,
+        "executions": 1,
+        "sql": "DROP TABLE \"syntax_1\""
+      },
+      {
+        "session": "profile-9213-129.json",
+        "globalQueryId": 1330,
+        "executions": 1,
+        "sql": "DROP TABLE \"syntax_10\""
+      }
+    ],
+    "relationalAnalyze": [
+      {
+        "session": "profile-9213-129.json",
+        "globalQueryId": 1361,
+        "executions": 1,
+        "sql": "ANALYZE temp.\"nodes\""
+      },
+      {
+        "session": "profile-9213-129.json",
+        "globalQueryId": 1371,
+        "executions": 1,
+        "sql": "ANALYZE temp.\"edges\""
+      },
+      {
+        "session": "profile-9213-129.json",
+        "globalQueryId": 1376,
+        "executions": 1,
+        "sql": "ANALYZE temp.\"functions\""
+      }
+    ]
+  },
+  "remainingAfterCTarget": {
+    "engineSubmissions": 989,
+    "overFixedLimit": 889,
+    "status": "projected only; rank subsequent work after actual C delivery, without assigning invented savings"
+  },
+  "remainingAfterCDelivery": {
+    "engineSubmissions": 975,
+    "overFixedLimit": 875,
+    "status": "measured; rank subsequent work from the remaining complete inventory without assigning unproven savings"
+  }
+}

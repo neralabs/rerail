@@ -1,0 +1,87 @@
+{
+  "calibration_s": 0.000016167,
+  "compile_s": 0.008230958,
+  "distinct_leaf_texts": 38,
+  "expansions": 2323,
+  "files": 1,
+  "index_dispatch": false,
+  "keys": [
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_shadow.py\",178,\"sync_async_signature_mismatch\"]"
+  ],
+  "load_s": 0.001240708,
+  "nodes": 1471,
+  "op_classes": {
+    "all": 47,
+    "any": 16,
+    "bind": 5,
+    "call": 2,
+    "compare": 1,
+    "const": 2,
+    "kind": 18,
+    "layout": 1,
+    "named": 1,
+    "not": 9,
+    "nth": 1,
+    "regex": 6,
+    "rel.neighbor": 36,
+    "rel.range": 8,
+    "util.backref": 3,
+    "value": 3
+  },
+  "ops": 159,
+  "program_nodes_actual": 1471,
+  "program_nodes_scope": 1471,
+  "programs": 1,
+  "regexes": 6,
+  "reordered_all_nodes": 8,
+  "results": [
+    {
+      "counters": {
+        "bind_memo_hits": 0,
+        "dispatch": 60,
+        "evals": 8699,
+        "mask_builds": 2,
+        "mask_cells": 120,
+        "memo_cells": 39717,
+        "memo_hits": 94,
+        "regex_bytes": 3741,
+        "regex_calls": 7,
+        "regex_sym_hits": 58,
+        "scan_visits": 6183,
+        "util_depth_cut": 0
+      },
+      "findings": 1,
+      "mode": "memo",
+      "ns_per_eval": 20.835728244625916,
+      "ns_per_program_node_actual": 123.21549966009574,
+      "ns_per_program_node_scope": 123.21549966009574,
+      "ns_per_scope_node": 123.21549966009574,
+      "seconds_min": 0.00018125000000000085,
+      "top_files": [
+        [
+          "l2050_transaction/synthetic_shadow.py",
+          1471,
+          0.000175916
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-sync-async-signatures",
+          "transaction-connection",
+          8699
+        ]
+      ],
+      "wall_seconds_min": 0.000181666
+    }
+  ],
+  "rules": [
+    {
+      "id": "data-layer-sync-async-signatures",
+      "programs": 1,
+      "scope_files": 1,
+      "scope_nodes": 1471
+    }
+  ],
+  "syntax_error_files": [],
+  "trie": true
+}

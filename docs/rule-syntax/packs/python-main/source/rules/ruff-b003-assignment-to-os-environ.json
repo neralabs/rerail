@@ -1,0 +1,54 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b003-assignment-to-os-environ",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't assign a new value to os.environ; it doesn't change the real process environment, so update or clear the existing mapping instead.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "assignment-to-os-environ",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "single-target-assignment": {
+              "kind": "assignment",
+              "not": {
+                "any": [
+                  { "has": { "stopBy": "neighbor", "regex": "^:$" } },
+                  { "has": { "stopBy": "neighbor", "kind": "assignment" } },
+                  { "inside": { "stopBy": "neighbor", "kind": "assignment" } }
+                ]
+              }
+            },
+            "sole-target": {
+              "any": [
+                {
+                  "precedes": { "stopBy": "neighbor", "regex": "^=$" },
+                  "inside": { "stopBy": "neighbor", "matches": "single-target-assignment" }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      { "kind": "parenthesized_expression" },
+                      { "kind": "tuple_pattern", "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } } }
+                    ],
+                    "matches": "sole-target"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "attribute",
+            "pattern": "os.environ",
+            "matches": "sole-target"
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "B003", "message": "Update `os.environ` in place with `.clear()` and `.update()` instead of assigning a new mapping to it.", "suppress": { "noqa": { "codes": ["B003"] } } }
+    }
+  ]
+}

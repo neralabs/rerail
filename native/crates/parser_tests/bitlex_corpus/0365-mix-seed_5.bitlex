@@ -1,0 +1,16 @@
+# corpus: mix: seed 5
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = escaped((after_odd_run(nul) & ~alpha))
+mask m1 = aligned(quote, 7)
+mask m2 = after(fill(next(after(m1), 3), lf))
+mask m3 = (next(m0, 5) & m2)

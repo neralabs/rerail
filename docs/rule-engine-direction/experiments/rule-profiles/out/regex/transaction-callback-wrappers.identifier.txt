@@ -1,0 +1,7 @@
+Callable
+Transaction
+^(?:SyncDatabaseConnection|SyncVersionedDatabaseConnection)$
+^(?:fn)$
+^(?:getattr)$
+^(?:read|read_async|read_version|read_version_async|versioned_read|versioned_read_async|versioned_write|versioned_write_async|write|write_async|write_version|write_version_async)$
+^(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)$
