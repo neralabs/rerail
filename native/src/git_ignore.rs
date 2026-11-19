@@ -7,7 +7,7 @@
 //! The index is re-read whenever its file changes on disk, so `git add` of an ignored file brings it
 //! back; a `.gitignore` is read when the walk first enters its folder. A matcher says whether one
 //! opened now would read the rules it read (`sources_unchanged`), so hosts can share one per
-//! checkout; one handed on as a matcher opened now reads the index from disk at its next question.
+//! checkout: every holder reads the index again once its file changes.
 //!
 //! The repository opens through the engine's one opener (`git_access::opener`), so a repository
 //! Git refuses has no matcher. Opening runs on a thread of its own under the Git read time limit; questions
@@ -75,29 +75,25 @@ impl GitIgnore {
     /// root `.gitignore`, `info/exclude` and that excludes file are as this matcher read them.
     /// When it would, the stack leaves every folder it entered, so the next path below a folder
     /// reads that folder's `.gitignore` again; with `read_index_again`, for a host that hands the
-    /// matcher on as one opened now, the matcher takes the repository and the stack that open
-    /// makes, which read the index from disk.
+    /// matcher on as one opened now, the matcher takes the stack that open makes, which reads the
+    /// index from disk.
     pub fn sources_unchanged(&mut self, read_index_again: bool) -> bool {
         let now = Self::sources_now(&self.root, read_index_again);
         self.take_sources(now)
     }
 
     /// The repository around `root` as an open now finds it, through the engine's opener, with
-    /// the sources it reads the rules from and, when `fresh`, the index and the stack it reads;
-    /// `None` where that open fails or finds no worktree.
+    /// the sources it reads the rules from and, when `fresh`, the stack it makes; `None` where
+    /// that open fails or finds no worktree.
     fn sources_now(root: &Path, fresh: bool) -> Option<Found> {
         let (repository, worktree) = discover_worktree(root).ok()??;
         let sources = Sources::read(&repository, &worktree)?;
         let stack = if fresh {
-            Some(index_and_exclude_stack(&repository).ok()?)
+            Some(index_and_exclude_stack(&repository).ok()?.1)
         } else {
             None
         };
-        Some(Found {
-            repository,
-            sources,
-            stack,
-        })
+        Some(Found { sources, stack })
     }
 
     /// Whether `now`, from [`Self::sources_now`], holds the sources this matcher read; when it
@@ -110,14 +106,9 @@ impl GitIgnore {
             return false;
         }
         match found.stack {
-            // Handed on as a matcher opened now: the index read before and the stack made from it,
-            // which names each `.gitignore` the index marks skip-worktree by the blob it held then,
-            // give way to those the open read, with its repository.
-            Some((index, stack)) => {
-                self.index = index;
-                self.stack = stack;
-                self.repository = found.repository;
-            }
+            // Handed on as a matcher opened now: the stack, which names each `.gitignore` the index
+            // marks skip-worktree by the blob it held then, gives way to the one the open made.
+            Some(stack) => self.stack = stack,
             None => self.leave_folders(),
         }
         true
@@ -215,12 +206,11 @@ fn discover_worktree(
     Ok(Some((repository, worktree)))
 }
 
-/// What a check of a matcher's sources found as an open now finds it: the repository, the sources
-/// and, for a matcher handed on as one opened now, the index and the stack that open reads.
+/// What a check of a matcher's sources found as an open now finds it: the sources and, for a
+/// matcher handed on as one opened now, the stack that open makes.
 struct Found {
-    repository: gix::Repository,
     sources: Sources,
-    stack: Option<(IndexFile, gix::worktree::Stack)>,
+    stack: Option<gix::worktree::Stack>,
 }
 
 /// What a matcher reads Git's ignore rules from, besides the `.gitignore` of each folder below
@@ -541,7 +531,7 @@ impl GitIgnoreMatcher {
     /// Whether a matcher opened now would follow the rules this one follows (the configuration
     /// Git reads, read again, and the files read whole as they were read); when it would, each
     /// folder's `.gitignore` is read again as the next path enters the folder, and, unless
-    /// `read_index_again` is false (for a holder that asks again), the index at the next question.
+    /// `read_index_again` is false (for a holder that asks again), the stack is made again.
     #[napi(catch_unwind)]
     pub fn sources_unchanged(&self, read_index_again: Option<bool>) -> Result<bool> {
         let root = self.read(|inner| Ok(inner.root.clone()))?;

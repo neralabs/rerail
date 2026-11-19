@@ -4,8 +4,9 @@
  * audited held one index per worktree per session. A router that asks gets the shared matcher while the matcher says a
  * matcher opened now would read the rules it read (`sourcesUnchanged`: the engine reads the configuration again as
  * Git does, includes and conditions among it, and stamps the files it read whole), and a fresh one otherwise, which the
- * routers that ask after it share. A router that did not hold the shared matcher gets it with the Git index read again
- * at its next question, as a matcher it opened would read it. A router keeps the matcher it was given until it asks
+ * routers that ask after it share. Every holder reads the Git index again once its file changes, as a matcher opened
+ * then would read it; a router that did not hold the shared matcher gets it with its exclude stack made again, as a
+ * matcher it opened would make it. A router keeps the matcher it was given until it asks
  * again, as a lane of its opens where a lane of its own opened its own matcher. A router that asks under another owner
  * of Git reads than the one that opened the shared matcher (Git answered at last) gets one that owner opens, as a
  * router's own open did.
@@ -53,8 +54,8 @@ export class GitIgnoreMatchers {
 
   /**
    * `root`'s current matcher while `opener` opened it and it reads the rules a matcher opened now would. Handed to a user
-   * that does not hold it yet, it reads the Git index again at its next question, as a matcher that user opened would
-   * read it; a user that asks again keeps the index it reads by, as it kept its own matcher's.
+   * that does not hold it yet, it makes its exclude stack again, as a matcher that user opened would make it; a user
+   * that asks again keeps the stack it reads by, as it kept its own matcher's.
    */
   #unchangedCurrent(root: string, user: object, opener: GitIgnoreOpener): Shared | undefined {
     const current = this.#current.get(root);
