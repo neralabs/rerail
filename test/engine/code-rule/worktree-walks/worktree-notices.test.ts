@@ -166,6 +166,18 @@ describe("WorktreeNotices", () => {
     expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, true]);
   });
 
+  it("waits `REWATCH_MS` after a watch ended when its folder could not be read as the watch began", () => {
+    const watch = new ScriptedWatch();
+    const folders = new Map<string, string>();
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "win32", now: () => 0, folderAt: root => folders.get(root) ?? "" });
+    // No identity was read as the watch began (a link, a path it could not read): nothing tells another folder from it.
+    read(subject, "/w");
+    watch.notice("/w", { ended: true });
+    subject.collect();
+    folders.set("/w", "1:11:7");
+    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
+  });
+
   it("tells one folder from another, and a path with no folder", () => {
     const root = mkdtempSync(join(tmpdir(), "rerail-folder-at-"));
     try {
