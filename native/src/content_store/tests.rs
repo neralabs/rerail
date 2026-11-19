@@ -22,7 +22,7 @@ fn temporary_database(label: &str) -> TemporaryDatabase {
 
 /// A store on a fresh temporary database. Bind the path to a name (`_path`, never `_`): dropping
 /// it removes the database.
-fn store(label: &str) -> (TemporaryDatabase, ContentStore) {
+pub(super) fn store(label: &str) -> (TemporaryDatabase, ContentStore) {
     let path = temporary_database(label);
     let store = ContentStore::open(&path).unwrap();
     (path, store)
@@ -60,7 +60,7 @@ fn a_test_store_leaves_no_files_behind() {
     assert!(!folder.exists(), "left behind: {}", folder.display());
 }
 
-fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
+pub(super) fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
     CandidateCatalogIdentity::new(
         HashKey::sha256(label.as_bytes()),
         HashKey::sha256(b"grammar-set"),
@@ -71,7 +71,7 @@ fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
 }
 
 /// Publishes `id` as a complete empty Git tree, so a snapshot may use it as its root.
-fn published_tree(store: &ContentStore, id: HashKey) -> HashKey {
+pub(super) fn published_tree(store: &ContentStore, id: HashKey) -> HashKey {
     store
         .put_git_trees_bulk(&[GitTree {
             id,
@@ -242,6 +242,75 @@ fn hash_lookup_index_contains_only_algorithm_and_first_lane() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     assert_eq!(columns, vec!["algorithm_id", "lane0"]);
+}
+
+#[test]
+fn bulk_sources_preserve_hashes_bounds_duplicates_and_typed_query_batches() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_path, store) = store("bulk-sources");
+    let requests = (0..257)
+        .map(|i| {
+            let source = format!("source {i} π").into_bytes();
+            let id = store.put_source(&source, &[]).unwrap();
+            (id, HashKey::sha256(&source))
+        })
+        .collect::<Vec<_>>();
+    let executed = AtomicUsize::new(0);
+    unsafe extern "C" fn trace(
+        _: u32,
+        state: *mut std::ffi::c_void,
+        _: *mut std::ffi::c_void,
+        _: *mut std::ffi::c_void,
+    ) -> i32 {
+        // SAFETY: the counter remains alive until the callback is removed.
+        unsafe { &*state.cast::<AtomicUsize>() }.fetch_add(1, Ordering::Relaxed);
+        0
+    }
+    let connection = store.connection.lock().unwrap();
+    // SAFETY: the connection and counter live through the synchronous batch reads below.
+    unsafe {
+        rusqlite::ffi::sqlite3_trace_v2(
+            connection.handle(),
+            rusqlite::ffi::SQLITE_TRACE_STMT,
+            Some(trace),
+            (&executed as *const AtomicUsize).cast_mut().cast(),
+        );
+    }
+    drop(connection);
+    let mut duplicated = requests.clone();
+    duplicated.push(requests[0]);
+    let sources = store
+        .get_sources_by_hash_bulk(&duplicated, 100_000)
+        .unwrap();
+    assert_eq!(sources.len(), 257);
+    assert_eq!(executed.load(Ordering::Relaxed), 3);
+    for (id, hash) in &requests {
+        assert_eq!(HashKey::sha256(&sources[id]), *hash);
+    }
+    let warm = store
+        .get_sources_by_hash_bulk(&duplicated, 100_000)
+        .unwrap();
+    assert_eq!(warm, sources);
+    assert_eq!(
+        executed.load(Ordering::Relaxed),
+        3,
+        "warm immutable source frames need no SQL"
+    );
+    assert!(store.get_sources_by_hash_bulk(&requests, 1).is_err());
+    assert!(
+        store
+            .get_sources_by_hash_bulk(
+                &[requests[0], (requests[0].0, HashKey::sha256(b"wrong"))],
+                100_000
+            )
+            .is_err()
+    );
+    assert!(store.get_sources_by_hash_bulk(&[], 0).unwrap().is_empty());
+    let connection = store.connection.lock().unwrap();
+    // SAFETY: remove the callback before the counter goes out of scope.
+    unsafe {
+        rusqlite::ffi::sqlite3_trace_v2(connection.handle(), 0, None, std::ptr::null_mut());
+    }
 }
 
 #[test]
@@ -446,8 +515,19 @@ fn source_and_tape_objects_deduplicate_and_round_trip() {
     {
         let cache = store.decompressed_cache.lock().unwrap();
         assert!(cache.contains(CacheKey::Source(HashKey::sha256(b"print('hello')\n"))));
-        assert!(cache.contains(CacheKey::Tape(HashKey::sha256(b"compact tape"))));
+        assert!(cache.contains(CacheKey::Tape(HashKey::tape_identity(
+            HashKey::sha256(b"print('hello')\n"),
+            b"compact tape"
+        ))));
     }
+    // Another source with the same tape bytes (a named-only tape holds no text) has its own tape.
+    let other = store.put_source(b"print('world')\n", &[]).unwrap();
+    let other_tape = store.put_tape(other, 1, 45, 1, b"compact tape").unwrap();
+    assert_ne!(other_tape, tape);
+    assert_eq!(
+        store.tape_by_source(other, 1, 45, 1).unwrap(),
+        Some(other_tape)
+    );
     {
         let connection = store.connection.lock().unwrap();
         let source_frame: (i64, Vec<u8>) = connection
@@ -926,31 +1006,29 @@ fn context_results_cascade_when_sources_and_clauses_are_deleted() {
                 },
             )
             .unwrap();
-        // In a turn of the writer line, as every store write.
-        store
-            .immediate_transaction_once(|connection| {
-                if delete_source {
-                    connection.execute(
-                        "DELETE FROM workspace_overlay WHERE workspace_id=?1",
-                        [workspace.0],
-                    )?;
-                    connection.execute(
-                        "DELETE FROM source_objects WHERE source_id=?1",
-                        [stored.source.0],
-                    )?;
-                } else {
-                    connection.execute(
-                        "DELETE FROM candidate_checks WHERE check_id=(SELECT check_id FROM context_check_results LIMIT 1)",
-                        [],
-                    )?;
-                }
-                Ok(())
-            })
-            .unwrap();
-        let count: i64 = store
-            .connection
-            .lock()
-            .unwrap()
+        let connection = store.connection.lock().unwrap();
+        if delete_source {
+            connection
+                .execute(
+                    "DELETE FROM workspace_overlay WHERE workspace_id=?1",
+                    [workspace.0],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM source_objects WHERE source_id=?1",
+                    [stored.source.0],
+                )
+                .unwrap();
+        } else {
+            connection
+                .execute(
+                    "DELETE FROM candidate_checks WHERE check_id=(SELECT check_id FROM context_check_results LIMIT 1)",
+                    [],
+                )
+                .unwrap();
+        }
+        let count: i64 = connection
             .query_row("SELECT count(*) FROM context_check_results", [], |row| {
                 row.get(0)
             })
@@ -1144,13 +1222,10 @@ fn cancelled_overlay_publication_rolls_back_before_commit() {
     assert_eq!(stored_source_count, 1);
 }
 
-/// A writer of another process that holds the store before the object pass, and again before the
-/// relationship pass, delays an overlay publication at each, which reports what it waited; it does
-/// not fail it. Each holder lets go at the publication's first busy attempt on it.
+/// A writer held for 3 s, longer than many SQLite busy timeouts, before the object pass and again
+/// before the relationship pass delays an overlay publication at each; it does not fail it.
 #[test]
 fn overlay_publication_reports_busy_retries() {
-    let _state = BusyTestState;
-    BUSY_TIMEOUT_OVERRIDE.set(Some(Duration::from_millis(10)));
     let (path, store) = store("overlay-retries");
     let snapshot = store
         .put_snapshot(
@@ -1163,23 +1238,21 @@ fn overlay_publication_reports_busy_retries() {
     let workspace = store
         .open_workspace("/retry", "repo", "owner", snapshot, 1, 100)
         .unwrap();
-    // A holder before the object pass, and another before the relationship pass; each lets go
-    // at the first busy attempt on it.
-    let held = std::rc::Rc::new(std::cell::RefCell::new(Some(hold_writer(&path))));
-    let holds = std::rc::Rc::new(std::cell::Cell::new(1));
-    let released = std::rc::Rc::clone(&held);
-    BUSY_ATTEMPT_HOOK.set(Some(Box::new(move |_| {
-        drop(released.borrow_mut().take());
-        Duration::ZERO
-    })));
-    let (taken, counted, copy) = (
-        std::rc::Rc::clone(&held),
-        std::rc::Rc::clone(&holds),
-        path.to_path_buf(),
-    );
+    // Each hold lasts 3 s from when it is taken: before the object pass, and again before the
+    // relationship pass.
+    let hold = |path: &std::path::Path| {
+        let blocker = Connection::open(path).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(3));
+            blocker.execute_batch("COMMIT").unwrap();
+        })
+    };
+    let (holders, held) = std::sync::mpsc::channel();
+    holders.send(hold(&path)).unwrap();
+    let copy = path.to_path_buf();
     BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
-        *taken.borrow_mut() = Some(hold_writer(&copy));
-        counted.set(counted.get() + 1);
+        holders.send(hold(&copy)).unwrap();
     })));
     let result = store
         .publish_overlay_files(
@@ -1197,11 +1270,11 @@ fn overlay_publication_reports_busy_retries() {
             }],
         )
         .unwrap();
-    assert_eq!(holds.get(), 2, "both passes found the store held");
-    assert!(
-        held.borrow().is_none(),
-        "each pass waited for its holder to let go"
-    );
+    let holders = held.try_iter().collect::<Vec<_>>();
+    assert_eq!(holders.len(), 2, "both passes found the store held");
+    for holder in holders {
+        holder.join().unwrap();
+    }
     assert!(
         result.retries >= 2,
         "each held pass retries: {}",
@@ -1606,20 +1679,21 @@ fn corrupt_zstandard_frames_fail_closed() {
     let (_path, store) = store("corrupt-frames");
     let source = store.put_source(b"source", &[]).unwrap();
     let tape = store.put_tape(source, 1, 1, 1, b"tape").unwrap();
-    // In a turn of the writer line, as every store write.
-    store
-        .immediate_transaction_once(|connection| {
-            connection.execute(
+    {
+        let connection = store.connection.lock().unwrap();
+        connection
+            .execute(
                 "UPDATE source_objects SET frame=x'000102' WHERE source_id=?1",
                 [source.0],
-            )?;
-            connection.execute(
+            )
+            .unwrap();
+        connection
+            .execute(
                 "UPDATE tape_objects SET frame=x'000102' WHERE tape_id=?1",
                 [tape.0],
-            )?;
-            Ok(())
-        })
-        .unwrap();
+            )
+            .unwrap();
+    }
     assert!(store.get_source(source).is_err());
     assert!(store.get_tape(tape).is_err());
 }
@@ -1712,8 +1786,6 @@ fn multiple_processes_converge_while_publishing() {
     assert_eq!(source_count, 1);
 }
 
-/// Two stores on one file write the same bytes at once and get one source. They share the file's
-/// writer line, so neither meets the other's write lock and neither retries.
 #[test]
 fn concurrent_connections_converge_on_one_source() {
     let path = temporary_database("concurrent");
@@ -1722,7 +1794,14 @@ fn concurrent_connections_converge_on_one_source() {
     let mut handles = Vec::new();
     for store in [first, second] {
         handles.push(thread::spawn(move || {
-            store.put_source(b"same bytes", &[]).unwrap()
+            for _ in 0..25 {
+                match store.put_source(b"same bytes", &[]) {
+                    Ok(id) => return id,
+                    Err(StoreError::Busy) => thread::sleep(Duration::from_millis(2)),
+                    Err(error) => panic!("unexpected store error: {error}"),
+                }
+            }
+            panic!("writer stayed busy")
         }));
     }
     assert_eq!(
@@ -2095,7 +2174,6 @@ fn vm_steps(store: &ContentStore, work: impl FnOnce()) -> u64 {
         .connection
         .lock()
         .unwrap()
-        .instrument()
         .progress_handler(
             1,
             Some(move || {
@@ -2109,7 +2187,6 @@ fn vm_steps(store: &ContentStore, work: impl FnOnce()) -> u64 {
         .connection
         .lock()
         .unwrap()
-        .instrument()
         .progress_handler(1, None::<fn() -> bool>)
         .unwrap();
     steps.load(std::sync::atomic::Ordering::Relaxed)
@@ -2162,25 +2239,18 @@ fn tree_publication_work_follows_its_entries_not_the_stores_path_names() {
     );
 }
 
-/// A writer of another process that holds the store longer than SQLite's per-attempt busy
-/// timeout delays a snapshot publication; it does not fail it. It lets go at the publication's
-/// second busy attempt.
+/// A writer that holds the store longer than SQLite's per-attempt busy timeout delays a snapshot
+/// publication; it does not fail it.
 #[test]
 fn snapshot_publication_waits_out_a_writer_held_longer_than_one_busy_timeout() {
-    let _state = BusyTestState;
-    BUSY_TIMEOUT_OVERRIDE.set(Some(Duration::from_millis(10)));
     let (path, store) = store("held-writer");
     let tree = three_hundred_entry_tree(60);
-    let mut blocker = Some(hold_writer(&path));
-    let attempts = std::rc::Rc::new(std::cell::Cell::new(0));
-    let counted = std::rc::Rc::clone(&attempts);
-    BUSY_ATTEMPT_HOOK.set(Some(Box::new(move |_| {
-        counted.set(counted.get() + 1);
-        if counted.get() == 2 {
-            drop(blocker.take());
-        }
-        Duration::ZERO
-    })));
+    let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let holder = thread::spawn(move || {
+        thread::sleep(Duration::from_secs(3));
+        blocker.execute_batch("COMMIT").unwrap();
+    });
     let published = store.publish_snapshot(
         std::slice::from_ref(&tree),
         tree.id,
@@ -2195,14 +2265,10 @@ fn snapshot_publication_waits_out_a_writer_held_longer_than_one_busy_timeout() {
             lease_seconds: 120,
         },
     );
+    holder.join().unwrap();
     assert!(
         published.is_ok(),
-        "a writer held past one busy timeout failed the publication: {published:?}"
-    );
-    assert_eq!(
-        attempts.get(),
-        2,
-        "the publication waited past one busy timeout"
+        "a writer held for 3 s failed the publication: {published:?}"
     );
 }
 

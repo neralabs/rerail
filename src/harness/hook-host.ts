@@ -17,11 +17,11 @@ import {
   daemonLeftEventUntaken,
   daemonNotRunningMessage,
   engineEndpointAt,
-  HOOK_DAEMON_WAIT_MS,
   runningDaemonEngineEndpoint,
   type DaemonState,
   type HookDaemon,
 } from "../runtime/daemon-control.js";
+import { HOOK_DAEMON_WAIT_MS } from "../runtime/daemon/daemon-waits.js";
 import { recordHookFailure } from "./hook-failures.js";
 import {
   bindSteerReceipt,
@@ -109,8 +109,9 @@ export interface HookOptions {
 
 /**
  * `options` with the daemon deadline `HOOK_DAEMON_WAIT_MS` from now. A host's hook takes it as the event arrives, so the
- * start check's read of the daemon (`hookRerailStarted`, up to 2 s) counts toward the one wait: a busy daemon held a
- * hook 2 s for the start check and then 12 s more for the endpoint lookup.
+ * start check's read of the daemon (`hookRerailStarted`: up to 2 s, and on Windows up to 30 s more while every instance
+ * of a busy engine pipe is taken) counts toward the one wait: a busy daemon held a hook 2 s for the start check and then
+ * 12 s more for the endpoint lookup.
  */
 export function withDaemonDeadline(options: HookOptions): HookOptions {
   const arrivedAt = Date.now();

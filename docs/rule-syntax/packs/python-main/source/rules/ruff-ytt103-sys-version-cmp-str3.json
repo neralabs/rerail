@@ -1,0 +1,263 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ytt103-sys-version-cmp-str3",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Compare sys.version_info to a tuple instead of comparing sys.version to a string; string order misjudges a two-digit minor version.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "sys-version-cmp-str3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "other-string": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "kind": "concatenated_string"
+                    }
+                  ],
+                  "value": {
+                    "type": "str"
+                  },
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "value": {
+                            "type": "str",
+                            "regex": "^(?:[\\s\\S]{2,}|[^\\x00-\\x7f]|)$"
+                          }
+                        },
+                        {
+                          "kind": "string",
+                          "regex": "(?:^|[^\\\\])(?:\\\\\\\\)*\\r\\n"
+                        },
+                        {
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "string",
+                            "regex": "(?:^|[^\\\\])(?:\\\\\\\\)*\\r\\n"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "string_start",
+                          "regex": "[fFtT]"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "other-string"
+                  }
+                }
+              ]
+            },
+            "sys-version": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "sys.version"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sys-version"
+                  }
+                }
+              ]
+            },
+            "ordered-string-compare": {
+              "kind": "comparison_operator",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^(?:<|<=|>|>=)$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "nthChild": {
+                      "position": 2,
+                      "ofRule": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "matches": "other-string"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 3,
+                        "ofRule": {
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "kind": "line_continuation"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "left-operand": {
+              "any": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "ordered-string-compare"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "left-operand"
+                  }
+                }
+              ]
+            },
+            "target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "all": [
+                {
+                  "resolves": {
+                    "import": [
+                      "sys.version"
+                    ]
+                  }
+                },
+                {
+                  "matches": "left-operand"
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$C"
+              },
+              {
+                "matches": "in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "YTT103",
+        "message": "Compare `sys.version_info` to a tuple such as `sys.version_info >= (3, 9)` instead of ordering `sys.version` against a string; string order misjudges 3.10 as older than 3.9.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "YTT103"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

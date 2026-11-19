@@ -41,6 +41,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** `sessions_get`'s answer for a session whose coding agent declined no steer. */
+const NO_DECLINES = { violations: 0, notes: [] };
+
 /** A daemon with every resource a poll may read, each empty. */
 function emptyDaemon(url: URL): unknown {
   if (url.pathname === "/healthz") return { version: "1", pid: 1 };
@@ -51,7 +54,7 @@ function emptyDaemon(url: URL): unknown {
   if (url.pathname === "/api/rules/activity") return { since: 0, rules: {}, sessions: { started: 0, withViolations: 0 } };
   if (url.pathname === "/api/violations") return { violations: [], total: 0, nextCursor: null };
   if (url.pathname === "/api/sessions") return { sessions: [], total: 0, nextCursor: null };
-  if (url.pathname === "/api/sessions/s1") return { session };
+  if (url.pathname === "/api/sessions/s1") return { session, declined: NO_DECLINES };
   if (url.pathname === "/api/sessions/s1/events") return { events: [], nextAfter: 0, pageLimit: 500 };
   if (url.pathname === "/api/merge-assist") return { enabled: false, conflicts: [] };
   throw new Error(`unexpected ${url.pathname}`);
@@ -249,7 +252,7 @@ describe("the selected session's violations", () => {
 describe("a session's transcript", () => {
   /** A session of 1,010 events and 300 violations, the newest violation at the last event. */
   function sessionDaemon(url: URL): unknown {
-    if (url.pathname === "/api/sessions/s1") return { session: { ...session, eventCount: 1_010 } };
+    if (url.pathname === "/api/sessions/s1") return { session: { ...session, eventCount: 1_010 }, declined: NO_DECLINES };
     if (url.pathname === "/api/sessions/s1/events") {
       const before = url.searchParams.get("before"), after = Number(url.searchParams.get("after") ?? 0);
       const all = Array.from({ length: 1_010 }, (_, i) => event(i + 1));
@@ -311,7 +314,7 @@ describe("the selected session", () => {
     let eventCount = 5;
     answer = url => {
       if (url.pathname === "/api/sessions") return { sessions: [s0], total: 60, nextCursor: "c0" };
-      return url.pathname === "/api/sessions/s1" ? { session: { ...session, eventCount } } : emptyDaemon(url);
+      return url.pathname === "/api/sessions/s1" ? { session: { ...session, eventCount }, declined: NO_DECLINES } : emptyDaemon(url);
     };
     ui.selectedSession = "s1";
     await refresh();

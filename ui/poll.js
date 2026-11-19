@@ -13,7 +13,7 @@
  * sheet's, from `views/index.js`). Long lists are paged with a cursor: a poll refreshes their first page and keeps the
  * further pages the person loaded.
  */
-import { follow, get, send } from "./api.js";
+import { ACCESS_KEY, follow, get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { toStoredRules } from "./derive.js";
 import { historyRuleId } from "./history-model.js";
@@ -588,32 +588,52 @@ function dropSession(id) {
 export async function loadSession(id) {
   let detail = data.sessionDetail.get(id);
   if (detail === undefined) {
-    detail = { head: null, gaps: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
+    detail = { head: null, gaps: null, declined: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
     data.sessionDetail.set(id, detail);
   }
-  return sessionLoad(detail, async () => {
-    let body;
-    try {
-      ({ body } = await get(`/api/sessions/${encodeURIComponent(id)}`));
-    } catch (error) {
-      if (!detail.loaded || !/answered 404$/u.test(error.message)) throw error;
-      dropSession(id);
-      return true;
-    }
-    const was = detail.head, wasGaps = detail.gaps;
-    detail.head = body.session;
-    detail.gaps = body.gaps;
-    patchSessionRow(body.session);
-    const changed = was?.eventCount !== body.session.eventCount || was?.endedAt !== body.session.endedAt
-      || JSON.stringify(wasGaps) !== JSON.stringify(body.gaps);
-    const page = await eventsPage(id, detail.loaded ? `after=${detail.nextAfter}` : `before=${Number.MAX_SAFE_INTEGER}`);
-    if (!detail.loaded) detail.earlier = page.events.length === EVENTS_PAGE;
-    detail.loaded = true;
-    detail.nextAfter = page.nextAfter;
-    if (page.events.length === 0) return changed;
-    detail.events = detail.events.concat(page.events);
-    return true;
-  });
+  return sessionLoad(detail, () => refreshSession(id, detail));
+}
+
+/** One load of a session: its head, then its newer events. Whether anything shown changed. */
+async function refreshSession(id, detail) {
+  const body = await sessionHead(id, detail);
+  // A session the daemon no longer has is dropped, which changes what the page shows.
+  if (body === null) return true;
+  const changed = applySessionHead(detail, body);
+  const added = await loadNewerEvents(id, detail);
+  return added || changed;
+}
+
+/** The session's head from the daemon; null when a session already loaded is gone (it is dropped). */
+async function sessionHead(id, detail) {
+  try {
+    return (await get(`/api/sessions/${encodeURIComponent(id)}`)).body;
+  } catch (error) {
+    if (!detail.loaded || !/answered 404$/u.test(error.message)) throw error;
+    dropSession(id);
+    return null;
+  }
+}
+
+/** Stores the head, its gaps and its declined steers, patches its list row, and says whether any of them changed. */
+function applySessionHead(detail, body) {
+  const before = [detail.head?.eventCount, detail.head?.endedAt, detail.gaps, detail.declined];
+  detail.head = body.session;
+  detail.gaps = body.gaps;
+  detail.declined = body.declined;
+  patchSessionRow({ ...body.session, declinedViolations: body.declined.violations });
+  return JSON.stringify(before) !== JSON.stringify([body.session.eventCount, body.session.endedAt, body.gaps, body.declined]);
+}
+
+/** The newest transcript page on a first load, else the events after the last loaded one; whether any arrived. */
+async function loadNewerEvents(id, detail) {
+  const page = await eventsPage(id, detail.loaded ? `after=${detail.nextAfter}` : `before=${Number.MAX_SAFE_INTEGER}`);
+  if (!detail.loaded) detail.earlier = page.events.length === EVENTS_PAGE;
+  detail.loaded = true;
+  detail.nextAfter = page.nextAfter;
+  if (page.events.length === 0) return false;
+  detail.events = detail.events.concat(page.events);
+  return true;
 }
 
 /**
@@ -761,8 +781,10 @@ async function poll() {
   const since = sinceFor();
   const started = generation;
   try {
-    const shared = [loadRepositories(), loadHealth()];
-    const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
+    // Every read is under the one `Promise.all` from the start: a context read that fails while the shared reads are
+    // still out must not leave their failures unhandled.
+    const scoped = ui.scope === null ? [] : scopedJobs(since).then(jobs => Promise.all(jobs));
+    const results = (await Promise.all([loadRepositories(), loadHealth(), scoped])).flat();
     if (started === generation) pollAnswered(results, since);
   } catch (error) {
     if (started === generation) pollFailed(error);
@@ -791,8 +813,11 @@ function pollFailed(error) {
   data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
   data.disconnected = !data.missing && !data.accessRequired;
   data.loaded = data.missing;
-  backoff = data.missing ? INTERVAL : failedPause();
-  if (!data.missing) console.warn("poll failed", error);
+  // Only a daemon that did not answer is asked less often. One that refused this browser is asked at the usual pace,
+  // so the page that asks to connect it continues soon after `rerail manage` does.
+  backoff = data.disconnected ? failedPause() : INTERVAL;
+  // A refused browser or an unknown repository is an answer the page shows; only a daemon that did not answer warns.
+  if (data.disconnected) console.warn("poll failed", error);
   onChange(data.missing);
 }
 
@@ -1044,6 +1069,8 @@ export function startPolling(listener) {
   atPace = false;
   followChanges();
   document.addEventListener("visibilitychange", () => { if (hidden()) endChanges(); else followChanges(); });
+  // Another tab of this origin stored the capability (the link `rerail manage` opens): read with it now.
+  window.addEventListener("storage", event => { if (event.key === ACCESS_KEY && !hidden()) refreshNow(); });
 }
 
 /** A user action that changes what to fetch (view, range, selected session) wants data now. */

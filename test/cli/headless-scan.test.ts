@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -48,7 +48,7 @@ function checkout(): string {
   git(root, "init", "--quiet", "--initial-branch=main");
   writeRule(root, "needle.json", needle("needle", "NEEDLE"));
   writeFileSync(join(root, "a.py"), "a = 1\n  x = NEEDLE\n");
-  git(root, "add", ".");
+  git(root, "add", "a.py", ".rerail/rules/needle.json");
   git(root, "commit", "--quiet", "-m", "seed");
   return root;
 }
@@ -95,7 +95,7 @@ describe("headless rerail scan", () => {
     // The change under review weakens the rule and adds one of its own; neither may judge it.
     writeRule(root, "needle.json", needle("needle", "NOTHING_MATCHES"));
     writeRule(root, "extra.json", needle("extra", "x"));
-    git(root, "add", ".");
+    git(root, "add", "a.py", ".rerail/rules/needle.json");
     git(root, "commit", "--quiet", "-m", "weaken");
     const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
     roots.push(home);
@@ -162,7 +162,7 @@ describe("headless rerail scan", () => {
     const root = checkout();
     writeRule(root, "a-broken.json", "{ not json");
     writeRule(root, "z-again.json", needle("needle", "OTHER"));
-    git(root, "add", ".");
+    git(root, "add", ".rerail/rules/a-broken.json", ".rerail/rules/z-again.json");
     git(root, "commit", "--quiet", "-m", "more rules");
     const report = await scan(root, { rulesRef: "HEAD" });
     expect(report.rules.map(rule => rule.ruleId)).toEqual(["needle"]);
@@ -204,7 +204,7 @@ describe("headless rerail scan", () => {
     const root = checkout();
     git(root, "checkout", "--quiet", "-b", "feature");
     writeFileSync(join(root, "b.py"), "NEEDLE\n");
-    git(root, "add", ".");
+    git(root, "add", "b.py");
     git(root, "commit", "--quiet", "-m", "b");
     writeFileSync(join(root, "c.py"), "NEEDLE\n");
     const diff = await scan(root, { scope: "git-diff", base: "main" });
@@ -269,6 +269,49 @@ describe("headless rerail scan", () => {
     expect({ status: report.status, rulesSource: report.rulesSource, failures: report.failures }).toEqual({ status: "completed", rulesSource: { kind: "home" }, failures: [] });
     expect(report.violations).toHaveLength(1);
   });
+
+  it("uses the Rerail home's configuration in a copy of a started checkout that no session has recorded", async () => {
+    const root = checkout();
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const databasePath = join(home, "rerail.sqlite");
+    setUpTestRepository(root, {}, databasePath);
+    // A copy with its `.git` keeps the clone id, so the home reads it as started, but Git's registry does not list it
+    // and no session recorded it. The scan records it, as a session started in it would.
+    const copy = `${root}-copy`;
+    roots.push(copy);
+    cpSync(root, copy, { recursive: true });
+    const report = await scan(copy, { databasePath });
+    expect({ status: report.status, rulesSource: report.rulesSource, failures: report.failures }).toEqual({ status: "completed", rulesSource: { kind: "home" }, failures: [] });
+    expect(report.violations).toHaveLength(1);
+  });
+
+  it.each(["worktree", "home"] as const)(
+    "names the submodule, not the checkout around it, when the only paths asked for are in a submodule Rerail has no record of (%s configuration)",
+    async configuration => {
+      const root = checkout();
+      const submodule = checkout();
+      git(root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", submodule, "sub");
+      git(root, "commit", "--quiet", "-m", "Add the submodule");
+      let options: Partial<Parameters<typeof runHeadlessScan>[0]> = { paths: ["sub/a.py"] };
+      if (configuration === "home") {
+        const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+        roots.push(home);
+        const databasePath = join(home, "rerail.sqlite");
+        setUpTestRepository(root, {}, databasePath);
+        options = { ...options, databasePath };
+      }
+      const report = await scan(root, options);
+      // Checkout paths are matched by their ends: on Windows they may come back with forward slashes or short (8.3) names.
+      expect({ status: report.status, rulesSource: report.rulesSource, rules: report.rules, failures: report.failures }).toEqual({
+        status: "failed",
+        rulesSource: null,
+        rules: [],
+        failures: [{ code: "checkout-not-audited", message: expect.stringMatching(/[\\/]sub was not audited, so no rules ran: Rerail has no record of .+[\\/]sub$/u), path: null, ruleId: null }],
+      });
+      expect(report.summary).toEqual({ violations: 0, failures: 1 });
+    },
+  );
 
   it("prints JSON and exits 3 on violations only with --fail-on-violations", async () => {
     const root = checkout();

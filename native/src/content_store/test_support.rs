@@ -2,7 +2,7 @@
 //! folder.
 
 use super::STORE_FILE_NAME;
-use super::connection::ThreadConnection;
+use super::connection::release_all_at;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -95,26 +95,6 @@ impl AsRef<Path> for TemporaryDatabase {
 
 impl Drop for TemporaryDatabase {
     fn drop(&mut self) {
-        ThreadConnection {
-            database_path: self.path.clone(),
-            line: super::writer_line::WriterLine::of(&self.path),
-        }
-        .release_all();
-    }
-}
-
-impl super::ContentStore {
-    /// Holds a write transaction on this thread until `release` receives, saying so on `held` once
-    /// it holds the store: a write of this process another test write must wait behind.
-    pub(crate) fn hold_write(
-        &self,
-        held: &std::sync::mpsc::Sender<()>,
-        release: &std::sync::mpsc::Receiver<()>,
-    ) -> super::StoreResult<()> {
-        self.immediate_transaction(|_| {
-            held.send(()).unwrap();
-            release.recv().unwrap();
-            Ok(())
-        })
+        release_all_at(&self.path);
     }
 }

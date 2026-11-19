@@ -963,9 +963,9 @@ Each generated parser has 27 more states (5,434 for TypeScript, 5,684 for TSX).
 With Patches 8 to 14, upstream's corpus parses as before (122 of 123 with seven added cases, one per patch; the one
 failure patch 1's `foo++!`). Under either dialect, tree-sitter-javascript 0.23.1's corpus builds the same trees as
 before but for its `Objects` case (Patch 9). Over the 22,173 TypeScript and TSX files above, no tree changes: none of
-them holds these constructs. tree-sitter-javascript's Patch 5 (`using` declarations in a `for` head) has no
-counterpart here: this grammar has no `using_declaration`, and reads `using r = f()` as an `assignment_expression`
-with a leading `using`, so `for (await using r = f(); ;) {}` already parsed without an error.
+them holds these constructs. tree-sitter-javascript's Patch 5 (`using` declarations in a `for` head) had no
+counterpart here: this grammar had no `using_declaration`, and read `using r = f()` as an `assignment_expression` with a
+leading `using`, so `for (await using r = f(); ;) {}` already parsed without an error. Patch 30 adds the declaration.
 
 ## Patch 15: an import type is a primary type
 
@@ -2080,3 +2080,168 @@ TypeScript, 406 for TSX) and the same states (6,019 and 6,306). Upstream's corpu
 and `.d.ts` files (the 23,562 of Rerail's npm dependencies, as `package-lock.json` pins them, and the 634 in Rerail's
 repository) and 64 `.tsx` files, the 3 test files above parse and no other tree changes; the 50 dependency files that
 fail to parse fail as before.
+
+## Patch 30: `using` is a name where no `using` declaration parses
+
+Upstream issue: tree-sitter/tree-sitter-typescript#380 (open: "`using` as a plain identifier (call argument, assignment
+RHS, array pattern) produces ERROR"). Present at tag `v0.23.2` and at upstream HEAD. The same change as Patch 18 in
+`grammars/tree-sitter-javascript/PATCHES.md`, with tree-sitter-javascript 0.25.0's `using_declaration`, which 0.23.1
+lacks.
+
+Why: `using` is a contextual keyword. It starts a `using` declaration only before a binding name on the same line
+(ECMAScript's `using [no LineTerminator here] BindingList[~Pattern]`), and is a name everywhere else, as TypeScript
+reads it. Upstream stands in for the declaration with an `optional('using')` before an `assignment_expression`, and
+`using` is not in `_reserved_identifier`, so wherever an expression may start the lexer returns the keyword: `f(using)`,
+`using.length`, `return using`, `x = using`, `1 + using`, `(using)`, `using = [2]` and a parameter named `using` are
+parse errors. Any rule that reads the syntax tree then skips the file (`source-incomplete`): Rerail's own
+`src/cli/rule-draft.ts` (`const using = …; using.filter(…)`) was one. A `using x = f()` declares nothing, so the scope
+model read `x` as a write to an undeclared global; `using x: T = f()` and `for (using x of xs)` were parse errors.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -76,6 +76,8 @@ module.exports = function defineGrammar(dialect) {
+       [$.new_expression, $.primary_expression],
+       [$.meta_property, $.primary_expression],
+       [$.construct_signature, $._property_name],
++      // A `[` after `using` is a subscript (`using [0] = 1`): no `using` declaration binds an array pattern.
++      [$.primary_expression, $.using_declaration],
+     ]),
+ 
+     conflicts: ($, previous) => previous.concat([
+@@ -266,7 +268,6 @@ module.exports = function defineGrammar(dialect) {
+       )),
+ 
+       assignment_expression: $ => prec.right('assign', seq(
+-        optional('using'),
+         field('left', choice($.parenthesized_expression, $._lhs_expression)),
+         '=',
+         field('right', $.expression),
+@@ -535,6 +536,79 @@ module.exports = function defineGrammar(dialect) {
+         choice($.primary_expression, $.new_expression), '!',
+       )),
+ 
++      // tree-sitter-javascript's using_declaration, from 0.25.0: `using r = f()`, `await using r = f()`.
++      // `using` is a name everywhere else (see _reserved_identifier).
++      using_declaration: $ => seq(
++        field('kind', choice(
++          'using',
++          seq('await', 'using'),
++        )),
++        commaSep1($.variable_declarator),
++        $._semicolon,
++      ),
++
++      // tree-sitter-javascript's for_statement, whose initializer may be a using declaration, as in its 0.25.0 with
++      // Rerail's Patch 5 there: `for (using r = f(); ;)`, `for (await using r = f(); ;)`.
++      for_statement: $ => seq(
++        'for',
++        '(',
++        choice(
++          field('initializer', choice($.lexical_declaration, $.variable_declaration, $.using_declaration)),
++          seq(field('initializer', $._expressions), ';'),
++          field('initializer', $.empty_statement),
++        ),
++        field('condition', choice(
++          seq($._expressions, ';'),
++          $.empty_statement,
++        )),
++        field('increment', optional($._expressions)),
++        ')',
++        field('body', $.statement),
++      ),
++
++      // tree-sitter-javascript's _for_header, with 0.25.0's `using` alternative: `for (using r of rs)`,
++      // `for (await using r of rs)`.
++      _for_header: $ => seq(
++        '(',
++        choice(
++          field('left', choice(
++            $._lhs_expression,
++            $.parenthesized_expression,
++          )),
++          seq(
++            field('kind', 'var'),
++            field('left', choice(
++              $.identifier,
++              $._destructuring_pattern,
++            )),
++            optional($._initializer),
++          ),
++          seq(
++            field('kind', choice('let', 'const')),
++            field('left', choice(
++              $.identifier,
++              $._destructuring_pattern,
++            )),
++            optional($._automatic_semicolon),
++          ),
++          seq(
++            field('kind', choice(
++              'using',
++              seq('await', 'using'),
++            )),
++            field('left', choice(
++              $.identifier,
++              alias('of', $.identifier),
++              $._destructuring_pattern,
++            )),
++            optional($._automatic_semicolon),
++          ),
++        ),
++        field('operator', choice('in', 'of')),
++        field('right', $._expressions),
++        ')',
++      ),
++
+       variable_declarator: $ => choice(
+         seq(
+           field('name', choice($.identifier, $._destructuring_pattern)),
+@@ -679,6 +753,7 @@ module.exports = function defineGrammar(dialect) {
+         $.interface_declaration,
+         $.import_alias,
+         $.ambient_declaration,
++        $.using_declaration,
+       ),
+ 
+       type_assertion: $ => prec.left('unary', seq(
+@@ -1356,6 +1431,8 @@ module.exports = function defineGrammar(dialect) {
+         // A modifier only before a class or a member, so it may name a member or a variable: `{ abstract: T }`.
+         'abstract',
+         'readonly',
++        // A keyword only before a declaration's name, so it may name a variable: `const using = f(); using.x`.
++        'using',
+         previous,
+       ),
+     },
+```
+
+`using_declaration` and `for_statement` are tree-sitter-javascript 0.25.0's, with its `for` initializer as Patch 5 there
+extends it. `_for_header` is 0.23.1's with 0.25.0's `using` alternative added: its `var`, `let` and `const` branches,
+unlike 0.25.0's, take no `of` as a name, as before. The declarator is this grammar's, so `using x: T = f()` takes a
+type. `using` is now a `_reserved_identifier`, a name wherever a name parses, and after a `using` that starts a
+statement a binding name continues the declaration and any other token the expression. The one lookahead both read is
+`[`, where the precedence reads the subscript, as TypeScript does: a `using` declaration binds no pattern. A `{` cannot
+follow a name on the same line, so `using {a} = b`, which TypeScript rejects, still reads as a declaration of an object
+pattern. A `using` at the end of a line before a name ends its statement, as ECMAScript's `[no LineTerminator here]`
+requires. `await using;` is an `await_expression`.
+
+Node kinds: `using_declaration` is new, a `declaration` as `lexical_declaration` is, with the field `kind` (`using`, or
+`await` and `using`) and one `variable_declarator` per name. `using x = f()` and `await using x = f()`, formerly an
+`expression_statement` holding an `assignment_expression` with a leading `using` token (and `await_expression` around
+it), are a `using_declaration` whose declarator binds `x` and holds `f()` as its `value`, as tree-sitter-javascript
+builds them; the scope model now declares `x`, block-scoped (`scope/ecma.rs`), so `typescript-eslint-no-unused-vars`
+reports an unused one, as typescript-eslint does, and the four declared divergences on its `no-unused-vars/234` and
+`235` fixtures are gone. A `for … of` head takes `using` and `await using` with the field `kind`, as `const` does, and a
+`for_statement`'s `initializer` may be a `using_declaration`. As in tree-sitter-javascript, `export using x = f()`,
+which TypeScript rejects, parses as an export of the declaration. A `using` that is a name is an `identifier`. Each
+generated parser has one more symbol (389 for TypeScript, 407 for TSX), the same tokens, and fewer states (6,006 and
+6,294).
+
+Upstream's corpus parses as before (111 of its own 112 cases; the one failure patch 1's `foo++!`). Compared with
+Patches 1 to 29 alone over 24,441 `.ts`, `.mts`, `.cts` and `.d.ts` files (the 23,576 of Rerail's npm dependencies, as
+`package-lock.json` pins them, and the 865 in Rerail's repository) and 64 `.tsx` files, 11 files that had syntax
+errors parse: `src/cli/rule-draft.ts`, 8 drizzle-orm declaration files whose method takes a parameter named `using`
+(`using(using: string): this`), and 2 puppeteer-core sources with `for (using … of …)` and `for await (using … of …)`.
+In 42 other files, each `using` and `await using` statement becomes a `using_declaration` and no other tree changes. No
+file gains an error; the 40 that fail to parse fail as before.

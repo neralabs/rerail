@@ -8,7 +8,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 
 #[test]
 fn upstream_literal_oracle() {
-    let oracle: serde_json::Value = serde_json::from_str(crate::code_rule_dsl::oracle!(
+    let oracle: serde_json::Value = serde_json::from_str(crate::code_rule_dsl::fixtures::oracle!(
         "rust/literal/literal.expected.json"
     ))
     .expect("oracle JSON");
@@ -126,7 +126,7 @@ fn upstream_literal_oracle() {
 
 #[test]
 fn upstream_value_oracle() {
-    let oracle: serde_json::Value = serde_json::from_str(crate::code_rule_dsl::oracle!(
+    let oracle: serde_json::Value = serde_json::from_str(crate::code_rule_dsl::fixtures::oracle!(
         "rust/value/rust.expected.json"
     ))
     .expect("oracle JSON");

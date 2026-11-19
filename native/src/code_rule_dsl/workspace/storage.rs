@@ -7,8 +7,8 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::tape;
 use crate::content_store::{
-    CapacityState, ContentStore, MAX_COLLECTION_BATCH, OperationDeadline, SnapshotId, StoreError,
-    StoreResult, WorkspaceId, WorkspaceRegistration, WritesOnlyWhenFree, end_waits, waits_end_when,
+    CapacityState, ContentStore, OperationDeadline, SnapshotId, StoreError, StoreResult,
+    WorkspaceId, WorkspaceRegistration,
 };
 use crate::git_workspace;
 use napi::Result;
@@ -17,15 +17,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Arc as StdArc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-pub(super) struct StoreRegistryEntry {
+pub struct StoreRegistryEntry {
     store: std::sync::Weak<ContentStore>,
     maintenance: std::sync::Weak<StorageMaintenance>,
 }
 
-pub(super) static CONTENT_STORES: LazyLock<Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>> =
+pub static CONTENT_STORES: LazyLock<Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub(super) fn shared_content_store(
+pub fn shared_content_store(
     path: std::path::PathBuf,
 ) -> StoreResult<(StdArc<ContentStore>, StdArc<StorageMaintenance>)> {
     let mut stores = CONTENT_STORES
@@ -58,68 +58,65 @@ pub(super) fn shared_content_store(
     Ok((store, maintenance))
 }
 
-pub(super) struct StorageMaintenance {
+pub struct StorageMaintenance {
     stop: StdArc<AtomicBool>,
     workspaces: StdArc<Mutex<HashMap<WorkspaceId, (String, usize)>>>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// The store's upkeep jobs (decision 0190): its collection, its search indexes' backlog and its SQLite
+    /// file, run by `rerail_accel::upkeep` when the machine is idle (collection past the soft limit at once).
+    _jobs: Vec<rerail_accel::upkeep::Registered>,
 }
 
 impl StorageMaintenance {
     fn start(store: StdArc<ContentStore>) -> Self {
         let stop = StdArc::new(AtomicBool::new(false));
         let workspaces = StdArc::new(Mutex::new(HashMap::<WorkspaceId, (String, usize)>::new()));
+        use crate::content_store::upkeep::{Collect, SqliteFile, Tables};
+        use rerail_accel::upkeep::register;
+        let jobs = vec![
+            register(Box::new(Collect::new(&store))),
+            register(Box::new(crate::content_store::upkeep::Frames::new(
+                store.database_path(),
+            ))),
+            register(Box::new(SearchIndex::new(&store))),
+            register(Box::new(SqliteFile::new(
+                store.database_path(),
+                Tables::All,
+            ))),
+        ];
+        rerail_accel::upkeep::start();
         let thread_stop = StdArc::clone(&stop);
         let thread_workspaces = StdArc::clone(&workspaces);
-        let thread = std::thread::Builder::new()
-            .name("rerail-store-maintenance".to_owned())
-            .spawn(move || {
-                // The renewals and collection wait in the store's writer line for the writers
-                // ahead, and the handle's drop ends that wait before it joins the thread, so a
-                // close never waits on those writers.
-                let stopped = || thread_stop.load(Ordering::Acquire);
-                waits_end_when(&stopped, || {
-                    let mut search_index_cursor = None;
-                    loop {
-                        std::thread::park_timeout(Duration::from_secs(30));
-                        if stopped() {
-                            break;
-                        }
-                        let active = thread_workspaces
-                            .lock()
-                            .map(|workspaces| {
-                                workspaces
-                                    .iter()
-                                    .map(|(workspace_id, (owner, _))| {
-                                        (*workspace_id, owner.clone())
-                                    })
-                                    .collect::<Vec<_>>()
-                            })
-                            .unwrap_or_default();
-                        if let Ok(now) = unix_seconds() {
-                            let leases = active
-                                .iter()
-                                .map(|(workspace_id, owner)| (*workspace_id, owner.as_str()))
-                                .collect::<Vec<_>>();
-                            let _ = store.renew_workspace_leases(&leases, now + 120);
-                            if store.capacity().is_ok_and(|capacity| {
-                                !matches!(capacity.state, CapacityState::Normal)
-                            }) {
-                                let _ = store.collect(now, MAX_COLLECTION_BATCH);
-                            }
-                        }
-                        index_stored_tapes_when_free(
-                            &store,
-                            &thread_stop,
-                            &mut search_index_cursor,
-                        );
-                    }
-                });
-            })
-            .expect("start content-store maintenance thread");
+        let thread = rerail_accel::exec::service("rerail-store-maintenance", None, move || {
+            loop {
+                std::thread::park_timeout(Duration::from_secs(30));
+                if thread_stop.load(Ordering::Acquire) {
+                    break;
+                }
+                let active = thread_workspaces
+                    .lock()
+                    .map(|workspaces| {
+                        workspaces
+                            .iter()
+                            .map(|(workspace_id, (owner, _))| (*workspace_id, owner.clone()))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if let Ok(now) = unix_seconds() {
+                    let leases = active
+                        .iter()
+                        .map(|(workspace_id, owner)| (*workspace_id, owner.as_str()))
+                        .collect::<Vec<_>>();
+                    let _ = store.renew_workspace_leases(&leases, now + 120);
+                }
+            }
+        })
+        .expect("start content-store maintenance thread");
         Self {
             stop,
             workspaces,
             thread: Some(thread),
+            _jobs: jobs,
         }
     }
 
@@ -145,17 +142,81 @@ impl StorageMaintenance {
     }
 }
 
-/// `index_stored_tapes`, its writes taking the store only while no other writer of this process
-/// holds it or waits for it (`WritesOnlyWhenFree`): a batch that would wait gives up and runs again
-/// at the next wake, as it did before the writer line, so a checked edit that arrives while it
-/// would have waited never waits behind it.
-pub(super) fn index_stored_tapes_when_free(
-    store: &ContentStore,
-    stop: &AtomicBool,
-    cursor: &mut Option<crate::content_store::TapeId>,
-) {
-    let _only_when_free = WritesOnlyWhenFree::enter();
-    index_stored_tapes(store, stop, cursor);
+/// The search indexes' backlog as an upkeep job (decision 0190 §4): due while stored tapes have no index (idle
+/// work, run after a minute of waiting, as the maintenance thread's wake every 30 s did before).
+pub struct SearchIndex {
+    store: std::sync::Weak<ContentStore>,
+    name: String,
+    cursor: Option<crate::content_store::TapeId>,
+    stop: AtomicBool,
+}
+
+impl SearchIndex {
+    pub fn new(store: &StdArc<ContentStore>) -> Self {
+        let name = store
+            .database_path()
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        SearchIndex {
+            store: StdArc::downgrade(store),
+            name: format!("search-index {name}"),
+            cursor: None,
+            stop: AtomicBool::new(false),
+        }
+    }
+}
+
+impl rerail_accel::upkeep::Job for SearchIndex {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn file(&self) -> Option<std::path::PathBuf> {
+        self.store
+            .upgrade()
+            .map(|s| s.database_path().to_path_buf())
+    }
+
+    fn due(&mut self) -> rerail_accel::upkeep::Due {
+        // Upkeep is behind the run: its SQL is on its own connections, never a wave's (decision 0104).
+        crate::code_rule_dsl::logic::profile::behind_the_run();
+        use rerail_accel::upkeep::Due;
+        let Some(store) = self.store.upgrade() else {
+            return Due::No;
+        };
+        // From the start: a backlog below the cursor is the backlog too.
+        match store.tapes_without_search_index_after(
+            grammar_version(),
+            i64::from(tape::formats::stored_version()),
+            None,
+            1,
+        ) {
+            Ok(b) if !b.is_empty() => Due::Idle {
+                starve: Duration::from_secs(60),
+            },
+            _ => Due::No,
+        }
+    }
+
+    fn step(
+        &mut self,
+        slice: &rerail_accel::upkeep::Slice,
+    ) -> std::result::Result<rerail_accel::upkeep::Step, String> {
+        crate::code_rule_dsl::logic::profile::behind_the_run();
+        use rerail_accel::upkeep::Step;
+        let Some(store) = self.store.upgrade() else {
+            return Ok(Step::Done);
+        };
+        // A run that begins stops it between batches, the backlog still due (`Slice::over`).
+        index_stored_tapes_until(&store, &self.stop, &mut self.cursor, slice.until, &|| {
+            slice.over()
+        });
+        Ok(if self.cursor.is_none() {
+            Step::Done
+        } else {
+            Step::More
+        })
+    }
 }
 
 /// Builds the search (selector) indexes of stored tapes that have none, for at most about a
@@ -165,17 +226,33 @@ pub(super) fn index_stored_tapes_when_free(
 /// The keyset cursor only moves forward until the backlog after it is empty, so a batch this build
 /// cannot index never pins it; then it starts over and picks up tapes stored below it meanwhile.
 /// A tape this build can never decode leaves the backlog with an incomplete index set.
-pub(super) fn index_stored_tapes(
+pub fn index_stored_tapes(
     store: &ContentStore,
     stop: &AtomicBool,
     cursor: &mut Option<crate::content_store::TapeId>,
 ) {
-    let started = Instant::now();
+    index_stored_tapes_until(
+        store,
+        stop,
+        cursor,
+        Instant::now() + Duration::from_secs(1),
+        &|| false,
+    );
+}
+
+/// [`index_stored_tapes`] until `until`.
+pub fn index_stored_tapes_until(
+    store: &ContentStore,
+    stop: &AtomicBool,
+    cursor: &mut Option<crate::content_store::TapeId>,
+    until: Instant,
+    over: &dyn Fn() -> bool,
+) {
     let mut grammars = HashMap::<i64, Arc<tape::Grammar>>::new();
-    while started.elapsed() < Duration::from_secs(1) && !stop.load(Ordering::Acquire) {
+    while Instant::now() < until && !stop.load(Ordering::Acquire) && !over() {
         let Ok(backlog) = store.tapes_without_search_index_after(
             grammar_version(),
-            i64::from(tape::TAPE_FORMAT_VERSION),
+            i64::from(tape::formats::stored_version()),
             *cursor,
             64,
         ) else {
@@ -207,14 +284,14 @@ pub(super) fn index_stored_tapes(
             && store
                 .put_unavailable_search_indexes(
                     &undecodable,
-                    crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
+                    crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
                 )
                 .is_err()
         {
             return;
         }
         if !tapes.is_empty()
-            && crate::code_rule_dsl::transducer::persist_search_index_batch(
+            && crate::code_rule_dsl::search_index::persist_search_index_batch(
                 store, &tapes, &documents,
             )
             .is_err()
@@ -257,9 +334,7 @@ fn decode_stored_tape(
 
 impl Drop for StorageMaintenance {
     fn drop(&mut self) {
-        // Ends a write of the thread waiting in the store's line, so the join below waits for no
-        // other writer (`waits_end_when` in `start`).
-        end_waits(&self.stop);
+        self.stop.store(true, Ordering::Release);
         if let Some(thread) = self.thread.take() {
             thread.thread().unpark();
             let _ = thread.join();
@@ -267,7 +342,7 @@ impl Drop for StorageMaintenance {
     }
 }
 
-pub(super) struct StorageRegistration {
+pub struct StorageRegistration {
     maintenance: StdArc<StorageMaintenance>,
     workspace_id: WorkspaceId,
 }
@@ -279,31 +354,21 @@ impl Drop for StorageRegistration {
 }
 
 #[derive(Clone)]
-pub(super) struct StorageContext {
-    pub(super) store: StdArc<ContentStore>,
-    pub(super) repository: Option<StdArc<git_workspace::GitWorkspace>>,
+pub struct StorageContext {
+    pub store: StdArc<ContentStore>,
+    pub repository: Option<StdArc<git_workspace::GitWorkspace>>,
     /// The workspace root relative to the repository worktree (`""`, or `dir/` with a trailing
     /// slash). Workspace paths are root-relative; `repository_prefix + path` is the repository path.
-    pub(super) repository_prefix: String,
-    pub(super) workspace_id: WorkspaceId,
-    pub(super) snapshot_id: SnapshotId,
-    pub(super) owner: String,
+    pub repository_prefix: String,
+    pub workspace_id: WorkspaceId,
+    pub snapshot_id: SnapshotId,
+    pub owner: String,
     /// The names the host judges secret-like: a file so named is never written to the store.
-    pub(super) secret_names: StdArc<SecretNames>,
-    pub(super) _maintenance: Option<StdArc<StorageRegistration>>,
+    pub secret_names: StdArc<SecretNames>,
+    pub _maintenance: Option<StdArc<StorageRegistration>>,
 }
 
 impl StorageContext {
-    /// Wakes the store's maintenance thread now, as its periodic wake would.
-    #[cfg(test)]
-    pub(super) fn wake_maintenance(&self) {
-        if let Some(registration) = &self._maintenance
-            && let Some(thread) = &registration.maintenance.thread
-        {
-            thread.thread().unpark();
-        }
-    }
-
     /// Whether `path` (workspace-relative) is named like one holding secrets, judged by its path in
     /// the repository: the store keeps no copy of such a file, not its source, tapes or results.
     pub(super) fn withholds(&self, path: &str) -> bool {
@@ -317,11 +382,8 @@ pub(super) fn unix_seconds() -> Result<i64> {
 
 /// A workspace's storage context over an explicit store file, discovering its Git worktree, with
 /// no secret-like names.
-#[cfg(test)]
-pub(super) fn storage_context_in(
-    root: &str,
-    store_path: std::path::PathBuf,
-) -> Result<StorageContext> {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn storage_context_in(root: &str, store_path: std::path::PathBuf) -> Result<StorageContext> {
     let discovered = git_workspace::discover(std::path::Path::new(root))
         .map_err(|error| invalid(error.to_string()))?;
     match attach_storage(root, discovered, store_path, StdArc::default())? {
@@ -370,7 +432,7 @@ pub(super) fn attach_storage(
         &store,
         1,
         grammar_set(),
-        i64::from(tape::TAPE_FORMAT_VERSION),
+        i64::from(tape::formats::stored_version()),
         &WorkspaceRegistration {
             root: discovered.worktree_root.to_string_lossy().as_ref(),
             repository: discovered.common_directory.to_string_lossy().as_ref(),
@@ -407,8 +469,7 @@ pub(super) fn attach_storage(
 
 /// `root` relative to `worktree` as a path prefix: `""` at the worktree root, else `dir/`.
 fn repository_prefix(root: &str, worktree: &std::path::Path) -> Result<String> {
-    let root = std::path::Path::new(root)
-        .canonicalize()
+    let root = dunce::canonicalize(std::path::Path::new(root))
         .map_err(|error| invalid(format!("cannot resolve workspace root: {error}")))?;
     let relative = root
         .strip_prefix(worktree)

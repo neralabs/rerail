@@ -26,6 +26,8 @@ pub(super) static WORKSPACE_TEST_SLOT: Mutex<()> = Mutex::new(());
 /// Build a Git fixture repository. Tests only: production discovery reads Git through gix.
 pub(super) fn git(root: &std::path::Path, arguments: &[&str]) {
     let status = std::process::Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .arg("-C")
         .arg(root)
         .args(arguments)
@@ -146,8 +148,11 @@ fn a_stored_local_result_decodes_to_typed_witnesses_and_re_encodes_to_its_bytes(
     );
     assert_eq!(printed.captures.get("B"), None);
     assert_eq!(
-        printed.captures.projection(),
-        Some(&json!({ "package": "pkg" }))
+        printed
+            .captures
+            .projection()
+            .map(crate::code_rule_dsl::violations::projection::Row::json),
+        Some(json!({ "package": "pkg" }))
     );
     assert_eq!(printed.message.as_deref(), Some("print 1"));
     assert_eq!(printed.fix.as_ref().unwrap()["text"], "log(1, 2)");
@@ -352,14 +357,22 @@ fn a_panic_holding_the_cpu_slot_leaves_the_next_apply_free_to_run() {
         request_buffer: None,
         request_direct: None,
     };
-    // Another test's apply may hold the slot for a moment: the wait ends at its release, which wakes
-    // this thread. A slot the panic left held is never released, and the bound fails the test
-    // rather than hanging it.
-    let slot = super::api::cpu_slot()
-        .try_lock_for(std::time::Duration::from_secs(10))
-        .expect("the CPU slot stayed held after the apply holding it panicked");
-    let outcome = task.apply_with_slot();
-    drop(slot);
+    // Another test's apply may hold the slot for a moment: each try waits for its release, which
+    // wakes this thread, and waits again only when another apply took the slot first. A slot the
+    // panic left held is never released, and the bound fails the test rather than hanging it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let outcome = loop {
+        let free = super::api::cpu_slot().try_lock_until(deadline);
+        assert!(
+            free.is_some(),
+            "the CPU slot stayed held after the apply holding it panicked"
+        );
+        drop(free);
+        match task.compute() {
+            Err(error) if error.reason == super::api::WORKSPACE_BUSY => continue,
+            outcome => break outcome,
+        }
+    };
     assert!(
         outcome.is_ok(),
         "the apply after a panic failed: {outcome:?}"
@@ -763,7 +776,7 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
             root,
             1,
             HashKey::sha256(b"rerail-grammars-v1"),
-            i64::from(tape::TAPE_FORMAT_VERSION),
+            i64::from(tape::formats::stored_version()),
         )
         .unwrap();
     let owner = "stored-workspace-test";
@@ -831,8 +844,14 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
     let lookups = [stored.tape.unwrap(), irrelevant_tape].map(|tape_id| {
         crate::content_store::SearchKindLookup {
             tape_id,
-            index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
-            kind_tokens: vec![crate::code_rule_dsl::transducer::kind_index_token(call)],
+            index_version: crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
+            kind_tokens: vec![
+                crate::code_rule_dsl::search_index::kind_index_token(
+                    crate::code_rule_dsl::language::GrammarDialect::Python,
+                    call,
+                )
+                .unwrap(),
+            ],
         }
     });
     assert_eq!(
@@ -849,7 +868,7 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
         store
             .tapes_without_search_index_after(
                 grammar_version(),
-                i64::from(tape::TAPE_FORMAT_VERSION),
+                i64::from(tape::formats::stored_version()),
                 None,
                 8
             )
@@ -3645,6 +3664,64 @@ fn reads_package_manifests_only_with_an_ast_clause_in_a_manifest_family() {
         )
         .unwrap();
     assert!(python.reads_package_manifests());
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "p-anchor-corpus"),
+    ignore = "P's anchor corpus is filled only on the p-anchor-corpus path (open item O20)"
+)]
+fn positional_index_lives_with_the_workspace_across_applies_and_deletions() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace
+        .add_code_rule(&tape_test_code_rule(), None)
+        .unwrap();
+    let file = |path: &str, source: &str| json!({"path":path,"language":"python","source":source});
+    tape_test_apply(
+        &workspace,
+        1,
+        vec![file("a.py", "print('a')\n"), file("b.py", "print('b')\n")],
+    );
+    let census = || workspace.state.lock().unwrap().anchor_corpus.census();
+    let first = census();
+    assert_eq!(first.1, 2);
+    // Neither an empty apply nor resending an identical source rebuilds postings.
+    tape_test_apply(&workspace, 2, vec![]);
+    assert_eq!(census(), first);
+    tape_test_apply(&workspace, 3, vec![file("a.py", "print('a')\n")]);
+    assert_eq!(census(), first);
+    // A retry of an interrupted rule is still the same indexed source revision.
+    workspace
+        .state
+        .lock()
+        .unwrap()
+        .files
+        .get_mut("a.py")
+        .unwrap()
+        .transient_failure = true;
+    tape_test_apply(&workspace, 4, vec![file("a.py", "print('a')\n")]);
+    assert_eq!(census(), first);
+    tape_test_apply(&workspace, 5, vec![file("a.py", "print('edited')\n")]);
+    assert_eq!(census().1, 2);
+    assert!(census().0 > first.0);
+    let mut remove = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({"revision":6,"files":[],"removed":["a.py"]}).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    remove.compute().unwrap();
+    assert_eq!(census().1, 1);
+    // A new workspace has no rows from the previous workspace's SQL corpus.
+    let independent = CodeRuleDslWorkspace::new();
+    assert_eq!(
+        independent.state.lock().unwrap().anchor_corpus.census(),
+        (0, 0)
+    );
+    independent.close();
+    workspace.close();
 }
 
 /// A clause reporting each JavaScript string that names an import target resolution fails for.

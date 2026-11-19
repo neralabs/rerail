@@ -1,6 +1,6 @@
 //! Workspace registry, overlays, promotion to snapshots, and workspace leases.
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::StoredFile;
 use super::rows::{intern_path, intern_string, validate_relative_path};
 use super::{
@@ -8,9 +8,10 @@ use super::{
     STRING_REPOSITORY, SnapshotId, SourceId, StoreError, StoreResult, StoredPathObjects,
     StoredSourceObjects, TapeId, WorkspaceId, WorkspaceRegistration,
 };
-#[cfg(test)]
+use crate::content_store::connection::Cached as _;
+#[cfg(any(test, feature = "test-hooks"))]
 use rusqlite::OptionalExtension;
-use rusqlite::{Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 use std::collections::HashMap;
 
 impl WorkspaceRegistration<'_> {
@@ -27,21 +28,21 @@ impl WorkspaceRegistration<'_> {
     /// snapshot no workspace references is collectable. The lease ends at `lease_until`.
     pub(super) fn register(
         &self,
-        transaction: &Transaction<'_>,
+        transaction: &Connection,
         snapshot_id: SnapshotId,
         lease_until: i64,
     ) -> StoreResult<WorkspaceId> {
         let root_path_id = intern_path(transaction, self.root)?;
         let repository_id = intern_string(transaction, STRING_REPOSITORY, self.repository)?;
         let owner_id = intern_string(transaction, STRING_OWNER, self.owner)?;
-        transaction.execute(
+        transaction.execute_cached(
             "INSERT INTO workspaces(root_path_id,repository_string_id,owner_string_id,snapshot_id,generation,lease_until,state_id)\
              VALUES (?1,?2,?3,?4,?5,?6,1)\
              ON CONFLICT(root_path_id) DO UPDATE SET repository_string_id=excluded.repository_string_id,owner_string_id=excluded.owner_string_id,\
              snapshot_id=excluded.snapshot_id,generation=excluded.generation,lease_until=excluded.lease_until,state_id=1",
             params![root_path_id, repository_id, owner_id, snapshot_id.0, self.generation, lease_until],
         )?;
-        let workspace_id = transaction.query_row(
+        let workspace_id = transaction.query_row_cached(
             "SELECT workspace_id FROM workspaces WHERE root_path_id=?1",
             [root_path_id],
             |row| row.get(0),
@@ -54,7 +55,7 @@ impl ContentStore {
     /// Registers a workspace over an existing snapshot with a lease ending at `lease_until`.
     /// Production registers its workspace in the snapshot's own transaction (`publish_snapshot`),
     /// so collection cannot delete it in between.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn open_workspace(
         &self,
         root: &str,
@@ -95,14 +96,15 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = intern_path(&transaction, path)?;
-        transaction.execute(
+        transaction.execute_cached(
             "INSERT INTO workspace_overlay(workspace_id,path_id,state_id,source_id,tape_id) VALUES (?1,?2,?3,?4,?5)\
              ON CONFLICT(workspace_id,path_id) DO UPDATE SET state_id=excluded.state_id,source_id=excluded.source_id,tape_id=excluded.tape_id",
             params![workspace_id.0, path_id, state_id, source_id.map(|id| id.0), tape_id.map(|id| id.0)],
         )?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 
@@ -126,7 +128,7 @@ impl ContentStore {
         self.immediate_transaction(|transaction| {
             for path in paths {
                 let path_id = intern_path(transaction, path)?;
-                transaction.execute(
+                transaction.execute_cached(
                     "INSERT INTO snapshot_files(snapshot_id,path_id,source_id,tape_id) \
                      SELECT ?1,path_id,source_id,tape_id FROM workspace_overlay \
                      WHERE workspace_id=?2 AND path_id=?3 \
@@ -139,7 +141,7 @@ impl ContentStore {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn overlay_file(
         &self,
         workspace_id: WorkspaceId,
@@ -151,7 +153,7 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         connection
-            .query_row(
+            .query_row_cached(
                 "SELECT o.source_id,o.tape_id FROM workspace_overlay o \
                  JOIN paths p ON p.path_id=o.path_id JOIN strings s ON s.string_id=p.string_id \
                  WHERE o.workspace_id=?1 AND s.domain_id=?2 AND s.value=?3",
@@ -191,16 +193,17 @@ impl ContentStore {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn remove_overlay_file(&self, workspace_id: WorkspaceId, path: &str) -> StoreResult<()> {
         validate_relative_path(path)?;
         let mut connection = self
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = transaction
-            .query_row(
+            .query_row_cached(
                 "SELECT p.path_id FROM paths p JOIN strings s ON s.string_id=p.string_id \
                  WHERE s.domain_id=?1 AND s.value=?2",
                 params![STRING_PATH, path],
@@ -208,12 +211,12 @@ impl ContentStore {
             )
             .optional()?;
         if let Some(path_id) = path_id {
-            transaction.execute(
+            transaction.execute_cached(
                 "DELETE FROM workspace_overlay WHERE workspace_id=?1 AND path_id=?2",
                 params![workspace_id.0, path_id],
             )?;
         }
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 
@@ -297,9 +300,8 @@ impl ContentStore {
     }
 
     /// Renews the leases of `workspaces` in a single attempt: the maintenance thread renews them
-    /// again on its next wake. Its turn in the writer line waits for the writers ahead, and the
-    /// maintenance handle's drop ends that wait (`waits_end_when`) before it joins the thread, so
-    /// closing the last workspace never waits on them.
+    /// again on its next wake, and closing the last workspace joins that thread, so it never
+    /// waits out other writers (`retry_busy`).
     pub fn renew_workspace_leases(
         &self,
         workspaces: &[(WorkspaceId, &str)],
@@ -328,7 +330,7 @@ impl ContentStore {
         let encoded = serde_json::to_string(&input).map_err(|error| {
             StoreError::Invalid(format!("workspace leases cannot be encoded: {error}"))
         })?;
-        let renew = |transaction: &Transaction<'_>| {
+        let renew = |transaction: &Connection| {
             transaction
                 .prepare_cached(
                     "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) workspace_id, \
@@ -348,14 +350,15 @@ impl ContentStore {
     }
 
     pub fn retire_workspace(&self, workspace_id: WorkspaceId) -> StoreResult<()> {
-        // In a transaction, so the update takes its turn in the writer line like every write.
-        self.immediate_transaction_once(|transaction| {
-            transaction.execute(
-                "UPDATE workspaces SET state_id=2, lease_until=0 WHERE workspace_id=?1",
-                [workspace_id.0],
-            )?;
-            Ok(())
-        })
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
+        connection.execute_cached(
+            "UPDATE workspaces SET state_id=2, lease_until=0 WHERE workspace_id=?1",
+            [workspace_id.0],
+        )?;
+        Ok(())
     }
 }
 
@@ -364,7 +367,7 @@ impl ContentStore {
 fn overlay_removal(
     workspace_id: WorkspaceId,
     paths: &[String],
-) -> StoreResult<Option<impl Fn(&Transaction<'_>) -> StoreResult<()>>> {
+) -> StoreResult<Option<impl Fn(&Connection) -> StoreResult<()>>> {
     if paths.is_empty() {
         return Ok(None);
     }
@@ -378,8 +381,8 @@ fn overlay_removal(
             .collect::<Vec<_>>(),
     )
     .map_err(|error| StoreError::Invalid(error.to_string()))?;
-    Ok(Some(move |transaction: &Transaction<'_>| {
-        transaction.execute(
+    Ok(Some(move |transaction: &Connection| {
+        transaction.execute_cached(
             "DELETE FROM workspace_overlay WHERE workspace_id=?1 AND path_id IN (\
              SELECT p.path_id FROM json_each(?2) i \
              CROSS JOIN hashes h INDEXED BY hashes_by_prefix ON h.algorithm_id=?4 \

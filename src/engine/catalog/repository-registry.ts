@@ -7,7 +7,7 @@ import { opendir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import { and, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";
-import { physicalPath, storedPath, storedPathAsync, withinCheckout } from "./checkout-control.js";
+import { earlierPhysicalPath, physicalPath, storedPath, storedPathAsync, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGitAsync } from "../git.js";
 import { mergeAssistExperimentEnabled } from "../experimental-features.js";
@@ -15,6 +15,7 @@ import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, 
 import {
   GIT_IDENTITY_FILE,
   normalizeRemoteAddress,
+  outsideGit,
   readCloneIdAt,
   readRemoteAddress,
   repositoryFolderName,
@@ -52,10 +53,15 @@ function repositoryByKeyOrAlias(db: Reader, key: RepositoryKey): RepositoryRow |
     ?? db.select().from(repositories).where(ne(repositories.aliases, [])).all().find(row => row.aliases.includes(key));
 }
 
-/** The normalised key of the checkout's `origin` or sole remote; undefined without one or without git. */
-function remoteKeyOf(root: string): RepositoryKey | undefined {
+/**
+ * The normalised key of the checkout's `origin` or sole remote; undefined without one or without git. A folder outside
+ * Git ({@link outsideGit}) has no remote, so Git is not started to say so. A folder with no work tree that Git still
+ * places in a repository, a bare repository or a folder inside a `.git`, is keyed by that repository's remote.
+ */
+function remoteKeyOf(location: RepositoryIdentityLocation): RepositoryKey | undefined {
+  if (!location.git && outsideGit(location.workspaceRoot)) return undefined;
   try {
-    const remote = readRemoteAddress(root);
+    const remote = readRemoteAddress(location.workspaceRoot);
     return remote === undefined ? undefined : normalizeRemoteAddress(remote.url);
   } catch (error) {
     if (error instanceof GitUnavailableError) return undefined;
@@ -69,7 +75,67 @@ function contextOf<C extends string | null>(
   repositoryKey: RepositoryKey,
   cloneId: C,
 ): CheckoutContext & { readonly cloneId: C } {
-  return { checkoutPath, repositoryKey, cloneId, git: location.git, main: location.main };
+  const earlierCheckoutPath = earlierKeyOf(location, checkoutPath);
+  return { checkoutPath, repositoryKey, cloneId, git: location.git, main: location.main, ...(earlierCheckoutPath === undefined ? {} : { earlierCheckoutPath }) };
+}
+
+/**
+ * The key Rerail 0.1.4 and earlier recorded a folder outside git under on Windows, where it is not `checkoutPath`: the
+ * JS realpath of the folder as the caller spelt it, which keeps a mapped or `subst` drive letter and the letter case
+ * typed, where this build keys it by the spelling the disk stores. A git checkout is keyed by git's top level in both.
+ * Undefined, never a throw, where that realpath fails ({@link earlierKeyAt}), so a record or lookup goes on under the
+ * stored key alone.
+ */
+function earlierKeyOf(location: Pick<RepositoryIdentityLocation, "git" | "workspaceRoot">, checkoutPath: string): string | undefined {
+  if (location.git || process.platform !== "win32" || location.workspaceRoot === checkoutPath) return undefined;
+  const earlier = earlierKeyAt(location.workspaceRoot);
+  return earlier === checkoutPath ? undefined : earlier;
+}
+
+/**
+ * `checkout` as a caller that spelt its folder `spelling` finds it: with the key Rerail 0.1.4 and earlier recorded the
+ * folder under for that spelling ({@link earlierKeyOf}) where it is another; `checkout` itself where the spelling does
+ * not resolve.
+ */
+export function spelledCheckout(checkout: CheckoutContext | undefined, spelling: string): CheckoutContext | undefined {
+  if (checkout === undefined) return undefined;
+  const earlierCheckoutPath = earlierKeyOf({ git: checkout.git, workspaceRoot: spelling }, checkout.checkoutPath);
+  return earlierCheckoutPath === undefined ? checkout : { ...checkout, earlierCheckoutPath };
+}
+
+/**
+ * The keys {@link earlierPhysicalPath} gave folder spellings this process asked about, at most
+ * {@link EARLIER_KEYS_HELD} of them. A daemon checks the start state of a session's folder on each of its events, so
+ * the realpath runs once per spelling rather than once per event; a link in the path changed while this process runs
+ * keeps the key it had.
+ */
+const earlierKeys = new Map<string, string>();
+
+/**
+ * The most spellings {@link earlierKeys} holds: a caller can send any spelling, and each new one past the bound drops
+ * the one added first; a hit moves nothing. A daemon meets one or two per folder outside Git; a spelling dropped is
+ * resolved again once, at the cost of one realpath.
+ */
+export const EARLIER_KEYS_HELD = 256;
+
+/**
+ * {@link earlierPhysicalPath} of `folder`, kept in {@link earlierKeys}; undefined where it throws. The earlier key is a
+ * fallback, so a realpath that throws, for any reason, must never break the lookup under the stored key: the catch
+ * gives no earlier key. No volume is known where the JS realpath throws and the native one, which forms the stored
+ * key, works. A spelling that threw is not kept, so its next lookup tries again.
+ */
+function earlierKeyAt(folder: string): string | undefined {
+  let key = earlierKeys.get(folder);
+  if (key === undefined) {
+    try {
+      key = earlierPhysicalPath(folder);
+    } catch {
+      return undefined;
+    }
+    earlierKeys.set(folder, key);
+    if (earlierKeys.size > EARLIER_KEYS_HELD) earlierKeys.delete(earlierKeys.keys().next().value!);
+  }
+  return key;
 }
 
 /** The most values one statement binds: SQLite refuses a statement with more than 32,766 variables (999 before 3.32). */
@@ -88,7 +154,7 @@ function deleteCheckoutSettings(db: Writer, checkoutPaths: readonly string[]): v
     db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, paths))).run();
   }
   // The keys `runtime/merge-assist/state.ts` keeps per checkout (`STATE_KEYS`).
-  const keys = checkoutPaths.flatMap(path => [`conflicts:${path}`, `scan:${path}`, `scanning:${path}`]);
+  const keys = checkoutPaths.flatMap(path => [`conflicts:${path}`, `scan:${path}`, `scanning:${path}`, `unheard:${path}`]);
   for (const run of statementRuns(keys)) db.delete(mergeAssistState).where(inArray(mergeAssistState.key, run)).run();
 }
 
@@ -114,8 +180,8 @@ export function recordCheckout(db: RerailDatabase, workspace: string, now = Date
   refuseUnboundedFolder(repositoryIdentityLocation(workspace));
   const { cloneId, location } = resolveCloneId(workspace);
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const context = db.transaction(tx => recordCheckoutRow(tx, location, checkoutPath, cloneId, now), { behavior: "immediate" });
-  return adoptRemoteOnce(db, context, location, now);
+  const repositoryKey = db.transaction(tx => recordCheckoutRow(tx, location, checkoutPath, cloneId, now), { behavior: "immediate" });
+  return adoptRemoteOnce(db, contextOf(location, checkoutPath, repositoryKey, cloneId), location, now);
 }
 
 /** Outside git a folder is its own checkout; a filesystem root or the home folder would claim everything below it. */
@@ -127,18 +193,21 @@ function refuseUnboundedFolder(located: RepositoryIdentityLocation): void {
   }
 }
 
-/** The checkout row at `checkoutPath` for `cloneId`, touched when it is there and written when not; a row of another clone id goes with its settings. */
+/**
+ * The checkout row at `checkoutPath` for `cloneId`, touched when it is there and written when not; a row of another
+ * clone id goes with its settings. Its repository; the caller forms the context after the write, outside its lock.
+ */
 function recordCheckoutRow(
   tx: Writer,
   location: RepositoryIdentityLocation,
   checkoutPath: string,
   cloneId: string,
   now: number,
-): CheckoutContext & { readonly cloneId: string } {
+): RepositoryKey {
   const existing = tx.select().from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get();
   if (existing?.cloneId === cloneId) {
     tx.update(checkouts).set({ lastSeenAt: now }).where(eq(checkouts.checkoutPath, checkoutPath)).run();
-    return contextOf(location, checkoutPath, existing.repositoryKey, cloneId);
+    return existing.repositoryKey;
   }
   if (existing !== undefined) {
     deleteCheckoutSettings(tx, [checkoutPath]);
@@ -147,7 +216,7 @@ function recordCheckoutRow(
   // A clone joins its recorded checkouts, else the repository keyed by its clone id, else the one its remote names.
   const repositoryKey = cloneRepository(tx, cloneId) ?? remoteRepositoryCreated(tx, location, cloneId, now);
   tx.insert(checkouts).values({ checkoutPath, repositoryKey, cloneId, started: null, createdAt: now, lastSeenAt: now }).run();
-  return contextOf(location, checkoutPath, repositoryKey, cloneId);
+  return repositoryKey;
 }
 
 /** The repository of a recorded checkout of the clone, else the repository keyed by its clone id. */
@@ -158,7 +227,7 @@ function cloneRepository(db: Reader, cloneId: string): RepositoryKey | undefined
 
 /** The repository the checkout's remote names, created when none is known: keyed by the remote, else by the clone id. */
 function remoteRepositoryCreated(tx: Writer, location: RepositoryIdentityLocation, cloneId: string, now: number): RepositoryKey {
-  const remoteKey = remoteKeyOf(location.workspaceRoot);
+  const remoteKey = remoteKeyOf(location);
   const known = remoteKey === undefined ? undefined : repositoryByKeyOrAlias(tx, remoteKey)?.repositoryKey;
   if (known !== undefined) return known;
   const repositoryKey = remoteKey ?? `${CLONE_KEY_PREFIX}${cloneId}`;
@@ -171,7 +240,7 @@ function remoteRepositoryCreated(tx: Writer, location: RepositoryIdentityLocatio
 /** A clone-keyed repository adopts the checkout's remote once per process; "no remote" is not remembered, so a remote added later is adopted. */
 function adoptRemoteOnce<C extends CheckoutContext>(db: RerailDatabase, context: C, location: RepositoryIdentityLocation, now: number): C {
   if (!context.repositoryKey.startsWith(CLONE_KEY_PREFIX) || adoptionChecked.has(context.repositoryKey)) return context;
-  const remoteKey = remoteKeyOf(location.workspaceRoot);
+  const remoteKey = remoteKeyOf(location);
   if (remoteKey === undefined) return context;
   adoptionChecked.add(context.repositoryKey);
   const target = repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey ?? remoteKey;
@@ -223,6 +292,14 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
   return lookupAt(db, repositoryIdentityLocation(workspace), new Map());
 }
 
+/**
+ * {@link lookupCheckout} at a location the caller read ({@link repositoryIdentityLocationAsync}, which runs its Git off
+ * the thread): a recorded checkout is found with no Git process.
+ */
+export function lookupCheckoutAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
+  return lookupAt(db, location, new Map());
+}
+
 function lookupAt(db: Reader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {
   const cloneId = readCloneIdAt(location.identityPath) ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
@@ -247,7 +324,7 @@ function remoteRepository(
   remoteKeys: Map<string, RepositoryKey | undefined>,
 ): RepositoryKey | undefined {
   if (!location.git) return undefined;
-  if (!remoteKeys.has(checkoutPath)) remoteKeys.set(checkoutPath, remoteKeyOf(location.workspaceRoot));
+  if (!remoteKeys.has(checkoutPath)) remoteKeys.set(checkoutPath, remoteKeyOf(location));
   const remoteKey = remoteKeys.get(checkoutPath);
   return remoteKey === undefined ? undefined : repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey;
 }
@@ -404,8 +481,22 @@ export function checkoutStatus(db: Reader, checkout: CheckoutContext | undefined
   if (checkout === undefined) return { started: false, setUp: false, startedBy: "repository" };
   const repository = db.select({ started: repositories.started, configuredAt: repositories.configuredAt })
     .from(repositories).where(eq(repositories.repositoryKey, checkout.repositoryKey)).get();
-  const own = db.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started ?? null;
+  const own = ownStarted(db, checkout);
   return statusOf(repository, own, own === null ? parentCheckouts(db, checkout) : []);
+}
+
+/**
+ * The checkout's own on/off: its row's, else the one Rerail 0.1.4 saved on the row it recorded the folder under
+ * ({@link CheckoutContext.earlierCheckoutPath}) for the same repository, so a start or stop saved here decides from then
+ * on. Both rows are read in one statement: a checkout with neither costs one read, as one with a single key does.
+ */
+function ownStarted(db: Reader, checkout: CheckoutContext): boolean | null {
+  const { checkoutPath, earlierCheckoutPath } = checkout;
+  if (earlierCheckoutPath === undefined) return db.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get()?.started ?? null;
+  const rows = db.select({ path: checkouts.checkoutPath, repositoryKey: checkouts.repositoryKey, started: checkouts.started }).from(checkouts)
+    .where(inArray(checkouts.checkoutPath, [checkoutPath, earlierCheckoutPath])).all();
+  const earlier = rows.find(row => row.path === earlierCheckoutPath && row.repositoryKey === checkout.repositoryKey);
+  return rows.find(row => row.path === checkoutPath)?.started ?? earlier?.started ?? null;
 }
 
 /** The status a checkout's own on/off, its parents' (nearest first) and its repository's row give it. */

@@ -64,9 +64,12 @@ Internal designs for contributors.
 
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md): the machine-wide content store
 - [transducer-design.md](transducer-design.md): the tape transducer language used by tests and benchmarks
+- [sql-executor.md](sql-executor.md): SQL sessions over facts, rule lowering, wave execution, and extension queries
 - [merge-assist-v1-build.md](merge-assist-v1-build.md): Merge Assist (experimental, off by default), which detects
   in-flight conflicts, where this checkout's work overlaps other branches and open pull requests, and tells the person
   and their coding agent before they merge
 - [windows.md](windows.md): the rules Rerail keeps on Windows, the defect behind each, and the module or check that
   holds it
 - [blade-parser.md](blade-parser.md): the Blade parser, a Rust port of Forte, what is ported and how it is checked
+- [repository-packs.md](repository-packs.md): the rule packs a repository enables, declared in its
+  `.rerail/packs.json`, so every machine runs the same rules for the same commit (a design)

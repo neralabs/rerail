@@ -101,6 +101,7 @@ export { steerOrigin } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
 export {
   encodeCodeRuleWorkspaceRequest,
+  RESULT_PAGE_BYTES,
   loadNativeBinding,
   type NativeBinding,
   type NativeCodeRuleDslWorkspace,
@@ -112,6 +113,7 @@ export { LOCKS_DIR } from "./native/file-lock.js";
 export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
 export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
+export { processStartedAt } from "./process-liveness.js";
 export { agentTranscriptPayload, callNamesDeniedPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD } from "./transcript-boundary.js";
 export { leaveUntaken, UNTAKEN_EVENTS_DIR, UNTAKEN_MOST_EVENTS, untakenFolderId, type UntakenPass } from "./untaken-events.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
@@ -126,7 +128,7 @@ export {
   resetRepositoryHistory,
   resetRepositoryHistoryIn,
 } from "./storage/database.js";
-export { defaultRerailHome } from "./storage/rerail-home.js";
+export { defaultRerailHome, STATUS_LINES_FOLDER } from "./storage/rerail-home.js";
 export { RERAIL_BASELINE_SCHEMA_VERSION, addColumn, type Migration } from "./storage/migrations.js";
 export { AUDIT_HISTORY_TRIGGER_STATEMENTS } from "./storage/audit-history.js";
 export {

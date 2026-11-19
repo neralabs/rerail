@@ -8,6 +8,9 @@
 /** What a request without the capability is told: the page has to be opened from its link once. */
 export const ACCESS_HINT = "Open the dashboard with rerail manage: this browser does not have its access link yet.";
 
+/** Where this origin's storage keeps the capability; index.html writes it there under the same name. */
+export const ACCESS_KEY = "rerail-access";
+
 /** A `401`: the daemon is up and this browser lacks its capability, which is not a lost connection. */
 function accessRequired() {
   return Object.assign(new Error(ACCESS_HINT), { name: "AccessRequired" });
@@ -23,7 +26,7 @@ function apiUrl(path) {
 function accessHeaders() {
   let access = null;
   try {
-    access = localStorage.getItem("rerail-access");
+    access = localStorage.getItem(ACCESS_KEY);
   } catch {}
   return access === null ? {} : { "x-rerail-access": access };
 }

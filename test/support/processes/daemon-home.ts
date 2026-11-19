@@ -51,8 +51,9 @@ const BUSY_MS = 8_000;
  * `<busy>.held`, and spins {@link BUSY_MS} without returning to its event loop, then removes `<busy>.held`. The daemon
  * looks only for the file, never at what it holds: it polls, and could read a file the test has created and not yet
  * written. With `slowStart`, the first daemon to listen while that file is there removes it, makes `<slowStart>.held`,
- * and spins as many milliseconds as it held right after that listen, before it can write daemon.json, then removes the
- * `.held` file; a test writes it before any daemon starts.
+ * and right after that listen, before it can write daemon.json, spins without returning to its event loop until the
+ * test writes `<slowStart>.release` ({@link releaseSlowStart}), then removes the `.held` file; a test writes `slowStart`
+ * before any daemon starts.
  */
 export function watchedEnvironment(home: string, busy?: string, slowStart?: string): NodeJS.ProcessEnv {
   const script = join(home, "watch.cjs");
@@ -81,15 +82,15 @@ const slowStart = ${JSON.stringify(slowStart ?? null)};
 if (daemon && slowStart !== null) {
   const listen = require("node:net").Server.prototype.listen;
   require("node:net").Server.prototype.listen = function (...args) {
-    let ms = 0;
+    let held = false;
     try {
-      ms = Number(fs.readFileSync(slowStart, "utf8"));
       fs.rmSync(slowStart);
       fs.writeFileSync(slowStart + ".held", "");
+      held = true;
     } catch {}
-    if (ms > 0) setImmediate(() => {
-      const end = Date.now() + ms;
-      while (Date.now() < end);
+    if (held) setImmediate(() => {
+      const pause = new Int32Array(new SharedArrayBuffer(4));
+      while (!fs.existsSync(slowStart + ".release")) Atomics.wait(pause, 0, 0, 10);
       fs.rmSync(slowStart + ".held", { force: true });
     });
     return listen.apply(this, args);
@@ -184,6 +185,11 @@ if (/[\\\\/]daemon-entry\\.js$/u.test(process.argv[1] ?? "")) {
 export async function holdEventLoop(busy: string): Promise<void> {
   await writeFile(busy, "");
   await until(() => existsSync(`${busy}.held`));
+}
+
+/** Lets the daemon held at its start by `slowStart` ({@link watchedEnvironment}) go on to write daemon.json. */
+export function releaseSlowStart(slowStart: string): void {
+  writeFileSync(`${slowStart}.release`, "");
 }
 
 function recorded(home: string, file: string): number[] {

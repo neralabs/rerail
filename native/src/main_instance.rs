@@ -182,19 +182,19 @@ where
     // The promise is made only once its thread runs: a promise left unsettled would keep Node's
     // event loop, and so the process, alive for ever.
     let (hand, handed) = mpsc::sync_channel::<JsDeferred<Option<ExclusiveFileLock>, Settle>>(1);
-    std::thread::Builder::new()
-        .name("rerail-lock-wait".to_owned())
-        .spawn(move || {
-            if let Ok(deferred) = handed.recv() {
-                settle(deferred, wait_and_name(wait, &path));
-            }
-        })
-        .map_err(|error| {
-            Error::new(
-                Status::GenericFailure,
-                format!("cannot start a lock wait: {error}"),
-            )
-        })?;
+    // A named service thread of the process's one executor: it waits on the OS, so it holds none
+    // of the pool's threads.
+    rerail_accel::exec::service("rerail-lock-wait", None, move || {
+        if let Ok(deferred) = handed.recv() {
+            settle(deferred, wait_and_name(wait, &path));
+        }
+    })
+    .map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("cannot start a lock wait: {error}"),
+        )
+    })?;
     let (deferred, promise) = env.create_deferred()?;
     // The thread waits in `recv` until this arrives, so the send cannot fail.
     let _ = hand.send(deferred);
@@ -235,14 +235,13 @@ fn wait_for_lock(file: File, wait: Duration) -> std::io::Result<Option<File>> {
     // took before the bound is in the channel, and one it takes after is dropped.
     let slot = Arc::new(Mutex::new(Some(sender)));
     let helper_slot = Arc::clone(&slot);
-    std::thread::Builder::new()
-        .name("rerail-lock-flock".to_owned())
-        .spawn(move || {
-            let taken = lock_blocking(&file).map(|()| file);
-            if let Some(sender) = helper_slot.lock().take() {
-                let _ = sender.send(taken);
-            }
-        })?;
+    // A named service thread of the process's one executor, as the wait above: `flock` blocks it.
+    rerail_accel::exec::service("rerail-lock-flock", None, move || {
+        let taken = lock_blocking(&file).map(|()| file);
+        if let Some(sender) = helper_slot.lock().take() {
+            let _ = sender.send(taken);
+        }
+    })?;
     if let Ok(taken) = receiver.recv_timeout(wait) {
         return taken.map(Some);
     }

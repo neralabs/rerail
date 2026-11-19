@@ -6,8 +6,8 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { ADAPTER_CAPABILITIES, type ConflictNotice, type RerailHost } from "../../engine/adapter-contract.js";
 import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
-import { repositoryIdentityLocation } from "../../engine/catalog/repository-identity.js";
-import { lookupCheckout, mergeAssistEnabled, recordCheckout } from "../../engine/catalog/repository-registry.js";
+import { repositoryIdentityLocationAsync } from "../../engine/catalog/repository-identity.js";
+import { lookupCheckoutAt, mergeAssistEnabled, recordCheckout } from "../../engine/catalog/repository-registry.js";
 import { baseBranchAsync, currentBranchAsync, githubRepositoryOf } from "../../engine/merge-assist/branch-git.js";
 import { orderConflicts } from "../../engine/merge-assist/conflicts.js";
 import {
@@ -18,12 +18,13 @@ import {
   type MergeAssistStatus,
   lastScanSchema,
 } from "../../engine/merge-assist/model.js";
+import { GitReads } from "../../engine/git.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import { checkouts, repositories } from "../../engine/storage/schema.js";
 import { processAlive } from "../daemon-control.js";
 import { detectConflicts, STALE_BRANCH_DAYS } from "./conflict-detect.js";
 import { deliveryHandler, readSettings, settingsAt, writeSettings } from "./conflict-delivery.js";
-import { ConflictHook, conflictEvents, type ConflictFire, type ConflictHandlerContext } from "./conflict-hook.js";
+import { ConflictHook, conflictEvents, handedEvents, type ConflictFire, type ConflictHandlerContext } from "./conflict-hook.js";
 import { dismissedConflict, readConflicts, recordHandlerResult, replaceConflict, type StoredConflict } from "./conflict-store.js";
 import { createGithubClient, PULL_REQUEST_LIMIT, type GithubClient, type GithubRepository, type PullRequestSummary } from "./github.js";
 import { commandHandler, RunningCommands } from "./hook-command.js";
@@ -115,8 +116,15 @@ export interface MergeAssistRuntime extends MergeAssistService {
   settled(): Promise<void>;
   /**
    * Stop: no conflict event is handed to the hook any more, and a handler that answers later records nothing. Every
-   * hook command still running gets SIGTERM on its process group, then SIGKILL after a short grace; waits at most
-   * `waitMs` in all, the handlers running now included.
+   * hook command still running gets SIGTERM on its process group, then SIGKILL after a short grace. Waits at most
+   * `waitMs` in all for the handlers, scans and detection passes running now: a pass that ends meanwhile stores what it
+   * found, as one that ended before the stop did. The events of what is stored from the stop on (a pass, a dismissal,
+   * Merge Assist turned off), and those a turn-off took and had not handed yet, are kept in the database (by a stop with
+   * no wait, while no other process holds its write lock), and the next change in that checkout, in this process or
+   * another, hands them to the hook before its own. A pass still running after the wait ends at its next Git read and
+   * stores nothing, and the stop resolves once the Git it ended has exited, so none runs on in the checkout. It does not
+   * wait for a pass's other work, such as a file read on a drive that stopped answering: that pass ends by itself later,
+   * and stores nothing and starts no Git.
    */
   stop(waitMs?: number): Promise<void>;
 }
@@ -174,6 +182,21 @@ const UNREAD_PULLS: Partial<Record<GithubReadiness["state"], string>> = {
 /** A checkout conflict events are fired in. */
 type FiredCheckout = Pick<CheckoutContext, "checkoutPath" | "repositoryKey">;
 
+/**
+ * Runs `work` with the busy wait of `database`'s open connection off: a write fails at once (SQLITE_BUSY) while another
+ * connection holds the write lock, where it would wait for the lock up to `busy_timeout` on the thread. The wait is put
+ * back after.
+ */
+function withoutBusyWait(database: RerailDatabase, work: () => void): void {
+  const busyTimeout = Number(database.$client.pragma("busy_timeout", { simple: true }));
+  database.$client.pragma("busy_timeout = 0");
+  try {
+    work();
+  } finally {
+    database.$client.pragma(`busy_timeout = ${busyTimeout}`);
+  }
+}
+
 class DatabaseMergeAssist implements MergeAssistRuntime {
   readonly #options: MergeAssistServiceOptions;
   readonly #now: () => number;
@@ -195,6 +218,20 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   readonly #listeners = new Set<(checkoutPath: string) => void>();
   /** Set once stopped: the database may be closing, so the hook's late answers are dropped. */
   #stopped = false;
+  /**
+   * Each Git read of the detection passes in this process, scans or not, and of a session's or an edit's locating of
+   * its checkout. {@link stop} stops them once its wait is over: a read running ends with its Git, no other starts, and
+   * a pass stores nothing. While they are not stopped, the database is open: its owner closes it once the stop has
+   * resolved, or as soon as a stop with no wait returns, which stops them in its call.
+   */
+  readonly #reads = new GitReads();
+  /**
+   * The sessions' scans and the edits' detections running now, each from when it was asked, its locating of the
+   * checkout included: {@link stop} waits for them.
+   */
+  readonly #hookWork = new Set<Promise<unknown>>();
+  /** The events of each checkout a turn-off took from the store and has not handed to the hook yet. */
+  readonly #taken = new Set<{ path: string; fires: ConflictFire[] }>();
 
   constructor(options: MergeAssistServiceOptions) {
     this.#options = options;
@@ -221,18 +258,16 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   /**
-   * The Git checkout at `checkoutPath`. A change records it, as a session start does, so its settings and conflicts
-   * have a recorded owner; a read only looks it up.
+   * The Git checkout at `checkoutPath`. A read locates it with one Git process off the thread, so the daemon answers
+   * hooks while it runs, and looks up the checkout recorded at that location. A change records it with
+   * `recordCheckout`, as a session start does, so its settings and conflicts have a recorded owner: that record locates
+   * the checkout again with a Git process on the thread.
    */
-  #checkout(checkoutPath: string, write: boolean): CheckoutContext {
-    let git = false;
-    try {
-      git = repositoryIdentityLocation(checkoutPath).git;
-    } catch {
-      // A folder that is gone is no checkout.
-    }
-    if (!git) throw new MergeAssistError("not-a-checkout", `Merge Assist works in a Git checkout, and ${checkoutPath} is not one.`);
-    const checkout = write ? recordCheckout(this.#db, checkoutPath, this.#now()) : lookupCheckout(this.#db, checkoutPath);
+  async #checkout(checkoutPath: string, write: boolean): Promise<CheckoutContext> {
+    // A folder that is gone is no checkout.
+    const location = await repositoryIdentityLocationAsync(checkoutPath).catch(() => undefined);
+    if (location?.git !== true) throw new MergeAssistError("not-a-checkout", `Merge Assist works in a Git checkout, and ${checkoutPath} is not one.`);
+    const checkout = write ? recordCheckout(this.#db, checkoutPath, this.#now()) : lookupCheckoutAt(this.#db, location);
     if (checkout === undefined) {
       throw new MergeAssistError(
         "not-a-checkout",
@@ -242,18 +277,36 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return checkout;
   }
 
-  #enabledCheckout(checkoutPath: string): CheckoutContext {
-    const checkout = this.#checkout(checkoutPath, true);
+  async #enabledCheckout(checkoutPath: string): Promise<CheckoutContext> {
+    const checkout = await this.#checkout(checkoutPath, true);
     if (!mergeAssistEnabled(this.#db, checkout.repositoryKey)) {
       throw new MergeAssistError("disabled", "Merge Assist is off for this repository; a person turns it on on the Merge Assist page or with rerail merge-assist on.");
     }
     return checkout;
   }
 
-  /** The recorded checkout at `checkoutPath` when Merge Assist is on for its repository. */
-  #activeCheckout(checkoutPath: string): CheckoutContext | undefined {
-    const checkout = lookupCheckout(this.#db, checkoutPath);
+  /**
+   * The recorded Git checkout at `checkoutPath` when Merge Assist is on for its repository. Git runs off the thread,
+   * and {@link stop} ends it as it ends a pass's reads and waits for it, so the database is open for the lookup.
+   */
+  async #activeCheckout(checkoutPath: string): Promise<CheckoutContext | undefined> {
+    const location = await this.#reads.run(signal => repositoryIdentityLocationAsync(checkoutPath, signal));
+    const checkout = location.git ? lookupCheckoutAt(this.#db, location) : undefined;
     return checkout === undefined || !mergeAssistEnabled(this.#db, checkout.repositoryKey) ? undefined : checkout;
+  }
+
+  /**
+   * Runs a session's or an edit's `work` where {@link stop} waits for it, its locating of the checkout included, as for
+   * a scan or detection that had begun when the stop came.
+   */
+  #duringHook<T>(work: () => Promise<T>): Promise<T> {
+    const running = work();
+    this.#hookWork.add(running);
+    const forget = (): void => {
+      this.#hookWork.delete(running);
+    };
+    running.then(forget, forget);
+    return running;
   }
 
   /** Tell the listeners the checkout's sessions may have something new to take. */
@@ -294,6 +347,15 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     });
   }
 
+  /**
+   * The events to hand the hook for a change in the checkout that makes `fires` over the conflicts the store held
+   * (`before`), asked in the change's transaction: none while stopping (`#fire` hands nothing then), whose events are
+   * kept for the next change to hand.
+   */
+  #handed(tx: StateQueries, checkoutPath: string, before: readonly StoredConflict[], fires: readonly ConflictFire[]): ConflictFire[] {
+    return handedEvents(tx, { checkoutPath, before, fires, muted: this.#stopped, now: this.#now() });
+  }
+
   /** The checkout's scan mark when a live scan holds it: fresh, and claimed by a process that is still running. */
   #liveMark(db: StateQueries, checkoutPath: string): ScanMark | undefined {
     const mark = readState(db, STATE_KEYS.scanning(checkoutPath), scanningSchema);
@@ -305,14 +367,20 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return this.#scans.has(checkoutPath) || this.#liveMark(this.#db, checkoutPath) !== undefined;
   }
 
-  /** Remove the checkout's scan mark if it is still `mark`; nothing once the database is closed. */
-  #releaseMark(checkoutPath: string, mark: ScanMark): void {
-    if (this.#database?.$client.open !== true) return;
+  /**
+   * Remove the checkout's scan mark if it is still `mark`; nothing once the database is closed. Unless `waitForLock`,
+   * it fails at once while another connection holds the write lock (`withoutBusyWait`).
+   */
+  #releaseMark(checkoutPath: string, mark: ScanMark, waitForLock = true): void {
+    const database = this.#database;
+    if (database?.$client.open !== true) return;
     const key = STATE_KEYS.scanning(checkoutPath);
-    this.#database.transaction(tx => {
+    const release = (): void => database.transaction(tx => {
       const current = readState(tx, key, scanningSchema);
       if (current?.since === mark.since && current.pid === mark.pid) deleteState(tx, key);
     }, { behavior: "immediate" });
+    if (waitForLock) release();
+    else withoutBusyWait(database, release);
   }
 
   /**
@@ -378,13 +446,17 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   /**
    * Find the checkout's in-flight conflicts for `session` (null outside a session), then hand the pass's events to the
    * conflict hook, without waiting for its handlers. A scan (`scan`) lists the pull requests afresh and records itself
-   * as the checkout's last scan.
+   * as the checkout's last scan. {@link stop} waits for it, and ends its Git reads once its wait is over.
    */
   async #detect(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null, scan = false): Promise<void> {
     const { pulls, problems, login = null } = await this.#openPulls(checkout, scan);
-    // Stopped while `gh` answered: the database may be closed, and nothing found now would be heard.
-    if (this.#stopped) return;
-    const detected = await detectConflicts({ database: this.#db, checkout, pulls, login, now: this.#now });
+    // The stop's wait ended while `gh` answered: the database may be closed. Within the wait, the pass runs and stores
+    // what it finds, as a pass that had begun when the stop came does, and its events are kept (`#handed`).
+    if (this.#reads.stopped) return;
+    const detected = await detectConflicts({
+      database: this.#db, checkout, pulls, login, now: this.#now, reads: this.#reads,
+      events: (tx, before, after) => this.#handed(tx, checkout.checkoutPath, before, conflictEvents(before, after)),
+    });
     if (detected === null) return;
     if (scan) {
       const last: LastScan = { at: isoSeconds(this.#now()), peers: detected.peers, problems: [...problems, ...detected.problems] };
@@ -392,7 +464,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
         if (mergeAssistEnabled(tx, checkout.repositoryKey)) writeState(tx, STATE_KEYS.scan(checkout.checkoutPath), last, this.#now());
       }, { behavior: "immediate" });
     }
-    this.#fire(checkout, conflictEvents(detected.before, detected.after), session, detected.checkout);
+    this.#fire(checkout, detected.fires, session, detected.checkout);
   }
 
   /** The checkout's branch (null while detached) and its base branch's short name, as the conflict hook hears them. */
@@ -402,7 +474,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async status(checkoutPath: string): Promise<MergeAssistStatus> {
-    const checkout = this.#checkout(checkoutPath, false);
+    const checkout = await this.#checkout(checkoutPath, false);
     const db = this.#db;
     const root = checkout.checkoutPath;
     const enabled = mergeAssistEnabled(db, checkout.repositoryKey);
@@ -424,16 +496,16 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async signInStamp(checkoutPath: string): Promise<string> {
-    const checkout = this.#activeCheckout(checkoutPath);
+    const checkout = await this.#activeCheckout(checkoutPath);
     return checkout === undefined ? "" : await this.#signIn.stamp(checkout.repositoryKey);
   }
 
   /**
    * Clear what Merge Assist found in every checkout of the repository, dismissals included, which sessions were handed
    * those conflicts' notes (so one found again is told again), and its `gh` readiness; the person's settings stay.
-   * Returns each checkout's conflicts that were open.
+   * Returns each checkout's events to hand the hook: `closed` for each conflict that was open (`#handed`).
    */
-  #clearRepository(tx: StateQueries, repositoryKey: string): Array<{ path: string; open: StoredConflict[] }> {
+  #clearRepository(tx: StateQueries, repositoryKey: string): Array<{ path: string; fires: ConflictFire[] }> {
     deleteState(tx, STATE_KEYS.github(repositoryKey));
     const cleared = tx.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, repositoryKey)).all().map(({ path }) => {
       const stored = readConflicts(tx, path);
@@ -442,11 +514,13 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       return { path, stored };
     });
     forgetDelivered(tx, new Set(cleared.flatMap(({ stored }) => stored.map(entry => entry.conflict.id))), this.#now());
-    return cleared.map(({ path, stored }) => ({ path, open: stored.filter(entry => entry.conflict.status === "open") }));
+    return cleared.map(({ path, stored }) => ({
+      path, fires: this.#handed(tx, path, stored, stored.filter(entry => entry.conflict.status === "open").map(conflict => ({ event: "closed", conflict }))),
+    }));
   }
 
   async setEnabled(checkoutPath: string, enabled: boolean): Promise<MergeAssistStatus> {
-    const checkout = this.#checkout(checkoutPath, true);
+    const checkout = await this.#checkout(checkoutPath, true);
     const { repositoryKey } = checkout;
     const cleared = this.#db.transaction(tx => {
       tx.update(repositories).set({ mergeAssist: enabled, updatedAt: this.#now() })
@@ -454,44 +528,49 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       return enabled ? [] : this.#clearRepository(tx, repositoryKey);
     }, { behavior: "immediate" });
     this.#pulls.delete(repositoryKey);
-    // Every conflict open when Merge Assist went off is closed: the hook hears it once, as for one no longer found.
-    for (const { path, open } of cleared) {
-      if (open.length === 0) continue;
-      this.#fire({ checkoutPath: path, repositoryKey }, open.map(conflict => ({ event: "closed", conflict })), null, await this.#branches(path));
+    // Every conflict open when Merge Assist went off is closed: the hook hears it once, as for one no longer found. A
+    // stop that comes while the branches are read keeps the events not handed yet (`#keepTaken`).
+    const taken = cleared.filter(({ fires }) => fires.length > 0);
+    for (const entry of taken) this.#taken.add(entry);
+    for (const entry of taken) {
+      const branches = await this.#branches(entry.path);
+      this.#taken.delete(entry);
+      this.#fire({ checkoutPath: entry.path, repositoryKey }, entry.fires, null, branches);
     }
     return await this.status(checkout.checkoutPath);
   }
 
   async scan(checkoutPath: string): Promise<MergeAssistStatus> {
-    const checkout = this.#enabledCheckout(checkoutPath);
+    const checkout = await this.#enabledCheckout(checkoutPath);
     await this.#scanOnce(checkout);
     return await this.status(checkout.checkoutPath);
   }
 
   async dismissConflict(checkoutPath: string, conflictId: string): Promise<MergeAssistStatus> {
-    const checkout = this.#enabledCheckout(checkoutPath);
+    const checkout = await this.#enabledCheckout(checkoutPath);
     const root = checkout.checkoutPath;
     const [name, branches] = await Promise.all([personName(root), this.#branches(root)]);
     // Found, checked and replaced in one transaction: of two dismissals at once, one changes the conflict and fires
     // `closed`; the other finds it dismissed.
-    const dismissed = this.#db.transaction(tx => {
-      const stored = readConflicts(tx, root).find(entry => entry.conflict.id === conflictId);
+    const fires = this.#db.transaction(tx => {
+      const before = readConflicts(tx, root);
+      const stored = before.find(entry => entry.conflict.id === conflictId);
       if (stored === undefined) throw new MergeAssistError("not-found", `This checkout has no conflict ${conflictId}.`);
       if (stored.conflict.status !== "open") throw new MergeAssistError("invalid-state", `Conflict ${conflictId} is already dismissed.`);
       const entry = dismissedConflict(stored, name, this.#now());
       replaceConflict(tx, root, entry, this.#now());
-      return entry;
+      return this.#handed(tx, root, before, [{ event: "closed", conflict: entry }]);
     }, { behavior: "immediate" });
-    this.#fire(checkout, [{ event: "closed", conflict: dismissed }], null, branches);
+    this.#fire(checkout, fires, null, branches);
     return await this.status(root);
   }
 
   async settings(checkoutPath: string): Promise<MergeAssistSettings> {
-    return readSettings(this.#db, this.#checkout(checkoutPath, false).repositoryKey);
+    return readSettings(this.#db, (await this.#checkout(checkoutPath, false)).repositoryKey);
   }
 
   async updateSettings(checkoutPath: string, change: MergeAssistSettingsChange): Promise<MergeAssistStatus> {
-    const checkout = this.#checkout(checkoutPath, true);
+    const checkout = await this.#checkout(checkoutPath, true);
     this.#db.transaction(tx => {
       const settings = readSettings(tx, checkout.repositoryKey);
       writeSettings(tx, checkout.repositoryKey, { hook: change.hook === undefined ? settings.hook : change.hook }, this.#now());
@@ -500,19 +579,26 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async detectAfterEdit(checkoutPath: string, sessionId: string | null = null, host?: RerailHost): Promise<boolean> {
-    const checkout = this.#activeCheckout(checkoutPath);
+    const session = sessionId === null ? null : { id: sessionId, host: host ?? null };
+    return await this.#duringHook(() => this.#detectAfterEdit(checkoutPath, session));
+  }
+
+  /** {@link detectAfterEdit}, which {@link stop} waits for. */
+  async #detectAfterEdit(checkoutPath: string, session: { id: string; host: RerailHost | null } | null): Promise<boolean> {
+    const checkout = await this.#activeCheckout(checkoutPath);
     if (checkout === undefined) return false;
     const last = this.#detectedAt.get(checkout.checkoutPath);
     if (last !== undefined && this.#now() - last < CONFLICT_DETECT_INTERVAL_MS) return false;
     this.#detectedAt.set(checkout.checkoutPath, this.#now());
-    await this.#detect(checkout, sessionId === null ? null : { id: sessionId, host: host ?? null });
+    await this.#detect(checkout, session);
     return true;
   }
 
   async openSession(checkoutPath: string, host: RerailHost, sessionId: string): Promise<void> {
-    const checkout = this.#activeCheckout(checkoutPath);
-    if (checkout === undefined) return;
-    await this.#scanOnce(checkout, { id: sessionId, host });
+    await this.#duringHook(async () => {
+      const checkout = await this.#activeCheckout(checkoutPath);
+      if (checkout !== undefined) await this.#scanOnce(checkout, { id: sessionId, host });
+    });
   }
 
   /** How a session on `host` takes the checkout's conflict notes: whether the host draws the footer. */
@@ -556,19 +642,65 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     this.#listeners.clear();
     // No queued handler starts from now on, so none starts a command after the running ones are ended.
     this.#hook.stop();
+    // The hook hears no event from now on: those a turn-off has not handed yet are kept, before anything is awaited.
+    this.#keepTaken(waitMs > 0);
+    // With no wait, the passes end in this call, before it awaits anything: its caller may close the database as soon
+    // as it returns, as `DatabaseApiStores.close()` does. Nor does it wait for another process's write lock.
+    if (waitMs <= 0) void this.#endPasses(false);
     const started = Date.now();
     await this.#commands.stop(Math.min(STOP_KILL_GRACE_MS, waitMs / 2));
     const timer = Promise.withResolvers<void>();
     const timeout = setTimeout(timer.resolve, Math.max(0, waitMs - (Date.now() - started)));
-    const scans = [...this.#scans.values()].map(scan => scan.work);
+    const running = [this.#hook.settled(), ...this.#hookWork, ...[...this.#scans.values()].map(scan => scan.work)];
     try {
-      await Promise.race([Promise.allSettled([this.#hook.settled(), ...scans]), timer.promise]);
+      // A scan or detection that ends meanwhile stores what it found, as one that ended before the stop did.
+      await Promise.race([Promise.allSettled(running), timer.promise]);
     } finally {
       clearTimeout(timeout);
     }
-    // A scan still waiting for `gh` gives up its mark while the database is open, so the next process scans at once;
-    // once `gh` answers it stops without touching the database.
-    for (const [path, { mark }] of this.#scans) this.#releaseMark(path, mark);
+    await this.#endPasses(waitMs > 0);
+  }
+
+  /**
+   * Keeps the events turn-offs took and have not handed under each checkout's `unheard` key, for the next change there,
+   * once, waiting for another connection's write lock only if `waitForLock`. While another connection holds the lock
+   * past the busy wait, or at all with none, they are not kept, and the stop says so.
+   */
+  #keepTaken(waitForLock: boolean): void {
+    const taken = [...this.#taken];
+    this.#taken.clear();
+    if (taken.length === 0) return;
+    const keep = (): void => this.#db.transaction(tx => {
+      for (const { path, fires } of taken) handedEvents(tx, { checkoutPath: path, before: readConflicts(tx, path), fires, muted: true, now: this.#now() });
+    }, { behavior: "immediate" });
+    try {
+      if (waitForLock) keep();
+      else withoutBusyWait(this.#db, keep);
+    } catch (error) {
+      process.stderr.write(`rerail: Merge Assist could not keep the conflict events it had not handed: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
+
+  /**
+   * Ends every pass still running at its next Git read, so it stores nothing, and gives up the scan marks of the scans
+   * among them while the database is open, so the next process scans at once, waiting for another connection's write
+   * lock only if `waitForLock`. Resolves once the Git it ended has exited, so none runs on in the checkout, and not once
+   * the passes have: a file read on a drive that stopped answering would hold one until the drive answers. Such a pass
+   * ends by itself later: it stores nothing, starts no Git, and gives up its scan mark only while the database is open
+   * (`#releaseMark`).
+   */
+  #endPasses(waitForLock = true): Promise<void> {
+    const ended = this.#reads.stop();
+    for (const [path, { mark }] of this.#scans) {
+      try {
+        this.#releaseMark(path, mark, waitForLock);
+      } catch (error) {
+        // Another connection held the write lock, past the busy wait or with none: the mark goes stale once this
+        // process ends, as a mark left by a process that ended without its stop does.
+        process.stderr.write(`rerail: Merge Assist could not give up its scan of ${path}: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    }
+    return ended;
   }
 }
 

@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import {
   ADAPTER_CAPABILITIES, type AdapterDelivery, type AdapterSession, type EventAnswerFacts, type RerailHost,
@@ -15,7 +15,8 @@ import {
 } from "../api/presentation-contracts.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import {
-  DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, recordedDaemonStatus, type DaemonState,
+  DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, recordedDaemonStatus, recordedDaemonStatusForEvent,
+  type DaemonState, type RecordedDaemon,
 } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
@@ -152,11 +153,17 @@ function unavailable(
 class NotAnswering extends Error {}
 
 /**
- * Whether the daemon `state` records may be read now (`recordedDaemonStatus`): false when it is gone. One whose engine
- * stayed silent to the proof runs but is busy: it is sent nothing, and this throws `NotAnswering`.
+ * How a reader asks what may be made of the recorded daemon: as a command or the status line does, within the proof's
+ * limit (`recordedDaemonStatus`), or as a hook does before its event (`recordedDaemonStatusForEvent`).
  */
-async function readableDaemon(state: DaemonState): Promise<boolean> {
-  const recorded = await recordedDaemonStatus(state);
+type DaemonStatusRead = (state: DaemonState) => Promise<RecordedDaemon>;
+
+/**
+ * Whether the daemon `state` records may be read now (`status`): false when it is gone. One whose engine stayed silent
+ * to the proof runs but is busy: it is sent nothing, and this throws `NotAnswering`.
+ */
+async function readableDaemon(state: DaemonState, status: DaemonStatusRead = recordedDaemonStatus): Promise<boolean> {
+  const recorded = await status(state);
   if (recorded === "silent") throw new NotAnswering("The Rerail daemon's engine did not answer in time");
   return recorded === "alive";
 }
@@ -404,6 +411,27 @@ async function liveHealth(daemon: VerifiedDaemon): Promise<z.infer<typeof health
 }
 
 /**
+ * The hosts a footer reads a daemon on: loopback's. One bound anywhere else gets no read and its links are drawn
+ * nowhere, since a browser should not be sent there.
+ */
+export const FOOTER_DAEMON_HOSTS: readonly string[] = ["127.0.0.1", "[::1]", "localhost"];
+
+/** Whether `origin`, the URL `state` records, is one a footer reads: loopback, http or pinned https, and bare. */
+function isFooterDaemonOrigin(origin: URL, state: DaemonState): boolean {
+  return isFooterDaemonTransport(origin, state) && FOOTER_DAEMON_HOSTS.includes(origin.hostname) && isBareOrigin(origin);
+}
+
+/** http, or https with the certificate's fingerprint recorded for Rerail's clients to pin. */
+function isFooterDaemonTransport({ protocol }: URL, state: DaemonState): boolean {
+  return protocol === "http:" || (protocol === "https:" && state.tlsFingerprint256 !== undefined);
+}
+
+/** No credentials, path, query or fragment: nothing a stale or planted locator could carry. */
+function isBareOrigin({ username, password, pathname, search, hash }: URL): boolean {
+  return [username, password, search, hash].every(part => part === "") && pathname === "/";
+}
+
+/**
  * The daemon serving `cwd`'s checkout, or why there is none. Re-reads the locator on every call:
  * installed updates and daemon restarts may change the listener. The Rerail home's daemon reads the
  * one database every session records into, so it serves sessions of every repository.
@@ -413,12 +441,7 @@ async function verifyDaemon(cwd: string): Promise<VerifiedDaemon | string> {
   const state = await readDaemonState(join(defaultRerailHome(), DAEMON_STATE_FILE));
   if (state === undefined) return "daemon unavailable";
   const origin = new URL(state.url);
-  const secure = origin.protocol === "https:" && state.tlsFingerprint256 !== undefined;
-  if ((origin.protocol !== "http:" && !secure) || !["127.0.0.1", "[::1]", "localhost"].includes(origin.hostname)
-      || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
-    return "daemon unavailable";
-  }
-  return { workspace, state, origin };
+  return isFooterDaemonOrigin(origin, state) ? { workspace, state, origin } : "daemon unavailable";
 }
 
 /**
@@ -447,7 +470,8 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
  * ask this first.
  */
 export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
-  const { state } = await daemonRepositoryState(cwd, host);
+  // A hook's start check, before its event: it waits for a busy daemon's engine pipe as main's hook did.
+  const { state } = await daemonRepositoryState(cwd, host, recordedDaemonStatusForEvent);
   return state === "not-answering" ? null : state;
 }
 
@@ -463,16 +487,31 @@ interface RepositoryOutcome {
   answer?: LiveResponse;
 }
 
-/** Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`). */
-async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryOutcome> {
+/**
+ * Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`), and
+ * asks the recorded daemon's state through `status`.
+ */
+async function daemonRepositoryState(cwd: string, host: RerailHost, status: DaemonStatusRead = recordedDaemonStatus): Promise<RepositoryOutcome> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return { state: null };
-    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema);
+    if (typeof daemon === "string" || !(await readableDaemon(daemon.state, status))) return { state: null };
+    const response = await get(daemon, `/api/presentation?${presentationQuery(cwd, daemon, { host })}`, presentationReadSchema);
     return { state: response.repositoryState, answer: { daemon, response } };
   } catch (error) {
     return { state: error instanceof NotAnswering ? "not-answering" : null };
   }
+}
+
+/**
+ * What a hook and the status line ask `/api/presentation` about `cwd`: `repository`, the folder as its real path gives
+ * it, and on Windows `spelling`, the folder as spelt, where the two differ and the daemon reads it
+ * ({@link DaemonState.readsSpelling}). Rerail 0.1.4 saved a stop for a folder outside Git under the folder as spelt, a
+ * mapped drive letter included, and the daemon's start check reads that key only when it gets the spelling.
+ */
+function presentationQuery(cwd: string, daemon: VerifiedDaemon, query: Record<string, string>): URLSearchParams {
+  const spelling = resolve(cwd);
+  const spelt = process.platform === "win32" && spelling !== daemon.workspace && daemon.state.readsSpelling === true;
+  return new URLSearchParams({ repository: daemon.workspace, ...query, ...(spelt ? { spelling } : {}) });
 }
 
 /** Why no daemon answered in a started checkout: none is running, or the live one gave no answer in time. */
@@ -493,11 +532,27 @@ async function withoutDaemon(
   } catch {
     state = undefined;
   }
+  return silentDaemonPresentation(state, presence, onDemand, silence);
+}
+
+/** {@link withoutDaemon} for a start state already read; undefined when it could not be. */
+function silentDaemonPresentation(
+  state: RepositoryStartState | undefined, presence: PresentationPresence, onDemand: boolean, silence: Silence,
+): SessionPresentation {
   if (state === undefined || state === "started") return unavailable(silence, SILENCE_TEXT[silence], presence);
   if (state === "not-set-up") return presentation({
     status: "not-set-up", items: [{ text: NOT_SET_UP, url: null }, { text: SET_UP_HINT, url: null }], presence, repositoryState: state,
   });
   return notOnHere(presence, onDemand);
+}
+
+/**
+ * The ambient footer of a session once its daemon has stopped, as `readPresentation` draws it with no daemon to ask:
+ * `not running` where Rerail is started or `state` is unknown, and nothing where it is not on. The stopping daemon
+ * leaves it for the surfaces it keeps drawn ahead of time (`claude-status-files.ts`).
+ */
+export function stoppedDaemonPresentation(state: RepositoryStartState | undefined): SessionPresentation {
+  return silentDaemonPresentation(state, "compact", false, "not-running");
 }
 
 /**
@@ -523,19 +578,18 @@ function isPresentationRequest(sessionId: unknown, host: RerailHost, cwd: unknow
 type PresentationResponse = PresentationRead;
 type AnsweredSession = NonNullable<NonNullable<PresentationResponse["context"]>["session"]>;
 /**
- * A live daemon of this checkout, and what it answered for the session or the repository. The session read's answer is
- * the recorded pid's (`readLiveResponse`); the repository read's names no pid, and is taken as its start state is.
+ * A live daemon, the checkout it was asked about, and what it answered for the session or the repository. The session
+ * read's answer is the recorded pid's (`readLiveResponse`); the repository read's names no pid, and is taken as its start
+ * state is.
  */
-type LiveResponse = { daemon: VerifiedDaemon; response: PresentationResponse };
+type LiveResponse = { daemon: Pick<VerifiedDaemon, "origin" | "workspace">; response: PresentationResponse };
 
 /** The daemon's answer for the session; undefined when no live daemon of this checkout answers as itself. */
 async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: PresentationRequest): Promise<LiveResponse | undefined> {
   // The `/api/presentation` response proves liveness; it must not pay for a second probe.
   const daemon = await verifyDaemon(cwd);
   if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return undefined;
-  const response = await get(daemon, `/api/presentation?${new URLSearchParams({
-    repository: daemon.workspace, host, sessionId, onDemand: String(onDemand),
-  })}`, presentationReadSchema);
+  const response = await get(daemon, `/api/presentation?${presentationQuery(cwd, daemon, { host, sessionId, onDemand: String(onDemand) })}`, presentationReadSchema);
   const context = response.context;
   return context === undefined || context.daemon.pid !== daemon.state.pid ? undefined : { daemon, response };
 }
@@ -568,6 +622,17 @@ async function answeredPresentation(answer: LiveResponse, request: PresentationR
   // The session-start hook records the session; until it has, Rerail is still starting, not failing (#302).
   if (context.session === null) return unavailable("starting", STARTING, presence, "started");
   return await answeredSessionPresentation(context.session, context.daemon.native.ok, answer, request);
+}
+
+/**
+ * The ambient footer that a daemon's own answer for a session comes to, with no request made: what `readPresentation`
+ * draws while the daemon at `origin` answers. `response` is its `presentation_get` answer for `request`, whose `cwd`
+ * is the folder it was asked about.
+ */
+export async function answeredSessionFooter(
+  origin: URL, response: PresentationRead, request: Pick<PresentationRequest, "sessionId" | "host" | "cwd">,
+): Promise<SessionPresentation> {
+  return await answeredPresentation({ daemon: { origin, workspace: await realpath(request.cwd) }, response }, request);
 }
 
 /** A session's presentation, and the answer it was made from, which only a daemon that answered as itself gives. */

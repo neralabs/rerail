@@ -31,7 +31,7 @@ import {
   type AdapterEvent, leaveUntaken, openRerailDatabase, RepositoryWorktreeWalks, setRuleSetting, SqliteAuditStore, SqliteAuditControlStore,
   UNTAKEN_EVENTS_DIR, untakenFolderId, type UntakenPass,
 } from "../../src/engine/index.js";
-import { presentedSessionNoteRules, steerDashboard } from "../../src/presentation/index.js";
+import { keepClaudeStatusFiles, presentedSessionNoteRules, steerDashboard } from "../../src/presentation/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { linkFolder } from "../support/platform/links.js";
@@ -270,7 +270,7 @@ describe("Rerail daemon", () => {
       body: {
         sessions: [{
           sessionId: "s1", host: "claude-code", cwd: "/workspace", repositoryId: "test-repository", startedAt: 1_000, endedAt: 2_000,
-          eventCount: 3, violationCount: 0, steeredViolations: 0, lastEventAt: 1_003,
+          eventCount: 3, violationCount: 0, steeredViolations: 0, declinedViolations: 0, lastEventAt: 1_003,
         }],
         total: 1,
         nextCursor: null,
@@ -341,6 +341,37 @@ describe("Rerail daemon", () => {
     }
   });
 
+  it("keeps a Claude Code session's status line in a file while it runs, and leaves it saying not running when it closes", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const databasePath = join(root, "rerail.sqlite");
+    const folder = join(root, "status");
+    await mkdir(folder);
+    setUpTestRepository(root, {}, databasePath);
+    const session = { host: "claude-code" as const, sessionId: "claude-session", cwd: root };
+    const store = new SqliteSessionStore(databasePath);
+    try {
+      store.openSession(session);
+      store.startHudTracking(session, true);
+      const daemon = await start({ statusLines: stores => keepClaudeStatusFiles({ stores, folder, checkEveryMs: 20 }) });
+      // The file's last line is the one for a terminal with no colour.
+      const line = async (): Promise<string> => (await readFile(join(folder, session.sessionId), "utf8")).split("\n")[2]!;
+      await vi.waitFor(async () => expect(await line()).toContain("rules unavailable"), { timeout: 10_000 });
+      // The links are into this daemon's own dashboard.
+      expect(await line()).toContain(`\u001b]8;;${new URL(daemon.url).origin}/?`);
+      // A steer another process records, as Claude Code's hook does, reaches the file without anything asking for it.
+      store.recordSteer(session, "receipt", ["team:rule"]);
+      await vi.waitFor(async () => expect(await line()).toContain("steered 1×"), { timeout: 10_000 });
+      store.closeSession(session.sessionId);
+      await vi.waitFor(() => expect(existsSync(join(folder, session.sessionId))).toBe(false), { timeout: 10_000 });
+      store.openSession(session);
+      await vi.waitFor(() => expect(existsSync(join(folder, session.sessionId))).toBe(true), { timeout: 10_000 });
+      await daemon.close();
+      expect(await line()).toBe("R E R A I L ✕ not running");
+    } finally {
+      store.close();
+    }
+  }, 60_000);
+
   it("keeps session status bounded even when an audit contains multi-megabyte violations", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const path = join(root, "rerail.sqlite");
@@ -387,10 +418,11 @@ describe("Rerail daemon", () => {
     expect(compact.context?.daemon).toEqual({
       pid: process.pid, database: { path, exists: true }, native: { ok: true }, workspaceRoot: root,
     });
-    // `sessions_get` adds the transcript's gaps, which the status line does not read.
-    const { gaps, ...head } = (await getJson<Record<string, unknown>>(daemon, "/api/sessions/large-run")).body;
+    // `sessions_get` adds the transcript's gaps and declined steers, which the status line does not read.
+    const { gaps, declined, ...head } = (await getJson<Record<string, unknown>>(daemon, "/api/sessions/large-run")).body;
     expect(compact.context?.session).toEqual(head);
     expect(gaps).toEqual({ droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 });
+    expect(declined).toEqual({ violations: 0, notes: [] });
     expect(compact.context?.session?.audit).toEqual({
       workspaceRoot: root, scope: "repository", mode: "log", status: "failed", violationCount: 1, failureCount: 148,
       unlistedFailureCount: 140, blindFileCount: 2, gapCount: 5, outOfWorkRuleCount: 1, fileWorkStoppedRuleCount: 1,

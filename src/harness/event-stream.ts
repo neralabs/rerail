@@ -16,7 +16,8 @@ import {
 } from "../runtime/event-protocol.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
-import { daemonEngineEndpoint, engineEndpointAt, HOOK_DAEMON_WAIT_MS } from "../runtime/daemon-control.js";
+import { daemonEngineEndpoint, engineEndpointAt } from "../runtime/daemon-control.js";
+import { HOOK_DAEMON_WAIT_MS } from "../runtime/daemon/daemon-waits.js";
 import { ingestEngineEventAnswer } from "../runtime/engine-service.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { linkDeliveries } from "../presentation/session-presentation.js";
@@ -129,8 +130,9 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
       answerFacts: () => answered,
       ingest: async (event) => {
         answered = {};
-        // As a hook waits: a busy daemon gets HOOK_DAEMON_WAIT_MS from the event's arrival, the start check's read of
-        // it included, and no more.
+        // As a hook waits (`withDaemonDeadline`): a busy daemon gets HOOK_DAEMON_WAIT_MS from the event's arrival, the
+        // start check's read of it included, though on Windows that read may first wait up to 30 s for a free instance
+        // of a busy engine pipe.
         const deadline = Date.now() + HOOK_DAEMON_WAIT_MS;
         if (event.kind === "session-start") host = event.session.host;
         // As hooks do: where Rerail is off nothing is recorded, and asking for the socket would autostart the daemon.

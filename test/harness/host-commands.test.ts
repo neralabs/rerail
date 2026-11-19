@@ -213,7 +213,7 @@ describe("/rerail-manage", () => {
     await run("rerail-manage");
     expect(mocks.rulesDashboard).toHaveBeenCalledWith({ cwd: "/workspace/acme-web" });
     expect(mocks.openDashboard).toHaveBeenCalledWith(scoped);
-    expect(notices).toEqual([{ message: `Opening ${scoped}`, level: "info" }]);
+    expect(notices).toEqual([{ message: "Opening the dashboard in your browser", level: "info" }]);
   });
 
   it("says so when the page opened as a tab in the Orca window", async () => {
@@ -221,7 +221,7 @@ describe("/rerail-manage", () => {
     mocks.openDashboard.mockResolvedValue("orca-tab");
     const { run, notices } = commandHarness();
     await run("rerail-manage");
-    expect(notices).toEqual([{ message: `Opening ${scoped} in the Orca window`, level: "info" }]);
+    expect(notices).toEqual([{ message: "Opening the dashboard in the Orca window", level: "info" }]);
   });
 
   it("gives the link to open by hand when BROWSER=none kept the browser shut", async () => {

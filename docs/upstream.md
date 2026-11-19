@@ -784,7 +784,7 @@ CI checks pack data by sha256 and scores the rules on it; it never re-derives th
 
 `ci.yml`'s jobs that touch pack data:
 
-- **Pack test data** (`test-data`) fills the Actions cache with every locked archive.
+- **Pack test data** (`test-data`) uploads every locked archive as the run's artifacts, which the jobs below download.
 - **Pack test data is in S3** (`test-data-in-s3`) fails when S3 lacks an archive a lock names.
 - **Conformance** (`conformance`) and **Scripts, reference examples, and conformance** (`tools`) run the conformance
   check.

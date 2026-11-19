@@ -17,7 +17,7 @@ import { reportQuarantinedRule, type QuarantinedRule } from "../catalog/rule-qua
 import { languageNotSupportedOf } from "./code-rule-language-support.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../native/native.js";
 import type { RepositoryAuditRuleProvenance, AuditRuleProvenance, RulePlacementDecision } from "../audit/audit.js";
-import { bundledCodeRuleDslDirectory } from "./code-rule-compile.js";
+import { bundledCodeRuleDslDirectory, relationalRulesOff } from "./code-rule-compile.js";
 import {
   folderContains,
   type RuleCatalog,
@@ -280,6 +280,11 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
       if (placement.length === 0) continue;
       if (rule.configError !== null) {
         quarantined.push({ ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` });
+        continue;
+      }
+      const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
+      if (relationalOff !== undefined) {
+        quarantined.push({ ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER, reason: relationalOff });
         continue;
       }
       const sourceText = stableJsonText(rule.document.rule);

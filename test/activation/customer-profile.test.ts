@@ -333,10 +333,13 @@ describe("activations racing for the lock of one killed while it held it", () =>
     const signed = { envelope: signProfile(profile(thumbprint), setup.signingKey), trustRoots: setup.trustRoots, thumbprint, now: NOW };
     const size = raceSize({ processes: 8, rounds: 4 });
 
+    // The race checks that the takes run one at a time and that each runs, so each racer waits up to a minute, as the
+    // lock's own race in file-lock.test.ts does. With the 5 s an activation waits, a loaded Windows runner failed the
+    // last in line: each turn holds the lock while this process answers the racer's enter and leave.
     const race = await raceForLock({
       take: `import { CustomerProfileStore } from ${JSON.stringify(sourceModule("src/activation/customer-profile.ts"))};
 const { envelope, trustRoots, thumbprint, now } = JSON.parse(process.env.RERAIL_RACE_PROFILE);
-const store = new CustomerProfileStore(${JSON.stringify(setup.home)});
+const store = new CustomerProfileStore(${JSON.stringify(setup.home)}, { lockWaitMs: 60_000 });
 const take = inside => store.activate("acme", envelope, trustRoots, thumbprint, new Date(now), inside);`,
       env: { RERAIL_RACE_PROFILE: JSON.stringify(signed) },
       ...size,

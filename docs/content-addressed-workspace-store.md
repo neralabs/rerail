@@ -7,7 +7,7 @@ Losing it costs reuse, never results.
 <details>
 <summary>What it holds and where the code lives</summary>
 
-It holds compressed sources and syntax tapes, per-file rule results, Git tree and snapshot metadata,
+It holds sources and syntax tapes, per-file rule results, Git tree and snapshot metadata,
 workspace overlays of changed files, and a kind search index.
 
 Code: `native/src/content_store/`, plus `native/src/code_rule_dsl/workspace/` (`storage.rs`,
@@ -50,10 +50,10 @@ the file, so the new store starts empty.
 store missing any object (new, or lacking an index this build added) takes the exclusive lock and
 applies the DDL; a new store also gets `auto_vacuum=INCREMENTAL`.
 
-`PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (1). A build refuses a store
+`PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (5). A build refuses a store
 whose floor is newer than its own. Additive changes such as indexes never raise it.
 
-The renamed file is `STORE_FILE_NAME`, now `content-v1.sqlite`. The old file is neither migrated nor
+The renamed file is `STORE_FILE_NAME`, now `content-v5.sqlite`. The old file is neither migrated nor
 deleted.
 
 Tests: `newer_compatibility_floor_is_refused`,
@@ -64,13 +64,10 @@ Tests: `newer_compatibility_floor_is_refused`,
 
 ## Connections and busy writers
 
-Each thread reads on its own connection. The writes of one process wait their turn in the store's
-writer line and are handed the store at the release of the writer ahead, in arrival order.
+Each thread reads on its own connection; a busy writer retries, then leaves the store alone.
 
-A write whose turn has not come within 10 s gives up, and the workspace keeps its results in memory
-until the writer it waited behind lets go. Only a writer of another process (a checkout's own store
-under a dev build) is waited out through SQLite's busy handler; behind one, the workspace skips the
-store for 30 s.
+A write that stays busy for 10 s gives up. The workspace then skips the store for 30 s and keeps its
+results in memory.
 
 <details>
 <summary>Connection settings</summary>
@@ -92,63 +89,22 @@ PRAGMA journal_size_limit=16777216;
 ```
 
 It also sets a 128-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
-`BUSY_TIMEOUT` (250 ms) per attempt for the write lock. The store writes only through the
-connection guard's `transaction_with_behavior` and `execute_batch`, each in a turn of the writer
-line, so a write meets that lock held only by a writer of another process. The guard still derefs to
-the connection, which could run a write outside a turn; in debug builds, so in every test, a commit
-on a store connection whose thread holds no turn is rolled back (`commits_only_in_a_turn`).
-
-SQLite's automatic checkpoint is replaced by its notice of the write-ahead log's size at each commit
-(`sqlite3_wal_hook`, `checkpoint_after_turn`). SQLite runs its checkpoint inside the commit, after it
-releases its write lock but before the commit returns, so the next writer of the process would wait
-for the checkpoint's copying and flushes in the line. The commit that leaves the log at SQLite's own
-size (`wal_autocheckpoint`, 1,000 pages by default) marks a checkpoint due, and its thread runs it,
-passive as SQLite's, once its turn is handed on (test:
-`a_commit_hands_the_line_on_before_the_checkpoint_it_leaves_due`). As before, every commit that
-leaves the log at that size or more runs one: a reader holding an old snapshot lets the log grow until
-it ends, and `journal_size_limit` shortens the file once a checkpoint copied the whole log and the
-next writer starts it over.
+`BUSY_TIMEOUT` (250 ms) per attempt for the write lock.
 
 </details>
 
 <details>
-<summary>Writer line, retry, give-up and cooldown details</summary>
+<summary>Retry, give-up and cooldown details</summary>
 
-1. **Turn.** Each store file has one `WriterLine` per process (`writer_line.rs`), shared by every
-   `ContentStore` on it. The store connection's `transaction_with_behavior` takes the write's turn
-   for an immediate or exclusive transaction and holds it until the transaction ends; the holder's
-   commit hands the line to the writer that arrived next (test:
-   `the_writer_ahead_hands_the_store_to_the_waiting_writers_in_arrival_order`). A writer committing
-   batch after batch (a Git snapshot publication) thus delays a write that arrives meanwhile by the
-   batch in progress, not the run (test:
-   `a_write_during_a_run_of_batches_waits_for_the_batch_in_progress_not_the_run`). The maintenance
-   thread's search-index batches take the store only while no writer of the process holds it or waits
-   for it (`WritesOnlyWhenFree`), and otherwise run again at its next wake, so a checked edit never
-   waits behind one.
-2. **Retry.** Every write runs under `retry_busy`: a `Busy` attempt, a writer of another process
-   holding SQLite's lock, rolls back and re-runs whole after jittered backoff, doubling from 2 ms to
-   200 ms.
-3. **Give up.** After `BUSY_DEADLINE` (10 s) of waiting, in the line and on another process, the
-   write returns `StoreError::Busy`. An `OperationDeadline` shares one deadline across an
-   operation's writes (an apply's publication passes, a snapshot's batches). In the line the bound is
-   reached only when the writers ahead stop letting go (a disk that stalls).
-4. **Cancel.** A wait in the line also ends when its owner cancels it (`waits_end_when`; the owner
-   wakes the waits with `end_waits`). Every cancellable publication passes through
-   `publish_overlay_files_reporting_busy`, whose waits end on the publication's own cancel, so
-   closing a workspace stops its applies' and completions' publications at once. The maintenance
-   handle ends its thread's waits (lease renewal, collection) before it joins that thread, so closing
-   the last workspace on the host's thread never waits on other writers. A cancelled write fails as
-   interrupted, is not retried and marks nothing.
-5. **Stall.** A waiter that itself waited the whole deadline marks the holder stalled
-   (`writes_stalled`) until that holder lets go. Meanwhile an apply leaves the store alone, keeping
-   results in memory, and the first apply after the holder lets go publishes them.
-6. **Cool down.** After a write waited out a writer of another process, whose end this process
-   cannot see, the workspace skips the store for `STORE_BUSY_COOLDOWN` (30 s); the first apply
-   afterwards publishes what it kept.
+1. **Retry.** Every write runs under `retry_busy`: a `Busy` attempt rolls back and re-runs whole
+   after jittered backoff, doubling from 2 ms to 200 ms.
+2. **Give up.** After `BUSY_DEADLINE` (10 s) the write returns `StoreError::Busy`. An
+   `OperationDeadline` shares one deadline across an operation's writes (an apply's publication
+   passes, a snapshot's batches).
+3. **Cool down.** The workspace skips the store for `STORE_BUSY_COOLDOWN` (30 s), keeping results in
+   memory; the first apply afterwards publishes them.
 
-A workspace result's `workspaceProfile` reports `storageRetries` and `storageRetryWaitNanoseconds`:
-each attempt that ended busy, the one that reached the deadline included, and each successful
-write's wait for its turn, so a stalled store shows there.
+A workspace result's `workspaceProfile` reports `storageRetries` and `storageRetryWaitNanoseconds`.
 
 </details>
 
@@ -179,7 +135,9 @@ signed 64-bit lanes, each eight digest bytes read with `i64::from_be_bytes`. SHA
 
 ## Objects
 
-Each source and tape is stored once, as an independent compressed frame checked on every read.
+Each source and tape is stored once. A scan's sources and tapes are kept uncompressed in segment files beside the
+store (`content-v5.sqlite.objects/`), read in place; the row points at its range and holds no bytes. Other writes keep
+an independent compressed frame in the row, checked on every read.
 
 - **`source_objects`:** each source under its SHA-256.
 - **`tape_objects`:** one syntax tape per source and grammar.
@@ -408,10 +366,8 @@ incomplete sets give `Unknown`. When every AST clause's root kinds are `Absent`,
 
 The maintenance thread builds indexes after publication, never during it. It reads unindexed tapes
 via a keyset cursor (`tapes_without_search_index_after`), 64 at a time, for about one second per
-wake, writing each batch in one transaction (`put_search_indexes_bulk`) only while no other writer
-of the process holds the store or waits for it (`index_stored_tapes_when_free`); a batch that would
-wait gives up and runs again at the next wake. A tape this build cannot decode gets an incomplete
-set, leaving the backlog.
+wake, writing each batch in one transaction (`put_search_indexes_bulk`). A tape this build cannot
+decode gets an incomplete set, leaving the backlog.
 
 </details>
 

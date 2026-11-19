@@ -1,0 +1,26 @@
+[package]
+name = "rerail-parser-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The parsers' tests that need no engine: the .rerail ladder against the engine's .rerail parser, the JSON suite against tree-sitter, and both on Metal."
+
+[features]
+# The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
+test-hooks = ["rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks"]
+
+[dependencies]
+rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
+rerail-rr-syntax = { path = "../rr_syntax" }
+bitlex = { path = "../../../tools/bitlex", default-features = false }
+# The JSON suite's comparisons: the grammar the engine links (ast-grep's), at its version.
+tree-sitter = "=0.27.1"
+tree-sitter-json = "=0.24.8"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The block programs' Metal backend, for the Metal checks (`metal_tests`).
+rerail-metal = { path = "../metal", features = ["test-hooks"] }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-parser-tests = { path = ".", features = ["test-hooks"] }

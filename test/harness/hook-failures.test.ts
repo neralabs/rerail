@@ -25,6 +25,7 @@ import { leaveUntaken, LOCKS_DIR, loadNativeBinding, UNTAKEN_EVENTS_DIR, UNTAKEN
 import { daemonLeftEventUntaken, engineRequestBody, parseEngineRequest } from "../../src/runtime/index.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { listenAsEngine } from "../support/platform/engine-endpoint.js";
+import { holdHomeAsDaemon } from "../support/processes/home-lock.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { sourceModule } from "../support/processes/lock-race.js";
 
@@ -478,12 +479,13 @@ describe("a hook that cannot record its event", () => {
     const rerailHome = await home();
     vi.stubEnv("RERAIL_HOME", rerailHome);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
-    // A live daemon: this process, holding the engine socket daemon.json names and proving the capability it records,
-    // with `answer` at the URL it records.
+    // A live daemon: this process, holding the home, the engine socket daemon.json names and proving the capability it
+    // records, with `answer` at the URL it records.
     const front = createHttpServer(answer);
     const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-alive-${process.pid}-${Date.now()}` : join(rerailHome, "engine.sock");
     await new Promise<void>(resolve => front.listen(0, "127.0.0.1", resolve));
     const closeEngine = await listenAsEngine(socketPath, "token");
+    const releaseHome = holdHomeAsDaemon(rerailHome);
     try {
       const port = (front.address() as AddressInfo).port;
       writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
@@ -502,6 +504,7 @@ describe("a hook that cannot record its event", () => {
       })]);
     } finally {
       front.closeAllConnections();
+      releaseHome();
       await Promise.all([new Promise(resolve => front.close(resolve)), closeEngine()]);
     }
   });
@@ -546,21 +549,26 @@ describe("a hook beside a daemon that runs but does not read", () => {
   }
 
   /**
-   * This process as the home's daemon, which watches the home's untaken folder: its engine socket proving the capability
-   * daemon.json records, and `port` at its URL. Returns what ends the engine.
+   * This process as the home's daemon, which watches the home's untaken folder: it holds the home, as a daemon does, so
+   * a lookup keeps the record of this daemon that does not answer; its engine socket proves the capability daemon.json
+   * records, and `port` is at its URL. Returns what lets go of the home and ends the engine.
    */
   async function recordedDaemon(rerailHome: string, port: number): Promise<() => Promise<void>> {
     vi.stubEnv("RERAIL_HOME", rerailHome);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-untaken-${process.pid}-${Date.now()}` : join(rerailHome, "engine.sock");
     const closeEngine = await listenAsEngine(socketPath, "token");
+    const releaseHome = holdHomeAsDaemon(rerailHome);
     mkdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR));
     writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
       pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test", ui: "bundled", startedAt: 1,
       packageRoot: rerailHome, databasePath: join(rerailHome, "rerail.sqlite"), kernelSocketPath: socketPath, accessToken: "token",
       untakenFolder: untakenFolderId(rerailHome),
     }));
-    return closeEngine;
+    return async () => {
+      releaseHome();
+      await closeEngine();
+    };
   }
 
   /** A front at the daemon's URL that never answers, and counts what reaches it. */

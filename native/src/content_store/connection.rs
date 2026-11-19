@@ -1,89 +1,65 @@
-//! Per-thread SQLite connections, connection pragmas, each write transaction's turn in the store's
-//! writer line, the checkpoint a commit leaves for after its turn, and the busy retry a write runs
-//! under for a writer of another process.
+//! Per-thread SQLite connections, connection pragmas, and the busy retry every store write runs
+//! under.
 
-use super::writer_line::{Refusal, Turn, Wait, WriterLine};
 use super::{ContentStore, StoreError, StoreResult};
 use parking_lot::{ArcMutexGuard, Mutex as ParkingMutex, RawMutex};
-use rusqlite::hooks::Wal;
-use rusqlite::wal::CheckpointMode;
-use rusqlite::{Connection, MAIN_DB, OpenFlags, Transaction, TransactionBehavior};
-use std::cell::{Cell, RefCell};
+use rusqlite::{Connection, OpenFlags, TransactionBehavior};
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::c_int;
 use std::hash::{BuildHasher, RandomState};
 use std::path::{Path, PathBuf};
-use std::ptr::NonNull;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// How long the store writes of one operation wait on other writers in all before they report
-/// `Busy`: their turns in the store's writer line (`take_turn`), which end at the release of the
-/// writer ahead or at their owner's cancel (`waits_end_when`), and reach it only when the
-/// writers ahead stop letting go (a disk that stalls), and SQLite's lock held by a writer of
-/// another process, which each attempt waits for at most one busy timeout (`wait_for_writer`), so
-/// a cancelled write notices between attempts.
+/// How long the store writes of one operation wait out other writers before they report `Busy`.
+/// Each attempt waits at most one busy timeout (`wait_for_writer`), so a cancelled write notices
+/// between attempts.
 const BUSY_DEADLINE: Duration = Duration::from_secs(10);
-/// The first and the largest backoff between a write's attempts on a store another process holds.
+/// The first and the largest backoff between a write's attempts.
 const BUSY_BACKOFF_FIRST: Duration = Duration::from_millis(2);
 const BUSY_BACKOFF_MAX: Duration = Duration::from_millis(200);
-/// How long one attempt waits inside SQLite on a writer of another process before it reports
-/// `Busy`.
+/// How long one attempt waits on another writer inside SQLite before it reports `Busy`.
 const BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 /// SQLite's own delays between the checks of a busy lock (`sqliteDefaultBusyCallback`).
 const BUSY_POLL_DELAYS_MS: [u64; 12] = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 type AttemptHook = Box<dyn FnMut(Duration) -> Duration>;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 type WaitHook = Box<dyn FnMut(usize)>;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Replaces `BUSY_DEADLINE` for writes on this thread, so a test reaches the deadline fast.
-    pub(crate) static BUSY_DEADLINE_OVERRIDE: std::cell::Cell<Option<Duration>> =
+    pub static BUSY_DEADLINE_OVERRIDE: std::cell::Cell<Option<Duration>> =
         const { std::cell::Cell::new(None) };
     /// Replaces the busy timeout (one attempt's wait) of writes on this thread, so a test's
     /// deadline spans many attempts instead of one or two: a scheduler stall
     /// then cannot decide how many retries it sees.
-    pub(crate) static BUSY_TIMEOUT_OVERRIDE: std::cell::Cell<Option<Duration>> =
+    pub static BUSY_TIMEOUT_OVERRIDE: std::cell::Cell<Option<Duration>> =
         const { std::cell::Cell::new(None) };
 
     /// Runs on each of this thread's write attempts that found the store busy, with how long the
     /// operation's writes have waited so far, and returns time to add to that wait without
     /// sleeping it: a test spends a deadline without waiting for it.
-    pub(crate) static BUSY_ATTEMPT_HOOK: RefCell<Option<AttemptHook>> =
+    pub static BUSY_ATTEMPT_HOOK: RefCell<Option<AttemptHook>> =
         const { RefCell::new(None) };
     /// Runs on each check of a busy lock inside SQLite on this thread, with the number of checks
     /// so far in that wait: a test releases a writer once another is waiting on it.
-    pub(crate) static BUSY_WAIT_HOOK: RefCell<Option<WaitHook>> =
+    pub static BUSY_WAIT_HOOK: RefCell<Option<WaitHook>> =
         const { RefCell::new(None) };
 }
 
 thread_local! {
     /// How long this thread has waited on the lock inside the current SQLite wait.
     static WAIT_SPENT: std::cell::Cell<Duration> = const { std::cell::Cell::new(Duration::ZERO) };
-    /// How long this thread has waited on other writers, in the writer line and inside SQLite,
-    /// since its write attempt began.
+    /// How long this thread has waited on the lock inside SQLite since its write attempt began.
     static ATTEMPT_WAITED: std::cell::Cell<Duration> =
         const { std::cell::Cell::new(Duration::ZERO) };
-    /// How this thread's writes wait for other writers (`Waits`).
-    static WAITS: Cell<Waits> = const { Cell::new(Waits::InLine) };
-    /// Whether this thread's last commit left the store's write-ahead log at the size SQLite's
-    /// own automatic checkpoint starts at (`checkpoint_after_turn`).
-    static CHECKPOINT_DUE: Cell<bool> = const { Cell::new(false) };
-}
-
-/// How a thread's writes wait for other writers.
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum Waits {
-    /// In the writer line for this process's writers, then inside SQLite for another process's.
-    InLine,
-    /// Only inside SQLite, for another process's writer: the line's turn is taken only while no
-    /// writer of this process holds the store or waits for it (`WritesOnlyWhenFree`).
-    OnlyWhenFree,
-    /// Never: the write gives up while any writer holds the store (`NoBusyWait`).
-    Never,
+    /// Whether this thread's SQLite waits give up at once (`immediate_transaction_no_wait`).
+    static NO_BUSY_WAIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether this thread runs an attempt of `retry_busy`, or one attempt its caller retries
+    /// (`immediate_transaction_once`): a `begin` inside one leaves the retry to it.
+    static IN_RETRY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 thread_local! {
@@ -91,52 +67,6 @@ thread_local! {
     /// `None` outside one, where each write has a deadline of its own.
     static OPERATION_WAITED: std::cell::Cell<Option<Duration>> =
         const { std::cell::Cell::new(None) };
-    /// Whether a write under this thread's `OperationDeadline` ended `Busy`.
-    static OPERATION_BUSY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// The cancel of the work this thread runs (`waits_end_when`), only while that call runs.
-    static WAIT_CANCEL: Cell<Option<NonNull<dyn Fn() -> bool>>> = const { Cell::new(None) };
-}
-
-/// Runs `body` with this thread's waits for a turn in the store's writer lines ending once
-/// `cancelled` holds, and returns what it returns: the owner of the work (a publication whose
-/// workspace closes, the maintenance thread whose handle stops it) ends a wait it no longer needs at
-/// once, not at the turn or the write deadline. Whoever makes `cancelled` hold wakes the waits
-/// (`end_waits`), and a woken wait reads it again. Such a write fails as interrupted, never as
-/// `Busy`, so it is not retried, marks no holder stalled and opens no busy window. A call inside
-/// another reads only its own `cancelled` while it runs.
-pub(crate) fn waits_end_when<T>(cancelled: &dyn Fn() -> bool, body: impl FnOnce() -> T) -> T {
-    /// Puts the outer call's cancel back when `body` returns or unwinds.
-    struct Restore(Option<NonNull<dyn Fn() -> bool>>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            WAIT_CANCEL.set(self.0);
-        }
-    }
-    // SAFETY: only the lifetime is erased. The pointer is read by `waits_ended`, on this thread
-    // only, while `body` runs, and `Restore` takes it out when `body` returns or unwinds, so it is
-    // never read after `cancelled`'s borrow ends; no caller can keep it past this call.
-    let erased = unsafe {
-        std::mem::transmute::<NonNull<dyn Fn() -> bool + '_>, NonNull<dyn Fn() -> bool + 'static>>(
-            NonNull::from(cancelled),
-        )
-    };
-    let _restore = Restore(WAIT_CANCEL.replace(Some(erased)));
-    body()
-}
-
-/// Sets `cancel` and wakes every write waiting in this process's writer lines, so a wait whose
-/// cancel reads it (`waits_end_when`) ends.
-pub(crate) fn end_waits(cancel: &AtomicBool) {
-    cancel.store(true, Ordering::Release);
-    super::writer_line::wake_all();
-}
-
-/// Whether the work this thread runs was cancelled (`waits_end_when`).
-fn waits_ended() -> bool {
-    // SAFETY: `waits_end_when` keeps the pointer valid while it is set (see there).
-    WAIT_CANCEL
-        .get()
-        .is_some_and(|cancelled| unsafe { cancelled.as_ref()() })
 }
 
 /// Makes every store write this thread runs while it lives share one `BUSY_DEADLINE` instead of
@@ -148,16 +78,15 @@ fn waits_ended() -> bool {
 /// Once it is spent, a write makes a single attempt, and reports `Busy` if that finds the store
 /// held, without retrying; a free store is still written. Writes outside a deadline
 /// (maintenance) keep a deadline of their own. Entering one inside another joins the outer one.
-pub(crate) struct OperationDeadline {
+pub struct OperationDeadline {
     owned: bool,
 }
 
 impl OperationDeadline {
-    pub(crate) fn enter() -> Self {
+    pub fn enter() -> Self {
         let owned = OPERATION_WAITED.get().is_none();
         if owned {
             OPERATION_WAITED.set(Some(Duration::ZERO));
-            OPERATION_BUSY.set(false);
         }
         Self { owned }
     }
@@ -167,19 +96,12 @@ impl Drop for OperationDeadline {
     fn drop(&mut self) {
         if self.owned {
             OPERATION_WAITED.set(None);
-            OPERATION_BUSY.set(false);
         }
     }
 }
 
-/// Whether a write under this thread's `OperationDeadline` ended `Busy`: its operation then left
-/// something unwritten, whatever the store's state is now.
-pub(crate) fn operation_found_busy() -> bool {
-    OPERATION_BUSY.get()
-}
-
 fn busy_deadline() -> Duration {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(deadline) = BUSY_DEADLINE_OVERRIDE.get() {
         return deadline;
     }
@@ -187,7 +109,7 @@ fn busy_deadline() -> Duration {
 }
 
 /// What other writers cost a write: its attempts that found the store busy, and the time those
-/// attempts, the backoff after them and a successful attempt's wait for its turn took.
+/// attempts and the backoff after them took.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BusyRetries {
     pub retries: usize,
@@ -198,8 +120,7 @@ pub struct BusyRetries {
 /// exponential backoff; `Busy` once `BUSY_DEADLINE` of waiting has passed, counting what the
 /// thread's other writes under the same `OperationDeadline` already waited. Every store write
 /// that takes the write lock runs under it, so one writer's long transaction delays the others
-/// instead of failing them. An attempt waits its turn in the writer line first (`take_turn`), so
-/// it finds SQLite's lock held only by a writer of another process.
+/// instead of failing them.
 pub(super) fn retry_busy<T>(
     retries: &mut BusyRetries,
     mut attempt: impl FnMut() -> StoreResult<T>,
@@ -211,11 +132,14 @@ pub(super) fn retry_busy<T>(
     loop {
         ATTEMPT_WAITED.set(Duration::ZERO);
         let attempt_started = Instant::now();
-        match attempt() {
+        let outer = IN_RETRY.replace(true);
+        let outcome = attempt();
+        IN_RETRY.set(outer);
+        match outcome {
             Err(StoreError::Busy) => {
                 let attempted = attempt_started.elapsed();
                 waited = waited.saturating_add(attempted);
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 {
                     let spent = waited;
                     waited = waited.saturating_add(BUSY_ATTEMPT_HOOK.with(|hook| {
@@ -224,14 +148,9 @@ pub(super) fn retry_busy<T>(
                             .map_or(Duration::ZERO, |hook| hook(spent))
                     }));
                 }
-                // Counted also when it ends the write: a wait that reached the deadline shows
-                // in the profile's retries and wait time.
-                retries.retries += 1;
-                add_wait(retries, attempted);
                 let Some(remaining) = deadline.checked_sub(waited) else {
                     if shared {
                         OPERATION_WAITED.set(Some(waited));
-                        OPERATION_BUSY.set(true);
                     }
                     return Err(StoreError::Busy);
                 };
@@ -240,14 +159,16 @@ pub(super) fn retry_busy<T>(
                 if shared {
                     OPERATION_WAITED.set(Some(waited));
                 }
-                add_wait(retries, delay);
+                retries.retries += 1;
+                retries.wait_nanoseconds = retries.wait_nanoseconds.saturating_add(
+                    u64::try_from(attempted.saturating_add(delay).as_nanos()).unwrap_or(u64::MAX),
+                );
                 std::thread::sleep(delay);
                 backoff = backoff.saturating_mul(2).min(BUSY_BACKOFF_MAX);
             }
             result => {
-                // An attempt that got the lock after waiting for its turn or inside SQLite still
-                // spent that time.
-                add_wait(retries, ATTEMPT_WAITED.get());
+                // An attempt that got the lock after waiting for it inside SQLite still spent
+                // that time.
                 if shared {
                     OPERATION_WAITED.set(Some(waited.saturating_add(ATTEMPT_WAITED.get())));
                 }
@@ -257,20 +178,12 @@ pub(super) fn retry_busy<T>(
     }
 }
 
-/// Adds `waited` to the time `retries` spent on other writers.
-fn add_wait(retries: &mut BusyRetries, waited: Duration) {
-    retries.wait_nanoseconds = retries
-        .wait_nanoseconds
-        .saturating_add(u64::try_from(waited.as_nanos()).unwrap_or(u64::MAX));
-}
-
 /// SQLite's busy handler of every store connection: waits for the write lock the way SQLite's
 /// own busy timeout does (`BUSY_TIMEOUT` in all, `BUSY_POLL_DELAYS_MS` between checks), and
 /// records what it waited, which an attempt that then gets the lock would otherwise leave
-/// uncounted. It runs on the thread that runs the statement. A write transaction asks SQLite for
-/// the lock only in its turn in the writer line, so it waits here for a writer of another process.
+/// uncounted. It runs on the thread that runs the statement.
 fn wait_for_writer(checks: i32) -> bool {
-    if WAITS.get() == Waits::Never {
+    if NO_BUSY_WAIT.get() {
         return false;
     }
     let spent = if checks <= 0 {
@@ -284,7 +197,7 @@ fn wait_for_writer(checks: i32) -> bool {
     else {
         return false;
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     BUSY_WAIT_HOOK.with(|hook| {
         if let Some(hook) = hook.borrow_mut().as_mut() {
             hook(usize::try_from(checks).unwrap_or_default());
@@ -302,7 +215,7 @@ fn wait_for_writer(checks: i32) -> bool {
 }
 
 fn busy_timeout() -> Duration {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(timeout) = BUSY_TIMEOUT_OVERRIDE.get() {
         return timeout;
     }
@@ -310,21 +223,14 @@ fn busy_timeout() -> Duration {
 }
 
 /// How long the writes under this thread's `OperationDeadline` have waited so far.
-#[cfg(test)]
-pub(crate) fn operation_waited() -> Option<Duration> {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn operation_waited() -> Option<Duration> {
     OPERATION_WAITED.get()
 }
 
-/// Counts `spent` as already waited by the writes under this thread's `OperationDeadline`, so a
-/// test gives a write only part of the deadline without waiting for the rest.
-#[cfg(test)]
-pub(crate) fn spend_operation_wait(spent: Duration) {
-    OPERATION_WAITED.set(Some(OPERATION_WAITED.get().unwrap_or_default() + spent));
-}
-
-/// `backoff` jittered to between half and all of it, so writers of several processes that found the
-/// same writer holding the store do not retry in step.
-fn jittered(backoff: Duration) -> Duration {
+/// `backoff` jittered to between half and all of it, so writers that found the same writer
+/// holding the store do not retry in step.
+pub(super) fn jittered(backoff: Duration) -> Duration {
     let half = backoff / 2;
     let span = u64::try_from((backoff - half).as_nanos())
         .unwrap_or(u64::MAX)
@@ -336,7 +242,8 @@ fn jittered(backoff: Duration) -> Duration {
 type SharedConnection = Arc<ParkingMutex<Option<Connection>>>;
 
 thread_local! {
-    static THREAD_CONNECTIONS: RefCell<HashMap<PathBuf, SharedConnection>> =
+    /// By database path: the store's identity (`store_identity`) and the connection to it.
+    static THREAD_CONNECTIONS: RefCell<HashMap<PathBuf, (i64, SharedConnection)>> =
         RefCell::new(HashMap::new());
 }
 
@@ -346,253 +253,226 @@ type ConnectionRegistry = Vec<(PathBuf, std::sync::Weak<ParkingMutex<Option<Conn
 static ALL_CONNECTIONS: std::sync::LazyLock<ParkingMutex<ConnectionRegistry>> =
     std::sync::LazyLock::new(|| ParkingMutex::new(Vec::new()));
 
+/// The store handles open in this process, by database path (`ThreadConnection`).
+static HANDLES: std::sync::LazyLock<ParkingMutex<HashMap<PathBuf, usize>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// A store handle's connections: one per thread, shared by the handles on the store. The last handle on a store
+/// closes every thread's idle connection to it (`close`), so nothing in the process holds the file open once the
+/// store is closed (a run's store is deleted and created again at its path).
 pub(super) struct ThreadConnection {
-    pub(super) database_path: PathBuf,
-    /// The line every write transaction of this process on the file takes its turn in.
-    pub(super) line: Arc<WriterLine>,
+    database_path: PathBuf,
+    /// The store's identity when opened: a thread's connection to a store since created again at the path is not
+    /// this store's.
+    identity: i64,
 }
 
 /// A locked thread connection, reopened if an idle release closed it.
-pub(super) struct ConnectionGuard<'a> {
-    connection: ArcMutexGuard<RawMutex, Option<Connection>>,
-    line: &'a WriterLine,
-}
+pub(super) struct ConnectionGuard(ArcMutexGuard<RawMutex, Option<Connection>>);
 
-impl std::ops::Deref for ConnectionGuard<'_> {
+impl std::ops::Deref for ConnectionGuard {
     type Target = Connection;
     fn deref(&self) -> &Connection {
-        self.connection
-            .as_ref()
-            .expect("connection opened under the lock")
+        self.0.as_ref().expect("connection opened under the lock")
     }
 }
 
-// The guard reads through the connection: the store writes only through
-// `transaction_with_behavior` and `execute_batch` below, each in a turn of the writer line. The
-// connection it derefs to could still run a write outside a turn, so in debug builds every commit
-// on a store connection checks that its thread holds a turn (`commits_only_in_a_turn`).
-impl ConnectionGuard<'_> {
-    /// Begins a transaction on the store, shadowing `Connection::transaction_with_behavior`. A
-    /// write transaction (immediate or exclusive) first takes the write's turn in the store's
-    /// writer line (`take_turn`) and holds it until it ends, so SQLite's write lock is then held,
-    /// if at all, by a writer of another process. A deferred one only reads, and takes no turn.
-    pub(super) fn transaction_with_behavior(
-        &mut self,
-        behavior: TransactionBehavior,
-    ) -> rusqlite::Result<StoreTransaction<'_>> {
-        let turn = match behavior {
-            TransactionBehavior::Deferred => None,
-            _ => Some(take_turn(self.line)?),
-        };
-        // `&mut self` keeps a second transaction off this connection while this one lives.
-        let connection: &Connection = self;
-        Ok(StoreTransaction {
-            transaction: Transaction::new_unchecked(connection, behavior)?,
-            connection,
-            turn,
-        })
+impl std::ops::DerefMut for ConnectionGuard {
+    fn deref_mut(&mut self) -> &mut Connection {
+        self.0.as_mut().expect("connection opened under the lock")
     }
-
-    /// The connection itself, for a test that instruments it (a progress handler); no store code
-    /// reaches it this way.
-    #[cfg(test)]
-    pub(super) fn instrument(&mut self) -> &mut Connection {
-        self.connection
-            .as_mut()
-            .expect("connection opened under the lock")
-    }
-
-    /// Runs `sql` outside a transaction in a turn of the writer line, shadowing
-    /// `Connection::execute_batch`: such a batch may write (collection's checkpoint and vacuum).
-    /// A checkpoint its writes leave due runs after the turn is handed on.
-    pub(super) fn execute_batch(&self, sql: &str) -> rusqlite::Result<()> {
-        let connection: &Connection = self;
-        // Cleared first, as in `StoreTransaction::commit`.
-        CHECKPOINT_DUE.set(false);
-        let turn = take_turn(self.line)?;
-        let ran = connection.execute_batch(sql);
-        drop(turn);
-        checkpoint_if_due(connection);
-        ran
-    }
-}
-
-/// A store transaction, holding its write's turn in the writer line until it commits or rolls
-/// back: the next writer is handed the line at that moment.
-pub(super) struct StoreTransaction<'a> {
-    transaction: Transaction<'a>,
-    connection: &'a Connection,
-    turn: Option<Turn<'a>>,
-}
-
-impl<'a> std::ops::Deref for StoreTransaction<'a> {
-    type Target = Transaction<'a>;
-    fn deref(&self) -> &Transaction<'a> {
-        &self.transaction
-    }
-}
-
-impl StoreTransaction<'_> {
-    /// Commits, hands the line to the next writer, then runs the checkpoint the commit left due
-    /// (`checkpoint_after_turn`): SQLite releases its write lock before its automatic checkpoint,
-    /// so the next writer is handed the line at that same point, not after the checkpoint.
-    pub(super) fn commit(self) -> rusqlite::Result<()> {
-        let Self {
-            transaction,
-            connection,
-            turn,
-        } = self;
-        // The mark is the thread's, not the connection's. It is cleared first, so that a mark left
-        // by a commit made beside this path and `execute_batch` (a write outside a turn, which
-        // debug builds roll back) is not read as this commit's, perhaps on another store. Both
-        // paths read it right after their commit, so none is left today; a stale one would cost
-        // one passive checkpoint.
-        CHECKPOINT_DUE.set(false);
-        transaction.commit()?;
-        drop(turn);
-        checkpoint_if_due(connection);
-        Ok(())
-    }
-}
-
-/// Puts SQLite's automatic checkpoint of `connection` after the write's turn. SQLite runs it inside
-/// the commit, once the write-ahead log holds `wal_autocheckpoint` pages (1,000 by default), after
-/// it has released its write lock, so a writer of another connection can write during it; the
-/// commit returns, and the turn is handed on, only after it. So the store replaces it with SQLite's
-/// own notice of the log's size at each commit (`sqlite3_wal_hook`, which turns the automatic
-/// checkpoint off), which marks the checkpoint due at that same size, and the committing thread runs
-/// it once its turn is handed on (`checkpoint_if_due`). Like SQLite's, it is passive and runs at
-/// every commit that leaves the log at that size or more: a reader that holds the log back lets it
-/// grow until that reader ends, as before, and `journal_size_limit` shortens the file once a
-/// checkpoint has copied the whole log and the next writer starts it over.
-fn checkpoint_after_turn(connection: &mut Connection) -> StoreResult<()> {
-    let due_at: c_int =
-        connection.pragma_query_value(None, "wal_autocheckpoint", |row| row.get(0))?;
-    connection.wal_hook(Some(move |_: &mut Wal, pages: c_int| {
-        if due_at > 0 && pages >= due_at {
-            CHECKPOINT_DUE.set(true);
-        }
-        Ok(())
-    }))?;
-    Ok(())
-}
-
-/// Runs the passive checkpoint this thread's last commit left due (`checkpoint_after_turn`).
-fn checkpoint_if_due(connection: &Connection) {
-    if CHECKPOINT_DUE.replace(false) {
-        #[cfg(test)]
-        run_checkpoint_hook();
-        // As SQLite's own automatic checkpoint: it copies what no reader still needs, never waits,
-        // and its result is not the commit's.
-        let _ = connection.wal_checkpoint_v2(Some(MAIN_DB), CheckpointMode::PASSIVE);
-    }
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Runs on this thread right before it runs a checkpoint its commit left due: a test lets
-    /// the next writer write there, to show it was handed the line before the checkpoint.
-    pub(crate) static CHECKPOINT_HOOK: RefCell<Option<Box<dyn FnMut()>>> =
-        const { RefCell::new(None) };
-}
-
-#[cfg(test)]
-fn run_checkpoint_hook() {
-    CHECKPOINT_HOOK.with(|hook| {
-        if let Some(hook) = hook.borrow_mut().as_mut() {
-            hook();
-        }
-    });
-}
-
-/// Takes `line`'s turn for one write: at once when the line is free, else in arrival order at the
-/// release of the writers ahead, for at most what is left of the write deadline (`busy_deadline`,
-/// less what the thread's `OperationDeadline` already waited) and until the work's cancel holds
-/// (`waits_end_when`); only when the line is free under `WritesOnlyWhenFree` and `NoBusyWait`. The
-/// wait counts as time waited on another writer (`ATTEMPT_WAITED`). A turn not given in its bound
-/// comes back as SQLite's own busy error, so every caller treats it as a busy store; a cancelled
-/// wait as SQLite's interrupt, which no caller retries.
-pub(super) fn take_turn(line: &WriterLine) -> rusqlite::Result<Turn<'_>> {
-    if WAITS.get() != Waits::InLine {
-        return line.try_take().ok_or_else(|| refused(&Refusal::Bound));
-    }
-    let deadline = busy_deadline();
-    let wait = Wait {
-        bound: deadline.saturating_sub(OPERATION_WAITED.get().unwrap_or_default()),
-        stalls_after: deadline,
-        cancelled: &waits_ended,
-    };
-    let (taken, waited) = line.take(&wait);
-    ATTEMPT_WAITED.set(
-        ATTEMPT_WAITED
-            .get()
-            .saturating_add(waited.unwrap_or_default()),
-    );
-    taken.map_err(|refusal| refused(&refusal))
-}
-
-/// The SQLite error a turn not given comes back as.
-fn refused(refusal: &Refusal) -> rusqlite::Error {
-    let (code, message) = match refusal {
-        Refusal::Bound => (
-            rusqlite::ffi::SQLITE_BUSY,
-            "another write of this process held the content store past the write deadline",
-        ),
-        Refusal::Cancelled => (
-            rusqlite::ffi::SQLITE_INTERRUPT,
-            "the content store write was cancelled while it waited for its turn",
-        ),
-    };
-    rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), Some(message.to_owned()))
 }
 
 impl ThreadConnection {
-    pub(super) fn lock(&self) -> Result<ConnectionGuard<'_>, String> {
+    pub(super) fn new(database_path: PathBuf, identity: i64) -> Self {
+        *HANDLES.lock().entry(database_path.clone()).or_default() += 1;
+        Self {
+            database_path,
+            identity,
+        }
+    }
+
+    /// The store's identity when this handle opened it (a sibling handle shares it).
+    pub(super) fn identity(&self) -> i64 {
+        self.identity
+    }
+
+    /// The handle closes (`ContentStore::drop`). Returns whether it was the store's last: then every thread's idle
+    /// connection to it is closed.
+    pub(super) fn close(&self) -> bool {
+        let last = {
+            let mut handles = HANDLES.lock();
+            let open = handles
+                .get_mut(&self.database_path)
+                .expect("a handle counted when made");
+            *open -= 1;
+            let last = *open == 0;
+            if last {
+                handles.remove(&self.database_path);
+            }
+            last
+        };
+        if last {
+            self.release_all();
+        }
+        last
+    }
+
+    pub(super) fn lock(&self) -> Result<ConnectionGuard, String> {
         let connection = THREAD_CONNECTIONS.with(|connections| {
             let mut connections = connections.borrow_mut();
-            Arc::clone(
-                connections
-                    .entry(self.database_path.clone())
-                    .or_insert_with(|| {
-                        let connection = SharedConnection::default();
-                        ALL_CONNECTIONS
-                            .lock()
-                            .push((self.database_path.clone(), Arc::downgrade(&connection)));
-                        connection
-                    }),
-            )
+            match connections.get(&self.database_path) {
+                Some((identity, connection)) if *identity == self.identity => {
+                    Arc::clone(connection)
+                }
+                _ => {
+                    let connection = SharedConnection::default();
+                    ALL_CONNECTIONS
+                        .lock()
+                        .push((self.database_path.clone(), Arc::downgrade(&connection)));
+                    connections.insert(
+                        self.database_path.clone(),
+                        (self.identity, Arc::clone(&connection)),
+                    );
+                    connection
+                }
+            }
         });
         let mut guard = connection.lock_arc();
         if guard.is_none() {
-            *guard = Some(
-                open_runtime_connection(&self.database_path).map_err(|error| error.to_string())?,
-            );
+            // Its configuring reads (`page_count`, `journal_mode`) wait for another process's writer as a write
+            // does: busy past one wait, they are tried again, not failed (every caller expects its connection).
+            let opened = retry_busy(&mut BusyRetries::default(), || {
+                open_runtime_connection(&self.database_path)
+            })
+            .map_err(|error| error.to_string())?;
+            // The file at the path is this handle's store only while its identity is: a store deleted and created
+            // again there is another, which this handle's writes (its atoms) must not reach.
+            let identity: i64 = opened
+                .query_row(
+                    "SELECT id FROM store_identity WHERE singleton = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())?;
+            if identity != self.identity {
+                return Err(format!(
+                    "the store at {} was created again: this handle's store is gone",
+                    self.database_path.display()
+                ));
+            }
+            *guard = Some(opened);
         }
-        Ok(ConnectionGuard {
-            connection: guard,
-            line: &self.line,
-        })
+        Ok(ConnectionGuard(guard))
     }
 
     /// Closes every thread's idle connection to this database; one in use stays open.
     pub(super) fn release_all(&self) {
-        ALL_CONNECTIONS.lock().retain(|(path, connection)| {
-            let Some(connection) = connection.upgrade() else {
-                return false;
-            };
-            if *path == self.database_path
-                && let Some(mut connection) = connection.try_lock()
-            {
-                connection.take();
-            }
-            true
-        });
+        release_all_at(&self.database_path);
     }
 }
 
+/// Closes every thread's idle connection to the database at `database_path`, whatever store was opened there; one
+/// in use stays open. A test's temporary database (`test_support::TemporaryDatabase`) calls it as it drops.
+pub(super) fn release_all_at(database_path: &Path) {
+    ALL_CONNECTIONS.lock().retain(|(path, connection)| {
+        let Some(connection) = connection.upgrade() else {
+            return false;
+        };
+        // One inside a transaction stays: the writer's batch holds its transaction open between jobs.
+        if path == database_path
+            && let Some(mut connection) = connection.try_lock()
+            && connection.as_ref().is_none_or(Connection::is_autocommit)
+        {
+            connection.take();
+        }
+        true
+    });
+}
+
+/// What in this process still holds the store at `database_path`: its open handles, and the thread connections to it
+/// that are open (a test checks a closed store's are none).
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) fn holding(database_path: &Path) -> (usize, usize) {
+    let handles = HANDLES.lock().get(database_path).copied().unwrap_or(0);
+    let open = ALL_CONNECTIONS
+        .lock()
+        .iter()
+        .filter(|(path, _)| path == database_path)
+        .filter_map(|(_, connection)| connection.upgrade())
+        .filter(|connection| connection.try_lock().is_none_or(|c| c.is_some()))
+        .count();
+    (handles, open)
+}
+
+/// A connection's page cache at rest, in KiB.
+pub(super) const CACHE_KIB: i64 = 1_024;
+
+/// When profiling, each statement of a store connection is reported to the profile, which counts the ones a wave's
+/// thread runs while waves are under way as hazards (decision 0104: no wave waits for SQL).
+fn trace_for_hazards(connection: &Connection) {
+    use rusqlite::ffi;
+    unsafe extern "C" fn trace(
+        event: u32,
+        _: *mut std::ffi::c_void,
+        p: *mut std::ffi::c_void,
+        x: *mut std::ffi::c_void,
+    ) -> std::ffi::c_int {
+        if event == ffi::SQLITE_TRACE_STMT {
+            // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
+            let text = unsafe {
+                std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>()))
+            }
+            .to_string_lossy();
+            super::hazards::statement("store", &text);
+        }
+        if event == ffi::SQLITE_TRACE_PROFILE {
+            // SAFETY: for SQLITE_TRACE_PROFILE, P is the statement and X its time in nanoseconds.
+            let (text, ns) = unsafe {
+                (
+                    std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>()))
+                        .to_string_lossy(),
+                    *x.cast::<i64>() as u64,
+                )
+            };
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            super::hazards::sql_in_wave("store", &text, ns);
+        }
+        0
+    }
+    if super::hazards::on() {
+        // SAFETY: the callback keeps no state; the connection is live.
+        unsafe {
+            ffi::sqlite3_trace_v2(
+                connection.handle(),
+                ffi::SQLITE_TRACE_PROFILE | ffi::SQLITE_TRACE_STMT,
+                Some(trace),
+                std::ptr::null_mut(),
+            )
+        };
+    }
+}
+
+/// SQL functions every connection gets, beside the store's own: the engine's, set as it loads.
+static CONNECTION_FUNCTIONS: std::sync::OnceLock<fn(&Connection) -> rusqlite::Result<()>> =
+    std::sync::OnceLock::new();
+
+/// Sets the SQL functions every connection the store opens gets, beside its own; the first setting stays. The
+/// engine sets them as it loads, before it opens a store.
+pub fn set_connection_functions(install: fn(&Connection) -> rusqlite::Result<()>) {
+    let _ = CONNECTION_FUNCTIONS.set(install);
+}
+
 pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<()> {
-    connection.set_prepared_statement_cache_capacity(128);
+    trace_for_hazards(connection);
+    connection.set_prepared_statement_cache_capacity(256);
     connection.busy_handler(Some(wait_for_writer))?;
+    // `auto_vacuum` takes only on an empty file, before `journal_mode = WAL` writes its header: set later, inside the
+    // creating transaction, it was ignored, so no store returned freed pages (decision 0053 §4).
+    let pages: i64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+    if pages == 0 {
+        connection.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
+    }
     connection.pragma_update(None, "foreign_keys", "ON")?;
     // Readers never block the writer, nor it them: every worker thread reads while one apply
     // publishes.
@@ -600,144 +480,468 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     // A store may be opened by each of Rerail's worker threads. Keep their aggregate page-cache
     // residency bounded; active reads still use the decompressed cache above.
-    connection.pragma_update(None, "cache_size", -1_024_i64)?;
-    connection.pragma_update(None, "mmap_size", 0_i64)?;
+    connection.pragma_update(None, "cache_size", -CACHE_KIB)?;
+    // Reads through a map of the file (the OS's page cache, shared by every connection and not the process's own
+    // memory), not `pread` into the 1 MB cache: with the map off, a one-file edit spent 0.5 s in `pread`, the writer's
+    // index descents reading the same pages again. `RERAIL_STORE_MMAP_MB` sets the map's bound (0: off).
+    static MMAP: std::sync::LazyLock<i64> = std::sync::LazyLock::new(|| {
+        mmap_bytes(std::env::var("RERAIL_STORE_MMAP_MB").ok().as_deref())
+    });
+    let mmap = *MMAP;
+    connection.pragma_update(None, "mmap_size", mmap)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
+    // Temporary B-trees (a statement's materialized CTEs and sorts, the prefilter's stages) stay
+    // in memory, not in temp files read back through the 1 MB cache (decision 0024 §6).
+    connection.pragma_update(None, "temp_store", "MEMORY")?;
+    rusqlite::vtab::array::load_module(connection)?;
+    super::postings::install(connection)?;
+    super::vocabulary::install(connection)?;
+    // The engine's SQL functions (its text tests, the prefilter's tapes), handed over as it loads.
+    if let Some(install) = CONNECTION_FUNCTIONS.get() {
+        install(connection)?;
+    }
+    // `atoms` over this process's arena, and the commit hook that keeps pending atoms out of
+    // committed rows (decision 0049).
+    super::atoms::Atoms::install(connection)?;
     Ok(())
 }
 
-/// The hooks of a connection the store reads and writes through (`ThreadConnection`): the
-/// checkpoint after the write's turn, and in debug builds the check that every commit runs in a
-/// turn. The schema's own connection at open (`initialize`) commits only in the open's turn, and
-/// too little for a checkpoint.
-fn install_store_hooks(connection: &mut Connection) -> StoreResult<()> {
-    checkpoint_after_turn(connection)?;
-    #[cfg(debug_assertions)]
-    commits_only_in_a_turn(connection)?;
-    Ok(())
+/// The store map's bound in MB when `RERAIL_STORE_MMAP_MB` does not set it: 4 GB, and none on Windows, which keeps
+/// the map off as every platform had it before.
+const DEFAULT_MMAP_MB: i64 = if cfg!(windows) { 0 } else { 4096 };
+
+/// The store map's bound in bytes for a `RERAIL_STORE_MMAP_MB` setting: the MB it names, or `DEFAULT_MMAP_MB`.
+fn mmap_bytes(setting: Option<&str>) -> i64 {
+    setting
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(DEFAULT_MMAP_MB)
+        << 20
 }
 
-/// Rolls back, in debug builds (every test), a write that commits on a store connection while its
-/// thread holds no turn of a writer line: the store writes only in a turn, and the connection the
-/// guard derefs to would let a new write skip it unseen.
-#[cfg(debug_assertions)]
-fn commits_only_in_a_turn(connection: &mut Connection) -> StoreResult<()> {
-    connection.commit_hook(Some(|| {
-        let outside = !super::writer_line::holds_a_turn();
-        if outside {
-            eprintln!(
-                "rerail: a content store write committed outside its turn in the writer line"
+/// SQLite's memory from jemalloc, the process's allocator, once and before SQLite initializes (it
+/// refuses afterwards, and then keeps the system allocator). Freed SQLite pages are then returned
+/// with the heap's (`purge_allocator_pages`) instead of staying fragmented in the system's zones:
+/// a slice's prefilter and ingest held ~140 MB there for ~30 MB live (O30).
+#[cfg(not(any(windows, target_family = "wasm")))]
+pub fn sqlite_on_jemalloc() {
+    use std::ffi::{c_int, c_void};
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    // The heap sampler sees SQLite's allocations too (`rerail_prof::heap`).
+    unsafe extern "C" fn allocate(bytes: c_int) -> *mut c_void {
+        let p = unsafe { tikv_jemalloc_sys::malloc(bytes.max(1) as usize) };
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc_by(
+                p as usize,
+                bytes.max(1) as usize,
+                rerail_prof::heap::SQLITE,
             );
         }
-        outside
-    }))?;
-    Ok(())
+        p
+    }
+    unsafe extern "C" fn release(pointer: *mut c_void) {
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(pointer as usize);
+        }
+        unsafe { tikv_jemalloc_sys::free(pointer) }
+    }
+    unsafe extern "C" fn resize(pointer: *mut c_void, bytes: c_int) -> *mut c_void {
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(pointer as usize);
+        }
+        let p = unsafe { tikv_jemalloc_sys::realloc(pointer, bytes.max(1) as usize) };
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc_by(
+                p as usize,
+                bytes.max(1) as usize,
+                rerail_prof::heap::SQLITE,
+            );
+        }
+        p
+    }
+    unsafe extern "C" fn size(pointer: *mut c_void) -> c_int {
+        unsafe { tikv_jemalloc_sys::malloc_usable_size(pointer) as c_int }
+    }
+    unsafe extern "C" fn round(bytes: c_int) -> c_int {
+        unsafe { tikv_jemalloc_sys::nallocx(bytes.max(1) as usize, 0) as c_int }
+    }
+    unsafe extern "C" fn init(_: *mut c_void) -> c_int {
+        rusqlite::ffi::SQLITE_OK
+    }
+    unsafe extern "C" fn shutdown(_: *mut c_void) {}
+    ONCE.call_once(|| {
+        let methods = rusqlite::ffi::sqlite3_mem_methods {
+            xMalloc: Some(allocate),
+            xFree: Some(release),
+            xRealloc: Some(resize),
+            xSize: Some(size),
+            xRoundup: Some(round),
+            xInit: Some(init),
+            xShutdown: Some(shutdown),
+            pAppData: std::ptr::null_mut(),
+        };
+        // SQLite copies the methods.
+        let code = unsafe {
+            rusqlite::ffi::sqlite3_config(rusqlite::ffi::SQLITE_CONFIG_MALLOC, &raw const methods)
+        };
+        if std::env::var_os("RERAIL_PROF").is_some() {
+            eprintln!(
+                "SQLite allocator: {}",
+                if code == rusqlite::ffi::SQLITE_OK {
+                    "jemalloc"
+                } else {
+                    "the system's (already initialized)"
+                }
+            );
+        }
+    });
 }
 
 fn open_runtime_connection(path: &Path) -> StoreResult<Connection> {
+    #[cfg(not(any(windows, target_family = "wasm")))]
+    sqlite_on_jemalloc();
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
     let mut connection = Connection::open_with_flags(path, flags)?;
     configure_connection(&mut connection)?;
-    install_store_hooks(&mut connection)?;
     Ok(connection)
 }
 
-/// Makes this thread's waits for another writer, in the writer line and inside SQLite, give up at
-/// once while it lives.
-struct NoBusyWait(Waits);
+/// Makes this thread's SQLite waits for another writer give up at once while it lives.
+struct NoBusyWait;
 
 impl NoBusyWait {
     fn enter() -> Self {
-        Self(WAITS.replace(Waits::Never))
+        NO_BUSY_WAIT.set(true);
+        Self
     }
 }
 
 impl Drop for NoBusyWait {
     fn drop(&mut self) {
-        WAITS.set(self.0);
-    }
-}
-
-/// Makes this thread's writes take the store, while it lives, only when no writer of this process
-/// holds it or waits for it: a background write that runs again later (a search-index batch) never
-/// joins the line ahead of a write a person waits for, and gives up as `Busy` instead. A writer of
-/// another process it still waits for one SQLite busy timeout, as such a write did before the line.
-pub(crate) struct WritesOnlyWhenFree(Waits);
-
-impl WritesOnlyWhenFree {
-    pub(crate) fn enter() -> Self {
-        Self(WAITS.replace(Waits::OnlyWhenFree))
-    }
-}
-
-impl Drop for WritesOnlyWhenFree {
-    fn drop(&mut self) {
-        WAITS.set(self.0);
+        NO_BUSY_WAIT.set(false);
     }
 }
 
 impl ContentStore {
+    /// A new connection to this store's file, configured as the store's own: for an owner that
+    /// keeps its own temp schema and modules (the waves' SQL owner).
+    pub fn open_connection(&self) -> StoreResult<Connection> {
+        open_runtime_connection(&self.database_path)
+    }
+
+    /// The store's file.
+    pub fn database_path(&self) -> &Path {
+        &self.database_path
+    }
+
     /// Runs `operation` in one immediate (write-locking) transaction, retried under `retry_busy`.
     pub(super) fn immediate_transaction<T>(
         &self,
-        mut operation: impl FnMut(&Transaction<'_>) -> StoreResult<T>,
+        mut operation: impl FnMut(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
         retry_busy(&mut BusyRetries::default(), || {
             self.immediate_transaction_once(&mut operation)
         })
     }
 
-    /// Runs `operation` in one immediate transaction, attempted once: `Busy` once the writers ahead
-    /// in the line held it past the write deadline, or a writer of another process held the store
-    /// for one SQLite busy timeout. For background writes that run again later.
+    /// Runs `operation` in one immediate transaction, attempted once: `Busy` once another writer
+    /// held the store for one SQLite busy timeout. For background writes that run again later.
     pub(super) fn immediate_transaction_once<T>(
         &self,
-        operation: impl FnOnce(&Transaction<'_>) -> StoreResult<T>,
+        operation: impl FnOnce(&Connection) -> StoreResult<T>,
+    ) -> StoreResult<T> {
+        self.immediate_transaction_stopping(None, operation)
+    }
+
+    /// `immediate_transaction`, interrupted once `stop` says so (upkeep yielding to a run, decision 0190 §8): a
+    /// progress handler's `SQLITE_INTERRUPT`, the transaction rolled back. The handler is the connection's for
+    /// this transaction only.
+    pub(super) fn immediate_transaction_until<T>(
+        &self,
+        stop: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
+        mut operation: impl FnMut(&Connection) -> StoreResult<T>,
+    ) -> StoreResult<T> {
+        retry_busy(&mut BusyRetries::default(), || {
+            self.immediate_transaction_stopping(Some(&stop), &mut operation)
+        })
+    }
+
+    fn immediate_transaction_stopping<T>(
+        &self,
+        stop: Option<&std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
+        operation: impl FnOnce(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
         let mut connection = self
             .connection
             .lock()
             .expect("content store connection unavailable");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let value = operation(&transaction)?;
-        transaction.commit()?;
+        if let Some(stop) = stop {
+            let stop = std::sync::Arc::clone(stop);
+            // Not stoppable, the transaction would hold the writers for its length: an error, not a quiet wait.
+            connection.progress_handler(1000, Some(move || stop()))?;
+        }
+        // One attempt: its caller retries, or runs it again later (`begin` leaves the retry to it).
+        let outer = IN_RETRY.replace(true);
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate);
+        IN_RETRY.set(outer);
+        let value = transaction.and_then(|transaction| {
+            let value = operation(&transaction)?;
+            self.commit(transaction)?;
+            Ok(value)
+        });
+        // Left installed, the handler would stop the connection's next statements: its error is the result's.
+        let cleared = if stop.is_some() {
+            connection.progress_handler(0, None::<fn() -> bool>)
+        } else {
+            Ok(())
+        };
+        let value = value?;
+        cleared?;
         Ok(value)
     }
 
     /// Runs `operation` in one immediate transaction without waiting: `Busy` if another writer
-    /// holds the store or waits in its line now. For the write a caller that must never block
-    /// (closing a workspace on the host's thread) tries once.
+    /// holds the store now. For the write a caller that must never block (closing a workspace on
+    /// the host's thread) tries once.
     pub(super) fn immediate_transaction_no_wait<T>(
         &self,
-        operation: impl FnOnce(&Transaction<'_>) -> StoreResult<T>,
+        operation: impl FnOnce(&Connection) -> StoreResult<T>,
     ) -> StoreResult<T> {
         // Opening the thread's connection (if an idle release closed it) is not a wait for
         // another writer, and must not fail as one.
         let mut connection = self.connection.lock().map_err(StoreError::Invalid)?;
         let _no_wait = NoBusyWait::enter();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let value = operation(&transaction)?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(value)
     }
+}
 
-    /// Whether a write of this process has held the store past another write's whole wait for
-    /// it, and holds it still (`WriterLine::stalled`).
-    pub(crate) fn writes_stalled(&self) -> bool {
-        self.connection.line.stalled()
+thread_local! {
+    /// Whether this thread runs the store writer's batch (`ContentStore::in_one_transaction`).
+    static BATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this thread runs the store writer's batch now.
+pub(super) fn in_batch() -> bool {
+    BATCH.with(std::cell::Cell::get)
+}
+
+/// A store write's transaction: its own, or a savepoint inside the writer's batch, which commits every job it
+/// drained at once.
+pub(super) enum Tx<'c> {
+    Top(Begun<'c>),
+    Inner(rusqlite::Savepoint<'c>),
+}
+
+/// A transaction of its own on a connection (`begin`): committed by `commit`, rolled back when dropped otherwise.
+pub(super) struct Begun<'c> {
+    connection: &'c mut Connection,
+    open: bool,
+}
+
+impl std::ops::Deref for Begun<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.connection
+    }
+}
+
+impl Begun<'_> {
+    pub(super) fn commit(mut self) -> rusqlite::Result<()> {
+        self.connection.execute_batch("COMMIT")?;
+        self.open = false;
+        Ok(())
+    }
+}
+
+impl Drop for Begun<'_> {
+    fn drop(&mut self) {
+        if self.open && !self.connection.is_autocommit() {
+            let _ = self.connection.execute_batch("ROLLBACK");
+        }
+    }
+}
+
+impl std::ops::Deref for Tx<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        match self {
+            Tx::Top(t) => t,
+            Tx::Inner(s) => s,
+        }
+    }
+}
+
+impl Tx<'_> {
+    /// Commits it, or releases the savepoint into the batch.
+    pub(super) fn commit(self) -> rusqlite::Result<()> {
+        match self {
+            Tx::Top(t) => t.commit(),
+            Tx::Inner(s) => s.commit(),
+        }
+    }
+}
+
+/// `connection`'s transaction for one store write: a savepoint when the writer's batch holds it open on this
+/// thread, else a transaction of its own with `behavior`.
+///
+/// A write's `BEGIN` waits for another writer as every store write does (`retry_busy`): nothing has run yet, so it
+/// is tried again until the write's deadline. Callers that began one here and failed it after one busy timeout
+/// (a collection pass, a pin, a snapshot file) failed under load, while every other write waited.
+pub(super) fn begin(
+    connection: &mut Connection,
+    behavior: TransactionBehavior,
+) -> StoreResult<Tx<'_>> {
+    if BATCH.with(std::cell::Cell::get) && !connection.is_autocommit() {
+        return Ok(connection.savepoint().map(Tx::Inner)?);
+    }
+    if !matches!(behavior, TransactionBehavior::Deferred) {
+        let sql = if matches!(behavior, TransactionBehavior::Exclusive) {
+            "BEGIN EXCLUSIVE"
+        } else {
+            "BEGIN IMMEDIATE"
+        };
+        if NO_BUSY_WAIT.get() || IN_RETRY.get() {
+            // A write that must not wait (`NoBusyWait`) tries once; one inside a retry leaves it to that retry.
+            connection.execute_batch(sql)?;
+        } else {
+            retry_busy(&mut BusyRetries::default(), || {
+                Ok(connection.execute_batch(sql)?)
+            })?;
+        }
+    } else {
+        connection.execute_batch("BEGIN DEFERRED")?;
+    }
+    Ok(Tx::Top(Begun {
+        connection,
+        open: true,
+    }))
+}
+
+impl ContentStore {
+    /// Runs `body` (the writer's batch of jobs) inside one immediate transaction of this thread's connection,
+    /// committed once with the atoms the jobs added: each job's store writes are savepoints in it (`begin`), so a
+    /// job that fails rolls back alone. Waits for another writer as one write does.
+    pub(super) fn in_one_transaction<T>(&self, body: impl FnOnce() -> T) -> StoreResult<T> {
+        retry_busy(&mut BusyRetries::default(), || {
+            let connection = self.connection.lock().map_err(StoreError::Invalid)?;
+            connection.execute_batch("BEGIN IMMEDIATE")?;
+            // Before the jobs make their rows: a fork found now maps the pending atoms first (decision 0170).
+            if let Err(e) = self.atoms.begin_write(&connection) {
+                let _ = connection.execute_batch("ROLLBACK");
+                return Err(e);
+            }
+            Ok(())
+        })?;
+        struct Batch;
+        impl Drop for Batch {
+            fn drop(&mut self) {
+                BATCH.with(|b| b.set(false));
+            }
+        }
+        // Forked before the jobs make their rows, or not at all: a fork first met by a job (one that writes atoms in
+        // its own savepoint) comes after rows the jobs before it made with this process's ids (decision 0170).
+        let forked_before = self.atoms.forked();
+        BATCH.with(|b| b.set(true));
+        let batch = Batch;
+        let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+        drop(batch);
+        let connection = self.connection.lock().map_err(StoreError::Invalid)?;
+        let value = match value {
+            Ok(value) => value,
+            Err(panic) => {
+                let _ = connection.execute_batch("ROLLBACK");
+                std::panic::resume_unwind(panic);
+            }
+        };
+        if !forked_before && self.atoms.forked() {
+            let _ = connection.execute_batch("ROLLBACK");
+            return Err(StoreError::Invalid(super::atoms::DIVERGED_TEXT.to_owned()));
+        }
+        // The batch's jobs declared their rows' symbols mapped, or ran not at all, after a fork (`write_back::Syms`).
+        let atoms = super::hazards::span("the batch's new atoms");
+        let committed =
+            super::atoms::mapped(|| self.atoms.write_pending(&connection)).and_then(|upto| {
+                drop(atoms);
+                let _commit = super::hazards::span("the batch's commit");
+                connection.execute_batch("COMMIT")?;
+                Ok(upto)
+            });
+        match committed {
+            Ok(upto) => {
+                let _held = super::hazards::span("the batch's atoms, held as stored");
+                self.atoms.committed(upto);
+                Ok(value)
+            }
+            Err(error) => {
+                if !connection.is_autocommit() {
+                    let _ = connection.execute_batch("ROLLBACK");
+                }
+                Err(error)
+            }
+        }
+    }
+}
+
+/// `Connection::query_row` and `Connection::execute` through the connection's statement cache (decision 0240): the
+/// plain forms parse their SQL at every call, and the store's writer made several such calls a tape (the tape's
+/// generation, its source's hash), parsing SQL for each of 27,000 files.
+pub(crate) trait Cached {
+    fn query_row_cached<
+        T,
+        P: rusqlite::Params,
+        F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    >(
+        &self,
+        sql: &str,
+        params: P,
+        f: F,
+    ) -> rusqlite::Result<T>;
+    fn execute_cached<P: rusqlite::Params>(&self, sql: &str, params: P) -> rusqlite::Result<usize>;
+}
+
+impl Cached for Connection {
+    fn query_row_cached<
+        T,
+        P: rusqlite::Params,
+        F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    >(
+        &self,
+        sql: &str,
+        params: P,
+        f: F,
+    ) -> rusqlite::Result<T> {
+        self.prepare_cached(sql)?.query_row(params, f)
     }
 
-    /// Returns once every write whose `LINE_WAIT_HOOK` ran waits for its turn (`WriterLine::sync`).
-    #[cfg(test)]
-    pub(crate) fn sync_writer_line(&self) {
-        self.connection.line.sync();
+    fn execute_cached<P: rusqlite::Params>(&self, sql: &str, params: P) -> rusqlite::Result<usize> {
+        self.prepare_cached(sql)?.execute(params)
+    }
+}
+
+#[cfg(test)]
+mod mmap_tests {
+    use super::mmap_bytes;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn the_store_is_mapped_up_to_4_gb_by_default() {
+        assert_eq!(mmap_bytes(None), 4096 << 20);
     }
 
-    /// Returns once `count` writes wait in this store's writer line.
-    #[cfg(test)]
-    pub(crate) fn wait_for_line_waiters(&self, count: usize) {
-        self.connection.line.wait_for_waiters(count);
+    #[cfg(windows)]
+    #[test]
+    fn the_store_is_not_mapped_by_default_on_windows() {
+        assert_eq!(mmap_bytes(None), 0);
+    }
+
+    #[test]
+    fn rerail_store_mmap_mb_sets_the_bound_on_every_platform() {
+        assert_eq!(mmap_bytes(Some("64")), 64 << 20);
+        assert_eq!(mmap_bytes(Some("0")), 0);
     }
 }

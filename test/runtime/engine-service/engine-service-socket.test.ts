@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { engineHoldsCapability, engineProof } from "../../../src/runtime/engine-proof.js";
-import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../../src/runtime/engine-pipe.js";
+import { engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../../src/runtime/daemon/engine-pipe.js";
 import {
   chooseEngineSocketPath, ingestEngineEvent, ingestEngineEventAnswer, listenBesideHeldPipe, preparePrivateDirectory, startEngineService,
 } from "../../../src/runtime/engine-service.js";

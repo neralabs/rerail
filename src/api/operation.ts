@@ -46,8 +46,11 @@ export interface RerailApiStores {
    * stream, and the dashboard then reads again only on what the person does.
    */
   changes?(): ChangeFeed;
-  /** Whether Rerail is on in the checkout a workspace is in, over one held connection with cached identities. */
-  repositoryState(workspace: string): RepositoryStartState;
+  /**
+   * Whether Rerail is on in the checkout a workspace is in, over one held connection with cached identities; with
+   * `spelling`, the folder as a Windows host spelt it, also what Rerail 0.1.4 saved under it.
+   */
+  repositoryState(workspace: string, spelling?: string): RepositoryStartState;
   /** `http://host:port` of the dashboard. */
   dashboardOrigin(): string;
   health(): z.infer<typeof presentationDaemonSchema>;

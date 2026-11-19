@@ -224,6 +224,26 @@ function sessionResponse(stores: RerailApiStores, caller: ApiCaller, sessionId: 
 }
 const sessionId = z.object({ sessionId: z.string().min(1) });
 
+/**
+ * `operation` with the start state of the folder its `repository` names read also under `spelling`, the folder as a
+ * Windows host spelt it ({@link RerailApiStores.repositoryState}); unchanged without one, or for any other folder.
+ */
+function readingSpelling(operation: Operation): Operation {
+  return { ...operation, handler: (stores, input, caller) => operation.handler(spelledStores(stores, input), input, caller) };
+}
+
+/** `stores` whose start-state read of `repository` passes `spelling` on; `stores` itself where it is no absolute path. */
+function spelledStores(stores: RerailApiStores, { repository, spelling }: { repository?: unknown; spelling?: unknown }): RerailApiStores {
+  if (typeof spelling !== "string" || !isAbsolute(spelling)) return stores;
+  const repositoryState = (workspace: string) => stores.repositoryState(workspace, workspace === repository ? spelling : undefined);
+  return new Proxy(stores, { get: (target, key) => key === "repositoryState" ? repositoryState : boundTo(target, Reflect.get(target, key)) });
+}
+
+/** `value` called on `target`, as a property read of `target` gives it: stores keep private fields a proxy cannot reach. */
+function boundTo(target: object, value: unknown): unknown {
+  return typeof value === "function" ? (value as (...parameters: unknown[]) => unknown).bind(target) : value;
+}
+
 const repositoryFilter = {
   repository: z.string().min(1).optional().describe("Only this repository's history (its key or an alias); machine-wide without it. A coding agent reads only its own repository's."),
 };
@@ -321,7 +341,7 @@ export const operations: readonly Operation[] = [
       return { removed: stores.preferences().remove(input.repository, input.host) };
     },
   }),
-  defineOperation({
+  readingSpelling(defineOperation({
     id: "presentation_get",
     method: "GET",
     path: "/api/presentation",
@@ -331,6 +351,7 @@ export const operations: readonly Operation[] = [
       host: z.enum(PRESENTATION_HOSTS).exclude([""]),
       sessionId: z.string().min(1).optional().describe("Exact session for passive daemon health and compact status."),
       onDemand: booleanParameter.optional().describe("Read session status even when ambient presentation is silent."),
+      spelling: z.string().optional().describe("On Windows, `repository` as the host spelt it, where that differs: read only for a start or stop Rerail 0.1.4 saved under it."),
     }).strict(),
     output: presentationResponseSchema,
     handler: (stores, input, caller) => {
@@ -362,7 +383,7 @@ export const operations: readonly Operation[] = [
       if (presence === "silent" && !input.onDemand) session = null;
       return { presence, repositoryState, scope, context: { daemon, session } };
     },
-  }),
+  })),
   defineOperation({
     id: "rules_activity",
     method: "GET",
@@ -613,6 +634,7 @@ export const operations: readonly Operation[] = [
       sessions: z.array(sessionSummarySchema.extend({
         violationCount: z.number().int().nonnegative().describe("Violations in the session's history, as `violations_list` with its `sessionId` counts them."),
         steeredViolations: z.number().int().nonnegative().describe("Of violationCount, those no audit recorded in Log mode (steered, or blocked)."),
+        declinedViolations: z.number().int().nonnegative().describe("Of steeredViolations, those of a steer the coding agent declined, as `sessions_get` counts them in `declined`."),
         lastEventAt: z.number().int().nullable().describe("Epoch milliseconds the session's newest event was observed; null when it has none."),
       })),
       total: z.number().int().nonnegative(),
@@ -638,11 +660,20 @@ export const operations: readonly Operation[] = [
         ignoredEdits: z.number().int().nonnegative().describe("Tool edits of files no rule checked because Git ignores them (`ignored-edit` events name each file and the ignore file, line and pattern)."),
         ignoreRuleChanges: z.number().int().nonnegative().describe("Changes to Git's ignore rules seen during the session that can make them ignore more: a pattern added, a negation (`!pattern`) removed, or, in a file with a negation, its patterns reordered or repeated. Each `ignore-rules-changed` event names the file and those patterns; comments, blank lines and duplicates in a file without a negation are not changes."),
       }).describe("Over the whole transcript, however much of it a reader has loaded."),
+      declined: z.object({
+        violations: z.number().int().nonnegative().describe("Steered violations of a declined steer: its audit's violations of the rule, each counted once."),
+        notes: z.array(z.object({
+          ruleId: z.string(),
+          reason: z.string().describe("The one line the coding agent gave the person for not following the steer."),
+          recordedAt: z.number().int(),
+          auditId: z.string().nullable().describe("The audit whose steer it declined: the latest in the session to steer the rule's violations and start at or before the note; null when none did."),
+        })).describe("Oldest first."),
+      }).describe("Steers the coding agent declined, from the notes it recorded with `rerail feedback`. A steer with no note is not known to be followed: an agent can decline without recording why."),
     }),
     handler: (stores, input, caller) => {
       const response = sessionResponse(stores, caller, input.sessionId);
       if (response === null) throw sessionNotFound(input.sessionId);
-      return { ...response, gaps: stores.reader.gaps(input.sessionId) };
+      return { ...response, gaps: stores.reader.gaps(input.sessionId), declined: stores.reader.declines(input.sessionId) };
     },
   }),
   defineOperation({

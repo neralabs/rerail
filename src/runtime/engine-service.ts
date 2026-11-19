@@ -25,8 +25,8 @@ import { isBusy } from "../engine/storage/sqlite-wal.js";
 import { waitForWriteLock } from "../engine/storage/write-lock-wait.js";
 import { openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
-import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
-import { isNamedPipe } from "./engine-pipe.js";
+import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./daemon/engine-proof.js";
+import { isNamedPipe } from "./daemon/engine-pipe.js";
 import { KeptRuntimes } from "./memory/kept-runtimes.js";
 import { memoryRoom } from "./memory/memory-room.js";
 import { checkoutStatus } from "./repository-start.js";
@@ -300,20 +300,38 @@ function guardedFacts(read: () => EventAnswerFacts | undefined): EventAnswerFact
 
 /**
  * What the caller that sent an event reads of its answer: `signal` aborts once it stops waiting for it (a hook's request,
- * `hookRequestSignal`; none for a caller that always reads the answer), and `readFacts` reads the facts of the answer
- * for a caller that reads them.
+ * `hookRequestSignal`; none for a caller that always reads the answer), `readFacts` reads the facts of the answer
+ * for a caller that reads them, and `answer` writes the answer in the session's lane (`routeEngineEvent`).
  */
 interface EventCaller {
   readonly signal?: AbortSignal | undefined;
   readonly readFacts?: AnswerFactsReader | undefined;
   /** When the event's hook met it (epoch ms), for an event a hook left while the daemon did not read (`untakenTaker`). */
   readonly observedAt?: number | undefined;
+  readonly answer?: HookAnswer | undefined;
 }
 
 /** An event's deliveries, and the facts of its answer where its caller reads them. */
 interface RoutedEvent {
   readonly deliveries: readonly AdapterDelivery[];
   readonly facts: EventAnswerFacts | undefined;
+}
+
+/**
+ * Writes an event's answer to the hook that sent it and says whether it reaches a hook that still waits for it
+ * (`answered`). The service writes it in the session's lane, so what an answer its write already showed undelivered took
+ * is the session's again before its next event runs.
+ */
+type HookAnswer = (routed: RoutedEvent) => AnswerFate;
+
+/**
+ * What became of an answer: `refused` when the write itself showed it reached no client that still waited (its
+ * connection closed or ended before it, or the write failed); else `heard` resolves once the connection shows it:
+ * true once the answer was all handed to it, false when it closed first.
+ */
+interface AnswerFate {
+  readonly refused: boolean;
+  readonly heard: Promise<boolean>;
 }
 
 interface EngineRoutingState {
@@ -477,7 +495,7 @@ async function routeEngineEvent(
   { event, configuration }: EngineRequest,
   options: EngineServiceOptions,
   state: EngineRoutingState,
-  { signal, readFacts, observedAt }: EventCaller = {},
+  { signal, readFacts, observedAt, answer }: EventCaller = {},
 ): Promise<RoutedEvent> {
   const session = eventSession(event);
   const { sessionId } = session;
@@ -492,7 +510,10 @@ async function routeEngineEvent(
     if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
     const deliveries = await runtime.ingest(event, { signal, observedAt });
     // Read in the session's lane, so the facts are this event's and not those of the session's next one.
-    return { deliveries, facts: readFacts === undefined ? undefined : guardedFacts(() => readFacts(runtime, deliveries)) };
+    const routed = { deliveries, facts: readFacts === undefined ? undefined : guardedFacts(() => readFacts(runtime, deliveries)) };
+    // A hook past its own limit has closed its connection: the steers its answer took go to the session's next answer.
+    if (answer !== undefined) await keepUnheard(answer(routed), () => runtime.returnUndelivered(sessionId, deliveries));
+    return routed;
   });
   void execution.then(release, release);
   track(state, execution);
@@ -557,6 +578,17 @@ function receiptWriter(state: EngineRoutingState, databasePath: string): RecordW
     state.receiptWriters.set(databasePath, writer);
   }
   return writer;
+}
+
+/**
+ * Gives the session back what an answer took once no client heard it (`giveBack`): before the session's next event when
+ * the write showed it, else once the connection shows it, for whichever of the session's answers comes next. The lane
+ * never waits on the write itself, which a client alive that has stopped reading never lets complete once the answer
+ * is bigger than its connection holds. A service's close waits for every connection to close, so it has each verdict.
+ */
+async function keepUnheard(fate: AnswerFate, giveBack: () => Promise<void>): Promise<void> {
+  if (fate.refused) return await giveBack();
+  void fate.heard.then(async heard => (heard ? undefined : await giveBack()));
 }
 
 /**
@@ -1115,10 +1147,11 @@ type EngineRoute = "proof" | "event" | "receipt";
 /** What the engine socket's requests reach: the service's events, and the receipts hooks hand over. */
 interface EngineAnswers {
   /**
-   * Runs the event of `request`, which `incoming` carried, for the hook that sent it: `signal` aborts once the hook stops
-   * waiting, and the answer carries its facts when the hook reads them (`answerFactsReader`).
+   * Runs the event of `request`, which `incoming` carried, for the hook that sent it, and writes its answer
+   * (`answerEngineEvent`): `signal` aborts once the hook stops waiting, and the answer carries its facts when the hook
+   * reads them (`answerFactsReader`).
    */
-  ingest(incoming: IncomingMessage, request: EngineRequest, signal: AbortSignal): Promise<RoutedEvent>;
+  ingest(incoming: IncomingMessage, request: EngineRequest, hook: { readonly signal: AbortSignal; readonly answer: HookAnswer }): Promise<void>;
   recordReceipt(receipt: SteerReceipt, configuration: EngineRuntimeConfiguration | undefined): Promise<void>;
 }
 
@@ -1179,13 +1212,15 @@ function untakenTaker(options: EngineServiceOptions, route: (request: EngineRequ
 /**
  * Runs the event a hook posted and answers with its deliveries, and the facts beside them for a hook that reads them.
  * The hook's request is watched from before its body is read, so the hook giving up at any point before its answer is
- * written counts; the runtime takes it with the event (`IngestOptions.signal`).
+ * written counts; the runtime takes it with the event (`IngestOptions.signal`). Its answer is written as the service
+ * routes it (`answerEngineEvent`), so what the answer took comes back to the session when the write shows no hook heard it.
  */
 async function answerEvent(incoming: IncomingMessage, response: ServerResponse, service: EngineAnswers): Promise<void> {
   const signal = hookRequestSignal(response);
   const request = parseEngineRequest(await requestBody(incoming));
-  const { deliveries, facts } = await service.ingest(incoming, request, signal);
-  response.end(encodeRerailEventResult({ eventId: request.event.eventId, deliveries: [...deliveries], ...facts }));
+  const answer: HookAnswer = ({ deliveries, facts }) =>
+    answered(response, encodeRerailEventResult({ eventId: request.event.eventId, deliveries: [...deliveries], ...facts }));
+  await service.ingest(incoming, request, { signal, answer });
 }
 
 /**
@@ -1315,6 +1350,25 @@ export function engineWorktreeWalks(): RepositoryWorktreeWalks {
   return new RepositoryWorktreeWalks({ treeWatch });
 }
 
+/**
+ * Routes a hook's event through `route` and writes its answer (`answer`). Any event but a session's end is answered in
+ * its session's lane, so the steers an answer its hook no longer waited for took are the session's again before its next
+ * event runs (`routeEngineEvent`). A session's end is answered once the service has let go of the session
+ * (`afterSessionEnd`), as the hook that ends it may read what that left: there is no later event of the session to carry
+ * a steer.
+ */
+async function answerEngineEvent(
+  event: AdapterEvent,
+  { answer, ...caller }: EventCaller & { readonly answer: HookAnswer },
+  route: (caller: EventCaller) => Promise<RoutedEvent>,
+): Promise<void> {
+  if (event.kind !== "session-end") {
+    await route({ ...caller, answer });
+    return;
+  }
+  answer(await route(caller));
+}
+
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
   if (!isNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const databasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
@@ -1341,10 +1395,11 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
   const untaken = untakenTaker(options, async (request, caller) => await routeEngineEvent(request, options, routing, caller));
   const answers: EngineAnswers = {
-    ingest: async (incoming, request, signal) => {
+    ingest: async (incoming, request, { signal, answer }) => {
       // Every event hooks left before this one was sent begins its check first, in its session's queue.
       await untaken.taken();
-      return await routeEngineEvent(request, options, routing, { signal, readFacts: answerFactsReader(incoming, request.event, options) });
+      const caller = { signal, answer, readFacts: answerFactsReader(incoming, request.event, options) };
+      await answerEngineEvent(request.event, caller, eventCaller => routeEngineEvent(request, options, routing, eventCaller));
     },
     recordReceipt: (receipt, configuration) => recordHandedReceipt(routing, options, receipt, configuration),
   };
@@ -1450,6 +1505,31 @@ function endAbandonedSessions(databasePath: string, idleMs: number, now: () => n
   } finally {
     store?.close();
   }
+}
+
+/**
+ * Writes `body` as the answer and says whether it reaches a client that still waits for it, decided by what the
+ * connection does, never by a time limit. Refused when the connection had already closed or ended (a hook past its own
+ * limit closes it), or the write failed at once (EPIPE: the daemon wrote before it read the hook's close). Else heard
+ * once the answer is all handed to the connection (`finish`), and not when the connection closes first. An answer queued
+ * behind an earlier one on its connection is written on it once that one is.
+ */
+function answered(response: ServerResponse, body: string): AnswerFate {
+  const connection = response.req.socket;
+  // Closed or ended before the write: a hook past its own limit closed it.
+  const gone = !connection.writable;
+  const heard = new Promise<boolean>(done => {
+    const onClose = (): void => done(false);
+    connection.once("close", onClose);
+    response.once("finish", () => {
+      // A connection carries many answers: each leaves nothing on it once written.
+      connection.off("close", onClose);
+      done(true);
+    });
+  });
+  response.end(body);
+  // A write the closed connection refused leaves its error on the connection in this turn, and no finish follows.
+  return { refused: gone || connection.errored !== null, heard };
 }
 
 export async function ingestEngineEvent(
