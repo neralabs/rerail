@@ -2315,20 +2315,26 @@ ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), no
     assert!(store.source_by_hash(key("(List[int])")).unwrap().is_none(), "the guest's source is not");
 }
 
-/// Decision 0431 R1: there are no guest documents. A guest's nodes are numbered in its host file's id space, so the
-/// root of a parsed annotation is in the same document as the string it was parsed from.
+/// Decision 0431 R1: there are no guest documents. A program the grammar holds (an HTML file's scripts) is part of its
+/// file: its nodes are numbered in the file's id space, so `docof` of a script's root is the file's, as the `raw_text`
+/// it stands at is, and its lines are the file's.
 #[test]
-#[ignore = "0431 step 2: guest nodes in the host file's id space"]
-fn a_guest_node_is_its_host_files() {
-    let py = "x: \"List[int]\" = []\ndef f(y: 'Dict[str, Foo]'): ...\n";
+#[ignore = "0431 step 3: a file's programs in its id space"]
+fn a_program_a_file_holds_is_the_files() {
+    let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
     let rule = r#"
+.language html
+#include "html/embeds.rr"
 .decl same(d: number, e: number)
-same(d, e) :- kind(s, "string"), parsed(s, "annotation", r), docof(s, d), docof(r, e).
-.output same
+same(d, e) :- kind(r, "raw_text"), parsed(r, "javascript", p), docof(r, d), docof(p, e).
+.decl calls(x: symbol, l: number)
+calls(x, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), line(c, l).
+.output same, calls
 "#;
-    let [same] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("guest-in-file", &[("a.py", py)], rule, &["same"])).unwrap();
-    assert_eq!(same.len(), 1, "both annotations' roots are a.py's: {same:?}");
-    assert_eq!(same[0][0], same[0][1], "a guest's root is its host file's: {same:?}");
+    let [same, calls] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("program-in-file", &[("a.html", html)], rule, &["same", "calls"])).unwrap();
+    assert_eq!(same.len(), 1, "both scripts are a.html's: {same:?}");
+    assert_eq!(same[0][0], same[0][1], "a script's root is its file's: {same:?}");
+    assert_eq!(calls, [["f(1)", "3"], ["g(2)", "5"]]);
 }
 
 /// Decision 0431 R2: `guest_of(n, s)` names the string node a guest node was parsed from (it replaces
@@ -2349,23 +2355,30 @@ own(x) :- kind(i, "identifier"), text(i, x), !guest_of(i, _).
     assert_eq!(own, [["List"], ["x"]], "the file's own identifiers are no guest's");
 }
 
-/// Decision 0431 R3: equal texts share one tape (`sub_tape`), and each place keeps its own positions: the same
-/// annotation in two files, at different lines, gives each file's names at that file's line.
+/// Decision 0431 R3: a string a rule parses is a tape value. The same annotation in two files is one tape and one
+/// set of nodes: both strings' `parsed` give the same root. A tape value's node has no line of its own; a rule places it
+/// through its string.
 #[test]
-#[ignore = "0431 step 2: a guest's range per place"]
-fn one_tape_at_two_places_keeps_each_places_lines() {
+#[ignore = "0431 step 2: a tape value's nodes named by its tape"]
+fn one_tape_at_two_places_is_one_set_of_nodes() {
     let a = "x: \"List[int]\" = []\n";
     let b = "\n\n\ny: \"List[int]\" = []\n";
     let rule = r#"
 .decl tapes(t: tape)
 tapes(t) :- kind(s, "string"), sub_tape(s, "annotation", t).
-.decl at(f: symbol, x: symbol, l: number, c: number)
-at(f, x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x), line(i, l), col(i, c), docof(i, d), doc(d, f, _).
-.output tapes, at
+.decl roots(r: node)
+roots(r) :- kind(s, "string"), parsed(s, "annotation", r).
+.decl own_lines(l: number)
+own_lines(l) :- kind(s, "string"), parsed(s, "annotation", r), line(r, l).
+.decl at(f: symbol, l: number)
+at(f, l) :- kind(s, "string"), parsed(s, "annotation", _), line(s, l), docof(s, d), doc(d, f, _).
+.output tapes, roots, own_lines, at
 "#;
-    let [tapes, at] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("guest-two-places", &[("a.py", a), ("b.py", b)], rule, &["tapes", "at"])).unwrap();
+    let [tapes, roots, own_lines, at] = <[Vec<Vec<String>>; 4]>::try_from(guests_run("guest-two-places", &[("a.py", a), ("b.py", b)], rule, &["tapes", "roots", "own_lines", "at"])).unwrap();
     assert_eq!(tapes.len(), 1, "one tape for the one text: {tapes:?}");
-    assert_eq!(at, [["a.py", "List", "1", "4"], ["a.py", "int", "1", "9"], ["b.py", "List", "4", "4"], ["b.py", "int", "4", "9"]]);
+    assert_eq!(roots.len(), 1, "one root, the tape's, for both places: {roots:?}");
+    assert!(own_lines.is_empty(), "a tape value's node has no line of its own: {own_lines:?}");
+    assert_eq!(at, [["a.py", "1"], ["b.py", "4"]], "each place at its string");
 }
 
 /// Decision 0431 R4: the rules decide what is parsed. A plain string holding the same text as an annotation is not

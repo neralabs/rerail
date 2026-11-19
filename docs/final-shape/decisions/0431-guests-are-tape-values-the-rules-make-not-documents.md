@@ -1,96 +1,114 @@
-# 0431. Guests are tape values the rules make and keep, not documents
+# 0431. No guest documents: strings the rules parse are tape values; programs the grammar holds are the file's
 
 Status: decided (2026-11-18), by the user: "there are no guest documents. The CPU and GPU run on exactly the same
 data"; "parsed strings are only for annotations and maybe format strings, not all strings; the rules decide them";
 "if the rules say 'here is an embedded string, here is its sha and here is its tape', then why can't that be kept in
-the facts that the program produces and not changed next time it's run?". Supersedes 0055's guest documents (§4,
-"What was built" 3–4) and 0391 (guest keys). Keeps 0055's model of a tape as content, 0058 (hiding, normalized
-strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied). Work queue Q261.
+the facts that the program produces and not changed next time it's run?". On a guest's node ids: (a), a node of a
+parsed string is named by its tape ("do a"); and the split below ("okay, I agree with that"). Supersedes 0055's guest
+documents (§4, "What was built" 3–4) and 0391 (guest keys). Keeps 0055's model of a tape as content, 0058 (hiding,
+normalized strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied), 0426 (format 16, unchanged).
+Work queue Q261.
 
 ## Intro
 
-Some strings in a file are code: a Python string annotation (`x: "List[int]"`), maybe a format string. A rule decides
-which ones, and reads the code inside as a tree.
+A file can hold code in another grammar, in two ways:
 
-Until now the engine made each such string a *guest document*: a document of its own, with a key in its own range,
-its own node ids, and a place in the chunk's batch. In every chunk, the rules that ask for guests were cut out and run
-first (the "embed slice"); the guests they asked for were parsed; the whole batch was built again with them; and the
-slice ran again, up to four rounds, for strings inside strings. Then the program ran over the last batch. On PostHog
-(cold, M3, 2026-11-18, 1ca497070) that took 32.1 s of CPU on the CPU binding and 34.4 s on Metal, 18.4 s and 13.7 s
-of it building the batch again. The device read a batch the host had rebuilt. A guest's tape was never stored (Q30), so
-a file read from the memo had no guests at all, and a cross-file rule could not see them.
+- **A string a rule decides is code.** A Python string annotation (`x: "List[int]"`), a format string, an eslint
+  directive in a comment, a regex or JSON value in a `.rr` file. The rules decide which strings; what is inside is
+  tested and reported at the string or a host node.
+- **A program the grammar holds.** An HTML `<script>` or `<style>`, a Vue component's script blocks, a Blade view's
+  compiled PHP, Markdown's inline text, a `.rr` pattern. Whole rule sets (the TypeScript, PHP, CSS packs) run over
+  them and report findings at their nodes, at the file's lines.
 
-The rules already say everything needed: this string node, parsed as this grammar, is this tape. That is a fact like
-any other the program derives. So it is one:
+Until now both were *guest documents*: a document of its own, with a key in its own range, its own node ids and a place
+in the chunk's batch. In every chunk the rules that ask for guests were cut out and run first (the "embed slice"); the
+guests were parsed; the whole batch was built again with them; and the slice ran again, up to four rounds. On PostHog
+(cold, M3, 2026-11-18, 1ca497070) that took 32.1 s of CPU on the CPU binding and 34.4 s on Metal, 18.4 s and 13.7 s of
+it building the batch again. The device read a batch the host had rebuilt. A guest's tape was never stored (Q30), so a
+file read from the memo had no guests, and a cross-file rule could not see them.
+
+What is fixed, whatever rules run: the host's nodes, a text's tape (a function of the text alone), and each node's
+position in its tape. A rule only decides whether a fact like `sub_tape(s, g, T)` exists. So nothing about embedded
+code may be named by which rules asked for it, or in what order.
 
 ```
-// x: "List[int]" = []               a.py, its nodes 0..11
+// x: "List[int]" = []               a.py; the same line in b.py, at line 4
 //
-// sub_tape(s, "annotation", T)      s = a.py's string node 7; T = sha256("(List[int])", annotation, format)
-// parsed(s, "annotation", r)        r = a.py's node 12: the guest's root, numbered after the file's own nodes
-// guest_of(n, s)                    n = 12..15: the guest's nodes, each parsed from s
-// node(n, …), child(…), text(…)     read from tape T where it lies, as a file's are read from its tape
-// line(n, 1), col(n, 4) for List    through s's place in a.py
+// sub_tape(s, "annotation", T)      s = a.py's string node; T = the tape of "(List[int])", keyed by its sha
+// parsed(s, "annotation", r)        r = (T, 1): the tape's node, the same r for b.py's string
+// guest_of(n, s)                    n is a node of the tape parsed at s: both files' strings, for each n
+// kind(n, …), child(…), text(…)     read from T where it lies
+// a finding at s, or at s by n      placed through s: a node of T has no line of its own
+//
+// <script>let a = f(1);</script>   a.html: the script is JavaScript by the grammar, parsed with the file
+// node(d, c, "call_expression")     c is a.html's node, numbered after its own: docof(c, a.html), line(c, 1)
 ```
 
 ## Decision
 
-1. **There are no guest documents.** A parsed string is a tape value: `@parse(grammar, text)`, keyed by the sha256 of
-   its text, grammar and tape format (0055's tape key). Equal texts anywhere share one tape.
-2. **The rules decide what is parsed.** `parsed(s, g, r)` and `sub_tape(s, g, t)` are derived by the program's own
-   rules, the parse a functor inside the fixpoint: a rule that reads a guest's nodes is in a later stratum than the rule
-   that makes it, and a string inside a guest is ordinary recursion. No slice is cut out and run first, and there are
-   no rounds outside the engine. Nothing parses a string no rule asked for.
-3. **A guest's nodes are its host file's.** They are numbered in the file's id space, after the file's own nodes:
-   `file << 32 | local`, a guest's range starting at the file's node count plus the guests before it. A file's guests
-   are numbered in stratum order, and within a stratum by (string node, grammar), so the numbering depends only on the
-   file and the program: never on the chunk, the run or another file. `docof(n, d)` of a guest node is its file. A
-   shared tape has one range per place, so `line`, `col` and `host_node` of each node are its place's. No guest key,
-   no key range, no collision: 0391's registry goes.
-4. **Where a guest node came from** is `guest_of(n, s)`: n was parsed from string node s. It replaces
-   `docof(n, d), guest(d, _, s, _)`, the packs' 21 uses in 6 files. `guest(g, host, at, grammar)`, `doc_role` and
-   `doc_root` of a guest go: a guest has no document to name.
-5. **The views read a guest's tape in place.** `node`, `child`, `field`, `text`, `line` and the rest are reads of a
-   tape (0353); a guest node's read finds its file's guest range (a derived fact, a relation in the run's block) and
-   reads the guest's tape there. The batch is built once per chunk and never again. The CPU and the device read the
-   same blocks: the files' tapes, the guests' tapes and the range relation.
-6. **Kept, and not made again.** A file's guests are facts of the file: its ranges and the tapes they name are kept
-   with its other rows (0402). The tapes are stored by their key, written behind the run (0306), and loaded with the
-   kept facts before the first wave (0104), as a file's are. An unchanged file under an unchanged program parses
-   nothing; a file read from the memo has its guests, so a cross-file rule reads them, and a chunk of partial hits no
-   longer leaves them out (`guests_unseen`).
+1. **There are no guest documents.** No document key range for guests, no guest key registry (0391), no embed slice,
+   no rounds outside the engine, no batch built again.
+2. **A string a rule parses is a tape value.** `@parse(grammar, text)` gives a tape keyed by the sha256 of its text,
+   grammar and tape format (0055's key); equal texts anywhere share one. `parsed(s, g, r)` and `sub_tape(s, g, t)` are
+   derived by the program's own rules, the parse a functor inside the fixpoint: a rule that reads the tape's nodes is
+   in a later stratum than the rule that makes it, and a string inside a parsed string is ordinary recursion. Nothing
+   parses a string no rule asked for.
+3. **A tape value's node is named by its tape:** (the tape's interned key, its preorder). The same node for every
+   place, rule and program that reaches it. It has no `docof`, `line` or `col` of its own. `guest_of(n, s)` says n is a
+   node of the tape parsed at string node s (a row per place). A finding is placed through s (at s, or at n's bytes
+   mapped through s's placement); the lowering refuses a finding placed at a tape value's node.
+4. **A program the grammar holds is part of its file.** The host language's parse makes it, as the matcher path makes
+   its derived programs (`DerivedImage`): what a file embeds depends on its bytes and its grammar, not on rules. Its
+   nodes are numbered in the file's id space after the file's own, in the order the parse found them, so `docof`,
+   `line` and `col` are the file's and findings land at its lines. The libraries' structural `embed` rules (`html`,
+   `vue`, `blade`, `markdown`, `rr` patterns) become the languages' declarations of what they embed.
+5. **Format 16 does not change** (0426): a tape is one text, one tree, one grammar. A file's programs are each a tape of
+   their own grammar; a tape value is a tape. Around them:
+   - a file's record of its programs (each one's tape key, host node, grammar, first id, the map from its text to the
+     host's bytes), a derived fact stored beside the file's tape and loaded with it;
+   - the reads (CLIF, 0310) resolve a node id to its tape and position: a file's node through that record, a tape
+     value's node through its key. Written once, for the CPU and the device.
+   Languages without a format 16 table (brace and percent formats, eslint directives, HTML, CSS, Markdown) keep format
+   15 for their tapes until they have one (0293 §3).
+6. **The batch is built once a chunk.** The views (`node`, `child`, `field`, `text`, …) are reads of tapes (0353): of
+   the files' tapes, their programs' and the tape values the run's facts name. The CPU and the device read the same
+   blocks.
+7. **Kept, and not made again.** A file's programs are kept with the file. A tape value is stored by its key, written
+   behind the run (0306), and loaded with the facts that name it before the first wave (0104). An unchanged file under
+   an unchanged program parses nothing; a file read from the memo has its programs and its parsed strings' tapes, so a
+   cross-file rule reads them.
 
 ## Requirements, each with its test
 
 | | Requirement | Test |
 |---|---|---|
-| R1 | A guest node is its host file's: `docof` gives the file | `a_guest_node_is_its_host_files` |
-| R2 | `guest_of(n, s)` names the string a guest node was parsed from | `guest_of_names_the_string_a_node_was_parsed_from` |
-| R3 | Positions are the place's: two files with the same annotation share a tape and keep their own lines | `one_tape_at_two_places_keeps_each_places_lines` |
+| R1 | A program the grammar holds is its file's: `docof` of its nodes is the file, its lines are the file's | `a_program_a_file_holds_is_the_files` |
+| R2 | `guest_of(n, s)` names the string a tape value's node was parsed at | `guest_of_names_the_string_a_node_was_parsed_from` |
+| R3 | One text is one tape and one set of nodes at every place; a tape value's node has no line of its own | `one_tape_at_two_places_is_one_set_of_nodes` |
 | R4 | No string is parsed unless a rule asks for it | `a_string_no_rule_asks_for_is_not_parsed` |
-| R5 | The batch is built once a chunk, guests or not | written with step 3, on the report's count of builds |
-| R6 | A second run over unchanged files and program parses no guest | written with step 4, on the report's count of parses |
-| R7 | A file read from the memo has its guests for a cross-file rule | written with step 4 |
-| R8 | CPU and Metal give the same rows, the device reading the same guest blocks | the Metal path's parity tests, with a guest |
+| R5 | The batch is built once a chunk | written with step 3, on the report's count of builds |
+| R6 | A second run over unchanged files and program parses nothing | written with step 4, on the report's count of parses |
+| R7 | A file read from the memo has its programs and tape values for a cross-file rule | written with step 4 |
+| R8 | CPU and Metal give the same rows, the device reading the same tapes | the Metal path's parity tests, with both kinds |
+| R9 | A finding placed at a tape value's node is refused by the lowering | written with step 2 |
 
-The tests for R1–R4 are in `logic/rr/tests.rs`, ignored until their step lands (`#[ignore = "0431 …"]`). 0055's
-tests keep their meaning: names at their host lines, guests that do not parse, `.guests off`, embeds of embeds.
+The tests for R1–R4 are in `logic/rr/tests.rs`, ignored until their step lands (`#[ignore = "0431 …"]`). 0055's tests
+keep their meaning, rewritten for `guest_of` and the file's programs where they read `guest(g, …)`.
 
 ## Steps
 
 1. The record, its tests, Q261.
-2. Ids: a file's guest ranges as a relation of its block; guests numbered in the file's space (R1, R3); `guest_of`
-   (R2) and the packs' 21 uses rewritten.
-3. The views read a guest's tape through the range relation; `with_matchers` runs once a chunk; the batch rebuild and
-   the guest documents go (R5, R8).
-4. `@parse` as a functor in the fixpoint; `parsed` and `sub_tape` derived by the program; the embed slice, `DEPTH` and
-   `GUEST_ROUNDS_KEY` go (R4). Kept: ranges and tapes stored and loaded before the waves (R6, R7). 0391's registry goes.
+2. Tape values: node ids by tape key and preorder, `guest_of`, findings placed through the string (R2, R3, R9); the
+   packs' `docof(n, d), guest(d, _, s, _)` (21 uses in 6 files) rewritten.
+3. Programs as the file's: made by the host's parse, numbered in the file's space, the file's program record; the views
+   and the reads (CLIF) resolve ids through it; `with_matchers` runs once a chunk; guest documents go (R1, R5, R8).
+4. `@parse` as a functor in the fixpoint; `parsed` and `sub_tape` derived by the program; the embed slice, `DEPTH`,
+   `GUEST_ROUNDS_KEY` and 0391's registry go (R4). Tape values stored and loaded before the waves (R6, R7).
 5. PostHog cold on CPU and Metal against 1ca497070's 32.1 s and 34.4 s of guests, findings unchanged (29,747,
    fa0efeaed6ff).
 
 ## Open
 
-- A value's tape (`@parse(g, x)` of a computed string, `parse_of`): numbered in each asking file's space, standing at
-  the asking node. To check against the packs' one use.
-- The matcher path's derived programs (Vue, Blade, `file_documents`): already made at parse and stored; whether they
-  become the same tape values is a later step, not this one.
+- A value's tape (`@parse(g, x)` of a computed string, `parse_of`): a tape value like any, placed through its asking
+  node. To check against the packs' one use.
+- `embed_value` (a `.rr` regex): a rule-made value, so a tape value; to confirm in step 2.
