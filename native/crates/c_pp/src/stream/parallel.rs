@@ -36,6 +36,7 @@
 
 use super::{Config, Pp, Src};
 use crate::files::Files;
+use crate::directives::Kind;
 use crate::sink::Null;
 
 mod files;
@@ -158,13 +159,15 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
 /// A directive of a file's P0 tables (`files::tabulate`), as the evaluator's file pass makes it
 /// from the file's tape (decision 0436): its tape kind (`tape::kind_id`), the text tokens before
 /// it, the group it is read in, the group after it, and its chain (`u32::MAX`: none).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirRow {
     pub kind: u16,
     pub text_before: u32,
     pub group: u32,
     pub after: u32,
     pub chain: u32,
+    /// The name it defines, undefines or tests (`#ifdef`, `#ifndef`, `#elifdef`, `#elifndef`).
+    pub name: Option<Vec<u8>>,
 }
 
 /// `src`'s P0 directives and its groups' number, read alone under `opts`: the cross-check of the
@@ -185,7 +188,16 @@ pub fn tables(opts: crate::Options, src: &[u8]) -> (Vec<DirRow>, u32) {
         .dirs
         .iter()
         .enumerate()
-        .map(|(d, dir)| DirRow { kind: crate::tape::kind_id(dir.kind), text_before: dir.text_before, group: dir.group, after: dir.after, chain: chain[d] })
+        .map(|(d, dir)| {
+            let sym = match dir.act {
+                files::Act::Define(k) => Some(pp.defs[k as usize].name),
+                files::Act::Undef(s) => Some(s),
+                files::Act::Test if !matches!(dir.kind, Kind::If | Kind::Elif | Kind::Else) => dir.line.first().filter(|n| n.kind == rerail_c_lean::pp::P::Ident).map(|n| n.sym),
+                _ => None,
+            };
+            let name = sym.map(|s| pp.syms.text(s).to_vec());
+            DirRow { kind: crate::tape::kind_id(dir.kind), text_before: dir.text_before, group: dir.group, after: dir.after, chain: chain[d], name }
+        })
         .collect();
     (rows, tab.groups.len() as u32)
 }

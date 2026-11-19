@@ -7,8 +7,8 @@
 //! the host to decide the next.
 //!
 //! Built so far: the unit's nodes (a count a file, their prefix sum, and from it the next
-//! dispatch's size), the names (`names`: each identifier leaf's key), and the directives
-//! (`directives`: each file's P0 rows, a file pass, a prefix sum and a file pass).
+//! dispatch's size), the names (each identifier leaf's key), the directives (each file's P0
+//! rows: a file pass, a prefix sum and a file pass) and their names (`evaluate`).
 
 use crate::Error;
 use crate::launch::{CheckedComputeEncoder, commit_checked, wait_checked};
@@ -74,77 +74,21 @@ impl Unit {
     }
 }
 
-/// The names pass's results, read back for tests: each file's first node in the unit, the
-/// unit's nodes, and each node's key (0 where it is no identifier).
-pub struct Names {
+/// The passes' results, read back for tests.
+pub struct Evaluated {
+    /// Each file's first node in the unit, the unit's nodes, and each node's key (0 where it is
+    /// no identifier).
     pub bases: Vec<u32>,
     pub total: u32,
     pub keys: Vec<u64>,
     /// Each node as the device's reader gives it (key, start, end, size), with `nodes`.
     pub nodes: Vec<[u32; 4]>,
-}
-
-/// The unit's nodes and their names: `pp_counts`, `pp_scan`, then `pp_names` (and `pp_nodes`
-/// with `nodes`) one thread a node, their number the scan's.
-pub fn names(unit: &Unit, nodes: bool) -> Result<Names, Error> {
-    let device = crate::device()?;
-    let n = unit.table.len();
-    let counts = MappedBuffer::zeroed::<u32>(&device, n.max(1))?;
-    let bases = MappedBuffer::zeroed::<u32>(&device, n.max(1))?;
-    let bad = MappedBuffer::zeroed::<u32>(&device, 1)?;
-    let total = MappedBuffer::zeroed::<u32>(&device, 1)?;
-    let args = MappedBuffer::zeroed::<u32>(&device, 4)?;
-    let keys = MappedBuffer::zeroed::<u64>(&device, unit.node_bound)?;
-    let out = MappedBuffer::zeroed::<[u32; 4]>(&device, if nodes { unit.node_bound } else { 1 })?;
-    let pipe = |name: &str| pipeline_named(SOURCE, name);
-    let (p_counts, p_scan, p_names, p_nodes) = (pipe("pp_counts")?, pipe("pp_scan")?, pipe("pp_names")?, pipe("pp_nodes")?);
-    let n32 = n as u32;
-    let _scope = crate::launch::LaunchScope::enter();
-    let queue = crate::pool::queue(&device)?;
-    let command = queue.new_command_buffer();
-    command.set_label("Rerail pp evaluator");
-    let e = command.new_compute_command_encoder();
-    e.set_compute_pipeline_state(&p_counts);
-    e.checked_set_buffers(command, &[&unit.files.buffer, &unit.data.buffer, &counts.buffer, &bad.buffer]);
-    e.set_bytes(4, 4, std::ptr::from_ref(&n32).cast());
-    e.checked_dispatch_threads(command, MTLSize::new(n.max(1) as u64, 1, 1), MTLSize::new(64, 1, 1));
-    e.end_encoding();
-    let e = command.new_compute_command_encoder();
-    e.set_compute_pipeline_state(&p_scan);
-    e.checked_set_buffers(command, &[&counts.buffer, &bases.buffer, &total.buffer, &args.buffer]);
-    e.set_bytes(4, 4, std::ptr::from_ref(&n32).cast());
-    e.checked_dispatch_thread_groups(command, MTLSize::new(1, 1, 1), MTLSize::new(1024, 1, 1));
-    e.end_encoding();
-    for (p, o) in [(&p_names, &keys), (&p_nodes, &out)] {
-        if std::ptr::eq(p, &p_nodes) && !nodes {
-            continue;
-        }
-        let e = command.new_compute_command_encoder();
-        e.set_compute_pipeline_state(p);
-        e.checked_set_buffers(command, &[&unit.files.buffer, &unit.data.buffer, &bases.buffer, &total.buffer, &o.buffer]);
-        e.set_bytes(5, 4, std::ptr::from_ref(&n32).cast());
-        e.checked_dispatch_thread_groups_indirect(command, &args.buffer, 0, MTLSize::new(256, 1, 1));
-        e.end_encoding();
-    }
-    if let Err(refused) = commit_checked(command) {
-        crate::launch::release_refused(command);
-        return Err(refused);
-    }
-    wait_checked(command)?;
-    // SAFETY: the device finished writing every buffer; each holds the counts read here.
-    unsafe {
-        if *bad.host().cast::<u32>() != 0 {
-            return Err(Error::BackendFailure);
-        }
-        let total = *total.host().cast::<u32>();
-        let read = |b: &MappedBuffer, k: usize| std::slice::from_raw_parts(b.host().cast::<u32>(), k).to_vec();
-        Ok(Names {
-            bases: read(&bases, n),
-            total,
-            keys: std::slice::from_raw_parts(keys.host().cast::<u64>(), total as usize).to_vec(),
-            nodes: if nodes { std::slice::from_raw_parts(out.host().cast::<[u32; 4]>(), total as usize).to_vec() } else { Vec::new() },
-        })
-    }
+    /// Each file's first directive row, the rows, each row's name key (0: none), and each
+    /// file's groups.
+    pub dir_bases: Vec<u32>,
+    pub rows: Vec<PpDir>,
+    pub dir_keys: Vec<u64>,
+    pub groups: Vec<u32>,
 }
 
 /// A directive's row (`PpDir` in the MSL): its node in its file's tape, its kind, the text tokens
@@ -161,52 +105,71 @@ pub struct PpDir {
     pub chain: u32,
 }
 
-/// The directives pass's results, read back for tests: each file's first row, the rows, and
-/// each file's groups.
-pub struct Dirs {
-    pub bases: Vec<u32>,
-    pub rows: Vec<PpDir>,
-    pub groups: Vec<u32>,
-}
-
-/// The unit's directives: `pp_dir_counts` (one thread a file walks its tape), `pp_scan`, then
-/// `pp_dirs` (the same walk, each file's rows from its first).
-pub fn directives(unit: &Unit) -> Result<Dirs, Error> {
+/// The passes, in one command buffer:
+/// - the unit's nodes: `pp_counts`, `pp_scan`;
+/// - the names: `pp_names` (and `pp_nodes` with `nodes`), one thread a node, their number the
+///   scan's;
+/// - the directives: `pp_dir_counts` (one thread a file walks its tape), `pp_scan`, `pp_dirs`
+///   (the same walk, each file's rows from its first);
+/// - the directives' names: `pp_dir_keys`, one thread a row, their number the second scan's.
+pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
     let device = crate::device()?;
     let n = unit.table.len();
-    let counts = MappedBuffer::zeroed::<u32>(&device, n.max(1))?;
-    let bases = MappedBuffer::zeroed::<u32>(&device, n.max(1))?;
-    let groups = MappedBuffer::zeroed::<u32>(&device, n.max(1))?;
-    let bad = MappedBuffer::zeroed::<u32>(&device, 1)?;
-    let total = MappedBuffer::zeroed::<u32>(&device, 1)?;
-    let args = MappedBuffer::zeroed::<u32>(&device, 4)?;
+    let per_file = || MappedBuffer::zeroed::<u32>(&device, n.max(1));
+    let one = |k: usize| MappedBuffer::zeroed::<u32>(&device, k);
+    let (counts, bases, dir_counts, dir_bases, groups) = (per_file()?, per_file()?, per_file()?, per_file()?, per_file()?);
+    let (bad, total, args, dir_total, dir_args) = (one(1)?, one(1)?, one(4)?, one(1)?, one(4)?);
+    let keys = MappedBuffer::zeroed::<u64>(&device, unit.node_bound)?;
+    let out = MappedBuffer::zeroed::<[u32; 4]>(&device, if nodes { unit.node_bound } else { 1 })?;
     let rows = MappedBuffer::zeroed::<PpDir>(&device, unit.dir_bound)?;
-    let pipe = |name: &str| pipeline_named(SOURCE, name);
-    let (p_counts, p_scan, p_dirs) = (pipe("pp_dir_counts")?, pipe("pp_scan")?, pipe("pp_dirs")?);
+    let dir_keys = MappedBuffer::zeroed::<u64>(&device, unit.dir_bound)?;
+    let names = ["pp_counts", "pp_scan", "pp_names", "pp_nodes", "pp_dir_counts", "pp_dirs", "pp_dir_keys"];
+    let pipes = names.iter().map(|n| pipeline_named(SOURCE, n)).collect::<Result<Vec<_>, _>>()?;
+    let pipe = |name: &str| &pipes[names.iter().position(|&n| n == name).expect("a pass of the list")];
     let n32 = n as u32;
     let files = MTLSize::new(n.max(1) as u64, 1, 1);
     let _scope = crate::launch::LaunchScope::enter();
     let queue = crate::pool::queue(&device)?;
     let command = queue.new_command_buffer();
-    command.set_label("Rerail pp directives");
-    let e = command.new_compute_command_encoder();
-    e.set_compute_pipeline_state(&p_counts);
-    e.checked_set_buffers(command, &[&unit.files.buffer, &unit.data.buffer, &counts.buffer, &bad.buffer]);
-    e.set_bytes(4, 4, std::ptr::from_ref(&n32).cast());
-    e.checked_dispatch_threads(command, files, MTLSize::new(64, 1, 1));
-    e.end_encoding();
-    let e = command.new_compute_command_encoder();
-    e.set_compute_pipeline_state(&p_scan);
-    e.checked_set_buffers(command, &[&counts.buffer, &bases.buffer, &total.buffer, &args.buffer]);
-    e.set_bytes(4, 4, std::ptr::from_ref(&n32).cast());
-    e.checked_dispatch_thread_groups(command, MTLSize::new(1, 1, 1), MTLSize::new(1024, 1, 1));
-    e.end_encoding();
-    let e = command.new_compute_command_encoder();
-    e.set_compute_pipeline_state(&p_dirs);
-    e.checked_set_buffers(command, &[&unit.files.buffer, &unit.data.buffer, &bases.buffer, &rows.buffer, &groups.buffer, &bad.buffer]);
-    e.set_bytes(6, 4, std::ptr::from_ref(&n32).cast());
-    e.checked_dispatch_threads(command, files, MTLSize::new(64, 1, 1));
-    e.end_encoding();
+    command.set_label("Rerail pp evaluator");
+    // A pass of one thread a file, its count of files at `at`.
+    let by_file = |name: &str, buffers: &[&metal::BufferRef], at: u64| {
+        let e = command.new_compute_command_encoder();
+        e.set_compute_pipeline_state(pipe(name));
+        e.checked_set_buffers(command, buffers);
+        e.set_bytes(at, 4, std::ptr::from_ref(&n32).cast());
+        e.checked_dispatch_threads(command, files, MTLSize::new(64, 1, 1));
+        e.end_encoding();
+    };
+    // A scan of the files' counts: each file's first, the total, the next dispatch's size.
+    let scan = |counts: &MappedBuffer, bases: &MappedBuffer, total: &MappedBuffer, args: &MappedBuffer| {
+        let e = command.new_compute_command_encoder();
+        e.set_compute_pipeline_state(pipe("pp_scan"));
+        e.checked_set_buffers(command, &[&counts.buffer, &bases.buffer, &total.buffer, &args.buffer]);
+        e.set_bytes(4, 4, std::ptr::from_ref(&n32).cast());
+        e.checked_dispatch_thread_groups(command, MTLSize::new(1, 1, 1), MTLSize::new(1024, 1, 1));
+        e.end_encoding();
+    };
+    // A pass of one thread an element, sized by `args` (groups of 256).
+    let indirect = |name: &str, buffers: &[&metal::BufferRef], args: &MappedBuffer| {
+        let e = command.new_compute_command_encoder();
+        e.set_compute_pipeline_state(pipe(name));
+        e.checked_set_buffers(command, buffers);
+        e.set_bytes(buffers.len() as u64, 4, std::ptr::from_ref(&n32).cast());
+        e.checked_dispatch_thread_groups_indirect(command, &args.buffer, 0, MTLSize::new(256, 1, 1));
+        e.end_encoding();
+    };
+    let (u_files, u_data) = (&unit.files.buffer, &unit.data.buffer);
+    by_file("pp_counts", &[u_files, u_data, &counts.buffer, &bad.buffer], 4);
+    scan(&counts, &bases, &total, &args);
+    indirect("pp_names", &[u_files, u_data, &bases.buffer, &total.buffer, &keys.buffer], &args);
+    if nodes {
+        indirect("pp_nodes", &[u_files, u_data, &bases.buffer, &total.buffer, &out.buffer], &args);
+    }
+    by_file("pp_dir_counts", &[u_files, u_data, &dir_counts.buffer, &bad.buffer], 4);
+    scan(&dir_counts, &dir_bases, &dir_total, &dir_args);
+    by_file("pp_dirs", &[u_files, u_data, &dir_bases.buffer, &rows.buffer, &groups.buffer, &bad.buffer], 6);
+    indirect("pp_dir_keys", &[u_files, u_data, &bases.buffer, &keys.buffer, &dir_bases.buffer, &dir_total.buffer, &rows.buffer, &dir_keys.buffer], &dir_args);
     if let Err(refused) = commit_checked(command) {
         crate::launch::release_refused(command);
         return Err(refused);
@@ -217,9 +180,19 @@ pub fn directives(unit: &Unit) -> Result<Dirs, Error> {
         if *bad.host().cast::<u32>() != 0 {
             return Err(Error::BackendFailure);
         }
-        let total = *total.host().cast::<u32>() as usize;
+        let total = *total.host().cast::<u32>();
+        let dir_total = *dir_total.host().cast::<u32>() as usize;
         let read = |b: &MappedBuffer| std::slice::from_raw_parts(b.host().cast::<u32>(), n).to_vec();
-        Ok(Dirs { bases: read(&bases), rows: std::slice::from_raw_parts(rows.host().cast::<PpDir>(), total).to_vec(), groups: read(&groups) })
+        Ok(Evaluated {
+            bases: read(&bases),
+            total,
+            keys: std::slice::from_raw_parts(keys.host().cast::<u64>(), total as usize).to_vec(),
+            nodes: if nodes { std::slice::from_raw_parts(out.host().cast::<[u32; 4]>(), total as usize).to_vec() } else { Vec::new() },
+            dir_bases: read(&dir_bases),
+            rows: std::slice::from_raw_parts(rows.host().cast::<PpDir>(), dir_total).to_vec(),
+            dir_keys: std::slice::from_raw_parts(dir_keys.host().cast::<u64>(), dir_total).to_vec(),
+            groups: read(&groups),
+        })
     }
 }
 

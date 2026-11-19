@@ -270,3 +270,32 @@ kernel void pp_dirs(device const PpFile* files [[buffer(0)]], device const uchar
     walk_dirs(tape_at(data, files[f].tape), rows, dir_bases[f], g, bad);
     groups[f] = g;
 }
+
+// --- The directives' names: a line pass ---------------------------------------------------------
+
+constant uint K_DEFINE = 6u, K_UNDEF = 7u, K_IFDEF = 13u, K_ELIFDEF = 16u, K_ELIFNDEF = 17u;
+
+// Each directive's name key (0: none): a `#define`'s or `#undef`'s name, an `#ifdef`'s,
+// `#ifndef`'s, or (in a chain) `#elifdef`'s or `#elifndef`'s operand, where the first token after
+// its word is an identifier: the key the names pass gave that leaf. One thread a row.
+kernel void pp_dir_keys(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
+                        device const uint* bases [[buffer(2)]], device const ulong* keys [[buffer(3)]],
+                        device const uint* dir_bases [[buffer(4)]], device const uint* dir_total [[buffer(5)]],
+                        device const PpDir* rows [[buffer(6)]], device ulong* dir_keys [[buffer(7)]],
+                        constant uint& n_files [[buffer(8)]], uint r [[thread_position_in_grid]]) {
+    if (r >= dir_total[0]) return;
+    uint f = file_of(dir_bases, n_files, r);
+    Tape t = tape_at(data, files[f].tape);
+    PpDir d = rows[r];
+    bool named = d.kind == K_DEFINE || d.kind == K_UNDEF || d.kind == K_IFDEF || d.kind == K_IFNDEF
+                 || ((d.kind == K_ELIFDEF || d.kind == K_ELIFNDEF) && d.chain != NO_CHAIN);
+    ulong key = 0ul;
+    // Its `#`, its word, then the first token after them: a leaf, or an operand node's first.
+    uint end = d.node + node_size(t, d.node);
+    uint j = d.node + 3u;
+    if (named && j < end) {
+        while (node_size(t, j) > 1u) j++;
+        if (node_kind(t, j) == K_IDENTIFIER) key = keys[bases[f] + j];
+    }
+    dir_keys[r] = key;
+}

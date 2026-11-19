@@ -1,5 +1,5 @@
 use rerail_c_pp::tape::{IDENTIFIER, image};
-use rerail_metal::pp_eval::{Unit, directives, name_key, names};
+use rerail_metal::pp_eval::{Unit, evaluate, name_key};
 use rerail_tape_format::View;
 
 /// `a == b`, or the difference printed and a panic (Relax keeps no assert's message).
@@ -49,7 +49,7 @@ fn the_names_pass_reads_the_tapes_in_place() {
     }
     files.extend(corpus());
     let unit = Unit::load(&files.iter().map(|(s, t)| (s.as_slice(), t.as_slice())).collect::<Vec<_>>()).unwrap();
-    let got = names(&unit, true).unwrap();
+    let got = evaluate(&unit, true).unwrap();
     let mut g = 0usize;
     for (f, (src, tape)) in files.iter().enumerate() {
         let v = View::new(tape).unwrap();
@@ -69,34 +69,38 @@ fn the_names_pass_reads_the_tapes_in_place() {
 /// The directives pass (a file pass, a prefix sum, a file pass) gives each file's directives as
 /// the spike's P0 tables do (`parallel::tables`): kind, text tokens before, the group each is
 /// read in and the one after it, its chain; and each file's groups. Each row's node is a
-/// directive of its kind in the tape.
+/// directive of its kind in the tape, and its name key (`pp_dir_keys`) is the key of the name
+/// the spike's directive defines, undefines or tests.
 #[test]
 fn the_directives_pass_gives_the_spikes_tables() {
-    let shapes: [&[u8]; 6] = [
+    let shapes: [&[u8]; 7] = [
         b"#define F(a) a\nint y = F(1);\n",
         b"#ifndef G\n#define G\n#if A\nx y\n#elif B\n#if C\nz\n#endif\n#else\nw\n#endif\n#endif\n",
         b"#else\n#endif\n#elif X\nt\n#if A\n#else\n#else\nu\n",
         b"",
         b"a\n#\n#pragma once\n#include <x.h>\nb c d\n",
         b"#if A\n#if B\n#endif\n",
+        b"#define\n#define 1\n#define G(x) x\n#undef\n#undef G H\n#ifdef\n#elifdef X\n#endif\n#ifndef abcdefghijklmnopqrs\n#elifndef Y\n#endif\n#elifdef Z\n",
     ];
     let mut files: Vec<(Vec<u8>, Vec<u8>, bool)> = shapes.iter().map(|s| (s.to_vec(), image(s, crate::pp::options(false)), false)).collect();
     files.extend(corpus_in());
     let unit = Unit::load(&files.iter().map(|(s, t, _)| (s.as_slice(), t.as_slice())).collect::<Vec<_>>()).unwrap();
-    let got = directives(&unit).unwrap();
+    let got = evaluate(&unit, false).unwrap();
     let mut rows = 0usize;
     for (f, (src, tape, cpp)) in files.iter().enumerate() {
         let (want, groups) = rerail_c_pp::stream::parallel::tables(crate::pp::options(*cpp), src);
         let v = View::new(tape).unwrap();
-        same(got.bases[f] as usize, rows, format!("file {f}'s first row"));
+        same(got.dir_bases[f] as usize, rows, format!("file {f}'s first row"));
         same(got.groups[f], groups, format!("file {f}'s groups"));
         for (d, w) in want.iter().enumerate() {
             let r = got.rows[rows + d];
             same((r.kind, r.text_before, r.group, r.after, r.chain), (u32::from(w.kind), w.text_before, w.group, w.after, w.chain), format!("file {f} directive {d}"));
             same(v.key(r.node as usize) & 0x3ff, r.kind, format!("file {f} directive {d}'s node"));
+            same(got.dir_keys[rows + d], w.name.as_deref().map_or(0, name_key), format!("file {f} directive {d}'s name {:?}", w.name.as_deref().map(String::from_utf8_lossy)));
         }
         rows += want.len();
     }
     same(got.rows.len(), rows, "the rows");
+    same(got.dir_keys.len(), rows, "the rows' keys");
     eprintln!("{} files, {rows} directives", files.len());
 }
