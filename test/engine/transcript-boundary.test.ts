@@ -71,12 +71,15 @@ const URL_INPUTS = [
   { content: "https://./x/../../UNC/192.0.2.1/d/3" },
   { content: "https://?/GLOBALROOT/Device/x/../Mup/192.0.2.1/d/4" },
   { content: "https://./UNC./192.0.2.1/d/5" },
+  // A scheme that only ends in the letters of `file` or `smb`, a word's: read as any other scheme's URL.
+  { command: "curl -s profile://192.0.2.1/s/11" },
+  { content: "See Makefile://192.0.2.1/s/12" },
 ];
 
 /**
  * Calls that name another machine's share right after a `:` where it is no URL's host and path, written with
- * backslashes after a switch, one-letter switches too, whose letter is no drive's; or in an `smb:` URL, which names a
- * share outright as a `file:` URL does; each with the share as the lookup opens it.
+ * backslashes after a switch, one-letter switches too, whose letter is no drive's; or in an `smb:` or `file:` URL,
+ * which names a share outright; each with the share as the lookup opens it.
  */
 const SHARES_AFTER_A_COLON = [
   { form: "robocopy's log switch", command: "robocopy src dst /LOG:\\\\192.0.2.1\\logs\\run.txt", share: "\\\\192.0.2.1\\logs\\run.txt" },
@@ -85,6 +88,9 @@ const SHARES_AFTER_A_COLON = [
   { form: "a one-letter parameter after an en dash", command: "Get-ChildItem \u2013P:\\\\192.0.2.1\\data\\cfg", share: "\\\\192.0.2.1\\data\\cfg" },
   { form: "findstr's one-letter switch", command: "findstr /G:\\\\192.0.2.1\\data\\cfg notes.txt", share: "\\\\192.0.2.1\\data\\cfg" },
   { form: "an smb: URL", command: "curl -s smb://192.0.2.1/share/cfg", share: "\\\\192.0.2.1\\share\\cfg" },
+  { form: "a file: URL", command: "curl -s file://192.0.2.1/share/cfg", share: "\\\\192.0.2.1\\share\\cfg" },
+  { form: "a FILE: URL", command: "curl -s FILE://192.0.2.1/share/cfg", share: "\\\\192.0.2.1\\share\\cfg" },
+  { form: "a git+file: URL", command: "git clone git+file://192.0.2.1/share/cfg", share: "\\\\192.0.2.1\\share\\cfg" },
 ];
 
 /**

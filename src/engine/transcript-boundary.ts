@@ -135,8 +135,12 @@ const DRIVE_AT_END = /(?:^|[^-a-z\d/\u2013-\u2015])[a-z]$/iu;
 /** A run of path separators, which Windows reads as one. */
 const SEPARATOR_RUN = /([\\/])[\\/]+/gu;
 
-/** A scheme whose URL names a share outright, `file` or `smb`, at the end of the token before a `:`. */
-const SHARE_SCHEME_AT_END = /(?:file|smb)$/iu;
+/**
+ * A scheme whose URL names a share outright, `file` or `smb`, ending the token before a `:` as a whole scheme: with
+ * nothing before it but marks, or as the last part of a compound scheme (`git+file`). `profile` and `Makefile` are
+ * other words, and their URLs are read as any other scheme's.
+ */
+const SHARE_SCHEME_AT_END = /(?:^|[^a-z\d.-])(?:file|smb)$/iu;
 
 /**
  * On Windows, whether a share on another machine right after a `:` and the token `before` it may be a URL's host and
@@ -147,7 +151,7 @@ const SHARE_SCHEME_AT_END = /(?:file|smb)$/iu;
  * both are looked up.
  */
 const urlAfter = (before: string, path: string): boolean =>
-  path.startsWith("//") && !SHARE_SCHEME_AT_END.test(before.slice(-4));
+  path.startsWith("//") && !SHARE_SCHEME_AT_END.test(before);
 
 /** Whether a drive letter ({@link DRIVE_AT_END}) ends the token `before` a lone `:`, the run of `delimiters`. */
 const driveBefore = (delimiters: string, before: string): boolean =>
