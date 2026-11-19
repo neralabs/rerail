@@ -238,6 +238,26 @@ describe("CheckoutCodeRuleRouter", () => {
     expect(errors.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
   });
 
+  it("takes the daemon's Git ignore matcher once for every walk question about a checkout that runs no rules", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await writeFile(join(session, ".gitignore"), "scratch/\n*.log\n");
+    startTestRepository(session, databasePath);
+    const matchers = new GitIgnoreMatchers();
+    // Each take checks the shared matcher's sources: Git's configuration and three whole files read again.
+    const takes = vi.spyOn(matchers, "matcher");
+    const { recorder } = recordingAudits();
+    const following = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await following.openWorkspace("walk-questions");
+
+    for (const view of [following.walkView(), following.walkView()]) {
+      const answers = [view.ignoresPath("scratch", true), view.ignoresPath("api", true), view.ignoresPath("api/x.py", false), view.ignoresPath("run.log", false)];
+      expect(answers).toEqual([true, false, false, true]);
+    }
+    expect(takes).toHaveBeenCalledTimes(1);
+  });
+
   it("looks up the checkout of a walk's files once per folder, not once per file", async () => {
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");
