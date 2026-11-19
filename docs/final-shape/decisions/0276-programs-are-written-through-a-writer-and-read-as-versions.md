@@ -494,6 +494,14 @@ Progress (2026-11-18):
       applied, `unset_literal`; a negated test held until the next literal shows whether it merges,
       `merge_negated_test`), then `end_rule`. The per-literal pieces are what `unset` and `merge_negated_tests` now
       run over a whole body for the helpers that still make one.
+    - *A3.4's order (decided 2026-11-18).* Each lowering takes the pick it is to write and returns its count of
+      alternatives; it runs every alternative (so the names it makes replay in order) and writes only the picked
+      one's literals (`alt`, `emit`). Lowerings move to this one at a time: until the helpers that read whole bodies
+      (`negate`, `outline`, `context`, `covering`, `aggregate`'s helper) write their rules by replay too, `alts_of`
+      bridges, collecting a converted lowering's alternatives by replaying it once per alternative into a sink of
+      literals. Then each helper writes its rules per combination, the analyses it makes of its bodies (`type_of`,
+      `grounds`, its key in `helper_once`) reading the rules as written in the builder; a replay skips a helper's
+      lowering by the length its deciding walk logged. Last, `alts_of` and the sink of literals go.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,

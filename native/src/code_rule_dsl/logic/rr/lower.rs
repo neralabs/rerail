@@ -183,10 +183,16 @@ fn place_relation(v: &str) -> String {
     format!("rr_place_{v}")
 }
 
-/// The rule a writing walk writes into, its variables `unset(x)` binds empty, and the negated test held back
-/// (`Lowerer::open`). A lowerer is copied (its seeds) with no rule open.
+/// Where a writing walk's literals go (`Lowerer::open`). A lowerer is copied (its seeds) with none.
 #[derive(Default)]
-struct Writing(Option<(crate::code_rule_dsl::logic::program_image::Open, BTreeSet<String>, Option<Literal>)>);
+struct Writing(Option<Sink>);
+
+enum Sink {
+    /// The rule open on the header, its variables `unset(x)` binds empty, and the negated test held back.
+    Rule(crate::code_rule_dsl::logic::program_image::Open, BTreeSet<String>, Option<Literal>),
+    /// The literals of one alternative, for a helper that still reads whole bodies (`alts_of`, decision 0276 A3.4).
+    Trees(Vec<Literal>),
+}
 
 impl Clone for Writing {
     fn clone(&self) -> Self {
@@ -208,6 +214,8 @@ struct Lowerer {
     /// The rule a writing walk writes into (`emit`), its variables `unset(x)` binds empty (`unset_vars`), and the
     /// negated test held back until the next literal shows whether it merges with it (`merge_negated_test`).
     open: Writing,
+    /// Whether `emit` writes: off in the alternatives of a lowering other than the one it is told to write (`alt`).
+    off: bool,
     /// Its header (decision 0276 §3): a module's declarations, inputs, facts and fields as the walk states them, its
     /// rules then written onto it (`Written`); the scope's, seeded; the modules' linked so far.
     prog: crate::code_rule_dsl::logic::program_image::Builder<'static>,
@@ -2018,13 +2026,23 @@ impl Lowerer {
         args.iter_mut().for_each(|t| unset_term(t, &unset));
         let mut o = self.prog.open_rule();
         self.prog.put_head(&mut o, rel, &ts(&args));
-        self.open.0 = Some((o, unset, None));
+        self.open.0 = Some(Sink::Rule(o, unset, None));
     }
 
     /// Literal `l` of the open rule (`begin_rule`), when one is: its `unset` applied, and a negated test merged with
     /// the one before it.
     fn emit(&mut self, l: Literal) -> Result<(), Error> {
-        let Some((_, unset, held)) = self.open.0.as_mut() else { return Ok(()) };
+        if self.off {
+            return Ok(());
+        }
+        let (unset, held) = match self.open.0.as_mut() {
+            None => return Ok(()),
+            Some(Sink::Trees(lits)) => {
+                lits.push(l);
+                return Ok(());
+            }
+            Some(Sink::Rule(_, unset, held)) => (unset, held),
+        };
         let is_unset = matches!(&l, Literal::Atom(a) if a.rel == "unset" && !a.neg);
         let Some(l) = unset_literal(l, unset)? else {
             // `unset(x)` goes; the tests either side of it are not adjacent.
@@ -2045,36 +2063,92 @@ impl Lowerer {
             None => l,
         };
         if negated_test(&l).is_some() {
-            self.open.0.as_mut().expect("open").2 = Some(l);
+            if let Some(Sink::Rule(_, _, held)) = self.open.0.as_mut() {
+                *held = Some(l);
+            }
             return Ok(());
         }
         self.put_open(&l)
     }
 
     fn put_open(&mut self, l: &Literal) -> Result<(), Error> {
-        let (o, ..) = self.open.0.as_mut().expect("a rule open");
+        let Some(Sink::Rule(o, ..)) = self.open.0.as_mut() else { unreachable!("a rule open") };
         put_literal(&mut self.prog, o, l).map_err(Error::Syntax)
     }
 
     /// Ends the open rule (`begin_rule`).
     fn end_rule(&mut self) -> Result<(), Error> {
-        if let Some(h) = self.open.0.as_mut().and_then(|(_, _, h)| h.take()) {
-            if let Err(e) = self.put_open(&h) {
-                let (o, ..) = self.open.0.take().expect("open");
-                self.prog.abandon_rule(o);
-                return Err(e);
-            }
+        let held = match self.open.0.as_mut() {
+            Some(Sink::Rule(_, _, h)) => h.take(),
+            _ => unreachable!("a rule open"),
+        };
+        if let Some(h) = held
+            && let Err(e) = self.put_open(&h)
+        {
+            self.drop_rule();
+            return Err(e);
         }
-        let (o, ..) = self.open.0.take().expect("a rule open");
+        let Some(Sink::Rule(o, ..)) = self.open.0.take() else { unreachable!("a rule open") };
         self.close(o);
         Ok(())
     }
 
     /// Leaves the open rule out (an error while it was written).
     fn drop_rule(&mut self) {
-        if let Some((o, ..)) = self.open.0.take() {
+        if let Some(Sink::Rule(o, ..)) = self.open.0.take() {
             self.prog.abandon_rule(o);
         }
+    }
+
+    /// Runs alternative `i` of a lowering told to write alternative `pick`: its literals are written (`emit`) only
+    /// when it is the one; every alternative runs, so the names each makes replay in order.
+    fn alt(&mut self, i: usize, pick: usize, f: impl FnOnce(&mut Self) -> Result<(), Error>) -> Result<(), Error> {
+        let off = self.off;
+        self.off = off || i != pick;
+        let r = f(self);
+        self.off = off;
+        r
+    }
+
+    /// Where the walk is in its log: the next name a replay reads, or the next one the deciding walk makes.
+    fn position(&self) -> usize {
+        self.replay.unwrap_or(self.log.len())
+    }
+
+    /// The alternatives of a lowering that writes the alternative it is told to (`f(me, pick)`, its count of
+    /// alternatives), as bodies: it runs once to decide, writing none, then once per alternative into a sink of
+    /// literals, replaying the names its first run made. A bridge for the helpers that still read whole bodies
+    /// (decision 0276 A3.4).
+    fn alts_of(&mut self, mut f: impl FnMut(&mut Self, usize) -> Result<usize, Error>) -> Result<Vec<Vec<Literal>>, Error> {
+        let start = self.position();
+        let replaying = self.replay.is_some();
+        let sink = self.open.0.take();
+        let off = std::mem::replace(&mut self.off, true);
+        let mut run = |me: &mut Self| -> Result<Vec<Vec<Literal>>, Error> {
+            let n = f(me, usize::MAX)?;
+            let end = me.position();
+            let mut out = Vec::with_capacity(n);
+            for i in 0..n {
+                me.replay = Some(start);
+                me.off = false;
+                me.open.0 = Some(Sink::Trees(Vec::new()));
+                let r = f(me, i);
+                let Some(Sink::Trees(lits)) = me.open.0.take() else { unreachable!("the sink of literals") };
+                r?;
+                debug_assert_eq!(me.replay, Some(end), "an alternative replays its lowering's names");
+                out.push(lits);
+            }
+            me.replay = replaying.then_some(end);
+            Ok(out)
+        };
+        let out = run(self);
+        if out.is_err() {
+            // An error ends the clause; where its log stands no longer matters.
+            self.replay = if replaying { self.replay } else { None };
+        }
+        self.open.0 = sink;
+        self.off = off;
+        out
     }
 
     /// Ends rule `o`, open on the header (`Builder::open_rule`), as one the walk wrote; left out in a replay.
@@ -3040,6 +3114,11 @@ impl Lowerer {
     /// ancestor in `stop`, or its nearest one is a or above it. Negated (a named): n is not below a, or it is with
     /// its nearest ancestor in `stop` below a.
     fn within(&mut self, rel: &str, args: &[At], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+        self.alts_of(|me, pick| me.within_put(rel, args, neg, pick))
+    }
+
+    /// `within`, writing alternative `pick` (`alt`): its count of alternatives.
+    fn within_put(&mut self, rel: &str, args: &[At], neg: bool, pick: usize) -> Result<usize, Error> {
         let (n, a, stop) = match args {
             [n, a] if rel == "within" => (n, a, None),
             [n, a, stop] if rel == "within_stop" => (n, a, Some(stop)),
@@ -3054,8 +3133,11 @@ impl Lowerer {
         if !self.prog.has_input(within) {
             self.prog.add_input(within);
         }
-        let below = |neg: bool| vec![Literal::Atom(Atom { rel: within.to_owned().into(), args: [n.clone(), a.clone()].into(), neg, gated: false })];
-        let Some(stop) = stop else { return Ok(vec![below(neg)]) };
+        let below = |neg: bool| Literal::Atom(Atom { rel: within.to_owned().into(), args: [n.clone(), a.clone()].into(), neg, gated: false });
+        let Some(stop) = stop else {
+            self.emit(below(neg))?;
+            return Ok(1);
+        };
         let set = self.set_name("within_stop", stop)?;
         let Term::Var(nv) = &n else { return Err(Error::Syntax("within_stop: the node is a variable".to_owned())) };
         let s = self.fresh("stop");
@@ -3065,14 +3147,29 @@ impl Lowerer {
         if neg {
             // n is not below a, or its nearest stop is strictly below a.
             let between = Literal::Atom(Atom { rel: within.to_owned().into(), args: [Term::Var(s.clone().into()), a.clone()].into(), neg: false, gated: false });
-            return Ok(vec![below(true), below(false).into_iter().chain([nearest, between]).collect()]);
+            self.alt(0, pick, |me| me.emit(below(true)))?;
+            self.alt(1, pick, |me| {
+                me.emit(below(false))?;
+                me.emit(nearest)?;
+                me.emit(between)
+            })?;
+            return Ok(2);
         }
         let none = Literal::Atom(Atom { rel: format!("{AXIS}{set}").into(), args: [n.clone(), Term::Wild].into(), neg: true, gated: false });
         // The nearest stop is a, or a is below it: it is not strictly below a (both are above n, so one of the three
         // holds). One alternative, not two: a rule's alternatives multiply, and a policy of several `within_stop`s
         // was exponential in them.
         let not_below = Literal::Atom(Atom { rel: within.to_owned().into(), args: [Term::Var(s.clone().into()), a.clone()].into(), neg: true, gated: false });
-        Ok(vec![below(false).into_iter().chain([none]).collect(), below(false).into_iter().chain([nearest, not_below]).collect()])
+        self.alt(0, pick, |me| {
+            me.emit(below(false))?;
+            me.emit(none)
+        })?;
+        self.alt(1, pick, |me| {
+            me.emit(below(false))?;
+            me.emit(nearest)?;
+            me.emit(not_below)
+        })?;
+        Ok(2)
     }
 
     /// `within_stop(n, a, S)` as a relation `rr_wstop_<S>(n, a)`: n is below a, and no node of S is between them.
