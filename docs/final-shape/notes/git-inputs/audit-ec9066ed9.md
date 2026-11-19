@@ -26,7 +26,9 @@ An opaque directory scope ID selected its own run when a named scope had the sam
 On macOS, an additional check used the standalone CLI for each publication and query.
 After an unrelated publication, the evaluator ran zero of its two strata and wrote zero rows back.
 After a relevant publication it updated one stratum. SQLite used the primary keys of the scope, run and snapshot tables for this lookup.
-All 12 standalone Git revision tests passed on Linux, including the existing whole-store enumeration. [CLI tests](../../../../native/tests/git_revision_cli.rs) · [Rule example](../../../rule-syntax/git.md#read-one-analysis-scopes-history)
+All 12 standalone Git revision tests passed on Linux, including the existing whole-store enumeration.
+The Windows 11 ARM64 guest rebuilt `ee5958ce09` and passed the same 12 tests on NTFS with two workers in 53.11 seconds.
+[CLI tests](../../../../native/tests/git_revision_cli.rs) · [Rule example](../../../rule-syntax/git.md#read-one-analysis-scopes-history)
 
 ## Constant relations across revisions and scopes
 
