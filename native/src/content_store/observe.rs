@@ -3352,7 +3352,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_racy_answer_is_named_by_the_listing() {
-        let (base, root, files) = listing_tree("racy");
+        let (base, root, files) = listing_tree("racy-named");
         std::fs::write(&files[0], "x = 3\n").unwrap();
         let name = files[0].file_name().unwrap().to_owned();
         let listed = listing::entries(&root.join("pkg")).unwrap().into_iter().find(|(n, _)| *n == name).and_then(|(_, l)| l);
