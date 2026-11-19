@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import type * as GitAccessModule from "../../../src/engine/native/git-access.js";
 import type { NativeGitAccess, NativeGitIgnoreMatcher } from "../../../src/engine/native/native.js";
 import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import { GitIgnoreMatchers } from "../../../src/engine/native/git-ignore-matchers.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
@@ -47,6 +48,35 @@ describe("a lane's Git ignore matcher and the process's Git owner", () => {
     } finally {
       stderr.mockRestore();
       await enforcer.close();
+    }
+  });
+
+  it("gives lanes that share the daemon's matcher one the new owner opens, as each lane's own open did", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-owner-change-"));
+    roots.push(root);
+    // Opened while Git had not said which system config it reads; the one it names makes Git ignore *.log.
+    const fallback = access(() => ({ ignored: () => false, ignoredBy: () => null, sourcesUnchanged: () => true }));
+    const answered = access(() => ({ ignored: (path: string) => path.endsWith(".log"), ignoredBy: () => null, sourcesUnchanged: () => true }));
+    const matchers = new GitIgnoreMatchers();
+    const lanes = ["first", "second"].map(() => {
+      const lane: NativeCodeRuleEnforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog([]), {
+        workspaceRoot: root,
+        steerDelivery: { requestSteer: async () => undefined },
+        followGitignore: true,
+        openGitIgnore: checkout => matchers.matcher(checkout, lane),
+      });
+      return lane;
+    });
+    try {
+      owner.current = fallback;
+      expect(lanes.map(lane => lane.ignoresPath("a.log", false))).toEqual([false, false]);
+      expect(fallback.openGitIgnoreMatcher).toHaveBeenCalledTimes(1);
+      owner.current = answered;
+      expect(lanes.map(lane => lane.ignoresPath("a.log", false))).toEqual([true, true]);
+      expect(answered.openGitIgnoreMatcher).toHaveBeenCalledTimes(1);
+      expect(matchers.size).toBe(1);
+    } finally {
+      await Promise.all(lanes.map(lane => lane.close()));
     }
   });
 });

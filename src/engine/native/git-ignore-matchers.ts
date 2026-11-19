@@ -6,19 +6,26 @@
  * Git does, includes and conditions among it, and stamps the files it read whole), and a fresh one otherwise, which the
  * routers that ask after it share. A router that did not hold the shared matcher gets it with the Git index read again
  * at its next question, as a matcher it opened would read it. A router keeps the matcher it was given until it asks
- * again, as a lane of its opens where a lane of its own opened its own matcher.
+ * again, as a lane of its opens where a lane of its own opened its own matcher. A router that asks under another owner
+ * of Git reads than the one that opened the shared matcher (Git answered at last) gets one that owner opens, as a
+ * router's own open did.
  */
 import { nativeGitAccess } from "./git-access.js";
-import type { NativeGitIgnoreMatcher } from "./native.js";
+import type { NativeGitAccess, NativeGitIgnoreMatcher } from "./native.js";
+
+/** What opens a checkout's Git ignore rules: the process's owner of Git reads (`nativeGitAccess`). */
+export type GitIgnoreOpener = Pick<NativeGitAccess, "openGitIgnoreMatcher">;
 
 interface Shared {
   readonly root: string;
   readonly matcher: NativeGitIgnoreMatcher;
+  /** The owner that opened it: a router that asks under another one gets a matcher that one opens. */
+  readonly opener: GitIgnoreOpener;
   readonly users: Set<object>;
 }
 
 export class GitIgnoreMatchers {
-  readonly #open: (root: string) => NativeGitIgnoreMatcher | null;
+  readonly #opener: () => GitIgnoreOpener;
   /** The matcher of each checkout a router that asks now gets, while its sources are unchanged. */
   readonly #current = new Map<string, Shared>();
   /** Every matcher a router holds: the current ones, and those a change left with the routers that took them. */
@@ -26,8 +33,8 @@ export class GitIgnoreMatchers {
   /** The checkouts whose matcher could not say whether what it read changed, said once each. */
   readonly #checkFailed = new Set<string>();
 
-  constructor(open: (root: string) => NativeGitIgnoreMatcher | null = root => nativeGitAccess().openGitIgnoreMatcher(root)) {
-    this.#open = open;
+  constructor(opener: () => GitIgnoreOpener = () => nativeGitAccess()) {
+    this.#opener = opener;
   }
 
   /**
@@ -36,7 +43,8 @@ export class GitIgnoreMatchers {
    * a router's own open did. A user that asks again uses only the answer: it lets go of the matcher it held for `root`.
    */
   matcher(root: string, user: object): NativeGitIgnoreMatcher | null {
-    const shared = this.#unchangedCurrent(root, user) ?? this.#opened(root);
+    const opener = this.#opener();
+    const shared = this.#unchangedCurrent(root, user, opener) ?? this.#opened(root, opener);
     this.#letGo(user, held => held.root === root && held !== shared);
     if (shared === undefined) return null;
     shared.users.add(user);
@@ -44,13 +52,14 @@ export class GitIgnoreMatchers {
   }
 
   /**
-   * `root`'s current matcher while it reads the rules a matcher opened now would. Handed to a user that does not hold it
-   * yet, it reads the Git index again at its next question, as a matcher that user opened would read it; a user
-   * that asks again keeps the index it reads by, as it kept its own matcher's.
+   * `root`'s current matcher while `opener` opened it and it reads the rules a matcher opened now would. Handed to a user
+   * that does not hold it yet, it reads the Git index again at its next question, as a matcher that user opened would
+   * read it; a user that asks again keeps the index it reads by, as it kept its own matcher's.
    */
-  #unchangedCurrent(root: string, user: object): Shared | undefined {
+  #unchangedCurrent(root: string, user: object, opener: GitIgnoreOpener): Shared | undefined {
     const current = this.#current.get(root);
-    return current !== undefined && this.#unchanged(current, !current.users.has(user)) ? current : undefined;
+    if (current === undefined || current.opener !== opener) return undefined;
+    return this.#unchanged(current, !current.users.has(user)) ? current : undefined;
   }
 
   /**
@@ -70,11 +79,11 @@ export class GitIgnoreMatchers {
     }
   }
 
-  /** A matcher opened now for `root`, current from now on; undefined outside Git. */
-  #opened(root: string): Shared | undefined {
-    const matcher = this.#open(root);
+  /** A matcher `opener` opens now for `root`, current from now on; undefined outside Git. */
+  #opened(root: string, opener: GitIgnoreOpener): Shared | undefined {
+    const matcher = opener.openGitIgnoreMatcher(root);
     if (matcher === null) return undefined;
-    const shared: Shared = { root, matcher, users: new Set() };
+    const shared: Shared = { root, matcher, opener, users: new Set() };
     this.#current.set(root, shared);
     this.#held.add(shared);
     return shared;
