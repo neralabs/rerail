@@ -75,14 +75,14 @@ function folderHolds(folder: string, path: string): boolean {
 export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #options: CheckoutCodeRuleRouterOptions;
   readonly #sessionRoot: string;
+  /** Where Git registers the worktrees, as `worktreeRoots` last read them (`worktreeRegistry`). */
+  #registryFolder: string | undefined;
   readonly #lanes = new Map<string, Lane>();
   readonly #eligibility = new Map<string, CheckoutEligibility>();
   /** Git's exclude stack of each checkout with no lane that a path was asked of; null where it cannot be opened. */
   readonly #gitIgnore = new Map<string, NativeGitIgnoreMatcher | null>();
   /** The checkouts with no lane whose Git ignore rules failed a read, reported once each. */
   readonly #gitIgnoreReported = new Set<string>();
-  /** Where Git registers the worktrees, as `worktreeRoots` last read them (`worktreeRegistry`). */
-  #registryFolder: string | undefined;
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
