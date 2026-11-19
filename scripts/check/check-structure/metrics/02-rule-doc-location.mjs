@@ -10,6 +10,10 @@
 // test that needs a pack's rule references the pack's document rather than copying it.
 // Exemption `validator-inputs`: `fixtures/packs/**` holds pack-shaped inputs to the pack validator and the
 // conformance runner; the pack format puts their rule documents in `rules/` (as #1 allows their pack.json).
+// Exemption `pack-test-data`: under `packs/<id>/upstream/` a rule document is pack test data (a recorded corpus, or one
+// in a publish request on its way to S3), never a rule set the engine loads.
+// Exemption `kept-records` (the `.rerail` workbench and the design notes, kept in git as they are:
+// docs/repository-structure.md, "Kept as they are"), each path with its reason in KEPT_RECORDS below.
 
 import { finding, isRuleDoc, sortFindings } from "../lib.mjs";
 
@@ -18,6 +22,16 @@ export const title = "Rule docs outside `packs/*/{rules,candidates}`";
 export const target = "0";
 
 const RULE_SET_DIRS = ["rules", "candidates", "probes", "policies"];
+
+/** Exemption `kept-records`: a directory (ending in `/`) or file, and why its rule documents stay where they are. */
+const KEPT_RECORDS = new Map([
+  ["docs/rule-syntax/packs/python-main/source/", "main's 537 Python rules as the workbench translated them: the source of each `.rerail` rule beside it, never loaded as a rule set"],
+  ["docs/rule-syntax/nested-routers.json", "the source rule of the workbench's nested-routers drafts beside it (nested-routers.b1.rerail, .b2.rerail)"],
+]);
+
+function isKeptRecord(path) {
+  return [...KEPT_RECORDS.keys()].some((kept) => (kept.endsWith("/") ? path.startsWith(kept) : path === kept));
+}
 
 function isTestInput(path) {
   if (path.startsWith("fixtures/packs/")) return true;
@@ -31,6 +45,7 @@ export function check(repo) {
   for (const path of repo.files) {
     if (!isRuleDoc(repo, path)) continue;
     if (/^packs\/[^/]+\/(rules|candidates)\//.test(path) || isTestInput(path)) continue;
+    if (/^packs\/[^/]+\/upstream\//.test(path) || isKeptRecord(path)) continue;
     const message = path.startsWith("fixtures/")
       ? "rule document in a fixtures rule-set directory (rules/, candidates/, probes/, policies/): rule sets belong in packs/<id>/"
       : "rule document outside packs/<id>/rules/, packs/<id>/candidates/ and fixtures/ test inputs";

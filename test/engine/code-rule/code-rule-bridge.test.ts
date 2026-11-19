@@ -42,6 +42,8 @@ const discovery = vi.hoisted(() => ({
 const asyncGitCalls = vi.hoisted(() => ({
   args: [] as string[][], failing: undefined as string | undefined, hanging: undefined as readonly string[] | undefined,
   throwsNext: undefined as string | undefined,
+  /** Runs before each such Git process starts, with its arguments: what another process does to the checkout meanwhile. */
+  before: undefined as ((args: readonly string[]) => void) | undefined,
 }));
 /**
  * The listings of a checkout's changed files a test makes late: the next walk listing (`gitModifiedOrUntrackedPaths`) of
@@ -59,6 +61,8 @@ const listings = vi.hoisted(() => ({
 }));
 /** For each path in it, the next file handles opened there call these, in turn, once closed (`readEnded`). */
 const closedReads = vi.hoisted(() => new Map<string, Array<() => void>>());
+/** For each path in it, the times every `lstat` there reports in place of the file's own (`holdTimes`). */
+const heldTimes = vi.hoisted(() => new Map<string, { mtimeMs: number; ctimeMs: number; mtime: Date; ctime: Date }>());
 /** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
 const heldGit = vi.hoisted(() => ({ reads: 0 }));
 /** How many of the files a walk read were made into text (`LentBytes.text`), for the tests that pin what a walk keeps. */
@@ -81,6 +85,7 @@ vi.mock("node:child_process", async importOriginal => {
       const forwarded = hangs ? [...args.slice(0, args.indexOf("-C") + 2), "cat-file", "--batch"] : fails ? [...args, "--no-such-option"] : [...args];
       call[1] = forwarded;
       asyncGitCalls.args.push(forwarded);
+      asyncGitCalls.before?.(forwarded);
       if (heldGit.reads > 0) {
         heldGit.reads -= 1;
         call[0] = process.execPath;
@@ -123,6 +128,11 @@ vi.mock("node:fs/promises", async importOriginal => {
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
       await discovery.directories.get(String(args[0]))?.shift()?.();
       return await actual.opendir(...args);
+    },
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      const info = await actual.lstat(...args);
+      const times = heldTimes.get(String(args[0]));
+      return times === undefined ? info : Object.assign(Object.create(Object.getPrototypeOf(info) as object) as typeof info, info, times);
     },
     // A test can make Windows hold a folder for a moment (holdRemovals).
     rm: vi.fn(actual.rm),
@@ -247,6 +257,18 @@ function mostHoldingSlots(asked: typeof listings.asked): number {
   return Math.max(0, ...holding);
 }
 
+/**
+ * Makes every `lstat` of `path` report the times of `earlier`, an `lstat` of it taken before, until `release`, which the
+ * clean-up calls too: Linux shows a file it truncates emptied before it gives the file its new times.
+ */
+function holdTimes(path: string, earlier: { mtimeMs: number; ctimeMs: number; mtime: Date; ctime: Date }): { release(): void } {
+  const { mtimeMs, ctimeMs, mtime, ctime } = earlier;
+  heldTimes.set(path, { mtimeMs, ctimeMs, mtime, ctime });
+  const release = () => { heldTimes.delete(path); };
+  releases.push(release);
+  return { release };
+}
+
 /** Resolves once the next file handle opened at `path` is closed: a read of the file has ended. */
 function readEnded(path: string): Promise<void> {
   const ended = Promise.withResolvers<void>();
@@ -299,10 +321,12 @@ afterEach(async () => {
   listings.calls.length = 0;
   closedReads.clear();
   releases.splice(0).forEach(release => release());
+  heldTimes.clear();
   discovery.reads.clear();
   discovery.directories.clear();
   discovery.opens.clear();
   heldGit.reads = 0;
+  asyncGitCalls.before = undefined;
   readBuffers.watching = false;
   readBuffers.seen.clear();
   await Promise.all(passes.splice(0));
@@ -1323,6 +1347,123 @@ describe("CodeRuleBridge", () => {
     ]);
   });
 
+  /**
+   * A session's first start opens its evaluator, for seconds on a large repository, without holding its agent up: a call
+   * answered meanwhile is never begun (`unwatchedCall`), so its edit is left to the evaluator's first walk. The first
+   * walk is held at its read of the file, so the next edit of the file begins before the walk has taken it.
+   */
+  async function editedWhileOpening(root: string, edit: (bridge: CodeRuleBridge, path: string) => Promise<void>) {
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const opening = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      openWorkspace: async () => {
+        entered.resolve();
+        await opening.promise;
+      },
+    });
+    const open = bridge.openWorkspace("session-1");
+    passes.push(open);
+    await entered.promise;
+    await edit(bridge, path);
+    const reading = holdDiscovery("reads", path);
+    opening.resolve();
+    await open;
+    await reading.entered;
+    const edits = () => auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)
+      .map(({ generatedText, previousText, previousReadError }) => ({ generatedText, previousText, previousReadError }));
+    return { bridge, path, reading, edits };
+  }
+
+  // The next edit's capture took the file holding the first edit as its earlier state: the walk then found no change,
+  // the next edit reported only its own lines, and a rule the first edit's lines broke gave no steer and no record.
+  it.each([
+    ["Write", { file_path: "src/a.py", content: "x = NEEDLE\n" }],
+    ["edit", { path: "src/a.py" }],
+  ] as const)("checks once, over its whole file, an edit a %s call answered while the evaluator opened made, at the next edit of the file before the first walk took it", async (tool, input) => {
+    const root = await workspace();
+    const test = await editedWhileOpening(root, async (bridge, path) => {
+      await bridge.unwatchedCall("first", tool, { ...input, ...("file_path" in input ? { file_path: path } : {}) });
+      await writeFile(path, "x = NEEDLE\n");
+      await bridge.unwatchedResult("first");
+    });
+    await test.bridge.begin("second", "write", { path: "src/a.py" });
+    await writeFile(test.path, "x = NEEDLE\ny = 2\n");
+    await test.bridge.finish("second");
+    test.reading.release();
+    await test.bridge.checkpoint("turn");
+    // From here on the file is observed as the session's: the next edit is measured from it.
+    await test.bridge.begin("third", "write", { path: "src/a.py" });
+    await writeFile(test.path, "x = NEEDLE\ny = 3\n");
+    await test.bridge.finish("third");
+    await test.bridge.checkpoint("turn");
+    expect(test.edits()).toEqual([
+      { generatedText: "x = NEEDLE\ny = 2\n", previousText: undefined, previousReadError: "Source changed during initial discovery without a captured preimage" },
+      { generatedText: "x = NEEDLE\ny = 3\n", previousText: "x = NEEDLE\ny = 2\n", previousReadError: undefined },
+    ]);
+  });
+
+  // A call answered while the evaluator opened may still run (a subagent's result comes late): once the next edit has
+  // checked the file, the session has observed it, and the edit after is measured from what that edit left.
+  it("measures an edit from what the last checked edit left, though the call answered while the evaluator opened still runs", async () => {
+    const root = await workspace();
+    const test = await editedWhileOpening(root, async (bridge, path) => {
+      await bridge.unwatchedCall("first", "Write", { file_path: path, content: "x = NEEDLE\n" });
+      await writeFile(path, "x = NEEDLE\n");
+    });
+    await test.bridge.begin("second", "write", { path: "src/a.py" });
+    await writeFile(test.path, "x = NEEDLE\ny = 2\n");
+    await test.bridge.finish("second");
+    await test.bridge.begin("third", "write", { path: "src/a.py" });
+    await writeFile(test.path, "x = NEEDLE\ny = 3\n");
+    await test.bridge.finish("third");
+    await test.bridge.finish("first");
+    test.reading.release();
+    await test.bridge.checkpoint("turn");
+    expect(test.edits()).toEqual([
+      { generatedText: "x = NEEDLE\ny = 2\n", previousText: undefined, previousReadError: "Source changed during initial discovery without a captured preimage" },
+      { generatedText: "x = NEEDLE\ny = 3\n", previousText: "x = NEEDLE\ny = 2\n", previousReadError: undefined },
+    ]);
+  });
+
+  it("answers a call while the evaluator opens though the session's folder is gone", async () => {
+    const root = await workspace();
+    const bridge = createBridge(join(root, "gone"), auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+    await expect(bridge.unwatchedCall("first", "Write", { file_path: "a.py", content: "x = 1\n" })).resolves.toBeUndefined();
+  });
+
+  // A file a call answered while the evaluator opened did not name, or that changed after that call ended, is not the
+  // call's edit: the next edit of it is measured from what it holds, as before.
+  it.each([
+    ["another writer changed while the call ran", "src/b.py", false],
+    ["changed after the call ended", "src/a.py", true],
+  ] as const)("measures the next edit of a file %s from what it holds", async (_kind, named, after) => {
+    const root = await workspace();
+    const test = await editedWhileOpening(root, async (bridge, path) => {
+      await bridge.unwatchedCall("first", "edit", { path: named });
+      if (!after) await writeFile(path, "x = OTHER\n");
+      await bridge.unwatchedResult("first");
+      if (after) {
+        // Past the call's end on the filesystem's clock, which stamped a file written after it.
+        const clock = await mkdtemp(join(tmpdir(), "rerail-policy-clock-"));
+        directories.push(clock);
+        await writeFile(join(clock, "ended"), "");
+        await awaitClockAfter(join(clock, "ended"));
+        await writeFile(path, "x = OTHER\n");
+      }
+    });
+    await test.bridge.begin("second", "write", { path: "src/a.py" });
+    await writeFile(test.path, "x = OTHER\ny = 2\n");
+    await test.bridge.finish("second");
+    test.reading.release();
+    await test.bridge.checkpoint("turn");
+    expect(test.edits()).toEqual([{ generatedText: "x = OTHER\ny = 2\n", previousText: "x = OTHER\n", previousReadError: undefined }]);
+  });
+
   // The walk at one command's result read the file the other was writing, and that command ended before the walk was
   // audited: the walk began while it ran, so the file is still left to the walk after.
   it("leaves a file to the walk after a command ends, though the command ends after a walk read the file and before the walk is audited", async () => {
@@ -1461,6 +1602,266 @@ describe("CodeRuleBridge", () => {
       { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n" },
     ]);
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.mode)).not.toContain("log");
+  });
+
+  // Linux empties a file it truncates before it gives the file its new times. A walk that read the file between the two
+  // found it empty, with the times of the write before, which came before the command that empties it began, and took
+  // the empty file as the session's edit. Here the file keeps those times while the walk at the other command's result
+  // reads it, as it did in the walk the session's open leaves running.
+  it("leaves a file a command empties to the walk after it ends, though the file's times still say it changed before the command began", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 2\n");
+    await bridge.finish("write-1");
+    // Every walk so far has run, so the walk below is the one at shell-2's result.
+    await bridge.checkpoint("turn");
+    const written = await lstat(path);
+    await awaitClockAfter(path);
+
+    await bridge.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await bridge.begin("shell-2", "Bash", { command: "ls" });
+    const stamping = holdTimes(path, written);
+    await writeFile(path, "");
+    await bridge.finish("shell-2");
+    stamping.release();
+    await writeFile(path, "x = 2\ny = 3\n");
+    await bridge.finish("shell-1");
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
+      { generatedText: "x = 2\n", previousText: "x = 1\n" },
+      { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n" },
+    ]);
+  });
+
+  // A command still running holds back only what changed once it had begun: a change made before is checked at the walk
+  // that finds it, and a file the walk finds as the session last saw it is kept as that walk saw it, as before.
+  it("checks a file a command changed before another command began at that command's result, while the other still runs", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    const kept = join(root, "src", "b.py");
+    await writeFile(path, "x = 1\n");
+    await writeFile(kept, "y = 1\n");
+    // Written before the session's start, so its first walk takes both files as they are.
+    await awaitClockAfter(path, kept);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const observations: SourceObservationCache = new Map();
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { observations });
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 2\n");
+    await bridge.finish("write-1");
+    await bridge.checkpoint("turn");
+    // An edit tool's own read of what it wrote is the session's last sight of the file, until a walk reads it again.
+    await bridge.begin("write-2", "write", { path: ["src/b.py"] });
+    await writeFile(kept, "y = 2\n");
+    await bridge.finish("write-2");
+    await awaitClockAfter(path, kept);
+
+    await bridge.begin("shell-2", "Bash", { command: "python3 generate.py" });
+    await writeFile(path, "x = 3\n");
+    await awaitClockAfter(path);
+    await bridge.begin("shell-1", "Bash", { command: "sleep 60" });
+    await bridge.finish("shell-2");
+    const edits = () => auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ path: edited, generatedText, previousText }) => ({ path: edited, generatedText, previousText }));
+    expect(edits()).toEqual([
+      { path: "src/a.py", generatedText: "x = 2\n", previousText: "x = 1\n" },
+      { path: "src/b.py", generatedText: "y = 2\n", previousText: "y = 1\n" },
+      { path: "src/a.py", generatedText: "x = 3\n", previousText: "x = 2\n" },
+    ]);
+    expect(observations.get(root)?.get("src/b.py")?.observedAt).toEqual(expect.any(Number));
+    await bridge.finish("shell-1");
+    expect(edits()).toHaveLength(3);
+  });
+
+  // A walk that cannot read a file (on Windows another program may hold it open: EBUSY) keeps neither its stamp nor its
+  // digest. A later walk that reads the file while a command runs has no stamp to compare the file's times with, so
+  // those times date what it reads, as for any file: a change made before the running command began is checked at that
+  // walk, and taken as the session's when one of its calls made it.
+  it("checks a file a walk could not read at the next walk that reads it, while a command runs that began after the file last changed", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 2\n");
+    await bridge.finish("write-1");
+    // Another program holds the file as the next walk opens it.
+    discovery.opens.set(path, [async () => { throw Object.assign(new Error(`EBUSY: resource busy or locked, open '${path}'`), { code: "EBUSY" }); }]);
+    await bridge.checkpoint("turn");
+
+    await bridge.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await writeFile(path, "x = 3\n");
+    await awaitClockAfter(path);
+    await bridge.begin("shell-2", "Bash", { command: "sleep 60" });
+    await bridge.finish("shell-1");
+    const edits = () => auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, readError }) => ({ generatedText, readError }));
+    expect(edits()).toEqual([
+      { generatedText: "x = 2\n" },
+      { readError: expect.stringContaining("EBUSY") },
+      { generatedText: "x = 3\n" },
+    ]);
+    await bridge.finish("shell-2");
+    expect(edits()).toHaveLength(3);
+  });
+
+  /**
+   * A session that edited `src/a.py` to `x = 2` and was then suspended, with the times of that write, and what it kept
+   * for its runtime to open it again; `observations` is the folder's shared cache, if any.
+   */
+  async function quietAfterEdit(observations?: SourceObservationCache) {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    await awaitClockAfter(path);
+    const first = createBridge(root, auditor(async (_sessionId, batch) => response(batch)), observations === undefined ? {} : { observations });
+    await first.openWorkspace("session-1");
+    await first.checkpoint("turn");
+    await first.begin("write-1", "write", { path: "src/a.py" });
+    await writeFile(path, "x = 2\n");
+    await first.finish("write-1");
+    // The session's last walk before the quiet comes after the write, as a turn's end does.
+    await awaitClockAfter(path);
+    await first.checkpoint("turn");
+    const resume = await first.walkResume();
+    await first.close();
+    const written = await lstat(path);
+    await awaitClockAfter(path);
+    return { root, path, written, resume: resume === undefined ? {} : { resume } };
+  }
+
+  /** Holds the next walk of `root`'s `src` folder before it lists the folder, until `release`. */
+  function holdWalkAtSource(root: string): { release(): void } {
+    const listed = Promise.withResolvers<void>();
+    discovery.directories.set(join(root, "src"), [async () => await listed.promise]);
+    releases.push(listed.resolve);
+    return { release: listed.resolve };
+  }
+
+  // After a quiet spell the agent's first command can rewrite a file it edited before, while the reopened session's
+  // first walk reads it. Linux empties a file it truncates before it gives the file its new times, so that walk found it
+  // empty with the times of the agent's write before the quiet: it took the empty file as what the file held, and the
+  // command's result measured its whole text as the agent's. Here the file keeps those times while that walk reads it.
+  it("leaves a file a command empties to the walk after it ends, though the reopened session's first walk reads it with the times of the write before the quiet", async () => {
+    const { root, path, written, resume } = await quietAfterEdit();
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const second = createBridge(root, auditor(auditGeneratedEdits), resume);
+    const firstWalk = holdWalkAtSource(root);
+    await second.openWorkspace("session-1");
+    await second.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await second.begin("shell-2", "Bash", { command: "ls" });
+    const stamping = holdTimes(path, written);
+    await writeFile(path, "");
+    firstWalk.release();
+    // Its result waits for the first walk and the one after it, both of which read the emptied file.
+    await second.finish("shell-2");
+    stamping.release();
+    await writeFile(path, "x = 2\ny = 3\n");
+    await second.finish("shell-1");
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
+      { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n" },
+    ]);
+  });
+
+  // Only a file the times do not date waits for the command: another program's change, made while the session was
+  // quiet, is recorded by the reopened session's first walk, as before, though a command of the agent runs.
+  it("records another program's change made while the session was quiet at the reopened session's first walk, while a command runs", async () => {
+    const { root, path, resume } = await quietAfterEdit();
+    await writeFile(path, "x = 3\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const second = createBridge(root, auditor(auditGeneratedEdits), resume);
+    const firstWalk = holdWalkAtSource(root);
+    await second.openWorkspace("session-1");
+    await second.begin("shell-1", "Bash", { command: "sleep 60" });
+    await second.begin("shell-2", "Bash", { command: "ls" });
+    firstWalk.release();
+    await second.finish("shell-2");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => ({ mode: batch.mode, edits: batch.edits.map(({ generatedText, previousText }) => ({ generatedText, previousText })) }))).toEqual([
+      { mode: "log", edits: [{ generatedText: "x = 3\n", previousText: "x = 3\n" }] },
+    ]);
+    await second.finish("shell-1");
+    expect(auditGeneratedEdits).toHaveBeenCalledTimes(1);
+  });
+
+  // A session opened fresh holds no sight of its own, and the folder's shared observations date its first walk's read
+  // instead: there the file a command empties is still what an earlier session saw, which Git holds, and the command's
+  // result measures its change from that text, as an open session's would.
+  it("leaves a file a command empties to the walk after it ends, though a fresh session's first walk reads it with the times the folder's shared observations saw", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 2\n");
+    commitAll(root);
+    await awaitClockAfter(path);
+    const observations: SourceObservationCache = new Map();
+    const earlier = createBridge(root, auditor(async (_sessionId, batch) => response(batch)), { observations });
+    await earlier.openWorkspace("session-1");
+    await earlier.checkpoint("turn");
+    await earlier.close();
+    const written = await lstat(path);
+    await awaitClockAfter(path);
+
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const fresh = createBridge(root, auditor(auditGeneratedEdits), { observations });
+    const firstWalk = holdWalkAtSource(root);
+    await fresh.openWorkspace("session-2");
+    await fresh.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await fresh.begin("shell-2", "Bash", { command: "ls" });
+    const stamping = holdTimes(path, written);
+    await writeFile(path, "");
+    firstWalk.release();
+    await fresh.finish("shell-2");
+    stamping.release();
+    await writeFile(path, "x = 2\ny = 3\n");
+    await fresh.finish("shell-1");
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
+      { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n" },
+    ]);
+  });
+
+  // Another program that rewrote a file within the clock tick of an earlier session's sight of it, before a fresh
+  // session, left times that do not date its bytes either: that first walk keeps the earlier sight, and the walk at the
+  // command's result, with no command running, dates the change by its times, before the session: never the agent's.
+  it("never takes another program's change from before a fresh session as the agent's, though its first walk reads it while a command runs with the times the shared observations saw", async () => {
+    const observations: SourceObservationCache = new Map();
+    const { root, path, written } = await quietAfterEdit(observations);
+    // The rewrite keeps the times of the write before it for good, as one within that write's clock tick does.
+    holdTimes(path, written);
+    await writeFile(path, "x = 22\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const fresh = createBridge(root, auditor(auditGeneratedEdits), { observations });
+    const firstWalk = holdWalkAtSource(root);
+    await fresh.openWorkspace("session-2");
+    await fresh.begin("shell-1", "Bash", { command: "sleep 60" });
+    await fresh.begin("shell-2", "Bash", { command: "ls" });
+    firstWalk.release();
+    await fresh.finish("shell-2");
+    await fresh.finish("shell-1");
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    expect(fresh.observedDigest("src/a.py")).toBe(createHash("sha256").update("x = 22\n").digest("hex"));
+  });
+
+  // A file whose times moved past the shared observations' sight of it is a fresh session's baseline at its first walk,
+  // as before, though a command runs.
+  it("takes a file another program changed before a fresh session as that session's baseline at its first walk, while a command runs", async () => {
+    const observations: SourceObservationCache = new Map();
+    const { root, path } = await quietAfterEdit(observations);
+    await writeFile(path, "x = 3\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const fresh = createBridge(root, auditor(auditGeneratedEdits), { observations });
+    await fresh.openWorkspace("session-2");
+    await fresh.begin("shell-1", "Bash", { command: "sleep 60" });
+    await fresh.finish("shell-1");
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    expect(fresh.observedDigest("src/a.py")).toBe(createHash("sha256").update("x = 3\n").digest("hex"));
   });
 
   it("delivers committed full-file snapshots in deterministic batches", async () => {
@@ -2388,6 +2789,28 @@ describe("ledgerPreimage", () => {
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
+}
+/** Whether a Git process reads a checkout's `HEAD` (`gitHead`). */
+function readsHead(args: readonly string[]): boolean {
+  return args.includes("--verify") && args.includes("HEAD");
+}
+/** Whether a Git process lists the tips of a checkout's branches (`gitBranchTips`). */
+function listsBranches(args: readonly string[]): boolean {
+  return args.includes("for-each-ref") && args.includes("--format=%(objectname)");
+}
+/**
+ * Has a command at work meanwhile run `acts` in turn as the next walk asks Git about its changes: each just before a Git
+ * process `at` names, once the walk's Git verdicts have read `HEAD` (the walk reads it as it starts, then its verdicts
+ * read it again). Returns the acts not run yet, which a case expects none of once its walk is done: a file the command
+ * left staged and uncommitted is audited as well, so the case would pass with no commit made while Git was read.
+ */
+function whileVerdictsRead(at: (args: readonly string[]) => boolean, ...acts: Array<() => void>): ReadonlyArray<() => void> {
+  let heads = 0;
+  asyncGitCalls.before = args => {
+    if (readsHead(args)) heads += 1;
+    else if (heads >= 2 && at(args)) acts.shift()?.();
+  };
+  return acts;
 }
 /** `path` relative to `root` as the bridge names a file, with `/` between its parts on every platform. */
 function repositoryPath(root: string, path: string): string {
@@ -3459,6 +3882,153 @@ describe("CodeRuleBridge and Git's own writes", () => {
     ]);
   });
 
+  // A command that writes files and commits them can commit while a walk asks Git about them, which can happen on a busy
+  // machine: the walk read `HEAD` before the commit, and `HEAD`'s blobs or the branches after it. Each file then held
+  // the blob of the new commit, which `HEAD` and the branch both had, and was taken for one Git wrote or restored from
+  // that branch, so none of the command's edits was checked.
+  it.each([
+    ["just after the walk's Git verdicts read HEAD", () => true],
+    ["just before they list the branches", listsBranches],
+  ])("keeps auditing a file its command committed %s", async (_when, at) => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    let left: ReadonlyArray<() => void> = [];
+    await shell(bridge, async () => {
+      await writeFile(join(root, "src", "mine.py"), "mine\n");
+      git(root, "add", "src/mine.py");
+      left = whileVerdictsRead(at, () => git(root, "commit", "--quiet", "-m", "mine"));
+    });
+    expect(left).toEqual([]);
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/mine.py", language: "python", generatedText: "mine\n" }],
+    ]);
+  });
+
+  // Claude Code runs a turn's commands side by side: here one writes files and commits them as the other's result walks
+  // the folder and reads Git. A file the session has seen waits for the writing command's own result, which measures it
+  // from the tree before the commit. A file new to the session is that walk's to check: read as the commit landed, it
+  // was taken for one Git wrote, and no later walk found it changed.
+  it("keeps auditing a file new to the session that a command still running commits as another command's result reads Git", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await bridge.begin("shell-1", "shell", { command: "./commit.sh" });
+    await writeFile(join(root, "src", "a.py"), "old\nmine\n");
+    await writeFile(join(root, "src", "mine.py"), "mine\n");
+    git(root, "add", "src/a.py", "src/mine.py");
+    await bridge.begin("shell-2", "shell", { command: "ls" });
+    const left = whileVerdictsRead(listsBranches, () => git(root, "commit", "--quiet", "-m", "mine"));
+    await bridge.finish("shell-2");
+    expect(left).toEqual([]);
+    await bridge.finish("shell-1");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/mine.py", language: "python", generatedText: "mine\n" }],
+      [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }],
+    ]);
+  });
+
+  // A command that commits again as the second reading of Git is made: the third reading, made once `HEAD` holds, finds
+  // the files of both commits the command's own.
+  it("keeps auditing a file its command committed in each of the walk's first two readings of Git", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    let left: ReadonlyArray<() => void> = [];
+    await shell(bridge, async () => {
+      await writeFile(join(root, "src", "mine.py"), "mine\n");
+      await writeFile(join(root, "src", "two.py"), "two\n");
+      git(root, "add", "src/mine.py");
+      left = whileVerdictsRead(
+        listsBranches,
+        () => git(root, "commit", "--quiet", "-m", "mine"),
+        () => { git(root, "add", "src/two.py"); git(root, "commit", "--quiet", "-m", "two"); },
+      );
+    });
+    expect(left).toEqual([]);
+    const edits = auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits);
+    expect(edits).toHaveLength(2);
+    expect(edits).toEqual(expect.arrayContaining([
+      { path: "src/mine.py", language: "python", generatedText: "mine\n" },
+      { path: "src/two.py", language: "python", generatedText: "two\n" },
+    ]));
+  });
+
+  // A command that restores from another branch a file the tree before its commit lacks, and commits another, as the walk
+  // reads Git: the second reading, made once `HEAD` holds, still finds the restored file Git's, and stands, since `HEAD`
+  // names what it read. A file the tree before the commit has is measured from it instead, and is no write of Git's.
+  it("keeps auditing a file its command committed beside one it restored from another branch", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    let left: ReadonlyArray<() => void> = [];
+    await shell(bridge, async () => {
+      await writeFile(join(root, "src", "new.py"), "violation\n");
+      await writeFile(join(root, "src", "mine.py"), "mine\n");
+      git(root, "add", "src/mine.py");
+      left = whileVerdictsRead(listsBranches, () => git(root, "commit", "--quiet", "-m", "mine"));
+    });
+    expect(left).toEqual([]);
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/mine.py", language: "python", generatedText: "mine\n" }],
+    ]);
+  });
+
+  // Reading Git again costs one more process only where a reading takes a change for Git's: a walk whose changes Git did
+  // not write reads `HEAD` once more than a walk that finds no change, for its verdicts, as before.
+  it("reads HEAD once for the Git verdicts of a shell edit Git did not write", async () => {
+    const root = await twoBranches();
+    const { bridge } = await opened(root);
+    const quiet = await gitReads(() => shell(bridge, () => undefined));
+    const edit = await gitReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n")));
+    expect(edit.heads).toBe(quiet.heads + 1);
+  });
+
+  // A command that commits again as each reading of Git is made: no reading holds for one `HEAD`. The first reading then
+  // stands, as the walk's one reading did: the file it found the command's own is audited, and the one it took for the
+  // branch's is not, as before. Dropping every reading would audit as the agent's files Git wrote while `HEAD` moved.
+  it("audits what its first reading of Git found the command's own when HEAD moves through every reading", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    let left: ReadonlyArray<() => void> = [];
+    await shell(bridge, async () => {
+      await writeFile(join(root, "src", "mine.py"), "mine\n");
+      await writeFile(join(root, "src", "late.py"), "late\n");
+      git(root, "add", "src/mine.py");
+      left = whileVerdictsRead(
+        listsBranches,
+        () => git(root, "commit", "--quiet", "-m", "mine"),
+        () => { git(root, "add", "src/late.py"); git(root, "commit", "--quiet", "-m", "late"); },
+        () => git(root, "commit", "--quiet", "--allow-empty", "-m", "more"),
+      );
+    });
+    expect(left).toEqual([]);
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "src/late.py", language: "python", generatedText: "late\n" },
+    ]);
+  });
+
+  // A session that closes as the walk asks whether `HEAD` still names what its first reading of Git read, a command having
+  // committed meanwhile: the close waits for the walk's step, which reads Git no more, so its first reading stands.
+  it("starts no Git process once the session closes as a walk finds HEAD moved since its first reading of Git", async () => {
+    const root = await twoBranches();
+    const { bridge } = await opened(root);
+    await bridge.begin("shell-1", "shell", { command: "./run.sh" });
+    await writeFile(join(root, "src", "mine.py"), "mine\n");
+    git(root, "add", "src/mine.py");
+    const close: { gitStarted?: number; closing?: Promise<void> } = {};
+    const left = whileVerdictsRead(listsBranches, () => git(root, "commit", "--quiet", "-m", "mine"));
+    const verdicts = asyncGitCalls.before;
+    asyncGitCalls.before = args => {
+      verdicts?.(args);
+      // The first read of `HEAD` after the commit is the one that finds it moved.
+      if (left.length > 0 || close.closing !== undefined || !readsHead(args)) return;
+      close.gitStarted = asyncGitCalls.args.length;
+      close.closing = bridge.close();
+    };
+    // The command's result may answer or find the session closed.
+    await Promise.allSettled([bridge.finish("shell-1")]);
+    await close.closing;
+    expect(close.gitStarted).toBeDefined();
+    expect(asyncGitCalls.args.slice(close.gitStarted)).toEqual([]);
+  });
+
   it("measures a file written in the command that moved the checkout from what Git wrote", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
@@ -3481,6 +4051,80 @@ describe("CodeRuleBridge and Git's own writes", () => {
       edits: [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\n" }],
     });
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(2);
+  });
+
+  // No walk reads the `HEAD` of a checkout inside the session's folder until one finds a change in it. The reading of
+  // Git's verdicts that stands then keeps its `HEAD` as the checkout's first snapshot, which the restore is judged from.
+  it("still tells the auditor, in log mode, of a file it had changed that Git restored, in a checkout inside the session's folder", async () => {
+    const { root, nested, extra } = await nestedCheckout();
+    git(nested, "config", "core.autocrlf", "false");
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await shell(bridge, () => writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n"));
+    await shell(bridge, () => git(nested, "restore", "src/gone.py"));
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1]).toMatchObject({
+      mode: "log",
+      edits: [{ path: "lib/src/gone.py", language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\n" }],
+    });
+    expect(auditGeneratedEdits).toHaveBeenCalledTimes(2);
+  });
+
+  // The same, where a command commits there as the first walk to find a change in that checkout reads Git: the walk's
+  // first reading read `HEAD` before the commit. The reading that stands read it after, so the restore that follows is
+  // judged from the commit, not from a `HEAD` the checkout no longer had.
+  it("still tells the auditor, in log mode, of a file Git restored in a checkout inside the session's folder whose first walk met a commit", async () => {
+    const { root, nested, extra } = await nestedCheckout();
+    git(nested, "config", "core.autocrlf", "false");
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    let left: ReadonlyArray<() => void> = [];
+    await shell(bridge, async () => {
+      await writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n");
+      await writeFile(join(nested, "src", "mine.py"), "mine\n");
+      git(nested, "add", "src/mine.py");
+      left = whileVerdictsRead(listsBranches, () => git(nested, "commit", "--quiet", "-m", "mine"));
+    });
+    expect(left).toEqual([]);
+    await shell(bridge, () => git(nested, "restore", "src/gone.py"));
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1]).toMatchObject({
+      mode: "log",
+      edits: [{ path: "lib/src/gone.py", language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\n" }],
+    });
+    expect(auditGeneratedEdits).toHaveBeenCalledTimes(2);
+  });
+
+  // A checkout inside the session's folder stopped on a conflict before the session opens, its file put back to our
+  // side, whose unmerged entries Git cannot list until the first walk that finds a change there reads its Git verdicts.
+  // The reading that stands keeps those entries as the checkout's first snapshot, so the next walk knows the conflict
+  // was there before it: the agent's edit of the conflicted file is its own, not a conflict Git just wrote over our side.
+  it("audits the agent's edit of a file in conflict since before the session, in a checkout inside the session's folder whose entries Git first listed for a walk's verdicts", async () => {
+    const root = await twoBranches();
+    git(root, "switch", "--quiet", "-c", "ours");
+    await writeFile(join(root, "src", "a.py"), "old\nours\n");
+    git(root, "commit", "--quiet", "-am", "ours");
+    git(root, "switch", "--quiet", "main");
+    const worktree = join(root, "wt");
+    git(root, "worktree", "add", "--quiet", "wt", "ours");
+    try { git(worktree, "merge", "--quiet", "other"); } catch { /* The conflict is the point. */ }
+    git(worktree, "checkout", "--ours", "src/a.py");
+    await awaitClockAfter(join(worktree, "src", "a.py"), join(worktree, "src", "new.py"));
+    asyncGitCalls.failing = "--unmerged";
+    try {
+      const { bridge, auditGeneratedEdits } = await opened(root, {
+        sourceRoot: path => resolve(root, path).startsWith(`${worktree}${sep}`) ? worktree : root,
+      });
+      // Git lists the entries again once the walk's verdicts read that checkout's `HEAD`, the first read of it.
+      asyncGitCalls.before = args => {
+        if (readsHead(args) && args[args.indexOf("-C") + 1] === worktree) asyncGitCalls.failing = undefined;
+      };
+      await shell(bridge, () => writeFile(join(worktree, "src", "new.py"), "mine\n"));
+      expect(asyncGitCalls.failing).toBeUndefined();
+      await shell(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nours\nmine\n"));
+      expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+        [{ path: "wt/src/new.py", language: "python", previousText: "violation\n", generatedText: "mine\n" }],
+        [{ path: "wt/src/a.py", language: "python", previousText: "old\nours\n", generatedText: "old\nours\nmine\n" }],
+      ]);
+    } finally {
+      asyncGitCalls.failing = undefined;
+    }
   });
 
   it("audits nothing a merge wrote when it stopped on a conflict, and a later shell edit from the conflicted text", async () => {
@@ -3926,6 +4570,19 @@ describe("ToolCallWindows", () => {
     expect(windows.ranDuring(0, 0)).toBe(false);
     expect(windows.ranDuring(10, 10)).toBe(true);
     expect(windows.ranDuring(MAX_FINISHED_CALLS * 10, MAX_FINISHED_CALLS * 10)).toBe(true);
+  });
+
+  it("says a call named a file and ran when it was written, from its start to its end, and only for the files it named", () => {
+    const windows = new ToolCallWindows();
+    windows.begin("write", 10, false, ["src/a.py"]);
+    windows.begin("command", 10, true);
+    expect(windows.namedAt("src/a.py", 9)).toBe(false);
+    expect(windows.namedAt("src/a.py", 10)).toBe(true);
+    expect(windows.namedAt("src/b.py", 12)).toBe(false);
+    windows.finish("write", 20);
+    expect(windows.namedAt("src/a.py", 20)).toBe(true);
+    expect(windows.namedAt("src/a.py", 21)).toBe(false);
+    expect(windows.namedAt("src/a.py", 9)).toBe(false);
   });
 });
 

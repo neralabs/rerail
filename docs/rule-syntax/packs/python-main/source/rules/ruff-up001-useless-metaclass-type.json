@@ -1,0 +1,102 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up001-useless-metaclass-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove redundant assignments of type to __metaclass__; Python 3 classes already use type as their metaclass.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "useless-metaclass-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "metaclass-target": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__metaclass__$"
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "metaclass-target"
+                  }
+                }
+              ]
+            },
+            "type-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^type$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "type-name"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "assignment",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "expression_statement"
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "type"
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "metaclass-target"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "matches": "type-name"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP001",
+        "message": "Remove this `__metaclass__ = type` line; Python 3 classes already use `type` as their metaclass. Keep it only if the code must still run on Python 2.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP001"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

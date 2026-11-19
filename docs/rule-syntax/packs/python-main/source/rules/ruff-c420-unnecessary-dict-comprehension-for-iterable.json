@@ -1,0 +1,309 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c420-unnecessary-dict-comprehension-for-iterable",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use dict.fromkeys(iterable, value) instead of a dict comprehension that maps each item to the same constant value; it is clearer and faster.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-dict-comprehension-for-iterable",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "not-shareable": {
+              "any": [
+                {
+                  "kind": "lambda"
+                },
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "dictionary"
+                },
+                {
+                  "kind": "set"
+                },
+                {
+                  "kind": "list_comprehension"
+                },
+                {
+                  "kind": "set_comprehension"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "generator_expression"
+                },
+                {
+                  "kind": "await"
+                },
+                {
+                  "kind": "yield"
+                },
+                {
+                  "kind": "call"
+                },
+                {
+                  "kind": "named_expression"
+                }
+              ]
+            },
+            "target-name": {
+              "kind": "identifier",
+              "pattern": "$X",
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "attribute",
+                  "field": "attribute"
+                }
+              },
+              "inside": {
+                "stopBy": {
+                  "kind": "dictionary_comprehension"
+                },
+                "kind": "dictionary_comprehension",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "for_in_clause",
+                  "has": {
+                    "field": "left",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "pattern": "$X"
+                      },
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "identifier",
+                          "pattern": "$X"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "bad-value": {
+              "any": [
+                {
+                  "matches": "not-shareable"
+                },
+                {
+                  "matches": "target-name"
+                }
+              ]
+            },
+            "paren-target": {
+              "kind": "tuple_pattern",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^,$"
+                }
+              },
+              "has": {
+                "stopBy": "neighbor",
+                "not": {
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "regex": "^[()]$"
+                    }
+                  ]
+                },
+                "any": [
+                  {
+                    "matches": "paren-target"
+                  },
+                  {
+                    "not": {
+                      "matches": "paren-target"
+                    },
+                    "pattern": "$INNER"
+                  }
+                ]
+              }
+            },
+            "target": {
+              "kind": "dictionary_comprehension",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "pair",
+                "all": [
+                  {
+                    "has": {
+                      "field": "key",
+                      "pattern": "$KEY"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "value",
+                      "not": {
+                        "any": [
+                          {
+                            "matches": "bad-value"
+                          },
+                          {
+                            "has": {
+                              "stopBy": "end",
+                              "matches": "bad-value"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "if_clause"
+                    }
+                  },
+                  {
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "for_in_clause"
+                      },
+                      "min": 2
+                    }
+                  }
+                ]
+              },
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "for_in_clause",
+                    "not": {
+                      "regex": "^async\\b"
+                    },
+                    "has": {
+                      "field": "left",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "kind": "subscript"
+                          },
+                          {
+                            "has": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "kind": "subscript"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "any": [
+                      {
+                        "has": {
+                          "field": "left",
+                          "pattern": "$TARGET"
+                        },
+                        "compare": {
+                          "left": "KEY",
+                          "op": "eq",
+                          "right": "TARGET",
+                          "text": "structure"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "left",
+                          "matches": "paren-target"
+                        },
+                        "compare": {
+                          "left": "KEY",
+                          "op": "eq",
+                          "right": "INNER",
+                          "text": "structure"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "COMP"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$COMP"
+              },
+              {
+                "matches": "in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.COMP",
+        "code": "C420",
+        "message": "Replace this comprehension with `dict.fromkeys(iterable, value)`, omitting the value when it is None; if the loop unpacks its items, do this only when they are already tuples.",
+        "each": "COMP",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C420"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

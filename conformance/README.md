@@ -10,6 +10,9 @@ Test support that scores rule packs against the tools they port. It is never pub
   pack test data that `npm run fixtures:pull` fetches from the archive the tool-pack's `test-data.lock` names), its
   rename variants, the real-code samples and the pack's declared divergences. The CLI is `npm run conformance:languages`,
   with `-- --check` as CI's gate (`npm run test:conformance`). See [The gate](#the-gate).
+- `data-layer/`: strict native replay of recorded data-layer analyzer calls, plus combined repository timing and parity.
+  The fourth data-layer batch contains explicit gap probes: its strict replay
+  fails while those gaps remain, and test assertions preserve their exact failure set.
 - `t1/`: the TypeScript grammar census (tier T1 of the language conformance standard).
 - `engine.ts`: what every harness shares about the engine it scores (the capabilities, and which engine failure codes
   are not failures).

@@ -7,12 +7,12 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 /// The config files Rerail's Git reads outside any repository, as it reported them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct GitSetup {
+pub struct GitSetup {
     /// The system config file this Git was built to read, where no environment variable moves it.
-    pub(crate) system_config: Option<PathBuf>,
+    pub system_config: Option<PathBuf>,
     /// A config file this Git reads besides the system one, such as Apple Git's under `/Library`,
     /// which Git lists with the scope `unknown`.
-    pub(crate) installation_config: Option<PathBuf>,
+    pub installation_config: Option<PathBuf>,
 }
 
 impl GitSetup {
@@ -21,7 +21,7 @@ impl GitSetup {
     /// --no-includes` outside any repository, absent where it failed. The host asks both with
     /// `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_NOSYSTEM` removed, which the opener applies itself, so
     /// they name the file Git was built to read.
-    pub(crate) fn from_report(system_config: Option<&str>, config_origins: Option<&str>) -> Self {
+    pub fn from_report(system_config: Option<&str>, config_origins: Option<&str>) -> Self {
         let origins = config_origins.map(file_origins).unwrap_or_default();
         let system_config = system_config
             .map(|path| path.trim_end_matches(['\r', '\n']))
@@ -49,7 +49,7 @@ impl GitSetup {
 
     /// The system attributes file: `gitattributes` beside the system config file, since Git takes
     /// both from one configured folder (`$(sysconfdir)`); `None` where the system file is unknown.
-    pub(crate) fn system_attributes(&self) -> Option<PathBuf> {
+    pub fn system_attributes(&self) -> Option<PathBuf> {
         Some(
             self.system_config
                 .as_deref()?
@@ -77,12 +77,12 @@ fn file_origins(listing: &str) -> Vec<(&str, &str)> {
 static INSTALLED: RwLock<Option<Arc<GitSetup>>> = RwLock::new(None);
 
 /// Makes `setup` the one every later open in this process uses.
-pub(crate) fn install(setup: Arc<GitSetup>) {
+pub fn install(setup: Arc<GitSetup>) {
     *INSTALLED.write().unwrap_or_else(PoisonError::into_inner) = Some(setup);
 }
 
 /// The setup the host installed in this process; `None` before it installed one.
-pub(crate) fn installed() -> Option<Arc<GitSetup>> {
+pub fn installed() -> Option<Arc<GitSetup>> {
     INSTALLED
         .read()
         .unwrap_or_else(PoisonError::into_inner)

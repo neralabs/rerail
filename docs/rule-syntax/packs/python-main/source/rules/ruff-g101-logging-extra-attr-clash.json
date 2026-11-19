@@ -1,0 +1,342 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-g101-logging-extra-attr-clash",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid extra keys that clash with built-in LogRecord attributes in logging calls; the logging call raises KeyError when they collide.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "logging-extra-attr-clash",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "logger-object": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "resolves": {
+                      "import": [
+                        "logging.getLogger",
+                        "logging.Logger"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "logger-object"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "logging",
+                      "flask.current_app.logger"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$"
+                    },
+                    {
+                      "kind": "attribute",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "attribute",
+                            "regex": "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "object",
+                            "matches": "name-chain"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "not": {
+                    "resolves": {
+                      "import": true
+                    }
+                  }
+                }
+              ]
+            },
+            "name-chain": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "matches": "name-chain"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-chain"
+                  }
+                }
+              ]
+            },
+            "logging-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^(debug|critical|error|exception|info|warn|warning|log)$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "matches": "logger-object"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "logging.debug",
+                      "logging.critical",
+                      "logging.error",
+                      "logging.exception",
+                      "logging.info",
+                      "logging.warn",
+                      "logging.warning",
+                      "logging.log"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "logging-callee"
+                  }
+                }
+              ]
+            },
+            "extra-value": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "kind": "keyword_argument",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "name",
+                          "regex": "^extra$"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "argument_list",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "field": "arguments",
+                            "kind": "call",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "function",
+                              "matches": "logging-callee"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "extra-value"
+                  }
+                }
+              ]
+            },
+            "extra-key": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "key",
+                    "kind": "pair",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "dictionary",
+                      "matches": "extra-value"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "extra-key"
+                  }
+                }
+              ]
+            },
+            "interpolated-part": {
+              "kind": "string",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[A-Za-z]*[fFtT]"
+              }
+            },
+            "builtin-dict": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "global": [
+                      "dict"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "builtins.dict"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "builtin-dict"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "string",
+                    "not": {
+                      "matches": "interpolated-part"
+                    }
+                  },
+                  {
+                    "kind": "concatenated_string",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "interpolated-part"
+                      }
+                    }
+                  }
+                ],
+                "value": {
+                  "regex": "^(args|asctime|created|exc_info|exc_text|filename|funcName|levelname|levelno|lineno|module|msecs|message|msg|name|pathname|process|processName|relativeCreated|stack_info|thread|threadName)$"
+                },
+                "pattern": "$K",
+                "matches": "extra-key"
+              },
+              {
+                "kind": "keyword_argument",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "regex": "^(args|asctime|created|exc_info|exc_text|filename|funcName|levelname|levelno|lineno|module|msecs|message|msg|name|pathname|process|processName|relativeCreated|stack_info|thread|threadName)$",
+                  "pattern": "$K"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "kind": "call",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "function",
+                          "matches": "builtin-dict"
+                        }
+                      },
+                      {
+                        "matches": "extra-value"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "G101",
+        "message": "Rename the `extra` key $K: it clashes with a built-in LogRecord attribute, so a standard-library logger raises KeyError when it builds the record.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "G101"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

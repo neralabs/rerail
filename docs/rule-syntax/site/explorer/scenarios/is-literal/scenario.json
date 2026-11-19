@@ -1,0 +1,5 @@
+{
+  "title": "is with a literal",
+  "rule": "ruff-f632-is-literal",
+  "note": "F632 flags x is 'text' or x is 1: is compares identity, which for strings and numbers depends on interning. == compares the value; is None is fine."
+}

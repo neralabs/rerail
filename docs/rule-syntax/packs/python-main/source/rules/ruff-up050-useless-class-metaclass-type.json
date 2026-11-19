@@ -1,0 +1,60 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up050-useless-class-metaclass-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove an explicit type metaclass from a class definition; it is already the default metaclass.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "useless-class-metaclass-type",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "builtin-type": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": { "global": ["type"], "import": ["builtins.type"] }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "builtin-type" }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "keyword_argument",
+            "has": { "stopBy": "neighbor", "field": "name", "regex": "^metaclass$" },
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "value", "matches": "builtin-type" } },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "class_definition",
+                    "field": "superclasses",
+                    "has": { "stopBy": "neighbor", "field": "name", "pattern": "$NAME" }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP050",
+        "message": "Remove `metaclass=type` from class `$NAME`; `type` is already the default metaclass. If it is the only argument, drop the parentheses too.",
+        "suppress": { "noqa": { "codes": ["UP050"] } }
+      }
+    }
+  ]
+}

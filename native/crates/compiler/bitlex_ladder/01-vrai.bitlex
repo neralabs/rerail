@@ -1,0 +1,20 @@
+# Step 1: A document is one `vrai`, with white space around it.
+#
+# Tier 1 finds each run of letters (a word) and checks every byte is a letter or white space.
+# Tier 2 takes one token and checks it is `vrai`.
+
+lexer ladder01
+
+class ws    = ' ' '\t' '\n' '\r'
+class alpha = 'a'..'z'
+
+# A run of letters is one token; it must be a keyword.
+token word = start starts(alpha) last lasts(alpha)
+keywords word { "vrai" } required
+
+skip ws
+error "a byte no token takes" when ~ws & ~alpha
+
+tree ladder {
+  node document = vrai
+}

@@ -1,0 +1,55 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f822-undefined-export",
+  "revision": 1,
+  "mode": "steer",
+  "description": "List only names the module actually defines in its __all__ (outside __init__.py); an undefined entry breaks star imports.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": [
+      "**/__init__.py",
+      "**/__init__.pyi",
+      "__init__.py",
+      "__init__.pyi"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "undefined-export",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "pattern": "$S",
+            "resolves": {
+              "unresolved": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F822",
+        "message": "Undefined name $S in `__all__`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F822"
+            ],
+            "parent": "statement"
+          }
+        }
+      }
+    }
+  ]
+}
