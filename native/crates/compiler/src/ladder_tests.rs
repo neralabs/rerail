@@ -375,3 +375,82 @@ tree t {
     assert_eq!(opened, [1, 0, 0, 1, 2, 0, 0]);
     assert_eq!(check_documents("ending", &c, b"ab<>(), ", &[], &fixed, &|_, _, _, _| None), None);
 }
+
+/// A rule made a call keeps the reference's meaning (doc 24 §2.3): a rule not `nested` takes
+/// its caller's follow, so a hidden mark its caller takes after it ends it. `ops` is a call
+/// under `Shape::Rules`; inlined, its loop stops at the line's `eol`, which `line` takes. As a
+/// call it must stop there too, not read the next line's first word as its own.
+#[test]
+fn a_called_rule_ends_at_the_hidden_marks_its_caller_takes() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name
+token simple_identifier = start name & ~prev(name) run word
+skip ws
+mark eol        = lf, end
+tree t {
+  node source_file whole = (line)*
+  node line       = simple_identifier ops eol
+  node ops        = simple_identifier (simple_identifier)*
+  hidden eol
+}
+"#;
+    let fixed = ["a b c\nd e\n", "a b\n", "a b c\nd e", "a b\n\nc d e f\n"];
+    for shape in [crate::bitlex_masks::Shape::Machine, crate::bitlex_masks::Shape::Rules] {
+        let c = compile_step_shaped("follow", source, shape);
+        let line = c.ids.of("line");
+        let lines: Vec<usize> = fixed.iter().map(|d| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == line).count()).collect();
+        assert_eq!(lines, [2, 1, 2, 2], "the reference: a line a line break");
+        assert_eq!(check_documents("follow", &c, b"ab \n", &[], &fixed, &|_, _, _, _| None), None, "{shape:?}");
+    }
+}
+
+/// A called level that takes only a mark: `rest` is `eol` alone or words then `eol`, a call
+/// under `Shape::Rules`. A taken mark is progress (a mark taken clears it and the marks before
+/// it, and only `TOKEN` sets them again), so the verifier accepts the call, and it parses as
+/// the reference.
+#[test]
+fn a_called_level_may_take_only_a_mark() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name
+token simple_identifier = start name & ~prev(name) run word
+skip ws
+mark eol        = lf, end
+tree t {
+  node source_file whole = (line)*
+  node line       = simple_identifier rest
+  choice rest     = eol | simple_identifier (simple_identifier)* eol
+  hidden eol
+}
+"#;
+    let fixed = ["a\nb c d\n", "a\n", "a b\nc\n", "a b c\n\nd\n"];
+    for shape in [crate::bitlex_masks::Shape::Machine, crate::bitlex_masks::Shape::Rules] {
+        let c = compile_step_shaped("mark_only", source, shape);
+        assert_eq!(check_documents("mark_only", &c, b"ab \n", &[], &fixed, &|_, _, _, _| None), None, "{shape:?}");
+        if shape != crate::bitlex_masks::Shape::Rules {
+            continue;
+        }
+        // `rest`'s own marks kept (`MARK_KEEP`): taken by nobody, no progress, refused.
+        let first_call = c.text.lines().filter_map(|l| l.strip_prefix("  rule ")).filter_map(|l| l.split_once(" @")).filter(|(r, _)| *r != "0").map(|(_, pc)| pc.to_owned()).min().expect("a called rule");
+        let kept: Vec<String> = c
+            .text
+            .lines()
+            .map(|l| match l.trim_start().split_once(" MARK m=") {
+                Some((pc, rest)) if pc >= first_call.as_str() => {
+                    let (m, operand) = rest.split_once(' ').expect("an operand");
+                    format!("  {pc} MARK m={} {operand}", m.parse::<u8>().expect("a mode") | crate::program::MARK_KEEP)
+                }
+                _ => l.to_owned(),
+            })
+            .collect();
+        let e = crate::rir_asm::assemble(&(kept.join("\n") + "\n")).err().expect("a kept mark is no progress");
+        assert!(e.contains("NonProgressingCycle"), "{e}");
+    }
+}
