@@ -1208,6 +1208,73 @@ fn constant_keyed(rules: &[Rule<'_>], component: &BTreeSet<String>) -> bool {
 /// (`Error::UnboundedValueCycle`). It reads the version's rules in place, its components as the tree's strata made
 /// them (`graph::components_by_name`).
 pub fn check(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
+    checked(v, &Given::default())
+}
+
+/// `check` of a program lowered without the rules of the library it reads (`rr::Text::lower_in`, decision 0246 §2):
+/// a library relation it reads guarantees what its rules in `library` do (`deparen(e, a)`: a is e or below it), as
+/// in the program lowered whole. Read only when the program alone fails: its library relations have no rules in it,
+/// so they guarantee nothing there (PR #508's 363b91c0b, t47).
+pub fn check_given(v: &Version, library: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
+    match check(v) {
+        Err(Error::UnboundedValueCycle { .. }) => checked(v, &given(v, library)),
+        done => done,
+    }
+}
+
+/// What a library gives a program's check: the moves and depths of the library relations the program reads and does
+/// not derive, by name, and those relations.
+#[derive(Default)]
+struct Given {
+    moves: Moves,
+    depths: Depths,
+    rels: BTreeSet<String>,
+}
+
+/// The guarantees of the relations of `library` that `v` reads and does not derive itself, summarized over their
+/// rules there and the relations below them (`summarize`, `depth_summaries`).
+fn given(v: &Version, library: &Version) -> Given {
+    let reads = |rule: Rule<'_>| -> Vec<String> {
+        rule.lits()
+            .filter_map(|l| match l {
+                Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(rule.v.rel_name(a.rel()).to_owned()),
+                _ => None,
+            })
+            .collect()
+    };
+    let own: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+    let mut by_head = BTreeMap::<&str, Vec<Rule<'_>>>::new();
+    for r in library.rules() {
+        let rule = Rule { v: library, r };
+        by_head.entry(rule.head_rel()).or_default().push(rule);
+    }
+    let mut reach: BTreeSet<String> = BTreeSet::new();
+    let mut todo: Vec<String> = v.rules().flat_map(|r| reads(Rule { v, r })).filter(|r| !own.contains(r.as_str()) && by_head.contains_key(r.as_str())).collect();
+    while let Some(rel) = todo.pop() {
+        if reach.contains(&rel) {
+            continue;
+        }
+        todo.extend(by_head[rel.as_str()].iter().flat_map(|&r| reads(r)).filter(|r| by_head.contains_key(r.as_str()) && !reach.contains(r)));
+        reach.insert(rel);
+    }
+    let about = About::of(library);
+    let Ok(sccs) = graph::components_by_name(library, &about) else { return Given::default() };
+    let edges_by = graph::edges_by_name(library, &about);
+    let p = Prog { v: library, lattice: ProgramFields::lattice(library) };
+    let (mut moves, mut depths) = (base(&p), depth_base());
+    for component in sccs.iter().filter(|c| c.iter().any(|r| reach.contains(r))) {
+        let recursive = component.len() > 1 || component.iter().any(|r| edges_by.get(r).is_some_and(|e| e.iter().any(|(w, _)| w == r)));
+        summarize(&p, component, &by_head, &mut moves, recursive);
+        depth_summaries(&p, component, &by_head, &mut depths, recursive);
+    }
+    let rels: BTreeSet<String> = reach.into_iter().filter(|r| !own.contains(r.as_str()) && !v.has_input(r) && !ProgramFields::states_facts(v, r)).collect();
+    moves.retain(|r, _| rels.contains(r));
+    depths.retain(|r, _| rels.contains(r));
+    Given { moves, depths, rels }
+}
+
+/// `check`, the relations of `given` guaranteeing what it holds for them.
+fn checked(v: &Version, given: &Given) -> Result<Vec<BTreeSet<String>>, Error> {
     let about = About::of(v);
     // A program that does not stratify fails there, by name.
     let Ok(sccs) = graph::components_by_name(v, &about) else { return Ok(Vec::new()) };
@@ -1216,6 +1283,8 @@ pub fn check(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
     let mut treed = Vec::new();
     let mut moves = base(&p);
     let mut depths = depth_base();
+    moves.extend(given.moves.iter().map(|(r, m)| (r.clone(), m.clone())));
+    depths.extend(given.depths.iter().map(|(r, d)| (r.clone(), d.clone())));
     let mut by_head = BTreeMap::<&str, Vec<Rule<'_>>>::new();
     for r in v.rules() {
         let rule = Rule { v, r };
@@ -1239,8 +1308,8 @@ pub fn check(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
     let last = kinds.iter().rposition(|(_, bound)| *bound == Some(true));
     for (i, component) in sccs.iter().enumerate() {
         let (recursive, bound) = kinds[i];
-        if last.is_some_and(|last| i <= last) {
-            // A component's guarantees, for its own rules and the components above it.
+        // A component's guarantees, for its own rules and the components above it; a library relation's are given.
+        if last.is_some_and(|last| i <= last) && !component.iter().all(|r| given.rels.contains(r)) {
             summarize(&p, component, &by_head, &mut moves, recursive);
             depth_summaries(&p, component, &by_head, &mut depths, recursive);
         }

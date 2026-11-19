@@ -344,13 +344,18 @@ fn beside(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// The files of folder `from` cloned into `to` (made), where there is one.
+/// The files of folder `from` cloned into `to` (made), where there is one, and its folders' in turn: the kept facts
+/// are a folder a space (`kept_facts::space_dir`, `.facts/<space>/`), and a copy that took the top level alone held
+/// rows naming files it lacked ("a space's kept facts: No such file or directory").
 fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     let Ok(entries) = std::fs::read_dir(from) else { return Ok(()) };
     std::fs::create_dir_all(to)?;
     for e in entries.flatten() {
-        if e.file_type()?.is_file() {
+        let kind = e.file_type()?;
+        if kind.is_file() {
             clone_file(&e.path(), &to.join(e.file_name()))?;
+        } else if kind.is_dir() {
+            clone_dir(&e.path(), &to.join(e.file_name()))?;
         }
     }
     Ok(())
@@ -392,6 +397,32 @@ impl Lock {
 
 #[cfg(test)]
 mod tests {
+    /// A store copied as a test's store is (`copy`: its file and `FOLDERS`) carries its memo packs: the copy's rows
+    /// find the template's bytes (decision 0240 §4), and its own writes go after them. Its file alone was copied
+    /// before, so its rows named a pack the copy's writer began again. PR #508's 62b554c01 (t47).
+    #[test]
+    fn a_template_is_published_and_copied_with_its_memo_packs() {
+        use crate::content_store::{ContentStore, MemoPut};
+        let dir = tempfile::tempdir().unwrap();
+        let space = crate::content_store::local_space(&[7u8; 32]);
+        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], over: false };
+        let template = dir.path().join("template.sqlite");
+        ContentStore::open(&template).unwrap().put_memo_entries(&space, (0..4).map(|p| put(p, 1)).collect(), 4).unwrap();
+        let copy = dir.path().join("copy/store.sqlite");
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        super::clone_file(&template, &copy).unwrap();
+        for suffix in super::FOLDERS {
+            super::clone_dir(&super::beside(&template, suffix), &super::beside(&copy, suffix)).unwrap();
+        }
+        let store = ContentStore::open(&copy).unwrap();
+        store.put_memo_entries(&space, (4..8).map(|p| put(p, 2)).collect(), 4).unwrap();
+        let read = store.memo_entries(&space, &(0..8).collect::<Vec<_>>(), true).unwrap();
+        assert_eq!(read.len(), 8, "the template's entries and the copy's each find their bytes");
+        for (part, blob) in read {
+            assert!(blob.bytes.bytes().iter().all(|&b| b == if part < 4 { 1 } else { 2 }), "part {part} reads the bytes it was put with");
+        }
+    }
+
     /// Another build's template unused for an hour goes, by its mark's time or, without one, its own; a fresh one and
     /// this build's stay.
     #[test]

@@ -930,7 +930,7 @@ fn formula_width() -> u64 {
 
 /// `label_formula`'s threads a (file, formula).
 const FORMULA_WIDTH: u64 = 128;
-/// `RERAIL_FORMULA_FUSED=N` (a measurement switch, Q250): `label_formula` dispatches a level's formulas at once, as many as
+/// `RERAIL_FORMULA_FUSED=N` (a measurement switch, Q271): `label_formula` dispatches a level's formulas at once, as many as
 /// its scratch allows, with N groups a file (1: one group evaluates every formula of the file in turn), not one a (file,
 /// formula).
 fn formula_fused() -> Option<usize> {
@@ -1076,9 +1076,10 @@ fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
     // The library once (its front end, with the first kernel), then the others side by side: each pipeline is a
     // back-end compile of its own, and Metal's compiler service runs them at once (work queue Q181: format 16's took 67
     // s one after another, 23 s together, on a loaded M3 Max). A kernel that fails to compile panics on its thread,
-    // and the panic goes on here (decision 0382).
+    // and the panic goes on here (decision 0382). Each compile waits on the device's compiler, so its thread is a
+    // device's worker, scoped as the executor's are (`exec::scoped`, decision 0100 §12).
     let first = pipeline_of(&SOURCE, KERNELS[0], format)?;
-    let rest = std::thread::scope(|scope| {
+    let rest = rerail_accel::exec::scoped(|scope| {
         let compiles = KERNELS[1..].iter().map(|name| scope.spawn(move || pipeline_of(&SOURCE, name, format))).collect::<Vec<_>>();
         compiles.into_iter().map(|compile| compile.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))).collect::<Result<Vec<_>, _>>()
     })?;
@@ -2623,7 +2624,7 @@ impl Runner<'_> {
         let leaves = leaves.cloned().unwrap_or_else(|| own.as_ref().expect("the group's leaves").buffer.clone());
         let stride = depth as usize * region;
         // A dispatch's formulas, and its groups a file (`rows`): one a formula, or `formula_fused()`, each evaluating
-        // its share in turn in its own slots (Q250).
+        // its share in turn in its own slots (Q271).
         let fused = formula_fused();
         let rows_most = (FORMULA_SCRATCH_BYTES / 4 / stride).clamp(1, count);
         let per = if formula_trace().is_some() && std::env::var_os("RERAIL_FORMULA_ONE").is_some() { 1 } else if fused.is_some() { count } else { rows_most };

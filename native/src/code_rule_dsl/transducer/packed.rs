@@ -1651,7 +1651,7 @@ impl Slotted {
                     return PatternVerdict::NoMatch;
                 }
                 let candidates = tape.transducer_children(node).collect::<Vec<_>>();
-                if Self::children(children, &candidates, tape, bindings) {
+                if Self::children(children, node, &candidates, tape, bindings) {
                     PatternVerdict::Matched
                 } else {
                     PatternVerdict::NoMatch
@@ -1662,6 +1662,7 @@ impl Slotted {
 
     fn children(
         goals: &[Self],
+        parent: u32,
         candidates: &[u32],
         tape: &TapeDoc,
         bindings: &mut AstBindings,
@@ -1674,6 +1675,8 @@ impl Slotted {
             });
         }
         let (mut goal, mut candidate) = (0_usize, 0_usize);
+        // The candidate the last goal matched, for the end of children (RER-131).
+        let mut last_matched: Option<usize> = None;
         while goal < goals.len() {
             if let Self::Ellipsis(name) = &goals[goal] {
                 let name = *name;
@@ -1684,15 +1687,26 @@ impl Slotted {
                     });
                 }
                 let mut skipped_anonymous = 0_usize;
+                let mut end_word: Option<&str> = None;
                 while goal < goals.len() && goals[goal].is_trivial() {
+                    // The end-of-children goal stands for the implied tokens after the pattern's
+                    // last child; a candidate keeps them only where its gap is not that word, and
+                    // those it keeps are the goal's (`ast_grep_core`'s `may_match_ellipsis_impl`).
+                    match &goals[goal] {
+                        Self::Terminal { text, .. } if goals[goal].is_children_end() => end_word = Some(text),
+                        _ => skipped_anonymous += 1,
+                    }
                     goal += 1;
-                    skipped_anonymous += 1;
                 }
                 if goal == goals.len() {
-                    let end = candidates
-                        .len()
-                        .saturating_sub(skipped_anonymous)
-                        .max(candidate);
+                    let mut rest = candidates.len();
+                    for token in end_word.into_iter().flat_map(|word| word.split('\u{1f}').filter(|token| !token.is_empty())).collect::<Vec<_>>().into_iter().rev() {
+                        match rest.checked_sub(1).map(|last| candidates[last]) {
+                            Some(last) if rest > candidate && !tape.transducer_is_named(last) && tape.transducer_text(last) == token.as_bytes() => rest -= 1,
+                            _ => break,
+                        }
+                    }
+                    let end = rest.saturating_sub(skipped_anonymous).max(candidate);
                     return name.is_none_or(|name| {
                         bindings.bind_multi(name, &candidates[candidate..end], tape)
                     });
@@ -1755,9 +1769,20 @@ impl Slotted {
                         }
                     }
                     PatternVerdict::SkipCandidate => candidate += 1,
-                    PatternVerdict::NoMatch => return false,
+                    // The end of children refused a named candidate: where the tokens the
+                    // candidate leaves out after the last matched child begin with the goal's,
+                    // those are the goal's and the rest trails (`ast_grep_core`'s
+                    // `match_nodes_impl_recursive`, RER-131).
+                    PatternVerdict::NoMatch => {
+                        let Self::Terminal { text, .. } = &goals[goal] else { return false };
+                        let word: Vec<&str> = text.split('\u{1f}').filter(|token| !token.is_empty()).collect();
+                        return goals[goal].is_children_end()
+                            && !word.is_empty()
+                            && last_matched.is_some_and(|last| tape.transducer_implied_after(parent, last, &word));
+                    }
                 }
             }
+            last_matched = Some(candidate);
             goal += 1;
             candidate += 1;
             if goal == goals.len() {

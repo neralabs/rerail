@@ -1,11 +1,11 @@
 # 0419. `label_formula`'s time is latency, a level per chunk: a chain's reach by blocks, chunks grow until measured
 
-Status: accepted (2026-11-18). Follows 0425 and Q250.
+Status: accepted (2026-11-18). Follows 0425 and Q271.
 
 ## Intro
 
 0425 removed about a quarter of `label_formula`'s (file, formula) pairs and half its formula images, and the kernel's
-time did not fall. The user asked: "1. identify why the GPU time didn't drop 2. do Q250: evaluating each level's
+time did not fall. The user asked: "1. identify why the GPU time didn't drop 2. do Q271: evaluating each level's
 formulas together per file." Asked which way to go (evaluating per file together looked slower than what it replaced),
 they said: "I want both, and I also want you to survey the code for existing lauch-delay and chunking affordances and
 reuse theinfrastecture and patterns already in the tree".

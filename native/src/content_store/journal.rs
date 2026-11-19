@@ -837,11 +837,11 @@ mod tests {
         std::fs::File::options().write(true).open(&kept).unwrap().set_times(std::fs::FileTimes::new().set_accessed(std::time::SystemTime::now()).set_modified(mtime)).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(500));
         next_epoch();
-        let Since::Changed { paths, cursor: touched } = since(std::slice::from_ref(&root), Some(settled), &cookies) else { panic!("a replay") };
+        let Since::Changed { paths, cursor: touched } = since(std::slice::from_ref(&root), Some(settled), &cookies, SETTLE) else { panic!("a replay") };
         assert!(!paths.contains(&kept), "an access time set is no change: {paths:?}");
         std::fs::write(&kept, "x = 2\n").unwrap();
         next_epoch();
-        let Since::Changed { paths, .. } = since(std::slice::from_ref(&root), Some(touched), &cookies) else { panic!("a replay") };
+        let Since::Changed { paths, .. } = since(std::slice::from_ref(&root), Some(touched), &cookies, SETTLE) else { panic!("a replay") };
         assert!(paths.contains(&kept), "a write is named: {paths:?}");
         // A root under one asked is answered by the same stream, kept for the process: a change made since the
         // run's question is told to the next run.
