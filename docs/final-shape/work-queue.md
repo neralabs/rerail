@@ -5359,3 +5359,13 @@ Open:
   pack test data), `violations::tests::a_token_neighbour_is_not_the_stored_node_past_an_implied_token`,
   `…gap_test_groups_anchor_at_the_implied_token`, `token_readers::no_rule_reads_a_token_the_tape_may_leave_out`.
 - **Done when**: each passes.
+- **Done** (2026-11-19), six of eight; the two `compile_matcher_tests` read ruff's fixtures, which no checkout here
+  holds at their lock (`npm run fixtures:pull`).
+  - The four RER-131 tests and the two pack rules (`ruff-fast001`'s lone trailing comma, `ruff-sim118`'s `in`) needed
+    t47's pending 48bf01694/241c19955 and c00a1d9f0, which stage 2 left out with the hub's token files. Ported onto
+    the hub's gap index, not Tim's per-call item sequence: `gap_split` with a `Stored` token condition; a gap test's
+    token conditions on a node's own tokens (`has`); a neighbour walk's `stored` test (no implied token between it and
+    the stored node) and a capture's span (`GapTest::token`), read from the parent's cached gaps by Tim's sequence
+    (`found_items`), the hub's `holds` and `implied_count` unchanged; `comparison.implied` set for `tokens`.
+  - The replay lab copied a capture's database without its atoms blocks (0401): it copies them now.
+  - Linux: the token, gap, matcher, violations, compare, compile, prefilter and anchors tests 1,102 of 1,104.

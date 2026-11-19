@@ -22,7 +22,9 @@ pub(super) fn replay(capture: &std::path::Path) -> (Json, CandidateRows) {
     let data: Json = serde_json::from_slice(&std::fs::read(capture).unwrap()).unwrap();
     let database = capture.parent().unwrap().join(data["database"].as_str().unwrap());
     let copy = temp();
-    std::fs::copy(database, &copy).unwrap();
+    std::fs::copy(&database, &copy).unwrap();
+    // A v6 store's atoms lie in blocks beside its file (decision 0401): the copy takes them too.
+    crate::content_store::atoms::copy_blocks(&database, &copy).unwrap();
     let store = open(&copy);
     let parameters: Vec<_> = data["parameters"]
         .as_array()

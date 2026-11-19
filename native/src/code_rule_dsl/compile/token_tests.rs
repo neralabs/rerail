@@ -234,20 +234,30 @@ impl<'a> Walk<'a> {
         self.tests.insert(Test { category, negated, relation: format!("layout {side}"), regex: String::new(), implied, path: path.to_owned() });
     }
 
-    /// Whether the relation at `path` is one the compiler also asks of the gaps (`compile::ast_rule::gap_test`): a
-    /// token test that is its target, or an `any` alternative or `all` item of it, is `lowered`. Asked only where a
-    /// token test reads it, once a path; every path it is asked is the test's own or a relation the walk went into on
-    /// the way to it.
+    /// Whether the relation at `path` is one the compiler also asks of the gaps (`compile::ast_rule::gap_test`,
+    /// or one it splits into a gap test and a stored child, `gap_split`), or one of the token's own relations
+    /// to the tokens beside it inside such a test (`follows`, `precedes`, under a `not` or not): a token test
+    /// that is its target, or an `any` alternative or `all` item of it, is `lowered`. Asked only where a token test
+    /// reads it, once a path; every path it is asked is the test's own or a relation the walk went into on the way
+    /// to it.
     fn lowered(&mut self, path: &str) -> bool {
         if let Some(&known) = self.lowered.get(path) {
             return known;
         }
-        use crate::code_rule_dsl::compile::ast_rule::gap_test;
+        use crate::code_rule_dsl::compile::ast_rule::{gap_split, gap_test};
         use crate::code_rule_dsl::matcher::AstMatcher;
-        let lowered = self
-            .relations
-            .get(path)
-            .is_some_and(|&(key, value)| gap_test(key, value, self.dialect, Some(Box::new(AstMatcher::Never))).is_some());
+        let dialect = self.dialect;
+        // The gap test the relation at `at` is, and whether it reads the token's own neighbours.
+        let gap = |at: &str, relations: &BTreeMap<String, (&str, &Value)>| {
+            let &(key, value) = relations.get(at)?;
+            gap_test(key, value, dialect, Some(Box::new(AstMatcher::Never))).map(|test| !test.token.is_empty())
+        };
+        let lowered = match self.relations.get(path) {
+            Some(&(key, value)) => gap(path, &self.relations).is_some() || gap_split(key, value, dialect).is_some(),
+            None => false,
+        } || ["/follows", "/precedes", "/not/follows", "/not/precedes"].iter().any(|nested| {
+            path.strip_suffix(nested).is_some_and(|relation| gap(relation, &self.relations) == Some(true))
+        });
         self.lowered.insert(path.to_owned(), lowered);
         lowered
     }
