@@ -2083,7 +2083,7 @@ impl Drop for KeepPlans {
             let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let lazy = lazy_probes_counted();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared, {} searched once heavy ({} versions' plans read, {} made); orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::SEARCHED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared, {} searched once heavy ({} versions' plans read, {} made); mispredicted: {} blown up, {} over-estimated; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::SEARCHED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[1].swap(0, std::sync::atomic::Ordering::Relaxed), joins::MISSES[0].swap(0, std::sync::atomic::Ordering::Relaxed), joins::MISSES[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -3291,6 +3291,32 @@ impl Model {
             format!("{}: heavy on its prepared order, searched{}{}", b.head_text(), if met.is_empty() { "" } else { "; " }, met.join(", "))
         });
         Some(line)
+    }
+
+    /// The rows after each step of `order`, as the search prices it (`STEP_ROWS`): what a running line's counts are
+    /// checked against (`joins::step_miss`), its widest step among them. A pricing, not a search.
+    pub(in crate::code_rule_dsl) fn order_step_rows(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, order: &[Step]) -> Option<Vec<f64>> {
+        let (was, rows_was) = (EXPLAIN_ALWAYS.with(|e| e.replace(true)), STEP_ROWS.with(|e| e.replace(true)));
+        let got = self.plan_inner(pf, b, first, Some(order), true);
+        EXPLAIN_ALWAYS.with(|e| e.set(was));
+        STEP_ROWS.with(|e| e.set(rows_was));
+        got.ok().and_then(|(_, x)| x).map(|x| x.steps.iter().map(|s| s.rows).collect())
+    }
+
+    /// A running line's miss against its order's step rows (`joins::step_miss`), once it has done a few searches'
+    /// work and is not flagged in that order. The step rows are priced once an order (`expected`), so a line too
+    /// small to matter is never priced (decision 0122). `RERAIL_JOIN_MISSES=off` checks none (a measurement aid).
+    #[allow(clippy::too_many_arguments)]
+    fn line_miss(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, order: &[Step], key: PlanKey, steps: &[(u64, u64)], expected: &mut Option<(Vec<Step>, Vec<f64>)>) -> Option<joins::Miss> {
+        static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| !std::env::var("RERAIL_JOIN_MISSES").is_ok_and(|v| v == "off"));
+        let work = super::profile::plan_work(steps) as f64;
+        if !*ON || work < joins::slow_factor() * SEARCH_WORK || positive_atoms(b) < 2 || joins::flagged(key, order) {
+            return None;
+        }
+        if expected.as_ref().is_none_or(|(o, _)| !same_order(o, order)) {
+            *expected = Some((order.to_vec(), self.order_step_rows(pf, b, first, order).unwrap_or_default()));
+        }
+        expected.as_ref().and_then(|(_, e)| joins::step_miss(e, steps, SEARCH_WORK))
     }
 
     fn plan_for_rows_in(&mut self, pf: Fields<'_>, b: &Body<'_>, at: usize, rows: f64, cx: &mut joins::SearchCx) -> Option<Vec<Step>> {
@@ -5474,6 +5500,8 @@ struct Driving {
     /// Per line (seeds, then probes): a replacement running over the rows a slow order left at its cut (decision
     /// 0206).
     handoff: Vec<Option<joins::Handoff>>,
+    /// Per line, its running order's rows after each step as priced, the widest among them (`Model::line_miss`).
+    expected: Vec<Option<(Vec<Step>, Vec<f64>)>>,
     /// Per line, the seconds its probes ran (the engine's per-probe wall time), for the measured critical path
     /// (decision 0208).
     walled: Vec<f64>,
@@ -9262,6 +9290,7 @@ impl<'a> Run<'a, '_> {
             replanned_at,
             searched: Vec::new(),
             handoff: Vec::new(),
+            expected: Vec::new(),
             walled: Vec::new(),
             wholes,
             keys,
@@ -9308,7 +9337,7 @@ impl<'a> Run<'a, '_> {
         let versions = Arc::clone(&self.versions);
         let pf = versions.whole(self.version);
         let fields = vs.whole(self.version);
-        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut stepped, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff, mut walled, mut wholes } = *d;
+        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut stepped, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff, mut expected, mut walled, mut wholes } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         // Each line's rule as the planner reads it: the seeds' orders, then the probes' (their rules fixed, their
@@ -9325,6 +9354,7 @@ impl<'a> Run<'a, '_> {
         // This thread's CPU at the stratum's start, less what other strata spent while it waited.
         let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_own } else { 0.0 };
         handoff.resize_with(nseeds + probes.len(), || None);
+        expected.resize_with(nseeds + probes.len(), || None);
         // Each relation's rows, delta start and end as its statistics were last read (`stats_changed`).
         let mut live_seen: Vec<[usize; 3]> = Vec::new();
         // `RERAIL_JOIN_CUT_ONLY=<text>` (a measurement aid): only components whose name holds it are cut.
@@ -9376,7 +9406,7 @@ impl<'a> Run<'a, '_> {
                     drop(rels);
                     Box::new(Driving {
                         scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                        explained, counted, earlier, timed, stepped, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff, walled, wholes,
+                        explained, counted, earlier, timed, stepped, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff, expected, walled, wholes,
                         cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
                     })
                 }};
@@ -9458,13 +9488,15 @@ impl<'a> Run<'a, '_> {
                     // Its prepared order, horribly slow (past `slow_factor` of what it was prepared at) or heavy (the
                     // check below): planned again next round with the run's statistics (`prepared_heavy`).
                     let checked = joins::check(key, work, &probes[k].2);
-                    if (checked || self.model.prepared_horribly_slow(&vs.at(r), &[Some(ai)], &probes[k].2, work))
+                    // Its rows against its order's step by step: the widest blown up, or a step far under its price.
+                    let miss = self.model.line_miss(pf, &vs.at(r), Some(ai), &probes[k].2, key, c, &mut expected[line]);
+                    if (checked || miss.is_some() || self.model.prepared_horribly_slow(&vs.at(r), &[Some(ai)], &probes[k].2, work))
                         && self.model.prepared_heavy(&vs.at(r), &[Some(ai)], &probes[k].2).is_some()
                     {
                         replanned_at.force(k);
                         continue;
                     }
-                    if !checked {
+                    if !checked && miss.is_none() {
                         continue;
                     }
                     let b = vs.at(r);
@@ -9474,10 +9506,14 @@ impl<'a> Run<'a, '_> {
                     }
                     let delta = c.first().map_or(0, |s| s.1) as f64;
                     let Some(est) = self.model.price_for_delta(pf, &b, Some(ai), &probes[k].2, delta) else { continue };
-                    if work <= joins::slow_factor() * est.max(1.0) {
+                    if miss.is_none() && work <= joins::slow_factor() * est.max(1.0) {
                         continue;
                     }
                     let rule = order_rules[line];
+                    if let Some(m) = &miss {
+                        joins::count_miss(m);
+                        super::profile::decision("mispredicted joins (decision 0203)", || format!("{} (delta at {ai}): {}", b.head_text(), m.describe()));
+                    }
                     joins::flag_slow(key, rule, &probes[k].2, est, work);
                     super::profile::decision("slow joins (decision 0203)", || format!("{} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows", b.head_text()));
                     let exact = if joins::pricing() { Vec::new() } else { self.exact_statistics(&name, line, false, &b, &probes[k].2) };
@@ -9735,9 +9771,16 @@ impl<'a> Run<'a, '_> {
                     // The walk cut now is judged by its own work over its own rows (a line's work so far may be an
                     // earlier walk's too: then a few rows read under a short budget stood for all of it).
                     let ran = c.work as f64;
-                    let est = if joins::check(key, work, &running) { self.model.price_for_delta(pf, &b, Some(cut_lead), &running, c.done.max(1) as f64) } else { None };
-                    if let Some(est) = est && ran > joins::slow_factor() * est.max(1.0) && positive_atoms(&b) >= 2 {
+                    // Its rows against its order's step by step (`line_miss`): the widest blown up, or far under.
+                    let miss = counted.get(line).and_then(|steps| self.model.line_miss(pf, &b, Some(cut_lead), &running, key, steps, &mut expected[line]));
+                    let est = if joins::check(key, work, &running) || miss.is_some() { self.model.price_for_delta(pf, &b, Some(cut_lead), &running, c.done.max(1) as f64) } else { None };
+                    if let Some(est) = est && (miss.is_some() || ran > joins::slow_factor() * est.max(1.0)) && positive_atoms(&b) >= 2 {
                         let rule = order_rules[line];
+                        if let Some(m) = &miss {
+                            joins::count_miss(m);
+                            super::profile::decision("mispredicted joins (decision 0203)", || format!("{}: {}", b.head_text(), m.describe()));
+                            self.model.prepared_heavy(&b, &[first, None], &running);
+                        }
                         joins::flag_slow(key, rule, &running, est, ran);
                         super::profile::decision("slow joins (decision 0203)", || format!("{} {}: {ran:.0} rows of work, priced {est:.0} for its {} rows read", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done));
                         let exact = if joins::pricing() { Vec::new() } else { self.exact_statistics(&name, line, whole, &b, &running) };

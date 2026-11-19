@@ -461,6 +461,81 @@ pub(super) fn count_handoff(back: bool) {
 /// order at it. Its work over its price is a floor, as a cut trial's is (decision 0267): it was cut while it ran, and
 /// it raises the order's kept ratio, never lowers it. Not kept, the next chunk's plan took the same order at the same
 /// price (`pre_546` on hogql: priced 360 to 513 for 102 K rows of work, at each of its trips).
+/// Whether line `key` is flagged in the order it runs (`flag_slow`): checked no more in it.
+pub(super) fn flagged(key: PlanKey, order: &[Step]) -> bool {
+    MEMO.read().flagged.get(&key).is_some_and(|o| *o == steps(order))
+}
+
+/// How a running line's rows missed its order's estimate, step by step (`step_miss`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Miss {
+    /// Its widest step made `ran` rows where the widest was priced at `est`: the expansion blew up.
+    Wide { est: f64, ran: f64 },
+    /// Step `at` made `ran` rows a binding entering it where it was priced at `est`: the estimate that chose the order
+    /// was far too high there (an atom priced to multiply its bindings that cuts them, read late for it).
+    Over { at: usize, est: f64, ran: f64 },
+}
+
+impl Miss {
+    pub fn describe(&self) -> String {
+        match self {
+            Miss::Wide { est, ran } => format!("its widest step made {ran:.0} rows, priced {est:.0}: blew up"),
+            Miss::Over { at, est, ran } => format!("step {at} made {ran:.3} rows a binding, priced {est:.3}: over-estimated"),
+        }
+    }
+}
+
+/// Lines found mispredicted step by step in this process: blown up, over-estimated (`RERAIL_PLAN_CACHE_COUNTS`).
+pub static MISSES: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+
+pub(super) fn count_miss(m: &Miss) {
+    MISSES[usize::from(matches!(m, Miss::Over { .. }))].fetch_add(1, Relaxed);
+}
+
+/// Bindings a step is entered with before its estimate is judged too high: under them its count is noise.
+pub const OVER_LEAST_LEAD: f64 = 64.0;
+
+/// A running line's miss against its order's estimate (`est`: the rows after each step, as the search priced the
+/// order; `ran`: each step's bindings in and rows out so far), or `None`. Both are taken per row the lead step made,
+/// so a line part way through its rows is judged as fairly as a finished one. Past `slow_factor` either way:
+///
+/// - **Wide:** the widest step made more than that times the widest priced, and more than a search's work. The
+///   expansion is the cost a wrong estimate makes; the work check (`check`) sees it only once it is the whole
+///   line's, and only against a price from the same statistics.
+/// - **Over:** a step priced at that times a search's work or more made rows a binding under its price's share. That
+///   is the step's own estimate, apart from the steps before it: an atom priced to multiply what it is entered with
+///   that cuts it is read late, after the expansion it would have cut (the orders it ruled out were priced with it).
+///
+/// The steps must be the order's, one for one (the profile pairs them so); else `None`.
+pub fn step_miss(est: &[f64], ran: &[(u64, u64)], search_work: f64) -> Option<Miss> {
+    if est.is_empty() || est.len() != ran.len() {
+        return None;
+    }
+    let lead = ran[0].1 as f64;
+    if lead <= 0.0 {
+        return None;
+    }
+    let f = slow_factor();
+    let scale = lead / est[0].max(1e-9);
+    let priced: Vec<f64> = est.iter().map(|e| e * scale).collect();
+    let widest_est = priced.iter().copied().fold(0.0, f64::max);
+    let widest_ran = ran.iter().map(|r| r.1 as f64).fold(0.0, f64::max);
+    if widest_ran > f * widest_est.max(search_work) {
+        return Some(Miss::Wide { est: widest_est, ran: widest_ran });
+    }
+    for at in 1..priced.len() {
+        let (into, made) = (ran[at].0 as f64, ran[at].1 as f64);
+        if into < OVER_LEAST_LEAD || priced[at] < f * search_work {
+            continue;
+        }
+        let (est, got) = (priced[at] / priced[at - 1].max(1e-9), made / into);
+        if est > f * got.max(1.0 / into) {
+            return Some(Miss::Over { at, est, ran: got });
+        }
+    }
+    None
+}
+
 pub(super) fn flag_slow(key: PlanKey, rule: u64, order: &[Step], est: f64, ran: f64) {
     COUNTS[FLAGS].fetch_add(1, Relaxed);
     let mut m = MEMO.write();

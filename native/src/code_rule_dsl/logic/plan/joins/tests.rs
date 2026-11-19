@@ -790,3 +790,30 @@ fn a_maintenance_rule_starts_from_its_source_rules_order() {
     let got = source_order(&ins, &gsrc, &gmap, &steps(&[2, 1, 0]), Some(0)).expect("an order");
     assert_eq!(got.iter().map(|s| s.at).collect::<Vec<_>>(), vec![0, 1, 2]);
 }
+
+/// A running line against its order's step rows (`step_miss`): the widest step blown up past `slow_factor` (8) times
+/// its price, a step far under a high price, each per row the lead step made; noise and misaligned steps left alone.
+#[test]
+fn a_line_misses_its_step_rows_by_a_blow_up_or_an_over_estimate() {
+    use super::{Miss, step_miss};
+    // As priced: no miss.
+    assert_eq!(step_miss(&[100.0, 1_000.0, 500.0], &[(0, 100), (100, 1_000), (1_000, 500)], 250.0), None);
+    // Part way through its lead rows, in proportion: no miss.
+    assert_eq!(step_miss(&[1_000.0, 8_000.0], &[(0, 100), (100, 800)], 250.0), None);
+    // The widest step priced at 200 rows made 50,000: blown up (past 8 x a search's 250 too).
+    assert_eq!(step_miss(&[100.0, 200.0, 100.0], &[(0, 100), (100, 200), (200, 50_000)], 250.0), Some(Miss::Wide { est: 200.0, ran: 50_000.0 }));
+    // Under 8 x a search's work, a blow-up costs less than replanning it: left.
+    assert_eq!(step_miss(&[100.0, 10.0], &[(0, 100), (100, 1_500)], 250.0), None);
+    // A step priced at 1,000 rows a binding (100,000 rows) made 5 a binding: over-estimated.
+    assert_eq!(step_miss(&[100.0, 100_000.0, 10.0], &[(0, 100), (100, 500), (500, 10)], 250.0), Some(Miss::Over { at: 1, est: 1_000.0, ran: 5.0 }));
+    // The expansion before it priced as it came; the last step priced to multiply by 4, it cut to 1 in 100: over.
+    assert_eq!(
+        step_miss(&[100.0, 50_000.0, 200_000.0], &[(0, 100), (100, 50_000), (50_000, 500)], 250.0),
+        Some(Miss::Over { at: 2, est: 4.0, ran: 0.01 })
+    );
+    // Entered with 10 bindings only: noise, not judged.
+    assert_eq!(step_miss(&[10.0, 100_000.0], &[(0, 10), (10, 5)], 250.0), None);
+    // Steps that are not the order's one for one, or no lead rows yet: not judged.
+    assert_eq!(step_miss(&[100.0, 100_000.0], &[(0, 100)], 250.0), None);
+    assert_eq!(step_miss(&[100.0, 100_000.0], &[(0, 0), (0, 0)], 250.0), None);
+}
