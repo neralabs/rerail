@@ -41,7 +41,7 @@ loads (an import's strings, an export's source, the string or template argument 
 process.getBuiltinModule), and `loads_types_only(n)` holds for `import type`, `export type` and a load inside
 `typeof import(…)`. The names avoid tsx/values' `module_load`.
 
-## Validation (nera-port-1, box-check.sh rpt-trb)
+## Validation (on a Linux build box)
 
 - test-rr: command-sigil 4/4, no-code-execution 4/4, session-paths 4/4, conformance-boundary 6/6 (4 + 2 text),
   conformance-pinned-data 3/3.

@@ -53,7 +53,7 @@ node is ast-grep's (an unanchored search) and is written as a whole-text `match`
 
 None. `arg`, `writer`, `declared` and the path tests are local; no second rule uses them yet.
 
-## Validation (nera-port-1, `box-check.sh rpt-trc`, plus each test's fixtures run through both sides)
+## Validation (on a Linux build box, plus each test's fixtures run through both sides)
 
 | rule | test-rr | pack examples caught / passes | repo corpus 7efcac9c67 | test fixtures, original vs translation |
 | --- | --- | --- | --- | --- |

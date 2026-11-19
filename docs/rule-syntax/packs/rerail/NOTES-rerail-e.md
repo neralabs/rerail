@@ -51,7 +51,7 @@ copied exactly, and tests that include the pack.json example (caught and passes)
 
 - A new library file is found only with `RERAIL_RR_LIB` pointing at this tree's `lib/` (`#include` reads the
   engine checkout's library otherwise: `#include "rr/rerail-ui-colours.rerail": no such file`). The checks ran
-  with a copy of box-check.sh that exports it; a suite running against the merged tree needs nothing.
+  with it set; the translation suite sets it to the checkout's own `lib/`.
 
 ## Validation (box, engine at 7efcac9c67)
 

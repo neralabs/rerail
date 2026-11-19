@@ -19,7 +19,7 @@ translation is `match("(?s:.*)(?:RE)(?s:.*)", n)`, or RE without its `^`/`$` whe
   require/import/createRequire call) are `loads(n, s)`; both clauses test `s` with their own regex. The JSON's `has`
   without `stopBy` is a direct child (`field`/`child`). No difference.
 
-Validation (box `rpt-tra`, `box-check.sh`): test-rr 23 passed, 0 failed (3+3+3+3+3+4+4). Every rule `same` on the
+Validation (on a Linux build box): test-rr 23 passed, 0 failed (3+3+3+3+3+4+4). Every rule `same` on the
 pack's caught examples (1/1/1/1/1/3/1 findings in both), passes examples (0 in both) and the repository at 7efcac9c67
 (0 findings in both for all seven: the repository already conforms). As a stronger check, each test's fixtures were
 also run as a corpus of their own against the JSON original: `same` on all 23 (50 findings in both, none on one side
