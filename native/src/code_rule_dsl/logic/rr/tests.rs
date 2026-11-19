@@ -2315,6 +2315,74 @@ ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), no
     assert!(store.source_by_hash(key("(List[int])")).unwrap().is_none(), "the guest's source is not");
 }
 
+/// Decision 0431 R1: there are no guest documents. A guest's nodes are numbered in its host file's id space, so the
+/// root of a parsed annotation is in the same document as the string it was parsed from.
+#[test]
+#[ignore = "0431 step 2: guest nodes in the host file's id space"]
+fn a_guest_node_is_its_host_files() {
+    let py = "x: \"List[int]\" = []\ndef f(y: 'Dict[str, Foo]'): ...\n";
+    let rule = r#"
+.decl same(d: number, e: number)
+same(d, e) :- kind(s, "string"), parsed(s, "annotation", r), docof(s, d), docof(r, e).
+.output same
+"#;
+    let [same] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("guest-in-file", &[("a.py", py)], rule, &["same"])).unwrap();
+    assert_eq!(same.len(), 1, "both annotations' roots are a.py's: {same:?}");
+    assert_eq!(same[0][0], same[0][1], "a guest's root is its host file's: {same:?}");
+}
+
+/// Decision 0431 R2: `guest_of(n, s)` names the string node a guest node was parsed from (it replaces
+/// `docof(n, d), guest(d, _, s, _)`), for every node of the guest and for no node of the file's own tree.
+#[test]
+#[ignore = "0431 step 2: guest_of"]
+fn guest_of_names_the_string_a_node_was_parsed_from() {
+    let py = "x: \"List[int]\" = []\nList = 1\n";
+    let rule = r#"
+.decl from(x: symbol, l: number, c: number)
+from(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x), line(s, l), col(s, c).
+.decl own(x: symbol)
+own(x) :- kind(i, "identifier"), text(i, x), !guest_of(i, _).
+.output from, own
+"#;
+    let [from, own] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("guest-of", &[("a.py", py)], rule, &["from", "own"])).unwrap();
+    assert_eq!(from, [["List", "1", "3"], ["int", "1", "3"]], "each name of the annotation, at its string");
+    assert_eq!(own, [["List"], ["x"]], "the file's own identifiers are no guest's");
+}
+
+/// Decision 0431 R3: equal texts share one tape (`sub_tape`), and each place keeps its own positions: the same
+/// annotation in two files, at different lines, gives each file's names at that file's line.
+#[test]
+#[ignore = "0431 step 2: a guest's range per place"]
+fn one_tape_at_two_places_keeps_each_places_lines() {
+    let a = "x: \"List[int]\" = []\n";
+    let b = "\n\n\ny: \"List[int]\" = []\n";
+    let rule = r#"
+.decl tapes(t: tape)
+tapes(t) :- kind(s, "string"), sub_tape(s, "annotation", t).
+.decl at(f: symbol, x: symbol, l: number, c: number)
+at(f, x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, x), line(i, l), col(i, c), docof(i, d), doc(d, f, _).
+.output tapes, at
+"#;
+    let [tapes, at] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("guest-two-places", &[("a.py", a), ("b.py", b)], rule, &["tapes", "at"])).unwrap();
+    assert_eq!(tapes.len(), 1, "one tape for the one text: {tapes:?}");
+    assert_eq!(at, [["a.py", "List", "1", "4"], ["a.py", "int", "1", "9"], ["b.py", "List", "4", "4"], ["b.py", "int", "4", "9"]]);
+}
+
+/// Decision 0431 R4: the rules decide what is parsed. A plain string holding the same text as an annotation is not
+/// parsed: no node of it is a guest's.
+#[test]
+#[ignore = "0431 step 2: guest_of"]
+fn a_string_no_rule_asks_for_is_not_parsed() {
+    let py = "x: \"List[int]\" = []\ny = \"Dict[str, int]\"\n";
+    let rule = r#"
+.decl names(x: symbol)
+names(x) :- kind(s, "string"), parsed(s, "annotation", _), kind(i, "identifier"), guest_of(i, _), text(i, x).
+.output names
+"#;
+    let [names] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("guest-asked-only", &[("a.py", py)], rule, &["names"])).unwrap();
+    assert_eq!(names, [["List"], ["int"]], "only the annotation is parsed: {names:?}");
+}
+
 /// `.on guest_error`: a guest that does not parse is withheld (skip, the default) or keeps its partial tree, and
 /// `report` gives a finding at its line in the host; the host's own `.on syntax_error` does not see it.
 #[test]

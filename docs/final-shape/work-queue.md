@@ -5475,3 +5475,14 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
   measure how often `finish` grows the room on hogql and PostHog first.
 - **Done when**: no tape of the PostHog corpus is copied by `finish`, and a test with a table past 256 codes holds R4.
 
+### Q261. No guest documents: guests are tape values the rules make and keep (decision 0431)
+
+- **Asked** (2026-11-18, the user): "there are no guest documents. The CPU and GPU run on exactly the same data";
+  the rules decide which strings are parsed (annotations, maybe format strings), and what they make is kept as the
+  program's facts.
+- **Measured before** (PostHog cold, M3, 1ca497070): guests 32.1 s CPU (CPU binding) and 34.4 s (Metal), of which
+  the batch built again with guests 18.4 s (216 builds) and 13.7 s (402); the embed slice's rounds 10.9 s and 18.1 s.
+  Findings 29,747, fa0efeaed6ff.
+- **Steps**: 0431's five. Step 1 (the record and the R1–R4 tests, ignored) is done.
+- **Done when**: R1–R8 hold, their tests pass unignored, no guest document, key range, embed slice or batch rebuild
+  is left, and PostHog's findings are unchanged on CPU and Metal.
