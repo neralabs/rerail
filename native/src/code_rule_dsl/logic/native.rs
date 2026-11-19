@@ -19,6 +19,7 @@
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
 pub mod setfix;
+pub mod width;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use setfix::DERIVATIONS;
 pub use setfix::{forget_engine, forget_scope};

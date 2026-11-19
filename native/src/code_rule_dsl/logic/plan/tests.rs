@@ -123,6 +123,41 @@ fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
     }
 }
 
+/// Decision 0394: a derived relation past the width cap stops the run, its error naming the relation and the rule
+/// deriving it; under `RERAIL_WIDEST=cut` the run goes on with the relation cut there, and says so at its end.
+#[test]
+fn a_relation_past_the_width_cap_stops_the_run_or_is_cut() {
+    use super::super::native::width;
+    let facts: String = (1..=100).map(|i| format!("l({i}).\nr({i}).\n")).collect();
+    let p = parse(&format!(".decl l(x:number)\n.decl r(x:number)\n{facts}.decl pairs(x:number,y:number)\npairs(x, y) :- l(x), r(y).\n.output pairs\n")).unwrap();
+    let run = || {
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        // The native strata (`program`), as a corpus run's: the SQL strata's inserts are bounded by the memory ceiling.
+        run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), "program")
+    };
+    width::forget_cuts();
+    width::set_for_tests(Some(1_000), Some(false));
+    let stopped = run();
+    width::set_for_tests(Some(1_000), Some(true));
+    let cut = run();
+    let report = width::cut_report();
+    width::set_for_tests(None, None);
+    width::forget_cuts();
+    let error = stopped.err().expect("a relation past the cap stops the run").to_string();
+    assert!(error.contains("`pairs` reached 1000 rows") && error.contains("l(") && error.contains("r("), "the error names the relation and its rule: {error}");
+    let out = cut.expect("cut, the run goes on");
+    let kept = out.shown()["pairs"].len();
+    assert!(kept > 0 && kept <= 1_000, "the rows made before the cap are kept, none past it: {kept}");
+    let report = report.expect("a cut is reported at the end");
+    assert!(report.contains("`pairs`") && report.contains("derived by pairs(") && report.contains("l("), "the report names the relation and its rule: {report}");
+}
+
 /// Whether this process numbers nodes in preorder, as T's facts and outputs do (`RERAIL_NODE_IDS=preorder`). The
 /// tests that compare with T run only then: under ids per definition (the default, decision 0094 §2a) a program that
 /// orders nodes reads `node_order`, which T's facts do not have, and outputs show ids as `slot.index`.

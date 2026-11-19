@@ -36,6 +36,10 @@ const FACT_STORE: &[&str] = &[
     "store_state",
     // The store's identity (RER-131): its atoms and connections belong to this store only.
     "store_identity",
+    // The segment files that hold objects and frames, by number, and the guests' keys (decision 0391).
+    "object_segments",
+    "frame_segments",
+    "guest_keys",
     "push_pending",
     "rows",
     "git_alias",
@@ -190,6 +194,28 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
     // The rule being compiled: the step that first bound each slot, for a refusal's message.
     ("code_rule_dsl/logic/native/setfix/device.rs", "BINDER"),
+    // Decision 0394: the relations a run cut at the width cap, for the failure it ends with, and the widest relations
+    // seen, for the memory ceiling's message (read by its watch thread). Messages only: no result reads them.
+    ("code_rule_dsl/logic/native/width.rs", "CUT"),
+    ("code_rule_dsl/logic/native/width.rs", "WIDEST"),
+    // Settings and measurement or debugging aids, read once or written as a run goes: a file appended to
+    // (`RERAIL_PREPARED_WHY`), the heap's span (`RERAIL_HEAP_AT`), the exports a debugging run counts by document
+    // (`RERAIL_KEPT_DOCS`), and the trees a thread decoded (a count, for the check that a run decodes none).
+    ("code_rule_dsl/logic/plan/prepared.rs", "LOG"),
+    ("code_rule_dsl/logic/profile/memory.rs", "AT"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_DOCS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_ROWS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "COUNTING"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "LISTED"),
+    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
+    // The rule being compiled for the device: its component's columns that hold arena texts (decision 0307).
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
+    // What registers at load: the world's files with the answerers installed, and the record's kinds' applies.
+    ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
+    ("content_store/record.rs", "KINDS"),
+    // The stores forgotten, by path and file, so a frames job neither reads nor sweeps them again; a test's log.
+    ("content_store/upkeep.rs", "GONE"),
+    ("content_store/record.rs", "LOG"),
     // This thread's run's binding (CPU or Metal).
     ("code_rule_dsl/logic/plan/placement.rs", "DEVICE"),
     // Profiling: the placements a recording run made, and the writer's jobs by kind.
@@ -401,7 +427,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "COMBINED", "2"),
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
     ("code_rule_dsl/logic/plan/choices.rs", "KEPT", "2"),
-    ("code_rule_dsl/logic/plan/corpus/guests.rs", "KEPT", "3"),
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
@@ -421,7 +446,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 24;
+const NOT_YET_MAPS_PIN: usize = 22;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")

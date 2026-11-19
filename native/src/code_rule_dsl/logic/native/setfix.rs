@@ -1179,7 +1179,8 @@ enum Body { Sql(String), Join(JoinRule), Unplanned }
 /// again).
 /// `budget`: the work (steps entered) the probe may still do before it is cut (decision 0206), set by the stratum's
 /// driver; none, no limit.
-struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Arc<JoinSpec>>, budget: std::cell::Cell<Option<u64>> }
+/// `full`: its head reached the width cap under `RERAIL_WIDEST=cut` (decision 0394): it derives no more this run.
+struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Arc<JoinSpec>>, budget: std::cell::Cell<Option<u64>>, full: std::cell::Cell<bool> }
 
 pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
@@ -1832,8 +1833,8 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
                 rel.stored = if matches!(start, Start::Base { .. }) { 0 } else { rel.n };
                 rels.push(rel);
             }
-            Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Sql(sql.clone()), whole: None, wkey: None, budget: Default::default() }),
-            Line::Unplanned { head, delta } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Unplanned, whole: None, wkey: None, budget: Default::default() }),
+            Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Sql(sql.clone()), whole: None, wkey: None, budget: Default::default(), full: Default::default() }),
+            Line::Unplanned { head, delta } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Unplanned, whole: None, wkey: None, budget: Default::default(), full: Default::default() }),
             Line::Device => device_wanted = solver().is_some(),
             Line::Leveled(rels) => { leveled = true; cyclic.extend(rels.iter().copied()); }
             Line::KeptOld => kept_old = true,
@@ -1845,7 +1846,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             Line::Seed { head, join } => {
                 let j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, join, &mut syms, !device_wanted)? };
                 if device_wanted { seed_specs.push((probes.len(), join.clone())); }
-                probes.push(ProbeRule { head: *head, delta: SEED, body: Body::Join(j), whole: None, wkey: None, budget: Default::default() });
+                probes.push(ProbeRule { head: *head, delta: SEED, body: Body::Join(j), whole: None, wkey: None, budget: Default::default(), full: Default::default() });
             }
             Line::Remove { head, join } => maint.removes.push((*head, joins(join, &mut syms)?)),
             Line::AddChecked { head, join } => maint.adds.push((*head, joins(join, &mut syms)?)),
@@ -1864,7 +1865,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             Line::Join { head, delta, join, whole } => {
                 let w = match whole { Some(w) => Some(joins(w, &mut syms)?), None => None };
                 if device_wanted { delta_specs.push((probes.len(), join.to_text())); }
-                probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Join(joins(join, &mut syms)?), whole: w, wkey: whole.clone(), budget: Default::default() });
+                probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Join(joins(join, &mut syms)?), whole: w, wkey: whole.clone(), budget: Default::default(), full: Default::default() });
             }
             Line::Levels { cand, chk, held, gone, live } => levels.lines.push(LevelLine { cand: *cand, chk: *chk, held: *held, gone: *gone, live: *live,
                                                        seen: 0, decided: Vec::new(), batch: Vec::new(), order: Vec::new(), shown: 0, gone_rows: Vec::new(), was_dead: Vec::new() }),
@@ -2399,6 +2400,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         for (pi, p) in comp.probes.iter().enumerate() {
             if cut_at.is_some() { break; }
             let Body::Join(j) = &p.body else { continue };
+            if p.full.get() { continue; }
             let tp = Instant::now();
             if device_fixed { break; }
             if p.delta == SEED { if seeded || on_device { continue } }
@@ -2427,7 +2429,19 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 None => { CUTS[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed); None }
             }) } else { None };
             let mut limited = (budget.is_some() || only.is_some()).then(|| Limited { limit: Some(Limit { budget: budget.unwrap_or(u64::MAX), only }), spent: None });
-            let n = if p.delta == SEED { run_seed(j, p.head, store, &mut syms, &mut fresh, limited.as_mut())? } else { run_join_limited(j, p.head, store, &mut syms, &mut fresh, limited.as_mut())? };
+            let ran = if p.delta == SEED { run_seed(j, p.head, store, &mut syms, &mut fresh, limited.as_mut()) } else { run_join_limited(j, p.head, store, &mut syms, &mut fresh, limited.as_mut()) };
+            // Decision 0394: a head at the width cap. Cut, the probe keeps what it made and derives no more; else the
+            // run stops, its error naming the relation and the probe (the driver adds its rule).
+            let n = match ran {
+                Ok(n) => n,
+                Err(e) if super::width::as_too_wide(&e).is_some() => {
+                    if !super::width::cutting() { return Err(super::width::with_rules(e, |t| vec![format!("probe {pi} of {name} (head `{t}`)")])); }
+                    p.full.set(true);
+                    super::width::note_cut(&store.rels[p.head].table, &name, pi);
+                    0
+                }
+                Err(e) => return Err(e),
+            };
             if let Some(b) = budget && let Some(spent) = limited.and_then(|l| l.spent) {
                 p.budget.set(Some(b.saturating_sub(spent.work)));
                 if let Some(left) = spent.left {
@@ -2460,6 +2474,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
         // Edge rules, natively.
         let (mut slots, mut bound, mut key): (Vec<i64>, Vec<bool>, Vec<i64>) = (Vec::new(), Vec::new(), Vec::new());
+        // Decision 0394: an edge rule's head at the width cap takes no more rows; the run stops after the edges, or
+        // goes on with the relation cut (`RERAIL_WIDEST=cut`).
+        let mut edge_full: Option<usize> = None;
         for rule in &comp.edges {
             slots.clear();
             slots.resize(rule.nslots, 0);
@@ -2485,6 +2502,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                         Term::Const(c) => *c,
                         Term::Cat(a, b) => cat(syms, slots[*a], slots[*b]),
                     }));
+                    if fresh[rule.head].n + store.rels[rule.head].n >= super::width::cap() { edge_full = Some(rule.head); return; }
                     fresh[rule.head].emitted += 1;
                     fresh[rule.head].offer(&row, &store.rels[rule.head]);
                 };
@@ -2499,6 +2517,11 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 }
             }
         }
+        if let Some(h) = edge_full {
+            let table = &store.rels[h].table;
+            if !super::width::cutting() { return Err(super::width::with_rules(super::width::too_wide(table, super::width::cap()), |t| vec![format!("an edge rule of {name} (head `{t}`)")])); }
+            super::width::note_cut_by(table, format!("an edge rule of {name}"));
+        }
         waves += 1;
         seeded = true;
         let mut any = false;
@@ -2510,6 +2533,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             let emitted = f.emitted;
             let big = f.n >= SPANNED_ROWS;
             any |= { let _s = big.then(|| crate::code_rule_dsl::logic::profile::span(|| "a wave's rows settled (Fresh::settle)".into())); rel.push_fresh(f, gates_done.contains(&r)) };
+            super::width::note_rows(&rel.table, rel.n);
             if counting && emitted > 0 {
                 let mut all = DERIVATIONS.lock().unwrap();
                 let e = all.entry(rel.table.clone()).or_default();
@@ -6762,8 +6786,12 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             }
             cx.n += 1;
             if let Some(c) = &mut cx.collect { c.extend_from_slice(&cx.row); return; }
+            // Decision 0394: no relation past the width cap. Its rows and those this walk made (an upper bound: some
+            // may repeat) stop at it; the run stops or cuts the probe (`width`), never fills memory.
+            let rel = &store.rels[cx.head];
+            if cx.fresh[cx.head].n + rel.n >= super::width::cap() { cx.error = Some(super::width::too_wide(&rel.table, super::width::cap())); return; }
             cx.fresh[cx.head].emitted += 1;
-            cx.fresh[cx.head].offer(&cx.row, &store.rels[cx.head]);
+            cx.fresh[cx.head].offer(&cx.row, rel);
             return;
         };
         /// The candidates: an input's index on exactly the key columns, a component relation's composite index, or
@@ -7335,7 +7363,12 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             if cx.error.is_none() { cx.error = out.error; }
             match cx.collect.as_deref_mut() {
                 Some(c) => c.extend_from_slice(&out.rows),
-                None => cx.fresh[head].absorb(out.fresh),
+                None => {
+                    cx.fresh[head].absorb(out.fresh);
+                    // Each morsel checked the cap on its own rows (decision 0394): together they are checked again.
+                    let rel = &cx.store.rels[head];
+                    if cx.error.is_none() && cx.fresh[head].n + rel.n > super::width::cap() { cx.error = Some(super::width::too_wide(&rel.table, super::width::cap())); }
+                }
             }
         }
         cx.counts[0][0].set(cx.counts[0][0].get() + 1);

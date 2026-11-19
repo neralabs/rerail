@@ -9386,8 +9386,27 @@ impl<'a> Run<'a, '_> {
             }
             let f: String = {
                 let _wave = super::lanes::wave::suspendable();
-                self.fx().run(&name, chunk as u32)?
+                // Decision 0394: a relation at the width cap stops the run; its error names each rule deriving it, in
+                // the order it ran, with the rows into and out of each step.
+                self.fx().run(&name, chunk as u32).map_err(|e| match e {
+                    Error::Sql(e) => Error::Sql(super::native::width::with_rules(e, |table| {
+                        line_bodies.iter().enumerate().filter(|(_, b)| b.rel(b.head()) == table).map(|(line, b)| {
+                            let order = if line < nseeds { &orders[line].1 } else { &probes[line - nseeds].2 };
+                            let steps = counted.get(line).map_or(String::new(), |c| format!(" (rows into, out of each step: {})", c.iter().map(|(i, o)| format!("{i}→{o}")).collect::<Vec<_>>().join(", ")));
+                            format!("{} :- {}.{steps}", b.head_text(), b.shown(order).join(", "))
+                        }).collect()
+                    })),
+                    e => e,
+                })?
             };
+            // Decision 0394: a probe cut at the width cap, named by its rule in the order it ran.
+            if super::native::width::any_cut() {
+                super::native::width::name_cuts(&name, |line| {
+                    let b = line_bodies.get(line)?;
+                    let order = if line < nseeds { orders.get(line).map(|o| &o.1)? } else { probes.get(line - nseeds).map(|p| &p.2)? };
+                    Some(format!("{} :- {}.", b.head_text(), b.shown(order).join(", ")))
+                });
+            }
             let f: Vec<&str> = f.split_whitespace().collect();
             // Each probe's milliseconds in this run, its first figure (always measured).
             if let Some(per) = f.get(7).filter(|_| f.len() == 9) {

@@ -2,6 +2,7 @@
 //! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
 
 pub use super::logic::profile::watch::watch;
+pub use super::logic::native::width::cut_report as width_cut_report;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings};
 pub use super::logic::settings::process_counters;

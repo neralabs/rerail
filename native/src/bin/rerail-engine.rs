@@ -11,6 +11,11 @@
 //!
 //! Every command takes `--memory-mb <n>` (the overall memory budget, 1 GB by default) and `--metal-mb <n>` (the Metal
 //! budget, on top of it: half the overall budget by default); `RERAIL_MEMORY_MB` and `RERAIL_METAL_MB` set them too.
+//!
+//! Runaways (decision 0394): a derived relation holds at most `RERAIL_WIDEST_ROWS` rows (50 M by default). Past it the
+//! run stops naming the relation's rules, or with `RERAIL_WIDEST=cut` keeps the rows so far, goes on, and exits 3.
+//! The process stops with exit code 3 past `RERAIL_MEMORY_MAX_MB` resident (three quarters of the machine's memory
+//! by default).
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -27,7 +32,14 @@ fn main() -> ExitCode {
     match rerail_engine::tools::cli(&args) {
         Ok(text) => {
             print!("{text}");
-            ExitCode::SUCCESS
+            // Decision 0394: a relation cut at the width cap (`RERAIL_WIDEST=cut`) left the results incomplete.
+            match rerail_engine::tools::width_cut_report() {
+                Some(report) => {
+                    eprintln!("rerail-engine: {report}");
+                    ExitCode::from(3)
+                }
+                None => ExitCode::SUCCESS,
+            }
         }
         Err(error) => {
             eprintln!("rerail-engine: {error}");
