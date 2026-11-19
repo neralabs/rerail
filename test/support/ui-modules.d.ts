@@ -237,7 +237,7 @@ declare module "*/ui/routes.js" {
   export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "merge";
   export interface Route {
     view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "steered" | "logged";
-    sessionFilter?: "all" | "corr" | "declined" | "open"; rule?: string; session?: string; jump?: boolean; conflict?: string;
+    sessionFilter?: "all" | "corr" | "declined"; rule?: string; session?: string; jump?: boolean; conflict?: string;
   }
   export function parseRoute(hash: string): Route;
   export function hashOf(route: Partial<Route>): string;

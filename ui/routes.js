@@ -5,17 +5,17 @@
  * (`sessionId=<id>`, with the `host` it ran in); every route keeps that scope. The hash names the view: `#overview`
  * (the default), `#pack/<packId>`, `#created` (rules created by you), `#packs` (the catalog), `#packs?review=1` (the
  * review before starting), `#create`, `#history` (`?rule=<id>` narrows it to one rule, `?outcome=steered|logged` sets
- * its chip), `#sessions` (`?filter=violations|declined|in-progress` sets its chip), `#settings`, `#merge` (Merge
- * Assist; `?conflict=<id>` brings that conflict into view, as the session's line links it), and `#rule/<id>`: a rule's
- * sheet over the current view (the coding agent's steer links here). Links from steers, the CLI and the status line
- * written before v8 keep working: `#rules` is Overview, `#activity` History, `#rule-packs` the catalog and
- * `#rule-packs?review=1` the review.
+ * its chip), `#sessions` (`?filter=violations|declined` sets its chip; an old `in-progress` opens All), `#settings`,
+ * `#merge` (Merge Assist; `?conflict=<id>` brings that conflict into view, as the session's line links it), and
+ * `#rule/<id>`: a rule's sheet over the current view (the coding agent's steer links here). Links from steers, the CLI
+ * and the status line written before v8 keep working: `#rules` is Overview, `#activity` History, `#rule-packs` the
+ * catalog and `#rule-packs?review=1` the review.
  */
 
 /**
  * @typedef {"overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "merge"} ViewName
  * @typedef {"all" | "steered" | "logged"} Outcome   History by rule's chips.
- * @typedef {"all" | "corr" | "declined" | "open"} SessionFilter History by session's chips: All, With violations, Declined steers, In progress.
+ * @typedef {"all" | "corr" | "declined"} SessionFilter History by session's chips: All, With violations, Declined steers.
  * @typedef {object} Route
  * @property {ViewName | null} view  `null` for a rule link: the sheet opens over whatever view shows.
  * @property {string} [pack]         The pack a `pack` route shows.
@@ -45,8 +45,8 @@ const encode = id => encodeURIComponent(id).replace(/%3A/gi, ":");
 /** History by rule's chips as the hash spells them; All has no parameter. */
 const OUTCOMES = { steered: true, logged: true };
 /** History by session's chips: the hash's word for each, and back. */
-const SESSION_FILTER_PARAM = { corr: "violations", declined: "declined", open: "in-progress" };
-const SESSION_FILTER = { violations: "corr", declined: "declined", "in-progress": "open" };
+const SESSION_FILTER_PARAM = { corr: "violations", declined: "declined" };
+const SESSION_FILTER = { violations: "corr", declined: "declined" };
 /** `table[key]` for a key the table itself holds; a URL's text never reaches inherited names like "constructor". */
 const own = (table, key) => (typeof key === "string" && Object.hasOwn(table, key) ? table[key] : undefined);
 

@@ -13,7 +13,7 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   many of its conflicts are open and not quiet, Settings).
 - `routes.js` holds the routes as pure functions of the URL: `#overview`, `#pack/<id>`, `#created`, `#packs`,
   `#packs?review=1`, `#create`, `#history` (`?rule=<id>`, and `?outcome=steered|logged` for its chip), `#sessions`
-  (`?filter=violations|declined|in-progress` for its chip), `#settings`, `#merge` (`?conflict=<id>` brings that conflict
+  (`?filter=violations|declined` for its chip), `#settings`, `#merge` (`?conflict=<id>` brings that conflict
   into view, as the session's line links it) and `#rule/<id>`, and the links from before v8 (`#rules`, `#activity`,
   `#rule-packs`). `shell.js` applies them and holds what every view shares: render on demand, the toast and clipboard,
   the theme, the writes, opening and closing the sheet, navigation.

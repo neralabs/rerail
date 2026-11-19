@@ -20,7 +20,8 @@ describe("a hash", () => {
     ["#sessions", { view: "sessions" }],
     ["#sessions?filter=violations", { view: "sessions", sessionFilter: "corr" }],
     ["#sessions?filter=declined", { view: "sessions", sessionFilter: "declined" }],
-    ["#sessions?filter=in-progress", { view: "sessions", sessionFilter: "open" }],
+    // In progress is no longer a chip: an old link to it opens All.
+    ["#sessions?filter=in-progress", { view: "sessions" }],
     ["#sessions?filter=nonsense", { view: "sessions" }],
     ["#settings", { view: "settings" }],
     ["#merge", { view: "merge" }],
@@ -69,7 +70,6 @@ describe("a hash", () => {
     { view: "sessions" },
     { view: "sessions", sessionFilter: "corr" },
     { view: "sessions", sessionFilter: "declined" },
-    { view: "sessions", sessionFilter: "open" },
     { view: "settings" },
     { view: "merge" },
     { view: "merge", conflict: "conflict:native/src/model.rs#matchers:ab12" },

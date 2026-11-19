@@ -137,27 +137,20 @@ function updateEvent(node, ev) {
 function createCorr(item) {
   return h("div.corr", { id: `c-${item.key}`, "data-key": item.key },
     h("div.ch", null, h("b"), h("span.mono"), h("span.badge.outcome"),
-      h("button.badge.declined", { hidden: true, "data-act": "declinetoggle", "aria-expanded": "false" }, "Declined", chevron(8)),
+      h("span.badge.declined", { hidden: true, title: "The coding agent didn’t follow this steer and recorded why with rerail feedback." }, "Declined"),
       h("div.act", null, h("button.btn.sm.ghost", { "data-act": "detail" }, "Open rule"))),
     h("dl.beats", null, h("dt.nera", null, "Rerail said"), h("dd.said"),
       h("dt.reason", { hidden: true }, "Agent said"), h("dd.reason", { hidden: true }),
       h("dt.where", null, "Where"), h("dd.where", null, h("code"))));
 }
 
-/**
- * A declined steer's badge, which opens the agent's reasons (one per line) under Rerail's message: folded by default,
- * so the card is as tall as any other. Hidden for a card no note answers.
- */
-function updateDeclined(node, key, reasons) {
-  const declined = reasons !== null, open = declined && ui.openDeclines.has(key);
-  const badge = node.querySelector(".badge.declined");
-  setAttr(badge, "hidden", !declined);
-  setAttr(badge, "data-i", key);
-  setAttr(badge, "aria-expanded", String(open));
-  setAttr(badge, "title", open ? "Hide the coding agent’s reason" : "The coding agent didn’t follow this steer. Show its reason.");
-  setAttr(node.querySelector("dt.reason"), "hidden", !open);
+/** A declined steer's badge and the agent's reasons under Rerail's message, one per line; hidden for a card no note answers. */
+function updateDeclined(node, reasons) {
+  const declined = reasons !== null;
+  setAttr(node.querySelector(".badge.declined"), "hidden", !declined);
+  setAttr(node.querySelector("dt.reason"), "hidden", !declined);
   const said = node.querySelector("dd.reason");
-  setAttr(said, "hidden", !open);
+  setAttr(said, "hidden", !declined);
   setText(said, declined ? reasons.join("\n") : "");
 }
 
@@ -178,7 +171,7 @@ function updateCorr(node, item) {
   const badge = node.querySelector(".badge.outcome");
   setText(badge, result === "logged" ? "Logged" : "Steered");
   setAttr(badge, "title", result === "logged" ? "Rerail recorded it; the coding agent wasn’t told." : "Rerail told the coding agent.");
-  updateDeclined(node, c.key, c.declined);
+  updateDeclined(node, c.declined);
   setAttr(node.querySelector("[data-act=detail]"), "data-i", f.ruleId);
   setAttr(node.querySelector("[data-act=detail]"), "hidden", c.rule === null);
   setText(node.querySelector(".said"), f.message);

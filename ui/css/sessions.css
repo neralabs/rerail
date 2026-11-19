@@ -131,11 +131,8 @@ body[data-panel="open"] .sess > aside{display:none}
 .beats dt{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);padding-top:2px}
 .beats dt.nera{color:var(--brand-foreground)}
 .beats dd{margin:0}
-/* A declined steer: its red badge beside the outcome's opens the agent's reasons, one per line, however long a word. */
+/* A declined steer: its red badge beside the outcome's, and the agent's reasons, one per line, however long a word. */
 .corr .badge.declined{background:var(--danger-subtle);color:var(--danger-foreground)}
-.corr .badge.declined:hover{box-shadow:inset 0 0 0 1px var(--fail-border)}
-.corr .badge.declined svg{transition:transform .15s}
-.corr .badge.declined[aria-expanded="true"] svg{transform:rotate(90deg)}
 .beats dt.reason{color:var(--danger-foreground)}
 .beats dd.reason{white-space:pre-line;overflow-wrap:anywhere}
 .evt{margin-left:58px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);margin-top:4px;overflow:hidden}

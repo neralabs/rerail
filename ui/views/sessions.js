@@ -1,6 +1,6 @@
 /**
  * History, by session (`#sessions`, `?sessionId=<id>&host=<agent>` selects one): the repository's coding agent
- * sessions by day (All · With violations · Declined steers · In progress, `?filter=`), and the selected one's
+ * sessions by day (All · With violations · Declined steers, `?filter=`), and the selected one's
  * transcript with the violations Rerail logged and steered in it and the steers the coding agent declined with its
  * reasons, filtered to one rule from its dropdown in either Show all events state.
  */
@@ -8,7 +8,7 @@ import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from
 import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId, truncate } from "../format.js";
 import { data, ui, repoName, titleOf as ruleTitle, packRuleOf } from "../state.js";
 import { ensureTitle, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier } from "../poll.js";
-import { sessionTurns, sessionCorrections, sessionViolationTotal, sessionDeclinedTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen, violationCounts } from "../sessions-model.js";
+import { sessionTurns, sessionCorrections, sessionViolationTotal, sessionDeclinedTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, violationCounts } from "../sessions-model.js";
 import { copyText, invalidate, loadMore, renderNow, toast } from "../shell.js";
 import { renderTimeline, jumpTo, placeTicks } from "../render/timeline.js";
 
@@ -98,8 +98,7 @@ function build() {
   el.chips = h("div.chips", { style: "margin-bottom:8px" },
     h("button.chip", { "data-act": "sfilter", "data-i": "all" }, "All"),
     h("button.chip", { "data-act": "sfilter", "data-i": "corr" }, "With violations"),
-    h("button.chip", { "data-act": "sfilter", "data-i": "declined" }, "Declined steers"),
-    h("button.chip", { "data-act": "sfilter", "data-i": "open" }, "In progress"));
+    h("button.chip", { "data-act": "sfilter", "data-i": "declined" }, "Declined steers"));
   el.list = h("div.srows");
   el.listBox = h("div.list.slist", null, h("div.slhead", null, h("span", null, "Session"), h("span", null, "Violations")), el.list);
   el.listEmpty = h("div.empty", { hidden: true }, h("p", null, "No sessions match."));
@@ -217,7 +216,6 @@ export function render(root) {
 function passesFilter(s) {
   if (ui.sessFilter === "corr") return s.violationCount > 0;
   if (ui.sessFilter === "declined") return violationCounts(s).declined > 0;
-  if (ui.sessFilter === "open") return isOpen(s);
   return ui.sessFilter === "all";
 }
 
@@ -254,7 +252,8 @@ function renderList(all, sess) {
   for (const c of v.chips.children) setAttr(c, "aria-pressed", String(c.dataset.i === ui.sessFilter));
 
   if (sess.sessionId !== revealed) { revealed = sess.sessionId; ui.openDays.add(dayKey(daysAgo(sess.startedAt))); }
-  const items = groupByDay(visible).flatMap(g => groupItems(g, q !== ""));
+  // A chip or a search opens every day group, so what it matches shows instead of hiding in a folded day.
+  const items = groupByDay(visible).flatMap(g => groupItems(g, narrowed));
   syncChildren(v.list, items, i => i.key, createListItem, updateListItem);
   setAttr(v.listEmpty, "hidden", items.length > 0);
   const more = data.sessions.next !== null;
@@ -393,7 +392,6 @@ export const actions = {
     invalidate();
   },
   foldtoggle: id => { toggleSet(ui.openFolds, id); invalidate(); },
-  declinetoggle: id => { toggleSet(ui.openDeclines, id); invalidate(); },
   showall: () => { ui.showAll = true; invalidate(); },
   sfilter: id => { ui.sessFilter = id; invalidate(); },
   daytoggle: id => { toggleSet(ui.openDays, id); invalidate(); },
