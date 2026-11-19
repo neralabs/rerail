@@ -67,7 +67,17 @@ async function readableByOthers(path: string): Promise<boolean> {
   const sddl = execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:ACL_PATH).Sddl"], {
     encoding: "utf8", env: { ...process.env, ACL_PATH: path },
   });
-  return /\(A;(?![^;]*IO)[^)]*;(?:BU|AU|WD)\)/u.test(sddl);
+  return [...sddl.matchAll(/\(A;([^;]*);([^;]*);;;(?:BU|AU|WD)\)/gu)].some(([, flags = "", rights = ""]) => !flags.includes("IO") && readsData(rights));
+}
+
+/**
+ * Whether an entry's rights let its account read a file or list a folder: FILE_READ_DATA (bit 0x1), GENERIC_READ or
+ * GENERIC_ALL, or a code carrying one. An entry that lets other accounts only pass through a records folder and make
+ * a folder of their own there reads nothing.
+ */
+function readsData(rights: string): boolean {
+  if (rights.startsWith("0x")) return (Number.parseInt(rights.slice(2), 16) & 0x9000_0001) !== 0;
+  return (rights.match(/[A-Z]{2}/gu) ?? []).some(code => ["FA", "FR", "GA", "GR", "CC"].includes(code));
 }
 
 /**
