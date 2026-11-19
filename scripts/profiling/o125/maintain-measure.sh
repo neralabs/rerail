@@ -23,7 +23,8 @@ cp -R $IN/o125-replay/00 $W
 export RERAIL_JOURNAL=off RERAIL_SQL_STRICT=1 RERAIL_DEVICE=cpu RERAIL_RR_LIB=$PWD/docs/rule-syntax/lib RERAIL_KEPT_BYTES=1 RERAIL_MODE_TRACE=1
 export RERAIL_COSTS=$OUTA/costs.sqlite RERAIL_IMAGE_STORE=$OUTA/images
 POLICY=$INA/${POLICY_NAME:-calls-policy.rr}
-steps=(00 $(seq 1 $((10#$LAST)) | xargs printf "%02d\n"))
+# BSD seq counts down (`seq 1 0` is "1 0"): LAST=00 is step 00 alone.
+steps=(00); [ $((10#$LAST)) -gt 0 ] && steps+=($(seq 1 $((10#$LAST)) | xargs printf "%02d\n"))
 apply() {  # the files step $1 changed, and those it removed
   rsync -rlpc --exclude .deleted $IN/o125-replay/$1/ $W/
   while read f; do [ -n "$f" ] && mv $W/$f /tmp/ai-trash/mm-$$-$(echo $f | tr / _) 2>/dev/null || true; done < $IN/o125-replay/$1/.deleted

@@ -739,6 +739,12 @@ base rows now include `ast_depth`, R6's measure key (step 10), which is this wor
 apart. By the recorded runs, cold went from 307 G (2026-11-17) to 323 G at step 1 (stages 2-6, 2026-11-18) and to
 about 361 G after the hub's merge (step 12): most of the rise came with the merge.
 
+Two of it are fixed since. The chunks' sets of the values their exports and held base relations name
+(`mentioned`, `held_nodes`, R6's key) were `std` hash sets, hashed with SipHash a value at a time; they are Fx sets
+now. With step 20's change beside it, cold O125 step 00 is 343.5 G (from 350.5 G, the same 8,721 findings). The
+inputs' frames and the kept facts written beside each (0401 step 6), about 1.5 s of a cold run, go when the frames
+are retired (the branches being aligned).
+
 ## Step 19: a new process's input deltas are views of ids, not copied rows
 
 A changed input's delta was rows copied into new relations: each side's rows read into hash sets of `Vec<i64>`, their
