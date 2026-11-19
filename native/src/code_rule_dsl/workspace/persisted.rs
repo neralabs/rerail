@@ -370,7 +370,9 @@ pub(super) fn restore_persisted_file(
             })
         })
         .collect::<Option<Vec<_>>>();
-    file.selector_skipped = lookups.is_some_and(|lookups| {
+    // The kept presence of the file's tape decides where it can (decision 0434 step 6, part 3); else the search index.
+    let by_presence = presence_selects(stored_documents, source_hash, grammar_id, file, code_rules);
+    file.selector_skipped = by_presence.unwrap_or_else(|| lookups.is_some_and(|lookups| {
         !lookups.is_empty()
             && store
                 .get_search_kind_presence_bulk(&lookups)
@@ -379,7 +381,7 @@ pub(super) fn restore_persisted_file(
                         matches!(selection, crate::content_store::StoredKindPresence::Absent)
                     })
                 })
-    });
+    }));
     if file.selector_skipped {
         for &id in &file.candidates.ast {
             file.witnesses.insert(id, Vec::new());
@@ -388,6 +390,36 @@ pub(super) fn restore_persisted_file(
     }
     documents::attach_stored_tape(store, tape_id, derived, file, &grammar);
     Ok(())
+}
+
+/// Whether the store's kept presence of the file's tape (decision 0434 step 6, part 3), read in place, rules out every
+/// candidate clause: none of a clause's root kinds is in the tape, as the search index's `Absent` says. A tape with an
+/// error node (its `ERROR_CODE` kind's bit) rules out none, as the index's syntax errors do not. `None` where the
+/// presence cannot tell and the search index is asked: no presence kept for the tape, a clause over a derived
+/// document (whose tape's presence is not kept), a clause with project evidence, or one with no root kinds.
+fn presence_selects(stored: &documents::StoredDocuments, source_hash: HashKey, grammar_id: i64, file: &FileState, code_rules: &[Arc<CompiledCodeRule>]) -> Option<bool> {
+    use crate::code_rule_dsl::build_ids::grammar_version;
+    let space = stored.presences.as_ref()?;
+    let key = crate::code_rule_dsl::facts::core::tape_key(&source_hash.sha256_bytes()?, grammar_id, grammar_version(), i64::from(tape::formats::stored_version()));
+    let presence = tape::TapePresence::Kept(tape::KeptPresence::find(space, &key, u8::try_from(grammar_id).ok()?)?);
+    if presence.has_kind(tape::ERROR_CODE) {
+        return Some(false);
+    }
+    for &id in &file.candidates.ast {
+        let clause = &code_rules[id.0].clauses[id.1];
+        if !clause.violation.project.is_empty() {
+            return None;
+        }
+        let matcher = candidate_grammar(&code_rules[id.0], id.1, &file.input);
+        if matcher.document.is_some() {
+            return None;
+        }
+        // An error root is always possible (`TapeDoc::may_have_kind`).
+        if matcher.anchors.root_kinds()?.iter().any(|&kind| kind == tape::ERROR_SYMBOL || presence.has_kind(kind)) {
+            return Some(false);
+        }
+    }
+    Some(!file.candidates.ast.is_empty())
 }
 
 /// The tape whose selector index tells whether a clause over `via`'s program has a witness root
@@ -810,6 +842,16 @@ pub(super) fn persist_files(
     };
     if closed.load(Ordering::Acquire) {
         return Err(invalid("policy workspace is closed"));
+    }
+    // Each stored tape's presence, kept with it behind the publication (decision 0434 step 6, part 3): a later
+    // batch's selector reads it in place (`presence_selects`).
+    for (file, _, _, grammar_id, _, _) in &prepared {
+        if let Some((_, image)) = &file.tape {
+            use sha2::Digest as _;
+            let digest: [u8; 32] = sha2::Sha256::digest(file.input.source.as_bytes()).into();
+            let key = crate::code_rule_dsl::facts::core::tape_key(&digest, *grammar_id, grammar_version(), i64::from(tape::formats::stored_version()));
+            crate::code_rule_dsl::facts::core::queue_presence(&storage.store, &key, &image.primary);
+        }
     }
     #[cfg(any(test, feature = "test-hooks"))]
     if let Some(published) = AFTER_FILES_PUBLISHED.take() {

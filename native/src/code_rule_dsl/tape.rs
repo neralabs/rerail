@@ -425,9 +425,11 @@ unsafe impl Send for KeptPresence {}
 unsafe impl Sync for KeptPresence {}
 
 impl KeptPresence {
-    /// The presence the store keeps for the tape queued under `tape` (its write-back key), of language `lang`, in the
-    /// presence space `space` (`kept_facts::presence`); `None` when it keeps none, or one of another shape.
-    pub fn find(space: &Arc<crate::content_store::kept_facts::KeptSpace>, tape: &crate::content_store::write_back::Key, lang: &rerail_tape_format::f16::Lang) -> Option<KeptPresence> {
+    /// The presence the store keeps for the tape queued under `tape` (its write-back key), of the language of tape tag
+    /// `tag`, in the presence space `space` (`kept_facts::presence`); `None` when it keeps none, or one of another
+    /// shape.
+    pub fn find(space: &Arc<crate::content_store::kept_facts::KeptSpace>, tape: &crate::content_store::write_back::Key, tag: u8) -> Option<KeptPresence> {
+        let lang = rerail_tape_format::f16::lang(tag)?;
         let rows = crate::content_store::kept_facts::presence::find(space, tape)?;
         let (kind_words, field_words) = lang.presence_words();
         let words = kind_words + field_words;

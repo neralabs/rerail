@@ -4125,6 +4125,53 @@ fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
     narrowed.close();
 }
 
+/// Decision 0434 step 6, part 3: with no search index built, a stored file is skipped by its tape's kept presence,
+/// read in place: `plain.py` has no lambda and no error node; `broken.py`'s error node keeps it decoded, as the
+/// index's syntax errors do; the results are a fresh workspace's.
+#[test]
+fn kept_presences_skip_only_error_free_tapes_that_cannot_match() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("presences");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let file =
+        |path: &str, source: &str| json!({ "path": path, "language": "python", "source": source });
+    let files = json!([
+        file("lambda.py", "f = lambda: 1\n"),
+        file("plain.py", "value = 1\n"),
+        file("broken.py", "value = (\n"),
+    ]);
+    // Store the tapes, and their presences with them; no selector index is built.
+    let first = stored_workspace(&store, "/presences-first", &print_code_rule());
+    apply_json(&first, 1, files.clone());
+    first.close();
+    store.written().unwrap();
+    let lambdas = compile(
+        "lambdas",
+        json!([{
+            "id": "lambda",
+            "violation": { "anchor": "witness.span", "code": "L", "message": "lambda" },
+            "forbid": { "ast": { "language": "python", "rule": { "kind": "lambda" } } }
+        }]),
+    );
+    let narrowed = stored_workspace(&store, "/presences-second", &lambdas);
+    let applied = apply_json(&narrowed, 1, files.clone());
+    let mut unstored = CodeRuleDslWorkspace::new();
+    unstored.add_code_rule(&lambdas, None).unwrap();
+    let fresh = apply_json(&unstored, 1, files);
+    unstored.close();
+    for key in ["violations", "failures"] {
+        assert_eq!(applied["evaluation"][key], fresh["evaluation"][key], "{key}");
+    }
+    assert_eq!(located(&applied["evaluation"]["violations"]).len(), 1);
+    let skipped = |workspace: &CodeRuleDslWorkspace, path: &str| {
+        workspace.state.lock().unwrap().files[path].selector_skipped
+    };
+    assert!(skipped(&narrowed, "plain.py"), "no lambda, no error node: skipped by its presence");
+    assert!(!skipped(&narrowed, "broken.py"));
+    assert!(!skipped(&narrowed, "lambda.py"));
+    narrowed.close();
+}
+
 /// A Next package with no server graph (one of its folders cannot be read on disk, or a file set
 /// holds more sources than `module_graph::MAX_GRAPH_FILES`) gives its files no membership:
 /// neither `serverGraph: true` nor `serverGraph: false` holds, rather than every file outside.

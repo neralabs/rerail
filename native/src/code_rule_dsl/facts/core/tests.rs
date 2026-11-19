@@ -157,7 +157,7 @@ fn a_stored_tape_is_given_the_presence_its_writer_made() {
     let key = tape_key(&digest, tag, gv, fv);
     let lang = rerail_tape_format::f16::lang(tag as u8).unwrap();
     let space = Arc::new(cache.kept_space(&crate::content_store::kept_facts::presence::presence_space()).unwrap().expect("the store keeps the presences"));
-    let kept = TapePresence::Kept(KeptPresence::find(&space, &key, lang).expect("the tape's presence, kept"));
+    let kept = TapePresence::Kept(KeptPresence::find(&space, &key, tag as u8).expect("the tape's presence, kept"));
     let kinds = lang.presence_words().0 * 64;
     assert!(made.doc.iter().any(|w| *w != 0), "a document has kinds");
     for kind in 0..kinds as u16 {

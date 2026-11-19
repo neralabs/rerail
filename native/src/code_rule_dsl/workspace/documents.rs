@@ -166,6 +166,9 @@ impl DocumentCache {
 pub(super) struct StoredDocuments {
     pub(super) objects: HashMap<HashKey, StoredSourceObjects>,
     pub(super) derived: HashMap<TapeId, Vec<StoredDocument>>,
+    /// The store's kept tape presences (decision 0434 step 6, part 3), mapped once for the batch: a stored file's
+    /// selector reads its tape's there, in place.
+    pub(super) presences: Option<Arc<crate::content_store::kept_facts::KeptSpace>>,
 }
 
 pub(super) fn prefetch(store: &ContentStore, sources: &[HashKey]) -> Result<StoredDocuments> {
@@ -183,7 +186,9 @@ pub(super) fn prefetch(store: &ContentStore, sources: &[HashKey]) -> Result<Stor
     let derived = store
         .file_documents_bulk(&tapes)
         .map_err(|error| invalid(error.to_string()))?;
-    Ok(StoredDocuments { objects, derived })
+    // A store that cannot map them selects by its search index alone, as before they were kept.
+    let presences = store.kept_space(&crate::content_store::kept_facts::presence::presence_space()).ok().flatten().map(Arc::new);
+    Ok(StoredDocuments { objects, derived, presences })
 }
 
 /// The documents the store keeps for one file: its tape `tape_id` and the documents `derived`

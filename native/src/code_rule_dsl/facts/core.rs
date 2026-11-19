@@ -272,7 +272,7 @@ fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crat
 
 /// The presence `image`'s writer made, kept by the store with the tape queued under `key` (decision 0434 step 6,
 /// part 3): its words, and the presence itself for a read of it before the store writes it.
-fn queue_presence(cache: &crate::content_store::ContentStore, key: &crate::content_store::write_back::Key, image: &crate::code_rule_dsl::tape::TapeImage) {
+pub fn queue_presence(cache: &crate::content_store::ContentStore, key: &crate::content_store::write_back::Key, image: &crate::code_rule_dsl::tape::TapeImage) {
     if let Some(crate::code_rule_dsl::tape::TapePresence::Made(p)) = &image.presence {
         let words = p.doc.iter().chain(&p.blocks).map(|&w| w as i64).collect();
         cache.queue_presence(key, words, Arc::clone(p) as crate::content_store::write_back::Held);
@@ -284,10 +284,9 @@ fn queue_presence(cache: &crate::content_store::ContentStore, key: &crate::conte
 fn with_presence(mut image: crate::code_rule_dsl::tape::TapeImage, cache: &crate::content_store::ContentStore, key: &crate::content_store::write_back::Key, presences: Option<&Arc<crate::content_store::kept_facts::KeptSpace>>, tag: i64) -> crate::code_rule_dsl::tape::TapeImage {
     use crate::code_rule_dsl::tape::{KeptPresence, TapePresence};
     if image.presence.is_none() {
-        let lang = u8::try_from(tag).ok().and_then(rerail_tape_format::f16::lang);
         image.presence = presences
-            .zip(lang)
-            .and_then(|(space, lang)| KeptPresence::find(space, key, lang))
+            .zip(u8::try_from(tag).ok())
+            .and_then(|(space, tag)| KeptPresence::find(space, key, tag))
             .map(TapePresence::Kept)
             .or_else(|| cache.queued_presence::<rerail_tape_format::f16::Presence>(key).map(TapePresence::Made));
     }
