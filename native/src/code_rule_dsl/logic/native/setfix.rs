@@ -65,7 +65,6 @@ use std::ffi::{CStr, CString};
 use std::hash::Hasher;
 use std::os::raw::c_int;
 use std::sync::atomic::{AtomicU64 as OrderCount, Ordering as AtomicOrdering};
-use rerail_accel::sharded::ByScope;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock};
 use std::time::Instant;
 
@@ -114,9 +113,6 @@ pub struct Interner { pub atoms: Arc<crate::content_store::atoms::Atoms>, buf: S
 #[derive(Default)]
 struct Deferred { texts: Vec<String>, at: HashMap<String, u32> }
 
-/// Walks in one piece that deferred their new texts and interned them in one batch (`whole`), and those texts: for
-/// the profile.
-pub static DEFERRED_WALKS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 
 /// The first value of a text a morsel deferred (`Deferred`): past every atom (`Sym` is 32 bits) and below every node
 /// (whose document is in the high 32 bits, from 0x6000… on).
@@ -185,30 +181,30 @@ impl Interner {
     }
 }
 
-/// The process's symbols of each database, kept from run to run with their arena: a run need not read a large
+/// The shared object's symbols of each database (decision 0442), kept from run to run with their arena: a run need not read a large
 /// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
 /// `RERAIL_LEVELS_ON_CYCLES`: a leveled component keeps levels only on its relations on a cycle (`open`).
-static LEVELS_ON_CYCLES: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_LEVELS_ON_CYCLES").is_some());
-static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
-/// The symbols of `conn`'s database: the process's arena of it.
+#[derive(Default)]
+struct DatabaseSymbols(Mutex<HashMap<String, Arc<RwLock<Interner>>>>);
+/// The symbols of `conn`'s database: the shared object's arena of it.
 pub fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
     let conn = conn.db();
     // A connection's symbols are found once (by its path) and kept for it until it closes (`forget_scope`).
-    let at = conn.at();
-    if let Some(s) = SCOPE_SYMS.lock(at).get(&at) {
+    let on = on(&conn);
+    if let Some(s) = on.syms.lock().as_ref() {
         return Ok(Arc::clone(s));
     }
     let s = symbols_by_path(conn)?;
     forgotten_on_close();
-    SCOPE_SYMS.lock(at).insert(at, Arc::clone(&s));
+    *on.syms.lock() = Some(Arc::clone(&s));
     Ok(s)
 }
 /// The path of `conn`'s main database (`""` in memory), found once per connection and kept until it closes
 /// (`forget_scope`): SQLite's `sqlite3_db_filename` takes the connection's mutex at every call.
 fn conn_path(conn: impl Scoped) -> Arc<str> {
     let conn = conn.db();
-    let at = conn.at();
-    if let Some(p) = SCOPE_PATHS.lock(at).get(&at) {
+    let on = on(&conn);
+    if let Some(p) = on.path.lock().as_ref() {
         return Arc::clone(p);
     }
     forgotten_on_close();
@@ -216,7 +212,7 @@ fn conn_path(conn: impl Scoped) -> Arc<str> {
     // (`prime`): not kept, so the run's own lookup finds it.
     let Ok(sql) = conn.sql() else { return Arc::from("") };
     let p: Arc<str> = Arc::from(sql.path().unwrap_or_default());
-    SCOPE_PATHS.lock(at).insert(at, Arc::clone(&p));
+    *on.path.lock() = Some(Arc::clone(&p));
     p
 }
 
@@ -228,13 +224,38 @@ pub fn prime(conn: &Connection) -> Result<Arc<crate::content_store::atoms::Atoms
     let arena = Arc::clone(&syms.read().unwrap().atoms);
     Ok(arena)
 }
-static SCOPE_PATHS: std::sync::LazyLock<ByScope<HashMap<usize, Arc<str>>>> = std::sync::LazyLock::new(Default::default);
-/// Each live connection's symbols (`symbols`), by its scope.
-static SCOPE_SYMS: std::sync::LazyLock<ByScope<HashMap<usize, Arc<RwLock<Interner>>>>> = std::sync::LazyLock::new(Default::default);
+/// What the evaluator keeps for one connection (decision 0442): on the connection itself (`vtab::ConnData`), dropped
+/// as it closes, or (its relations and components) as a run reuses it (`forget_engine`). Two connections, on any
+/// threads, never reach each other's.
+#[derive(Default)]
+pub struct OnConn {
+    /// Its main database's path (`conn_path`): SQLite's `sqlite3_db_filename` takes the connection's mutex.
+    path: parking_lot::Mutex<Option<Arc<str>>>,
+    /// Its symbols (`symbols`).
+    syms: parking_lot::Mutex<Option<Arc<RwLock<Interner>>>>,
+    /// Its open components, by name.
+    components: parking_lot::Mutex<HashMap<String, Arc<Mutex<Component>>>>,
+    /// The relations of components run with `nowrite`, by table, until they are materialized.
+    derived: parking_lot::Mutex<HashMap<String, Arc<InRel>>>,
+    /// The relations `adopt`ed into its next run.
+    adopted: parking_lot::Mutex<std::collections::BTreeSet<String>>,
+    /// Input relations loaded for joins, by spec, for the run that loaded them (`INPUTS` before: see `forget_inputs`).
+    inputs: parking_lot::Mutex<HashMap<InputKey, Arc<InRel>>>,
+    /// Relations whose rows change between its native runs (`keep_inputs`).
+    changing: parking_lot::Mutex<Option<std::collections::BTreeSet<String>>>,
+    /// The given versions of a run's changed reads (`give_versions`), by table: `Old`, `Minus`, `Plus`, `New`.
+    given: parking_lot::Mutex<HashMap<String, [Arc<InRel>; 4]>>,
+}
+
+/// What the evaluator keeps for `conn` (`OnConn`).
+fn on(conn: impl Scoped) -> Arc<OnConn> {
+    conn.db().data().get::<OnConn>()
+}
 fn symbols_by_path(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
     let conn = conn.db();
     let key = conn_path(conn).to_string();
-    let mut syms = SYMS.lock().unwrap();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<DatabaseSymbols>();
+    let mut syms = held_.0.lock().unwrap();
     let atoms = crate::content_store::atoms::Atoms::for_connection(conn.sql()?);
     // A store created again at the same path has new atoms (`Atoms::for_database`, checked by `Atoms::attach`).
     if let Some(s) = syms.get(&key) && Arc::ptr_eq(&s.read().unwrap().atoms, &atoms) {
@@ -353,11 +374,12 @@ fn hash_vals(vals: impl Iterator<Item = i64>) -> u64 {
 /// `[postings]`, `[lead]`). Measurement only: nothing reads it but the report.
 pub mod probed {
     use std::collections::HashMap;
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    static PROBES: std::sync::Mutex<Option<HashMap<(String, Vec<usize>), u64>>> = std::sync::Mutex::new(None);
+    /// The run's probes (decision 0442).
+    #[derive(Default)]
+    struct Probes(std::sync::Mutex<HashMap<(String, Vec<usize>), u64>>);
     #[inline]
     pub(crate) fn on() -> bool {
-        *ON.get_or_init(|| std::env::var_os("RERAIL_INDEX_REPORT").is_some())
+        rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_INDEX_REPORT").is_some())
     }
     #[inline]
     pub(crate) fn note(rel: &str, cols: impl Iterator<Item = usize>) {
@@ -369,12 +391,11 @@ pub mod probed {
     fn add(rel: &str, mut cols: Vec<usize>) {
         cols.sort_unstable();
         cols.dedup();
-        let mut p = PROBES.lock().unwrap_or_else(|e| e.into_inner());
-        *p.get_or_insert_with(HashMap::new).entry((rel.to_owned(), cols)).or_insert(0) += 1;
+        crate::code_rule_dsl::logic::run::with_local(|p: &Probes| *p.0.lock().unwrap_or_else(|e| e.into_inner()).entry((rel.to_owned(), cols)).or_insert(0) += 1);
     }
     /// The probes since the last `take`.
     pub(crate) fn take() -> HashMap<(String, Vec<usize>), u64> {
-        PROBES.lock().unwrap_or_else(|e| e.into_inner()).take().unwrap_or_default()
+        crate::code_rule_dsl::logic::run::local_if_any::<Probes>().map(|p| std::mem::take(&mut *p.0.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default()
     }
 }
 
@@ -1123,8 +1144,10 @@ const IN_ORDER: usize = 64;
 /// derives many rows already held keeps at most about this many more.
 const FRESH_BATCH: usize = 1 << 16;
 
-/// `RERAIL_SPIKE_DERIVATIONS`: rows derived (new or already held) and rows held new, by relation, over the process.
-pub static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+/// `RERAIL_SPIKE_DERIVATIONS`: rows derived (new or already held) and rows held new, by relation, over the run
+/// (`run::local`, decision 0442).
+#[derive(Default)]
+pub struct Derivations(pub std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>>);
 impl Fresh {
     /// Rows another writer wrote in place (`placed`): distinct, none held by the relation; with `rounds`, each row's
     /// round of the device's fixpoint (its level, as `add_leveled`'s).
@@ -1281,7 +1304,8 @@ enum Body { Sql(String), Join(JoinRule), Unplanned }
 /// again).
 /// `budget`: the work (steps entered) the probe may still do before it is cut (decision 0206), set by the stratum's
 /// driver; none, no limit.
-struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Arc<JoinSpec>>, budget: std::cell::Cell<Option<u64>> }
+/// `full`: its head reached the width cap under `RERAIL_WIDEST=cut` (decision 0462): it derives no more this run.
+struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Arc<JoinSpec>>, budget: std::cell::Cell<Option<u64>>, full: std::cell::Cell<bool> }
 
 pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
@@ -1663,13 +1687,10 @@ impl Rows0 {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CutReport { pub probe: usize, pub work: u64, pub done: u64, pub left: u64, pub led: bool, pub whole: bool }
 
-/// Cuts made, cut waves gone on reading only the rows left or all (`restricted`), and trials run (decision 0207),
-/// in this process.
-static CUTS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
 
 /// Decision 0206's counts: cuts, then waves gone on over the rows left only, and over all rows; then trials run.
 pub fn cut_counts() -> [u64; 4] {
-    CUTS.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+    run_counts().cuts.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// The limit a join's walk runs under (`run_join_in_each`): set by `run` for the probe it is about to run. `only`:
@@ -1724,8 +1745,7 @@ impl Rel {
 
 /// `RERAIL_LEVELS_TRACE=<value>`: the candidates holding the value, and how each is decided.
 fn levels_traced(row: &[i64]) -> bool {
-    static V: std::sync::LazyLock<Option<i64>> = std::sync::LazyLock::new(|| std::env::var("RERAIL_LEVELS_TRACE").ok().and_then(|v| v.parse().ok()));
-    V.is_some_and(|v| row.contains(&v))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LEVELS_TRACE").ok().and_then(|v| v.parse().ok())).is_some_and(|v| row.contains(&v))
 }
 
 impl Levels {
@@ -1835,35 +1855,29 @@ pub(crate) fn forgotten_on_close() {
 }
 
 /// Drops what the connection at `at` left: its components and derived relations (`scope`).
-pub fn forget_scope(at: usize) {
-    SCOPE_SYMS.lock(at).remove(&at);
-    SCOPE_PATHS.lock(at).remove(&at);
-    // Its loaded inputs: a connection opened later at its address binds sources of its own.
-    INPUTS.lock(at).remove(&at);
-    CHANGING.lock(at).remove(&at);
-    crate::code_rule_dsl::logic::plan::forget_connection(at);
-    forget_engine(at);
+pub fn forget_scope(_at: usize, data: &crate::code_rule_dsl::facts::vtab::ConnData) {
+    // Its symbols, path, loaded inputs and what its runs left in SQL (`plan::Left`) go with the connection's own
+    // values (`OnConn`).
+    forget_engine(data);
 }
 
 /// Drops the engine's relations and components a run left on the connection at `at` (when it closes, or when the
 /// next run reuses it, `vtab::reuse`). They are freed on a thread of their own: no run's work.
-pub fn forget_engine(at: usize) {
-    let mut gone: (Vec<Arc<Mutex<Component>>>, Vec<Arc<InRel>>) = Default::default();
-    COMPONENTS.lock(at).retain(|(s, _), comp| *s != at || { gone.0.push(Arc::clone(comp)); false });
-    DERIVED.lock(at).retain(|(s, _), rel| *s != at || { gone.1.push(Arc::clone(rel)); false });
-    ADOPTED.lock(at).retain(|(s, _)| *s != at);
-    GIVEN.lock(at).retain(|(s, _), _| *s != at);
+pub fn forget_engine(data: &crate::code_rule_dsl::facts::vtab::ConnData) {
+    let Some(on) = data.get_if_any::<OnConn>() else { return };
+    let gone: (Vec<Arc<Mutex<Component>>>, Vec<Arc<InRel>>) =
+        (std::mem::take(&mut *on.components.lock()).into_values().collect(), std::mem::take(&mut *on.derived.lock()).into_values().collect());
+    on.adopted.lock().clear();
+    on.given.lock().clear();
     if !gone.0.is_empty() || !gone.1.is_empty() {
         rerail_accel::exec::drop_beside(gone);
     }
 }
-static COMPONENTS: LazyLock<ByScope<HashMap<(usize, String), Arc<Mutex<Component>>>>> = LazyLock::new(Default::default);
 fn component(conn: impl Scoped, name: &str) -> Result<Arc<Mutex<Component>>> {
-    let conn = conn.db();
-    component_in(conn.at(), name)
+    component_in(&on(conn), name)
 }
-fn component_in(scope: usize, name: &str) -> Result<Arc<Mutex<Component>>> {
-    COMPONENTS.lock(scope).get(&(scope, name.to_owned())).cloned().ok_or_else(|| err(format!("no set fixpoint named {name:?}")))
+fn component_in(on: &OnConn, name: &str) -> Result<Arc<Mutex<Component>>> {
+    on.components.lock().get(name).cloned().ok_or_else(|| err(format!("no set fixpoint named {name:?}")))
 }
 
 fn unhex(s: &str) -> Result<String> { spec::unhex(s).map_err(err) }
@@ -1907,8 +1921,7 @@ fn read_sql(conn: impl Scoped, sql: &str, types: &[u8], syms: &mut Interner) -> 
 /// Whether an environment setting is on, read once per process (these are asked per index and per join).
 macro_rules! env_set {
     ($name:literal) => {{
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os($name).is_some())
+        rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os($name).is_some())
     }};
 }
 
@@ -1965,7 +1978,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
                 let _rows = crate::code_rule_dsl::logic::profile::span(move || what.into());
                 match start {
                     Start::Base { old, gone, seeded } => {
-                        let (o, g) = { let d = DERIVED.lock(conn.at()); (d.get(&(conn.at(), old.clone())).cloned(), if gone == "-" { None } else { d.get(&(conn.at(), gone.clone())).cloned() }) };
+                        let (o, g) = { let on = on(&conn); let d = on.derived.lock(); (d.get(old.as_str()).cloned(), if gone == "-" { None } else { d.get(gone.as_str()).cloned() }) };
                         // `-`: no rows gone (a copy of the kept relation, its levels with it).
                         let o = o.ok_or_else(|| err(format!("rel: no native relation {old}")))?;
                         // The rows gone, from the stratum that made them: a native relation, or a table where a SQL
@@ -2001,8 +2014,8 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
                 rel.stored = if matches!(start, Start::Base { .. }) { 0 } else { rel.n };
                 rels.push(rel);
             }
-            Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Sql(sql.clone()), whole: None, wkey: None, budget: Default::default() }),
-            Line::Unplanned { head, delta } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Unplanned, whole: None, wkey: None, budget: Default::default() }),
+            Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Sql(sql.clone()), whole: None, wkey: None, budget: Default::default(), full: Default::default() }),
+            Line::Unplanned { head, delta } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Unplanned, whole: None, wkey: None, budget: Default::default(), full: Default::default() }),
             Line::Device => device_wanted = solver().is_some(),
             Line::Leveled(rels) => { leveled = true; cyclic.extend(rels.iter().copied()); }
             Line::KeptOld => kept_old = true,
@@ -2014,7 +2027,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             Line::Seed { head, join } => {
                 let j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, join, &mut syms, !device_wanted)? };
                 if device_wanted { seed_specs.push((probes.len(), join.clone())); }
-                probes.push(ProbeRule { head: *head, delta: SEED, body: Body::Join(j), whole: None, wkey: None, budget: Default::default() });
+                probes.push(ProbeRule { head: *head, delta: SEED, body: Body::Join(j), whole: None, wkey: None, budget: Default::default(), full: Default::default() });
             }
             Line::Remove { head, join } => maint.removes.push((*head, joins(join, &mut syms)?)),
             Line::AddChecked { head, join } => maint.adds.push((*head, joins(join, &mut syms)?)),
@@ -2033,7 +2046,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             Line::Join { head, delta, join, whole } => {
                 let w = match whole { Some(w) => Some(joins(w, &mut syms)?), None => None };
                 if device_wanted { delta_specs.push((probes.len(), join.to_text())); }
-                probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Join(joins(join, &mut syms)?), whole: w, wkey: whole.clone(), budget: Default::default() });
+                probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Join(joins(join, &mut syms)?), whole: w, wkey: whole.clone(), budget: Default::default(), full: Default::default() });
             }
             Line::Levels { cand, chk, held, gone, live } => levels.lines.push(LevelLine { cand: *cand, chk: *chk, held: *held, gone: *gone, live: *live,
                                                        seen: 0, decided: Vec::new(), batch: Vec::new(), order: Vec::new(), shown: 0, gone_rows: Vec::new(), was_dead: Vec::new() }),
@@ -2158,7 +2171,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             // none, so the whole stratum (174 relations, O125 `acls`) was overdeleted and derived again instead. A
             // row's wave orders its supports whether or not a cycle reads it. `RERAIL_LEVELS_ON_CYCLES` keeps them
             // only on cycles, as before.
-            if !*LEVELS_ON_CYCLES { keep[r] = true; continue; }
+            if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_LEVELS_ON_CYCLES").is_some()) { keep[r] = true; continue; }
             // Whether `r` reaches itself.
             let mut seen = vec![false; n];
             let mut stack = next[r].clone();
@@ -2222,8 +2235,9 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     drop(syms);
     let store = Arc::new(RwLock::new(Store { rels, syms: symbols }));
     forgotten_on_close();
-    let mut reg = COMPONENTS.lock(conn.at());
-    let key = (conn.at(), name.clone());
+    let on = on(&conn);
+    let mut reg = on.components.lock();
+    let key = name.clone();
     let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None, device_wait: None,
                                device: device_plans, seed_specs, levels, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
     // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`fixpoint`), not as
@@ -2248,20 +2262,20 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
 /// hash indexes the waves kept (`InRel::chains`): nothing is copied or indexed again.
 pub fn close(conn: impl Scoped, name: &str) -> Result<()> {
     let conn = conn.db();
-    let at_scope = conn.at();
+    let on = on(&conn);
     forgotten_on_close();
-    let mut reg = COMPONENTS.lock(at_scope);
-    let Some(comp) = reg.remove(&(at_scope, name.to_owned())) else { return Ok(()) };
+    let mut reg = on.components.lock();
+    let Some(comp) = reg.remove(name) else { return Ok(()) };
     drop(reg);
     let comp = comp.lock().unwrap();
     if comp.done {
         let rels = std::mem::take(&mut comp.store.write().unwrap().rels);
         forgotten_on_close();
-        let mut derived = DERIVED.lock(at_scope);
+        let mut derived = on.derived.lock();
         for rel in rels {
             let moved = InRel::moved(rel);
             let table = moved.name.get().cloned().unwrap_or_default();
-            derived.insert((at_scope, table), Arc::new(moved));
+            derived.insert(table, Arc::new(moved));
         }
     }
     Ok(())
@@ -2274,6 +2288,8 @@ pub fn close(conn: impl Scoped, name: &str) -> Result<()> {
 pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     let conn = conn.db();
     let t0 = Instant::now();
+    // The run's limits (decision 0462): its cap, whether it cuts, its memory stop, and its record.
+    let limits = super::width::Limits::here();
     let comp = component(conn, name)?;
     let mut comp = comp.lock().unwrap();
     let (nrels, symbols) = { let s = comp.store.read().unwrap(); (s.rels.len(), Arc::clone(&s.syms)) };
@@ -2590,6 +2606,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         for (pi, p) in comp.probes.iter().enumerate() {
             if cut_at.is_some() { break; }
             let Body::Join(j) = &p.body else { continue };
+            if p.full.get() { continue; }
             let tp = Instant::now();
             if device_fixed { break; }
             if p.delta == SEED { if seeded || on_device { continue } }
@@ -2613,22 +2630,29 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             // has left after a cut.
             let budget = p.budget.get();
             let only = if pi == start { resume_left.take().and_then(|(named, l)| match restricted(j, l.of, named) {
-                Some(i) => { CUTS[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed); Some((i, l)) }
+                Some(i) => { run_counts().cuts[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed); Some((i, l)) }
                 // At a step no longer known: the run reads all its rows.
-                None => { CUTS[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed); None }
+                None => { run_counts().cuts[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed); None }
             }) } else { None };
             let mut limited = (budget.is_some() || only.is_some()).then(|| Limited { limit: Some(Limit { budget: budget.unwrap_or(u64::MAX), only }), spent: None });
-            let n = if p.delta == SEED { run_seed(j, p.head, store, &mut syms, &mut fresh, limited.as_mut())? } else { run_join_limited(j, p.head, store, &mut syms, &mut fresh, limited.as_mut())? };
-            // A source that could not make the rows it read (a kept input's frame that does not decode) read them as
-            // zeros: the stratum fails with why, as a statement reading it does.
-            if let Some(why) = j.failed() {
-                return Err(err(format!("{name}: {why}")));
-            }
+            let ran = if p.delta == SEED { run_seed(j, p.head, store, &mut syms, &mut fresh, limited.as_mut()) } else { run_join_limited(j, p.head, store, &mut syms, &mut fresh, limited.as_mut()) };
+            // Decision 0462: a head at the width cap. Cut, the probe keeps what it made and derives no more; else the
+            // run stops, its error naming the relation and the probe (the driver adds its rule).
+            let n = match ran {
+                Ok(n) => n,
+                Err(e) if super::width::as_too_wide(&e).is_some() => {
+                    if !limits.cutting() { return Err(super::width::with_rules(e, |t| vec![format!("probe {pi} of {name} (head `{t}`)")])); }
+                    p.full.set(true);
+                    limits.note_cut(&store.rels[p.head].table, &name, pi);
+                    0
+                }
+                Err(e) => return Err(e),
+            };
             if let Some(b) = budget && let Some(spent) = limited.and_then(|l| l.spent) {
                 p.budget.set(Some(b.saturating_sub(spent.work)));
                 if let Some(left) = spent.left {
                     p.budget.set(None);
-                    CUTS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    run_counts().cuts[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     cut_at = Some((pi, left, CutReport { probe: pi, work: spent.work, done: spent.done, left: 0, led: spent.led, whole }));
                 }
             }
@@ -2656,6 +2680,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
         // Edge rules, natively.
         let (mut slots, mut bound, mut key): (Vec<i64>, Vec<bool>, Vec<i64>) = (Vec::new(), Vec::new(), Vec::new());
+        // Decision 0462: an edge rule's head at the width cap takes no more rows; the run stops after the edges, or
+        // goes on with the relation cut (`RERAIL_WIDEST=cut`).
+        let mut edge_full: Option<usize> = None;
         for rule in &comp.edges {
             slots.clear();
             slots.resize(rule.nslots, 0);
@@ -2681,6 +2708,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                         Term::Const(c) => *c,
                         Term::Cat(a, b) => cat(syms, slots[*a], slots[*b]),
                     }));
+                    if fresh[rule.head].n + store.rels[rule.head].n >= limits.cap { edge_full = Some(rule.head); return; }
                     fresh[rule.head].emitted += 1;
                     fresh[rule.head].offer(&row, &store.rels[rule.head]);
                 };
@@ -2695,6 +2723,15 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 }
             }
         }
+        if let Some(h) = edge_full {
+            let table = &store.rels[h].table;
+            if !limits.cutting() { return Err(super::width::with_rules(super::width::too_wide(table, limits.cap), |t| vec![format!("an edge rule of {name} (head `{t}`)")])); }
+            limits.note_cut_by(table, format!("an edge rule of {name}"));
+        }
+        // The run's memory watch said stop (decision 0462): the wave's rows are dropped and the run stops.
+        if let Some(e) = limits.stop_error() {
+            return Err(e);
+        }
         waves += 1;
         seeded = true;
         let mut any = false;
@@ -2706,11 +2743,14 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             let emitted = f.emitted;
             let big = f.n >= SPANNED_ROWS;
             any |= { let _s = big.then(|| crate::code_rule_dsl::logic::profile::span(|| "a wave's rows settled (Fresh::settle)".into())); rel.push_fresh(f, gates_done.contains(&r)) };
+            limits.note_rows(&rel.table, rel.n);
             if counting && emitted > 0 {
-                let mut all = DERIVATIONS.lock().unwrap();
-                let e = all.entry(rel.table.clone()).or_default();
-                e.0 += emitted;
-                e.1 += (rel.n - lo) as u64;
+                crate::code_rule_dsl::logic::run::with_local(|all: &Derivations| {
+                    let mut all = all.0.lock().unwrap();
+                    let e = all.entry(rel.table.clone()).or_default();
+                    e.0 += emitted;
+                    e.1 += (rel.n - lo) as u64;
+                });
             }
             lo_of[r] = lo;
             if !gates_done.contains(&r) { let hi = rel.n; let _s = (big && hi > lo).then(|| crate::code_rule_dsl::logic::profile::span(|| "a wave's rows indexed (set_delta)".into())); rel.set_delta(lo, hi); }
@@ -3259,7 +3299,7 @@ pub fn trial_over(conn: impl Scoped, name: &str, probe: usize, spec: Option<&Joi
     let made_rows = got?;
     syms.check()?;
     drop(store);
-    CUTS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    run_counts().cuts[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let run = spent.map(|s| TrialRun { work: s.work, rows: n, done: if s.left.is_some() { s.done.min(n) } else { n }, made: made_rows, cut: s.left.is_some(), steps });
     // O169: the first trial to finish over the rows a cut left keeps its rows, to be the wave's (`keep_trial_rows`).
     if from_cut && run.as_ref().is_some_and(|r| !r.cut) && comp.trial_rows.as_ref().is_none_or(|t| t.0 != probe) {
@@ -3309,7 +3349,7 @@ pub fn trial_own(conn: impl Scoped, name: &str, spec: &JoinSpec, size: &dyn Fn(u
     let steps: Vec<(u64, u64)> = j.counts.iter().map(|[a, b]| (a.get(), b.get())).collect();
     let made = got?;
     syms.check()?;
-    CUTS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    run_counts().cuts[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Ok(spent.map(|s| (TrialRun { work: s.work, rows: n, done: if s.left.is_some() { s.done.min(n) } else { n }, made, cut: s.left.is_some(), steps }, all, picked)))
 }
 
@@ -3491,7 +3531,9 @@ unsafe impl<'vtab> VTab<'vtab> for RelTab {
     type Cursor = RelCursor;
     fn connect(db: &mut VTabConnection, _: Option<&()>, _: &[u8], _: &[u8], _: &[u8], args: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
         let arg = |i: usize| std::str::from_utf8(args.get(i).copied().unwrap_or(b"")).unwrap_or("").trim().trim_matches('\'').to_string();
-        let comp = component_in(unsafe { db.handle() } as usize, &arg(0)).map_err(|e| Error::ModuleError(e.to_string()))?;
+        // SAFETY: the connecting connection's own handle, not closed by the borrowed `Connection` made of it.
+        let conn = unsafe { Connection::from_handle(db.handle()) }?;
+        let comp = component_in(&on(&conn), &arg(0)).map_err(|e| Error::ModuleError(e.to_string()))?;
         let store = comp.lock().unwrap().store.clone();
         let rel: usize = arg(1).parse().map_err(|_| Error::ModuleError("bad rel".into()))?;
         let types = store.read().unwrap().rels[rel].types.clone();
@@ -3699,20 +3741,28 @@ pub fn thread_cpu() -> f64 {
     (user + kernel).as_secs_f64()
 }
 
-/// CPU seconds and rows of input loads and index builds: [base facts (construction), lower strata's tables].
-static LOADS: Mutex<[(f64, u64); 2]> = Mutex::new([(0.0, 0); 2]);
+/// CPU seconds and rows of input loads and index builds: [base facts (construction), lower strata's tables], over
+/// the run (decision 0442).
+#[derive(Default)]
+struct Loads(Mutex<[(f64, u64); 2]>);
 
-/// Derived inputs' orders opened (an index asked for at a join's compile) and made (first probed), decision 0186.
-static ORDERS_OPENED: OrderCount = OrderCount::new(0);
-static ORDERS_MADE: OrderCount = OrderCount::new(0);
+/// Adds `cpu` seconds and `rows` to the run's loads of part `i` (`Loads`).
+fn loaded(i: usize, cpu: f64, rows: u64) {
+    crate::code_rule_dsl::logic::run::with_local(|l: &Loads| {
+        let l = &mut l.0.lock().unwrap()[i];
+        l.0 += cpu;
+        l.1 += rows;
+    });
+}
+
 pub fn orders_counted() -> (u64, u64) {
-    (ORDERS_OPENED.load(AtomicOrdering::Relaxed), ORDERS_MADE.load(AtomicOrdering::Relaxed))
+    (run_counts().orders_opened.load(AtomicOrdering::Relaxed), run_counts().orders_made.load(AtomicOrdering::Relaxed))
 }
 
 /// `set_fixpoint_loads()`: "base_cpu_ms base_rows derived_cpu_ms derived_rows". Base-fact relations and their
 /// indexes are construction (the product's tape and anchor index hold them), reported apart from execution.
 pub fn loads() -> String {
-    let l = LOADS.lock().unwrap();
+    let l = crate::code_rule_dsl::logic::run::local_if_any::<Loads>().map(|l| *l.0.lock().unwrap()).unwrap_or_default();
     format!("{:.1} {} {:.1} {}", l[0].0 * 1e3, l[0].1, l[1].0 * 1e3, l[1].1)
 }
 
@@ -3969,8 +4019,8 @@ impl Csr {
                 charge(Unit::IndexEntry, rel.len() as u64);
                 let mut order = if printed { Index::printed(self.cols.clone()) } else { Index::new(self.cols.clone()) };
                 order.add_run_in(&rel.rows, rel.k, 0, rel.n, 0, &rel.sorted.within(&self.cols, rel.k, 0, rel.n as u32));
-                ORDERS_MADE.fetch_add(1, AtomicOrdering::Relaxed);
-                LOADS.lock().unwrap()[1].0 += thread_cpu() - c0;
+                run_counts().orders_made.fetch_add(1, AtomicOrdering::Relaxed);
+                loaded(1, thread_cpu() - c0, 0);
                 if env_set!("RERAIL_SPIKE_INDEX") {
                     eprintln!("O125 order made took {:.3} ms rows={} cols={:?} of {} viewed={}", (thread_cpu() - c0) * 1e3, rel.len(), self.cols, rel.name.get().map_or("?", String::as_str), rel.viewed);
                 }
@@ -4055,11 +4105,11 @@ impl Csr {
 /// Drops native relations `tables` of `conn`'s run: no later stratum reads them (`plan::last_reads`), so their rows
 /// and the indexes the waves kept are freed now, not when the run ends.
 pub fn release(conn: &Connection, tables: &[String]) {
-    let at = conn.at();
     forgotten_on_close();
-    let mut derived = DERIVED.lock(at);
+    let on = on(conn);
+    let mut derived = on.derived.lock();
     for t in tables {
-        derived.remove(&(at, t.clone()));
+        derived.remove(t);
     }
 }
 
@@ -4067,11 +4117,11 @@ pub fn release(conn: &Connection, tables: &[String]) {
 /// later stratum reads: their rows are read once more, in order, and their per-column indexes were most of their
 /// size. A relation shared with a reader still open keeps them.
 pub fn unindex(conn: &Connection, tables: &[String]) {
-    let at = conn.at();
     forgotten_on_close();
-    let mut derived = DERIVED.lock(at);
+    let on = on(conn);
+    let mut derived = on.derived.lock();
     for t in tables {
-        if let Some(rel) = derived.get_mut(&(at, t.clone())).and_then(Arc::get_mut) {
+        if let Some(rel) = derived.get_mut(t).and_then(Arc::get_mut) {
             rel.chains = Vec::new();
             *rel.idx.get_mut().unwrap() = HashMap::default();
         }
@@ -4083,21 +4133,20 @@ pub fn unindex(conn: &Connection, tables: &[String]) {
 pub fn forget_inputs_of(conn: &Connection, tables: &[String]) {
     let path = conn_path(conn).to_string();
     let reads = |key: &InputKey| key.sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| tables.iter().any(|t| t == w));
-    if let Some(m) = INPUTS.lock(conn.at()).get_mut(&conn.at()) { m.retain(|key, _| !reads(key)); }
-    STORED.lock().unwrap().retain(|(p, t), _| *p != path || !t.rsplit('.').next().is_some_and(|n| tables.iter().any(|x| x == n)));
+    on(conn).inputs.lock().retain(|key, _| !reads(key));
+    crate::code_rule_dsl::logic::profile::shared::<StoredTables>().0.lock().unwrap().retain(|(p, t), _| *p != path || !t.rsplit('.').next().is_some_and(|n| tables.iter().any(|x| x == n)));
 }
 
 /// Drops every native relation of `conn`'s runs: a chunk's, once its exports are written to the cross-file part.
 pub fn forget_derived(conn: &Connection) {
-    let at = conn.at();
-    DERIVED.lock(at).retain(|(s, _), _| *s != at);
+    on(conn).derived.lock().clear();
 }
 
 /// A native relation of `conn`'s run, for a caller that keeps it past the run with the indexes it has (a session's
 /// relations, decision 0090 step 3).
 pub fn held(conn: impl Scoped, table: &str) -> Option<Arc<InRel>> {
     let conn = conn.db();
-    DERIVED.lock(conn.at()).get(&(conn.at(), table.to_owned())).cloned()
+    on(&conn).derived.lock().get(table).cloned()
 }
 
 /// A native relation of `conn`'s run as the caller reads an output: each live row, its columns `text` gives as the
@@ -4189,11 +4238,11 @@ pub fn finding_rows(conn: &Connection) -> Result<Option<Vec<(String, String, i64
 /// names (`adopted`).
 pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
     crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
-    let at = conn.at();
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
-    DERIVED.lock(at).insert((at, table.to_owned()), rel);
-    ADOPTED.lock(at).insert((at, table.to_owned()));
+    let on = on(conn);
+    on.derived.lock().insert(table.to_owned(), rel);
+    on.adopted.lock().insert(table.to_owned());
 }
 
 /// Holds `table` in `conn`'s run as `rel`, a relation it already holds under another name: a quiet stratum's
@@ -4202,7 +4251,7 @@ pub fn hold_as(conn: impl Scoped, table: &str, rel: Arc<InRel>) {
     crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
     let conn = conn.db();
     forgotten_on_close();
-    DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
+    on(&conn).derived.lock().insert(table.to_owned(), rel);
 }
 
 /// A native fact operator's completed set. No rows are published until a SQL consumer materializes it.
@@ -4215,7 +4264,7 @@ pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vec<i64>>, types: Ve
     let mut rel = InRel::flat(&rows, types);
     Arc::get_mut(&mut rel).unwrap().stored = 0;
     forgotten_on_close();
-    DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
+    on(&conn).derived.lock().insert(table.to_owned(), rel);
     Ok(())
 }
 
@@ -4233,7 +4282,7 @@ pub fn hold_view_in_place(conn: impl Scoped, table: &str, src: Arc<dyn crate::co
     let rel = Arc::new(InRel { vers: Default::default(), viewed: true, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None });
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
-    DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
+    on(&conn).derived.lock().insert(table.to_owned(), rel);
 }
 
 /// A changed read's versions given, not marked (0364 R1, R2): an input's old rows, its rows gone, its rows added and
@@ -4251,20 +4300,18 @@ pub fn give_versions(conn: impl Scoped, table: &str, types: Vec<u8>, given: [(Ar
         Arc::new(InRel { vers: Default::default(), viewed, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types: types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None })
     };
     forgotten_on_close();
-    GIVEN.lock(conn.at()).insert((conn.at(), table.to_owned()), given.map(view));
+    on(&conn).given.lock().insert(table.to_owned(), given.map(view));
 }
 
 /// Drops `tables`' given versions (`give_versions`).
 pub fn take_versions(conn: impl Scoped, tables: &[String]) {
     let conn = conn.db();
-    let mut given = GIVEN.lock(conn.at());
+    let on = on(&conn);
+    let mut given = on.given.lock();
     for t in tables {
-        given.remove(&(conn.at(), t.clone()));
+        given.remove(t.as_str());
     }
 }
-
-/// The given versions of a run's changed reads (`give_versions`): `Old`, `Minus`, `Plus`, `New`.
-static GIVEN: LazyLock<ByScope<HashMap<(usize, String), [Arc<InRel>; 4]>>> = LazyLock::new(Default::default);
 
 /// Holds `table` in `conn`'s run as `src`'s rows, read in place (a view of every row): a relation an index holds
 /// (the reach index, decision 0119) is probed through the source's own lookups, never copied into rows.
@@ -4273,7 +4320,7 @@ pub fn hold_source(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule
     let rel = InRel::over_source(src, types);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
-    DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
+    on(&conn).derived.lock().insert(table.to_owned(), rel);
 }
 
 /// Holds `table` in `conn`'s run as `src`'s columns `cols`, one row of each source row: a rule that copies a bound
@@ -4304,7 +4351,7 @@ pub fn hold_view(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_d
     let rel = Arc::new(rel);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
-    DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
+    on(&conn).derived.lock().insert(table.to_owned(), rel);
     live
 }
 
@@ -4346,7 +4393,7 @@ fn view_rows(src: &dyn crate::code_rule_dsl::facts::vtab::Source, cols: &[usize]
 /// The source a relation of `conn`'s run is held as (`hold_source`), for a caller that reads the index itself.
 pub fn held_source(conn: impl Scoped, table: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
     let conn = conn.db();
-    let rel = DERIVED.lock(conn.at()).get(&(conn.at(), table.to_owned())).cloned()?;
+    let rel = on(&conn).derived.lock().get(table).cloned()?;
     rel.held_source()
 }
 
@@ -4355,7 +4402,7 @@ pub fn held_source(conn: impl Scoped, table: &str) -> Option<Arc<dyn crate::code
 pub fn hold_empty(conn: impl Scoped, table: &str, types: Vec<u8>) {
     let conn = conn.db();
     forgotten_on_close();
-    DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), InRel::flat(&[], types));
+    on(&conn).derived.lock().insert(table.to_owned(), InRel::flat(&[], types));
 }
 
 /// Holds `table` in `conn`'s run as a relation of `rows` (flat, `types.len()` values each): one a run kept from an
@@ -4365,7 +4412,7 @@ pub fn hold_rows(conn: &Connection, table: &str, types: Vec<u8>, rows: Vec<i64>,
     let rel = InRel::kept(types, rows, n);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
-    DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
+    on(&conn).derived.lock().insert(table.to_owned(), rel);
 }
 
 /// `rel`, an earlier run's kept relation bound where it lies (decision 0401 F3), held as `conn`'s run's `table`.
@@ -4373,13 +4420,13 @@ pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
     crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
-    DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
+    on(&conn).derived.lock().insert(table.to_owned(), rel);
 }
 
 /// A native relation of `conn`'s run as it can be kept and held again (`hold_rows`): its columns' types and its live
 /// rows, flat.
 pub fn kept_rows(conn: &Connection, table: &str) -> Option<(Vec<u8>, Vec<i64>, usize)> {
-    let rel = DERIVED.lock(conn.at()).get(&(conn.at(), table.to_owned())).cloned()?;
+    let rel = on(&conn).derived.lock().get(table).cloned()?;
     if rel.view.is_some() {
         return None;
     }
@@ -4396,13 +4443,8 @@ pub fn kept_rows(conn: &Connection, table: &str) -> Option<(Vec<u8>, Vec<i64>, u
 
 /// The relations `adopt`ed into `conn`'s next run, taken by its planner.
 pub fn adopted(conn: &Connection) -> std::collections::BTreeSet<String> {
-    let at = conn.at();
-    let mut a = ADOPTED.lock(at);
-    let mine: std::collections::BTreeSet<String> = a.iter().filter(|(s, _)| *s == at).map(|(_, t)| t.clone()).collect();
-    a.retain(|(s, _)| *s != at);
-    mine
+    std::mem::take(&mut *on(conn).adopted.lock())
 }
-static ADOPTED: LazyLock<ByScope<std::collections::BTreeSet<(usize, String)>>> = LazyLock::new(Default::default);
 
 impl InRel {
     /// A relation of `rows` (flat, `types.len()` values each) an earlier run kept (decision 0077 §4), in no table.
@@ -4492,7 +4534,7 @@ impl InRel {
         }
         // Duplicates offered: (derived - new) / new of the relation's derivations, spread evenly, each a row of an
         // earlier wave.
-        let dup = DERIVATIONS.lock().unwrap().get(name).map_or(0.0, |&(d, nw)| if nw > 0 { d.saturating_sub(nw) as f64 / nw as f64 } else { 0.0 });
+        let dup = crate::code_rule_dsl::logic::run::with_local(|all: &Derivations| all.0.lock().unwrap().get(name).copied()).map_or(0.0, |(d, nw)| if nw > 0 { d.saturating_sub(nw) as f64 / nw as f64 } else { 0.0 });
         let mut offers: Vec<Vec<u32>> = Vec::with_capacity(waves.len());
         let mut owed = 0.0f64;
         let mut seed = 0x9e37_79b9u64;
@@ -4914,8 +4956,8 @@ impl InRel {
 /// columns) that an earlier chunk found worth building and that this run holds, built now as one batch. Returns the
 /// launches and the relations they read.
 pub fn prefetch_tables(conn: &Connection, wants: &std::collections::BTreeSet<(String, Vec<usize>)>) -> Result<(usize, usize)> {
-    let at = conn.at();
-    table::prefetch(wants, |name| DERIVED.lock(at).get(&(at, name.to_owned())).cloned()).map_err(err)
+    let on = on(conn);
+    table::prefetch(wants, |name| on.derived.lock().get(name).cloned()).map_err(err)
 }
 
 /// The index-cost spike's growth totals (`InRel::grow_spike`): today's ms, the mixed ms, offers, rows held, today's
@@ -4948,7 +4990,6 @@ pub fn tables_built() -> (u64, u64, u64) {
 }
 
 /// The relations of components run with `nowrite`, by table, until they are materialized.
-static DERIVED: LazyLock<ByScope<HashMap<(usize, String), Arc<InRel>>>> = LazyLock::new(Default::default);
 const SEED: usize = usize::MAX;
 /// Columns with at most this many values report each value's postings (`stats`).
 
@@ -4956,7 +4997,7 @@ const SEED: usize = usize::MAX;
 /// `c0`, `c1`, ….
 pub fn derived(conn: impl Scoped, table: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
     let conn = conn.db();
-    let rel = DERIVED.lock(conn.at()).get(&(conn.at(), table.to_owned())).cloned()?;
+    let rel = on(&conn).derived.lock().get(table).cloned()?;
     Some(Derived::new(rel, None))
 }
 /// A derived relation's rows where they lie (a `Derived` source, not a view): its rows, how many, its dead bits
@@ -5070,7 +5111,7 @@ impl crate::code_rule_dsl::facts::vtab::Source for Derived {
 /// `set_fixpoint_materialize(table)`: inserts a native relation's rows (those not already in its table) into the
 /// table, for SQL that reads it. Returns the rows written.
 pub fn materialize(conn: &Connection, table: &str) -> Result<i64> {
-    let Some(rel) = DERIVED.lock(conn.at()).get(&(conn.at(), table.to_owned())).cloned() else { return Err(err(format!("no native relation {table}"))) };
+    let Some(rel) = on(&conn).derived.lock().get(table).cloned() else { return Err(err(format!("no native relation {table}"))) };
     if rel.k > DERIVED_COLUMNS {
         return Err(err(format!("{table}: more than {DERIVED_COLUMNS} columns")));
     }
@@ -5087,15 +5128,16 @@ const DERIVED_COLUMNS: usize = 16;
 // ---- set_derived(rel): a native relation's rows not yet in its table, for one INSERT … SELECT ----------------------
 
 #[repr(C)]
-pub struct DerivedTab { base: ffi::sqlite3_vtab, scope: usize }
+pub struct DerivedTab { base: ffi::sqlite3_vtab, on: Arc<OnConn> }
 unsafe impl<'vtab> VTab<'vtab> for DerivedTab {
     type Aux = ();
     type Cursor = DerivedCursor;
     fn connect(db: &mut VTabConnection, _: Option<&()>, _: &[u8], _: &[u8], _: &[u8], _: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
-        let scope = unsafe { db.handle() } as usize;
+        // SAFETY: the connecting connection's own handle, not closed by the borrowed `Connection` made of it.
+        let on = on(&unsafe { Connection::from_handle(db.handle()) }?);
         let cols: Vec<String> = (0..DERIVED_COLUMNS).map(|i| format!("c{i}")).collect();
         let schema = CString::new(format!("CREATE TABLE x({}, rel HIDDEN)", cols.join(", "))).map_err(|e| Error::ModuleError(e.to_string()))?;
-        Ok((Cow::Owned(schema), DerivedTab { base: ffi::sqlite3_vtab::default(), scope }))
+        Ok((Cow::Owned(schema), DerivedTab { base: ffi::sqlite3_vtab::default(), on }))
     }
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         let rel = info.constraints().position(|c| c.is_usable() && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ && c.column() == DERIVED_COLUMNS as c_int);
@@ -5107,16 +5149,16 @@ unsafe impl<'vtab> VTab<'vtab> for DerivedTab {
         Ok(true)
     }
     fn open(&mut self) -> Result<DerivedCursor> {
-        Ok(DerivedCursor { base: ffi::sqlite3_vtab_cursor::default(), scope: self.scope, rel: None, id: 0 })
+        Ok(DerivedCursor { base: ffi::sqlite3_vtab_cursor::default(), on: Arc::clone(&self.on), rel: None, id: 0 })
     }
 }
 
 #[repr(C)]
-pub struct DerivedCursor { base: ffi::sqlite3_vtab_cursor, scope: usize, rel: Option<Arc<InRel>>, id: usize }
+pub struct DerivedCursor { base: ffi::sqlite3_vtab_cursor, on: Arc<OnConn>, rel: Option<Arc<InRel>>, id: usize }
 unsafe impl VTabCursor for DerivedCursor {
     fn filter(&mut self, _: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
         let table: String = args.get(0)?;
-        let rel = DERIVED.lock(self.scope).get(&(self.scope, table.clone())).cloned().ok_or_else(|| Error::ModuleError(format!("no native relation {table}")))?;
+        let rel = self.on.derived.lock().get(table.as_str()).cloned().ok_or_else(|| Error::ModuleError(format!("no native relation {table}")))?;
         self.id = rel.stored;
         while self.id < rel.len() && is_dead(&rel.dead, self.id as u32) { self.id += 1; }
         self.rel = Some(rel);
@@ -5844,17 +5886,15 @@ impl InRel {
                 // `RERAIL_KEY_PRINTS` (measurement aids): `off` probes the sorted order by its rows, `hash` builds the hash
                 // table of before decision 0112's derived-input order.
                 // 0: prints (the default), 1: `off`, 2: `hash`.
-                static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-                let mode = *MODE.get_or_init(|| match std::env::var("RERAIL_KEY_PRINTS").as_deref() { Ok("off") => 1, Ok("hash") => 2, _ => 0 });
+                let mode = rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_KEY_PRINTS").as_deref() { Ok("off") => 1, Ok("hash") => 2, _ => 0 });
                 if self.view.is_none() && mode != 2 {
                     // A derived relation's rows are its own: a sorted order on the key columns (dead rows are in
                     // it, as in a kept chain; readers skip them). Its probes give whole keys, so it keeps a print a
                     // row and a probe reads prints, not rows (`runs::print_span`).
                     // It is made on its first probe (`Csr::runs`), unless `RERAIL_LAZY_ORDERS=off` (a measurement aid).
                     let csr = Csr { ordered: Some(mode != 1), ..empty(false, false) };
-                    ORDERS_OPENED.fetch_add(1, AtomicOrdering::Relaxed);
-                    static EAGER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-                    if *EAGER.get_or_init(|| std::env::var("RERAIL_LAZY_ORDERS").is_ok_and(|v| v == "off")) { csr.runs(self); }
+                    run_counts().orders_opened.fetch_add(1, AtomicOrdering::Relaxed);
+                    if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LAZY_ORDERS").is_ok_and(|v| v == "off")) { csr.runs(self); }
                     csr
                 } else if let Some(v) = self.view.as_ref().filter(|v| v.ids.is_none() && v.eqs.is_empty())
                     && let Some(ib) = v.src.in_block().filter(|ib| ib.rows as usize == v.src.len())
@@ -5870,8 +5910,7 @@ impl InRel {
             if env_set!("RERAIL_SPIKE_INDEX") {
                 eprintln!("O125 index base={} took {:.3} ms rows={} cols={cols:?} chain={} source={} sorted={} lead={} view={} of {:?}", self.base, (thread_cpu() - c0) * 1e3, self.len(), m.chain.is_some(), m.source, m.sorted, m.lead, self.view.is_some(), self.view.as_ref().map(|v| (v.src.columns(), v.cols.clone())));
             }
-            let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
-            l.0 += thread_cpu() - c0;
+            loaded(usize::from(!self.base), thread_cpu() - c0, 0);
             if env_set!("RDL_PROFILE") {
                 eprintln!("      index on {cols:?} of {} rows in {:.1} ms", self.len(), t0.elapsed().as_secs_f64() * 1e3);
             }
@@ -5879,46 +5918,35 @@ impl InRel {
         }).clone()
     }
 }
-/// Input relations loaded for joins, by connection (its scope) and spec, for the run that loaded them: the base
-/// relations are vtabs rebound per batch, so a load is not reused across runs (`forget_inputs`). A connection's, not
-/// its database's: connections on one database bind sources of their own (a run's chunks evaluating at once, decision
-/// 0254), and one's run must neither read nor drop another's. T cached them for its process, which ran one program
-/// over one facts file.
-static INPUTS: LazyLock<ByScope<HashMap<usize, HashMap<InputKey, Arc<InRel>>>>> = LazyLock::new(Default::default);
+// Input relations loaded for joins (`OnConn::inputs`), by spec, for the run that loaded them: the base relations are
+// vtabs rebound per batch, so a load is not reused across runs (`forget_inputs`). A connection's, not its database's:
+// connections on one database bind sources of their own (a run's chunks evaluating at once, decision 0254), and one's
+// run must neither read nor drop another's. T cached them for its process, which ran one program over one facts file.
 
 /// Drops the input relations loaded on `conn`'s database: a run starts over the relations bound now.
 pub fn forget_inputs(conn: &Connection) {
     let path = conn_path(conn).to_string();
-    let at = conn.at();
-    let changing = CHANGING.lock(at).get(&at).cloned();
+    let on = on(conn);
+    let changing = on.changing.lock().clone();
     let Some(changing) = changing else {
-        INPUTS.lock(at).remove(&at);
-        STORED.lock().unwrap().retain(|(p, _), _| *p != path);
+        on.inputs.lock().clear();
+        crate::code_rule_dsl::logic::profile::shared::<StoredTables>().0.lock().unwrap().retain(|(p, _), _| *p != path);
         return;
     };
     // Kept: base inputs (`b:` specs) that read none of the relations that change between runs; their rows and
     // indexes are the same in the next run. Derived inputs (`d:`, a SQL stratum's table) are made again.
     let reads_changing = |sel: &str| sel.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| changing.contains(w));
-    if let Some(m) = INPUTS.lock(at).get_mut(&at) { m.retain(|key, _| key.base && !reads_changing(&key.sql)); }
-    STORED.lock().unwrap().retain(|(p, table), _| *p != path || (!table.starts_with("main.") && !table.starts_with("temp.") && !reads_changing(table)));
+    on.inputs.lock().retain(|key, _| key.base && !reads_changing(&key.sql));
+    crate::code_rule_dsl::logic::profile::shared::<StoredTables>().0.lock().unwrap().retain(|(p, table), _| *p != path || (!table.starts_with("main.") && !table.starts_with("temp.") && !reads_changing(table)));
 }
 
-/// Relations whose rows change between the native runs on `conn` (`keep_inputs`), by connection: while set,
-/// `forget_inputs` keeps every other base input loaded, with its indexes.
-static CHANGING: LazyLock<ByScope<HashMap<usize, std::collections::BTreeSet<String>>>> = LazyLock::new(Default::default);
+// Relations whose rows change between the native runs on a connection (`OnConn::changing`, `keep_inputs`): while
+// set, `forget_inputs` keeps every other base input loaded, with its indexes.
 
 /// Runs on `conn` that read the same inputs but for `changing` (the bounded rounds: each round rebinds only its
 /// `__prev` inputs) keep the others loaded; `None` ends it, and the next `forget_inputs` drops everything.
 pub fn keep_inputs(conn: &Connection, changing: Option<std::collections::BTreeSet<String>>) {
-    let at = conn.at();
-    match changing {
-        Some(c) => {
-            CHANGING.lock(at).insert(at, c);
-        }
-        None => {
-            CHANGING.lock(at).remove(&at);
-        }
-    }
+    *on(conn).changing.lock() = changing;
 }
 
 /// An input from its spec's text (`<b|d|x>:<hex select>:<hex columns>:<types>`).
@@ -5928,9 +5956,9 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
 
 fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<Arc<InRel>> {
     let conn = conn.db();
-    let at = conn.at();
-    if let Some(r) = INPUTS.lock(at).get(&at).and_then(|m| m.get(spec)) { return Ok(r.clone()); }
-    let keep = |rel: &Arc<InRel>| { INPUTS.lock(at).entry(at).or_default().insert(spec.clone(), rel.clone()); };
+    let on = on(&conn);
+    if let Some(r) = on.inputs.lock().get(spec) { return Ok(r.clone()); }
+    let keep = |rel: &Arc<InRel>| { on.inputs.lock().insert(spec.clone(), rel.clone()); };
     let _load = crate::code_rule_dsl::logic::profile::span(|| "open: input load".into());
     let base = spec.base;
     let (table, cols, types) = (&spec.sql, &spec.cols, spec.types.as_bytes());
@@ -5944,13 +5972,13 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
                 && let Some(held) = held_rel(view.src.as_ref(), types.len())
             {
                 let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: held.k, n: held.n, rows: held.rows.clone(), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: held.dead.clone(), ndead: held.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None });
-                LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
+                loaded(0, thread_cpu() - c0, 0);
                 keep(&rel);
                 return Ok(rel);
             }
             let n = view.ids.as_ref().map_or(0, Vec::len);
             let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: types.len(), n, rows: Rows::new(types.len()), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None });
-            LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
+            loaded(0, thread_cpu() - c0, 0);
             if env_set!("RDL_PROFILE") {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
             }
@@ -5966,11 +5994,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
         n += 1;
     }
     let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: types.len(), n, rows: Rows::frozen(types.len(), rows, n), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Shared::default(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Shared::default(), stats: None });
-    {
-        let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
-        l.0 += thread_cpu() - c0;
-        l.1 += rel.len() as u64;
-    }
+    loaded(usize::from(!base), thread_cpu() - c0, rel.len() as u64);
     if env_set!("RDL_PROFILE") {
         eprintln!("      input {} rows in {:.1} ms: SELECT {cols} FROM {table}", rel.len(), t0.elapsed().as_secs_f64() * 1e3);
     }
@@ -6281,12 +6305,14 @@ pub fn table_source(conn: &Connection, schema: &str, name: &str) -> Option<Arc<d
     stored_table(conn, schema, name, &need)
 }
 /// The stored tables read this run, by database and `schema.table` (dropped with the inputs, `forget_inputs`).
-static STORED: LazyLock<Mutex<HashMap<(String, String), Option<Arc<Stored>>>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct StoredTables(Mutex<HashMap<(String, String), Option<Arc<Stored>>>>);
 /// The stored table `schema.name` with the columns named in `need` loaded (`None`: not one, or not integers).
 fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
     if schema == "temp" || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') { return None; }
     let key = (conn_path(conn).to_string(), format!("{schema}.{name}"));
-    let t = STORED.lock().unwrap().get(&key).cloned();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<StoredTables>();
+    let t = held_.0.lock().unwrap().get(&key).cloned();
     let t = match t {
         Some(t) => t?,
         None => {
@@ -6294,13 +6320,13 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
             let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().map(str::to_owned).collect();
             let k = columns.len();
             let t = Arc::new(Stored::new(columns, (0..k).map(|_| std::sync::OnceLock::new()).collect()));
-            STORED.lock().unwrap().insert(key.clone(), Some(t.clone()));
+            crate::code_rule_dsl::logic::profile::shared::<StoredTables>().0.lock().unwrap().insert(key.clone(), Some(t.clone()));
             t
         }
     };
     let need: Vec<usize> = need.iter().map(|c| t.columns.iter().position(|n| n == c.trim())).collect::<Option<_>>()?;
     if !t.load(conn, &format!("{schema}.{name}"), &need) {
-        STORED.lock().unwrap().insert(key, None);
+        crate::code_rule_dsl::logic::profile::shared::<StoredTables>().0.lock().unwrap().insert(key, None);
         return None;
     }
     Some(t as Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)
@@ -6392,19 +6418,20 @@ impl JoinRule {
 }
 
 /// Where a node read (`Step::Func`'s `texts`) finds the run's long-text nodes: the binding, when the join was made
-/// after it, or the connection's scope, looked up as the step runs when it was made before (a phase's plan made
-/// before its run binds its nodes). Without a binding a read is NULL, as the SQL function's (`functions::register`).
+/// after it, or the connection's data (weakly), looked up as the step runs when it was made before (a phase's plan
+/// made before its run binds its nodes). Without a binding a read is NULL, as the SQL function's
+/// (`functions::register`).
 #[derive(Clone)]
 pub enum NodeTexts {
     Held(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>),
-    At(usize),
+    At(std::sync::Weak<crate::code_rule_dsl::facts::vtab::ConnData>),
 }
 
 impl std::fmt::Debug for NodeTexts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NodeTexts::Held(_) => f.write_str("Held"),
-            NodeTexts::At(at) => write!(f, "At({at})"),
+            NodeTexts::At(_) => f.write_str("At"),
         }
     }
 }
@@ -6413,8 +6440,7 @@ impl std::fmt::Debug for NodeTexts {
 /// on its caller's thread, as before (to compare).
 /// Not under `walks_whole`.
 fn morsels_on() -> bool {
-    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("RERAIL_MORSELS").map_or(true, |v| v != "off"));
-    *ON && !WALKS_WHOLE.with(std::cell::Cell::get)
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_MORSELS").map_or(true, |v| v != "off")) && !WALKS_WHOLE.with(std::cell::Cell::get)
 }
 
 thread_local! {
@@ -6441,13 +6467,11 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
     c.cloned(&["CHUNK"], &crate::code_rule_dsl::facts::rows::CHUNK);
 }
 
-/// Rows a cut left that a walk going on from it read in their order, unsorted (`scan_order`, decision 0294).
-static LEFT_IN_ORDER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Tests: the rows a cut left that walks going on from it read in their order (`LEFT_IN_ORDER`).
+/// Tests: the rows a cut left that walks going on from it read in their order (`run_counts().left_in_order`).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn left_read_in_order() -> u64 {
-    LEFT_IN_ORDER.load(std::sync::atomic::Ordering::Relaxed)
+    run_counts().left_in_order.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Tests: the walks this thread has run in morsels.
@@ -6701,7 +6725,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                     }
                     Source::Full(r) => Src::Full(*r),
                     Source::Native(table) => {
-                        let rel = DERIVED.lock(conn.at()).get(&(conn.at(), table.clone())).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
+                        let rel = on(&conn).derived.lock().get(table.as_str()).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
                         let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
                         let ix = if index { rel.index(&cols) } else { unindexed(&cols) };
                         Src::In(rel, ix)
@@ -6710,11 +6734,12 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                     // its rows at the run's start, those gone and those new, in place.
                     Source::Version(table, ver) => {
                         // A changed input's versions are given beside it (`give_versions`); a held relation's are its marks.
-                        let given = GIVEN.lock(conn.at()).get(&(conn.at(), table.clone())).cloned();
+                        let on = on(&conn);
+                        let given = on.given.lock().get(table.as_str()).cloned();
                         let rel = if let Some([old, minus, plus, now]) = given {
                             Some(match ver { spec::Ver::Old => old, spec::Ver::Minus => minus, spec::Ver::Plus => plus, spec::Ver::New => now })
                         } else {
-                        let held = DERIVED.lock(conn.at()).get(&(conn.at(), table.clone())).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
+                        let held = on.derived.lock().get(table.as_str()).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
                         match ver {
                             spec::Ver::New => Some(held),
                             spec::Ver::Old => held.version_view(Ver::Old),
@@ -6786,10 +6811,9 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                 // batch (`syntax::LongTexts`).
                 let texts = if crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&name) {
                     let long = crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES;
-                    let at = conn.at();
-                    Some(match crate::code_rule_dsl::facts::vtab::bound_source_at(at, long) {
+                    Some(match crate::code_rule_dsl::facts::vtab::bound_source(&conn, long) {
                         Some(nodes) => NodeTexts::Held(nodes),
-                        None => NodeTexts::At(at),
+                        None => NodeTexts::At(conn.db().data_weak()),
                     })
                 } else {
                     None
@@ -6897,7 +6921,7 @@ fn run_join_limited(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
 fn run_seed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], limited: Option<&mut Limited>) -> Result<u64> {
     match level::take(j)? {
         Some(p) => {
-            level::USED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            level::run_counts().used.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             // From a level's pairs: unlimited.
             run_join_in(j, head, store, syms, fresh, &[], None, Some(&p))
         }
@@ -6974,6 +6998,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     }
     struct Ctx<'a, 'c> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
                      key: Vec<i64>, row: Vec<i64>, error: Option<Error>, pending: Vec<(usize,i128)>, scratch: Vec<rowcode::Scratch>,
+                     /// The run's cap on a derived relation's rows (decision 0462, `width::Limits`).
+                     cap: usize,
                      /// The texts the branch being walked holds as text alone (`TEXT_OUT`), by `value - SCRATCH`: each
                      /// dropped as its step's branch returns.
                      texts: Vec<String>,
@@ -7154,7 +7180,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let known: Vec<(usize, usize)> = match left {
             Some(_) if (1..n).all(|p| key_cmp(p as u32 - 1, p as u32).is_le()) => {
                 runs::presorted::site_known(runs::presorted::SCAN, n as u64);
-                LEFT_IN_ORDER.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+                run_counts().left_in_order.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
                 return None;
             }
             _ => known,
@@ -7224,8 +7250,12 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             }
             cx.n += 1;
             if let Some(c) = &mut cx.collect { c.extend_from_slice(&cx.row); return; }
+            // Decision 0462: no relation past the width cap. Its rows and those this walk made (an upper bound: some
+            // may repeat) stop at it; the run stops or cuts the probe (`width`), never fills memory.
+            let rel = &store.rels[cx.head];
+            if cx.fresh[cx.head].n + rel.n >= cx.cap { cx.error = Some(super::width::too_wide(&rel.table, cx.cap)); return; }
             cx.fresh[cx.head].emitted += 1;
-            cx.fresh[cx.head].offer(&cx.row, &store.rels[cx.head]);
+            cx.fresh[cx.head].offer(&cx.row, rel);
             return;
         };
         /// The candidates: an input's index on exactly the key columns, a component relation's composite index, or
@@ -7620,7 +7650,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let read = match nodes {
                         NodeTexts::Held(nodes) => node_read(name, Some(&**nodes), val(slots, args[0])),
                         NodeTexts::At(at) => {
-                            let nodes = crate::code_rule_dsl::facts::vtab::bound_source_at(*at, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES);
+                            let nodes = at.upgrade().and_then(|d| crate::code_rule_dsl::facts::vtab::bound_source_in(&d, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES));
                             node_read(name, nodes.as_deref(), val(slots, args[0]))
                         }
                     };
@@ -7735,7 +7765,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         }).collect();
         struct Out { n: u64, fresh: Fresh, rows: Vec<i64>, counts: Vec<[u64; 2]>, skipped: u64, work: u64, failed: Option<String>, error: Option<Error>,
                      left: Option<Vec<u32>>, texts: Vec<String> }
-        let (head, collecting, cut_from) = (cx.head, cx.collect.is_some(), cx.cut_from);
+        let (head, collecting, cut_from, cap) = (cx.head, cx.collect.is_some(), cx.cut_from, cx.cap);
         let atoms = Arc::clone(&cx.syms.atoms);
         let mut outs: Vec<Option<Out>> = (0..parts).map(|_| None).collect();
         crate::threads::scope(|jobs| {
@@ -7747,7 +7777,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let mut rows = Vec::new();
                     let factor = factored(j);
                     let failed = factor.iter().map(|_| Default::default()).collect();
-                    let mut w = Ctx { j, head, store, syms: &mut syms, fresh: &mut fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(),
+                    let mut w = Ctx { j, head, store, syms: &mut syms, fresh: &mut fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, cap, pending: Vec::new(),
                                       scratch: j.steps.iter().map(|_| rowcode::Scratch::default()).collect(), texts: Vec::new(),
                                       collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
                                       factor, failed, snap: Vec::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
@@ -7799,7 +7829,12 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             if cx.error.is_none() { cx.error = out.error; }
             match cx.collect.as_deref_mut() {
                 Some(c) => c.extend_from_slice(&out.rows),
-                None => cx.fresh[head].absorb(out.fresh),
+                None => {
+                    cx.fresh[head].absorb(out.fresh);
+                    // Each morsel checked the cap on its own rows (decision 0462): together they are checked again.
+                    let rel = &cx.store.rels[head];
+                    if cx.error.is_none() && cx.fresh[head].n + rel.n > cx.cap { cx.error = Some(super::width::too_wide(&rel.table, cx.cap)); }
+                }
             }
         }
         cx.counts[0][0].set(cx.counts[0][0].get() + 1);
@@ -7827,8 +7862,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         if texts.is_empty() {
             if !collecting { mine.settle(&cx.store.rels[head]); }
         } else {
-            DEFERRED_WALKS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            DEFERRED_WALKS[1].fetch_add(texts.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            run_counts().deferred_walks[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            run_counts().deferred_walks[1].fetch_add(texts.len() as u64, std::sync::atomic::Ordering::Relaxed);
             settle_deferred(cx, &mut [(&mut texts, &mut mine, &mut rows)]);
         }
         match (cx.collect.as_deref_mut(), before) {
@@ -7941,7 +7976,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let scratch = j.steps.iter().map(|_| rowcode::Scratch::default()).collect();
     let factor = factored(j);
     let failed = factor.iter().map(|_| Default::default()).collect();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
                        factor, failed, snap: Vec::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
@@ -8822,13 +8857,15 @@ pub mod scope_tests {
         let path = crate::code_rule_dsl::fixtures::temp();
         drop(crate::content_store::ContentStore::open(&path).unwrap());
         let conn = Connection::open(&path).unwrap();
-        let at = conn.at();
         assert!(conn_path(&conn).ends_with(path.file_name().unwrap().to_str().unwrap()));
         symbols(&conn).unwrap();
-        assert!(SCOPE_PATHS.lock(at).contains_key(&at) && SCOPE_SYMS.lock(at).contains_key(&at));
+        let kept = std::sync::Arc::downgrade(&on(&conn));
+        assert!(kept.upgrade().is_some_and(|o| o.path.lock().is_some() && o.syms.lock().is_some()));
         drop(conn);
-        assert!(!SCOPE_PATHS.lock(at).contains_key(&at), "the closed connection's path is kept by its address");
-        assert!(!SCOPE_SYMS.lock(at).contains_key(&at), "the closed connection's symbols are kept by its address");
+        assert!(kept.upgrade().is_none(), "the closed connection's path and symbols are dropped with it");
+        // A connection opened after it, at its address or not, starts with none of it.
+        let next = Connection::open(&path).unwrap();
+        assert!(on(&next).path.lock().is_none() && on(&next).syms.lock().is_none());
     }
 }
 
@@ -8860,6 +8897,27 @@ pub mod sorted_tests {
     }
 }
 
+/// The run's counts of this module's work (decision 0442: a run's own, `run::local`).
+#[derive(Default)]
+pub struct SetfixCounts {
+    /// Walks in one piece that deferred their new texts and interned them in one batch (`whole`), and those texts: for
+    /// the profile.
+    pub deferred_walks: [std::sync::atomic::AtomicU64; 2],
+    /// Cuts made, cut waves gone on reading only the rows left or all (`restricted`), and trials run (decision 0207),
+    /// in this process.
+    pub cuts: [std::sync::atomic::AtomicU64; 4],
+    /// Derived inputs' orders opened (an index asked for at a join's compile) and made (first probed), decision 0186.
+    pub orders_opened: OrderCount,
+    pub orders_made: OrderCount,
+    /// Rows a cut left that a walk going on from it read in their order, unsorted (`scan_order`, decision 0294).
+    pub left_in_order: std::sync::atomic::AtomicU64,
+}
+
+/// The run's `SetfixCounts`.
+#[inline]
+pub fn run_counts() -> std::sync::Arc<SetfixCounts> {
+    crate::code_rule_dsl::logic::run::local::<SetfixCounts>()
+}
 
 /// A `min` lattice relation for another crate's tests (the device's, decision 0384 step 5): folded on the CPU, or
 /// given rows another writer folded with their key map, and read back as each live row's key, value and changes.

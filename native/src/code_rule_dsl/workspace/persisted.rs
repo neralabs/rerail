@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Weak};
+use std::sync::{Arc, Weak};
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -552,7 +552,8 @@ type CatalogMemo = (
     Vec<Weak<CompiledCodeRule>>,
     CandidateCatalogIdentity,
 );
-static CATALOGS: LazyLock<parking_lot::Mutex<Vec<CatalogMemo>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct Catalogs(parking_lot::Mutex<Vec<CatalogMemo>>);
 
 /// The result catalog of `code_rules`: every apply reads it, so it is hashed once per code-rule set.
 pub fn candidate_catalog(
@@ -568,11 +569,13 @@ pub fn candidate_catalog(
                 .all(|(known, code_rule)| std::ptr::eq(known.as_ptr(), Arc::as_ptr(code_rule)))
             && known.iter().all(|known| known.strong_count() > 0)
     };
-    if let Some((_, _, catalog)) = CATALOGS.lock().iter().find(|memo| same(memo)) {
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<Catalogs>();
+    if let Some((_, _, catalog)) = held_.0.lock().iter().find(|memo| same(memo)) {
         return Ok(*catalog);
     }
     let catalog = hash_candidate_catalog(engine, code_rules)?;
-    let mut catalogs = CATALOGS.lock();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<Catalogs>();
+    let mut catalogs = held_.0.lock();
     catalogs.retain(|(_, known, _)| known.iter().all(|known| known.strong_count() > 0));
     if catalogs.len() >= 16 {
         catalogs.remove(0);

@@ -1,14 +1,15 @@
-//! Bounded, process-owned metadata. Complete keys compare without hash aliases;
+//! Bounded metadata, the caller's (decision 0442). Complete keys compare without hash aliases;
 //! rows, statements and SQLite connections never enter this cache.
 use super::{Columns, Registry, SharedColumns};
 use std::collections::{BTreeMap, VecDeque};
 const MAX_ENTRIES: usize = 128;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
 
-pub(crate) fn shared() -> parking_lot::MutexGuard<'static, Cache> {
-    static SCHEMAS: std::sync::LazyLock<parking_lot::Mutex<Cache>> =
-        std::sync::LazyLock::new(Default::default);
-    SCHEMAS.lock()
+/// The caller's cache (decision 0442: the shared object's), held while the guard lives.
+pub(crate) fn shared() -> parking_lot::ArcMutexGuard<parking_lot::RawMutex, Cache> {
+    #[derive(Default)]
+    struct FactSchemas(std::sync::Arc<parking_lot::Mutex<Cache>>);
+    crate::code_rule_dsl::logic::profile::shared::<FactSchemas>().0.lock_arc()
 }
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]

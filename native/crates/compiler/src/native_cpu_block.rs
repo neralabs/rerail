@@ -95,7 +95,7 @@ pub struct CompiledBlock {
     /// bytes after it, and `Batch` brings what they wrote back to the file's positions
     /// (`strip_prefix`, 0389). Empty where there is none, or the passes make it themselves.
     pub prefix: Vec<u8>,
-    /// With `native_cpu_stream::KEEP_IR`: each function's IR as Cranelift was given it (its
+    /// With `native_cpu_codegen::Options::keep_ir`: each function's IR as Cranelift was given it (its
     /// `FuncId`), and the entries' ids in order, for an ahead-of-time build (`clif_rust`).
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     pub entry_ids: Vec<u32>,
@@ -2568,7 +2568,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         crate::clif_fold::fold_with(func, &s);
         let r = crate::clif_fold::returns(func, &s);
         s.insert(id.as_u32(), r);
-        if crate::native_cpu_stream::KEEP_IR.load(std::sync::atomic::Ordering::Relaxed) {
+        if crate::native_cpu_codegen::options().keep_ir.load(std::sync::atomic::Ordering::Relaxed) {
             ir.push((id.as_u32(), func.clone()));
         }
     };
@@ -6088,8 +6088,8 @@ pub enum RunForm {
 }
 
 pub fn run_form() -> RunForm {
-    static FORM: std::sync::OnceLock<RunForm> = std::sync::OnceLock::new();
-    *FORM.get_or_init(|| match std::env::var("RERAIL_RUN_FORM").as_deref() {
+    // The run's setting (decision 0442).
+    rerail_context::setting(|| match std::env::var("RERAIL_RUN_FORM").as_deref() {
         Ok("block") => RunForm::Block,
         Ok("window") => RunForm::Window,
         _ => RunForm::Bytes,

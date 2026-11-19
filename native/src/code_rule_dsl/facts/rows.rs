@@ -54,11 +54,14 @@ pub struct Facts {
     pub block: Block,
     /// Held while an index is added to one of its relations (`Relation::try_reserve_index`, decision 0325 step 5).
     pub ix: Mutex<()>,
+    /// The count of bytes given back of the run that leased it (`given_back`): a relation's last holder may drop it
+    /// on any thread.
+    given: Arc<GivenBack>,
 }
 
 impl Facts {
     fn new(block: Block) -> Facts {
-        Facts { block, ix: Mutex::new(()) }
+        Facts { block, ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>() }
     }
 }
 
@@ -134,16 +137,21 @@ pub enum Life {
     Device,
 }
 
-/// The blocks new relations go in outside a chunk, while they have room: one a `Life`.
-static OPEN: [Mutex<Option<Arc<Facts>>>; 4] = [Mutex::new(None), Mutex::new(None), Mutex::new(None), Mutex::new(None)];
+/// The blocks a run's new relations go in outside a chunk, while they have room: one a `Life` (decision 0442: the
+/// run's, so no two runs' relations share a block).
+#[derive(Default)]
+struct Open([Mutex<Option<Arc<Facts>>>; 4]);
 
-/// Every block leased, by `Life`, while it lives: what a profile reads (`held`).
-static LIVE: Mutex<[Vec<std::sync::Weak<Facts>>; 3]> = Mutex::new([Vec::new(), Vec::new(), Vec::new()]);
+/// Every block leased on this machine, by `Life`, while it lives: what a profile reads (`held`; decision 0442: the
+/// machine's, as the memory it counts is).
+#[derive(Default)]
+struct Live(Mutex<[Vec<std::sync::Weak<Facts>>; 3]>);
 
 /// Per `Life`, the blocks held now, their bytes written and their bytes reserved: a profile's account of the rows
 /// outside the heap.
 pub fn held() -> [(usize, usize, usize); 3] {
-    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    let live_blocks = crate::code_rule_dsl::logic::profile::machine::<Live>();
+    let live = live_blocks.0.lock().unwrap_or_else(|e| e.into_inner());
     std::array::from_fn(|l| {
         live[l].iter().filter_map(std::sync::Weak::upgrade).fold((0, 0, 0), |(n, u, r), f| (n + 1, u + f.block.used(), r + f.block.reserved()))
     })
@@ -215,7 +223,8 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
     if let Some(c) = chunk {
         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
     }
-    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    let live_blocks = crate::code_rule_dsl::logic::profile::machine::<Live>();
+    let mut live = live_blocks.0.lock().unwrap_or_else(|e| e.into_inner());
     live[life as usize].retain(|w| w.strong_count() > 0);
     live[life as usize].push(Arc::downgrade(&f));
     Ok(f)
@@ -225,7 +234,8 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
 /// its others' margin, a new one made when it has none.
 fn open_with_room(life: Life, need: usize) -> Result<Arc<Facts>, String> {
     let chunk = CHUNK.with(|c| c.borrow().clone());
-    let mut open = chunk.as_ref().map_or(&OPEN[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
+    let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
+    let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
     match &*open {
         Some(f) if f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => Ok(f.clone()),
         _ => {
@@ -281,9 +291,6 @@ impl<T: rerail_blocks::Pod> Default for BlockVec<T> {
     }
 }
 
-/// `BlockVec`'s chunks taken, by where: its relation's block, or the open block of its life.
-pub static BLOCK_VEC_CHUNKS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-
 impl<T: rerail_blocks::Pod> BlockVec<T> {
     /// Empty, with no chunk.
     pub const fn new() -> Self {
@@ -316,16 +323,15 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         let bytes = (n * size_of::<T>()).max(1);
         let align = align_of::<T>().max(8);
         let room = |&(f, grow): &(&Arc<Facts>, usize)| f.block.reserved().saturating_sub(f.block.used()) >= bytes + MARGIN + grow;
-        let (facts, (at, size), which) = match near.filter(room).and_then(|(f, _)| f.block.try_alloc_chunk_fit(bytes, align).map(|c| (f.clone(), c))) {
-            Some((f, c)) => (f, c, 0),
+        let (facts, (at, size)) = match near.filter(room).and_then(|(f, _)| f.block.try_alloc_chunk_fit(bytes, align).map(|c| (f.clone(), c))) {
+            Some(found) => found,
             None => {
                 let life = if self.life == Life::Device { Life::Run } else { self.life };
                 let f = open_with_room(life, bytes).unwrap_or_else(|e| panic!("a block for {bytes} bytes of an index: {e}"));
                 let c = f.block.try_alloc_chunk_fit(bytes, align).unwrap_or_else(|| panic!("an open block with room holds {bytes} bytes"));
-                (f, c, 1)
+                (f, c)
             }
         };
-        BLOCK_VEC_CHUNKS[which].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.len > 0 {
             // SAFETY: the old chunk holds `len` written `T`s; the new one is this vector's alone, apart from it.
             // copy: growth: an array that outgrew its chunk, moved once, as a vector's growth moves it
@@ -626,19 +632,27 @@ impl Drop for Lent {
 
 /// The relations of many parts merged into one for a reader that binds one (`Rows::one`), and their bytes: copies the
 /// device's reads of a relation of many parts would not make.
-static MERGED: [std::sync::atomic::AtomicUsize; 2] = [const { std::sync::atomic::AtomicUsize::new(0) }; 2];
+/// On the shared object (decision 0442): a profile's count over the runs that share it.
+#[derive(Default)]
+struct Merged([std::sync::atomic::AtomicUsize; 2]);
+
+fn merged_counts() -> std::sync::Arc<Merged> {
+    crate::code_rule_dsl::logic::profile::shared::<Merged>()
+}
 
 /// The relations merged into one so far (`Rows::one`), and their bytes, for a profile.
 pub fn merged() -> (usize, usize) {
-    (MERGED[0].load(std::sync::atomic::Ordering::Relaxed), MERGED[1].load(std::sync::atomic::Ordering::Relaxed))
+    let m = merged_counts();
+    (m.0[0].load(std::sync::atomic::Ordering::Relaxed), m.0[1].load(std::sync::atomic::Ordering::Relaxed))
 }
 
-/// The bytes of dead relations' chunks given back to the OS so far (`Held`'s drop), for a profile.
-static GIVEN_BACK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// The bytes of a run's dead relations' chunks given back to the OS so far (`Held`'s drop), for a profile: the run's.
+#[derive(Default)]
+struct GivenBack(std::sync::atomic::AtomicUsize);
 
-/// The bytes of dead relations' chunks given back to the OS so far.
+/// The bytes of the run's dead relations' chunks given back to the OS so far.
 pub fn given_back() -> usize {
-    GIVEN_BACK.load(std::sync::atomic::Ordering::Relaxed)
+    crate::code_rule_dsl::logic::profile::local::<GivenBack>().0.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Drop for Held {
@@ -652,7 +666,7 @@ impl Drop for Held {
             return;
         }
         let given = unsafe { (*self.rel).release(&self.facts.block) };
-        GIVEN_BACK.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
+        self.facts.given.0.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -692,7 +706,8 @@ impl Part {
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
         let chunk = CHUNK.with(|c| c.borrow().clone());
-        let mut open = chunk.as_ref().map_or(&OPEN[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
+        let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
+        let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
                 _ if alone => {
@@ -702,7 +717,7 @@ impl Part {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
                     }
                     if life != Life::Device {
-                        let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut live = live_blocks.0.lock().unwrap_or_else(|e| e.into_inner());
                         live[life as usize].retain(|w| w.strong_count() > 0);
                         live[life as usize].push(Arc::downgrade(&f));
                     }
@@ -1079,7 +1094,7 @@ impl Drop for Kills {
         let block = &self.base.facts().block;
         // SAFETY: `try_kills` made it in `block`, which `base` keeps, and this was its last holder.
         let given = unsafe { (*block.ptr::<Relation>(self.at)).release_kills(block) };
-        GIVEN_BACK.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
+        self.base.facts().given.0.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -1434,8 +1449,9 @@ impl Rows {
         Some((self.merged.get_or_init(|| {
                 let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
                 let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
-                MERGED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                MERGED[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
+                let m = merged_counts();
+                m.0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                m.0[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
                 crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
                 let mut one = Part::new(self.life, self.k, rows);
                 for p in parts {
@@ -1905,13 +1921,13 @@ mod tests {
         // copy: not block data: a test's rows
         fork.extend_from_slice(&[7, 8, 9, 10]);
         assert!(fork.tail.as_ref().is_some_and(|t| t.rel().continues()), "the second goes on in a continuation");
-        let merged = MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let merged = super::merged().0;
         let b = fork.in_block().expect("bound");
         assert_eq!(b.rows, 4, "the base's 2 and its own 2");
         let rel = b.relation();
         let got: Vec<i64> = (0..4).flat_map(|id| [rel.get(id, 0), rel.get(id, 1)]).collect();
         assert_eq!(got, [1, 2, 3, 4, 7, 8, 9, 10], "each row where it lies, by the read written once");
-        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        assert_eq!(super::merged().0, merged, "nothing merged");
         assert_eq!(first.in_block().expect("bound").rows, 3);
         // Frozen, then started from again: its writer the next one's, still one relation.
         let kept2 = fork.freeze(4);
@@ -1921,7 +1937,7 @@ mod tests {
         next.extend_from_slice(&[11, 12]);
         let b = next.in_block().expect("bound");
         assert_eq!((b.rows, b.relation().get(4, 1), b.relation().get(1, 0)), (5, 12, 3));
-        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        assert_eq!(super::merged().0, merged, "nothing merged");
         // Moved for another writer (as from a full block): its base's rows go with it, and it is one relation.
         let lent = next.tail.as_ref().expect("a tail").moved_room(next.tail.as_ref().expect("a tail").len(), 1);
         assert_eq!(lent.at, 5, "every row it reads, then the room");
@@ -1947,7 +1963,7 @@ mod tests {
     #[test]
     fn forks_of_forks_stay_one_relation() {
         let k = 1;
-        let merged = || MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let merged = || super::merged().0;
         let before = merged();
         let read = |r: &Rows| -> Vec<i64> {
             let b = r.in_block().expect("bound");
@@ -2036,7 +2052,7 @@ mod tests {
                 }
             }
         };
-        let merged = MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let merged = super::merged().0;
         let old = rows.tail.as_ref().expect("a tail").clone();
         // As if its block were full: moved.
         let lent = rows.tail_moved(2).expect("a tail with rows");
@@ -2056,7 +2072,7 @@ mod tests {
         drop((lent, next, old));
         assert_eq!(rows.parts().count(), 1, "one relation");
         assert_eq!(rows.in_block().expect("bound whole").rows, 5);
-        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        assert_eq!(super::merged().0, merged, "nothing merged");
         // copy: not block data: a test's rows
         let all: Vec<Vec<i64>> = (0..5).map(|i| rows.row(i, k).to_vec()).collect();
         assert_eq!(all, [[1, 2], [3, 4], [10, 20], [11, 21], [12, 22]].map(|r| r.to_vec()));
@@ -2116,7 +2132,7 @@ mod tests {
                 }
             }
         };
-        let merged = MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let merged = super::merged().0;
         let lent = rows.tail_room(3).expect("room in the tail's block");
         assert_eq!(lent.at, 2);
         assert!(rows.tail_room(1).is_none(), "one loan a tail at a time");
@@ -2134,7 +2150,7 @@ mod tests {
         assert_eq!(rows.parts().count(), 1, "one relation");
         let b = rows.in_block().expect("bound whole");
         assert_eq!(b.rows, 5);
-        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        assert_eq!(super::merged().0, merged, "nothing merged");
         // copy: not block data: a test's rows
         let all: Vec<Vec<i64>> = (0..5).map(|i| rows.row(i, k).to_vec()).collect();
         assert_eq!(all, [[1, 2], [3, 4], [10, 20], [11, 21], [12, 22]].map(|r| r.to_vec()));
@@ -2166,10 +2182,10 @@ mod tests {
         next.extend_from_slice(&[4]);
         assert_eq!((kept.rows(), next.rows()), (3, 4), "the frozen rows read their own");
         assert!(next.shares(&kept));
-        let merged = MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let merged = super::merged().0;
         assert_eq!(next.in_block().expect("bound").rows, 4);
         assert_eq!(kept.in_block().expect("bound").rows, 3, "a prefix bound as its rows");
-        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        assert_eq!(super::merged().0, merged, "nothing merged");
         // The writer is the first's: a second's first row opens a continuation of the kept rows' relation (step 7).
         let mut other = kept.shared(3);
         assert!(other.segs.len() == 1 && other.tail.is_none());

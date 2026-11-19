@@ -786,16 +786,15 @@ unused(f) :- def(f, _), !used(f).
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        (report.cross_maintained.0, crate::code_rule_dsl::logic::plan::output::shown(&out, "unused").unwrap())
+        let decoded = report.run.expect("the test's run is the outermost").trees_decoded;
+        (report.cross_maintained.0, crate::code_rule_dsl::logic::plan::output::shown(&out, "unused").unwrap(), decoded)
     };
     run("kept.sqlite");
     write("c.py", "def h():\n    pass\n");
-    crate::code_rule_dsl::logic::program_image::forget_trees_decoded();
-    let (maintained, rows) = run("kept.sqlite");
     // The run's program is a version (`lower::Lowered`): no tree to copy or read beside it. A tree is made only by
-    // decoding one (`Version::program`), counted.
-    let decoded = crate::code_rule_dsl::logic::program_image::trees_decoded();
-    let (_, fresh) = run("fresh.sqlite");
+    // decoding one (`Version::program`), counted in the run's record, on any of its threads.
+    let (maintained, rows, decoded) = run("kept.sqlite");
+    let (_, fresh, _) = run("fresh.sqlite");
     assert_eq!(rows, fresh);
     assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
     assert_eq!(decoded.0, 0, "the maintained run decoded trees from their versions, the last at {:?}", decoded.1);

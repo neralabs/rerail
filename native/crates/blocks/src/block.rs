@@ -69,10 +69,12 @@ pub trait Backing: Send + Sync {
 
 /// The bytes zeroed as blocks' memory was handed out again (a free list's chunk, a dirty block's allocation).
 pub fn zeroed_bytes() -> u64 {
-    ZEROED.load(Relaxed)
+    rerail_context::with_local::<Zeroed, _>(|z| z.0.load(Relaxed))
 }
 
-static ZEROED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The run's count (decision 0442: a measurement of the run's).
+#[derive(Default)]
+struct Zeroed(std::sync::atomic::AtomicU64);
 
 /// Zeroes `len` bytes at `p`, counted (`zeroed_bytes`).
 ///
@@ -80,7 +82,7 @@ static ZEROED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(
 /// `p..p + len` is writable memory of a block.
 unsafe fn zero(p: *mut u8, len: usize) {
     unsafe { std::ptr::write_bytes(p, 0, len) };
-    ZEROED.fetch_add(len as u64, Relaxed);
+    rerail_context::with_local::<Zeroed, _>(|z| z.0.fetch_add(len as u64, Relaxed));
 }
 
 /// What a block has used, and holds free (its free list's bytes): shared with a ledger that counts live blocks

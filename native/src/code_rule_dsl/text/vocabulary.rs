@@ -113,9 +113,12 @@ fn determinize(hirs: &[regex_syntax::hir::Hir]) -> Option<Dfa> {
 /// hundred at a time (a data-layer policy makes a handful), cleared when full.
 const KEPT_GROUPS: usize = 512;
 
-fn kept_groups() -> &'static std::sync::Mutex<HashMap<String, Option<std::sync::Arc<Dfa>>>> {
-    static KEPT: std::sync::OnceLock<std::sync::Mutex<HashMap<String, Option<std::sync::Arc<Dfa>>>>> = std::sync::OnceLock::new();
-    KEPT.get_or_init(Default::default)
+/// The groups' automata kept, the caller's (decision 0442: the shared object's).
+#[derive(Default)]
+struct Vocabularies(std::sync::Mutex<HashMap<String, Option<std::sync::Arc<Dfa>>>>);
+
+fn kept_groups() -> std::sync::Arc<Vocabularies> {
+    crate::code_rule_dsl::logic::profile::shared::<Vocabularies>()
 }
 
 /// A DFA read back from the bytes `to_bytes_native_endian` made; `None` when they no longer read.
@@ -207,7 +210,7 @@ impl Searchers {
             // A group already determinized in this process (another policy of a batch, another run) is taken as it
             // is: by its key, which names its patterns (O-vocabulary-dfa-reuse). The store's cache is asked after.
             let named = group_key(&hirs);
-            if let Some(kept) = kept_groups().lock().expect("the kept groups").get(&named).cloned() {
+            if let Some(kept) = kept_groups().0.lock().expect("the kept groups").get(&named).cloned() {
                 crate::code_rule_dsl::prof::count("text.dfa_group_kept", 1);
                 // Named in the cache as a read of it would (the run's manifest), or put where it is not kept there.
                 if let Some(c) = cache {
@@ -272,7 +275,8 @@ impl Searchers {
                 if cache.is_some() {
                     out.cached.push((named.clone(), kept.clone()));
                 }
-                let mut all = kept_groups().lock().expect("the kept groups");
+                let held = kept_groups();
+                let mut all = held.0.lock().expect("the kept groups");
                 if all.len() >= KEPT_GROUPS {
                     all.clear();
                 }

@@ -63,6 +63,9 @@ pub struct CodeRuleDslWorkspace {
     /// `package.json`, answered without the state lock.
     pub(super) package_manifests: AtomicBool,
     #[napi(skip)] pub closed: Arc<AtomicBool>,
+    /// What the workspace's runs share by design (decision 0442): its own, as apart from another workspace's as one
+    /// in another process.
+    #[napi(skip)] pub shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
 }
 
 impl Default for CodeRuleDslWorkspace {
@@ -71,10 +74,26 @@ impl Default for CodeRuleDslWorkspace {
     }
 }
 
-#[napi]
+/// The Node environment's machine (decision 0442). The addon's caller is the environment: it makes one machine and
+/// keeps it in its instance data, so every workspace it makes shares its pool, its CPU slot and its learned model,
+/// each workspace on a shared object of its own. Another environment (a worker thread) has its own.
+fn environment_machine(env: &napi::Env) -> Result<Arc<crate::code_rule_dsl::logic::profile::Machine>> {
+    if let Some(machine) = env.get_instance_data::<Arc<crate::code_rule_dsl::logic::profile::Machine>>()? {
+        return Ok(Arc::clone(machine));
+    }
+    let machine = crate::code_rule_dsl::logic::profile::Machine::new();
+    env.set_instance_data(Arc::clone(&machine), (), |_| {})?;
+    Ok(machine)
+}
+
 impl CodeRuleDslWorkspace {
-    #[napi(constructor)]
+    /// A workspace on the tests' shared object (a product build's: one of its own), for a caller with no Node
+    /// environment.
     pub fn new() -> Self {
+        Self::on(crate::code_rule_dsl::logic::profile::default_shared())
+    }
+
+    fn on(shared: Arc<crate::code_rule_dsl::logic::profile::Shared>) -> Self {
         let state = WorkspaceState {
             instance: WORKSPACE_INSTANCES.fetch_add(1, Ordering::Relaxed),
             ..WorkspaceState::default()
@@ -85,7 +104,17 @@ impl CodeRuleDslWorkspace {
             server_graph: AtomicBool::new(false),
             package_manifests: AtomicBool::new(false),
             closed: Arc::new(AtomicBool::new(false)),
+            shared,
         }
+    }
+}
+
+#[napi]
+impl CodeRuleDslWorkspace {
+    /// A workspace on a shared object of its own, on the environment's machine (`environment_machine`).
+    #[napi(constructor)]
+    pub fn construct(env: napi::Env) -> Result<Self> {
+        Ok(Self::on(crate::code_rule_dsl::logic::profile::Shared::on(&environment_machine(&env)?)))
     }
 
     /// Attaches the content store file at `store_path` to the Git repository containing `root`.
@@ -120,6 +149,7 @@ impl CodeRuleDslWorkspace {
         Ok(WorkspaceStorageTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            shared: Arc::clone(&self.shared),
             root,
             store_path: PathBuf::from(store_path),
             secret_names: Arc::new(SecretNames::compile(secret_names)?),
@@ -137,6 +167,8 @@ impl CodeRuleDslWorkspace {
         compiled: &CompiledCodeRuleDsl,
         placement: Option<String>,
     ) -> Result<()> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let placement = placement.as_deref().map(parse_placement).transpose()?;
         let guard = match self.state.try_lock() {
             Ok(guard) => guard,
@@ -337,10 +369,12 @@ impl CodeRuleDslWorkspace {
 
     #[napi(catch_unwind)]
     pub fn try_apply(&self, request_json: String) -> Result<Option<String>> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         if self.closed.load(Ordering::Acquire) || request_json.len() > 8192 {
             return Ok(None);
         }
-        let Some(_slot) = cpu_slot().try_lock() else {
+        let Some(_slot) = cpu_slot().try_lock_arc() else {
             return Ok(None);
         };
         // Upkeep yields to the apply (decision 0190 §8).
@@ -438,6 +472,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(WorkspaceApplyTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            shared: Arc::clone(&self.shared),
             request_json,
             request_buffer: None,
             request_direct: None,
@@ -449,6 +484,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(WorkspaceApplyTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            shared: Arc::clone(&self.shared),
             request_json: String::new(),
             request_buffer: Some(request.to_vec()),
             request_direct: None,
@@ -465,6 +501,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(WorkspaceIndexTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            shared: Arc::clone(&self.shared),
             options,
         })
     }
@@ -479,6 +516,7 @@ impl CodeRuleDslWorkspace {
         WorkspaceCompletionTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            shared: Arc::clone(&self.shared),
         }
     }
 
@@ -501,6 +539,7 @@ impl CodeRuleDslWorkspace {
         WorkspaceResultPageTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            shared: Arc::clone(&self.shared),
             cursor: cursor as usize,
             maximum_bytes: maximum_bytes as usize,
         }
@@ -508,6 +547,8 @@ impl CodeRuleDslWorkspace {
 
     #[napi(catch_unwind)]
     pub fn memory_profile(&self) -> Result<String> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let state = match self.state.lock() {
             Ok(guard) => StateLease {
                 guard: Some(guard),
@@ -529,6 +570,8 @@ impl CodeRuleDslWorkspace {
     /// least recently used documents, which later loads bring back from the store or a reparse.
     #[napi(catch_unwind)]
     pub fn set_document_residency_limit(&self, bytes: u32) -> Result<()> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         self.state_now()?.documents.set_limit(bytes as usize);
         Ok(())
     }
@@ -539,6 +582,8 @@ impl CodeRuleDslWorkspace {
     /// apply that defers nothing evaluate again the files whose clauses read import targets.
     #[napi(catch_unwind)]
     pub fn set_root(&self, root: String) -> Result<()> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let root = PathBuf::from(root);
         if !root.is_absolute() {
             return Err(invalid("workspace root must be an absolute path"));
@@ -553,6 +598,8 @@ impl CodeRuleDslWorkspace {
 
     #[napi(catch_unwind)]
     pub fn evict_inactive(&self) -> Result<bool> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let mut state = self.state_now()?;
         // Cross-file clauses read the evidence index and the call graph, which eviction keeps: they
         // are summaries of the files, and an edit after eviction updates the graph in place.
@@ -606,6 +653,8 @@ impl CodeRuleDslWorkspace {
         start_byte: u32,
         end_byte: u32,
     ) -> Result<Option<String>> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let mut state = self.state_now()?;
         documents::reference(&mut state, &path, start_byte as usize, end_byte as usize)?
             .map(|reference| serde_json::to_string(&reference).map_err(json_error))
@@ -616,6 +665,8 @@ impl CodeRuleDslWorkspace {
     /// reference whose file version is no longer current is refused.
     #[napi(catch_unwind)]
     pub fn resolve_node_reference(&self, reference: String) -> Result<String> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let reference: documents::NodeReference =
             serde_json::from_str(&reference).map_err(json_error)?;
         let mut state = self.state_now()?;
@@ -624,6 +675,8 @@ impl CodeRuleDslWorkspace {
 
     #[napi(catch_unwind)]
     pub fn close(&self) {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         self.closed.store(true, Ordering::Release);
         clear_if_unlocked(&self.state);
         match self.scopes.lock() {
@@ -798,6 +851,8 @@ pub struct StorageAttachment {
 pub struct WorkspaceStorageTask {
     state: Arc<Mutex<WorkspaceState>>,
     closed: Arc<AtomicBool>,
+    /// The workspace's shared object (decision 0442): the task's run is on it.
+    shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
     root: String,
     /// The store file the host named.
     store_path: PathBuf,
@@ -812,6 +867,8 @@ impl Task for WorkspaceStorageTask {
 
     fn compute(&mut self) -> Result<StorageAttachment> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            // The task's run, on the workspace's shared object (decision 0442).
+            let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             check_closed(&self.closed)?;
             // A workspace Git cannot describe (no repository, an unreadable untracked directory, a
             // corrupt index) attaches no store: the host walks it, reporting what it cannot read,
@@ -895,6 +952,8 @@ impl Task for WorkspaceStorageTask {
 pub struct WorkspaceApplyTask {
     pub state: Arc<Mutex<WorkspaceState>>,
     pub closed: Arc<AtomicBool>,
+    /// The workspace's shared object (decision 0442): the task's run is on it.
+    pub shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
     pub request_json: String,
     pub request_buffer: Option<Vec<u8>>,
     pub request_direct: Option<Request>,
@@ -904,18 +963,22 @@ pub struct WorkspaceApplyTask {
 #[napi]
 pub const WORKSPACE_BUSY: &str = "WORKSPACE_BUSY";
 
-/// One apply at a time across the process's workspaces. It guards no data, so it is a mutex a
-/// panic does not poison: an apply that panics while holding it frees it for the next one.
-pub fn cpu_slot() -> &'static parking_lot::Mutex<()> {
-    static SLOT: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
-    &SLOT
+/// One apply at a time across the machine's workspaces (decision 0442: the machine's, so a Node environment's
+/// workspaces share it). It guards no data, so it is a mutex a panic does not poison: an apply that panics while
+/// holding it frees it for the next one.
+pub fn cpu_slot() -> Arc<parking_lot::Mutex<()>> {
+    #[derive(Default)]
+    struct CpuSlot(Arc<parking_lot::Mutex<()>>);
+    Arc::clone(&crate::code_rule_dsl::logic::profile::machine::<CpuSlot>().0)
 }
 impl Task for WorkspaceApplyTask {
     type Output = ResultText;
     type JsValue = ResultText;
     fn compute(&mut self) -> Result<ResultText> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
-            let Some(_slot) = cpu_slot().try_lock() else {
+            // The task's run, on the workspace's shared object (decision 0442).
+            let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
+            let Some(_slot) = cpu_slot().try_lock_arc() else {
                 return Err(invalid(WORKSPACE_BUSY));
             };
             // Upkeep yields to the apply (decision 0190 §8): its steps stop, their work left due.
@@ -1329,6 +1392,8 @@ impl Drop for PurgeAfterApply {
 pub struct WorkspaceResultPageTask {
     state: Arc<Mutex<WorkspaceState>>,
     closed: Arc<AtomicBool>,
+    /// The workspace's shared object (decision 0442): the task's run is on it.
+    shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
     cursor: usize,
     maximum_bytes: usize,
 }
@@ -1339,6 +1404,8 @@ impl Task for WorkspaceResultPageTask {
 
     fn compute(&mut self) -> Result<String> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            // The task's run, on the workspace's shared object (decision 0442).
+            let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             if self.maximum_bytes == 0 || self.maximum_bytes > 64 * 1024 * 1024 {
                 return Err(invalid(
                     "result page limit must be between 1 byte and 64 MiB",
@@ -1382,6 +1449,8 @@ impl Task for WorkspaceResultPageTask {
 pub struct WorkspaceCompletionTask {
     state: Arc<Mutex<WorkspaceState>>,
     closed: Arc<AtomicBool>,
+    /// The workspace's shared object (decision 0442): the task's run is on it.
+    shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
 }
 
 impl WorkspaceCompletionTask {
@@ -1483,6 +1552,8 @@ impl Task for WorkspaceCompletionTask {
 
     fn compute(&mut self) -> Result<()> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            // The task's run, on the workspace's shared object (decision 0442).
+            let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             check_closed(&self.closed)?;
             // One deadline for the publication under the lock and the completion write after it,
             // so an apply waiting on the lock waits at most one.

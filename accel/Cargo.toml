@@ -11,8 +11,11 @@ default = ["sme", "gpu", "ane"]
 sme = []
 gpu = []
 ane = []
+# The tests' shared object for reads outside a run (decision 0442; `rerail_context::TESTS`).
+test-hooks = ["rerail-context/test-hooks"]
 
 [dependencies]
+rerail-context = { path = "../native/crates/context" }
 rayon = "=1.12.0"
 parking_lot = "0.12"
 sha2 = "0.10"
@@ -36,3 +39,6 @@ cc = "=1.10.0"
 [lints.rust]
 # objc 0.2's `msg_send!` tests a `cargo-clippy` feature in the calling crate.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
+[dev-dependencies]
+rerail-context = { path = "../native/crates/context", features = ["test-hooks"] }

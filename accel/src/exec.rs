@@ -237,11 +237,14 @@ pub struct LateBy {
     pub late_max: f64,
 }
 
-static WAITS: std::sync::Mutex<(BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>)> = std::sync::Mutex::new((BTreeMap::new(), BTreeMap::new()));
+/// The run's waits, by site, and the jobs that made them late (decision 0442: the profile's, so the run's).
+#[derive(Default)]
+struct Waits(std::sync::Mutex<(BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>)>);
 
-/// Every site's waits so far, and the jobs that made them late: for the profile.
+/// Every site's waits so far in the run under way, and the jobs that made them late: for the profile.
 pub fn waits() -> (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>) {
-    let w = WAITS.lock().unwrap_or_else(|p| p.into_inner());
+    let waits = rerail_context::local::<Waits>();
+    let w = waits.0.lock().unwrap_or_else(|p| p.into_inner());
     (w.0.iter().map(|(k, v)| (*k, v.clone())).collect(), w.1.iter().map(|(k, v)| (*k, v.clone())).collect())
 }
 
@@ -298,7 +301,8 @@ impl Waiting {
             self.s.late_exact = ready.map_or(0.0, |r| ended.saturating_duration_since(r).as_secs_f64().min(wall));
             late_by = Some((name, wall));
         }
-        let mut w = WAITS.lock().unwrap_or_else(|p| p.into_inner());
+        let waits = rerail_context::local::<Waits>();
+        let mut w = waits.0.lock().unwrap_or_else(|p| p.into_inner());
         let t = w.0.entry(self.site).or_default();
         t.waits += self.s.waits;
         t.helping += self.s.helping;
@@ -404,8 +408,8 @@ impl Bell {
 /// every 100 ms. On a shared machine the cores' threads get less than a core each, so their wall time stretches; a
 /// device's does not.
 pub fn cores_slowdown() -> f64 {
-    static LAST: std::sync::Mutex<Option<(Instant, f64)>> = std::sync::Mutex::new(None);
-    let mut last = LAST.lock().unwrap_or_else(|p| p.into_inner());
+    let pools = pools();
+    let mut last = pools.load.lock().unwrap_or_else(|p| p.into_inner());
     if let Some((at, v)) = *last {
         if at.elapsed().as_secs_f64() < 0.1 {
             return v;
@@ -433,13 +437,12 @@ pub fn measured_lane() -> Option<Lane> {
 }
 
 fn measured_pin() -> Option<(Lane, Option<String>)> {
-    static PIN: OnceLock<Option<(Lane, Option<String>)>> = OnceLock::new();
-    PIN.get_or_init(|| {
+    // The run's setting (decision 0442), read as it first needs it.
+    rerail_context::setting(|| {
         let v = std::env::var("RERAIL_LANE_PIN").ok()?;
         let (lane, name) = v.split_once(':').map_or((v.trim(), None), |(l, n)| (l.trim(), Some(n.trim().to_owned())));
         Lane::ALL.into_iter().find(|l| l.name() == lane).map(|l| (l, name))
     })
-    .clone()
 }
 
 /// The lane `RERAIL_LANE_PIN` measures `kernel` on, if it names one for it.
@@ -681,18 +684,23 @@ pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOn
         b = b.stack_size(s);
     }
     let named = name.to_owned();
+    // The service reads its starter's shared and machine values (decision 0442), and keeps no run of its alive: it
+    // may outlive it. One started outside any run (the process's signal watcher, from `main`) has none to carry.
+    let shared = rerail_context::shared_object();
     b.spawn(move || {
-        struct Listed(String);
+        let _within = shared.map(rerail_context::within);
+        let pools = pools();
+        struct Listed(String, Arc<Pools>);
         impl Drop for Listed {
             fn drop(&mut self) {
-                let mut l = SERVICES.lock().unwrap_or_else(|e| e.into_inner());
+                let mut l = self.1.services.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(i) = l.iter().position(|n| *n == self.0) {
                     l.swap_remove(i);
                 }
             }
         }
-        SERVICES.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
-        let _listed = Listed(named);
+        pools.services.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
+        let _listed = Listed(named, pools);
         f()
     })
 }
@@ -703,17 +711,38 @@ pub fn scoped<'env, T>(f: impl for<'scope> FnOnce(&'scope std::thread::Scope<'sc
     std::thread::scope(f)
 }
 
-static SERVICES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+/// What the machine's pools hold beside rayon's one pool (decision 0442: the machine's, `rerail_context::Machine`):
+/// the device lanes' pool and their submissions' slots, the services alive, the load last read.
+#[derive(Default)]
+struct Pools {
+    /// The device lanes' own pool ([`lane_host`]): `None` where it could not be made.
+    lanes: OnceLock<Option<rayon::ThreadPool>>,
+    /// The submissions' slots ([`lane_spawn`]): whether each is busy, and its pool.
+    busy: [std::sync::atomic::AtomicBool; SLOTS],
+    slots: [OnceLock<Option<rayon::ThreadPool>>; SLOTS],
+    /// The names of the [`service`] threads alive.
+    services: std::sync::Mutex<Vec<String>>,
+    /// The cores' slowdown last read, and when ([`cores_slowdown`]).
+    load: std::sync::Mutex<Option<(Instant, f64)>>,
+}
+
+fn pools() -> Arc<Pools> {
+    rerail_context::machine::<Pools>()
+}
 
 /// The names of the [`service`] threads alive now.
 pub fn services() -> Vec<String> {
-    SERVICES.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    pools().services.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// Drops `x` beside the caller, as a job on the pool: freeing what it holds is no step's work, and a drop waits for
 /// nothing.
 pub fn drop_beside<T: Send + 'static>(x: T) {
-    rayon::spawn(move || drop(x));
+    let run = rerail_context::run_own();
+    rayon::spawn(move || {
+        let _run = rerail_context::enter(run);
+        drop(x)
+    });
 }
 
 /// The worker of a device lane, until the executor drops: two submissions deep (decision 0100 §11).
@@ -813,24 +842,20 @@ fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
     struct Handed<T>(T);
     // SAFETY: see `Handed`: the caller is blocked for as long as the other thread holds it.
     unsafe impl<T> Send for Handed<T> {}
-    match lanes_pool() {
+    let pools = pools();
+    match pools.lanes.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).build().ok()) {
         Some(pool) => {
             let f = Handed(f);
+            let run = rerail_context::run_own();
             pool.install(move || {
                 let f = f;
+                let _run = rerail_context::enter(run);
                 Handed((f.0)())
             })
             .0
         }
         None => f(),
     }
-}
-
-/// The device lanes' own pool ([`lane_host`]): `None` where it could not be made.
-fn lanes_pool() -> Option<&'static rayon::ThreadPool> {
-    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
-    POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).build().ok())
-        .as_ref()
 }
 
 /// Runs a device lane's submission on a pool of its own and returns at once: its result, and the CPU seconds of the
@@ -843,22 +868,24 @@ fn lanes_pool() -> Option<&'static rayon::ThreadPool> {
 /// thread-local evaluation (the launch budget, the profile's spans) was the first's, and the first waited for the
 /// whole of the second. With every slot busy (more in flight than [`SLOTS`]) it runs here.
 pub fn lane_spawn<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> std::sync::mpsc::Receiver<(std::thread::Result<R>, f64)> {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static BUSY: [AtomicBool; SLOTS] = [const { AtomicBool::new(false) }; SLOTS];
-    static POOLS: [OnceLock<Option<rayon::ThreadPool>>; SLOTS] = [const { OnceLock::new() }; SLOTS];
+    use std::sync::atomic::Ordering;
     let (send, take) = std::sync::mpsc::channel();
+    let pools = pools();
+    let run = rerail_context::run_own();
+    let held = Arc::clone(&pools);
     let job = move |slot: Option<usize>| {
+        let _run = rerail_context::enter(run);
         let c0 = thread_cpu();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
         let cpu = thread_cpu() - c0;
         if let Some(slot) = slot {
-            BUSY[slot].store(false, Ordering::Release);
+            held.busy[slot].store(false, Ordering::Release);
         }
         let _ = send.send((r, cpu));
     };
-    let claimed = (0..SLOTS).find(|&i| BUSY[i].compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed).is_ok());
+    let claimed = (0..SLOTS).find(|&i| pools.busy[i].compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed).is_ok());
     let pool = claimed.and_then(|i| {
-        POOLS[i]
+        pools.slots[i]
             .get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(move |t| format!("rerail-lane-slot {i}.{t}")).build().ok())
             .as_ref()
             .map(|pool| (i, pool))
@@ -867,7 +894,7 @@ pub fn lane_spawn<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> 
         Some((i, pool)) => pool.spawn(move || job(Some(i))),
         None => {
             if let Some(i) = claimed {
-                BUSY[i].store(false, Ordering::Release);
+                pools.busy[i].store(false, Ordering::Release);
             }
             job(None)
         }
@@ -1406,7 +1433,10 @@ impl Executor {
         let mut ticket = self.board.queue(Lane::Cpu, vec![Item { form: name, units: 0.0, estimate, host: estimate }]);
         let (reply, take) = std::sync::mpsc::sync_channel(1);
         let board = Arc::clone(&self.board);
+        // The job is its caller's run's (decision 0442), on whichever pool thread takes it.
+        let run = rerail_context::run_own();
         rayon::spawn_fifo(move || {
+            let _run = rerail_context::enter(run);
             board.start(&mut ticket);
             let r = as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
             board.finish(ticket, r.is_ok());

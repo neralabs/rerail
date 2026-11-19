@@ -2048,7 +2048,6 @@ fn formulas(
 ) -> Vec<Option<Vec<(usize, Vec<u64>)>>> {
     use super::compile_sets::{Index, Reader, Set};
     use rayon::prelude::*;
-    static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SETS_CHECK").is_some());
     if !formulas_on() {
         return vec![None; level.len()];
     }
@@ -2095,7 +2094,7 @@ fn formulas(
                         Plan::Fact(fact) => Some(Arc::unwrap_or_clone(fact.nth_bits(view, &index.siblings).expect("a node set"))),
                         Plan::Set { walk, program, domain, set } => walk.texts(program, view).map(|texts| {
                             let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(set);
-                            if *CHECK {
+                            if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SETS_CHECK").is_some()) {
                                 // The domain read exactly, as the formula reads it (a demand's set too).
                                 let within = Reader { tape: view, index, labels: &sets[tape], texts: &[] }.eval(&domain.set());
                                 let starts = (0..view.transducer_len() as u32).filter(|&node| within[node as usize / 64] >> (node % 64) & 1 != 0);
@@ -2188,7 +2187,7 @@ fn label_level<'a>(
             "packed" => packed_ns / packed as u128,
             _ => *wall,
         }).collect::<Vec<_>>();
-        write_census(file, level, &routes, &walls, &found, tapes, sets);
+        write_census(&file, level, &routes, &walls, &found, tapes, sets);
     }
     drop(views);
     let (mut changed, mut given) = (false, Vec::new());
@@ -2867,18 +2866,17 @@ struct Demand {
 /// Whether an `all`'s labels start where the kinds allow alone (`RERAIL_DEMAND_SETS=off`, a measurement switch: as
 /// before decision 0459).
 fn demand_sets_off() -> bool {
-    static OFF: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_DEMAND_SETS").is_ok_and(|mode| mode == "off"));
-    *OFF
+    crate::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEMAND_SETS").is_ok_and(|mode| mode == "off"))
 }
 
 /// Where the label census goes (`RERAIL_LABEL_CENSUS=<file>`): a line per label pass a host level evaluates, its
 /// route, starts and members. A measurement switch: off, nothing is noted or written.
-fn census() -> Option<&'static std::sync::Mutex<std::fs::File>> {
-    static FILE: std::sync::LazyLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
+fn census() -> Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>> {
+    // The run's setting (decision 0442): opened once a run, appended to.
+    crate::code_rule_dsl::logic::profile::setting(|| {
         let path = std::env::var_os("RERAIL_LABEL_CENSUS")?;
-        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(std::sync::Mutex::new)
-    });
-    FILE.as_ref()
+        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(|f| std::sync::Arc::new(std::sync::Mutex::new(f)))
+    })
 }
 
 /// A short form of `tree` for the census: kinds as `k145`, labels' rules nested, long ones cut.

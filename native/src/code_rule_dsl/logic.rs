@@ -4,6 +4,7 @@
 
 pub mod crypto;
 pub mod derived;
+pub mod run;
 pub mod run_state;
 #[cfg(test)]
 pub mod facts_only;

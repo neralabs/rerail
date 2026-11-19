@@ -17,7 +17,9 @@ const KEPT: i64 = 400_000;
 /// The recent steps a comparison reads.
 pub const READ: i64 = 200_000;
 
-static QUEUE: Mutex<Vec<StepSample>> = Mutex::new(Vec::new());
+/// The steps queued for the machine's cost store (decision 0442: the machine's, as the learned model is).
+#[derive(Default)]
+struct StepQueue(Mutex<Vec<StepSample>>);
 
 /// Whether steps are kept: the cost statistics have a store (not `RERAIL_COSTS=off`, not a test).
 pub fn enabled() -> bool {
@@ -29,14 +31,15 @@ pub fn submit(steps: Vec<StepSample>) {
     if steps.is_empty() {
         return;
     }
-    let mut q = QUEUE.lock();
+    let queue = crate::code_rule_dsl::logic::profile::machine::<StepQueue>();
+    let mut q = queue.0.lock();
     let room = QUEUE_LIMIT.saturating_sub(q.len());
     q.extend(steps.into_iter().take(room));
 }
 
 /// The steps queued since the last write.
 pub fn take() -> Vec<StepSample> {
-    std::mem::take(&mut *QUEUE.lock())
+    std::mem::take(&mut *crate::code_rule_dsl::logic::profile::machine::<StepQueue>().0.lock())
 }
 
 pub fn create(db: &Connection) -> rusqlite::Result<()> {

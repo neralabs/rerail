@@ -197,7 +197,26 @@ impl Default for Prices {
 
 /// Rates learned from the cost statistics (decision 0100 §14): seconds a unit, by kernel name ([`Kernel::name`]) and
 /// lane, with the samples each was fitted from. They take the place of the table's and a program's own.
-static LEARNED: std::sync::RwLock<Vec<Learned>> = std::sync::RwLock::new(Vec::new());
+/// The machine's learned rates (decision 0442: its price model's), their version (0 before any; else a number no other
+/// machine's rates have, `VERSIONS`, so a thread's copy is never another machine's), and whether its stored statistics
+/// are in place ([`first_price`]).
+#[derive(Default)]
+struct Rates {
+    learned: std::sync::RwLock<Vec<Learned>>,
+    version: std::sync::atomic::AtomicU64,
+    priced: std::sync::atomic::AtomicBool,
+}
+static VERSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn rates() -> std::sync::Arc<Rates> {
+    rerail_context::machine::<Rates>()
+}
+
+impl Rates {
+    fn changed(&self) {
+        self.version.store(VERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed), std::sync::atomic::Ordering::Release);
+    }
+}
 
 /// A rate learned from samples ([`learn_from`]).
 #[derive(Clone, Debug)]
@@ -250,10 +269,8 @@ impl Learned {
 /// The fewest warm samples a rate is fitted from.
 pub const MIN_SAMPLES: usize = 8;
 
-/// Bumped at each change of [`LEARNED`]: a price reads its thread's copy, taken again only when this moves, so pricing
-/// (on every thread, for every launch) touches no shared lock.
-static LEARNED_VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
+// A price reads its thread's copy of the rates (`LEARNED_COPY`), taken again only when their version moves, so pricing
+// (on every thread, for every launch) touches no shared lock.
 thread_local! {
     static LEARNED_COPY: std::cell::RefCell<(u64, Vec<(String, Lane, [f64; 6])>)> = const { std::cell::RefCell::new((0, Vec::new())) };
 }
@@ -261,7 +278,6 @@ thread_local! {
 /// What a price waits for first: the stored statistics, which the engine reads once a run has work to price
 /// ([`before_first_price`]). `true` once they are in place (or there are none): later prices skip it.
 static FIRST_PRICE: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
-static PRICED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Sets what the first price waits for (the engine's `costs::ready`): a process that prices nothing reads nothing.
 pub fn before_first_price(ready: fn() -> bool) {
@@ -270,11 +286,12 @@ pub fn before_first_price(ready: fn() -> bool) {
 
 /// Waits, before the first price, for what [`before_first_price`] names.
 pub fn first_price() {
-    if PRICED.load(std::sync::atomic::Ordering::Acquire) {
+    let rates = rates();
+    if rates.priced.load(std::sync::atomic::Ordering::Acquire) {
         return;
     }
     if FIRST_PRICE.get().is_none_or(|ready| ready()) {
-        PRICED.store(true, std::sync::atomic::Ordering::Release);
+        rates.priced.store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -282,13 +299,15 @@ pub fn first_price() {
 /// the largest sample's units, and 1 when the samples spread ([`Learned::at`]).
 fn learned(name: &str, lane: Lane) -> Option<[f64; 6]> {
     first_price();
-    let version = LEARNED_VERSION.load(std::sync::atomic::Ordering::Acquire);
+    let rates = rates();
+    let version = rates.version.load(std::sync::atomic::Ordering::Acquire);
     if version == 0 {
         return None;
     }
     LEARNED_COPY.with_borrow_mut(|(seen, copy)| {
         if *seen != version {
-            *copy = LEARNED
+            *copy = rates
+                .learned
                 .read()
                 .map(|l| {
                     l.iter()
@@ -372,9 +391,10 @@ fn fitted(name: String, lane: Lane, points: &[[f64; 3]], this_run: bool) -> Lear
     Learned { name, lane, per_launch, per_unit, host_per_launch, host_per_unit, samples: points.len(), largest: hi, spread: hi >= SPREAD * lo, this_run }
 }
 
-/// This run's warm samples' points, by (kernel name, lane): the latest [`RUN_HELD`] of each.
-static RUN: std::sync::Mutex<std::collections::BTreeMap<(String, usize), std::collections::VecDeque<[f64; 3]>>> =
-    std::sync::Mutex::new(std::collections::BTreeMap::new());
+/// This run's warm samples' points, by (kernel name, lane): the latest [`RUN_HELD`] of each (the run's own, decision
+/// 0442).
+#[derive(Default)]
+struct RunPoints(std::sync::Mutex<std::collections::BTreeMap<(String, usize), std::collections::VecDeque<[f64; 3]>>>);
 /// The most recent samples a rate of this run is fitted from.
 const RUN_HELD: usize = 64;
 /// The fewest of this run's own samples a rate is fitted from: fewer than the stored statistics' ([`MIN_SAMPLES`]),
@@ -389,7 +409,8 @@ pub const RUN_MIN_SAMPLES: usize = 4;
 pub fn observe(lane: Lane, forms: &str, launches: u32, units: f64, wall: f64, cpu: f64, load: f64, cold: bool, ok: bool) {
     let Some((name, point)) = point_of(lane, forms, launches, units, wall, cpu, load, cold, ok) else { return };
     let fit = {
-        let Ok(mut run) = RUN.lock() else { return };
+        let points = rerail_context::local::<RunPoints>();
+        let Ok(mut run) = points.0.lock() else { return };
         let held = run.entry((name.clone(), lane.index())).or_default();
         if held.len() == RUN_HELD {
             held.pop_front();
@@ -401,16 +422,17 @@ pub fn observe(lane: Lane, forms: &str, launches: u32, units: f64, wall: f64, cp
         }
         fitted(name, lane, &held.iter().copied().collect::<Vec<_>>(), true)
     };
-    if let Ok(mut l) = LEARNED.write() {
+    let rates = rates();
+    if let Ok(mut l) = rates.learned.write() {
         l.retain(|x| !(x.name == fit.name && x.lane == fit.lane));
         l.push(fit);
-        LEARNED_VERSION.fetch_add(1, std::sync::atomic::Ordering::Release);
+        rates.changed();
     }
 }
 
 /// The rates learned so far.
 pub fn learned_rates() -> Vec<Learned> {
-    LEARNED.read().map(|l| l.clone()).unwrap_or_default()
+    rates().learned.read().map(|l| l.clone()).unwrap_or_default()
 }
 
 /// Fits per-unit rates from `samples` and puts them in place of the priors; the rates fitted.
@@ -421,7 +443,8 @@ pub fn learned_rates() -> Vec<Learned> {
 /// of one kernel name alone, with at least [`MIN_SAMPLES`] of them.
 pub fn learn_from(samples: &[crate::score::Sample]) -> Vec<Learned> {
     let fitted = fit_rates(samples);
-    if let Ok(mut l) = LEARNED.write() {
+    let rates = rates();
+    if let Ok(mut l) = rates.learned.write() {
         for f in &fitted {
             // A rate of this run's own samples stays: it is what the machine does now.
             if l.iter().any(|x| x.this_run && x.name == f.name && x.lane == f.lane) {
@@ -431,7 +454,7 @@ pub fn learn_from(samples: &[crate::score::Sample]) -> Vec<Learned> {
             l.push(f.clone());
         }
         if !fitted.is_empty() {
-            LEARNED_VERSION.fetch_add(1, std::sync::atomic::Ordering::Release);
+            rates.changed();
         }
     }
     fitted

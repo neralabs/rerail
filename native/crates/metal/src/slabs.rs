@@ -44,7 +44,7 @@
 use crate::Error;
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
-use std::sync::{Arc, Condvar, LazyLock, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// A slab's bytes (PIAT §20.2.1's default).
@@ -325,7 +325,17 @@ struct State {
     deadline: Option<Instant>,
 }
 
-static STATE: LazyLock<(Mutex<State>, Condvar)> = LazyLock::new(Default::default);
+/// The machine's residency (decision 0442): its state, the wake of its drop thread, and that thread, started once.
+#[derive(Default)]
+struct Residency {
+    state: Mutex<State>,
+    wake: Condvar,
+    dropper: std::sync::OnceLock<()>,
+}
+
+fn residency() -> std::sync::Arc<Residency> {
+    rerail_context::machine::<Residency>()
+}
 
 /// What the residency holds now: slabs, documents and bytes per pool.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -337,7 +347,8 @@ pub struct Held {
 }
 
 pub fn held() -> Held {
-    let state = STATE.0.lock().expect("residency poisoned");
+    let st_ = residency();
+    let state = st_.state.lock().expect("residency poisoned");
     Held { slabs: state.slabs.len(), documents: state.documents.len(), sources: state.sources.len(), pools: state.pools }
 }
 
@@ -443,7 +454,8 @@ pub fn admit_sources(files: &[&[u8]]) -> Result<Vec<Arc<ResidentSource>>, Error>
 /// (decision 0032 §4), so no file's bytes are hashed here. A digest must be its file's.
 pub fn admit_sources_digested(files: &[&[u8]], digests: &[[u8; 32]]) -> Result<Vec<Arc<ResidentSource>>, Error> {
     let _admit = rerail_prof::Stage::start("residency.sources");
-    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let st_ = residency();
+    let mut state = st_.state.lock().map_err(|_| Error::BackendFailure)?;
     state.clock += 1;
     let clock = state.clock;
     let mut keep = Vec::new();
@@ -479,7 +491,8 @@ pub fn admit_sources_digested(files: &[&[u8]], digests: &[[u8; 32]]) -> Result<V
 
 /// The digests the residency does not hold (each once); the hits' slabs are marked used.
 pub fn misses(digests: &[[u8; 32]]) -> Result<Vec<[u8; 32]>, Error> {
-    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let st_ = residency();
+    let mut state = st_.state.lock().map_err(|_| Error::BackendFailure)?;
     state.clock += 1;
     let clock = state.clock;
     let mut missing = Vec::new();
@@ -501,7 +514,8 @@ pub fn misses(digests: &[[u8; 32]]) -> Result<Vec<[u8; 32]>, Error> {
 
 
 pub fn resident(digests: &[[u8; 32]]) -> Result<Vec<Arc<Resident>>, Error> {
-    let state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let st_ = residency();
+    let state = st_.state.lock().map_err(|_| Error::BackendFailure)?;
     digests.iter().map(|digest| state.documents.get(digest).cloned().ok_or(Error::BackendCapacity)).collect()
 }
 
@@ -514,7 +528,8 @@ pub type Placement<'a> = ([u8; 32], usize, Option<Table>, Box<dyn FnOnce(&Arc<Sl
 /// there. The tape is written there once, by its load, and read there by the host and the device; the slab lives as
 /// long as a holder of it does, retired from the residency or not.
 pub fn tape_room(bytes: usize) -> Result<(Arc<Slab>, usize), Error> {
-    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let residency = residency();
+    let mut state = residency.state.lock().map_err(|_| Error::BackendFailure)?;
     let (at, offset) = state.room(bytes, &[])?;
     let clock = state.clock;
     state.slabs[at].last_use = clock;
@@ -542,7 +557,8 @@ pub struct Placed {
 /// §8): a document is found only once it reads whole.
 pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>, ready: &mut dyn FnMut() -> Result<(), Error>) -> Result<(), Error> {
     let _admit = rerail_prof::Stage::start("residency.admit");
-    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let st_ = residency();
+    let mut state = st_.state.lock().map_err(|_| Error::BackendFailure)?;
     let mut keep = digests.iter().filter_map(|digest| state.documents.get(digest).map(|document| document.slab.id)).collect::<Vec<_>>();
     let mut placed_all = Vec::with_capacity(parts.len());
     for (digest, bytes, table, place) in parts {
@@ -594,7 +610,8 @@ pub fn gather(documents: Vec<Arc<Resident>>) -> Result<Vec<Arc<Resident>>, Error
         return Ok(documents);
     }
     let _gather = rerail_prof::Stage::start("residency.gather");
-    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let st_ = residency();
+    let mut state = st_.state.lock().map_err(|_| Error::BackendFailure)?;
     let keep: Vec<u64> = documents.iter().map(|document| document.slab.id).collect();
     // Each document's range, and each language's table once (whether or not the slab holds it: a little room spare).
     let room = |documents: &mut dyn Iterator<Item = &Arc<Resident>>| {
@@ -659,14 +676,16 @@ pub fn gather(documents: Vec<Arc<Resident>>) -> Result<Vec<Arc<Resident>>, Error
 /// slab, whatever reads it, when the residency's lock is free now; whether it did. A batch holding
 /// the slab keeps its memory until it ends; the documents in it are admitted again when next asked.
 pub fn evict() -> bool {
-    let Ok(mut state) = STATE.0.try_lock() else { return false };
+    let st_ = residency();
+    let Ok(mut state) = st_.state.try_lock() else { return false };
     state.retire(&[])
 }
 
 /// Forgets everything resident: documents, sources and slabs (each slab's memory goes as its last
 /// batch lets go). The engine's drop releases its pipelines and pools with it.
 pub fn clear() {
-    if let Ok(mut state) = STATE.0.lock() {
+    let st_ = residency();
+    if let Ok(mut state) = st_.state.lock() {
         state.documents.clear();
         state.sources.clear();
         state.slabs.clear();
@@ -678,15 +697,16 @@ pub fn clear() {
 /// A full execution ended: `drop_all` runs `DROP_AFTER` from now, unless another ends first
 /// (which moves the deadline). The first call's `drop_all` is the one kept.
 pub fn executed(drop_all: fn()) {
-    static DROPPER: std::sync::Once = std::sync::Once::new();
-    let (lock, wake) = &*STATE;
+    let r = residency();
+    let (lock, wake) = (&r.state, &r.wake);
     if let Ok(mut state) = lock.lock() {
         state.deadline = Some(Instant::now() + DROP_AFTER);
     }
     wake.notify_all();
-    DROPPER.call_once(|| {
+    r.dropper.get_or_init(|| {
+        let r = std::sync::Arc::clone(&r);
         rerail_accel::exec::service("rerail-residency-drop", None, move || {
-                let (lock, wake) = &*STATE;
+                let (lock, wake) = (&r.state, &r.wake);
                 let Ok(mut state) = lock.lock() else { return };
                 loop {
                     match state.deadline {

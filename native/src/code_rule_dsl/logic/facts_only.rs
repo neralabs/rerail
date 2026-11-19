@@ -34,6 +34,10 @@ const FACT_STORE: &[&str] = &[
     "store_state",
     // The store's identity (RER-131): its atoms and connections belong to this store only.
     "store_identity",
+    // The segment files objects (sources, tapes) are in, by number (decision 0295), and each guest's key, an identity
+    // interned to its number as `strings` and `hashes` are (decision 0391; frames retired, 0439).
+    "object_segments",
+    "guest_keys",
     "push_pending",
     "rows",
     "git_alias",
@@ -52,10 +56,6 @@ const FACT_STORE: &[&str] = &[
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
     "memo_entries",
     "memo_packs",
-    // The segments objects (sources, tapes) are in (decision 0295): files of their bytes, mapped.
-    "object_segments",
-    // Each guest's key (decision 0391): an identity interned to its number, as `strings` and `hashes` are.
-    "guest_keys",
     // The observer's own journal (decision 0433): the paths its listings named changed, by generation. What it
     // observed, as `samples` are measurements.
     "observed_changes",
@@ -190,37 +190,27 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
     // The rule being compiled: the step that first bound each slot, for a refusal's message.
     ("code_rule_dsl/logic/native/setfix/device.rs", "BINDER"),
+    // What registers at load: the world's files with the answerers installed, and the record's kinds' applies.
+    ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
+    ("content_store/record.rs", "KINDS"),
+    // A test's log.
     // This thread's run's binding (CPU or Metal).
     ("code_rule_dsl/logic/plan/placement.rs", "DEVICE"),
     // Profiling: the placements a recording run made, and the writer's jobs by kind.
     ("code_rule_dsl/logic/plan/placement.rs", "RECORDED"),
-    ("content_store/write_back.rs", "BY_KIND"),
     // The coverage check's census of the shipped rule files, read once by a test process.
     ("code_rule_dsl/logic/plan/coverage.rs", "CENSUS"),
     // The process's interned relation names (`front::Name`): one allocation per distinct name, not a result kept.
-    ("code_rule_dsl/logic/front/name.rs", "TABLE"),
     // The relations' numbers (decision 0209 step 1, `table::rel_id`): an interner as `TABLE`, one number per name.
-    ("code_rule_dsl/logic/plan/table.rs", "NAMES"),
-    ("code_rule_dsl/logic/costs.rs", "FITTED"),
-    ("code_rule_dsl/logic/costs.rs", "WRITER"),
-    ("code_rule_dsl/logic/costs.rs", "MODEL_STATE"),
     // Decision 0203: the batch predictor a crate above registers (`joins::set_pricer`), the wider searches queued for
     // the idle `join-search` upkeep job, and that job's one registration.
-    ("code_rule_dsl/logic/plan/joins.rs", "PRICER"),
-    ("code_rule_dsl/logic/plan/joins.rs", "REQUESTS"),
-    ("code_rule_dsl/logic/plan/joins.rs", "JOB"),
     // Decision 0203's feedback as measured: each line's notes, exact pair statistics, proposals and trials, written
     // back with the kept plans (`joins::to_store`) and read from them; measurements, as the cost model's `FITTED`.
-    ("code_rule_dsl/logic/plan/joins.rs", "MEMO"),
     // The gate of the RERAIL_* switches (`corpus::switches`): its readers, writer and waiters, no value kept.
     ("code_rule_dsl/logic/plan/corpus/switches.rs", "STATE"),
     // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
-    ("code_rule_dsl/logic/costs/sql_plans.rs", "MODEL"),
-    ("code_rule_dsl/logic/costs/sql_plans.rs", "QUEUE"),
     // The join steps submitted at their lines' ends, queued for the cost statistics' writer (decision 0354).
-    ("code_rule_dsl/logic/costs/join_steps.rs", "QUEUE"),
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
-    ("code_rule_dsl/logic/lanes.rs", "SQL"),
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
     // The device's waves on this thread (decision 0113 §3; the open one is the job's, `lanes::OPEN`): the waves
     // flushed, the strata waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a
@@ -228,59 +218,22 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
-    // The component being compiled's own columns of arena texts (decision 0307), set around its plans' compile
-    // (`own_texts`): a call's context, as `BINDER` and `ARENA`.
-    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
     // The job's open device submission its strata share (`lanes::open`): an open thing, as `WAVE`.
     ("code_rule_dsl/logic/lanes.rs", "OPEN"),
-    // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
-    ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
-    // Each live connection's path and symbols, by its scope; dropped when it closes (`setfix::forget_scope`).
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
-    ("code_rule_dsl/logic/lanes.rs", "ALL"),
-    ("code_rule_dsl/logic/lanes.rs", "CPU"),
-    ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
-    ("code_rule_dsl/logic/lanes.rs", "FORMS"),
     ("code_rule_dsl/logic/lanes.rs", "DONE"),
     ("code_rule_dsl/logic/lanes.rs", "QUEUED"),
-    ("code_rule_dsl/logic/native.rs", "LATTICES"),
-    ("code_rule_dsl/logic/native.rs", "RESULTS"),
-    ("code_rule_dsl/logic/native/extension.rs", "RESULTS"),
-    ("code_rule_dsl/logic/native/extension.rs", "TAPE"),
-    ("code_rule_dsl/logic/native/extension/setfix.rs", "COMPONENTS"),
-    ("code_rule_dsl/logic/native/extension/setfix.rs", "DERIVED"),
-    ("code_rule_dsl/logic/native/extension/setfix.rs", "INPUTS"),
-    ("code_rule_dsl/logic/native/extension/setfix.rs", "LOADS"),
-    ("code_rule_dsl/logic/native/extension/setfix.rs", "SYMS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "ADOPTED"),
-    ("code_rule_dsl/logic/native/setfix.rs", "CHANGING"),
-    ("code_rule_dsl/logic/native/setfix.rs", "COMPONENTS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "DERIVATIONS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "DERIVED"),
-    ("code_rule_dsl/logic/native/setfix.rs", "INPUTS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "LOADS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
     // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
-    ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
-    // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
     // pending atoms no committed row may hold yet, not a result kept.
-    ("content_store/atoms.rs", "RESERVED"),
     ("content_store/atoms.rs", "RESERVING"),
+    // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
-    ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
-    ("code_rule_dsl/logic/native/setfix/table.rs", "BUILT"),
-    ("code_rule_dsl/logic/plan.rs", "LOG"),
-    ("code_rule_dsl/logic/plan.rs", "PATH"),
-    ("code_rule_dsl/logic/plan.rs", "SETTING"),
     // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
     // This thread's zstd contexts by dictionary (RER-131): open things, not results.
@@ -289,49 +242,35 @@ const STATE: &[(&str, &str)] = &[
     // The language tags the store's dictionaries are chosen by (RER-131): set once as the library loads.
     ("content_store/compression.rs", "LANGUAGE_TAGS"),
     // The store handles open in this process, by path (RER-131): a registry of open things.
-    ("content_store/connection.rs", "HANDLES"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
     // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files
     // the tests' stores are, not results.
+    // The caller's options for its runs' inputs (`--facts`, `--require-facts`, `--base`; decision 0442).
+    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "OPTIONS"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "HANDED"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
-    ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
-    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
-    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
     // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),
-    ("code_rule_dsl/logic/plan/sketch.rs", "FILE"),
     ("code_rule_dsl/logic/profile.rs", "DIR"),
     // Ended threads' CPU accounts and their CPU outside spans, summed for the report; no reusable results.
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
     ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
-    ("code_rule_dsl/logic/profile.rs", "ON"),
-    // Each thread's profile records, merged into `STATE` as they are read: records, no reusable results.
-    ("code_rule_dsl/logic/profile.rs", "SHARDS"),
+    // Each thread's shard of its run's profile records, merged into the run's as they are read: records, no
+    // reusable results.
+    ("code_rule_dsl/logic/profile.rs", "SHARD"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
-    ("code_rule_dsl/logic/profile.rs", "STATE"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
-    // Debugging aids, each under its switch, and the switches read once: `RERAIL_HEAP_AT`'s text; the trees a thread
-    // decoded from versions (a count and the last's place); `RERAIL_KEPT_DOCS`'s exports, the rows it counted in and
-    // out by document and by file, and the file being counted. Records of a run, no result read back.
-    ("code_rule_dsl/logic/profile/memory.rs", "AT"),
-    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "LISTED"),
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_DOCS"),
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_ROWS"),
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "COUNTING"),
     // The world's rows (`rr::lower::World`), made once the languages are installed: a registry of what is
     // installed, as `FUNCTORS`.
     ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
-    ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
     // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
@@ -341,19 +280,12 @@ const STATE: &[(&str, &str)] = &[
     // The rule files' entries a thread read before its run (0275), taken by the run's manifest: a queue.
     ("code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE"),
     // rerail's own files the process names to its observers (0284): a registry.
-    ("content_store/observe.rs", "OWN"),
     // Profiling (0288): the command's clocks, the process's start, the run thread's phases, each step's decisions.
     ("code_rule_dsl/logic/profile.rs", "COMMAND"),
     ("code_rule_dsl/logic/profile.rs", "DECIDING"),
-    ("code_rule_dsl/logic/profile.rs", "RUN_PHASES"),
     ("code_rule_dsl/logic/profile/life.rs", "ENTERED"),
-    ("content_store/atoms.rs", "CANONICAL"),
     // Each database file's identity, read once a file: a registry, as CANONICAL is.
-    ("content_store/atoms.rs", "IDENTITIES"),
-    ("content_store/atoms.rs", "MEMORY"),
-    ("content_store/atoms.rs", "REGISTRY"),
     ("content_store/compression.rs", "ENCODER"),
-    ("content_store/connection.rs", "ALL_CONNECTIONS"),
     ("content_store/connection.rs", "ATTEMPT_WAITED"),
     ("content_store/connection.rs", "BUSY_ATTEMPT_HOOK"),
     ("content_store/connection.rs", "BUSY_DEADLINE_OVERRIDE"),
@@ -363,9 +295,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
-    // The store's state as this process holds it, ahead of SQLite (decision 0104): the kept blocks' rows and the
-    // memo's admitted entries, read once before a run's first wave, not a cache of anything else.
-    ("content_store/held.rs", "SNAPSHOTS"),
     // The device's automata and test tables for regex and text stages, held while the thread runs (a command buffer
     // may read them).
     ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
@@ -374,13 +303,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "STORE"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH"),
-    // With them, the memo plans of the batch's runs so far, by root (O-store-single-program): dropped with the batch.
-    ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH_PLANS"),
     // A registry of an open thing: the holders of the rule files' shared tape-cache handle, and the handle.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "READING"),
-    ("content_store/observe.rs", "OBSERVERS"),
     // The journal's open streams, one a root (decision 0105): open things.
-    ("content_store/journal.rs", "LIVE"),
     // A job's own plans and observations (decisions 0113, 0116), taken into the run's as the job ends: the run's own
     // state on the job's thread, gone with it.
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
@@ -388,58 +313,32 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
     // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
     ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
-    // Measurement aids under `RERAIL_PLAN_GREEDY_PROBE`: its switches, and the probe's counts and sums.
-    ("code_rule_dsl/logic/plan.rs", "PROBE"),
-    ("code_rule_dsl/logic/plan.rs", "SEEN"),
-    ("code_rule_dsl/logic/plan.rs", "SUMS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
-    ("content_store/write_back.rs", "WRITERS"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
-    // A run's changed reads' given versions (decision 0364 step 3), by the run's scope, removed with its tables.
-    ("code_rule_dsl/logic/native/setfix.rs", "GIVEN"),
-    // The kept facts as this process holds them (decision 0401 F3, 0438): each space's blocks mapped, by store, space
-    // and the row naming the files, read in place and mapped again when a commit changes the row. The facts
-    // themselves, as `SNAPSHOTS` holds their rows, not a cache of anything else.
-    ("code_rule_dsl/logic/plan/corpus/retain/kept_read.rs", "BOUND"),
     // The record kinds' applies, registered at load.
     ("content_store/record.rs", "KINDS"),
-    // The stores forgotten in this process (a test's store removed), by path and file: a registry of closed things.
-    ("content_store/upkeep.rs", "GONE"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
-    ("code_rule_dsl/logic/plan/corpus/inputs.rs", "CONSULTED", "1"),
-    ("code_rule_dsl/logic/strings/git.rs", "STATE", "1"),
-    ("code_rule_dsl/logic/rr.rs", "LIBRARIES", "2"),
-    ("code_rule_dsl/logic/rr.rs", "PARSED", "2"),
-    ("code_rule_dsl/logic/rr.rs", "PROGRAMS", "2"),
-    ("code_rule_dsl/logic/plan/corpus/phase0.rs", "KEPT", "2"),
-    ("code_rule_dsl/logic/plan/corpus.rs", "COMBINED", "2"),
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
-    ("code_rule_dsl/logic/plan/choices.rs", "KEPT", "2"),
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
     ("code_rule_dsl/logic/plan.rs", "PLANS", "6"),
     ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),
-    ("code_rule_dsl/logic/plan.rs", "KEPT", "6"),
     ("code_rule_dsl/logic/derived.rs", "MEMO", "6"),
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
     // The observed keeps, a handle a strand enters (decision 0113 §4).
     ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", "6"),
-    ("code_rule_dsl/logic/native/setfix/table.rs", "PAID", "6"),
-    ("code_rule_dsl/logic/strings.rs", "MATCHERS", "7"),
     // RER-131's compiled group patterns, where `GROUPS` was.
-    ("code_rule_dsl/logic/strings.rs", "GROUP_REGEXES", "7"),
     ("code_rule_dsl/logic/strings/functions.rs", "CACHE", "7"),
-    ("code_rule_dsl/text.rs", "LOWERED", "7"),
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 22;
+const NOT_YET_MAPS_PIN: usize = 9;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")

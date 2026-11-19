@@ -336,16 +336,14 @@ impl Job for MemoSweep {
         rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
         // A point read on a connection of its own, closed after it: at most one a poll (10 s). Kept from poll to poll,
         // it held the store's file open between them: a store removed (a test's, with its directory) was held open
-        // until the next poll found its path gone. Under `GONE`'s lock, so a store forgotten (`forget`) is read by no
-        // check under way as it is removed (a read connection makes the store's `-shm` file).
-        let gone = GONE.lock().unwrap_or_else(|p| p.into_inner());
-        let now = identity(&self.path);
-        if now.is_none() || gone.get(&self.path).is_some_and(|was| *was == now) {
+        // until the next poll found its path gone. A store forgotten (`ContentStore::forget`) is read by no check
+        // under way as it is removed (a read connection makes the store's `-shm` file): its jobs are taken out under
+        // the registry's lock, which a check runs under, and the steps' (`upkeep::forget_file`).
+        if !self.path.exists() {
             return Due::No;
         }
         let wanted = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
             .is_ok_and(|c| super::corpus_runs::memo_sweep_wanted(&c).unwrap_or(false));
-        drop(gone);
         if wanted { Due::Urgent } else { Due::No }
     }
 
@@ -362,10 +360,9 @@ impl Job for MemoSweep {
         if slice.over() {
             return Ok(Step::More);
         }
-        // A store gone since the job became due (or forgotten, being removed) has nothing to sweep, and opening it would
-        // make a new one.
-        let now = identity(&self.path);
-        if now.is_none() || GONE.lock().unwrap_or_else(|p| p.into_inner()).get(&self.path).is_some_and(|was| *was == now) {
+        // A store gone since the job became due has nothing to sweep, and opening it would make a new one. (One
+        // forgotten has no job left to step.)
+        if !self.path.exists() {
             return Ok(Step::Done);
         }
         let store = ContentStore::open(&self.path).map_err(|e| e.to_string())?;
@@ -376,31 +373,6 @@ impl Job for MemoSweep {
     }
 }
 
-/// Which file a path names: its device and inode where the system has them, else its creation time.
-type FileIdentity = (u64, u64);
-
-/// The stores forgotten (`ContentStore::forget`, as a test's store is removed), by path, with the file each was: its
-/// memo sweep neither reads nor sweeps that file again; a store made again at the path is another file, read as before.
-static GONE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Option<FileIdentity>>>> = std::sync::LazyLock::new(Default::default);
-
-/// The store at `path` is being removed: once this returns, no memo sweep reads it (a check under way has ended).
-pub(super) fn forget(path: &Path) {
-    GONE.lock().unwrap_or_else(|p| p.into_inner()).insert(path.to_path_buf(), identity(path));
-}
-
-fn identity(path: &Path) -> Option<FileIdentity> {
-    let m = std::fs::metadata(path).ok()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-        Some((m.dev(), m.ino()))
-    }
-    #[cfg(not(unix))]
-    {
-        let t = m.created().or_else(|_| m.modified()).ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
-        Some((t.as_secs(), u64::from(t.subsec_nanos())))
-    }
-}
 
 #[cfg(test)]
 mod tests {
