@@ -26,6 +26,9 @@
 // A measurement's stop (`STOP`): the kernel ends before its phase `stop` (0: never).
 #define TICK() if (++phase == stop) return
 #define BARRIER() TICK(); if (!ukl_grid_barrier(g, &tg.flag)) return
+// Scans sharing their barriers (`ukl_grid_scans`): `JOB(k, …)` each, then `SCANS(k)`.
+#define JOB(j, n_, in_, out_, total_) jobs[j].n = (n_); jobs[j].in = C32(in_); jobs[j].out = C32(out_); jobs[j].total = C32(total_)
+#define SCANS(k) TICK(); if (!ukl_grid_scans(g, jobs, (k), C32(SUMS), tg.scratch, &tg.flag)) return
 #define SCAN(n, in, out, total) TICK(); if (!ukl_grid_scan_n(g, (n), C32(in), C32(out), C32(total), C32(SUMS), tg.scratch, &tg.flag)) return
 #define SEG(op, n, in, heads, out) TICK(); if (!ukl_grid_seg_scan_n(g, (op), (n), C32(in), C32(heads), C32(out), C32(SUMS), tg.big, tg.big + 256u, &tg.flag)) return
 #define SORT(n, bits, keys, va, kb, vb, hist) TICK(); if (!ukl_grid_sort_u64(g, (n), (bits), true, C64(keys), C32(va), C64(kb), C32(vb), C32(hist), C32(SUMS), sl, tg.scratch, &tg.flag)) return
@@ -62,30 +65,52 @@ constant uint PG_STAGE = 3u;
     device const PpFile* files = AT(const PpFile, FILES);                                              \
     uint nf = W(N_FILES);                                                                              \
     uint stop = 0u, phase = 0u;                                                                        \
-    (void)lane; (void)data; (void)files; (void)nf; (void)sl; (void)stop; (void)phase;
+    UklScanJob jobs[UKL_GRID_SCANS];                                                                   \
+    (void)lane; (void)data; (void)files; (void)nf; (void)sl; (void)stop; (void)phase; (void)jobs;
 
 kernel void pp_setup(PP_GRID_PARAMS) {
     PP_GRID_BEGIN
     stop = W(STOP);
     if (ukl_grid_failed(g)) return;
     uint last = W(LAST);
-    // --- The front: the nodes, the names, the directives, the guards -------------------------
-    EACH(f, nf) {
-        pp_counts(files, data, AT(uint, COUNTS), AT(atomic_uint, BAD), nf, f);
-        pp_dir_counts(files, data, AT(uint, DIR_COUNTS), AT(atomic_uint, BAD), nf, f);
-    }
+    // --- The front: the nodes, the names, the directives, the text map, the guards ----------
+    // A node a thread, and a scan or a sort between: no thread walks a file (decision 0460).
+    EACH(f, nf) pp_counts(files, data, AT(uint, COUNTS), AT(atomic_uint, BAD), nf, f);
     BARRIER();
     SCAN(nf, COUNTS, BASES, TOTAL);
-    SCAN(nf, DIR_COUNTS, DIR_BASES, DIR_TOTAL);
-    EACH(n, N(TOTAL)) {
+    uint nn = N(TOTAL);
+    EACH(n, nn) {
         pp_names(files, data, AT(const uint, BASES), AT(const uint, TOTAL), AT(ulong, KEYS), nf, n);
         if (W(NODES_FLAG) != 0u) pp_nodes(files, data, AT(const uint, BASES), AT(const uint, TOTAL), AT(uint4, NODES_OUT), nf, n);
+        pp_node_flags(files, data, AT(const uint, BASES), AT(const uint, TOTAL), AT(uint, DFLAG), AT(uint, GFLAG), AT(atomic_uint, DEV), AT(uint, OWNER_IN), nf, n);
     }
-    EACH(f, nf) pp_dirs(files, data, AT(const uint, DIR_BASES), AT(PpDir, ROWS), AT(uint, DIR_GROUPS), AT(uint, GUARDED), AT(atomic_uint, BAD), nf, f);
     BARRIER();
-    EACH(r, N(DIR_TOTAL)) pp_dir_keys(files, data, AT(const uint, BASES), AT(const ulong, KEYS), AT(const uint, DIR_BASES), AT(const uint, DIR_TOTAL), AT(const PpDir, ROWS), AT(ulong, DIR_KEYS), nf, r);
+    JOB(0, nn, DFLAG, DRANK, DIR_TOTAL);
+    JOB(1, nn, GFLAG, GRANK, N_GROUPS);
+    JOB(2, nn, DEV, NDEPTH, DEV_TOTAL);
+    SCANS(3);
+    SEG(UKL_SEG_MAX, nn, OWNER_IN, VHEADS, OWNER);
+    EACH(n, nn) pp_node_depths(files, data, AT(const uint, BASES), AT(const uint, TOTAL), AT(const uint, NDEPTH), AT(const uint, DEV), AT(const uint, GFLAG), AT(const uint, GRANK), AT(const uint, OWNER), AT(uint, AFLAG), AT(uint, TFLAG), AT(ulong, GRP_KEYS), nf, n);
     BARRIER();
-    EACH(f, nf) pp_guards(AT(const uint, GUARDED), AT(const uint, DIR_BASES), AT(const ulong, DIR_KEYS), AT(ulong, GUARDS), nf, f);
+    JOB(0, nn, TFLAG, TRANK, TTOTAL);
+    JOB(1, nn, AFLAG, ARANK, N_ARMS);
+    SCANS(2);
+    EACH(n, nn) {
+        pp_arm_keys(AT(const uint, TOTAL), AT(const uint, AFLAG), AT(const uint, ARANK), AT(const uint, NDEPTH), AT(const uint, DEV), AT(ulong, ARM_KEYS), n);
+        pe_text_nodes(AT(const uint, TFLAG), AT(const uint, TRANK), AT(const uint, TOTAL), AT(uint, TEXT_NODES), n);
+    }
+    EACH(f, nf) pp_file_dirs(AT(const uint, BASES), AT(const uint, DRANK), AT(const uint, ARANK), AT(const uint, N_ARMS), AT(uint, DIR_BASES), AT(uint, DIR_GROUPS), nf, f);
+    BARRIER();
+    SORT(N(N_ARMS), 64u, ARM_KEYS, ASORT_VA, ASORT_KB, ASORT_VB, ASORT_HIST);
+    SORT(N(N_GROUPS), 64u, GRP_KEYS, PSORT_VA, PSORT_KB, PSORT_VB, PSORT_HIST);
+    EACH(n, nn) pp_rows(files, data, AT(const uint, BASES), AT(const uint, TOTAL), AT(const uint, DFLAG), AT(const uint, DRANK), AT(const uint, NDEPTH), AT(const uint, DEV), AT(const uint, TRANK), AT(const uint, ARANK), AT(const uint, GRANK), AT(const ulong, ARM_KEYS), AT(const uint, N_ARMS), AT(const ulong, GRP_KEYS), AT(const uint, N_GROUPS), AT(PpDir, ROWS), nf, n);
+    BARRIER();
+    EACH(r, N(DIR_TOTAL)) {
+        pp_dir_keys(files, data, AT(const uint, BASES), AT(const ulong, KEYS), AT(const uint, DIR_BASES), AT(const uint, DIR_TOTAL), AT(const PpDir, ROWS), AT(ulong, DIR_KEYS), nf, r);
+        pp_guard_marks(AT(const uint, DIR_BASES), AT(const uint, DIR_TOTAL), AT(const PpDir, ROWS), AT(atomic_uint, G_OUT), AT(atomic_uint, G_ARMS), nf, r);
+    }
+    BARRIER();
+    EACH(f, nf) pp_guards(AT(const uint, BASES), AT(const uint, DIR_BASES), AT(const uint, DIR_TOTAL), AT(const PpDir, ROWS), AT(const uint, TRANK), AT(const uint, TTOTAL), AT(const uint, G_OUT), AT(const uint, G_ARMS), AT(const ulong, DIR_KEYS), AT(uint, GUARDED), AT(ulong, GUARDS), nf, f);
     if (last == 1u) return;
     // --- The definitions --------------------------------------------------------------------
     EACH(r, N(DIR_TOTAL)) pd_defs(files, data, AT(const uint, BASES), AT(const uint, DIR_BASES), AT(const uint, DIR_TOTAL), AT(const PpDir, ROWS), AT(PpDef, DEFS), AT(uint, PCOUNT), AT(uint, BCOUNT), nf, r);
@@ -96,14 +121,9 @@ kernel void pp_setup(PP_GRID_PARAMS) {
     BARRIER();
     EACH(s, N(ITOTAL)) pd_items(files, data, AT(const uint, BASES), AT(const ulong, KEYS), AT(const uint, DIR_BASES), AT(const uint, DIR_TOTAL), AT(PpDef, DEFS), AT(const uint, IFIRST), AT(const uint, ITOTAL), AT(const ulong, PKEYS), AT(uint, ITEMS), AT(atomic_uint, ROOM), nf, W(CAP), s);
     if (last == 2u) return;
-    // --- The visibility: the text map, the rows, the stretches, the lookups ----------------
-    EACH(n, N(TOTAL)) pe_owner_in(files, data, AT(const uint, BASES), AT(const uint, TOTAL), AT(uint, OWNER_IN), nf, n);
+    // --- The visibility: the rows, the stretches, the lookups (the text map is the front's) --
+    // The definitions' flags, done.
     BARRIER();
-    SEG(UKL_SEG_MAX, N(TOTAL), OWNER_IN, VHEADS, OWNER);
-    EACH(n, N(TOTAL)) pe_text_flag(files, data, AT(const uint, BASES), AT(const uint, TOTAL), AT(const uint, OWNER), AT(uint, TFLAG), nf, n);
-    BARRIER();
-    SCAN(N(TOTAL), TFLAG, TRANK, TTOTAL);
-    EACH(n, N(TOTAL)) pe_text_nodes(AT(const uint, TFLAG), AT(const uint, TRANK), AT(const uint, TOTAL), AT(uint, TEXT_NODES), n);
     EACH(j, W(ND)) pe_row_flag(AT(const PpInst, INSTS), AT(const uint, N_INSTS), AT(const uint, DACTIVE), AT(const uint, N_DIRS), AT(const uint, DIR_BASES), AT(const PpDir, ROWS), AT(const PpDef, DEFS), AT(const ulong, DIR_KEYS), AT(uint, RFLAG), j);
     BARRIER();
     SCAN(N(N_DIRS), RFLAG, RAT, RTOTAL);

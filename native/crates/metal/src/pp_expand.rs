@@ -257,14 +257,6 @@ pub struct Vis {
     n_builtin: u32,
     nd: usize,
     ng: usize,
-    // The text map: a word a node of the unit.
-    owner_in: Buf,
-    heads: Buf,
-    owner: Buf,
-    tflag: Buf,
-    trank: Buf,
-    tscan: Scan,
-    pub(crate) text_nodes: Buf,
     // The rows: a directive of the layout each, after the built-ins'.
     rflag: Buf,
     rat: Buf,
@@ -299,7 +291,6 @@ impl Vis {
     pub fn new(arena: &Arena, unit: &Unit, lay: &Layout) -> Result<Vis, Error> {
         let words = |v: &[u32]| arena.from_slice(if v.is_empty() { &[0] } else { v });
         let zeroed = |k: usize| arena.zeroed::<u32>(k.max(1));
-        let nodes = unit.node_bound;
         let top = top_bound(unit, lay);
         let (nd, ng, nb) = (lay.dir_slots.len(), lay.gap_slots.len(), lay.builtins.len());
         let rows = nd + nb;
@@ -326,13 +317,6 @@ impl Vis {
             n_builtin: nb as u32,
             nd,
             ng,
-            owner_in: zeroed(nodes)?,
-            heads: zeroed(nodes)?,
-            owner: zeroed(nodes)?,
-            tflag: zeroed(nodes)?,
-            trank: zeroed(nodes)?,
-            tscan: Scan::new(arena)?,
-            text_nodes: zeroed(nodes)?,
             rflag: zeroed(nd)?,
             rat: zeroed(nd)?,
             rscan: Scan::new(arena)?,
@@ -353,15 +337,14 @@ impl Vis {
         })
     }
 
-    /// The visibility's slots of the layout: the text map (a max scan of each node's owner, a
-    /// scan of the text flags), the rows (a flag and a scan, then a sort by name), the stretches
+    /// The visibility's slots of the layout (the text map is the front's): the rows (a flag and
+    /// a scan, then a sort by name), the stretches
     /// (a sort of their keys, their counts and a scan) and the lookups, as phases of `pp_setup`.
     pub fn lay(&self, l: &mut Lay) {
         l.at("INSTS", &self.insts).at("N_INSTS", &self.n_insts).at("DSLOT", &self.dslot).at("DACTIVE", &self.dactive).at("N_DIRS", &self.n_dirs);
         l.at("GSLOT", &self.gslot).at("GACTIVE", &self.gactive).at("N_GAPS", &self.n_gaps).at("FLOORS", &self.floors).word("N_UNITS", self.n_units);
         l.word("N_BUILTIN", self.n_builtin).word("ND", self.nd as u32).word("NG", self.ng as u32);
-        l.at("OWNER_IN", &self.owner_in).at("VHEADS", &self.heads).at("OWNER", &self.owner).at("TFLAG", &self.tflag).at("TRANK", &self.trank);
-        l.at("TTOTAL", &self.tscan.total).at("TEXT_NODES", &self.text_nodes).at("RFLAG", &self.rflag).at("RAT", &self.rat).at("RTOTAL", &self.rscan.total);
+        l.at("RFLAG", &self.rflag).at("RAT", &self.rat).at("RTOTAL", &self.rscan.total);
         l.at("SORT_KEYS", &self.sort_keys).at("NAME_KEYS", &self.name_keys).at("VALUES", &self.values).at("N_ROWS", &self.n_rows);
         l.at("SORT_KB", &self.sort.keys_b).at("SORT_VA", &self.sort.vals_a).at("SORT_VB", &self.sort.vals_b).at("SORT_HIST", &self.sort.hist);
         l.at("GCOUNTS", &self.gcounts).at("GFIRSTS", &self.gfirsts).at("GKEYS", &self.gkeys);

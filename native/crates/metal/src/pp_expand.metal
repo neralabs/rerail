@@ -326,22 +326,7 @@ kernel void pd_relex_test(device const uchar* bytes [[buffer(0)]], device const 
 // whose owner is a `code` node. A scan of those flags gives each its rank, and the ranks place
 // the unit's text tokens (`text_nodes`), each file's from its root's rank.
 
-// Each node's index where it has leaves, else 0: the max scan's input.
-inline void pe_owner_in(device const PpFile* files, device const uchar* data, device const uint* bases, device const uint* total, device uint* out, uint n_files, uint g) {
-    if (g >= total[0]) return;
-    uint f = file_of(bases, n_files, g);
-    Tape t = tape_at(data, files, f);
-    out[g] = node_size(t, g - bases[f]) > 1u ? g : 0u;
-}
 
-// Whether each node is a text token: a leaf whose owner is a `code` node.
-inline void pe_text_flag(device const PpFile* files, device const uchar* data, device const uint* bases, device const uint* total, device const uint* owner, device uint* flag, uint n_files, uint g) {
-    if (g >= total[0]) return;
-    uint f = file_of(bases, n_files, g);
-    Tape t = tape_at(data, files, f);
-    uint i = g - bases[f];
-    flag[g] = node_size(t, i) == 1u && node_kind(t, owner[g] - bases[f]) == K_CODE ? 1u : 0u;
-}
 
 // Each text token's node at its rank.
 inline void pe_text_nodes(device const uint* flag, device const uint* rank, device const uint* total, device uint* text_nodes, uint g) {

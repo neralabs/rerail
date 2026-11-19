@@ -14,7 +14,7 @@
 
 use crate::Error;
 use crate::launch::{commit_checked, wait_checked};
-use crate::pp_blocks::{Arena, Bound, Buf, Enc, Grid, Lay, Scan};
+use crate::pp_blocks::{Arena, Bound, Buf, Enc, Grid, Lay, Scan, Sort};
 
 /// The passes' source, preprocessed for Metal (`crate::pp_blocks::source`).
 pub fn source() -> Result<&'static str, Error> {
@@ -209,8 +209,35 @@ pub struct Front {
     pub lay: Buf,
     counts: Buf,
     pub bases: Buf,
-    dir_counts: Buf,
     pub dir_bases: Buf,
+    // The directives, a word a node: the row, group and arm flags, the depth events, their scans.
+    dflag: Buf,
+    gflag: Buf,
+    aflag: Buf,
+    dev: Buf,
+    drank: Buf,
+    grank: Buf,
+    arank: Buf,
+    depth: Buf,
+    dev_scan: Scan,
+    group_scan: Scan,
+    arm_scan: Scan,
+    // The arms' and the groups' keys (depth, place), sorted; a file's guard marks.
+    arm_keys: Buf,
+    arm_sort: Sort,
+    group_keys: Buf,
+    group_sort: Sort,
+    g_out: Buf,
+    g_arms: Buf,
+    // The text map, a word a node: each node's owner (a max scan), its text flag and rank, and
+    // each text token's node.
+    owner_in: Buf,
+    heads: Buf,
+    owner: Buf,
+    tflag: Buf,
+    trank: Buf,
+    tscan: Scan,
+    pub text_nodes: Buf,
     groups: Buf,
     guarded: Buf,
     guards: Buf,
@@ -235,6 +262,7 @@ impl Front {
     pub fn new(arena: &Arena, unit: &Unit, nodes: bool, groups: u64) -> Result<Front, Error> {
         let n = unit.len();
         let per_file = || arena.zeroed::<u32>(n);
+        let per_node = || arena.zeroed::<u32>(unit.node_bound);
         Ok(Front {
             n,
             nodes,
@@ -244,8 +272,31 @@ impl Front {
             lay: arena.zeroed::<u32>(crate::pp_blocks::SLOTS.len())?,
             counts: per_file()?,
             bases: per_file()?,
-            dir_counts: per_file()?,
             dir_bases: per_file()?,
+            dflag: per_node()?,
+            gflag: per_node()?,
+            aflag: per_node()?,
+            dev: per_node()?,
+            drank: per_node()?,
+            grank: per_node()?,
+            arank: per_node()?,
+            depth: per_node()?,
+            dev_scan: Scan::new(arena)?,
+            group_scan: Scan::new(arena)?,
+            arm_scan: Scan::new(arena)?,
+            arm_keys: arena.zeroed::<u64>(unit.dir_bound)?,
+            arm_sort: Sort::new(arena, unit.dir_bound)?,
+            group_keys: arena.zeroed::<u64>(unit.dir_bound)?,
+            group_sort: Sort::new(arena, unit.dir_bound)?,
+            g_out: per_file()?,
+            g_arms: per_file()?,
+            owner_in: per_node()?,
+            heads: per_node()?,
+            owner: per_node()?,
+            tflag: per_node()?,
+            trank: per_node()?,
+            tscan: Scan::new(arena)?,
+            text_nodes: per_node()?,
             groups: per_file()?,
             guarded: per_file()?,
             guards: arena.zeroed::<u64>(n)?,
@@ -262,7 +313,15 @@ impl Front {
     /// The front's slots of the layout, and the run's words: the stage it ends after.
     pub fn lay(&self, l: &mut Lay, last: u32) {
         l.at("GRID", &self.grid).at("SUMS", &self.sums).at("FILES", &self.files).at("COUNTS", &self.counts).at("BASES", &self.bases);
-        l.at("TOTAL", &self.scan.total).at("DIR_COUNTS", &self.dir_counts).at("DIR_BASES", &self.dir_bases).at("DIR_TOTAL", &self.dir_scan.total);
+        l.at("TOTAL", &self.scan.total).at("DIR_BASES", &self.dir_bases).at("DIR_TOTAL", &self.dir_scan.total);
+        l.at("DFLAG", &self.dflag).at("GFLAG", &self.gflag).at("AFLAG", &self.aflag).at("DEV", &self.dev).at("DRANK", &self.drank);
+        l.at("GRANK", &self.grank).at("ARANK", &self.arank).at("NDEPTH", &self.depth).at("DEV_TOTAL", &self.dev_scan.total);
+        l.at("N_GROUPS", &self.group_scan.total).at("N_ARMS", &self.arm_scan.total).at("ARM_KEYS", &self.arm_keys).at("GRP_KEYS", &self.group_keys);
+        l.at("ASORT_KB", &self.arm_sort.keys_b).at("ASORT_VA", &self.arm_sort.vals_a).at("ASORT_VB", &self.arm_sort.vals_b).at("ASORT_HIST", &self.arm_sort.hist);
+        l.at("PSORT_KB", &self.group_sort.keys_b).at("PSORT_VA", &self.group_sort.vals_a).at("PSORT_VB", &self.group_sort.vals_b).at("PSORT_HIST", &self.group_sort.hist);
+        l.at("G_OUT", &self.g_out).at("G_ARMS", &self.g_arms);
+        l.at("OWNER_IN", &self.owner_in).at("VHEADS", &self.heads).at("OWNER", &self.owner).at("TFLAG", &self.tflag).at("TRANK", &self.trank);
+        l.at("TTOTAL", &self.tscan.total).at("TEXT_NODES", &self.text_nodes);
         l.at("DIR_GROUPS", &self.groups).at("GUARDED", &self.guarded).at("GUARDS", &self.guards).at("BAD", &self.bad).at("KEYS", &self.keys);
         l.at("NODES_OUT", &self.out).at("ROWS", &self.rows).at("DIR_KEYS", &self.dir_keys);
         l.word("N_FILES", self.n as u32).word("NODES_FLAG", u32::from(self.nodes)).word("LAST", last);

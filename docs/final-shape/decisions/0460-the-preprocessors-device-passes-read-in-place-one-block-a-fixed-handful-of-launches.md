@@ -343,3 +343,17 @@ with the unit, because each primitive's number of levels was chosen by its capac
     - Tests: the library's grid tests, with 64-bit sorts of keys that vary in two digits and in
       one; 17 tests on Metal, and `rerail-ukl`'s 8 under cargo.
   - A two-line unit's evaluation drops from 1,368 µs to 637 µs.
+- **Step 5d: no thread walks a file.** The front's `walk_dirs` (one thread a file, its items in
+  order) is gone, with `pp_dir_counts` and `pp_dirs`. Each row's fields come from passes of a node
+  a thread, and scans and sorts between them:
+  - a row is a node of a directive's kind;
+  - its depth comes from the groups' +1/−1 events, scanned;
+  - its rank among rows, groups and arms, from their flags scanned in one `ukl_grid_scans`;
+  - the arm it is read under is the latest arm at its depth before it: a search in the arms'
+    keys (depth, place), sorted. A row's group node is likewise the latest group one depth less;
+  - `text_before` is the text tokens' rank (the text map moved from the visibility into the
+    front);
+  - the guard's shape comes from per-row marks (atomics by file) and a per-file pass.
+
+  `the_directives_pass_gives_the_spikes_tables` and every evaluator test pass. The corpus:
+  3,132 units equal, the same 3 refused. GPU time for the three slices: 52, 42 and 45 ms.

@@ -175,7 +175,11 @@ pub fn source() -> Result<&'static str, Error> {
             include_str!("pp_expand.metal"),
             include_str!("pp_grid.metal")
         );
-        rerail_ukl::metal_source("pp.metal", &text).map_err(|e| e.to_string())
+        // A failed source is fatal (no fallback): its reason is said once, where it is made.
+        rerail_ukl::metal_source("pp.metal", &text).map_err(|e| {
+            eprintln!("the preprocessor's evaluator source: {e}");
+            e.to_string()
+        })
     });
     SOURCE.as_ref().map(String::as_str).map_err(|_| Error::BackendFailure)
 }
@@ -263,7 +267,8 @@ pub const GROUPS: u64 = 32;
 /// The arena's stores the persistent kernels read, by slot: `pp_grid.metal`'s `S_*`, made from
 /// this list (`source`), and a run's offsets (`Lay`). A word slot holds a value, not an offset.
 pub const SLOTS: &[&str] = &[
-    "GRID", "SUMS", "LAST", "STOP", "N_FILES", "NODES_FLAG", "FILES", "COUNTS", "BASES", "TOTAL", "DIR_COUNTS", "DIR_BASES", "DIR_TOTAL",
+    "GRID", "SUMS", "LAST", "STOP", "N_FILES", "NODES_FLAG", "FILES", "COUNTS", "BASES", "TOTAL", "DIR_BASES", "DIR_TOTAL", "DFLAG", "GFLAG", "AFLAG", "DEV", "DRANK", "GRANK", "ARANK", "NDEPTH", "DEV_TOTAL", "N_GROUPS", "N_ARMS",
+    "ARM_KEYS", "ASORT_KB", "ASORT_VA", "ASORT_VB", "ASORT_HIST", "GRP_KEYS", "PSORT_KB", "PSORT_VA", "PSORT_VB", "PSORT_HIST", "G_OUT", "G_ARMS",
     "DIR_GROUPS", "GUARDED", "GUARDS", "BAD", "KEYS", "NODES_OUT", "ROWS", "DIR_KEYS",
     "DEFS", "PCOUNT", "BCOUNT", "PFIRST", "IFIRST", "PTOTAL", "ITOTAL", "PKEYS", "ITEMS", "ROOM", "CAP", "VA_LO", "VA_HI",
     "INSTS", "N_INSTS", "DSLOT", "DACTIVE", "N_DIRS", "GSLOT", "GACTIVE", "N_GAPS", "N_BUILTIN", "ND", "NG", "OWNER_IN", "VHEADS",

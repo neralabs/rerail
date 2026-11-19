@@ -154,3 +154,14 @@ fn what_a_barrier_costs() {
         }
     }
 }
+
+/// The evaluator's source compiles (a failed compile is fatal, so its message is shown here).
+#[test]
+fn the_source_compiles() {
+    let device = crate::device().unwrap();
+    let src = source().unwrap();
+    if let Err(e) = device.new_library_with_source(src, &metal::CompileOptions::new()) {
+        let lines: Vec<&str> = e.lines().filter(|l| l.contains("error")).take(12).collect();
+        panic!("{}", lines.join("\n"));
+    }
+}

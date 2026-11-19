@@ -169,121 +169,154 @@ inline void pp_nodes(device const PpFile* files, device const uchar* data, devic
     out[g] = uint4(node_key(t, i), node_start(t, i), node_end(t, i), node_size(t, i));
 }
 
-// --- The directives: a file pass, a prefix sum, a file pass ------------------------------------
+// --- The directives: passes a node each ----------------------------------------------------------
 //
-// One thread a file walks its tape's items in order: a text line (`code`) is passed by its
-// subtree's size, a directive is one row, and a group is entered (its chain's directives are its
-// children; its branches' items after each). The first walk counts each file's directives,
-// a scan (`pp_blocks`) gives each file its first row, and the second writes the rows: the spike's P0
-// tables (`rerail_c_pp::stream::parallel::tables`), made from the tape in place.
+// A node is a directive row where its kind is a directive's (they are items alone: a directive's
+// own nodes are tokens and kinds past `K_IDENTIFIER`). A group (`K_GROUP`) holds its chain's arms
+// (`#if…`, `#elif…`, `#else`), its `#endif`, and each arm's items after it. Every row's fields come
+// from scans over the batch's nodes and searches, never from a walk of a file (decision 0460):
+// - a node's depth: the groups around it, a scan of +1 after each group's node and -1 at its end;
+// - its place among rows, groups and arms: scans of their flags (a file's from its first node's);
+// - the arm an item is read under: the latest arm at the item's own depth before it, a search in
+//   the arms' keys (depth, place) sorted; a row's group node, the latest group at one depth less;
+// - the text before it: the text tokens' scan (`text_before`, from its file's first node's).
+// The spike's P0 tables (`rerail_c_pp::stream::parallel::tables`), made from the tapes in place.
 
 constant uint K_CODE = 1u;
 constant uint K_GROUP = 2u;
 constant uint K_DIRECTIVES = 3u;
 constant uint K_IF = 12u, K_IFNDEF = 14u, K_ELSE = 18u, K_ENDIF = 19u;
 constant uint NO_CHAIN = 0xffffffffu;
-// The groups a walk holds open: deeper sends the unit to the CPU (bit 30 of `bad`).
-constant uint MAX_OPEN = 128u;
 
 // A directive's row: its node in its file's tape, its kind, the text tokens before it in the
 // file, the group it is read in and the group after it, and its chain (`NO_CHAIN`: none).
 struct PpDir { uint node, kind, text_before, group, after, chain; };
 
-// File `t`'s walk: each directive's row to `out` (where `out` is set) from row `at`; the number
-// of rows, the file's groups in `groups`, and in `guarded` whether it has an include guard's
-// shape: its first directive an `#ifndef` with no text before it, of one arm, its `#endif` the
-// last directive with no text after it, every directive between inside it (the spike's
-// `files::guard`; the name is the first row's key, `pp_guards`).
-inline uint walk_dirs(Tape t, device PpDir* out, uint at, thread uint& groups, thread bool& guarded, device atomic_uint* bad) {
-    uint ends[MAX_OPEN], outer[MAX_OPEN], chain_of[MAX_OPEN];
-    uint depth = 0u, cur = 0u, chains = 0u, text = 0u, rows = 0u;
-    groups = 1u;
-    // The guard's shape: the first row's, the arms of its chain after it, the rows after the
-    // first outside a group, and the last row.
-    bool first_ok = false, more_arms = false, last_violates = false;
-    uint outside = 0u, last_kind = 0u, last_after = 0u, last_text = 0u;
-    // Node 0 is the file's root (`pp`).
-    for (uint i = 1u; i < t.v->nodes;) {
-        while (depth > 0u && i >= ends[depth - 1u]) {
-            depth--;
-            cur = outer[depth];
-        }
-        uint k = node_kind(t, i), size = node_size(t, i);
-        if (k == K_CODE) {
-            // A line of text: its leaves are its tokens.
-            text += size - 1u;
-            i += size;
-            continue;
-        }
-        if (k == K_GROUP) {
-            if (depth == MAX_OPEN) {
-                atomic_fetch_or_explicit(bad, 1u << 30, memory_order_relaxed);
-                return rows;
-            }
-            ends[depth] = i + size;
-            outer[depth] = cur;
-            chain_of[depth] = chains++;
-            depth++;
-            i += 1u;
-            continue;
-        }
-        if (k >= K_DIRECTIVES && k < K_IDENTIFIER) {
-            PpDir d;
-            d.node = i;
-            d.kind = k;
-            d.text_before = text;
-            d.chain = NO_CHAIN;
-            // A group's child is its chain's: an arm opens (`#if…`, `#elif…`, `#else`), read in
-            // the group the chain opened in; or the `#endif` closes it.
-            if (depth > 0u && k >= K_IF && k <= K_ELSE) {
-                d.group = outer[depth - 1u];
-                d.after = groups++;
-                d.chain = chain_of[depth - 1u];
-                cur = d.after;
-            } else if (depth > 0u && k == K_ENDIF) {
-                cur = outer[depth - 1u];
-                d.group = cur;
-                d.after = cur;
-            } else {
-                d.group = cur;
-                d.after = cur;
-            }
-            if (out) out[at + rows] = d;
-            if (rows == 0u) {
-                first_ok = k == K_IFNDEF && text == 0u;
-            } else {
-                more_arms |= d.chain == 0u && k != K_ENDIF;
-                last_violates = d.group == 0u || d.after == 0u;
-                outside += last_violates ? 1u : 0u;
-            }
-            last_kind = k;
-            last_after = d.after;
-            last_text = text;
-            rows++;
-        }
-        i += size;
+constant uint PP_NONE = 0xffffffffu;
+
+// A node's depth: the groups around it (the events' exclusive scan, and its own event).
+inline uint pp_depth(device const uint* depth, device const uint* dev, uint g) { return depth[g] + dev[g]; }
+
+// The node of the last key at or before (`d`, `x`) in `keys`' first `n` (sorted), where its depth
+// is `d`; `PP_NONE` where there is none.
+inline uint pp_latest(device const ulong* keys, uint n, uint d, uint x) {
+    ulong q = (ulong(d) << 32) | ulong(x);
+    uint lo = 0u, hi = n;
+    for (uint k = 0u; k < 40u && lo < hi; k++) {
+        uint mid = (lo + hi) / 2u;
+        if (keys[mid] <= q) lo = mid + 1u; else hi = mid;
     }
-    guarded = rows >= 2u && first_ok && !more_arms && last_kind == K_ENDIF && last_after == 0u && last_text == text
-              && outside == (last_violates ? 1u : 0u);
-    return rows;
+    if (lo == 0u || uint(keys[lo - 1u] >> 32) != d) return PP_NONE;
+    return uint(keys[lo - 1u]);
 }
 
-// Each file's directives.
-inline void pp_dir_counts(device const PpFile* files, device const uchar* data, device uint* counts, device atomic_uint* bad, uint n_files, uint f) {
-    if (f >= n_files) return;
-    uint groups;
-    bool guarded;
-    counts[f] = walk_dirs(tape_at(data, files, f), (device PpDir*)nullptr, 0u, groups, guarded, bad);
+// Each node's flags: a row's, a group's; a group's depth events (+1 after its node, -1 past its
+// end: `dev`, words that wrap); and the text map's seed (an interior node's place).
+inline void pp_node_flags(device const PpFile* files, device const uchar* data, device const uint* bases, device const uint* total, device uint* dflag, device uint* gflag, device atomic_uint* dev, device uint* owner_in, uint n_files, uint g) {
+    uint n = total[0];
+    if (g >= n) return;
+    uint f = file_of(bases, n_files, g);
+    Tape t = tape_at(data, files, f);
+    uint i = g - bases[f];
+    uint k = node_kind(t, i), size = node_size(t, i);
+    dflag[g] = k >= K_DIRECTIVES && k < K_IDENTIFIER ? 1u : 0u;
+    gflag[g] = k == K_GROUP ? 1u : 0u;
+    owner_in[g] = size > 1u ? g : 0u;
+    if (k == K_GROUP) {
+        if (g + 1u < n) atomic_fetch_add_explicit(&dev[g + 1u], 1u, memory_order_relaxed);
+        if (g + size < n) atomic_fetch_sub_explicit(&dev[g + size], 1u, memory_order_relaxed);
+    }
 }
 
-// Each file's rows from its first (the scan's), its groups, and whether it has a guard's shape.
-inline void pp_dirs(device const PpFile* files, device const uchar* data, device const uint* dir_bases, device PpDir* rows, device uint* groups, device uint* guarded, device atomic_uint* bad, uint n_files, uint f) {
+// Each node's arm flag (an arm's kind inside a group), its text flag (a leaf of a text line), and a
+// group's key (its depth, its place) at its rank.
+inline void pp_node_depths(device const PpFile* files, device const uchar* data, device const uint* bases, device const uint* total, device const uint* depth, device const uint* dev, device const uint* gflag, device const uint* grank, device const uint* owner, device uint* aflag, device uint* tflag, device ulong* gkeys, uint n_files, uint g) {
+    if (g >= total[0]) return;
+    uint f = file_of(bases, n_files, g);
+    Tape t = tape_at(data, files, f);
+    uint i = g - bases[f];
+    uint k = node_kind(t, i), d = pp_depth(depth, dev, g);
+    aflag[g] = k >= K_IF && k <= K_ELSE && d > 0u ? 1u : 0u;
+    tflag[g] = node_size(t, i) == 1u && node_kind(t, owner[g] - bases[f]) == K_CODE ? 1u : 0u;
+    if (gflag[g] != 0u) gkeys[grank[g]] = (ulong(d) << 32) | ulong(g);
+}
+
+// Each arm's key (its depth, its place) at its rank.
+inline void pp_arm_keys(device const uint* total, device const uint* aflag, device const uint* arank, device const uint* depth, device const uint* dev, device ulong* akeys, uint g) {
+    if (g < total[0] && aflag[g] != 0u) akeys[arank[g]] = (ulong(pp_depth(depth, dev, g)) << 32) | ulong(g);
+}
+
+// Each file's first row, and its groups: the file's own and one an arm.
+inline void pp_file_dirs(device const uint* bases, device const uint* drank, device const uint* arank, device const uint* n_arms, device uint* dir_bases, device uint* groups, uint n_files, uint f) {
     if (f >= n_files) return;
-    uint g;
-    bool shaped;
-    walk_dirs(tape_at(data, files, f), rows, dir_bases[f], g, shaped, bad);
-    groups[f] = g;
+    dir_bases[f] = drank[bases[f]];
+    uint a1 = f + 1u < n_files ? arank[bases[f + 1u]] : n_arms[0];
+    groups[f] = 1u + a1 - arank[bases[f]];
+}
+
+// The group an item at depth `d` is read in: its arm's (the latest arm at its depth before it,
+// numbered from 1 in its file), or 0, the file's own.
+inline uint pp_arm_of(device const ulong* akeys, uint n_arms, device const uint* arank, uint a0, uint d, uint x) {
+    if (d == 0u) return 0u;
+    uint a = pp_latest(akeys, n_arms, d, x);
+    return a == PP_NONE ? 0u : arank[a] - a0 + 1u;
+}
+
+// Each directive's row at its rank: its node, kind and text before it; an arm's group (its
+// chain's), the group it opens and its chain (its group's rank in the file); an `#endif`'s its
+// chain's group; any other's the group it is read in.
+inline void pp_rows(device const PpFile* files, device const uchar* data, device const uint* bases, device const uint* total, device const uint* dflag, device const uint* drank, device const uint* depth, device const uint* dev, device const uint* trank, device const uint* arank, device const uint* grank, device const ulong* akeys, device const uint* n_arms, device const ulong* gkeys, device const uint* n_groups, device PpDir* rows, uint n_files, uint g) {
+    if (g >= total[0] || dflag[g] == 0u) return;
+    uint f = file_of(bases, n_files, g);
+    Tape t = tape_at(data, files, f);
+    uint b = bases[f], i = g - b, k = node_kind(t, i), d = pp_depth(depth, dev, g);
+    uint a0 = arank[b], na = n_arms[0];
+    PpDir r;
+    r.node = i;
+    r.kind = k;
+    r.text_before = trank[g] - trank[b];
+    r.chain = NO_CHAIN;
+    bool arm = k >= K_IF && k <= K_ELSE && d > 0u;
+    if (arm || (k == K_ENDIF && d > 0u)) {
+        uint grp = pp_latest(gkeys, n_groups[0], d - 1u, g);
+        uint outer = grp == PP_NONE ? 0u : pp_arm_of(akeys, na, arank, a0, d - 1u, grp);
+        r.group = outer;
+        if (arm) {
+            r.after = arank[g] - a0 + 1u;
+            r.chain = grp == PP_NONE ? NO_CHAIN : grank[grp] - grank[b];
+        } else {
+            r.after = outer;
+        }
+    } else {
+        r.group = pp_arm_of(akeys, na, arank, a0, d, g);
+        r.after = r.group;
+    }
+    rows[drank[g]] = r;
+}
+
+// A file's rows after its first that break an include guard's shape: outside every group, or
+// another arm of the first chain (`outside`, `arms`, a count each by file).
+inline void pp_guard_marks(device const uint* dir_bases, device const uint* dir_total, device const PpDir* rows, device atomic_uint* outside, device atomic_uint* arms, uint n_files, uint r) {
+    if (r >= dir_total[0]) return;
+    uint f = file_of(dir_bases, n_files, r);
+    if (r == dir_bases[f]) return;
+    PpDir d = rows[r];
+    if (d.group == 0u || d.after == 0u) atomic_fetch_add_explicit(&outside[f], 1u, memory_order_relaxed);
+    if (d.chain == 0u && d.kind != K_ENDIF) atomic_fetch_add_explicit(&arms[f], 1u, memory_order_relaxed);
+}
+
+// Each file's include guard, where it has a guard's shape: its first directive an `#ifndef` with
+// no text before it, of one arm, its `#endif` the last directive with no text after it, every
+// directive between inside it (the spike's `files::guard`); the guard's name is the first row's
+// key, else 0.
+inline void pp_guards(device const uint* bases, device const uint* dir_bases, device const uint* dir_total, device const PpDir* rows, device const uint* trank, device const uint* ttotal, device const uint* outside, device const uint* arms, device const ulong* dir_keys, device uint* guarded, device ulong* guards, uint n_files, uint f) {
+    if (f >= n_files) return;
+    uint d0 = dir_bases[f], d1 = f + 1u < n_files ? dir_bases[f + 1u] : dir_total[0];
+    uint text = (f + 1u < n_files ? trank[bases[f + 1u]] : ttotal[0]) - trank[bases[f]];
+    bool shaped = d1 >= d0 + 2u && rows[d0].kind == K_IFNDEF && rows[d0].text_before == 0u && arms[f] == 0u
+                  && rows[d1 - 1u].kind == K_ENDIF && rows[d1 - 1u].after == 0u && rows[d1 - 1u].text_before == text && outside[f] == 1u;
     guarded[f] = shaped ? 1u : 0u;
+    guards[f] = shaped ? dir_keys[d0] : 0ul;
 }
 
 // --- The directives' names: a line pass ---------------------------------------------------------
@@ -311,9 +344,3 @@ inline void pp_dir_keys(device const PpFile* files, device const uchar* data, de
     dir_keys[r] = key;
 }
 
-// Each file's include guard's key (0: none): its first directive's name, where the file has a
-// guard's shape. One thread a file.
-inline void pp_guards(device const uint* guarded, device const uint* dir_bases, device const ulong* dir_keys, device ulong* guards, uint n_files, uint f) {
-    if (f >= n_files) return;
-    guards[f] = guarded[f] != 0u ? dir_keys[dir_bases[f]] : 0ul;
-}
