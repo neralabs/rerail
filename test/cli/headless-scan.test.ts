@@ -936,6 +936,43 @@ Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
     expect(await evaluate()).toEqual(resolved);
   }, 30_000);
 
+  it("invalidates a Git tree after a same-size rewrite with restored modification time", async () => {
+    const root = checkout(), path = "pkg/inside.py";
+    mkdirSync(join(root, "pkg"));
+    writeFileSync(join(root, path), "NEEDLE\n");
+    git(root, "add", path);
+    git(root, "commit", "-qm", "nested finding");
+    const tree = git(root, "rev-parse", "HEAD:pkg");
+    const file = join(root, ".git", "objects", tree.slice(0, 2), tree.slice(2));
+    chmodSync(file, 0o600);
+    const time = new Date("2020-01-02T03:04:05Z"), original = readFileSync(file);
+    utimesSync(file, time, time);
+    const initial = statSync(file, { bigint: true });
+    const open = () => new (loadNativeBinding().GitRevisionSource)(root, "HEAD", "mutation");
+    const view = open();
+    const run = async (name: string) => {
+      vi.stubEnv("RERAIL_CONTENT_STORE_PATH", join(root + "-home", name + ".sqlite"));
+      try { return await scan(root, { revision: "HEAD", analysisScope: "mutation", paths: [path] }); }
+      finally { vi.unstubAllEnvs(); }
+    };
+    expect(view.readDirectory("pkg")).toHaveLength(1);
+    expect(await run("warm")).toMatchObject({ status: "completed", violations: [{ path }] });
+    const rewrite = (bytes: Buffer) => { writeFileSync(file, bytes); utimesSync(file, time, time); };
+    rewrite(Buffer.alloc(original.length));
+    const changed = statSync(file, { bigint: true });
+    expect([changed.size, changed.mtimeNs, changed.ino]).toEqual([initial.size, initial.mtimeNs, initial.ino]);
+    if (process.platform === "win32") expect(changed.birthtimeNs).toBe(initial.birthtimeNs);
+    expect(() => open().readDirectory("pkg")).toThrow();
+    expect(() => view.readDirectory("pkg")).toThrow();
+    const cold = await run("cold"), warm = await run("warm");
+    expect(cold.status).toBe("failed");
+    expect(cold.failures.length).toBeGreaterThan(0);
+    expect(warm).toMatchObject({ status: "failed", failures: cold.failures, violations: [] });
+    rewrite(original);
+    expect(view.readDirectory("pkg")).toHaveLength(1);
+    expect(await run("warm")).toMatchObject({ status: "completed", violations: [{ path }] });
+  }, 30_000);
+
   it("compares Git message selectors with the installed Git", () => {
     const root = checkout();
     git(root, "commit", "--allow-empty", "-qm", "code 12 echo echo", "-m", "second paragraph");

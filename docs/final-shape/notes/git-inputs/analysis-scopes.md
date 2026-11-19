@@ -191,6 +191,9 @@ Both warm profiles recorded zero tree decodes.
 
 A pack layout records which indexes can supply each object ID prefix.
 Each lookup still checks the loose object paths.
+An in-place rewrite can preserve a Git object's length and modification time.
+The storage observation must detect the rewrite before a view or persisted inventory reuses that object.
+On Windows the observation also needs the file's change time. An unavailable change observation requires verification of the object.
 Small indexes list the first bytes of the object IDs they contain. A lookup can skip a small
 index when the requested ID starts with a different byte. Every candidate index contributes
 its supplier, including when several packs contain the same object.

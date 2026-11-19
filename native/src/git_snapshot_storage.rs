@@ -237,20 +237,30 @@ fn stat(digest: &mut Sha256, path: &Path) -> Option<()> {
     hash_stat(digest, metadata(path)?.as_ref())
 }
 
-fn metadata(path: &Path) -> Option<Option<std::fs::Metadata>> {
-    match std::fs::metadata(path) {
+#[cfg(not(windows))]
+use std::fs::{Metadata as StorageMetadata, metadata as read_metadata};
+
+#[cfg(windows)]
+#[path = "git_snapshot_windows_stat.rs"]
+mod windows;
+#[cfg(windows)]
+use windows::{StorageMetadata, read_metadata};
+
+fn metadata(path: &Path) -> Option<Option<StorageMetadata>> {
+    match read_metadata(path) {
         Ok(metadata) => Some(Some(metadata)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(None),
         Err(_) => None,
     }
 }
 
-fn hash_stat(digest: &mut Sha256, metadata: Option<&std::fs::Metadata>) -> Option<()> {
+fn hash_stat(digest: &mut Sha256, metadata: Option<&StorageMetadata>) -> Option<()> {
     let Some(metadata) = metadata else {
         digest.update([0]);
         return Some(());
     };
     digest.update([1]);
+    #[cfg(not(windows))]
     digest.update(metadata.len().to_le_bytes());
     #[cfg(unix)]
     {
@@ -262,7 +272,9 @@ fn hash_stat(digest: &mut Sha256, metadata: Option<&std::fs::Metadata>) -> Optio
         digest.update(metadata.ctime().to_le_bytes());
         digest.update(metadata.ctime_nsec().to_le_bytes());
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    metadata.hash(digest);
+    #[cfg(not(any(unix, windows)))]
     {
         let time = |timestamp: std::io::Result<std::time::SystemTime>| {
             timestamp.ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|time| time.as_nanos().to_le_bytes())

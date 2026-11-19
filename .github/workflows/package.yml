@@ -166,7 +166,18 @@ jobs:
 
       - name: Compare native message selectors with Git
         if: matrix.target != 'aarch64-pc-windows-msvc'
-        run: ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "compares Git message selectors"
+        run: |
+          git version --build-options
+          node -p "process.platform + ' ' + process.arch + ' ' + process.version"
+          ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "compares Git message selectors" --reporter=verbose
+
+      - name: Check Git object invalidation on Windows
+        if: matrix.windows_runtime_smoke
+        shell: pwsh
+        run: |
+          $drive = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetTempPath())
+          [System.IO.DriveInfo]::new($drive).DriveFormat
+          ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "same-size rewrite" --reporter=verbose
 
       - name: Smoke Windows junction lifecycle
         if: matrix.windows_runtime_smoke
