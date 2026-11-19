@@ -16,7 +16,14 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { checkoutRealpath, physicalPath, storedPath } from "./checkout-control.js";
-import { filePlacementInputs, linkedWorktreeFromFiles, lookupEnvironment, placementInputs, type PlacementInputs } from "./checkouts/git-placement.js";
+import {
+  filePlacementInputs,
+  gitEntryFacts,
+  linkedWorktreeFromFiles,
+  lookupEnvironment,
+  placementInputs,
+  type PlacementInputs,
+} from "./checkouts/git-placement.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
@@ -87,15 +94,19 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
 /**
  * {@link repositoryIdentityLocation} of `requested`. A kept answer serves while its stamp is unchanged, and for folders Git
  * does not take for the user's only when `lastAnswer` is set: Git takes those through `safe.directory`, so each placement
- * of one asks Git, and Git's last acceptance there serves the worktree registry until the next. A refusal is never
- * kept: the person may give their trust back at any time, and Git then lists the folder.
+ * of one asks Git, and Git's last acceptance there serves the worktree registry until the next. The registry
+ * (`lastAnswer`) also takes Git's acceptances of folders the files cannot describe ({@link keptForRegistry}). A refusal
+ * is never kept: the person may give their trust back at any time, and Git then lists the folder.
  */
 function placed(requested: string, lastAnswer: boolean): RepositoryIdentityLocation {
+  const kept = lastAnswer ? keptForRegistry(requested) : undefined;
+  if (kept !== undefined) return kept;
   const inputs = placementInputs(requested);
-  if (inputs === undefined) {
-    heldTopLevels.delete(requested);
-    return locatedByGit(requested).location;
-  }
+  return inputs === undefined ? acceptedByGit(requested) : placedFromInputs(requested, inputs, lastAnswer);
+}
+
+/** {@link placed} for a folder whose placement inputs were read: the kept answer, else the files' or Git's. */
+function placedFromInputs(requested: string, inputs: PlacementInputs, lastAnswer: boolean): RepositoryIdentityLocation {
   const held = heldTopLevels.get(requested);
   if (held?.stamp === inputs.stamp && (inputs.owned || lastAnswer)) return { ...held.location };
   const fromFiles = linkedLocation(inputs);
@@ -125,14 +136,17 @@ function linkedLocation(inputs: PlacementInputs): RepositoryIdentityLocation | u
 /**
  * Keeps `located` for `folder` under the stamp of `inputs`, read before it was placed, when it names the folder as its
  * own top level ({@link answersInputs}): what makes that so is read at the folder and the Git folders it names, all in
- * the stamp. Any other answer depends on the folders above too, and is not kept. For folders Git does not take for the
- * user's, whose answer depends on the `safe.directory` entries of the user's and the system's Git config too, Git's
- * acceptance is kept for the worktree registry alone ({@link placed}).
+ * the stamp. Any other answer depends on the folders above too, and is not kept for placements; Git's acceptance naming
+ * a folder above is kept for the worktree registry as it kept every checkout's before ({@link keepAcceptance}). For
+ * folders Git does not take for the user's, whose answer depends on the `safe.directory` entries of the user's and the
+ * system's Git config too, Git's acceptance is kept for the worktree registry alone ({@link placed}).
  */
 function holdTopLevel(folder: string, inputs: PlacementInputs, located: Located): void {
   heldTopLevels.delete(folder);
+  gitAcceptances.delete(folder);
   try {
     if (answersInputs(folder, inputs, located)) keepTopLevel(folder, inputs, located);
+    else if (located.byGit && !namesItself(folder, located.location)) keepAcceptance(folder, undefined, located.location);
   } catch {
     // A folder whose real path cannot be read now is asked of Git again next time.
   }
@@ -151,9 +165,16 @@ function keepTopLevel(folder: string, inputs: PlacementInputs, located: Located)
  * Git folder the inputs name, as a main checkout exactly when they name no other.
  */
 function answersInputs(folder: string, inputs: PlacementInputs, located: Located): boolean {
-  const { location } = located;
-  if (!location.git || physicalPath(location.workspaceRoot) !== physicalPath(folder)) return false;
-  return !located.byGit || namesInputsCommon(location, inputs);
+  return namesItself(folder, located.location) && (!located.byGit || namesInputsCommon(located.location, inputs));
+}
+
+/** Whether `location` is in Git and names `folder` as its own top level; false when a real path cannot be read. */
+function namesItself(folder: string, location: RepositoryIdentityLocation): boolean {
+  try {
+    return location.git && physicalPath(location.workspaceRoot) === physicalPath(folder);
+  } catch {
+    return false;
+  }
 }
 
 function namesInputsCommon(location: RepositoryIdentityLocation, inputs: PlacementInputs): boolean {
@@ -284,9 +305,15 @@ export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined
   if (known !== undefined && known.contents === contents) return known;
   const registry = listWorktrees(checkout, commonDirectory, contents);
   // A checkout where Git cannot answer keeps nothing: what is kept is bounded by what answers.
-  if (registry === undefined) worktreeRegistries.delete(commonDirectory);
+  if (registry === undefined) forget(checkout, commonDirectory);
   else worktreeRegistries.set(commonDirectory, registry);
   return registry;
+}
+
+/** Drops the registry of `commonDirectory`, and the acceptance of `checkout` kept for it, once Git cannot list there. */
+function forget(checkout: string, commonDirectory: string): void {
+  worktreeRegistries.delete(commonDirectory);
+  gitAcceptances.delete(resolve(checkout));
 }
 
 /**
@@ -294,34 +321,61 @@ export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined
  * every call, and a placement is kept only while what Git reads at the folder is unchanged: a recorded checkout's folder
  * can be removed and become another repository's checkout, the folder above it renamed, or its `.git` file rewritten to
  * name another repository, and the registry to read is then that repository's. A kept placement costs a few lstats,
- * reads of small files and two real paths. For folders another account owns, Git's last acceptance; while the
- * environment moves Git's lookup, Git's acceptance under the variables' values ({@link placedUnderEnvironment}).
+ * reads of small files and two real paths. For folders another account owns, Git's last acceptance; for folders the
+ * files cannot describe, and while the environment moves Git's lookup, Git's acceptance kept for the registry
+ * ({@link keptForRegistry}).
  */
 function registryCommonDirectory(checkout: string): string | undefined {
   if (!existsSync(checkout)) return undefined;
-  const requested = resolve(checkout);
-  const environment = lookupEnvironment();
-  const location = environment === undefined ? placed(requested, true) : placedUnderEnvironment(requested, environment);
+  const location = placed(resolve(checkout), true);
   return location.git ? physicalPath(dirname(location.identityPath)) : undefined;
 }
 
-/** Git's acceptances of recorded checkouts while the environment moves Git's lookup, for the worktree registry alone. */
-const environmentTopLevels = new Map<string, { readonly stamp: string; readonly location: RepositoryIdentityLocation }>();
+/**
+ * Git's acceptances of recorded checkouts that the worktree registry, asked at every tool call, takes in place of asking
+ * Git again: of folders the files cannot describe ({@link gitEntryFacts}), of every folder while the environment moves
+ * Git's lookup, and of folders Git places in a repository above them. Each is kept under the facts Git read there
+ * ({@link acceptanceStamp}), or, with no stamp, as the registry kept every checkout's before: until a placement asks Git
+ * again or Git cannot list the registry. A refusal is not kept.
+ */
+const gitAcceptances = new Map<string, { readonly stamp: string | undefined; readonly location: RepositoryIdentityLocation }>();
+
+/** Git's acceptance of `requested` kept for the worktree registry while the facts it was kept under are unchanged. */
+function keptForRegistry(requested: string): RepositoryIdentityLocation | undefined {
+  const kept = gitAcceptances.get(requested);
+  if (kept === undefined) return undefined;
+  return kept.stamp === undefined || kept.stamp === acceptanceStamp(requested) ? { ...kept.location } : undefined;
+}
 
 /**
- * Git's placement of `requested` while `environment`, the lookup variables' values, moves Git's lookup: every placement
- * asks Git then, and the registry, asked at every tool call, takes Git's acceptance kept under the folder's own inputs
- * ({@link filePlacementInputs}) and those values, which do not change while the process runs. A refusal is not kept.
+ * The facts a kept acceptance of `requested` holds: its placement inputs read from the files ({@link
+ * filePlacementInputs}), else the raw facts Git reads there ({@link gitEntryFacts}), with the lookup variables' values,
+ * which do not change while the process runs. Undefined when neither can be read.
  */
-function placedUnderEnvironment(requested: string, environment: string): RepositoryIdentityLocation {
-  const inputs = filePlacementInputs(requested);
-  const stamp = inputs === undefined ? undefined : `${inputs.stamp}\n${environment}`;
-  const held = environmentTopLevels.get(requested);
-  if (stamp !== undefined && held?.stamp === stamp) return { ...held.location };
+function acceptanceStamp(requested: string): string | undefined {
+  const facts = filePlacementInputs(requested)?.stamp ?? gitEntryFacts(requested);
+  return facts === undefined ? undefined : `${facts}\n${lookupEnvironment() ?? ""}`;
+}
+
+/**
+ * Git's placement of `requested`, a folder the files cannot describe or one placed while the environment moves Git's
+ * lookup, kept for the worktree registry under the facts read before Git ran.
+ */
+function acceptedByGit(requested: string): RepositoryIdentityLocation {
+  heldTopLevels.delete(requested);
+  const stamp = acceptanceStamp(requested);
   const { location } = locatedByGit(requested);
-  if (stamp !== undefined && location.git) environmentTopLevels.set(requested, { stamp, location });
-  else environmentTopLevels.delete(requested);
+  keepAcceptance(requested, stamp, location);
   return { ...location };
+}
+
+/**
+ * Keeps Git's acceptance `location` of `requested` for the worktree registry: under `stamp` when it names the folder as
+ * its own top level, else with none, since what Git read in the folders above is in no stamp. A refusal is not kept.
+ */
+function keepAcceptance(requested: string, stamp: string | undefined, location: RepositoryIdentityLocation): void {
+  if (!location.git) gitAcceptances.delete(requested);
+  else gitAcceptances.set(requested, { stamp: namesItself(requested, location) ? stamp : undefined, location });
 }
 
 function listWorktrees(checkout: string, commonDirectory: string, contents: string): WorktreeRegistry & { readonly contents: string } | undefined {

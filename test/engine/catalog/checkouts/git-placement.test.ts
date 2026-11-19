@@ -620,6 +620,96 @@ describe("a kept answer follows the folders' owners, and the user's trust in ano
   });
 });
 
+/** A repository at `path` whose `.git` is a link to its Git folder, moved to `store`; returns the checkout's real path. */
+async function gitFolderLinked(path: string, store: string): Promise<string> {
+  const main = repository(path);
+  await rename(join(main, ".git"), store);
+  linkFolder(store, join(main, ".git"));
+  return main;
+}
+
+/** Asks the registry of `checkout` three times, each against Git's list; returns how many Git processes placed it. */
+function registryPlacements(checkout: string): number {
+  const before = locateCalls(checkout);
+  for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(checkout)?.worktrees, checkout).toEqual(gitsRegistry(checkout));
+  return locateCalls(checkout) - before;
+}
+
+describe("the worktree registry keeps Git's acceptance of a checkout its files cannot describe while what Git reads there is unchanged", () => {
+  it("places a checkout whose .git is a link once for three lists, under a lookup variable too", async () => {
+    const root = await temporaryRoot();
+    const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    expect(registryPlacements(main)).toBe(1);
+
+    vi.stubEnv("GIT_OBJECT_DIRECTORY", join(root, "main.git", "objects"));
+    expect(registryPlacements(main)).toBe(1);
+  });
+
+  it("places a worktree whose .git file names a link to its Git folder once, and again once the link names another", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    const other = repository(join(root, "other"));
+    git(main, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    git(other, "worktree", "add", "--quiet", "-b", "w", join(root, "ow"));
+    const link = join(root, "w.git");
+    linkFolder(join(main, ".git", "worktrees", "w"), link);
+    await rewriteInPlace(join(root, "w", ".git"), `gitdir: ${link}\n`);
+    expect(registryPlacements(join(root, "w"))).toBe(1);
+
+    await relink(link, join(other, ".git", "worktrees", "w"));
+    expect(registryPlacements(join(root, "w"))).toBe(1);
+    expect(worktreeRegistry(join(root, "w"))?.commonDirectory).toBe(physicalPath(join(other, ".git")));
+  });
+
+  it("lists as Git does once a checkout's .git link names another Git folder, and none once that Git folder moves", async () => {
+    const root = await temporaryRoot();
+    const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
+    const other = await gitFolderLinked(join(root, "other"), join(root, "other.git"));
+    git(other, "worktree", "add", "--quiet", "-b", "o", join(root, "o"));
+    expectGitsRegistries(main);
+
+    await relink(join(main, ".git"), join(root, "other.git"));
+    expectGitsRegistries(main);
+    expect(worktreeRegistry(main)?.worktrees).toHaveLength(2);
+    await rename(join(root, "other.git"), join(root, "moved.git"));
+    expect(gitsAnswer(main).git).toBe(false);
+    expect(worktreeRegistry(main)).toBeUndefined();
+  });
+
+  it("gives no list for a checkout whose .git is a link once its folders are another account's, and Git's last acceptance while safe.directory names it", async () => {
+    const root = await temporaryRoot();
+    const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
+    expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
+    const global = join(root, "global.gitconfig");
+    await writeFile(global, "");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", global);
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    takeOwnersAway();
+    gitSeesAnotherOwner();
+    expect(worktreeRegistry(main)).toBeUndefined();
+
+    await writeFile(global, "[safe]\n\tdirectory = *\n");
+    const before = locateCalls(main);
+    for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(main)?.worktrees).toHaveLength(1);
+    expect(locateCalls(main) - before).toBe(1);
+    // With the entry removed, the next placement asks Git, which refuses, and the registry keeps nothing.
+    await writeFile(global, "");
+    expect(repositoryIdentityLocation(main).git).toBe(false);
+    expect(worktreeRegistry(main)).toBeUndefined();
+  });
+
+  it("places a recorded checkout Git places in the repository above it once for three lists, as the registry did before", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    const inner = join(outer, "inner");
+    // An empty Git folder, which Git passes over to the repository above.
+    mkdirSync(join(inner, ".git"), { recursive: true });
+    expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
+    expect(registryPlacements(inner)).toBe(1);
+  });
+});
+
 describe("an entry Git reads through a link is read through it", () => {
   it("a checkout whose objects folder is a link, once the folder it names is gone", async () => {
     const root = await temporaryRoot();

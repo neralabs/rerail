@@ -18,11 +18,12 @@ import {
   lstatSync,
   openSync,
   readFileSync,
+  readlinkSync,
   type Stats,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathsOwnedByCurrentUser } from "../../native/native.js";
-import { storedPath } from "../checkout-control.js";
+import { checkoutRealpath, storedPath } from "../checkout-control.js";
 
 /** What Git reads to place a folder holding a `.git` entry, as it was when read. */
 export interface PlacementInputs {
@@ -374,6 +375,115 @@ function ownedAsGitTakes(realFolder: string, gitFolder: string, entries: readonl
  */
 function ownersTaken(paths: readonly string[]): boolean | undefined {
   return paths.every(plainlyResolved) ? pathsOwnedByCurrentUser(paths) : false;
+}
+
+/**
+ * The facts Git reads to place `folder`, raw, for a folder {@link filePlacementInputs} cannot describe (a `.git` link, a
+ * Git folder reached through a link, a `HEAD` link, a file that cannot be read): one string that changes whenever one of
+ * them does, under which the worktree registry keeps Git's own acceptance of the folder. It holds the folder's real
+ * path; whether Git takes the folder, the `.git` entry and the Git folder for the user's; the entry's own type and
+ * identity, and its link text; what the entry resolves to through links, and for a `.git` file its text and the real
+ * path of the Git folder it names ({@link gitFolderBehind}); and that Git folder's facts ({@link gitFolderRaw}). Each
+ * is read now; a part that cannot be read is held as such. Undefined when the folder's real path, or on Windows the
+ * owners, cannot be read.
+ */
+export function gitEntryFacts(folder: string): string | undefined {
+  const realFolder = realOf(folder);
+  if (realFolder === undefined) return undefined;
+  const dotGit = join(realFolder, ".git");
+  const behind = gitFolderBehind(realFolder, dotGit);
+  const owned = ownersAsGitReads(realFolder, dotGit, behind.gitFolder ?? dotGit);
+  return owned === undefined ? undefined : [realFolder, `owned:${owned}`, behind.facts, gitFolderRaw(behind.gitFolder)].join("\n");
+}
+
+/** `path`'s real path, through every link; undefined when it cannot be read (a link whose target is gone, say). */
+function realOf(path: string): string | undefined {
+  try {
+    return checkoutRealpath(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/** An entry's type, permissions and identity on its volume, as an lstat gives them; `none` or `?` when it gives none. */
+function described(looked: Looked): string {
+  if (looked === undefined) return "?";
+  return looked === "none" ? "none" : `${looked.mode}:${looked.dev}:${looked.ino}`;
+}
+
+function linkText(path: string): string {
+  try {
+    return readlinkSync(path);
+  } catch {
+    return "?";
+  }
+}
+
+function textFact(read: FileText | "none" | undefined): string {
+  return isText(read) ? `text:${read.text}` : (read ?? "?");
+}
+
+/** What a `.git` entry is and the real path of the Git folder Git reaches through it. */
+interface Behind {
+  readonly facts: string;
+  readonly gitFolder: string | undefined;
+}
+
+/**
+ * The `.git` entry in `realFolder`, as Git reads it: its own facts and link text, the real path it resolves to and that
+ * entry's facts; for a folder there, that folder is the Git folder ({@link namedBehind} for a file).
+ */
+function gitFolderBehind(realFolder: string, dotGit: string): Behind {
+  const entry = look(dotGit);
+  const target = realOf(dotGit);
+  const resolved = target === undefined ? undefined : look(target);
+  const facts = [described(entry), isEntry(entry) && entry.isSymbolicLink() ? linkText(dotGit) : "-", target ?? "?", described(resolved)].join("\n");
+  return isFolder(resolved) ? { facts, gitFolder: target } : namedBehind(realFolder, dotGit, facts, resolved);
+}
+
+/**
+ * A `.git` entry that resolves to a file: its text, and the real path of the Git folder it names, which Git resolves
+ * from the folder holding the `.git` entry, not from where a link took it.
+ */
+function namedBehind(realFolder: string, dotGit: string, facts: string, resolved: Looked): Behind {
+  const read = isEntry(resolved) && resolved.isFile() ? fileText(dotGit) : undefined;
+  const named = isText(read) && read.text.startsWith(GITDIR) ? readPath(read.text.slice(GITDIR.length)) : undefined;
+  return { facts: `${facts}\n${textFact(read)}`, gitFolder: named === undefined ? undefined : realOf(resolve(realFolder, named)) };
+}
+
+/**
+ * A Git folder's facts as Git reads them to place a checkout: its identity, its `HEAD` (a link's text, else the file's),
+ * `commondir` and `config.worktree`, and the common Git folder's ({@link commonRaw}).
+ */
+function gitFolderRaw(gitFolder: string | undefined): string {
+  if (gitFolder === undefined) return "-";
+  const head = join(gitFolder, "HEAD");
+  const headLooked = look(head);
+  const headText = isEntry(headLooked) && headLooked.isSymbolicLink() ? `link:${linkText(head)}` : textFact(fileText(head));
+  const commondir = fileText(join(gitFolder, "commondir"));
+  return [gitFolder, described(look(gitFolder)), described(headLooked), headText, textFact(commondir), textFact(fileText(join(gitFolder, "config.worktree"))), commonRaw(gitFolder, commondir)].join("\n");
+}
+
+/** The common Git folder `commondir` names (else the Git folder): its real path, identity, `objects`, `refs` and `config`. */
+function commonRaw(gitFolder: string, commondir: FileText | "none" | undefined): string {
+  const named = isText(commondir) ? readPath(commondir.text) : undefined;
+  const common = named === undefined ? gitFolder : realOf(resolve(gitFolder, named));
+  if (common === undefined) return "?";
+  const reached = `objects:${reachable(join(common, "objects"))} refs:${reachable(join(common, "refs"))}`;
+  return [common, described(look(common)), reached, textFact(fileText(join(common, "config")))].join("\n");
+}
+
+/**
+ * Whether Git takes the real folder, its `.git` entry and the Git folder for the user's, read now: on POSIX each one's
+ * lstat owner ({@link ownedByUser}), on Windows the engine's read ({@link ownersTaken}); undefined when no engine can tell.
+ */
+function ownersAsGitReads(realFolder: string, dotGit: string, gitFolder: string): boolean | undefined {
+  const paths = [realFolder, dotGit, gitFolder];
+  if (process.platform === "win32") return ownersTaken(paths);
+  return paths.every(path => {
+    const looked = look(path);
+    return isEntry(looked) && ownedByUser(looked.uid);
+  });
 }
 
 /**
