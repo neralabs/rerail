@@ -82,9 +82,9 @@ struct Parser<'a> {
     /// The kinds the parse looks for ahead, a bit each: the marks (bit `k`: mark `k`), then the
     /// soft keywords. Which marks are hidden.
     looks: Vec<String>,
-    hidden: u64,
+    hidden: u128,
     /// Each rule's and choice's first looks and whether it may be empty (`first_of`).
-    named: HashMap<&'a str, (u64, bool)>,
+    named: HashMap<&'a str, (u128, bool)>,
     /// Each rule's and choice's first token kinds and whether it may be empty (`first_of`).
     named_starts: HashMap<&'a str, (Starts, bool)>,
     /// The rules' nodes open, innermost last (`retag` changes the last's kind).
@@ -115,7 +115,7 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     /// A rule, a choice or a token, by name (`Gram::Sym`).
-    fn sym(&mut self, name: &String, at: usize, follow: u64) -> Option<usize> {
+    fn sym(&mut self, name: &String, at: usize, follow: u128) -> Option<usize> {
         let decl = self.decl;
         // A nested level is a machine's level of its own: it ends where none of its arms
         // takes the token, whatever its caller takes next. In it, only the marks and soft
@@ -222,17 +222,17 @@ impl<'a> Parser<'a> {
         c
     }
 
-    fn look_bit(&self, kind: &str) -> u64 {
+    fn look_bit(&self, kind: &str) -> u128 {
         self.looks.iter().position(|m| m == kind).map_or(0, |k| 1 << k)
     }
 
     /// The soft keyword the token at `at` may be taken as, its bit; 0 for none.
-    fn soft_bit(&self, at: usize) -> u64 {
+    fn soft_bit(&self, at: usize) -> u128 {
         self.tokens.get(at).and_then(|t| t.soft.as_deref()).map_or(0, |k| self.look_bit(k))
     }
 
     /// The looks `g` may start with, and whether it may match nothing.
-    fn first(&self, g: &Gram) -> (u64, bool) {
+    fn first(&self, g: &Gram) -> (u128, bool) {
         match g {
             Gram::Lit(k) => (self.look_bit(k), false),
             Gram::Sym(name) => self.named.get(name.as_str()).copied().unwrap_or((self.look_bit(name), false)),
@@ -284,7 +284,7 @@ impl<'a> Parser<'a> {
         self.tokens.get(at).is_some_and(|t| !t.mark && self.starts(g).0.has(t))
     }
 
-    fn first_seq(&self, items: &[Gram]) -> (u64, bool) {
+    fn first_seq(&self, items: &[Gram]) -> (u128, bool) {
         let mut bits = 0;
         for i in items {
             let (b, empty) = self.first(i);
@@ -298,7 +298,7 @@ impl<'a> Parser<'a> {
 
     /// Match `g` from token `at`: the next token, or `None`. `follow`: the marks that may come
     /// after `g` here. Nodes are appended to `out`; on a failed match the caller truncates them.
-    fn matches(&mut self, g: &Gram, at: usize, follow: u64) -> Option<usize> {
+    fn matches(&mut self, g: &Gram, at: usize, follow: u128) -> Option<usize> {
         match g {
             Gram::Lit(k) => self.token(k, at, follow),
             // The levels `body` runs, with the flag set or clear; the caller's flags after.
@@ -661,7 +661,7 @@ impl<'a> Parser<'a> {
 
     /// A token of `kind` at `at`: its leaf (a mark has none), then past the marks that `follow`
     /// does not hold. A hidden one is skipped; one not hidden fails the parse.
-    fn token(&mut self, kind: &str, at: usize, follow: u64) -> Option<usize> {
+    fn token(&mut self, kind: &str, at: usize, follow: u128) -> Option<usize> {
         self.far = self.far.max(at);
         // Its own kind, or the soft keyword it is.
         let t = self.tokens.get(at).filter(|t| t.kind == kind || t.soft.as_deref() == Some(kind))?;
@@ -677,7 +677,7 @@ impl<'a> Parser<'a> {
     /// From `at`, past the marks the grammar can not take here (`follow`): hidden ones are
     /// skipped; one not hidden, `None`. In a nested level, one not hidden ends the level, as
     /// the machine's: its caller takes it or refuses the file (`sym`'s `rewound`).
-    fn past_marks(&self, mut at: usize, follow: u64) -> Option<usize> {
+    fn past_marks(&self, mut at: usize, follow: u128) -> Option<usize> {
         while let Some(t) = self.tokens.get(at).filter(|t| t.mark) {
             let bit = self.look_bit(&t.kind);
             if follow & bit != 0 {
@@ -792,10 +792,10 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
     if real == 0 && !decl.whole {
         return Err("no tokens: the root would be zero-width".into());
     }
-    let hidden = decl.marks.iter().enumerate().filter(|(_, m)| decl.hidden.contains(m)).fold(0u64, |h, (k, _)| h | 1 << k);
+    let hidden = decl.marks.iter().enumerate().filter(|(_, m)| decl.hidden.contains(m)).fold(0u128, |h, (k, _)| h | 1 << k);
     let looks: Vec<String> = decl.marks.iter().chain(&decl.soft).cloned().collect();
-    if looks.len() > 64 {
-        return Err("more than 64 marks and soft keywords".into());
+    if looks.len() > 128 {
+        return Err("more than 128 marks and soft keywords".into());
     }
     let extra_at = extras.iter().map(|e| e.1.start).collect();
     // A settling mark's extras (`Token::settle`): those since the token before it that start

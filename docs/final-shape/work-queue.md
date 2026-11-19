@@ -1917,3 +1917,16 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   state, and the gap marks read through the state.
 - **Done when**: the CPU body holds no token-level mask (`tier1_cones` lists none left), with the
   tapes unchanged.
+
+### Q228. A hidden mark taken before another live hidden mark: the compiled tier 2 refuses where the reference parses
+
+- **What**: tried for 0429's class header. Kotlin's grammar had one `semi` (no `class_head`
+  split) and a hidden `mark head_ctor = lf_end, before "constructor"`, declared before `semi`
+  and taken by `class_rest` before `[primary_constructor]`. With it, `class A⏎constructor(x: Int)⏎`
+  parses in Bitlex's reference, but the compiled tier 2 (interpreter and Cranelift alike)
+  refuses it at the `:` (byte 21, "no state takes the token"). Without the line break, and in
+  `fun f(x: Int)`, it parses. `semi` is still live, hidden, at the `constructor` token after
+  `head_ctor` is taken.
+- **Done when**: the compiled tier 2 equals the reference on that grammar and text (a ladder
+  test of two hidden gap marks at one token, the first taken), and 0429's class header step can
+  use it.

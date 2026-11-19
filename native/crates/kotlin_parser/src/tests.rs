@@ -1255,3 +1255,26 @@ fn asked_comments_are_the_lean_parsers() {
         "fun f() {\n    g(\n        true /* s */,\n        x,\n    )\n}\n",
     ]);
 }
+
+/// A probe: Bitlex's reference (`eval`, `tree`) on `RERAIL_KOTLIN_TEXT`, its tree or its refusal.
+#[test]
+#[ignore = "a probe: prints"]
+fn reference_probe() {
+    let text = std::env::var("RERAIL_KOTLIN_TEXT").unwrap_or_default().replace("\\n", "\n");
+    let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+    let tables = Default::default();
+    match ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &tables) {
+        Ok(out) => {
+            eprintln!("errors {:?}", out.errors);
+            if let Some(tree) = &out.tree {
+                eprintln!("reference tree: {:?}", ::bitlex::tree::nodes(tree, &out.tokens, text.len()).map(|n| n.len()));
+            }
+        }
+        Err(e) => eprintln!("eval: {e:?}"),
+    }
+    let c = compiled().expect("compiles");
+    match c.parser.image(text.as_bytes()) {
+        Ok(i) => eprintln!("compiled: {}", image_text(&i).expect("an image")),
+        Err(e) => eprintln!("compiled refuses: {e:?}\n{}", c.explain(&text)),
+    }
+}
