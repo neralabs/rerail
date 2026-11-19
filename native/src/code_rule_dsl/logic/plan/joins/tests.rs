@@ -57,7 +57,7 @@ fn random_orders_are_distinct_connected_and_start_where_asked() {
 #[test]
 fn the_critical_path_is_the_heaviest_chain_and_its_heavy_lines_are_noted() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     // s0 -> s1 -> s3 (work 10 + 200k + 10), s0 -> s2 -> s3 (10 + 50k + 10).
     let names: Vec<String> = ["s0", "s1", "s2", "s3"].map(String::from).to_vec();
     let producers = vec![vec![], vec![0], vec![0], vec![1, 2]];
@@ -72,13 +72,13 @@ fn the_critical_path_is_the_heaviest_chain_and_its_heavy_lines_are_noted() {
     assert_eq!(n.tried.len(), 1);
     assert!((n.tried[0].ratio - 200.0).abs() < 1e-6, "measured over priced: {n:?}");
     assert!(note(&102).is_none() && note(&100).is_none());
-    clear();
+    let _own = own();
 }
 
 #[test]
 fn a_choice_is_corrected_by_what_its_order_measured_and_rounds_choose_together() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
     let candidates = vec![Candidate { order: order(&[0, 1]), est: 100.0, steps: Vec::new() }, Candidate { order: order(&[1, 0]), est: 300.0, steps: Vec::new() }];
     // Not noted: the search's best.
@@ -94,13 +94,13 @@ fn a_choice_is_corrected_by_what_its_order_measured_and_rounds_choose_together()
     let round = vec![Choice { key: 200, candidates: candidates.clone(), chosen: 0, why: "" }, Choice { key: 201, candidates, chosen: 0, why: "" }];
     let made = finish_round(round);
     assert_eq!(made.iter().map(|c| c.chosen).collect::<Vec<_>>(), vec![1, 0]);
-    clear();
+    let _own = own();
 }
 
 #[test]
 fn a_noted_line_explores_untried_orders_within_the_margin() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
     critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 300, rule: 1, order: steps(&order(&[0, 1, 2])), work: 1e6, est: 1e6, ..Default::default() }]);
     let candidates = vec![
@@ -117,7 +117,7 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
     assert!(explored[1] > 0, "an untried order within the margin is tried now and then: {explored:?}");
     assert_eq!(explored[2], 0, "never one past the margin");
     assert!(explored[0] > explored[1], "mostly the best: {explored:?}");
-    clear();
+    let _own = own();
 }
 
 /// `h(x, z) :- a(x, y), b(y, z)`: priced from its statistics, `a` (50 rows) leads and each probes `b` by `y` for a
@@ -127,7 +127,7 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
 #[test]
 fn a_run_that_changes_no_decision_writes_no_notes() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = vec![Step { at: 1, mode: None }, Step { at: 0, mode: None }];
     let line = |work: f64| LineRun { stratum: "s".into(), key: 220, rule: 1, order: steps(&order), work, est: 1e5, ..Default::default() };
     critical(&["s".into()], &[vec![]], &[line(2e5)]);
@@ -138,13 +138,13 @@ fn a_run_that_changes_no_decision_writes_no_notes() {
     // Measured at four times: its order's ratio moves, and the note is written.
     critical(&["s".into()], &[vec![]], &[line(8e5)]);
     assert!(to_store().is_some(), "a changed measure is written");
-    clear();
+    let _own = own();
 }
 
 #[test]
 fn walked_orders_are_costed_against_the_walked_order_that_ran() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
     // The order that ran measured twice its price; the other is priced ten times higher.
     critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 210, rule: 1, order: steps(&order(&[0, 1])), work: 2e5, est: 1e5, ..Default::default() }]);
@@ -164,13 +164,13 @@ fn walked_orders_are_costed_against_the_walked_order_that_ran() {
     // An untried order within the margin is still explored now and then (`explore_rate`, a draw): that is not its walk
     // taken.
     assert!(round[0].chosen == 0 || round[0].why.starts_with("explored"), "within the walks' spread: {}", round[0].why);
-    clear();
+    let _own = own();
 }
 
 #[test]
 fn exact_statistics_and_the_memo_change_the_plan() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let p = parse(".decl a(x: number, y: number)\n.decl b(y: number, z: number)\n.decl h(x: number, z: number)\nh(x, z) :- a(x, y), b(y, z).\n.output h\n").unwrap();
     let placed = body::Placed::of_program(&p).unwrap();
     let pf = placed.fields().unwrap();
@@ -195,7 +195,7 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     put_exact(1, b.observed_key(), vec![(atom_sig(atom_b, &bound), [50, 50_000])]);
     let ((order, work, _), _) = model.plan_inner(pf, &b, None, None, false).unwrap();
     assert_eq!(lead(&order), "b", "exact: {work}");
-    clear();
+    let _own = own();
 
     // The memo: the line's best order ran 10,000 times its price; its next plan takes the other.
     let _plans = KeepPlans::start(None);
@@ -209,7 +209,7 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let n = note(&key).unwrap();
     // Decision 0243: the wider search is the background's, asked for at the line's end; the plan makes none.
     assert!(n.wants_search && n.proposals.is_empty(), "no wider search at the plan: {n:?}");
-    clear();
+    let _own = own();
 }
 
 /// A wider search asked for is run by the upkeep job's step (here on the test's thread): its orders are the line's
@@ -217,9 +217,10 @@ fn exact_statistics_and_the_memo_change_the_plan() {
 #[test]
 fn a_requested_search_proposes_its_orders() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     {
-        let mut m = MEMO.write();
+        let held = joins();
+        let mut m = held.memo.write();
         noted_mut(&mut m, 400, 1).wants_search = true;
     }
     request(400, 1.0, false, Box::new(|_| Searched { orders: vec![(vec![(1, None), (0, None)], 5.0), (vec![(0, None), (1, None)], 3.0)], walked: None }));
@@ -230,7 +231,7 @@ fn a_requested_search_proposes_its_orders() {
     let n = note(&400).unwrap();
     assert_eq!(n.proposals.iter().map(|p| p.1).collect::<Vec<_>>(), vec![3.0, 5.0]);
     assert!(!n.wants_search);
-    clear();
+    let _own = own();
 }
 
 /// Decision 0272 (O167): a one-shot process serves its waiting searches at its run's end, so their proposals are
@@ -238,9 +239,9 @@ fn a_requested_search_proposes_its_orders() {
 #[test]
 fn a_one_shot_run_serves_its_waiting_searches_at_its_end() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     drain_at_end(false);
-    noted_mut(&mut MEMO.write(), 410, 1).wants_search = true;
+    noted_mut(&mut joins().memo.write(), 410, 1).wants_search = true;
     request(410, 1.0, false, Box::new(|_| Searched { orders: vec![(vec![(1, None), (0, None)], 5.0)], walked: None }));
     drain();
     assert_eq!(requests(), 1, "a long-lived process leaves the search to the idle job");
@@ -249,7 +250,7 @@ fn a_one_shot_run_serves_its_waiting_searches_at_its_end() {
     drain_at_end(false);
     assert_eq!(requests(), 0, "a one-shot run serves it at its end");
     assert_eq!(note(&410).unwrap().proposals.iter().map(|p| p.1).collect::<Vec<_>>(), vec![5.0]);
-    clear();
+    let _own = own();
 }
 
 /// Decision 0207: a line's orders are trialled once in a process, and once more after a flag; each trial's ratio is
@@ -257,9 +258,9 @@ fn a_one_shot_run_serves_its_waiting_searches_at_its_end() {
 #[test]
 fn trials_are_taken_once_and_their_ratios_kept() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     assert!(!take_trial(500), "decision 0274: a line not seen on a critical path is not trialled");
-    noted_mut(&mut MEMO.write(), 500, 1).critical = 0.5;
+    noted_mut(&mut joins().memo.write(), 500, 1).critical = 0.5;
     assert!(take_trial(500) && !take_trial(500), "once");
     flag_slow(500, 1, &[Step { at: 0, mode: None }, Step { at: 1, mode: None }], 10.0, 1e6);
     assert!(take_trial(500), "again after a flag");
@@ -271,7 +272,7 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     // Decision 0247: a trial moves the ratio a quarter of the way (in logs), as a run would half of it.
     let quarter = 4f64.powf(0.75) * 16f64.powf(0.25);
     assert!((t.ratio - quarter).abs() < 1e-9 && t.runs == 2, "a trial weighs a quarter: {t:?}");
-    clear();
+    let _own = own();
 }
 
 /// Q80: a slow line keeps what it measured. Its flag measures its rule's exact statistics, which no longer key its
@@ -280,7 +281,7 @@ fn trials_are_taken_once_and_their_ratios_kept() {
 #[test]
 fn a_slow_lines_measure_outlives_its_exact_statistics() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
     let (ran, other) = (order(&[0, 1, 2]), order(&[1, 0, 2]));
     // `pre_546` on hogql: priced 400 for its first rows, 102 K rows of work.
@@ -301,7 +302,7 @@ fn a_slow_lines_measure_outlives_its_exact_statistics() {
     assert_eq!(over_measured(&[(other.clone(), 5_000.0)], 102_000.0, 10, 4_000), Some(other.clone()));
     assert_eq!(over_measured(&[(other.clone(), 5e7)], 102_000.0, 10, 4_000), None);
     assert_eq!(over_measured(&[(other.clone(), 5e4)], 102_000.0, 0, 4_000), Some(other), "no row done: at least its work again");
-    clear();
+    let _own = own();
 }
 
 /// Decision 0274: trials follow the critical path as runs observe it. A line with a share of the measured path is
@@ -310,7 +311,7 @@ fn a_slow_lines_measure_outlives_its_exact_statistics() {
 #[test]
 fn trials_are_for_lines_observed_on_the_critical_path() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = vec![Step { at: 0, mode: None }, Step { at: 1, mode: None }];
     let run = |key: PlanKey, work: f64| LineRun { stratum: "s".into(), key, rule: 1, order: steps(&order), work, est: 0.0, wall: 0.0 };
     let strata = ["s".to_owned()];
@@ -329,7 +330,7 @@ fn trials_are_for_lines_observed_on_the_critical_path() {
         assert!(runs <= 5, "a line off the path stops being trialled");
     }
     assert!(on_critical_path(&602) && trial_due(&602), "the new path's line is trialled");
-    clear();
+    let _own = own();
 }
 
 /// A trial cut at its budget measured only part of its order's work: the cut work over the order's price is no
@@ -339,7 +340,7 @@ fn trials_are_for_lines_observed_on_the_critical_path() {
 #[test]
 fn a_trial_cut_at_its_budget_never_makes_its_order_look_cheaper_than_priced() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let good = vec![Step { at: 0, mode: None }, Step { at: 1, mode: None }, Step { at: 2, mode: None }];
     let cross = vec![Step { at: 0, mode: None }, Step { at: 2, mode: None }, Step { at: 1, mode: None }];
     // Over a sample: the good order priced 100, measured 300, ran to its end; the cross product priced 1e6, cut at
@@ -356,7 +357,7 @@ fn a_trial_cut_at_its_budget_never_makes_its_order_look_cheaper_than_priced() {
     // A cut trial that measured more than its price already says so: kept, as a floor.
     put_trial(301, 1, &cross, 5e6, 1e6, true);
     assert_eq!(note(&301).unwrap().tried[0].ratio, 5.0);
-    clear();
+    let _own = own();
 }
 
 /// A trial cut at its budget measured a floor of its work (decision 0267): under its price it says nothing, so an
@@ -364,7 +365,7 @@ fn a_trial_cut_at_its_budget_never_makes_its_order_look_cheaper_than_priced() {
 #[test]
 fn a_cut_trial_is_a_floor_of_its_ratio() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let cheap = vec![Step { at: 0, mode: None }, Step { at: 1, mode: None }];
     let dear = vec![Step { at: 1, mode: None }, Step { at: 0, mode: None }];
     // The trials over a sample (pre_570's at 35 files): the running order 3,736 rows of work against its price of
@@ -387,7 +388,7 @@ fn a_cut_trial_is_a_floor_of_its_ratio() {
     let n = note(&501).unwrap();
     let t = n.tried.iter().find(|t| t.order == steps(&cheap)).unwrap();
     assert!((t.ratio - 3.0).abs() < 1e-9 && t.runs == 1, "a floor raises the ratio, never lowers it: {t:?}");
-    clear();
+    let _own = own();
 }
 
 /// Decision 0271: a slow line is bounded on every path. One a trial cannot sample (pre_570: 0 of 423 lead rows done
@@ -426,7 +427,7 @@ fn a_slow_line_is_bounded_on_every_path() {
 #[test]
 fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let names: Vec<String> = ["s0", "s1", "s2", "s3"].map(String::from).to_vec();
     let producers = vec![vec![], vec![0], vec![0], vec![1, 2]];
     let timeline = vec![Some((0.0, 0.1, 0)), Some((0.1, 0.3, 1)), Some((0.12, 0.9, 0)), Some((0.95, 1.0, 0))];
@@ -443,7 +444,7 @@ fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
     assert_eq!(noted, vec![702, 703], "the lines on the measured path, by seconds: {:?}", path.lines);
     assert!(note(&701).is_none(), "s1 is off the measured path");
     assert!((path.lines[0].1 - 0.7 / 0.74).abs() < 1e-9);
-    clear();
+    let _own = own();
 }
 
 /// Decision 0209 §4: `h(a, b) :- r(f, a), r(f, b), r(f, c)` over a key of 100 values of one row and one of 300. A
@@ -824,4 +825,9 @@ fn a_line_misses_its_step_rows_by_a_blow_up_or_an_over_estimate() {
     // Steps that are not the order's one for one, or no lead rows yet: not judged.
     assert_eq!(step_miss(&[100.0, 100_000.0], &[(0, 100)], 250.0), None);
     assert_eq!(step_miss(&[100.0, 100_000.0], &[(0, 0), (0, 0)], 250.0), None);
+}
+
+/// A shared object of the test's own, so its memo is empty and no other test's (decision 0442).
+fn own() -> impl Drop {
+    crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::new())
 }

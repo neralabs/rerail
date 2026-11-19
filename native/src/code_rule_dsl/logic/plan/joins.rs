@@ -86,25 +86,26 @@ pub(super) fn trials_on() -> bool {
 /// (0208), a moving average over runs, is at least `critical_share`. A line that leaves the path halves its share
 /// each run, and drops below in a few: the next path's lines are found as each is made faster.
 pub(super) fn on_critical_path(key: &PlanKey) -> bool {
-    NOTED.load(Relaxed) && MEMO.read().notes.get(key).is_some_and(|n| n.critical >= critical_share())
+    joins().noted.load(Relaxed) && joins().memo.read().notes.get(key).is_some_and(|n| n.critical >= critical_share())
 }
 
 /// Decision 0274: whether line `key`'s orders would be trialled at this check (`take_trial`), without taking it.
 pub(super) fn trial_due(key: &PlanKey) -> bool {
-    trials_on() && on_critical_path(key) && !MEMO.read().trialled.contains(key)
+    trials_on() && on_critical_path(key) && !joins().memo.read().trialled.contains(key)
 }
 
 /// Whether line `key`'s orders are trialled at this check: decision 0274, only a line observed on a run's critical
 /// path, and as 0207, once in this process and once more after it was flagged slow. A slow line off the path is
 /// planned again instead, under the handoff's limit (decision 0271).
 pub(super) fn take_trial(key: PlanKey) -> bool {
-    on_critical_path(&key) && MEMO.write().trialled.insert(key)
+    on_critical_path(&key) && joins().memo.write().trialled.insert(key)
 }
 
 /// A trial measured `ratio` (work over price) for `order` of line `key`: kept as a run's is (`critical`).
 pub(super) fn put_tried(key: PlanKey, rule: u64, order: &[Step], ratio: f64) {
     run_counts().counts[TRIALS].fetch_add(1, Relaxed);
-    let mut m = MEMO.write();
+    let st_ = joins();
+    let mut m = st_.memo.write();
     let n = noted_mut(&mut m, key, rule);
     merge_tried(n, steps(order), ratio.clamp(1e-6, 1e9), TRIAL_WEIGHT);
 }
@@ -134,7 +135,8 @@ pub(super) fn put_trial(key: PlanKey, rule: u64, order: &[Step], work: f64, est:
         return;
     }
     run_counts().counts[TRIALS].fetch_add(1, Relaxed);
-    let mut m = MEMO.write();
+    let st_ = joins();
+    let mut m = st_.memo.write();
     let n = noted_mut(&mut m, key, rule);
     let order = steps(order);
     match n.tried.iter_mut().find(|t| t.order == order) {
@@ -161,14 +163,15 @@ fn merge_tried(n: &mut Note, order: Vec<StoredStep>, ratio: f64, weight: f64) {
 /// Decision 0243: line `key`'s walked proposals, with their walked work, and the walked work of the order it ran;
 /// `None` where its search priced them, or made none.
 pub(super) fn walked(key: &PlanKey) -> Option<(f64, Vec<(Vec<Step>, f64)>)> {
-    let m = MEMO.read();
+    let st_ = joins();
+    let m = st_.memo.read();
     let n = m.notes.get(key).filter(|n| n.walked > 0.0 && !n.proposals.is_empty())?;
     Some((n.walked, n.proposals.iter().map(|(o, w)| (o.iter().map(|&(at, mode)| Step { at: at as usize, mode }).collect(), *w)).collect()))
 }
 
 /// Line `key`'s proposals from a wider search, as orders.
 pub(super) fn proposals(key: &PlanKey) -> Vec<Vec<Step>> {
-    MEMO.read().notes.get(key).map(|n| n.proposals.iter().map(|(o, _)| o.iter().map(|&(at, mode)| Step { at: at as usize, mode }).collect()).collect()).unwrap_or_default()
+    joins().memo.read().notes.get(key).map(|n| n.proposals.iter().map(|(o, _)| o.iter().map(|&(at, mode)| Step { at: at as usize, mode }).collect()).collect()).unwrap_or_default()
 }
 
 /// `RERAIL_JOINS=off`: no memo, no flags, no exploration (the planner as before).
@@ -278,10 +281,22 @@ fn fingerprint(n: &Note) -> u64 {
     h.finish()
 }
 
-static MEMO: std::sync::LazyLock<RwLock<Memo>> = std::sync::LazyLock::new(Default::default);
-/// Whether any line is noted, or any rule has exact statistics: the planner's fast paths read these alone.
-static NOTED: AtomicBool = AtomicBool::new(false);
-static EXACT: AtomicBool = AtomicBool::new(false);
+/// The join statistics of the caller's programs (decision 0442: the shared object's): the memo, its flags (whether
+/// any line is noted, any rule has exact statistics, any column is raised: the planner's fast paths read these
+/// alone), the searches waiting, and the upkeep job that runs them.
+#[derive(Default)]
+struct Joins {
+    memo: RwLock<Memo>,
+    noted: AtomicBool,
+    exact: AtomicBool,
+    raised: AtomicBool,
+    requests: Mutex<Vec<(PlanKey, f64, bool, Search)>>,
+    job: std::sync::OnceLock<Mutex<Option<rerail_accel::upkeep::Registered>>>,
+}
+
+fn joins() -> Arc<Joins> {
+    super::super::profile::shared::<Joins>()
+}
 pub(super) const FLAGS: usize = 0;
 pub(super) const MEASURED: usize = 1;
 pub(super) const CORRECTED: usize = 2;
@@ -302,11 +317,12 @@ pub(super) fn unstored(order: &[StoredStep]) -> Vec<Step> {
 /// Raises column `c` of `rel` to keep its heavy values (decision 0209 §4), for line `key` where a line raised it
 /// (kept with its note); whether it was not yet.
 pub(super) fn raise(key: Option<PlanKey>, rel: &str, c: usize) -> bool {
-    RAISED.store(true, Relaxed);
-    let mut m = MEMO.write();
+    joins().raised.store(true, Relaxed);
+    let st_ = joins();
+    let mut m = st_.memo.write();
     if let Some(key) = key {
         // A trial raises before its line is noted (`put_tried` notes it, with its rule, right after).
-        NOTED.store(true, Relaxed);
+        joins().noted.store(true, Relaxed);
         let n = m.notes.entry(key).or_default();
         if !n.raised.iter().any(|(r, k)| r == rel && *k == c) {
             n.raised.push((rel.to_owned(), c));
@@ -319,67 +335,66 @@ pub(super) fn raise(key: Option<PlanKey>, rel: &str, c: usize) -> bool {
 /// Whether column `c` of `rel` keeps its heavy values.
 #[cfg(test)]
 pub(super) fn raised(rel: &str, c: usize) -> bool {
-    RAISED.load(Relaxed) && MEMO.read().raised.contains(&(rel.to_owned(), c))
+    joins().raised.load(Relaxed) && joins().memo.read().raised.contains(&(rel.to_owned(), c))
 }
 
 /// The columns that keep their heavy values, read once (`Run::heavy_for` checks every shared column of every rule
 /// of a stratum, in every chunk: a read of the memo's lock and a key allocated for each was 0.4 s of a cold run).
 pub(super) fn raised_all() -> Vec<(String, usize)> {
-    if !RAISED.load(Relaxed) {
+    if !joins().raised.load(Relaxed) {
         return Vec::new();
     }
-    MEMO.read().raised.iter().cloned().collect()
+    joins().memo.read().raised.iter().cloned().collect()
 }
 
 pub(super) fn any_raised() -> bool {
-    RAISED.load(Relaxed)
+    joins().raised.load(Relaxed)
 }
 
-static RAISED: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn noted(key: &PlanKey) -> bool {
-    NOTED.load(Relaxed) && MEMO.read().notes.contains_key(key)
+    joins().noted.load(Relaxed) && joins().memo.read().notes.contains_key(key)
 }
 
 pub(super) fn any_noted() -> bool {
-    NOTED.load(Relaxed)
+    joins().noted.load(Relaxed)
 }
 
 pub fn note(key: &PlanKey) -> Option<Note> {
-    if !NOTED.load(Relaxed) {
+    if !joins().noted.load(Relaxed) {
         return None;
     }
-    MEMO.read().notes.get(key).cloned()
+    joins().memo.read().notes.get(key).cloned()
 }
 
 /// Whether the line has work queued for its next plan: a wider search wanted, or a proposal not tried yet. Such a
 /// line is searched, not taken at its kept price.
 pub(super) fn pending(key: &PlanKey) -> bool {
-    NOTED.load(Relaxed) && MEMO.read().notes.get(key).is_some_and(|n| n.wants_search || n.proposals.iter().any(|(o, _)| n.tried(o).is_none()))
+    joins().noted.load(Relaxed) && joins().memo.read().notes.get(key).is_some_and(|n| n.wants_search || n.proposals.iter().any(|(o, _)| n.tried(o).is_none()))
 }
 
 /// The epoch of `rule`'s exact statistics (0: none), digested into its plan keys.
 pub(super) fn epoch(rule: u64) -> u32 {
-    if !EXACT.load(Relaxed) {
+    if !joins().exact.load(Relaxed) {
         return 0;
     }
-    MEMO.read().epochs.get(&rule).copied().unwrap_or(0)
+    joins().memo.read().epochs.get(&rule).copied().unwrap_or(0)
 }
 
 pub(super) fn any_exact() -> bool {
-    EXACT.load(Relaxed)
+    joins().exact.load(Relaxed)
 }
 
 /// `rule`'s exact statistics, read once per search.
 pub(super) fn exact_for(rule: u64) -> Option<Arc<HashMap<Sig, [i64; 2]>>> {
-    if !EXACT.load(Relaxed) {
+    if !joins().exact.load(Relaxed) {
         return None;
     }
-    MEMO.read().exact.get(&rule).cloned()
+    joins().memo.read().exact.get(&rule).cloned()
 }
 
 fn noted_mut<'m>(memo: &'m mut Memo, key: PlanKey, rule: u64) -> &'m mut Note {
-    NOTED.store(true, Relaxed);
+    joins().noted.store(true, Relaxed);
     memo.dirty = true;
     if memo.notes.len() >= NOTES_MAX && !memo.notes.contains_key(&key) {
         // The least important tenth goes.
@@ -401,7 +416,8 @@ pub(super) fn check(key: PlanKey, work: f64, order: &[Step]) -> bool {
     if work < slow_rows() {
         return false;
     }
-    let mut m = MEMO.write();
+    let st_ = joins();
+    let mut m = st_.memo.write();
     if m.flagged.get(&key).is_some_and(|o| *o == steps(order)) {
         return false;
     }
@@ -416,7 +432,8 @@ pub(super) fn check(key: PlanKey, work: f64, order: &[Step]) -> bool {
 /// The work at which line `key` is next checked (`check`), so the engine cuts its probe there (decision 0206);
 /// none once flagged in the order it runs (`order`).
 pub(super) fn next_due(key: PlanKey, order: &[Step]) -> Option<f64> {
-    let m = MEMO.read();
+    let st_ = joins();
+    let m = st_.memo.read();
     if m.flagged.get(&key).is_some_and(|o| *o == steps(order)) {
         return None;
     }
@@ -458,7 +475,7 @@ pub(super) fn count_handoff(back: bool) {
 /// price (`pre_546` on hogql: priced 360 to 513 for 102 K rows of work, at each of its trips).
 /// Whether line `key` is flagged in the order it runs (`flag_slow`): checked no more in it.
 pub(super) fn flagged(key: PlanKey, order: &[Step]) -> bool {
-    MEMO.read().flagged.get(&key).is_some_and(|o| *o == steps(order))
+    joins().memo.read().flagged.get(&key).is_some_and(|o| *o == steps(order))
 }
 
 /// How a running line's rows missed its order's estimate, step by step (`step_miss`).
@@ -531,7 +548,8 @@ pub fn step_miss(est: &[f64], ran: &[(u64, u64)], search_work: f64) -> Option<Mi
 
 pub(super) fn flag_slow(key: PlanKey, rule: u64, order: &[Step], est: f64, ran: f64) {
     run_counts().counts[FLAGS].fetch_add(1, Relaxed);
-    let mut m = MEMO.write();
+    let st_ = joins();
+    let mut m = st_.memo.write();
     let order = steps(order);
     m.flagged.insert(key, order.clone());
     m.forced.insert(key);
@@ -563,7 +581,7 @@ pub(super) fn over_measured(others: &[(Vec<Step>, f64)], ran: f64, done: u64, le
 
 /// Whether the line's replan skips the planning budget, once.
 pub(super) fn take_forced(key: &PlanKey) -> bool {
-    NOTED.load(Relaxed) && MEMO.write().forced.remove(key)
+    joins().noted.load(Relaxed) && joins().memo.write().forced.remove(key)
 }
 
 /// `rule`'s exact pair statistics, measured for line `key`: the rule's plans are keyed again (`epoch`).
@@ -572,7 +590,8 @@ pub(super) fn put_exact(key: PlanKey, rule: u64, stats: Vec<(Sig, [i64; 2])>) {
         return;
     }
     run_counts().counts[MEASURED].fetch_add(stats.len() as u64, Relaxed);
-    let mut m = MEMO.write();
+    let st_ = joins();
+    let mut m = st_.memo.write();
     let n = noted_mut(&mut m, key, rule);
     for (sig, c) in stats {
         match n.exact.iter_mut().find(|(s, _)| *s == sig) {
@@ -583,7 +602,7 @@ pub(super) fn put_exact(key: PlanKey, rule: u64, stats: Vec<(Sig, [i64; 2])>) {
     let map: HashMap<Sig, [i64; 2]> = n.exact.iter().cloned().collect();
     m.exact.insert(rule, Arc::new(map));
     *m.epochs.entry(rule).or_insert(0) += 1;
-    EXACT.store(true, Relaxed);
+    joins().exact.store(true, Relaxed);
 }
 
 /// A wider search's orders for line `key`, best first: its proposals. `walked`: the walked work of the order the
@@ -594,7 +613,8 @@ pub(super) fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>, wal
     orders.truncate(PROPOSALS);
     run_counts().counts[PROPOSED].fetch_add(orders.len() as u64, Relaxed);
     log(|| format!("proposals for line {:x}: {} orders, {} {:?}{}", key as u64, orders.len(), if walked.is_some() { "walked" } else { "prices" }, orders.iter().map(|o| format!("{} {:.0}", o.0.iter().map(|s| s.0.to_string()).collect::<Vec<_>>().join("."), o.1)).collect::<Vec<_>>(), walked.map_or(String::new(), |w| format!("; the order it ran walked {w:.0}"))));
-    let mut m = MEMO.write();
+    let st_ = joins();
+    let mut m = st_.memo.write();
     let Some(n) = m.notes.get_mut(&key) else { return };
     n.proposals = orders;
     n.walked = walked.unwrap_or(0.0);
@@ -647,18 +667,24 @@ pub trait Pricer: Send + Sync {
     fn price(&self, round: &[Choice]) -> Option<Vec<Vec<f64>>>;
 }
 
-static PRICER: RwLock<Option<Arc<dyn Pricer>>> = RwLock::new(None);
+/// The machine's batch pricer, the learned model's (decision 0442: the machine's), and whether one is set.
+#[derive(Default)]
+struct Pricing(RwLock<Option<Arc<dyn Pricer>>>, AtomicBool);
 
-pub fn set_pricer(p: Option<Arc<dyn Pricer>>) {
-    PRICING.store(p.is_some(), Relaxed);
-    *PRICER.write() = p;
+fn pricer() -> Arc<Pricing> {
+    super::super::profile::machine::<Pricing>()
 }
 
-static PRICING: AtomicBool = AtomicBool::new(false);
+pub fn set_pricer(p: Option<Arc<dyn Pricer>>) {
+    let held = pricer();
+    held.1.store(p.is_some(), Relaxed);
+    *held.0.write() = p;
+}
+
 
 /// Whether a batch pricer is set: every searched line's choice is then made in its round.
 pub(super) fn pricing() -> bool {
-    PRICING.load(Relaxed)
+    pricer().1.load(Relaxed)
 }
 
 /// A small generator for exploration and random orders: `RERAIL_JOIN_SEED` fixes it.
@@ -695,11 +721,13 @@ impl Rng {
 pub fn choose(round: &mut [Choice]) {
     // Nothing to choose between: the pricer is not asked (decision 0354: rounds of no choice were three in four).
     let choosing = round.iter().any(|c| c.candidates.len() >= 2);
-    let predicted = PRICER.read().clone().filter(|_| choosing).and_then(|p| {
+    let st_ = pricer();
+    let predicted = st_.0.read().clone().filter(|_| choosing).and_then(|p| {
         let _span = super::super::profile::span(|| "join model: prediction".into());
         p.price(round)
     });
-    let memo = if NOTED.load(Relaxed) { Some(MEMO.read()) } else { None };
+    let held = joins();
+    let memo = if held.noted.load(Relaxed) { Some(held.memo.read()) } else { None };
     for (k, c) in round.iter_mut().enumerate() {
         c.chosen = 0;
         c.why = "the search's best";
@@ -888,7 +916,8 @@ pub fn critical_timed(strata: &[String], producers: &[Vec<usize>], runs: &[LineR
     if total <= 0.0 {
         return Path { strata: path, work: total, lines, measured };
     }
-    let mut m = MEMO.write();
+    let st_ = joins();
+    let mut m = st_.memo.write();
     for r in runs {
         let key = r.key;
         let share = if !on_path(r) { 0.0 } else if by_wall { r.wall / walls } else if measured.is_some() { r.work / works.max(1.0) } else { r.work / total };
@@ -958,7 +987,6 @@ pub(super) struct Searched {
 /// the line's relations to walk (decision 0243), and the search. The search is given whether its time is up: it
 /// walks no further order once it is (decision 0245), and returns what it has.
 type Search = Box<dyn FnOnce(&dyn Fn() -> bool) -> Searched + Send>;
-static REQUESTS: Mutex<Vec<(PlanKey, f64, bool, Search)>> = Mutex::new(Vec::new());
 /// Requests waiting at most (the least important are dropped).
 const REQUESTS_MAX: usize = 64;
 /// Decision 0243: requests that hold their line's relations, at most. A held relation stays alive until its search
@@ -967,13 +995,14 @@ const HOLDING_MAX: usize = 4;
 
 /// Whether a new request may hold its line's relations to walk them (`HOLDING_MAX`).
 pub(super) fn may_hold() -> bool {
-    REQUESTS.lock().iter().filter(|r| r.2).count() < HOLDING_MAX
+    joins().requests.lock().iter().filter(|r| r.2).count() < HOLDING_MAX
 }
 
 /// Asks for a wider search of line `key` (`search`), run by the `join-search` upkeep job at idle.
 pub(super) fn request(key: PlanKey, weight: f64, holds: bool, search: Search) {
     job();
-    let mut q = REQUESTS.lock();
+    let st_ = joins();
+    let mut q = st_.requests.lock();
     if q.iter().any(|r| r.0 == key) {
         return;
     }
@@ -985,15 +1014,16 @@ pub(super) fn request(key: PlanKey, weight: f64, holds: bool, search: Search) {
 /// Whether a wider search of line `key` is worth asking for: none waits for it, and it has no proposals yet.
 pub(super) fn wants_request(key: &PlanKey) -> bool {
     let key = key;
-    if REQUESTS.lock().iter().any(|r| &r.0 == key) {
+    if joins().requests.lock().iter().any(|r| &r.0 == key) {
         return false;
     }
-    !(NOTED.load(Relaxed) && MEMO.read().notes.get(key).is_some_and(|n| !n.proposals.is_empty() && !n.wants_search))
+    !(joins().noted.load(Relaxed) && joins().memo.read().notes.get(key).is_some_and(|n| !n.proposals.is_empty() && !n.wants_search))
 }
 
 /// Raises the waiting searches of the critical path's lines to its work: they are searched first.
 fn prioritize(lines: &[(PlanKey, f64)], total: f64) {
-    let mut q = REQUESTS.lock();
+    let st_ = joins();
+    let mut q = st_.requests.lock();
     for (k, w, _, _) in q.iter_mut() {
         if let Some((_, share)) = lines.iter().find(|(l, _)| l == k) {
             *w = w.max(share * total) + total;
@@ -1004,14 +1034,15 @@ fn prioritize(lines: &[(PlanKey, f64)], total: f64) {
 
 /// Requests waiting, for tests and the profile.
 pub fn requests() -> usize {
-    REQUESTS.lock().len()
+    joins().requests.lock().len()
 }
 
 /// Runs the most important waiting search now, on this thread, until `over` says its time is up: `false` where none
 /// waits.
 pub fn search_one(over: &dyn Fn() -> bool) -> bool {
     let Some((key, _, _, search)) = ({
-        let mut q = REQUESTS.lock();
+        let st_ = joins();
+        let mut q = st_.requests.lock();
         (!q.is_empty()).then(|| q.remove(0))
     }) else {
         return false;
@@ -1044,7 +1075,7 @@ pub fn drain_at_end(on: bool) {
 /// At a run's end, where `drain_at_end` is set: the waiting searches, most important first, until this thread has
 /// spent `DRAIN_SHARE` of the process's CPU so far on them. The searches the budget leaves wait, as before.
 pub(super) fn drain() {
-    if !DRAIN.with(std::cell::Cell::get) || REQUESTS.lock().is_empty() {
+    if !DRAIN.with(std::cell::Cell::get) || joins().requests.lock().is_empty() {
         return;
     }
     let budget = DRAIN_SHARE * super::super::profile::process_cpu();
@@ -1059,20 +1090,23 @@ pub(super) fn drain() {
     log(|| format!("searches at the run's end: {served} served in {:.1} ms CPU (budget {:.1} ms), {} wait", spent * 1e3, budget * 1e3, requests()));
 }
 
-struct JoinSearch;
+/// The searches of the shared object that registered it: its step runs on that object.
+struct JoinSearch(Arc<crate::code_rule_dsl::logic::profile::Shared>);
 
 impl rerail_accel::upkeep::Job for JoinSearch {
     fn name(&self) -> String {
         "join-search".into()
     }
     fn due(&mut self) -> rerail_accel::upkeep::Due {
-        if REQUESTS.lock().is_empty() {
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.0));
+        if joins().requests.lock().is_empty() {
             rerail_accel::upkeep::Due::No
         } else {
             rerail_accel::upkeep::Due::Idle { starve: std::time::Duration::from_secs(300) }
         }
     }
     fn step(&mut self, slice: &rerail_accel::upkeep::Slice) -> Result<rerail_accel::upkeep::Step, String> {
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.0));
         while !slice.over() {
             if !search_one(&|| slice.over()) {
                 return Ok(rerail_accel::upkeep::Step::Done);
@@ -1082,19 +1116,9 @@ impl rerail_accel::upkeep::Job for JoinSearch {
     }
 }
 
-/// The job, registered once per process when the first search is asked for.
+/// The job, registered once per shared object when its first search is asked for.
 fn job() {
-    static JOB: std::sync::OnceLock<Mutex<Option<rerail_accel::upkeep::Registered>>> = std::sync::OnceLock::new();
-    JOB.get_or_init(|| Mutex::new(Some(rerail_accel::upkeep::register(Box::new(JoinSearch)))));
-}
-
-/// Clears the memo (tests).
-#[cfg(any(test, feature = "test-hooks"))]
-pub fn clear() {
-    *MEMO.write() = Memo::default();
-    NOTED.store(false, Relaxed);
-    EXACT.store(false, Relaxed);
-    REQUESTS.lock().clear();
+    joins().job.get_or_init(|| Mutex::new(Some(rerail_accel::upkeep::register(Box::new(JoinSearch(crate::code_rule_dsl::logic::profile::shared_here()))))));
 }
 
 // Persistence (`choices.rs`): the notes as rows, kept beside the plans.
@@ -1209,7 +1233,8 @@ pub type Stored = (Vec<(PlanKey, Note)>, Vec<(PlanKey, u64, Sig, [i64; 2])>, Vec
 
 /// The memo's notes and exact statistics, for the store, where any changed since the last call.
 pub fn to_store() -> Option<Stored> {
-    let mut m = MEMO.write();
+    let st_ = joins();
+    let mut m = st_.memo.write();
     if !std::mem::take(&mut m.dirty) {
         return None;
     }
@@ -1229,7 +1254,8 @@ pub fn from_store((notes, exact, raised): Stored) {
     if notes.is_empty() {
         return;
     }
-    let mut m = MEMO.write();
+    let st_ = joins();
+    let mut m = st_.memo.write();
     let mut taken: FxHashSet<PlanKey> = FxHashSet::default();
     for (k, n) in notes {
         if !m.notes.contains_key(&k) {
@@ -1255,7 +1281,7 @@ pub fn from_store((notes, exact, raised): Stored) {
     // The columns every note raised: made from a stratum's first plan (`Run::heavy_for`).
     let all: Vec<(String, usize)> = m.notes.values().flat_map(|n| n.raised.iter().cloned()).collect();
     if !all.is_empty() {
-        RAISED.store(true, Relaxed);
+        joins().raised.store(true, Relaxed);
         m.raised.extend(all);
     }
     // As the store holds them: a run that changes none of them writes none.
@@ -1267,9 +1293,9 @@ pub fn from_store((notes, exact, raised): Stored) {
     for (rule, map) in rules {
         m.epochs.entry(rule).or_insert(1);
         m.exact.insert(rule, Arc::new(map));
-        EXACT.store(true, Relaxed);
+        joins().exact.store(true, Relaxed);
     }
-    NOTED.store(!m.notes.is_empty(), Relaxed);
+    joins().noted.store(!m.notes.is_empty(), Relaxed);
 }
 
 #[cfg(test)]

@@ -212,12 +212,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/table.rs", "NAMES"),
     // Decision 0203: the batch predictor a crate above registers (`joins::set_pricer`), the wider searches queued for
     // the idle `join-search` upkeep job, and that job's one registration.
-    ("code_rule_dsl/logic/plan/joins.rs", "PRICER"),
-    ("code_rule_dsl/logic/plan/joins.rs", "REQUESTS"),
-    ("code_rule_dsl/logic/plan/joins.rs", "JOB"),
     // Decision 0203's feedback as measured: each line's notes, exact pair statistics, proposals and trials, written
     // back with the kept plans (`joins::to_store`) and read from them; measurements, as the cost model's `FITTED`.
-    ("code_rule_dsl/logic/plan/joins.rs", "MEMO"),
     // The gate of the RERAIL_* switches (`corpus::switches`): its readers, writer and waiters, no value kept.
     ("code_rule_dsl/logic/plan/corpus/switches.rs", "STATE"),
     // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
@@ -230,8 +226,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
-    ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
-    ("code_rule_dsl/logic/lanes.rs", "FORMS"),
     ("code_rule_dsl/logic/lanes.rs", "DONE"),
     ("code_rule_dsl/logic/lanes.rs", "QUEUED"),
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
@@ -282,7 +276,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
-    ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
     // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.

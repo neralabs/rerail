@@ -121,12 +121,10 @@ native/src/code_rule_dsl/logic.rs::LOAD	stays	code registered at load
 native/src/code_rule_dsl/logic/device.rs::SOLVER	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/front/name.rs::TABLE	shared	shared by design: an interner (names are visible to every caller holding it)
 native/src/code_rule_dsl/logic/json_rules/translate.rs::E	stays	a constant
-native/src/code_rule_dsl/logic/lanes.rs::BATCHES	shared	shared by design: an executor or its queues
-native/src/code_rule_dsl/logic/lanes.rs::FORMS	shared	shared by design: an executor or its queues
 native/src/code_rule_dsl/logic/lanes.rs::NEXT	stays	a ticket counter: append-only
 native/src/code_rule_dsl/logic/native/setfix.rs::ONCE	stays	a hook registered once
-native/src/code_rule_dsl/logic/native/setfix.rs::STORED	shared	the stored tables loaded, by database: every connection on one store shares them, so they are the store's (step 5)
-native/src/code_rule_dsl/logic/native/setfix.rs::SYMS	shared	shared by design: one per store file
+native/src/code_rule_dsl/logic/native/setfix.rs::STORED	stays	one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view (a file's stored tables: a write forgets them for every holder)
+native/src/code_rule_dsl/logic/native/setfix.rs::SYMS	stays	one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view (a file's symbols, with its atoms' arena)
 native/src/code_rule_dsl/logic/native/setfix/device.rs::TICKETS	stays	a ticket counter: append-only
 native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counter: append-only, unique across threads
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
@@ -140,21 +138,13 @@ native/src/code_rule_dsl/logic/plan/corpus/session.rs::GENERATION	stays	an id co
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::CHANGED	stays	guards the process's environment variables, which the OS keeps per process (a test's switches)
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::STATE	stays	guards the process's environment variables, which the OS keeps per process (a test's switches)
 native/src/code_rule_dsl/logic/plan/coverage.rs::CENSUS	stays	computed once from the engine's own files
-native/src/code_rule_dsl/logic/plan/joins.rs::EXACT	shared	the join statistics' flags (with MEMO)
-native/src/code_rule_dsl/logic/plan/joins.rs::JOB	shared	shared by design: a learned model, its queue or its job
-native/src/code_rule_dsl/logic/plan/joins.rs::MEMO	shared	shared by design: a learned model, its queue or its job
 native/src/code_rule_dsl/logic/plan/joins.rs::N	stays	an id counter: append-only
-native/src/code_rule_dsl/logic/plan/joins.rs::NOTED	shared	the join statistics' flags (with MEMO)
-native/src/code_rule_dsl/logic/plan/joins.rs::PRICER	shared	shared by design: a learned model, its queue or its job
-native/src/code_rule_dsl/logic/plan/joins.rs::PRICING	shared	the join statistics' flags (with MEMO)
-native/src/code_rule_dsl/logic/plan/joins.rs::RAISED	shared	the join statistics' flags (with MEMO)
-native/src/code_rule_dsl/logic/plan/joins.rs::REQUESTS	shared	shared by design: a learned model, its queue or its job
 native/src/code_rule_dsl/logic/plan/keeps.rs::OBSERVED	stays	a key, holding nothing
 native/src/code_rule_dsl/logic/plan/output.rs::WRITES	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid
 native/src/code_rule_dsl/logic/plan/table.rs::NAMES	shared	shared by design: an interner (names are visible to every caller holding it)
-native/src/code_rule_dsl/logic/profile.rs::EXITED	shared	the accounts of the pool's ended threads: with the pool (batch 5)
-native/src/code_rule_dsl/logic/profile.rs::EXITED_GAPS	shared	the gaps of the pool's ended threads: with the pool (batch 5)
-native/src/code_rule_dsl/logic/profile.rs::THREADS	shared	the process's threads that opened spans: the pool is shared by design, its accounts go with it (batch 5)
+native/src/code_rule_dsl/logic/profile.rs::EXITED	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): every thread that opened a span, and the accounts of those that ended
+native/src/code_rule_dsl/logic/profile.rs::EXITED_GAPS	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): every thread that opened a span, and the accounts of those that ended
+native/src/code_rule_dsl/logic/profile.rs::THREADS	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): every thread that opened a span, and the accounts of those that ended
 native/src/code_rule_dsl/logic/profile.rs::TICK	stays	the OS's timebase ratio: a constant of the machine read once
 native/src/code_rule_dsl/logic/profile.rs::WARM_FAULTS	stays	the process's exit status (RERAIL_WARM=list): an atexit handler reads it
 native/src/code_rule_dsl/logic/profile/life.rs::ENTERED	stays	computed once from the engine's own files
@@ -164,7 +154,6 @@ native/src/code_rule_dsl/logic/profile/memory.rs::PEAK	stays	the process's footp
 native/src/code_rule_dsl/logic/profile/memory.rs::SAMPLED	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
 native/src/code_rule_dsl/logic/profile/memory.rs::START	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
 native/src/code_rule_dsl/logic/profile/memory.rs::STARTED	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
-native/src/code_rule_dsl/logic/profile/roofline.rs::ROOFS	shared	the machine's measured roofs: a model of the machine, from the shared object
 native/src/code_rule_dsl/logic/rr.rs::CORE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr.rs::SHAPE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr/images.rs::SHIPPED	stays	computed once from the engine's own files
@@ -270,7 +259,7 @@ native/src/code_rule_dsl/tape/tokens.rs::BY_DIALECT	stays	computed once from the
 native/src/code_rule_dsl/tape/tokens.rs::KEPT	stays	computed once from the engine's own files
 native/src/code_rule_dsl/tape/vue_lean.rs::IDS	stays	computed once from the engine's own files
 native/src/code_rule_dsl/text.rs::NAMES	stays	counter names leaked once each (`&'static str`), from the engine's own text productions: an append-only interner of the engine's names
-native/src/code_rule_dsl/transducer/packed/compile/matcher.rs::NAMES	shared	an interner (names are visible to every caller holding it)
+native/src/code_rule_dsl/transducer/packed/compile/matcher.rs::NAMES	stays	names leaked once each (`&'static str`), from the engine's own fallback reasons: an append-only interner of the engine's names
 native/src/code_rule_dsl/transducer/packed/device.rs::MATCHER	stays	code a crate above registers at load
 native/src/code_rule_dsl/transducer/packed/json_parser.rs::PARSER	stays	computed once from the engine's own files
 native/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::DOM	stays	code registered at load
@@ -292,35 +281,35 @@ native/src/code_rule_dsl/workspace/calls_state.rs::SUMMARIES_EXTRACTED	stays	exi
 native/src/code_rule_dsl/workspace/ingest.rs::PACKAGE_CONTEXT_PATH_VISITS	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/code_rule_dsl/workspace/ingest.rs::PROJECT	stays	code a crate above registers at load
 native/src/code_rule_dsl/workspace/ingest.rs::REPOSITORY_CONTEXT	stays	code registered at load
-native/src/code_rule_dsl/workspace/storage.rs::CONTENT_STORES	shared	shared by design: one per store file
-native/src/content_store/atoms.rs::CANONICAL	shared	shared by design: one per store file
+native/src/code_rule_dsl/workspace/storage.rs::CONTENT_STORES	stays	one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view
+native/src/content_store/atoms.rs::CANONICAL	stays	a path's canonical form (realpath), the file system's: one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view
 native/src/content_store/atoms.rs::GIVEN	stays	a test's counter
-native/src/content_store/atoms.rs::IDENTITIES	shared	shared by design: one per store file
+native/src/content_store/atoms.rs::IDENTITIES	stays	one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view
 native/src/content_store/atoms.rs::MEMORY	shared	shared by design: one per store file
-native/src/content_store/atoms.rs::REGISTRY	shared	shared by design: one per store file
+native/src/content_store/atoms.rs::REGISTRY	stays	one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view (a file's atoms: ids are the file's)
 native/src/content_store/compression.rs::LANGUAGE_TAGS	stays	code a crate above registers at load
-native/src/content_store/connection.rs::ALL_CONNECTIONS	shared	shared by design: one per store file
+native/src/content_store/connection.rs::ALL_CONNECTIONS	stays	one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view
 native/src/content_store/connection.rs::CONNECTION_FUNCTIONS	stays	code a crate above registers at load
-native/src/content_store/connection.rs::HANDLES	shared	shared by design: one per store file
+native/src/content_store/connection.rs::HANDLES	stays	one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view
 native/src/content_store/connection.rs::ONCE	stays	a hook registered once
-native/src/content_store/frames.rs::COUNTED	shared	the store's: which run token last counted each space, on the store's writer connection (batch 5)
-native/src/content_store/frames.rs::SNAPSHOTS	shared	shared by design: one per store file
+native/src/content_store/frames.rs::COUNTED	stays	one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view (a store's spaces)
+native/src/content_store/frames.rs::SNAPSHOTS	stays	one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view
 native/src/content_store/journal.rs::COUNTER	stays	an id counter: append-only
-native/src/content_store/journal.rs::EPOCH	shared	the store's journal epoch: one per store
-native/src/content_store/journal.rs::LIVE	shared	shared by design: one per store file
+native/src/content_store/journal.rs::EPOCH	stays	the journal streams' synchronisation epoch, with them
+native/src/content_store/journal.rs::LIVE	stays	the file system journal's streams, one per watched root in the process (an FSEvents stream per root): one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view
 native/src/content_store/mod.rs::SEARCH_INDEX_FAMILY_WRITES	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/content_store/observe.rs::JOURNAL	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build (a test process's choice of the journal; a run's is its setting)
-native/src/content_store/observe.rs::OBSERVERS	shared	shared by design: one per store file
-native/src/content_store/observe.rs::OWN	shared	shared by design: one per store file
+native/src/content_store/observe.rs::OBSERVERS	stays	one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view (an observer per store)
+native/src/content_store/observe.rs::OWN	stays	rerail's own files every observer of the process skips (decision 0284): the stores' files, one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view
 native/src/content_store/record.rs::KINDS	stays	code a crate above registers at load
 native/src/content_store/record.rs::LOG	stays	a test's log
 native/src/content_store/schema.rs::SCHEMA_OBJECTS	stays	computed once from the engine's own files
 native/src/content_store/segments.rs::WRITES	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid
-native/src/content_store/write_back.rs::BY_KIND	shared	the store writer's account: every run's jobs share the writer; goes on the writer with the store's resources
+native/src/content_store/write_back.rs::BY_KIND	stays	the account of the process's store writers (with WRITERS)
 native/src/content_store/write_back.rs::RUNS	stays	an id counter: append-only
 native/src/content_store/write_back.rs::T0	stays	the process's start, for timestamps
 native/src/content_store/write_back.rs::TOLD	stays	a warning said once a process
-native/src/content_store/write_back.rs::WRITERS	shared	shared by design: one per store file
+native/src/content_store/write_back.rs::WRITERS	stays	one per store file in the process: the OS keeps a file's locks (SQLite's POSIX locks) per process, so every holder of the file in the process shares one, and a write invalidates every holder's view (one writer per store file: SQLite has one writer)
 native/src/git_workspace.rs::NEXT_FIXTURE	stays	an id counter: append-only
 native/src/git_workspace.rs::SOURCE_ALIAS_HASHES	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/lib.rs::GLOBAL	stays	the allocator (code registered at load)

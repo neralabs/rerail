@@ -374,7 +374,8 @@ pub mod prof {
         counts: Vec<(&'static str, u64)>,
     }
 
-    static FORMS: LazyLock<Mutex<BTreeMap<&'static str, Form>>> = LazyLock::new(Default::default);
+    #[derive(Default)]
+    struct RunForms(Mutex<BTreeMap<&'static str, Form>>);
 
     /// Batches and device waves, over the run: launches per batch, batches per dependency level (decision 0095 §5).
     #[derive(Default)]
@@ -394,7 +395,8 @@ pub mod prof {
         wave_strata: u64,
     }
 
-    static BATCHES: LazyLock<Mutex<Batches>> = LazyLock::new(Default::default);
+    #[derive(Default)]
+    struct RunBatches(Mutex<Batches>);
 
     thread_local! {
         /// This thread's level (a run's dependency level), and the batches run in it so far.
@@ -413,7 +415,8 @@ pub mod prof {
         }
         LEVEL.set((l, 0));
         if n > 0 && profile::on() {
-            let mut b = BATCHES.lock().unwrap();
+            let held_ = crate::code_rule_dsl::logic::profile::local::<RunBatches>();
+            let mut b = held_.0.lock().unwrap();
             b.levels += 1;
             b.per_level[bucket(n, &[1, 2, 4, 8])] += 1;
             b.max_per_level = b.max_per_level.max(n);
@@ -423,7 +426,8 @@ pub mod prof {
     /// A wave the stratum driver flushed: its launches and the strata waiting on it.
     pub fn wave(launches: usize, strata: usize) {
         if profile::on() {
-            let mut b = BATCHES.lock().unwrap();
+            let held_ = crate::code_rule_dsl::logic::profile::local::<RunBatches>();
+            let mut b = held_.0.lock().unwrap();
             b.waves += 1;
             b.wave_launches += launches as u64;
             b.wave_strata += strata as u64;
@@ -441,7 +445,8 @@ pub mod prof {
         fn drop(&mut self) {
             let Some((form, phase, t, c)) = self.0.take() else { return };
             let (wall, cpu) = (t.elapsed().as_secs_f64(), thread_cpu() - c);
-            let mut forms = FORMS.lock().unwrap();
+            let held_ = crate::code_rule_dsl::logic::profile::local::<RunForms>();
+            let mut forms = held_.0.lock().unwrap();
             let f = forms.entry(form).or_default();
             match f.host.iter_mut().find(|h| h.0 == phase) {
                 Some(h) => {
@@ -459,7 +464,8 @@ pub mod prof {
         if !profile::on() || n == 0 {
             return;
         }
-        let mut forms = FORMS.lock().unwrap();
+        let held_ = crate::code_rule_dsl::logic::profile::local::<RunForms>();
+        let mut forms = held_.0.lock().unwrap();
         let f = forms.entry(form).or_default();
         match f.counts.iter_mut().find(|c| c.0 == what) {
             Some(c) => c.1 += n,
@@ -480,14 +486,16 @@ pub mod prof {
             {
                 let (l, k) = LEVEL.get();
                 LEVEL.set((l, k + 1));
-                let mut b = BATCHES.lock().unwrap();
+                let held_ = crate::code_rule_dsl::logic::profile::local::<RunBatches>();
+                let mut b = held_.0.lock().unwrap();
                 b.batches += 1;
                 b.launches += n;
                 b.by_size[bucket(n, &[1, 4, 16, 64])] += 1;
                 b.max_launches = b.max_launches.max(n);
             }
             let rep = &r.1;
-            let mut forms = FORMS.lock().unwrap();
+            let held_ = crate::code_rule_dsl::logic::profile::local::<RunForms>();
+            let mut forms = held_.0.lock().unwrap();
             let f = forms.entry(form).or_default();
             f.batches += 1;
             f.total += rep.total;
@@ -517,7 +525,8 @@ pub mod prof {
 
     /// Per form and lane with launches: (form, lane, launches, wall seconds, the lane's job CPU seconds).
     pub fn by_lane() -> Vec<(&'static str, Lane, u64, f64, f64)> {
-        let forms = FORMS.lock().unwrap();
+        let held_ = crate::code_rule_dsl::logic::profile::local::<RunForms>();
+        let forms = held_.0.lock().unwrap();
         let mut out = Vec::new();
         for (name, f) in forms.iter() {
             for l in Lane::ALL {
@@ -533,7 +542,8 @@ pub mod prof {
     /// The section: per form, the host phases, then per lane the launches and where the submission's time went, then
     /// the executor's own time.
     pub fn report() -> String {
-        let forms = FORMS.lock().unwrap();
+        let held_ = crate::code_rule_dsl::logic::profile::local::<RunForms>();
+        let forms = held_.0.lock().unwrap();
         let mut r = String::new();
         if forms.is_empty() {
             return r;
@@ -568,7 +578,8 @@ pub mod prof {
             }
         }
         {
-            let b = BATCHES.lock().unwrap();
+            let held_ = crate::code_rule_dsl::logic::profile::local::<RunBatches>();
+            let b = held_.0.lock().unwrap();
             let _ = writeln!(r, "\nBatches: {} batches of {} launches (at most {} in one); by launches: 1: {}, 2-4: {}, 5-16: {}, 17-64: {}, more: {}",
                 b.batches, b.launches, b.max_launches, b.by_size[0], b.by_size[1], b.by_size[2], b.by_size[3], b.by_size[4]);
             let _ = writeln!(r, "Per dependency level: {} levels ran a batch (at most {} in one level); by batches: 1: {}, 2: {}, 3-4: {}, 5-8: {}, more: {}",
