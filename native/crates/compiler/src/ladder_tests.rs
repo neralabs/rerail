@@ -394,17 +394,24 @@ mark eol        = lf, end
 tree t {
   node source_file whole = (line)*
   node line       = simple_identifier ops eol
-  node ops        = simple_identifier (simple_identifier)*
+  node ops        = simple_identifier simple_identifier simple_identifier (simple_identifier)*
   hidden eol
 }
 "#;
-    let fixed = ["a b c\nd e\n", "a b\n", "a b c\nd e", "a b\n\nc d e f\n"];
+    let fixed = ["a b c d\ne f g h\n", "a b c d\n", "a b c d e\nf g h i", "a b c d\n\ne f g h i j\n"];
     for shape in [crate::bitlex_masks::Shape::Machine, crate::bitlex_masks::Shape::Rules] {
         let c = compile_step_shaped("follow", source, shape);
         let line = c.ids.of("line");
         let lines: Vec<usize> = fixed.iter().map(|d| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == line).count()).collect();
         assert_eq!(lines, [2, 1, 2, 2], "the reference: a line a line break");
-        assert_eq!(check_documents("follow", &c, b"ab \n", &[], &fixed, &|_, _, _, _| None), None, "{shape:?}");
+        if shape == crate::bitlex_masks::Shape::Rules {
+            assert!(c.text.lines().any(|l| l.contains(" PUSH ")), "`ops` is a call:\n{}", c.text);
+        }
+        let differ = check_documents("follow", &c, b"ab \n", &[], &fixed, &|_, _, _, _| None);
+        if let Some(d) = &differ {
+            eprintln!("DIFFERS {shape:?}: {d}");
+        }
+        assert_eq!(differ, None, "{shape:?}");
     }
 }
 
@@ -452,5 +459,51 @@ tree t {
             .collect();
         let e = crate::rir_asm::assemble(&(kept.join("\n") + "\n")).err().expect("a kept mark is no progress");
         assert!(e.contains("NonProgressingCycle"), "{e}");
+    }
+}
+
+/// A call whose uses differ in a hidden mark after them, where it may end and go on, is
+/// refused: after `line`'s use the reference ends `ops` at `eol`, after `last`'s it reads on
+/// past it, and one call can not do both. One that can not go on where it may end compiles:
+/// there ending at the mark and skipping it are the same (`a_called_rule_…` above).
+#[test]
+fn a_call_whose_uses_differ_where_it_can_go_on_is_refused() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+class punct     = '.' ';'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name & ~punct
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start punct
+keywords punct { "." ";" } required
+skip ws
+mark eol        = lf, end
+tree t {
+  node source_file whole = (line)* [last]
+  node line       = simple_identifier ops eol
+  node last       = '.' OPS
+  node ops        = simple_identifier simple_identifier simple_identifier (simple_identifier)*
+  hidden eol
+}
+"#;
+    let open = source.replace("OPS", "ops");
+    let e = compile_error_shaped(&open, crate::bitlex_masks::Shape::Rules).expect("refused");
+    if !e.contains("may end here and take a token it may hold at") {
+        eprintln!("REFUSED: {e}");
+        panic!("the refusal says why");
+    }
+    // `last`'s `ops` closed by a `;`: a call that can not go on where it may end after `last`
+    // ends there whatever follows.
+    let closed = source.replace("OPS", "ops ';'").replace("(simple_identifier)*", "(simple_identifier)* ';'");
+    let fixed = ["a b c d ;\n", "a b c d ;\n. e f g ; ;\n", "a b c d e ;\n. f g h ;\n;", ". a b\nc ; ;"];
+    for shape in [crate::bitlex_masks::Shape::Machine, crate::bitlex_masks::Shape::Rules] {
+        let c = compile_step_shaped("differ", &closed, shape);
+        let differ = check_documents("differ", &c, b"ab .;\n", &[], &fixed, &|_, _, _, _| None);
+        if let Some(d) = &differ {
+            eprintln!("DIFFERS {shape:?}: {d}");
+        }
+        assert_eq!(differ, None, "{shape:?}");
     }
 }

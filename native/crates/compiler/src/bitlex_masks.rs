@@ -973,7 +973,11 @@ impl Lowering {
                 Stmt::Implied { .. } => {}
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
-                Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
+                // The tree's too: a call keeps its rule's follows (`grammar::follow_contexts`).
+                Stmt::Hidden(kinds) => {
+                    self.hidden.extend(kinds.iter().cloned());
+                    self.tree.push(stmt.clone());
+                }
                 Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops } => {
                     if let Some(d) = drops {
                         let v = self.expr(d)?;

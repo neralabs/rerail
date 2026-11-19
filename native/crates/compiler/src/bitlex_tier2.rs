@@ -900,6 +900,28 @@ impl Emit<'_> {
         // gap's decision there, so a hidden mark that ends levels does not end it, as the lean
         // parser asks `asi` once at a line break.
         let mark_kinds: Vec<u16> = self.marks.iter().map(|m| m.kind).collect();
+        // A hidden mark only some of the level's uses have after them (`StateRow::split`):
+        // where the level may end, it may hold at no token the state takes. There ending at it
+        // and skipping it are the same (the token is no arm's: the level ends, and its caller
+        // takes the mark or skips it); at a token the state takes, one call can not end after
+        // some uses and read on after others.
+        if nested && st.end.is_some() && !st.split.is_empty() {
+            for m in self.marks.iter().filter(|m| st.split.contains(&m.kind) && !mine.iter().any(|&a| self.arms[a].token == m.kind)) {
+                let taken = (0..=255u8).find(|&b| {
+                    has(&m.first, b)
+                        && mine.iter().any(|&a| {
+                            let kind = self.arms[a].token;
+                            self.rows.iter().any(|row| (row.kind == kind && row.kind != 0 && has(&row.first, b)) || row.keywords.iter().chain(&row.soft).any(|(w, k)| *k == kind && w[0] == b))
+                        })
+                });
+                if let Some(b) = taken {
+                    return Err(format!(
+                        "state {s}: a call whose uses differ in the hidden mark of kind {} after them may end here and take a token it may hold at (byte {b:#04x}): one call can not end at it after some uses and read on after others; make the rule `nested`, or give its uses one follow",
+                        m.kind
+                    ));
+                }
+            }
+        }
         let into: Vec<&ArmRow> = self.arms.iter().filter(|a| usize::from(a.to) == s).collect();
         let returned_to = self.arms.iter().any(|a| a.push.iter().any(|&p| usize::from(p) == s));
         let after_mark_only = !into.is_empty() && !returned_to && into.iter().all(|a| !a.call && mark_kinds.contains(&a.token));
@@ -916,7 +938,7 @@ impl Emit<'_> {
                 match arm {
                     Some(a) => Some((k, AtMark::Arm(a))),
                     None if st.refuses.contains(&m.kind) => Some((k, AtMark::Refuse)),
-                    None if (m.ends && !after_mark_only || !m.hidden) && nested && st.end.is_some() => Some((k, AtMark::End)),
+                    None if (m.ends && !after_mark_only || !m.hidden || st.follows.contains(&m.kind)) && nested && st.end.is_some() => Some((k, AtMark::End)),
                     None if !m.hidden => Some((k, AtMark::Refuse)),
                     None => None,
                 }
@@ -1112,7 +1134,7 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
     states
         .iter()
         .enumerate()
-        .map(|(s, st)| (0..marks.len()).filter(|&k| !refusing(&marks[k], arms) && (takes[s].contains(&marks[k].kind) || !marks[k].hidden || st.refuses.contains(&marks[k].kind) || marks[k].ends && st.end.is_some())).collect())
+        .map(|(s, st)| (0..marks.len()).filter(|&k| !refusing(&marks[k], arms) && (takes[s].contains(&marks[k].kind) || !marks[k].hidden || st.refuses.contains(&marks[k].kind) || (marks[k].ends || st.follows.contains(&marks[k].kind)) && st.end.is_some())).collect())
         .collect()
 }
 

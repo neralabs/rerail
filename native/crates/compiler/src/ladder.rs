@@ -467,6 +467,8 @@ pub struct Compiled {
     pub parser: crate::native_cpu_stream::Parser,
     /// The program's text, as the assembler read it.
     pub text: String,
+    /// Tier 2's state machine as text (`grammar::text`).
+    pub machine: String,
 }
 
 pub fn compile_step(name: &str, source: &str) -> Compiled {
@@ -491,7 +493,18 @@ pub fn compile_step_shaped(name: &str, source: &str, shape: crate::bitlex_masks:
     let program = crate::rir_asm::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
     let native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
     let parser = crate::native_cpu_stream::Parser::new(&native).unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
-    Compiled { stmts, ids, program, native, parser, text }
+    let machine = compiled.machine.clone();
+    Compiled { stmts, ids, program, native, parser, text, machine }
+}
+
+/// Why the compiler refuses `source` in tier 2's `shape`; `None` where it compiles.
+pub fn compile_error_shaped(source: &str, shape: crate::bitlex_masks::Shape) -> Option<String> {
+    let stmts = parse(source).unwrap_or_else(|e| panic!("parses: {e}"));
+    let ids = Ids::default();
+    let kind = |n: &str| Some(ids.of(n));
+    let field = |n: &str| Some(ids.of(&format!("field {n}")));
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).err()
 }
 
 /// Why the compiler refuses `source`; `None` where it compiles.
