@@ -5477,12 +5477,27 @@ impl InRel {
     }
     /// Its live rows of ids `lo..hi`, row-major, read where they lie a batch at a time into one scratch of at most
     /// `LIVE_BATCH` rows (`f` per batch): a frame's digest and bytes are made from these, with no copy of the relation
-    /// (`retain::held_frame`). `None` for a view.
+    /// (`retain::held_frame`). A view's rows are read through it, where they lie (a kept relation bound in place,
+    /// decision 0417 step 6b, has no rows of its own and no dead ones).
     pub fn each_live_batch(&self, lo: usize, hi: usize, mut f: impl FnMut(&[i64])) -> Option<()> {
-        if self.view.is_some() {
-            return None;
-        }
         let k = self.k;
+        if self.view.is_some() {
+            let hi = hi.min(self.len());
+            // copy: not block data: a batch of a view's values handed to the reader, never kept.
+            let mut buf: Vec<i64> = Vec::with_capacity(LIVE_BATCH.min(hi.saturating_sub(lo)) * k);
+            let mut id = lo;
+            while id < hi {
+                let end = (id + LIVE_BATCH).min(hi);
+                buf.clear();
+                for i in id..end {
+                    let r = self.at(i);
+                    buf.extend((0..k).map(|c| r.at(c)));
+                }
+                f(&buf);
+                id = end;
+            }
+            return Some(());
+        }
         let hi = hi.min(self.n);
         let mut buf: Vec<i64> = Vec::with_capacity(LIVE_BATCH.min(hi.saturating_sub(lo)) * k);
         let mut id = lo;
@@ -5502,10 +5517,13 @@ impl InRel {
         }
         Some(())
     }
-    /// Its live rows, row-major.
+    /// Its live rows, row-major (a view's read through it, `each_live_batch`).
     pub fn live_rows(&self) -> Option<Vec<i64>> {
         if self.view.is_some() {
-            return None;
+            let mut out = Vec::with_capacity(self.len() * self.k);
+            // copy: load: a view's rows for a caller that takes them flat.
+            self.each_live_batch(0, self.len(), |b| out.extend_from_slice(b))?;
+            return Some(out);
         }
         if self.ndead == 0 {
             return Some(self.rows.to_vec(0, self.n, self.k));
@@ -5651,8 +5669,11 @@ impl InRel {
         }
         self.rows.in_block().filter(|b| b.rows as usize == self.n)
     }
-    /// A flat relation's row `id`'s value in column `c`, read where it lies.
-    pub fn value(&self, id: usize, c: usize) -> i64 { self.rows.value(id as u32, self.k, c) }
+    /// Row `id`'s value in column `c`, read where it lies: its own rows', or a view's through it (a kept relation
+    /// bound in place, decision 0417 step 6b).
+    pub fn value(&self, id: usize, c: usize) -> i64 {
+        match &self.view { None => self.rows.value(id as u32, self.k, c), Some(_) => self.at(id).at(c) }
+    }
     /// The row whose `keyed` column is `v`: the source's, or its run (the last starting at or under `v`), then its
     /// row in the run, by binary searches of that column read where it lies. None or one.
     fn keyed_rows(&self, v: i64) -> std::ops::Range<u32> {
@@ -8386,6 +8407,21 @@ pub mod posted_tests {
         assert!(r.sorted.within_key(2, Some(0), &[0, 1], 0, 4).is_empty(), "not in the dedup order");
         assert!(r.sorted.within_key(2, None, &[1], 0, 4).is_empty(), "not by its second alone");
         assert!(InRel::over_source(src, b"ii".to_vec()).sorted.within_key(2, None, &[0], 0, 4).is_empty(), "a source with no order");
+    }
+
+    /// A relation over a source (a kept relation bound in place, decision 0417 step 6b) has no rows of its own: its
+    /// values, its live rows and their batches are read through it, as a held relation's are (a value of it once
+    /// panicked, "row 0 of a relation of 0 rows", and its live rows were none, so a kept stratum's put held no rows).
+    #[test]
+    fn a_relation_over_a_source_reads_its_rows_through_it() {
+        let src = super::columns_source(vec!["a".into(), "b".into()], vec![Some(vec![1, 2, 5]), Some(vec![3, 4, 0])]);
+        let r = InRel::over_source(src, b"ii".to_vec());
+        assert_eq!((r.len(), r.rows()), (3, 3));
+        assert_eq!((0..3).map(|i| [r.value(i, 0), r.value(i, 1)]).collect::<Vec<_>>(), [[1, 3], [2, 4], [5, 0]], "its values");
+        assert_eq!(r.live_rows().as_deref(), Some(&[1, 3, 2, 4, 5, 0][..]), "its live rows");
+        let mut batches = Vec::new();
+        assert!(r.each_live_batch(1, 9, |b| batches.push(b.to_vec())).is_some());
+        assert_eq!(batches, [vec![2, 4, 5, 0]], "rows 1.. in one batch, bounded by its rows");
     }
 
     /// Statistics read from a kept relation's postings are those measured from its rows, with dead rows left out.

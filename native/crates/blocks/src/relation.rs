@@ -1231,8 +1231,16 @@ mod tests {
         let mut threes: Vec<u32> = fork2.group(i, key(3)).iter().copied().filter(|&id| fork2.get(id, 0) == 3).collect();
         threes.sort_unstable();
         assert_eq!(threes, (0..160).filter(|id| id % 10 == 3).collect::<Vec<u32>>(), "every id down the chain");
-        // Kept, a continuation is packed with every row it reads (decision 0417 K3: `kept_facts::columns`, tested
-        // there as `a_continuation_is_kept_with_every_row_it_reads`).
+        // Packed for the keep (decision 0417 K3): every row it reads, down the chain, its chain's first (the store's
+        // packer reads it so too: `kept_facts::a_continuation_is_kept_with_every_row_it_reads`).
+        let (packed, _) = crate::packed::pack_open(fork2, &spec, kind::FACTS);
+        let p: &crate::packed::Packed = packed.root();
+        let mut rows: Vec<(i64, i64)> = (0..p.len()).map(|i| (p.get(i, 0), p.get(i, 1))).collect();
+        rows.sort_unstable();
+        let mut want: Vec<(i64, i64)> = (0..160).map(|id| (fork2.get(id, 0), fork2.get(id, 1))).collect();
+        want.sort_unstable();
+        want.dedup();
+        assert_eq!(rows, want, "every row down the chain, packed");
     }
 
     /// Decision 0384 step 5: an added index's buckets and rows are chunks of a free-listed block, which forgetting it

@@ -2742,24 +2742,16 @@ pub(in crate::code_rule_dsl) fn kept_rows(name: &KeptRel, digest: u64, reads: Ve
 
 /// `rel`'s entry, whatever it holds: its rows lent whole where they lie in a block (`kept_rows`), or, for a relation
 /// with none (no rows, or a view over a source), its live rows flat: the derived fact written once. An empty relation
-/// or a view went unkept, and its stratum ran again in every next run (a phase's unchanged strata, 12 of 19). A view
-/// is read through its source: a kept relation bound where it lies (decision 0417 step 6b) has no rows of its own
-/// (`live_rows` none), and was put with no rows under its count.
+/// or a view went unkept, and its stratum ran again in every next run (a phase's unchanged strata, 12 of 19). A view's
+/// rows are read through it (`InRel::live_rows`): a kept relation bound where it lies (decision 0417 step 6b) has no
+/// rows of its own, and was once put with none under its count.
 pub(in crate::code_rule_dsl) fn kept_put(name: &KeptRel, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rel: &Arc<InRel>) -> KeptPut {
     if let Some(put) = kept_rows(name, digest, reads.clone(), types.clone(), rel) {
         return put;
     }
     let w = types.len();
-    // copy: not block data: a relation with no block of its rows (a view's rows read from its source, or none).
-    let rows = rel.live_rows().unwrap_or_else(|| {
-        let src = rel.source((0..w).map(|c| format!("c{c}")).collect());
-        crate::code_rule_dsl::logic::profile::decision("a view's rows put as an entry (decision 0417 step 6b)", || format!("{}: {} rows", name.name, src.len()));
-        let mut out = Vec::with_capacity(src.len() * w);
-        for r in 0..src.len() {
-            out.extend((0..w).map(|c| src.value(r, c)));
-        }
-        out
-    });
+    // copy: not block data: a relation with no block of its rows (a view's rows read through it, or none).
+    let rows = rel.live_rows().unwrap_or_default();
     let n = if w == 0 { rel.rows() } else { rows.len() / w };
     KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads, what: KeptWhat::Flat { widths: vec![8; w], rows, n, levels: rel.live_levels(), given: false }, types }
 }
@@ -2790,7 +2782,7 @@ pub(in crate::code_rule_dsl) struct Handed {
 }
 
 impl Handed {
-    /// `held`'s entry as `write_kept` puts one written whole; `None` for a relation of no rows of its own (a view).
+    /// `held`'s entry as `write_kept` puts one written whole; a view's rows read through it.
     /// `was`: its stored entry's digest. Its rows changed, its kept entry is put now (decision 0401 F6), its reads
     /// given at the part's write (`write_kept`, a retag the writer merges into it): the writer holds its rows until
     /// its copy is made.
@@ -2867,9 +2859,8 @@ pub(in crate::code_rule_dsl) mod kept_read;
 pub mod kept_tests;
 
 /// The frame digest of `held`'s live rows (`rows_digest`), read where they lie a batch at a time: no copy of the
-/// relation (it was copied whole for each frame written, 460 MB of a 300-file run's peak). `None` for a view.
+/// relation (it was copied whole for each frame written, 460 MB of a 300-file run's peak); a view's through it.
 pub(in crate::code_rule_dsl) fn held_digest(cells: &Cells, held: &InRel) -> Option<u64> {
-    held.each_live_batch(0, 0, |_| {})?;
     Some(cells.digest_batches(held.len(), held.rows(), &|lo, hi, f| {
         held.each_live_batch(lo, hi, |rows| f(rows));
     }))

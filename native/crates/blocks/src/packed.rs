@@ -352,16 +352,22 @@ pub fn pack(view: &View, spec: &Spec, kind: u32) -> (Block, PackStats) {
 }
 
 /// Packs an open relation's rows directly, never freezing them in place: each column read once, sorted into
-/// canonical order (a radix sort of the packed key, as freeze's), deduplicated, encoded.
+/// canonical order (a radix sort of the packed key, as freeze's), deduplicated, encoded. A continuation (decision
+/// 0384 steps 7 and 8, a delta flagged as continuing its base) packs every row it reads, its chain's first.
 pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Block, PackStats) {
-    assert!(!rel.is_delta(), "a delta is packed through its view, with its base");
+    assert!(!rel.is_delta() || rel.continues(), "a delta is packed through its view, with its base");
     crate::scratch::with(|s| {
         let a = rel.arity as usize;
-        let n = rel.rows.len() as usize;
+        let n = rel.len_all() as usize;
         let raw: &mut [i64] = s.take(n * a);
-        let rows = &rel.rows;
         let read = |(c, col): (usize, &mut [i64])| {
-            rows.read_col(c, n as u32, col);
+            if rel.continues() {
+                for (id, v) in col.iter_mut().enumerate() {
+                    *v = rel.get(id as u32, c);
+                }
+            } else {
+                rel.rows.read_col(c, n as u32, col);
+            }
             col.iter().fold((i64::MAX, i64::MIN), |(a, b), &v| (a.min(v), b.max(v)))
         };
         let range: Vec<(i64, i64)> = if n * a >= PAR_MIN {
