@@ -5409,8 +5409,10 @@ fn run_observed(
                     // declared or not.
                     let bound: Vec<&str> = repository.iter().map(|(rel, _, _)| rel.as_str()).collect();
                     let progs = [cross.placed()?, maintained.placed()?];
-                    let (rels, strata) = retain::frame_rels_kept(store, &[&progs[0], &progs[1]], &binds, &bound)?;
+                    let (mut rels, strata) = retain::frame_rels_kept(store, &[&progs[0], &progs[1]], &binds, &bound)?;
                     cross_idents = progs.iter().map(super::body::Placed::digest).zip(strata).collect();
+                    // And the documents the cross program's last run read (`retain::write_run_docs`).
+                    rels.insert(retain::run_docs_rel(retain::keys(&prepared_key, cross.digest()?).1));
                     Some(rels)
                 }
             }
@@ -8957,6 +8959,14 @@ fn run_observed(
                             c.adopt_inputs(k);
                         }
                     }
+                    // A part read from the store (its frames, or its kept strata): the documents its last run read,
+                    // for the inputs' deltas (`retain::document_delta_except`).
+                    if session.is_none()
+                        && let Some(c) = cell.as_mut().filter(|c| c.docs(&memo_whole).is_none())
+                        && let Some(docs) = retain::read_run_docs(store, frames_space, binds, &memo_whole)?
+                    {
+                        c.set_docs(docs, memo_whole);
+                    }
                     let mut cut = retain::cut(cell.as_ref(), ckey, &cross_placed, &cross_sccs, &digests)?;
                     if kept_frames.is_some() {
                         cross_kept = Some(cut.strata);
@@ -9033,6 +9043,21 @@ fn run_observed(
                         _ => None,
                     };
                     let (mut from_entries, mut from_entries_rows, mut hashed) = (0usize, 0usize, Vec::<String>::new());
+                    // Outside a session, the documents whose content and key are its last run's (the documents it read,
+                    // kept as a frame: `retain::write_run_docs`): an input's rows of them are as they were, and only
+                    // the others' rows are hashed (`retain::document_delta_except`). Not a semi-join's relation, whose
+                    // rows of a document follow what other documents' exports mention.
+                    let same_docs: Option<rustc_hash::FxHashSet<i64>> = match (cell.as_ref(), session.as_ref()) {
+                        (Some(kept), None) => kept.docs(&memo_whole).map(|was| {
+                            let now = run_docs_held.lock().expect("the run's documents");
+                            was.iter().filter(|(p, w)| now.get(*p) == Some(*w)).map(|(_, (_, d))| *d).collect()
+                        }),
+                        _ => None,
+                    };
+                    crate::code_rule_dsl::logic::profile::decision("documents as the last run read them", || match &same_docs {
+                        Some(s) => format!("{} of {} documents: their inputs' rows not hashed again", s.len(), run_docs_held.lock().expect("the run's documents").len()),
+                        None => "no record of the last run's documents (a session, or none kept)".to_owned(),
+                    });
                     // The kept inputs' digests by owner after the edit (decision 0117 step 2), for the frames written back.
                     let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = std::mem::take(&mut kept_input_docs);
                     let mut from_owners = 0usize;
@@ -9097,7 +9122,8 @@ fn run_observed(
                             return None;
                         };
                         let _s = crate::code_rule_dsl::logic::profile::span(|| "session/input delta by document".into());
-                        let Some((delta, docs)) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&cross_placed, &split.locations, rel), &retain::cells_of(&store.atoms_handle(), &cross_placed, &cross.domains, rel, new.columns().len())) else {
+                        let same = same_docs.as_ref().filter(|_| !semijoin.contains(rel));
+                        let Some((delta, docs)) = retain::document_delta_except(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&cross_placed, &split.locations, rel), &retain::cells_of(&store.atoms_handle(), &cross_placed, &cross.domains, rel, new.columns().len()), same, kept.input_ranges(rel).map(|r| r.as_ref())) else {
                             if trace { eprintln!("rerail: input delta of {rel}: not by document (old columns {:?}, new {:?}, {} and {} rows), diffed by rules", old.columns(), new.columns(), old.len(), new.len()); }
                             if live {
                                 eprintln!("RERAIL_STRATA_LIVE input delta {rel}: by the rules (no document delta)");
@@ -9138,7 +9164,7 @@ fn run_observed(
                     }
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
                         Some(c) => format!("{} documents changed; {from_owners} inputs' deltas kept beside them; {from_entries} read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
-                        None => format!("{from_owners} inputs' deltas kept beside them (decision 0117 step 2); {} found by hashing their documents", hashed.len()),
+                        None => format!("{from_owners} inputs' deltas kept beside them (decision 0117 step 2); {} found by hashing their documents, {} of them every row", hashed.len(), crate::code_rule_dsl::logic::plan::corpus::maintain::shape::now().inputs_hashed_whole),
                     });
                     if std::env::var_os("RERAIL_SPIKE_DELTA").is_some() {
                         let read: usize = changes.iter().flatten().flat_map(|(a, b)| [a, b]).flatten().map(|e| e.rows.values().map(|(w, r)| r.len() / (*w).max(1)).sum::<usize>()).sum();
@@ -9496,9 +9522,15 @@ fn run_observed(
                     step(&format!("kept statistics: {made} of {lazy_made} lazy relations planned with"));
                     drop(s);
                     let s = span("retain");
+                    let docs_were = cell.as_ref().and_then(|c| c.docs(&memo_whole)).cloned();
                     let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), retain::budget(), false);
                     if let Some(was) = &was_frames {
                         let written = next.write_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed, inputs_done, &semijoin_stats, placer)?;
+                        // A run whose inputs are as the frames hold them (a warm run) writes no first record: it writes
+                        // nothing, and the next run that changes a document records them.
+                        if docs_were.is_some() || !cut.changed.is_empty() {
+                            retain::write_run_docs(store, frames_space, binds, &memo_whole, &run_docs_held.lock().expect("the run's documents"), docs_were.as_ref())?;
+                        }
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
                     }
                     drop(s);

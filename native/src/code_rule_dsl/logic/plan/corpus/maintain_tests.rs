@@ -82,6 +82,18 @@ impl Session {
         Ran { report, rows: self.rows(&out), shape, by_levels }
     }
 
+    /// A run outside the session over a store kept from run to run (`kept-frames.sqlite`): what a new process
+    /// does, its kept part read from the store's frames.
+    fn run_kept(&mut self) -> Ran {
+        let out = self.dir.join("out-kept");
+        let _ = std::fs::remove_dir_all(&out);
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join("kept-frames.sqlite")));
+        let (before, levels) = (shape::now(), maintain::strata_by_levels());
+        let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let (shape, by_levels) = (shape::since(before), maintain::strata_by_levels() - levels);
+        Ran { report, rows: self.rows(&out), shape, by_levels }
+    }
+
     /// A run over the files as they are now from an empty store, outside the session (R10's truth).
     fn fresh(&mut self) -> Vec<BTreeSet<Vec<String>>> {
         self.fresh += 1;
@@ -189,6 +201,21 @@ fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
 
 /// R1 in the source: no engine code outside tests names a maintenance relation. The names live in one list
 /// (`maintain::shape::MAINTENANCE_SUFFIXES`), which this reads.
+#[test]
+fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
+    let mut s = kinds("r2-kept");
+    s.run_kept();
+    for (file, body, what) in SMALL_EDITS {
+        s.write(file, body);
+        let ran = s.run_kept();
+        assert_eq!(ran.rows, s.fresh(), "R10: after {what}, the kept run's outputs are a fresh run's");
+        // Its last run's documents are a frame of the part's space (`retain::write_run_docs`): an input's rows of the
+        // documents as they were are not read again, only the changed documents' rows are hashed.
+        assert!(ran.shape.inputs_hashed > 0, "R2: after {what}, the inputs' deltas are found by their documents");
+        assert_eq!(ran.shape.inputs_hashed_whole, 0, "R2: after {what}, no input's every row is hashed, only the changed documents' ({} inputs)", ran.shape.inputs_hashed);
+    }
+}
+
 #[test]
 fn r1_the_engine_source_names_no_maintenance_relation() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic");

@@ -589,3 +589,35 @@ entries are read (0 before). The inputs still hashed are an open item of 0364.
 
 Session CPU per step, after: 28.0 (00), 11.5, 9.8, 14.2, 8.6, 24.2, 9.8, 11.3, 15.8 s. Session = cold at every step.
 
+## Step 14: a new process hashes only the changed documents' rows of its inputs
+
+A kept CLI run (a new process) found each input's delta by hashing every row of every document
+(`retain::document_delta`): 2.6-3.1 s of O125 step 05, and so of every step, however few documents changed. A
+session reads the changed documents' memo entries (step 13). In a new process those entries are the store's: the
+old content's entry is not admitted before the first wave, and resolving a content to its source is SQL inside the
+waves (`memo.found`, refused by `RERAIL_SQL_STRICT`). So the store route was not taken. Instead:
+
+- The documents a kept run read (path, key and content, as `input_delta::Docs`) are a frame of the part's space,
+  `rerail:run_docs` under the cross program's `binds` (`retain::write_run_docs`). It is read with the cross part's
+  frames before the first wave (`retain::run_docs_rel` among `frame_rels_kept`'s identities) and set on the kept part
+  (`read_run_docs`, `Retained::set_docs`). It is written only when the list changed, not when it differs only in how
+  a content is named (by digest, then by source once stored behind the run). A run whose inputs did not change writes
+  no first record, so a warm run writes nothing.
+- A document whose content and key are the last run's has its inputs' rows as they were, except in a semi-join's
+  relation (`semijoin`, which follows other documents' exports). `retain::document_delta_except` takes those digests
+  from the frame (`was`), counts each owner's rows (`documents_of`, falling back to the whole pass when an unchanged
+  document's count differs), and hashes only the other owners' rows. A changed document's old rows are read by the
+  kept input's ranges (`Retained::input_ranges`, when the source is the one adopted), and its new rows come from
+  those already collected.
+
+`maintain::shape::inputs_hashed_whole` counts the inputs whose every row was hashed. The new test
+`r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs` (kept runs outside a session, with
+`run_kept`) asserts it is 0 after each small edit. Without the frame write the test fails, with 4 inputs hashed whole.
+
+O125 step 01 (a one-file edit, 75 of 77 documents unchanged), M1 Max: "input delta by document" 1.31 s, of which
+hashing is 0.10 s. The rest is reading owners: 0.37 s counting, 0.44 s for the old rows (this input's old source was
+decoded by `load`, so it has no ranges: see 0364's open item), and 0.19 s for the new rows. Step 05 (14 documents
+changed, about half the lines) took 3.1 s before the other owners' rows were hashed apart. The kept route's other
+open costs are 0364's: `load` copies and hashes the inputs it reads from the frames, and the kept-facts writer carries
+a delta's entries forward (0353 row 12).
+

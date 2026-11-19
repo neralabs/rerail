@@ -32,8 +32,8 @@ const GUESTS: std::ops::Range<i64> = (1 << 30)..(1 << 31);
 pub(in crate::code_rule_dsl) type Docs = HashMap<String, (Content, i64)>;
 
 /// The documents that differ between two runs: each one's entry before and after (`None`: not read in that run).
-/// `None` when an entry is not in the memo (it was emptied, or a chunk's rows were not attributable). `program` is
-/// the memo plan's id (`memo::Program::id`), its entries' key.
+/// `None` when an entry is not in the memo (it was emptied, or a chunk's rows were not attributable). `held`: the
+/// session's memo, its entries under the memo plan `program` (`memo::Program::id`).
 pub(super) fn changed(old: &Docs, new: &Docs, held: &memo::Held, program: &[u8; 32]) -> Option<Vec<(Option<Arc<Entry>>, Option<Arc<Entry>>)>> {
     let held = held.lock().expect("the session memo");
     let live = std::env::var_os("RERAIL_STRATA_LIVE").is_some();

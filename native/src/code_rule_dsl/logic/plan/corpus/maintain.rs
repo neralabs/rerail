@@ -136,6 +136,7 @@ pub mod shape {
     static MEASURES_UNKEYED: AtomicUsize = AtomicUsize::new(0);
     static INPUTS_HASHED: AtomicUsize = AtomicUsize::new(0);
     static INPUTS_FROM_ENTRIES: AtomicUsize = AtomicUsize::new(0);
+    static INPUTS_HASHED_WHOLE: AtomicUsize = AtomicUsize::new(0);
     static DRIVERS_UNLED: AtomicUsize = AtomicUsize::new(0);
 
     /// The counts so far.
@@ -163,6 +164,9 @@ pub mod shape {
         pub inputs_hashed: usize,
         /// R2: a session's inputs whose delta was read from the changed documents' memo entries (`input_delta`).
         pub inputs_from_entries: usize,
+        /// R2: of `inputs_hashed`, those whose every row was hashed (`retain::document_delta`'s pass), not only the
+        /// rows of the documents that changed (`retain::document_delta_except`).
+        pub inputs_hashed_whole: usize,
     }
 
     pub fn now() -> Shape {
@@ -176,6 +180,7 @@ pub mod shape {
             measures_unkeyed: MEASURES_UNKEYED.load(Relaxed),
             inputs_hashed: INPUTS_HASHED.load(Relaxed),
             inputs_from_entries: INPUTS_FROM_ENTRIES.load(Relaxed),
+            inputs_hashed_whole: INPUTS_HASHED_WHOLE.load(Relaxed),
         }
     }
 
@@ -192,6 +197,7 @@ pub mod shape {
             measures_unkeyed: n.measures_unkeyed - before.measures_unkeyed,
             inputs_hashed: n.inputs_hashed - before.inputs_hashed,
             inputs_from_entries: n.inputs_from_entries - before.inputs_from_entries,
+            inputs_hashed_whole: n.inputs_hashed_whole - before.inputs_hashed_whole,
         }
     }
 
@@ -206,6 +212,9 @@ pub mod shape {
     }
     pub fn negated_led() {
         NEGATED_LED.fetch_add(1, Relaxed);
+    }
+    pub fn input_hashed_whole() {
+        INPUTS_HASHED_WHOLE.fetch_add(1, Relaxed);
     }
     pub fn input_from_entries() {
         INPUTS_FROM_ENTRIES.fetch_add(1, Relaxed);
