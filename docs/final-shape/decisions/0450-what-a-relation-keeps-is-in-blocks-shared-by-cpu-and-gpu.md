@@ -317,3 +317,26 @@ that size came from the cache's first use, a 16z block decoded, and nothing else
     87.4 B against 85.3-89.6 B, peak 349-372 MB against 351-367 MB; Metal 77.0-80.8 B, peak 1,292-1,434 MB; 1,629
     findings in every run.
 
+## Built (2026-11-19, step 3: no device cache of relations)
+
+- **A view read in place keeps its indexes in a block of its own** (R4): its relation of no columns, which the
+  view's source (`syntax::Viewed`, its batch's life) makes the first time the device reads the view, and hands out
+  with its device view (`DeviceView::home`). Every stratum's handle is made over it (`DevRel::view_in`), so the
+  indexes any stratum built there are found (`find_index`) by the next, on any thread; they go with the batch.
+- **A copy is made for its stratum, never cached**: rows uploaded from the host and views made on the device
+  (0353 rows 4, 5) are made at each stratum that reads them, holding the columns it reads, their indexes built with
+  them. The batch keeps each handle it is given until its work completes (`Batch::keeps`).
+- **Gone**: `RESIDENT` (the thread's cache of relations, the last thread-local of relation data on the device side),
+  its `Entry`, `Owner`, `trim`, `resident_max`, `unrun`, `forget_dropped` (and the device trait's), the test hooks
+  `kept_in_place`, `resident_dropped`, and the profile's "found resident" counts. `column_stats` reads a relation
+  in its block in place and gathers any other's column on the host.
+- Tests: `a_views_index_is_in_its_block_for_every_thread` (another thread's stratum, in another batch, finds the
+  index the first built, and builds none); `a_view_made_on_the_device_is_made_at_each_stratum` (was
+  `a_view_made_in_a_refused_batch_is_made_again`); R1's check in `column_stats`' test is now that nothing else holds
+  the relation. The 25 setfix device and `metal_join` tests pass on Metal.
+- hogql cold, Metal, profiling, format 15, load 58-84, six pairs interleaved with the build before (8596fd54c),
+  1,629 findings in every run: 74.0-82.1 B (four of six 74.7-75.9 B) against 73.3-76.3 B. The cost is the views
+  uploaded from the host, now made per stratum: 145 uploads, 10.2 MB in 172-197 ms of CPU in every run, against
+  65-96 uploads, 5.3-7.9 MB in about 88 ms. The count is now the same in every run; before, what a thread's cache
+  held decided it, by the threads' timing (R6). These uploads are 0353 row 5's copies and go with its steps.
+

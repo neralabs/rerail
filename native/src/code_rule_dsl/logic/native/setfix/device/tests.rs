@@ -681,8 +681,6 @@
                     let report = super::take_report().expect("a device report");
                     assert!(report.refused.is_none() && report.waved == 1, "{report:?}");
                     in_place += report.in_place;
-                    // Decision 0450 R1: nothing of a relation read in place is kept past its stratum.
-                    assert_eq!(super::kept_in_place(), 0, "{name}: a handle to a relation read in place outlived its stratum");
                 }
                 assert_eq!(super::waves_kept(), 0, "the wave's completion goes with its last stratum (Q261: kept for ever, before)");
             } else {
@@ -703,10 +701,6 @@
         }
         assert_eq!(got[1], got[0], "the strata's rows after the wave are their own runs'");
         assert!(in_place > 0, "the strata read their input in place");
-        // The strata closed, their relations dropped: a chunk's end lets go of the device's copies of them, which
-        // held their blocks until this thread's next device stratum (Q261).
-        super::forget_dropped();
-        assert_eq!(super::resident_dropped(), 0);
     }
 
     /// Decision 0386, the queue's bound: a stratum that waits for its wave leaves no command buffer open on its
@@ -870,7 +864,7 @@
         let status = super::super::run(&db, "beside", 0).unwrap();
         assert!(!status.ends_with(" 3"), "it ran apart: {status}");
         let report = super::take_report().expect("a device report");
-        assert!(report.refused.is_none() && report.waved == 0 && report.resident_hits + report.sort_hits > 0, "it read the resident copy: {report:?}");
+        assert!(report.refused.is_none() && report.waved == 0 && report.sort_hits > 0, "it read the index the wave built: {report:?}");
         super::super::close(&db, "beside").unwrap();
         wave::flush(1).unwrap();
         super::super::run(&db, "in_wave", 0).unwrap();
@@ -1044,7 +1038,7 @@
         // Decision 0450 step 1: a relation in its block is read where it lies, with nothing made resident first.
         let (read, in_place) = super::column_stats(&cols, 16).expect("the device");
         assert_eq!(in_place, 2);
-        assert_eq!(super::kept_in_place(), 0, "the read keeps no handle to the relation");
+        assert_eq!(std::sync::Arc::strong_count(&rel), 1, "the read keeps no handle to the relation (decision 0450 R1)");
         // The same statistics as the columns' values gathered on the host.
         let (c0, c1): (Vec<i64>, Vec<i64>) = (rows.iter().step_by(2).copied().collect(), rows.iter().skip(1).step_by(2).copied().collect());
         let (of_values, in_place) = super::column_stats(&[StatColumn::Values(&c0), StatColumn::Values(&c1)], 16).expect("the device");
@@ -1178,7 +1172,7 @@
     /// next stratum makes it again and reads the host's rows, not a relation nothing wrote (the lost findings of a
     /// refused `attr_of`, 2026-11-17).
     #[test]
-    fn a_view_made_in_a_refused_batch_is_made_again() {
+    fn a_view_made_on_the_device_is_made_at_each_stratum() {
         use crate::code_rule_dsl::facts::core;
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
         use crate::code_rule_dsl::logic::native::setfix::InRel;
@@ -1207,23 +1201,67 @@
         let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
         assert!(src.device_view().is_some_and(|d| d.in_place.is_none()), "made on the device");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
-        // Encoded into a batch the refusal drops uncommitted: nothing ran it.
+        // Encoded into a batch a refusal drops uncommitted: nothing ran it, and nothing of it is kept (decision 0450
+        // step 3: a copy is made at each stratum, never cached).
         let mut refused = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         super::resident(&rel, &[0, 1], &[], &mut refused, &mut rep).expect("resident");
         assert_eq!(rep.uploads, 1, "made: {rep:?}");
         drop(refused);
-        let _ = super::unrun::<()>(Err("refused at run time".to_owned()));
         let mut batch = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         let (dev, _, place) = super::resident(&rel, &[0, 1], &[], &mut batch, &mut rep).expect("resident");
-        assert_eq!((rep.uploads, rep.resident_hits), (1, 0), "made again, not found: {rep:?}");
+        assert_eq!(rep.uploads, 1, "made again: {rep:?}");
         batch.finish().unwrap();
         let n = src.len();
         for c in [0, 1] {
             let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
             assert_eq!(dev.column(place[c] as usize), host, "column {c}");
         }
+        let _ = std::fs::remove_file(&store_path);
+    }
+
+    /// Decision 0450 step 3 (R4): a view read in place keeps its indexes in a block of its own, which the view's
+    /// source holds (its chunk's life), not in a thread's cache: a stratum on another thread, in another batch, finds
+    /// the index the first built, and builds none.
+    #[test]
+    fn a_views_index_is_in_its_block_for_every_thread() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::logic::native::setfix::InRel;
+        use crate::code_rule_dsl::model::FileInput;
+        use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+        use std::sync::Arc;
+        if !mj::available() {
+            return;
+        }
+        crate::test_languages();
+        let texts = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a):\n        return a\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("v{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (3 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let store_path = std::env::temp_dir().join(format!("rerail-view-index-{}-{nonce}.sqlite", std::process::id()));
+        let store = crate::content_store::ContentStore::open(&store_path).unwrap();
+        let all = sources(&store, docs).unwrap();
+        let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
+        assert!(src.device_view().is_some_and(|d| d.in_place.is_some()), "read in place");
+        let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
+        let probe = |rel: &Arc<InRel>| {
+            let mut batch = mj::Batch::new().expect("the device");
+            let mut rep = super::Report::default();
+            let (dev, ix, _) = super::resident(rel, &[], &[2], &mut batch, &mut rep).expect("resident");
+            batch.finish().unwrap();
+            assert!(dev.view.is_some() && ix.is_some(), "a view read in place, by its index");
+            (rep.sorts, rep.sort_hits, rep.uploads)
+        };
+        assert_eq!(probe(&rel), (1, 0, 0), "the first stratum builds the index");
+        let again = Arc::clone(&rel);
+        let other = std::thread::spawn(move || probe(&again)).join().unwrap();
+        assert_eq!(other, (0, 1, 0), "another thread's stratum finds it in the view's block");
         let _ = std::fs::remove_file(&store_path);
     }
 

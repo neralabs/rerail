@@ -59,8 +59,6 @@ pub trait SolverDevice: Send + Sync {
     ) -> Result<Vec<u64>, String>;
     /// The report of the last stratum the device ran or refused on this thread (taken).
     fn take_report(&self) -> Option<Report>;
-    /// Lets go of this thread's device copies of relations the engine dropped (a chunk's, as it ends).
-    fn forget_dropped(&self) {}
     /// A flat-lattice system's least fixpoint on the device's work queue.
     fn lattice(&self, system: &lattice::System<'_>) -> Result<lattice::Solved, Refused>;
     /// Nearest ancestors in a set by pointer jumping (`nodes` per set; `target` and `done` set-major).
@@ -99,13 +97,6 @@ pub fn register(device: &'static dyn SolverDevice) {
 /// The registered device, if any.
 pub(in crate::code_rule_dsl) fn solver() -> Option<&'static dyn SolverDevice> {
     SOLVER.get().copied()
-}
-
-/// Lets go of this thread's device copies of relations the engine dropped, when there is a device.
-pub fn forget_dropped() {
-    if let Some(d) = solver() {
-        d.forget_dropped();
-    }
 }
 
 /// The report of the last stratum the device ran or refused on this thread, when there is a device.

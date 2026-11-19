@@ -52,8 +52,6 @@ fn table_max() -> usize { rerail_accel::budget::metal_share(48 << 20) }
 fn batch_max() -> usize { rerail_accel::budget::metal_share(64 << 20) }
 /// The largest text arena a batch runs again with; past it, the stratum's texts are made on the host.
 fn arena_max() -> usize { rerail_accel::budget::metal_share(64 << 20) }
-/// the most bytes the relations kept on the device may take on a thread;
-fn resident_max() -> usize { rerail_accel::budget::metal_share(80 << 20) }
 /// the budget a submission leaves for its stages run again after an overflow: with less left, the rules after go
 /// into the next submission.
 fn headroom() -> usize { rerail_accel::budget::metal_share(48 << 20) }
@@ -1085,39 +1083,7 @@ fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Opt
     Ok(PStage { first, span: 1, kind, desc: d, npassed: 0 })
 }
 
-/// A relation kept on the device: its rows, and its sorts by key columns.
-/// Whose rows an entry holds: a relation's, or a source's that views read whole (`View` with no rows chosen): every
-/// view of the source, whatever its columns, reads the one upload (decision 0277).
-enum Owner {
-    Rel(Weak<InRel>),
-    Src(Weak<dyn crate::code_rule_dsl::facts::vtab::Source>),
-}
-
-impl Owner {
-    fn of(rel: &Arc<InRel>) -> Owner {
-        match &rel.view {
-            Some(v) if v.whole() && rel.ndead == 0 => Owner::Src(Arc::downgrade(&v.src)),
-            _ => Owner::Rel(Arc::downgrade(rel)),
-        }
-    }
-
-    fn live(&self) -> bool {
-        match self {
-            Owner::Rel(r) => r.strong_count() > 0,
-            Owner::Src(s) => s.strong_count() > 0,
-        }
-    }
-
-    fn same(&self, other: &Owner) -> bool {
-        match (self, other) {
-            (Owner::Rel(a), Owner::Rel(b)) => Weak::ptr_eq(a, b),
-            (Owner::Src(a), Owner::Src(b)) => std::ptr::addr_eq(a.as_ptr(), b.as_ptr()),
-            _ => false,
-        }
-    }
-}
-
-/// Column `c` of `rel` among its owner's columns (`Owner`).
+/// Column `c` of `rel` among its owner's columns: a whole view's, its source's.
 fn owner_col(rel: &InRel, c: usize) -> usize {
     match &rel.view {
         Some(v) if v.whole() && rel.ndead == 0 => v.column(c),
@@ -1168,89 +1134,16 @@ fn narrowed(mut d: mj::Stage, at: &[u32]) -> mj::Stage {
     d
 }
 
-struct Entry {
-    owner: Owner,
-    /// The owner's columns the upload holds, in its order.
-    cols: Vec<usize>,
-    /// The device's copy (`None` for a relation read in place: its handle is made at each stratum from its block,
-    /// decision 0450 step 1, and the entry holds only its texts until step 2).
-    dev: Option<Rc<mj::DevRel>>,
-    /// Its sorts, by the owner's key columns.
-    indexes: Vec<(Vec<usize>, Rc<mj::DevIndex>)>,
-    bytes: usize,
-    used: u64,
-}
-
-#[derive(Default)]
-struct Resident {
-    entries: Vec<Entry>,
-    bytes: usize,
-    clock: u64,
-}
-
 thread_local! {
-    static RESIDENT: RefCell<Resident> = RefCell::default();
     /// Per rule (its spec's hash) and stage: the rows out per row of the input table's space, last seen.
     static GROWTH: RefCell<HashMap<(u64, usize), f64>> = RefCell::default();
     static LAST: RefCell<Option<Report>> = const { RefCell::new(None) };
-}
-
-impl Resident {
-    /// Drops entries whose relation the engine dropped, then the least recently used while over the budget.
-    fn trim(&mut self, room: usize) {
-        self.entries.retain(|e| e.owner.live());
-        while self.bytes() + room > resident_max() && !self.entries.is_empty() {
-            let at = self.entries.iter().enumerate().min_by_key(|(_, e)| e.used).map(|(k, _)| k).expect("an entry");
-            self.entries.swap_remove(at);
-        }
-        self.bytes = self.bytes();
-    }
-
-    fn bytes(&self) -> usize {
-        self.entries.iter().map(|e| e.bytes).sum::<usize>()
-    }
-}
-
-/// `r`, after a refusal at run time dropped what this thread's device cache holds: a batch refused while it was
-/// encoded is dropped uncommitted, and a wave that failed did not run to its end, so the views, texts, verdicts and
-/// indexes they made (cached as they were encoded) were never written. Later strata would read them as made.
-fn unrun<T>(r: Result<T, String>) -> Result<T, String> {
-    if r.is_err() {
-        RESIDENT.with_borrow_mut(|res| {
-            res.entries.clear();
-            res.bytes = 0;
-        });
-        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "device caches dropped after a refusal", 1);
-    }
-    r
-}
-
-/// Drops this thread's device copies of relations the engine dropped. An entry read in place holds its relation's
-/// block (`Held::kept`), so a chunk's blocks outlived it until this thread's next device stratum trimmed them: by the
-/// threads' timing (Q261). A chunk calls it as it ends, its device work done.
-pub(in crate::code_rule_dsl) fn forget_dropped() {
-    RESIDENT.with_borrow_mut(|res| {
-        res.entries.retain(|e| e.owner.live());
-        res.bytes = res.bytes();
-    });
 }
 
 /// The waves flushed whose completion this thread keeps for a stratum still to resume.
 #[cfg(test)]
 fn waves_kept() -> usize {
     FLUSHED.with_borrow(HashMap::len)
-}
-
-/// This thread's kept handles to relations read in place, each holding its relation's block (decision 0450 R1: none).
-#[cfg(test)]
-fn kept_in_place() -> usize {
-    RESIDENT.with_borrow(|r| r.entries.iter().filter(|e| e.dev.as_ref().is_some_and(|d| d.read_in_place())).count())
-}
-
-/// This thread's device copies of relations the engine dropped.
-#[cfg(test)]
-fn resident_dropped() -> usize {
-    RESIDENT.with_borrow(|r| r.entries.iter().filter(|e| !e.owner.live()).count())
 }
 
 /// The report of the last stratum the device ran or refused on this thread (taken).
@@ -1292,23 +1185,23 @@ struct Run<'p> {
 /// `rel`'s rows where they lie in a block, and the columns there: a flat relation's (its dead rows marked by its
 /// dead rows' delta, `InBlock::dead`, which the kernels skip), or a whole view's source's (the vtab's `Relation`).
 fn placed(rel: &Arc<InRel>) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
-    match (Owner::of(rel), &rel.view) {
-        (Owner::Src(_), Some(view)) => view.src.in_block().filter(|b| rel.ndead == 0 && b.rows as usize == rel.len()).map(|b| (b, view.src.columns().len())),
-        (Owner::Src(_), None) => None,
-        (Owner::Rel(_), _) => rel.in_block().map(|b| (b, rel.k)),
+    match &rel.view {
+        Some(view) if view.whole() && rel.ndead == 0 => view.src.in_block().filter(|b| b.rows as usize == rel.len()).map(|b| (b, view.src.columns().len())),
+        _ => rel.in_block().map(|b| (b, rel.k)),
     }
 }
 
-/// The device's copy of `rel`'s columns `need` and `cols`, its sort by `cols` (none when it has no keys), and where
-/// each of its columns lies in the copy (`mj::NONE`: not held), uploaded and encoded into `batch` when not resident.
-/// A copy holds only the columns stages read; one that lacks a column is uploaded again with it (decision 0277).
+/// The device's handle to `rel`'s columns `need` and `cols`, its index by `cols` (none when it has no keys), and
+/// where each of its columns lies in the handle (`mj::NONE`: not held). Nothing is kept of it between strata
+/// (decision 0450 steps 1 and 3): rows in a block, and a view read in place, are read where they lie, their indexes
+/// found in their blocks (or built there by `batch`); a copy (rows uploaded, a view made on the device) is made for
+/// this stratum, holding only the columns it reads, and its index built with it. A stratum in flight holds its own.
 #[allow(clippy::type_complexity)]
 fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vec<u32>), String> {
-    // Rows in a block are read where they lie (decision 0325 step 3), and nothing is kept of them between strata
-    // (decision 0450 step 1): the handle is made from the block now, its sorts found in the block (or built there),
-    // and a stratum in flight holds its own handle until it completes.
+    // Rows in a block are read where they lie (decision 0325 step 3).
     if let Some((b, ncols)) = placed(rel) {
         let dev = Rc::new(mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a relation in its block"))?);
+        batch.keeps(dev.clone());
         rep.in_place += 1;
         // Every column of the owner, at its own place.
         let place: Vec<u32> = (0..rel.k).map(|c| owner_col(rel, c) as u32).collect();
@@ -1320,81 +1213,57 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
         return Ok((dev, Some(ix), place));
     }
-    RESIDENT.with_borrow_mut(|res| {
-        res.clock += 1;
-        let clock = res.clock;
-        let owner = Owner::of(rel);
-        let mut want: Vec<usize> = need.iter().chain(cols).map(|&c| owner_col(rel, c)).collect();
-        want.sort_unstable();
-        want.dedup();
-        let found = res.entries.iter().position(|e| e.owner.same(&owner));
-        let at = match found {
-            Some(at) if res.entries[at].dev.is_some() && want.iter().all(|c| res.entries[at].cols.contains(c)) => {
-                rep.resident_hits += 1;
-                at
+    let c0 = thread_cpu();
+    let whole = matches!(&rel.view, Some(v) if v.whole() && rel.ndead == 0);
+    let n_all = rel.len();
+    let ids: Option<Vec<usize>> = (rel.ndead > 0).then(|| (0..n_all).filter(|&id| !is_dead(&rel.dead, id as u32)).collect());
+    let n = ids.as_ref().map_or(n_all, Vec::len);
+    // A whole view its batch's chunk block makes (decision 0289 §2).
+    let made = match &rel.view {
+        Some(view) if whole => view.src.device_view().filter(|d| d.rows == n),
+        _ => None,
+    };
+    let (dev, held): (mj::DevRel, Vec<usize>) = match made.as_ref().and_then(|d| Some((d.view, d.in_place.clone()?, d.home.clone()?))) {
+        // A view the views' reads answer is read in place (decision 0353 step 4d): its relation of no columns, which
+        // the view's source holds, keeps its indexes (decision 0450 step 3); every column is the view's own.
+        Some((view, v, home)) => {
+            let ncols = rel.view.as_ref().map_or(0, |view| view.src.columns().len());
+            let dev = mj::DevRel::view_in(home, ncols, n, v).map_err(|e| format!("{e:?}: a view of {n} rows read in place"))?;
+            rep.in_place += 1;
+            // By the view's device code (`device_chunk::VIEW_*`), as `view_made` counts them.
+            crate::code_rule_dsl::prof::count(["device.view_read.node", "device.view_read.child", "device.view_read.field", "device.view_read.core", "device.view_read.axis", "device.view_read.line", "device.view_read.end_line", "device.view_read.col", "device.view_read.docof", "device.view_read.tline"].get(view as usize).copied().unwrap_or("device.view_read.other"), n);
+            (dev, (0..ncols).collect())
+        }
+        None => {
+            let mut want: Vec<usize> = need.iter().chain(cols).map(|&c| owner_col(rel, c)).collect();
+            want.sort_unstable();
+            want.dedup();
+            let k = want.len();
+            // The process's device budget short (the syntax side's tapes hold most of it): the pool's free buffers
+            // give theirs back first.
+            if mj::device_bytes_left() < 8 * k * n + headroom() {
+                mj::give_back();
             }
-            found => {
-                let c0 = thread_cpu();
-                // The columns held already stay held: the entry's texts carry over to the new copy.
-                let old = found.map(|at| res.entries.swap_remove(at));
-                if let Some(o) = &old {
-                    want.extend(o.cols.iter().copied());
-                    want.sort_unstable();
-                    want.dedup();
-                }
-                let n_all = rel.len();
-                let ids: Option<Vec<usize>> = (rel.ndead > 0).then(|| (0..n_all).filter(|&id| !is_dead(&rel.dead, id as u32)).collect());
-                let n = ids.as_ref().map_or(n_all, Vec::len);
-                {
-                let k = want.len();
-                res.trim(8 * k * n);
-                // The process's device budget short (the syntax side's tapes hold most of it): every relation kept
-                // and the pool's free buffers give theirs back first.
-                if mj::device_bytes_left() < 8 * k * n + headroom() {
-                    res.entries.clear();
-                    res.bytes = 0;
-                    mj::give_back();
-                }
-                // A whole view its batch's chunk block makes (decision 0289 §2): its columns made on the device.
-// copy (0353 step 4): a view made on the device, cached as a relation (decision 0353).
-                let made = match (&owner, &rel.view) {
-                    (Owner::Src(_), Some(view)) if ids.is_none() && view.whole() => view.src.device_view().filter(|d| d.rows == n),
-                    _ => None,
-                };
-                // A view the views' reads answer is read in place (decision 0353 step 4d): its relation holds no
-                // value, only the indexes its probes build, and the entry holds every column (the view's own).
-                let in_place = made.as_ref().and_then(|d| d.in_place.clone().map(|v| (d.view, v)));
-                if let Some((view, v)) = in_place {
-                    let ncols = rel.view.as_ref().map_or(0, |view| view.src.columns().len());
-                    let dev = mj::DevRel::view(ncols, n, v).map_err(|e| format!("{e:?}: a view of {n} rows read in place"))?;
-                    rep.in_place += 1;
-                    // By the view's device code (`device_chunk::VIEW_*`), as `view_made` counts them.
-                    crate::code_rule_dsl::prof::count(["device.view_read.node", "device.view_read.child", "device.view_read.field", "device.view_read.core", "device.view_read.axis", "device.view_read.line", "device.view_read.end_line", "device.view_read.col", "device.view_read.docof", "device.view_read.tline"].get(view as usize).copied().unwrap_or("device.view_read.other"), n);
-                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Some(Rc::new(dev)), indexes: Vec::new(), bytes: 0, used: clock });
-                    res.bytes = res.bytes();
-                    res.entries.len() - 1
-                } else if let Some(d) = made {
-                    let device = rerail_accel::gpu::join::device()?;
-                    let block = d.block.gpu_buffer(device);
-                    let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
-                    batch.expand_view(&block, d.root, d.view, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
-                    rep.uploads += 1;
-                    rep.upload_cpu += thread_cpu() - c0;
-                    let by = &mut rep.upload_by[profile::UPLOAD_MADE];
-                    // By view (`device_chunk::VIEW_*`), for the profile: what step 4 removes, view by view.
-                    crate::code_rule_dsl::prof::count(["device.view_made.node", "device.view_made.child", "device.view_made.field", "device.view_made.core", "device.view_made.axis", "device.view_made.line", "device.view_made.end_line", "device.view_made.col", "device.view_made.docof", "device.view_made.tline"].get(d.view as usize).copied().unwrap_or("device.view_made.other"), dev.bytes());
-                    by.0 += dev.bytes() as u64;
-                    by.1 += thread_cpu() - c0;
-                    let bytes = dev.bytes();
-                    res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), bytes, used: clock });
-                    res.bytes = res.bytes();
-                    res.entries.len() - 1
-                } else {
-// copy (0353 step 6): rows uploaded from the host (decision 0353).
+            let dev = if let Some(d) = made {
+// copy (0353 step 4): a view made on the device for a stratum (decision 0353).
+                let device = rerail_accel::gpu::join::device()?;
+                let block = d.block.gpu_buffer(device);
+                let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
+                batch.expand_view(&block, d.root, d.view, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
+                rep.uploads += 1;
+                rep.upload_cpu += thread_cpu() - c0;
+                let by = &mut rep.upload_by[profile::UPLOAD_MADE];
+                // By view (`device_chunk::VIEW_*`), for the profile: what step 4 removes, view by view.
+                crate::code_rule_dsl::prof::count(["device.view_made.node", "device.view_made.child", "device.view_made.field", "device.view_made.core", "device.view_made.axis", "device.view_made.line", "device.view_made.end_line", "device.view_made.col", "device.view_made.docof", "device.view_made.tline"].get(d.view as usize).copied().unwrap_or("device.view_made.other"), dev.bytes());
+                by.0 += dev.bytes() as u64;
+                by.1 += thread_cpu() - c0;
+                dev
+            } else {
+// copy (0353 step 6): rows uploaded from the host for a stratum (decision 0353).
                 let dev = mj::DevRel::upload(k, n, |v| {
                     let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
-                    match (&owner, &rel.view) {
-                        (Owner::Src(_), Some(view)) => {
+                    match &rel.view {
+                        Some(view) if whole => {
                             // The source's rows in order, the columns held read at once per row (`Source::for_rows`).
                             view.src.for_rows(&want, &mut |r, row| {
                                 if r >= n {
@@ -1405,7 +1274,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                                 }
                             });
                         }
-                        (_, None) => {
+                        None => {
                             // Each wanted value read where it lies (`RowRef::Rows`), not the row copied whole.
                             for r in 0..n {
                                 let row = rel.at(row_of(r));
@@ -1414,7 +1283,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                                 }
                             }
                         }
-                        (_, Some(_)) => {
+                        Some(_) => {
                             for r in 0..n {
                                 let row = rel.at(row_of(r)).read();
                                 for (c, &w) in want.iter().enumerate() {
@@ -1431,68 +1300,43 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 let by = &mut rep.upload_by[if rel.view.is_some() { profile::UPLOAD_VIEW } else { profile::UPLOAD_FLAT }];
                 by.0 += dev.bytes() as u64;
                 by.1 += thread_cpu() - c0;
-                let bytes = dev.bytes();
-                res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), bytes, used: clock });
-                res.bytes = res.bytes();
-                res.entries.len() - 1
-                }
-                }
-            }
-        };
-        let e = &mut res.entries[at];
-        e.used = clock;
-        let dev = e.dev.clone().expect("a copy: a relation read in place has no entry of it");
-        let place: Vec<u32> = (0..rel.k).map(|c| e.cols.iter().position(|&w| w == owner_col(rel, c)).map_or(mj::NONE, |p| p as u32)).collect();
-        if cols.is_empty() {
-            return Ok((dev, None, place));
+                dev
+            };
+            (dev, want)
         }
-        let key: Vec<usize> = cols.iter().map(|&c| owner_col(rel, c)).collect();
-        if let Some((_, ix)) = e.indexes.iter().find(|(c, _)| *c == key) {
-            rep.sort_hits += 1;
-            return Ok((dev, Some(ix.clone()), place));
-        }
-        let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
-        // `child` probed by its parent: its children off the tape, no index of the view (decision 0353 step 4c).
-        if let Some(ix) = batch.by_parent(&dev, &by).map_err(|e| format!("{e:?}: a parent probe"))? {
-            let ix = Rc::new(ix);
-            e.indexes.push((key, ix.clone()));
-            return Ok((dev, Some(ix), place));
-        }
-        let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
-        // Built here, or found the relation's own already (decision 0325 step 5).
-        if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
-        e.bytes += ix.bytes();
-        e.indexes.push((key, ix.clone()));
-        Ok((dev, Some(ix), place))
-    })
+    };
+    let dev = Rc::new(dev);
+    batch.keeps(dev.clone());
+    let place: Vec<u32> = (0..rel.k).map(|c| held.iter().position(|&w| w == owner_col(rel, c)).map_or(mj::NONE, |p| p as u32)).collect();
+    if cols.is_empty() {
+        return Ok((dev, None, place));
+    }
+    let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
+    // `child` probed by its parent: its children off the tape, no index of the view (decision 0353 step 4c).
+    if let Some(ix) = batch.by_parent(&dev, &by).map_err(|e| format!("{e:?}: a parent probe"))? {
+        return Ok((dev, Some(Rc::new(ix)), place));
+    }
+    let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
+    // Found where a stratum before built it (a view's, in its block), or built here.
+    if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+    Ok((dev, Some(ix), place))
 }
 
 /// Decision 0209 §6 on the device, with decision 0261: columns' statistics in one batch
-/// (`rerail_accel::gpu::join::column_stats_of`). A relation this thread holds on the device, as it is now (its live
-/// rows), is read in place: its column of the resident upload. Any other's values are gathered on the host. Also how
-/// many columns were read in place.
+/// (`rerail_accel::gpu::join::column_stats_of`). A relation in its block is read in place, its column where it
+/// lies; any other's values are gathered on the host. Also how many columns were read in place.
 pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), String> {
     use rerail_accel::gpu::join::{StatCol, column_stats_of};
-    // Each relation's upload and where the column is in it: a copy holds only the columns stages read, in its
-    // owner's numbering (decision 0277), so a column it lacks is gathered on the host.
-    let devs: Vec<Option<(Rc<mj::DevRel>, usize)>> = RESIDENT.with_borrow(|res| {
-        cols.iter()
-            .map(|c| {
-                let StatColumn::Rel(rel, col) = c else { return None };
-                // A relation in its block: its column where it lies (decision 0450 step 1).
-                if let Some((b, ncols)) = placed(rel) {
-                    let at = owner_col(rel, *col);
-                    return (at < ncols).then(|| mj::DevRel::in_block(&b, ncols).ok().map(|d| (Rc::new(d), at))).flatten();
-                }
-                let owner = Owner::of(rel);
-                let e = res.entries.iter().find(|e| e.owner.same(&owner))?;
-                let at = e.cols.iter().position(|&w| w == owner_col(rel, *col))?;
-                // A view read in place holds no column where it lies (its rows are its reads').
-                let dev = e.dev.as_ref()?;
-                (dev.rows == rel.len() - rel.ndead && at < dev.cols && dev.view.is_none()).then(|| (dev.clone(), at))
-            })
-            .collect()
-    });
+    let devs: Vec<Option<(Rc<mj::DevRel>, usize)>> = cols
+        .iter()
+        .map(|c| {
+            let StatColumn::Rel(rel, col) = c else { return None };
+            // A relation in its block: its column where it lies (decision 0450 step 1). Any other's is gathered.
+            let (b, ncols) = placed(rel)?;
+            let at = owner_col(rel, *col);
+            (at < ncols).then(|| mj::DevRel::in_block(&b, ncols).ok().map(|d| (Rc::new(d), at))).flatten()
+        })
+        .collect();
     let gathered: Vec<Option<Vec<i64>>> = cols
         .iter()
         .zip(&devs)
@@ -1797,7 +1641,7 @@ impl<'p> Run<'p> {
 /// `fresh` as the CPU's run would add them. Returns each rule's head rows (before the store's set). The rules go in
 /// as few submissions as their tables' space allows (`BATCH_MAX`): one, for most strata.
 pub(in crate::code_rule_dsl) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
-    unrun(run_(rules, store, names, fresh))
+    run_(rules, store, names, fresh)
 }
 
 fn run_(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
@@ -1853,10 +1697,6 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
             // Out of device buffers: the relations kept resident and the pool's free buffers give theirs back, once,
             // and the group runs again.
             Err(e) if !cleared && e.contains("BackendCapacity") => {
-                RESIDENT.with_borrow_mut(|r| {
-                    r.entries.clear();
-                    r.bytes = 0;
-                });
                 mj::give_back();
                 cleared = true;
             }
@@ -1926,7 +1766,7 @@ fn commit_wave() -> Result<(), String> {
 /// commits it once, for every stratum in it): its ticket for `resume`. `None` when they do not all fit one
 /// submission's space (the stratum then runs on its own, `run`).
 pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
-    unrun(submit_(rules, names))
+    submit_(rules, names)
 }
 
 fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
@@ -1990,7 +1830,7 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
 
 /// A stratum that waited for its wave (`submit`'s `ticket`), finished: as `run`, from the flushed submission.
 pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
-    unrun(resume_(ticket, rules, store, names, fresh))
+    resume_(ticket, rules, store, names, fresh)
 }
 
 fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
@@ -2502,7 +2342,7 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
 /// the new rows once, at the end, into `fresh` as the CPU's waves would add them. `heads` are the component's
 /// relations, which must be empty when it starts. Returns each rule's rows made, seeds then deltas.
 pub(in crate::code_rule_dsl) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
-    unrun(fixpoint_(seeds, deltas, heads, store, names, fresh))
+    fixpoint_(seeds, deltas, heads, store, names, fresh)
 }
 
 fn fixpoint_(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {

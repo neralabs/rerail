@@ -3791,6 +3791,9 @@ impl Batch {
 struct Viewed {
     batch: Arc<Batch>,
     view: View,
+    /// The view's relation of no columns, its indexes' block, for a view the device reads in place (decision 0450 step
+    /// 3): made the first time it is read there. `None` inside when no block could be had.
+    home: std::sync::OnceLock<Option<crate::code_rule_dsl::facts::rows::Part>>,
 }
 impl Viewed {
     fn columns(view: View) -> &'static [&'static str] {
@@ -3901,6 +3904,10 @@ impl Source for Viewed {
         if matches!(self.view, View::Line) && in_place.is_none() && !device_chunk::fill_lines(&self.batch, chunk) {
             return None;
         }
+        #[cfg(target_os = "macos")]
+        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()).clone());
+        #[cfg(not(target_os = "macos"))]
+        let home = None;
         Some(crate::code_rule_dsl::facts::vtab::DeviceView {
             block: &chunk.block,
             root: chunk.root,
@@ -3908,6 +3915,7 @@ impl Source for Viewed {
             rows: self.len(),
             #[cfg(target_os = "macos")]
             in_place,
+            home,
         })
     }
     fn columns(&self) -> Vec<String> {
@@ -4531,7 +4539,7 @@ fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     }
     // A relation the batch made as rows (`Batch::made`: its spans have places too) is bound in place of the view.
     for (name, view) in named.into_iter().filter(|(name, _)| !batch.made.contains(name)) {
-        out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view })));
+        out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view, home: std::sync::OnceLock::new() })));
     }
     for (at, families) in families().iter().enumerate() {
         for (family, &name) in families.names().iter().enumerate() {

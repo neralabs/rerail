@@ -2040,6 +2040,11 @@ impl DevRel {
     /// (`Part::for_device`, decision 0325 step 5), every row the device's to write.
     pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
         let part = crate::code_rule_dsl::facts::rows::Part::for_device(cols, rows).map_err(|_| Error::BackendCapacity)?;
+        DevRel::of_part(part, cols, rows)
+    }
+
+    /// A handle to `part`, a relation of the device's own of `cols` columns and `rows` rows (`Part::for_device`'s).
+    fn of_part(part: crate::code_rule_dsl::facts::rows::Part, cols: usize, rows: usize) -> Result<DevRel, Error> {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let buffer = Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
@@ -2051,6 +2056,15 @@ impl DevRel {
     /// the device's own, which its indexes go in, and the view's directory, which its rows are read through.
     pub(in crate::code_rule_dsl) fn view(cols: usize, rows: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace) -> Result<DevRel, Error> {
         let mut dev = DevRel::empty(0, rows)?;
+        dev.cols = cols;
+        dev.view = Some(view);
+        Ok(dev)
+    }
+
+    /// `view`, its indexes in `home` (the view's own relation of no columns, which its source holds: decision 0450
+    /// step 3), so a stratum finds the indexes any stratum before it built there.
+    pub(in crate::code_rule_dsl) fn view_in(home: crate::code_rule_dsl::facts::rows::Part, cols: usize, rows: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace) -> Result<DevRel, Error> {
+        let mut dev = DevRel::of_part(home, 0, rows)?;
         dev.cols = cols;
         dev.view = Some(view);
         Ok(dev)
@@ -2611,6 +2625,11 @@ impl Batch {
             self.kept = Some(std::rc::Rc::new(make()?));
         }
         Ok(())
+    }
+
+    /// Keeps `rel` (a handle a stratum made for its work) until this batch's work completes.
+    pub(in crate::code_rule_dsl) fn keeps(&mut self, rel: std::rc::Rc<DevRel>) {
+        self.read.push(rel);
     }
 
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {

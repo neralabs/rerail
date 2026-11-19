@@ -6515,8 +6515,6 @@ fn run_observed(
                 Some(v) => crate::code_rule_dsl::logic::plan::in_view(&v, || evaluate_in(task, db, modules, hand)),
                 None => (evaluate_in(task, db, modules, hand), Default::default()),
             };
-            // Its relations dropped, the device's copies of them go too, before its blocks are measured (Q261).
-            crate::code_rule_dsl::logic::device::forget_dropped();
             r
         });
         if let Ok(ev) = &mut got {
