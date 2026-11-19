@@ -523,8 +523,12 @@ impl Snapshot {
         if !path.is_relative() || path.components().any(|part| !matches!(part, Component::Normal(_) | Component::CurDir)) {
             return Ok(false);
         }
+        let bytes = path.as_os_str().as_encoded_bytes();
+        let directory = bytes.strip_suffix(b".").unwrap_or(bytes).last()
+            .is_some_and(|byte| std::path::is_separator(char::from(*byte)));
         match self.view.entry(&self.view.root.join(path)) {
-            Ok(_) => Ok(true),
+            Ok(Entry::Dir(_)) => Ok(true),
+            Ok(Entry::File(_)) => Ok(!directory),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
             Err(err) => Err(err),
         }

@@ -62,6 +62,9 @@ The `git_revision_error` reason is one of these symbols.
 | `repository-not-open` | The repository argument has no open repository |
 
 The resolver checks the objects it reads during navigation before it follows their IDs.
+A parent step requires a commit. A commit's tree link requires a tree.
+When an expression ends at a tree entry, the resolver compares the entry mode with the local object's kind.
+It can still report the recorded ID for an absent final entry, including a commit in a submodule.
 Revision navigation and object facts use the recorded Git objects, as with `git --no-replace-objects`.
 To select a replacement explicitly, request its `refs/replace/<original-id>` ref.
 Message searches report unreadable parent links on standard error and continue through readable history.

@@ -14,7 +14,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from "../engine/audit/audit.js";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
@@ -434,7 +434,9 @@ function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGi
     const skippedPaths: string[] = [];
     const paths = inputs.filter(path => {
       try {
-        if (path === "." || (source === undefined ? existsSync(join(root, path)) : source.containsPath(path))) return true;
+        // join() strips a final "/.". Let the filesystem check the directory requirement.
+        const directory = path.endsWith("/.") || path.endsWith(sep + ".");
+        if (path === "." || (source === undefined ? existsSync(join(root, path) + (directory ? sep : "")) : source.containsPath(path))) return true;
         skippedPaths.push(path);
         return false;
       } catch (error) {

@@ -50,6 +50,11 @@ fn commit_metadata<'a>(commit: &'a gix::Commit<'_>) -> Result<gix::objs::CommitR
         format_args!("malformed Git commit {}: {error}", commit.id)))
 }
 
+fn check_kind(id: ObjectId, actual: Kind, expected: Kind) -> Result<()> {
+    if actual == expected { return Ok(()); }
+    Err(lookup_error("wrong-object-kind", format_args!("Git object {id} is {actual}, expected {expected}")))
+}
+
 /// Check every link as it is followed, including the kind recorded in annotated tags.
 pub(super) fn peel_object<'repo>(
     mut object: Object<'repo>, kind: Option<Kind>, mut read: impl FnMut(ObjectId) -> Result<Object<'repo>>,
@@ -67,7 +72,11 @@ pub(super) fn peel_object<'repo>(
                 }
                 target
             }
-            Kind::Commit if kind == Some(Kind::Tree) => read(commit_metadata(&object.into_commit())?.tree())?,
+            Kind::Commit if kind == Some(Kind::Tree) => {
+                let tree = read(commit_metadata(&object.into_commit())?.tree())?;
+                check_kind(tree.id, tree.kind, Kind::Tree)?;
+                return Ok(tree);
+            }
             _ if kind.is_none() => return Ok(object),
             _ => return Err(lookup_error("wrong-object-kind", format_args!(
                 "Git object {} is {}, expected {}", object.id, object.kind, kind.expect("requested object kind")))),
@@ -191,22 +200,26 @@ impl<'repo> Revision<'repo> {
             })?;
             let entry = &entries[index];
             let target = entry.target;
-            if segments.peek().is_none() {
-                if directory && !entry.is_tree() {
-                    return Err(lookup_error("wrong-object-kind", format_args!("Git path {path:?} is not a directory")));
+            let final_entry = segments.peek().is_none() || segments.clone().eq([&b""[..]]);
+            if (directory || !final_entry) && !entry.is_tree() {
+                return Err(lookup_error("wrong-object-kind", format_args!("Git path component in {path:?} is not a directory")));
+            }
+            if final_entry {
+                // rev-parse can name an absent blob or foreign gitlink from the recorded tree.
+                // A header suffices to validate a local target without inflating a large blob.
+                if let Some(header) = self.repo.try_find_header(target)
+                    .map_err(|err| lookup_error("unreadable-object", format_args!("Git object {target}: {err}")))? {
+                    let expected = match entry.mode & 0o170000 {
+                        0o040000 => Kind::Tree,
+                        0o160000 => Kind::Commit,
+                        _ => Kind::Blob,
+                    };
+                    check_kind(target, header.kind(), expected)?;
                 }
                 return Ok(target);
             }
-            if !entry.is_tree() {
-                return Err(lookup_error("wrong-object-kind", format_args!("Git path component in {path:?} is not a directory")));
-            }
-            if segments.clone().eq([&b""[..]]) {
-                return Ok(target);
-            }
             let object = self.read(target)?;
-            if object.kind != Kind::Tree {
-                return Err(lookup_error("wrong-object-kind", format_args!("Git object {target} is {}, expected tree", object.kind)));
-            }
+            check_kind(target, object.kind, Kind::Tree)?;
             tree = object.into_tree();
         }
         unreachable!("an empty path returned the root")
@@ -432,18 +445,21 @@ impl delegate::Navigate for Revision<'_> {
                 {
                     return Err(message!("Shallow history ends at {}", commit.id).raise());
                 }
-                commit_metadata(commit)?
+                let id = commit_metadata(commit)?
                     .parents()
                     .nth(number)
                     .ok_or_else(|| {
                         message!("Git commit {} has no parent {}", commit.id, number + 1).raise()
-                    })
+                    })?;
+                let object = revision.read(id)?;
+                check_kind(id, object.kind, Kind::Commit)?;
+                Ok(object.into_commit())
             };
             match traversal {
-                Traversal::NthParent(number) => parent(&commit, number - 1),
+                Traversal::NthParent(number) => Ok(parent(&commit, number - 1)?.id),
                 Traversal::NthAncestor(steps) => {
                     for _ in 0..steps {
-                        commit = revision.read(parent(&commit, 0)?)?.try_into_commit()?;
+                        commit = parent(&commit, 0)?;
                     }
                     Ok(commit.id)
                 }

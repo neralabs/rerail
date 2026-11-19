@@ -507,17 +507,56 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     }
     const unsorted = literal("tree", Buffer.concat(["z", "a"].flatMap(name => [Buffer.from(`100644 ${name}\0`), Buffer.from(blob, "hex")])));
     expect(() => open(unsorted).readDirectory(".")).toThrow(/entries out of order/u);
-    const expressions = [`${commit}^{tree}`, `${commit}:bad`, `${wrongTag}^{}`, `${unsorted}:a`];
+    const head = git(root, "rev-parse", "HEAD");
+    const makeCommit = (tree: string, parent: string) => literal("commit",
+      `tree ${tree}\nparent ${parent}\nauthor Test <a@b> 123 +0000\ncommitter Test <a@b> 123 +0000\n\nlinks\n`);
+    const singleEntry = (mode: string, id: string) => literal("tree", Buffer.concat([Buffer.from(`${mode} fake\0`), Buffer.from(id, "hex")]));
+    const wrongLinks = [
+      `${makeCommit(head, head)}^{tree}`, `${makeCommit(tree, tree)}^1`, `${makeCommit(tree, tree)}~1`,
+      `${singleEntry("100644", tree)}:fake`, `${singleEntry("040000", head)}:fake/`, `${singleEntry("120000", tree)}:fake`,
+    ];
+    for (const expression of wrongLinks) expect(() => open(expression)).toThrow(/expected (tree|commit|blob)/u);
+    expect(open(`${makeCommit(tree, head)}^1`).commit).toBe(head);
+    expect(open(`${singleEntry("040000", tree)}:fake/`).tree).toBe(tree);
+    const foreign = "1".repeat(40);
+    const gitlink = `${singleEntry("160000", foreign)}:fake`;
+    const errors = new Map([
+      [`${commit}^{tree}`, "malformed-object"], [`${commit}:bad`, "malformed-object"],
+      [`${wrongTag}^{}`, "wrong-object-kind"], [`${unsorted}:a`, "malformed-object"],
+      ...wrongLinks.map(expr => [expr, "wrong-object-kind"] as const),
+    ]);
     const policy = join(root, "navigation.rr");
     writeFileSync(policy, `#include "git.rr"
 .policy "malformed-links" revision 1
 .violation Error(at: span, exp: symbol, reason: symbol) "{exp} {reason}"
-${expressions.map(expr => `git_revision_request(r, "${expr}") :- git_root_repo(r).`).join("\n")}
+${[...errors.keys(), gitlink].map(expr => `git_revision_request(r, "${expr}") :- git_root_repo(r).`).join("\n")}
 Error(@place("git", 1), e, reason) :- git_revision_error(_, e, reason).
+.violation Found(at: span, oid: symbol) "foreign {oid}"
+Found(@place("git", 1), oid) :- git_revision(_, "${gitlink}", oid).
 `);
     const checked = await scan(root, { revision: "HEAD", analysisScope: "malformed", rr: [policy] });
-    expect(checked.violations.map(row => row.message).sort()).toEqual(expressions.map((expr, i) =>
-      `${expr} ${i === 2 ? "wrong-object-kind" : "malformed-object"}`).sort());
+    expect(checked.violations.map(row => row.message).sort()).toEqual([
+      ...[...errors].map(([expr, reason]) => `${expr} ${reason}`), `foreign ${foreign}`,
+    ].sort());
+  });
+
+  it("requires a directory for explicit paths ending in a separator or slash dot on both providers", async () => {
+    const root = checkout();
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src/b.py"), "NEEDLE\n");
+    git(root, "add", "src/b.py");
+    git(root, "commit", "-qm", "directory");
+    const source = new (loadNativeBinding().GitRevisionSource)(root, "HEAD", "paths");
+    for (const path of ["a.py/", "a.py/."]) expect(source.containsPath(path)).toBe(false);
+    for (const path of ["src/", "src/.", "./"]) expect(source.containsPath(path)).toBe(true);
+    for (const input of [{}, { revision: "HEAD", analysisScope: "paths" }]) {
+      const paths = ["a.py/", "a.py/.", "src/"];
+      const report = await scan(root, { ...input, paths });
+      expect(report.status).toBe("completed");
+      expect(report.requestedPaths).toEqual(paths);
+      expect(report.skippedPaths).toEqual(["a.py/", "a.py/."]);
+      expect(report.violations.map(row => row.path)).toEqual(["src/b.py"]);
+    }
   });
 
   it("reports unreadable requested Git paths while scanning the paths it can read", async () => {
