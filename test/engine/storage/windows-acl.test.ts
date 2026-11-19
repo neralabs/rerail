@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withHomeLock } from "../../../src/engine/native/file-lock.js";
 import { makeLedgerFolder } from "../../../src/engine/storage/ledger-paths.js";
-import { keepFolderPrivate, makeRerailHome, openToOthers } from "../../../src/engine/storage/private-files.js";
-import { icaclsInherits, insideProfile, sddlOtherReaders, whoamiUserSid, WINDOWS_ACL, type WindowsAcl } from "../../../src/engine/storage/windows-acl.js";
+import { keepFolderPrivate, keepFoundFolderPrivate, makeRerailHome, openToOthers } from "../../../src/engine/storage/private-files.js";
+import { icaclsInherits, insideProfile, sddlOtherReaders, sddlWriters, whoamiUserSid, WINDOWS_ACL, type WindowsAcl } from "../../../src/engine/storage/windows-acl.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const USER = "S-1-5-21-1-2-3-1001";
@@ -15,13 +16,18 @@ const ENTRA_USER = "S-1-12-1-1111111111-2222222222-3333333333-4444444444";
 /** A profile no test folder is under, so every folder here counts as outside it. */
 const ELSEWHERE = String.raw`C:\Users\nobody-here`;
 
-/** An ACL that records each folder it restricts and each it is asked about; `inherited` is what every read answers. */
-function recordingAcl(inherited = true): WindowsAcl & { restricted: Array<[string, boolean]>; read: string[] } {
+/**
+ * An ACL that records each folder it restricts or shares and each it is asked about; `inherited` is what every read
+ * of inheritance answers, and `writers` the accounts every folder's ACL lets make a folder in it.
+ */
+function recordingAcl(inherited = true, writers: string[] = []): WindowsAcl & { restricted: Array<[string, boolean]>; read: string[]; calls: string[] } {
   const restricted: Array<[string, boolean]> = [];
   const read: string[] = [];
+  const calls: string[] = [];
   return {
     restricted,
     read,
+    calls,
     restrictToOwner: (path, folder) => restricted.push([path, folder]),
     restrictFolderToOwner: path => {
       restricted.push([path, true]);
@@ -32,7 +38,34 @@ function recordingAcl(inherited = true): WindowsAcl & { restricted: Array<[strin
       read.push(path);
       return Promise.resolve(inherited);
     },
+    writers: path => {
+      calls.push(`writers ${path}`);
+      return Promise.resolve(writers);
+    },
+    keepEachOwnersOwn: (path, sharing) => {
+      restricted.push([path, true]);
+      calls.push(`each owner's own ${path} for ${sharing.join(" ")}`);
+      return Promise.resolve();
+    },
+    letAddFiles: (path, sharing) => {
+      calls.push(`add files ${path} for ${sharing.join(" ")}`);
+      return Promise.resolve();
+    },
   };
+}
+
+/** The entries of `path`'s DACL that `icacls /save` writes, as `[flags, access mask, SID or short name]`. */
+function savedEntries(path: string): Array<[string, number, string]> {
+  const saved = join(tmpdir(), `rerail-acl-test-${process.pid}-${String(Date.now())}.txt`);
+  try {
+    execFileSync("icacls.exe", [path, "/save", saved, "/q"]);
+    const sddl = readFileSync(saved).toString("utf16le");
+    const codes: Record<string, number> = { FA: 0x1F_01FF };
+    return [...sddl.matchAll(/\(A;([A-Z]*);([^;]*);;;([^)]*)\)/gu)].map(([, flags = "", rights = "", sid = ""]) =>
+      [flags, rights.startsWith("0x") ? Number.parseInt(rights.slice(2), 16) : codes[rights] ?? -1, sid]);
+  } finally {
+    rmSync(saved, { force: true });
+  }
 }
 
 const roots: string[] = [];
@@ -103,7 +136,8 @@ describe("an owner-only ACL on Windows", () => {
     const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const acl: WindowsAcl = { restrictToOwner: () => {
       throw new Error("icacls failed");
-    }, restrictFolderToOwner: () => Promise.resolve(), otherReaders: () => [], inherits: () => Promise.resolve(false) };
+    }, restrictFolderToOwner: () => Promise.resolve(), otherReaders: () => [], inherits: () => Promise.resolve(false),
+    writers: () => Promise.resolve([]), keepEachOwnersOwn: () => Promise.resolve(), letAddFiles: () => Promise.resolve() };
     expect(() => keepFolderPrivate(String.raw`D:\rerail`, { acl, platform: "win32", profile: ELSEWHERE, made: true })).not.toThrow();
     expect(written).toHaveBeenCalledWith(expect.stringContaining("icacls failed"));
   });
@@ -204,7 +238,7 @@ describe("an owner-only ACL on Windows", () => {
     const sessions = join(checkout, ".rerail", "sessions");
     await mkdir(sessions, { recursive: true });
     const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const acl: WindowsAcl = { ...recordingAcl(), restrictFolderToOwner: () => Promise.reject(new Error("Access is denied.")) };
+    const acl: WindowsAcl = { ...recordingAcl(), keepEachOwnersOwn: () => Promise.reject(new Error("Access is denied.")) };
     await makeLedgerFolder(join(sessions, "a".repeat(64)), { acl, platform: "win32", profile: ELSEWHERE, repair: true });
     expect(written).toHaveBeenCalledWith(`rerail: could not keep ${sessions} to this user alone, so other accounts may read what Rerail writes there: Access is denied.\n`);
   });
@@ -217,9 +251,11 @@ describe("an owner-only ACL on Windows", () => {
     const ownersAlone: string[] = [];
     // The records folder's repair stays under way until the case releases it, as one over many earlier records does.
     const { promise: passedOn, resolve: passOn } = Promise.withResolvers<undefined>();
-    const acl: WindowsAcl = { ...recordingAcl(), restrictFolderToOwner: async path => {
+    const acl: WindowsAcl = { ...recordingAcl(), keepEachOwnersOwn: path => {
       started.push(path);
-      if (path === sessions) return passedOn;
+      return passedOn;
+    }, restrictFolderToOwner: async path => {
+      started.push(path);
       // A session's own folder, new or nearly empty, has its ACL a turn of the event loop later.
       await new Promise(resolve => setImmediate(resolve));
       ownersAlone.push(path);
@@ -240,6 +276,74 @@ describe("an owner-only ACL on Windows", () => {
     await makeLedgerFolder(join(sessions, "c".repeat(64)), windows);
     expect(started).toHaveLength(3);
   });
+
+  it("keeps for each account that could make a folder in a found records folder that right, after letting it add files to each folder every account shares there", async () => {
+    const checkout = await temporaryRoot();
+    const sessions = join(checkout, ".rerail", "sessions");
+    for (const name of ["claude-code-locks", "codex-pending", "a".repeat(64)]) await mkdir(join(sessions, name), { recursive: true });
+    await writeFile(join(sessions, "notes-locks"), "a file, not a folder\n");
+    const acl = recordingAcl(true, ["S-1-5-11"]);
+    const repair = await keepFoundFolderPrivate(sessions, { acl, platform: "win32", profile: ELSEWHERE, shared: name => name.endsWith("-locks") || name.endsWith("-pending") });
+    await repair.kept;
+    expect(acl.calls.slice(0, 1)).toEqual([`writers ${sessions}`]);
+    expect(acl.calls.slice(1, 3).sort()).toEqual([`add files ${join(sessions, "claude-code-locks")} for S-1-5-11`, `add files ${join(sessions, "codex-pending")} for S-1-5-11`]);
+    // The records folder's own list changes last, once every account that records there can still lock and hold steers.
+    expect(acl.calls.slice(3)).toEqual([`each owner's own ${sessions} for S-1-5-11`]);
+  });
+
+  it("lets the accounts that record in a records folder add files to a folder every account shares there, whoever makes it, and to no session's folder", async () => {
+    const checkout = await temporaryRoot();
+    const sessions = join(checkout, ".rerail", "sessions");
+    await mkdir(sessions, { recursive: true });
+    // Another account's view: its hook makes the agent host's lock folder in a records folder the first account repaired.
+    const acl = recordingAcl(false, ["S-1-5-21-1-2-3-1001", "S-1-5-11"]);
+    const windows = { acl, platform: "win32" as const, profile: ELSEWHERE };
+    await makeLedgerFolder(join(sessions, "claude-code-locks"), windows);
+    expect(acl.calls).toEqual([`writers ${sessions}`, `add files ${join(sessions, "claude-code-locks")} for S-1-5-21-1-2-3-1001 S-1-5-11`]);
+    // A hook's call on a folder already there, and a session's own folder, start no program.
+    await makeLedgerFolder(join(sessions, "claude-code-locks"), windows);
+    await makeLedgerFolder(join(sessions, "b".repeat(64)), windows);
+    expect(acl.calls).toHaveLength(2);
+    // Under the profile folder, or elsewhere than Windows, nothing is shared.
+    await makeLedgerFolder(join(sessions, "codex-locks"), { ...windows, profile: checkout });
+    await makeLedgerFolder(join(sessions, "cursor-locks"), { ...windows, platform: "linux" });
+    expect(acl.calls).toHaveLength(2);
+  });
+
+  it("names the accounts a folder's ACL lets make a folder in it, by SID, beyond this user, SYSTEM, Administrators and the creator's entry", () => {
+    // A folder made under `C:\`: Users may read, Authenticated Users may change, and a named account may write.
+    const underDrive = "D:AI(A;OICIID;FA;;;BA)(A;OICIID;FA;;;SY)(A;OICIID;0x1200a9;;;BU)(A;ID;0x1301bf;;;AU)(A;OICIIOID;SDGXGWGR;;;AU)"
+      + `(A;OICIIOID;GA;;;CO)(A;;FA;;;${USER})(A;;FW;;;S-1-5-21-1-2-3-1002)(D;;FA;;;S-1-5-21-1-2-3-1003)(A;;LC;;;S-1-5-21-1-2-3-1004)`;
+    expect(sddlWriters(underDrive, USER)).toEqual(["S-1-5-11", "S-1-5-21-1-2-3-1002", "S-1-5-21-1-2-3-1004"]);
+    // Repaired: this user lists it, Authenticated Users may only make a folder there.
+    expect(sddlWriters(`D:PAI(A;;FA;;;${USER})(A;OICIIO;FA;;;CO)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200a4;;;AU)`, USER)).toEqual(["S-1-5-11"]);
+    expect(sddlWriters(`D:PAI(A;OICI;FA;;;${USER})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)`, USER)).toEqual([]);
+    expect(sddlWriters("D:NO_ACCESS_CONTROL", USER)).toEqual(["S-1-1-0"]);
+  });
+
+  it.runIf(process.platform === "win32")("keeps each account's records its own in a records folder under a drive, and lets each account that could make a folder there still make one", async () => {
+    const root = await temporaryRoot();
+    // Authenticated Users may change what the root holds, as under `C:\`, so the records folder inherits that.
+    execFileSync("icacls.exe", [root, "/grant", "*S-1-5-11:(OI)(CI)M", "/q"]);
+    const sessions = join(root, ".rerail", "sessions");
+    await mkdir(join(sessions, "0".repeat(64)), { recursive: true });
+    await writeFile(join(sessions, "0".repeat(64), "events.jsonl"), "{}\n");
+    await mkdir(join(sessions, "claude-code-locks"));
+    const repair = await keepFoundFolderPrivate(sessions, { profile: ELSEWHERE, shared: name => name.endsWith("-locks") });
+    await repair.kept;
+    const records = savedEntries(sessions);
+    expect(records.filter(([flags]) => flags.includes("ID"))).toEqual([]);
+    expect(records).toContainEqual(["OICIIO", 0x1F_01FF, "CO"]);
+    // Authenticated Users: pass through, read attributes and the ACL, make a folder; never list it.
+    expect(records).toContainEqual(["", 0x12_00A4, "AU"]);
+    expect(savedEntries(join(sessions, "claude-code-locks"))).toContainEqual(["", 0x10_00A2, "AU"]);
+    expect(savedEntries(join(sessions, "0".repeat(64), "events.jsonl")).map(([, , sid]) => sid)).not.toContain("AU");
+    // A folder every account shares, made after the repair, gets the same entry; a session's folder gets none.
+    await makeLedgerFolder(join(sessions, "codex-locks"), { profile: ELSEWHERE });
+    expect(savedEntries(join(sessions, "codex-locks"))).toContainEqual(["", 0x10_00A2, "AU"]);
+    await makeLedgerFolder(join(sessions, "1".repeat(64)), { profile: ELSEWHERE });
+    expect(savedEntries(join(sessions, "1".repeat(64))).map(([, , sid]) => sid)).not.toContain("AU");
+  }, 60_000);
 
   it("tells an inherited entry from what icacls prints, in any language and whatever the path", () => {
     const madeUnderDrive = [

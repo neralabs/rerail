@@ -3,8 +3,8 @@ import { constants } from "node:fs";
 import { type FileHandle, lstat, mkdir, open, rm } from "node:fs/promises";
 import { renameWithRetry } from "../file-replace.js";
 import { openNoFollow } from "../no-follow.js";
-import { type FoundFolderRepair, keepFolderPrivate, keepFoundFolderPrivate, type PrivateMachine } from "./private-files.js";
-import { resolve, sep } from "node:path";
+import { type FoundFolderRepair, keepFolderPrivate, keepFoundFolderPrivate, type PrivateMachine, shareLikeParent } from "./private-files.js";
+import { dirname, resolve, sep } from "node:path";
 
 /**
  * Session records default to `<checkout>/.rerail/sessions`, a path the repository controls: a committed `.rerail` or
@@ -39,6 +39,12 @@ function errno(error: unknown): string | undefined {
 }
 
 /**
+ * The folders in a session records folder that every account recording there shares: each agent host's locks and
+ * held steers (`<host>-locks`, `<host>-pending`, `hook-adapter.ts`). A session's own folder is named by a digest.
+ */
+const SHARED_FOLDER = /^[a-z][a-z-]*-(?:locks|pending)$/u;
+
+/**
  * Checks the folders from the innermost `.rerail` on `directory` down to it, refusing a symlink or a non-folder among
  * them. With `create`, makes each missing one (`0700`), and the folders above `.rerail` as `mkdir -p` would; without
  * it, stops at the first missing one.
@@ -52,25 +58,52 @@ async function ledgerFolder(directory: string, create: boolean, machine: Private
     return;
   }
   for (let end = start + 1; end <= segments.length; end += 1) {
-    const folder = segments.slice(0, end).join(sep);
-    let stats = await lstat(folder).catch((error: unknown) => {
-      if (errno(error) === "ENOENT") return undefined;
-      throw error;
-    });
-    if (stats === undefined) {
-      if (!create) return;
-      if (end === start + 1) await mkdir(segments.slice(0, start).join(sep) || sep, { recursive: true, mode: 0o700 });
-      const made = await mkdir(folder, { mode: 0o700 }).then(() => true, (error: unknown) => {
-        if (errno(error) !== "EEXIST") throw error;
-        return false;
-      });
-      // Windows ignores the mode: the folder of session records gets an owner-only ACL, which every record inherits.
-      if (made && end === start + 2) keepFolderPrivate(folder, { ...machine, made });
-      stats = await lstat(folder);
-    }
-    if (stats.isSymbolicLink()) refuse(folder, "a symbolic link");
-    if (!stats.isDirectory()) refuse(folder, "not a folder");
+    if (!await checkedFolder({ segments, start, end }, create ? machine : undefined)) return;
   }
+}
+
+/** A folder on a session record path: the path's segments, where the innermost `.rerail` is, and where the folder ends. */
+interface PathFolder {
+  readonly segments: readonly string[];
+  readonly start: number;
+  readonly end: number;
+}
+
+/**
+ * Checks one folder of {@link ledgerFolder}'s, making it when it is missing and `machine` is given; false when it is
+ * missing and not made. Refuses a symlink or a non-folder.
+ */
+async function checkedFolder(at: PathFolder, machine: PrivateMachine | undefined): Promise<boolean> {
+  const folder = at.segments.slice(0, at.end).join(sep);
+  let stats = await lstat(folder).catch((error: unknown) => {
+    if (errno(error) === "ENOENT") return undefined;
+    throw error;
+  });
+  if (stats === undefined) {
+    if (machine === undefined) return false;
+    await makeFolder(at, machine);
+    stats = await lstat(folder);
+  }
+  if (stats.isSymbolicLink()) refuse(folder, "a symbolic link");
+  if (!stats.isDirectory()) refuse(folder, "not a folder");
+  return true;
+}
+
+/**
+ * Makes one missing folder of {@link ledgerFolder}'s (`0700`), and those above `.rerail` first. Windows ignores the
+ * mode: the folder of session records it makes gets an owner-only ACL, which every record inherits, and a folder in
+ * it that every account recording there shares, the entry that lets those accounts add files ({@link shareLikeParent}).
+ */
+async function makeFolder(at: PathFolder, machine: PrivateMachine): Promise<void> {
+  const { segments, start, end } = at;
+  const folder = segments.slice(0, end).join(sep);
+  if (end === start + 1) await mkdir(segments.slice(0, start).join(sep) || sep, { recursive: true, mode: 0o700 });
+  const made = await mkdir(folder, { mode: 0o700 }).then(() => true, (error: unknown) => {
+    if (errno(error) !== "EEXIST") throw error;
+    return false;
+  });
+  if (made && end === start + 2) keepFolderPrivate(folder, { ...machine, made });
+  if (made && end === start + 3 && SHARED_FOLDER.test(segments[end - 1] ?? "")) await shareLikeParent(folder, dirname(folder), machine);
 }
 
 /** What {@link makeLedgerFolder} is given: the system the folder is kept private on, and whether it repairs. */
@@ -98,7 +131,7 @@ async function keepRecordsFolderPrivate(directory: string, machine: PrivateMachi
   const { ino } = await lstat(folder, { bigint: true });
   let kept = keptRecordsFolders.get(folder);
   if (kept?.ino !== ino) {
-    kept = { ino, repair: keepFoundFolderPrivate(folder, machine) };
+    kept = { ino, repair: keepFoundFolderPrivate(folder, { ...machine, shared: name => SHARED_FOLDER.test(name) }) };
     keptRecordsFolders.set(folder, kept);
   }
   const repair = await kept.repair;
