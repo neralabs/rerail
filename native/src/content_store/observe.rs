@@ -2290,9 +2290,10 @@ mod tests {
         o.list_max = 0;
         o.journal_settle = std::time::Duration::from_secs(5);
         // Trust at once: these runs follow each other within the settle window, as no test can wait it out; and the
-        // journal's answer whatever it costs.
+        // journal's answer whatever it costs: waited for as long as its settle budget, since a cookie on a loaded
+        // host comes later than a run's 2 s (718434dca).
         o.settle_ns = 0;
-        o.wait_least_ns = 2_000_000_000;
+        o.wait_least_ns = o.journal_settle.as_nanos() as u64;
         o
     }
 
