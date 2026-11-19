@@ -13,11 +13,12 @@ pub(super) const INVENTORY_CHILD: &str = "git_inventory_child_request";
 const ROOT: &str = "git_root_repo";
 const VIEW: &str = "git_root_view";
 const REPOSITORY: &str = "git_repository";
+const LOCATION: &str = "git_location_of";
 const TREE: &str = "git_source_tree";
 const COMMIT: &str = "git_source_commit";
 const SELECTION: &str = "git_inventory_selection";
 const SOURCE_BLOB: &str = "git_selected_source_blob";
-pub(super) const INPUTS: [&str; 7] = [ROOT, VIEW, REPOSITORY, TREE, COMMIT, SELECTION, SOURCE_BLOB];
+pub(super) const INPUTS: [&str; 8] = [ROOT, VIEW, REPOSITORY, LOCATION, TREE, COMMIT, SELECTION, SOURCE_BLOB];
 
 #[derive(Default)]
 pub(super) struct Git {
@@ -232,13 +233,57 @@ impl Git {
         }
     }
 
-    fn identity(&self) -> String {
+    fn identity(&self, locations: bool) -> String {
         let key = self
             .repository
             .as_ref()
             .map(|(id, _)| (id.repository.as_str(), id.view.as_str()))
             .unwrap_or_default();
-        format!("{}\n{}\n{:?}\n{:?}", key.0, key.1, self.tree, self.commit)
+        let mut identity = format!("{}\n{}\n{:?}\n{:?}", key.0, key.1, self.tree, self.commit);
+        if locations && let Some((_, repo)) = &self.repository {
+            identity.push('\n');
+            identity.push_str(&serde_json::to_string(&location_rows(repo)).expect("Git location strings"));
+        }
+        identity
+    }
+}
+
+fn location_rows(repo: &gix::Repository) -> Vec<(&'static str, &'static str, String)> {
+    let paths = std::iter::once(("common-dir", repo.common_dir()))
+        .chain(repo.workdir().map(|path| ("worktree", path)));
+    paths.map(|(role, path)| {
+        let (encoding, value) = match path.canonicalize() {
+            Ok(path) => location_value(&path),
+            Err(error) => ("error", error.to_string()),
+        };
+        (role, encoding, value)
+    }).collect()
+}
+
+fn location_value(path: &Path) -> (&'static str, String) {
+    if let Some(text) = path.to_str() { return ("text", text.to_owned()); }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        ("utf16le", hex(&path.as_os_str().encode_wide().flat_map(u16::to_le_bytes).collect::<Vec<_>>()))
+    }
+    #[cfg(not(windows))]
+    { ("unix-bytes", hex(path.as_os_str().as_encoded_bytes())) }
+}
+
+#[test]
+#[cfg(any(unix, windows))]
+fn non_unicode_git_locations_keep_the_original_path_units() {
+    #[cfg(unix)]
+    {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+        assert_eq!(location_value(Path::new(OsStr::from_bytes(b"x\xff"))), ("unix-bytes", "78ff".into()));
+    }
+    #[cfg(windows)]
+    {
+        use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+        let path = OsString::from_wide(&[0x78, 0xd800]);
+        assert_eq!(location_value(Path::new(&path)), ("utf16le", "780000d8".into()));
     }
 }
 
@@ -260,8 +305,11 @@ fn observes_git(program: &Program) -> bool {
     INPUTS.iter().any(|name| program.inputs.iter().any(|input| input == name))
 }
 
-pub(super) fn observation(program: &Program, root: &Path) -> Option<String> {
-    observes_git(program).then(|| Git::new(root).identity())
+pub(super) fn observation(program: &Program, root: &Path) -> Option<(&'static str, String)> {
+    observes_git(program).then(|| {
+        let locations = program.inputs.iter().any(|input| input == LOCATION);
+        (if locations { LOCATION } else { "" }, Git::new(root).identity(locations))
+    })
 }
 
 pub(super) fn inputs(program: &Program, root: &Path, options: &serde_json::Value) -> std::collections::BTreeMap<String, Vec<Vec<Value>>> {
@@ -283,6 +331,11 @@ pub(super) fn inputs(program: &Program, root: &Path, options: &serde_json::Value
     }
     if let Some((identity, repo)) = &source.repository {
         let key = &identity.repository;
+        if let Some(rows) = inputs.get_mut(LOCATION) {
+            rows.extend(location_rows(repo).into_iter().map(|(role, encoding, value)| {
+                vec![Value::Str(key.as_str().into()), Value::Str(identity.view.as_str().into()), Value::Str(role.into()), Value::Str(encoding.into()), Value::Str(value.into())]
+            }));
+        }
         if let Some(rows) = inputs.get_mut(SELECTION)
             && let Some(selection) = crate::git_workspace::snapshot::inventory_selection(root)
         {
@@ -406,8 +459,8 @@ pub(super) fn verify_sources(
     Ok(())
 }
 
-pub(super) fn still(root: &Path, previous: &str) -> bool {
-    Git::new(root).identity() == previous
+pub(super) fn still(root: &Path, input: &str, previous: &str) -> bool {
+    Git::new(root).identity(input == LOCATION) == previous
 }
 
 /// An output whose dependencies are entirely Git inputs and ordinary rules

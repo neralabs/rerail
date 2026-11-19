@@ -447,8 +447,8 @@ pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> 
     )?;
     consulted.extend(seen.into_inner());
     git_revisions(program, root, base, &mut consulted);
-    if let Some(identity) = super::git::observation(program, root) {
-        consulted.push(("git_root_repo".to_owned(), String::new(), identity));
+    if let Some((input, identity)) = super::git::observation(program, root) {
+        consulted.push(("git_root_repo".to_owned(), input.to_owned(), identity));
     }
     if program.inputs.iter().any(|name| name == "source_grammar_suffix") {
         program.inputs.retain(|name| name != "source_grammar_suffix");
@@ -527,7 +527,7 @@ pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String,
             "git_object_predicate" => return crate::code_rule_dsl::logic::strings::git::predicate_still(root, path, digest),
             super::analysis_history::INPUT => return super::analysis_history::Read::from_key(path)
                 .is_some_and(|read| read.records().is_ok_and(|(_, current)| current == *digest)),
-            "git_root_repo" => return super::git::still(root, digest),
+            "git_root_repo" => return super::git::still(root, path, digest),
             "git_rev" | "git_index" | "git_tracking_index" | "git_revision_rows" => return crate::code_rule_dsl::logic::strings::git::still(root, what, path, digest),
             "base" => {
                 let Some((rev, file)) = path.split_once('\t') else { return false };

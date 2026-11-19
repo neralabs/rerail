@@ -8,6 +8,21 @@ Each linked worktree has its own view for HEAD, its reflog, and its index. A bar
 An open source view tracks the Git directories it opened. If another checkout takes their place, evaluation fails.
 Changing a ref inside the same checkout remains visible to a later evaluation.
 
+Use `git_repository_dir(repo, path)` for the common Git directory. Use `git_worktree(view, path)` for the working directory of the opened view.
+These relations return absolute paths on the host that runs the policy. Linked worktrees share a common directory. A bare view has no working directory.
+During a revision scan, these paths describe the local repository that supplies the objects.
+
+```rr
+#include "git.rr"
+.decl checkout(repo: symbol, view: symbol, common: symbol, work: symbol)
+checkout(r, v, common, work) :- git_root_view(r, v), git_repository_dir(r, common), git_worktree(v, work).
+.output checkout
+```
+
+Both path relations use the `text` rows of `git_location_of(repo, view, role, encoding, value)`. The roles are `common-dir` and `worktree`.
+For a path outside Unicode, the input supplies lowercase hex with encoding `unix-bytes` on Unix or `utf16le` on Windows.
+If the host cannot resolve a directory, its row uses `error` and gives the cause.
+
 Use a view for a mutable name such as HEAD. This program returns the repository, worktree view, and commit together.
 
 ```rr

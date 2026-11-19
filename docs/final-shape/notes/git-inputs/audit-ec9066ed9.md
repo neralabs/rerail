@@ -2,7 +2,16 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Fourteen of the 28 follow-up findings have verified repairs. Fourteen remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Fifteen of the 28 follow-up findings have verified repairs. Thirteen remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+
+## Repository and worktree locations
+
+The standalone CLI rejected `git_worktree` as undeclared before the repair.
+The main checkout and two linked checkouts now report one repository ID and common directory. Each reports its own view ID and working directory.
+Rules in both working-tree and revision runs returned the linked checkout's real path. A bare repository returned its common directory and zero working directories.
+Renaming the bare repository preserved both IDs. A fresh invocation using the same scope and store returned its new path.
+One native relation supplies the locations. The two public relations are rules in `git.rr`.
+[Rule reference](../../../rule-syntax/git.md) · [Standalone CLI regression](../../../../native/tests/git_revision_cli.rs)
 
 ## Decoded directory cache
 

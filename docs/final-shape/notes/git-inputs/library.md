@@ -14,13 +14,13 @@ A value's contract still distinguishes repository IDs, algorithm-qualified objec
 .decl git_root_view(repo: symbol, view: symbol)
 .decl git_repository(repo: symbol, kind: symbol, format: symbol)
 .decl git_repository_dir(repo: symbol, path: symbol)
-.decl git_worktree(repo: symbol, path: symbol)
+.decl git_worktree(view: symbol, path: symbol)
 
 .decl git_snapshot_request(request: symbol, repo: symbol, revision: symbol, prefix: symbol)
 ```
 
 `git_root_repo` contains one repository for an invocation with a Git root.
-`git_worktree` has no row for a bare repository.
+`git_repository_dir` names the common Git directory shared by linked worktrees. `git_worktree` names the opened view's working directory and has no row for a bare view.
 The repository identifies the clone. The view identifies the opened worktree's reference context.
 No request changes the repository argument of another predicate.
 A scan supplies one snapshot request. A rule can issue additional object lookups for its own evidence.

@@ -263,6 +263,56 @@ fn standalone_logic_publishes_each_source_after_its_history_query_finishes() {
 }
 
 #[test]
+fn git_location_rules_identify_the_common_directory_and_each_open_worktree() {
+    let f = Checkout::new();
+    let first = f.area.path().join("first link");
+    let second = f.area.path().join("second link");
+    for dir in [&first, &second] {
+        f.git(&["worktree", "add", "--detach", dir.to_str().unwrap()]);
+    }
+    let bare = f.area.path().join("bare.git");
+    f.git(&["clone", "-q", "--bare", ".", bare.to_str().unwrap()]);
+    let rules = f.area.path().join("locations.rr");
+    let out = f.area.path().join("locations");
+    fs::write(&rules, r#"#include "git.rr"
+.decl dir(path: symbol)
+dir(p) :- git_root_repo(r), git_repository_dir(r, p).
+.decl work(path: symbol)
+work(p) :- git_root_view(_, v), git_worktree(v, p).
+.decl repo(r: symbol)
+repo(r) :- git_repository_dir(r, _).
+.decl view(v: symbol)
+view(v) :- git_root_view(_, v).
+.output dir, work, repo, view
+"#).unwrap();
+    let read = |root: &Path, revision: bool| {
+        let result = f.run("logic", &[&rules, root, &out], revision.then_some("locations"));
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(f.run("csv", &[&out], None).status.success());
+        ["dir", "work", "repo", "view"].map(|name| fs::read_to_string(out.join(format!("{name}.csv"))).unwrap().trim_end().to_owned())
+    };
+    let path = |p: &Path| p.canonicalize().unwrap().to_str().unwrap().to_owned();
+    let [common, work, repo, main_view] = read(&f.repo, true);
+    assert_eq!(common, path(&f.repo.join(".git")));
+    assert_eq!(work, path(&f.repo));
+    assert!(!repo.is_empty() && !main_view.is_empty());
+    let mut views = std::collections::BTreeSet::from([main_view]);
+    for linked in [&first, &second] {
+        let [d, w, r, v] = read(linked, true);
+        assert_eq!((&d, &r), (&common, &repo));
+        assert_eq!(w, path(linked));
+        assert!(views.insert(v.clone()));
+        assert_eq!(read(linked, false), [d, w, r, v]);
+    }
+    let [d, w, r, v] = read(&bare, true);
+    assert_eq!(d, path(&bare));
+    assert!(w.is_empty());
+    let moved = f.area.path().join("moved.git");
+    fs::rename(bare, &moved).unwrap();
+    assert_eq!(read(&moved, true), [path(&moved), String::new(), r, v]);
+}
+
+#[test]
 fn the_documented_head_queries_preserve_the_worktree_in_answers_and_errors() {
     let f = Checkout::new();
     let linked = f.area.path().join("linked");
