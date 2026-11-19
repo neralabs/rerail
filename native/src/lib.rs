@@ -274,24 +274,34 @@ pub fn content_store_file_name() -> &'static str {
 #[cfg(not(feature = "headless"))]
 #[napi]
 pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
-    LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()).as_deref())?.inspection()
+    LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()))?.inspection()
+}
+
+#[cfg(not(feature = "headless"))]
+#[derive(Clone)]
+enum PolicyLocation {
+    Worktree(std::path::PathBuf),
+    Git(std::sync::Arc<git_workspace::snapshot::Snapshot>),
 }
 
 #[cfg(not(feature = "headless"))]
 #[derive(Clone)]
 struct LoadedRrPolicy {
-    local_path: Option<std::path::PathBuf>,
+    location: PolicyLocation,
     program: rerail_rr_syntax::code_rule_dsl::logic::front::ast::Program,
     files: Vec<code_rule_dsl::logic::rr::LibraryFile>,
 }
 
 #[cfg(not(feature = "headless"))]
 impl LoadedRrPolicy {
-    fn read(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Result<Self> {
-        let path = rr_policy_path(path, snapshot)?;
-        let local_path = if snapshot.is_none() { Some(path.canonicalize().map_err(|error| Error::from_reason(format!("{}: {error}", path.display())))?) } else { None };
-        let (program, files) = tools::read_policy(local_path.as_deref().unwrap_or(&path)).map_err(Error::from_reason)?;
-        Ok(Self { local_path, program, files })
+    fn read(path: &str, snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>) -> Result<Self> {
+        let path = rr_policy_path(path, snapshot.as_deref())?;
+        let (program, files) = tools::read_policy(&path).map_err(Error::from_reason)?;
+        let location = match snapshot {
+            Some(snapshot) => PolicyLocation::Git(snapshot),
+            None => PolicyLocation::Worktree(path),
+        };
+        Ok(Self { location, program, files })
     }
 
     fn inspection(&self) -> Result<String> {
@@ -306,8 +316,11 @@ impl LoadedRrPolicy {
 #[derive(Default)]
 pub struct LoadedRrPolicies {
     store: Option<std::path::PathBuf>,
-    programs: std::sync::Mutex<std::collections::HashMap<String, LoadedRrPolicy>>,
+    programs: std::sync::Mutex<std::collections::HashMap<String, PolicyVersions>>,
 }
+
+#[cfg(not(feature = "headless"))]
+type PolicyVersions = std::collections::HashMap<Option<git_workspace::snapshot::SnapshotKey>, LoadedRrPolicy>;
 
 #[cfg(not(feature = "headless"))]
 #[napi]
@@ -321,14 +334,19 @@ impl LoadedRrPolicies {
     pub fn load(&self, path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
         let read = || {
             if source.is_none() && let Ok(local) = Path::new(&path).canonicalize()
-                && let Some(policy) = self.programs.lock().unwrap_or_else(|err| err.into_inner()).get(&path)
-                && policy.local_path.as_ref() == Some(&local) && policy.files.iter().all(|file| file.unchanged())
+                && let Some(policy) = self.programs.lock().unwrap_or_else(|err| err.into_inner()).get(&path).and_then(|versions| versions.get(&None))
+                && matches!(&policy.location, PolicyLocation::Worktree(stored) if stored == &local)
+                && policy.files.iter().all(|file| file.unchanged())
             {
                 return policy.inspection();
             }
-            let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()).as_deref())?;
+            let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()))?;
             let inspection = policy.inspection()?;
-            self.programs.lock().unwrap_or_else(|err| err.into_inner()).insert(path.clone(), policy);
+            let key = match &policy.location {
+                PolicyLocation::Git(snapshot) => Some(snapshot.source_key()),
+                PolicyLocation::Worktree(_) => None,
+            };
+            self.programs.lock().unwrap_or_else(|err| err.into_inner()).entry(path.clone()).or_default().insert(key, policy);
             Ok(inspection)
         };
         match &self.store {
@@ -342,7 +360,7 @@ impl LoadedRrPolicies {
 fn rr_policy_path(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Result<std::path::PathBuf> {
     let path = Path::new(path);
     match snapshot {
-        None => Ok(path.to_owned()),
+        None => path.canonicalize().map_err(|error| Error::from_reason(format!("{}: {error}", path.display()))),
         Some(snapshot) if path.is_relative() && path.components().all(|part| matches!(part, std::path::Component::Normal(_))) => Ok(snapshot.root().join(path)),
         Some(_) => Err(Error::from_reason("Expected a repository-relative policy path")),
     }
@@ -361,15 +379,23 @@ pub fn scan_rr_policies_async(
     policy_source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
     loaded: Option<&LoadedRrPolicies>,
 ) -> Result<napi::bindgen_prelude::AsyncTask<ScanRrPolicies>> {
+    let policy_snapshot = policy_source.map(|source| source.pinned_snapshot());
     let policies = loaded.map(|loaded| {
         let programs = loaded.programs.lock().unwrap_or_else(|error| error.into_inner());
-        paths.iter().map(|path| programs.get(path).cloned().ok_or_else(|| format!("{path}: policy was not loaded"))).collect()
+        let origin = policy_snapshot.as_ref().map(|snapshot| snapshot.source_key());
+        paths.iter().map(|path| {
+            let versions = programs.get(path).ok_or_else(|| format!("{path}: policy was not loaded"))?;
+            if let Some(policy) = versions.get(&origin) { return Ok(policy.clone()); }
+            if origin.is_some() { return Err(format!("{path}: policy was not loaded from the selected Git source")); }
+            if versions.len() == 1 { return Ok(versions.values().next().expect("one inspected policy").clone()); }
+            Err(format!("{path}: select a policy source for this path inspected in multiple revisions"))
+        }).collect()
     });
     let owner = analysis.map(|run| run.owner_for(Path::new(&store))).transpose()?;
     Ok(napi::bindgen_prelude::AsyncTask::new(ScanRrPolicies {
         paths, root, store, output, owner, source_paths,
         snapshot: source.map(|source| source.pinned_snapshot()),
-        policy_snapshot: policy_source.map(|source| source.pinned_snapshot()),
+        policy_snapshot,
         policies,
     }))
 }
@@ -400,7 +426,7 @@ impl napi::Task for ScanRrPolicies {
             let options = serde_json::json!({ "sourcePaths": self.source_paths, "scanSpans": true, "reuse": path != Path::new(":memory:") });
             let preloaded = self.policies.is_some();
             let policies = self.policies.take().unwrap_or_else(|| self.paths.iter().map(|path|
-                LoadedRrPolicy::read(path, self.policy_snapshot.as_deref()).map_err(|error| error.to_string())
+                LoadedRrPolicy::read(path, self.policy_snapshot.clone()).map_err(|error| error.to_string())
             ).collect());
             let mut counts = std::collections::HashMap::new();
             let policies: Vec<_> = policies.into_iter().map(|policy| {
@@ -418,7 +444,7 @@ impl napi::Task for ScanRrPolicies {
             let mut reports = Vec::new();
             let mut ephemeral = path == Path::new(":memory:");
             for (i, policy) in policies.into_iter().enumerate() {
-                let (LoadedRrPolicy { program, files, local_path }, ids) = match policy {
+                let (LoadedRrPolicy { program, files, location }, ids) = match policy {
                     Ok(policy) => policy,
                     Err(error) => {
                         reports.push(serde_json::json!({"error": error, "ruleId": null}));
@@ -433,7 +459,7 @@ impl napi::Task for ScanRrPolicies {
                 let report = if ephemeral {
                     None
                 } else {
-                    if preloaded && let Some(path) = &local_path && files.iter().all(|file| file.unchanged()) {
+                    if preloaded && let PolicyLocation::Worktree(path) = &location && files.iter().all(|file| file.unchanged()) {
                         code_rule_dsl::logic::rr::retain_read_program(path, &files, &program);
                     }
                     match tools::run_program_checked(program.clone(), &files, root, &out, &options) {

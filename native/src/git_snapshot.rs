@@ -461,7 +461,18 @@ pub struct Snapshot {
     view: Arc<View>,
 }
 
+/// A repository, selected object and directory within it, shared by equivalent source views.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct SnapshotKey {
+    repository_prefix: PathBuf,
+    object: gix::ObjectId,
+}
+
 impl Snapshot {
+    pub fn source_key(&self) -> SnapshotKey {
+        SnapshotKey { repository_prefix: self.view.cache_root.clone(), object: self.view.commit.unwrap_or(self.view.tree) }
+    }
+
     pub fn set_source_languages(&self, languages: SourceLanguages) {
         let mut state = self.view.inventory.lock().unwrap_or_else(|e| e.into_inner());
         if state.host_languages.as_ref() != Some(&languages) {

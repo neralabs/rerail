@@ -1681,6 +1681,35 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     }
   }, 30_000);
 
+  it("selects an inspected Git policy by repository and revision in either catalog load order", async () => {
+    const root = checkout(), other = checkout(), home = root + "-home";
+    mkdirSync(home);
+    const engine = loadNativeBinding(), path = "which.rr", store = join(home, "versions.sqlite");
+    const commitPolicy = (word: string) => {
+      writeFileSync(join(root, path), `#include "git.rr"\n.policy "which" revision 1\n.violation Seen(at: span) "${word}"\nSeen(@place("git",1)) :- git_source_commit(_, _).\n`);
+      git(root, "add", path);
+      git(root, "commit", "-qm", word);
+      return git(root, "rev-parse", "HEAD");
+    };
+    const first = commitPolicy("one"), second = commitPolicy("two");
+    git(other, "fetch", "-q", root, "main");
+    const open = (id: string, repo = root) => new engine.GitRevisionSource(repo, id, "versions");
+    const source = open(first);
+    for (const order of [[first, second], [second, first]]) {
+      const catalog = new engine.LoadedRrPolicies(store);
+      const run = async (policySource?: typeof source) => JSON.parse(await engine.scanRrPoliciesAsync(
+        [path], root, store, "", undefined, undefined, source, policySource, catalog,
+      ))[0];
+      catalog.load(path, open(order[0]!));
+      expect((await run()).diagnostics[0].message).toBe(order[0] === first ? "one" : "two");
+      catalog.load(path, open(order[1]!));
+      expect((await run(open(first))).diagnostics[0].message).toBe("one");
+      expect((await run(open(second))).diagnostics[0].message).toBe("two");
+      expect((await run(open(first, other))).error).toMatch(/not loaded from the selected Git source/u);
+      expect((await run()).error).toMatch(/select a policy source/u);
+    }
+  }, 30_000);
+
   it("runs the inspected policy after an include changes and refreshes it on the next inspection", async () => {
     const root = checkout(), home = root + "-home";
     mkdirSync(home);

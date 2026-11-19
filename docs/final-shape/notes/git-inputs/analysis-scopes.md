@@ -91,6 +91,10 @@ The process can reuse a checked graph from another store. It must save that grap
 On restart, the engine checks the recorded file digests and missing include candidates before it reuses a graph.
 A scan can execute a policy inspected for another store. It retains the program there while the inspected inputs still match.
 If an include changes after inspection, the scan executes the inspected version. The next inspection reads the new version.
+A native policy catalog can inspect the same relative path in several Git revisions.
+An explicit policy source selects the inspected entry for that repository, revision, and directory.
+Without a policy source, evaluation uses the inspected working-tree policy, or the only inspected Git policy for that path.
+If several Git entries match the path, the caller must select a policy source.
 The collection check gives a second scope its own policy and memo rows. After releasing that scope, it checks which rows collection removed.
 The inventory key uses the set of selected paths. Reordering paths, repeating one, or adding a child of a selected directory preserves the key.
 Selecting the root has the same key as an unrestricted walk. An empty selection covers no files.
