@@ -79,6 +79,7 @@ const UNPUBLISHED = [
   "rule-engine-direction/",
   "rule-syntax/",
   "sql-executor.md",
+  "sql-workload-profiling.md",
 ];
 
 /** Whether docs path `path` (relative to `docs/`, `/`-separated) is one the site leaves out. */

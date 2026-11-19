@@ -27,7 +27,7 @@ Use trials 1 and 2 for the other layout orders.
 Each trial reads normal production SQL after duplicate-expression removal.
 It checks exact candidate rows and writes its results beside the capture.
 The host compares temporary tables, retained postings, and retained shared sets.
-The profiling guide (`docs/sql-workload-profiling.md`, removed; at 7efcac9c67) describes capture creation and interpretation.
+The [profiling guide](../../../docs/sql-workload-profiling.md#candidate-preparation-captures) describes capture creation and interpretation.
 
 The CPU totals include replay setup and cache construction.
 They exclude parsing, initial publication, earlier structural preparation, and final matcher evaluation.
@@ -89,7 +89,7 @@ Use a closed candidate capture with complete `decoded_properties` for the reques
 The host checks complete contiguous preorder trees and one vocabulary before each kernel.
 Input captures remain unchanged.
 File IDs belong to each capture. The recorded source digests identify the measured files.
-The profiling guide (`docs/sql-workload-profiling.md`, removed; at 7efcac9c67) describes capture creation.
+The [profiling guide](../../../docs/sql-workload-profiling.md#candidate-preparation-captures) describes capture creation.
 
 | Experiment | Alternatives | Measured selection |
 | --- | --- | --- |

@@ -1632,7 +1632,8 @@ after P's last native commit):
   `npm run test:sql-execution-budget`) measure P's SQL anchor engine, test-only here (O20). On this
   branch's `code-rule-profile` addon the shape gate finds no anchor batches or producer plans (12 of
   17 fail), and the cold job takes 353 engine SQL submissions against the 100 the budget allows,
-  which P's own workplan records as an expected acceptance failure. `ci.yml` runs them only with
+  which P's own workplan (`docs/sql-performance-recovery-workplan.md`, removed; at 7efcac9c67)
+  records as an expected acceptance failure. `ci.yml` runs them only with
   `RERAIL_RELATIONAL_TESTS=1`; both scripts still run by hand.
 - Not the merge's: `audit-cli.test.ts` has 1 failure before and after it.
   `checkout-code-rule-router.test.ts` had 17 failures before and has 1 after it (a 5 s timeout
