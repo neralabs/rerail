@@ -35,8 +35,8 @@ sra_item(t, a) :- kind(t, "subscript"), field(t, "value", v), sra_item(v, a).
 .decl sra_write(t: node, a: node)
 sra_write(t, a) :- sra_item(t, a), (expr_ctx(t, "store") ; expr_ctx(t, "del")).
 
-// The cases, `cases/django-practice-settings-runtime-assignment/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-settings-runtime-assignment/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "conftest.py" from "cases/django-practice-settings-runtime-assignment/conftest.py"
     .fixture "shop/alias.py" from "cases/django-practice-settings-runtime-assignment/shop/alias.py"

@@ -123,8 +123,8 @@ cfr_has_else(s) :- field(s, "alternative", a), kind(a, "else_clause").
 .decl cfr_loop(k: symbol)
 cfr_loop("while_statement"). cfr_loop("for_statement"). cfr_loop("function_definition"). cfr_loop("class_definition").
 
-// The cases, `cases/django-practice-clean-field-returns-value/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-clean-field-returns-value/`, read as one repository: each line ending in `# caught`
+// is reported, and no other line.
 .test cases exactly
     .fixture "accounts/__init__.py" from "cases/django-practice-clean-field-returns-value/accounts/__init__.py"
     .fixture "accounts/base.py" from "cases/django-practice-clean-field-returns-value/accounts/base.py"

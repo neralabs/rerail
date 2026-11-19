@@ -83,8 +83,8 @@ dar_on_commit(oc) :- kind(oc, "call"), field(oc, "function", f), attr_of(f, _, "
 .decl dar_after_commit(n: node)
 dar_after_commit(n) :- dar_on_commit(oc), within(n, oc).
 
-// The cases, `cases/django-practice-dispatch-in-atomic-request/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-dispatch-in-atomic-request/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "proj/settings.py" from "cases/django-practice-dispatch-in-atomic-request/proj/settings.py"
     .fixture "shop/api/viewsets.py" from "cases/django-practice-dispatch-in-atomic-request/shop/api/viewsets.py"

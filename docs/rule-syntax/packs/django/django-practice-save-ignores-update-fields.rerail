@@ -83,8 +83,8 @@ siuf_new_test("^self\\._state\\.adding( +and .*)?$"). siuf_new_test("^not +self\
 siuf_new_test("^kwa?r?g?s?\\.get\\(.force_insert.[^)]*\\)( +and .*)?$").
 siuf_new_test("^not +self\\.(pk|id) +or +kwa?r?g?s?\\.get\\(.force_insert.[^)]*\\)$").
 
-// The cases, `cases/django-practice-save-ignores-update-fields/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-save-ignores-update-fields/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "blog/base.py" from "cases/django-practice-save-ignores-update-fields/blog/base.py"
     .fixture "blog/branches.py" from "cases/django-practice-save-ignores-update-fields/blog/branches.py"

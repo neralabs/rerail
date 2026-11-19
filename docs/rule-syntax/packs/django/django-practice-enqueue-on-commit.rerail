@@ -39,8 +39,8 @@ EnqueueInAtomic(c, w) :- dj_side_effect(c, w), dj_in_transaction(c), !eoc_in_on_
 eoc_in_on_commit(c) :- dj_side_effect(c, _), kind(oc, "call"), within(c, oc), field(oc, "function", f),
     sym_of(f, "django.db.transaction.on_commit").
 
-// The cases, `cases/django-practice-enqueue-on-commit/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-enqueue-on-commit/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
     .fixture "shop/__init__.py" from "cases/django-practice-enqueue-on-commit/shop/__init__.py"
     .fixture "shop/base.py" from "cases/django-practice-enqueue-on-commit/shop/base.py"

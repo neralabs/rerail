@@ -82,8 +82,8 @@ srl_not_manager(q, rel) :- dj_qs_model(q, mc), srl_defines(mc, rel), !srl_m2m(mc
 srl_defines(mc, x) :- dj_model_method(mc, _, x).
 srl_defines(mc, x) :- dj_model_super(mc, b), kind(f, "function_definition"), nearest(f, b, scope), def_name(f, x).
 
-// The cases, `cases/django-practice-select-related-in-loop/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-select-related-in-loop/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
     .fixture "shop/base.py" from "cases/django-practice-select-related-in-loop/shop/base.py"
     .fixture "shop/models.py" from "cases/django-practice-select-related-in-loop/shop/models.py"

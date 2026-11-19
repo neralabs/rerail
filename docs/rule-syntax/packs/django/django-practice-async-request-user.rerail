@@ -37,8 +37,8 @@ aru_in_async(n) :- nearest(n, f, dj_region_stop), is_async(f), docof(n, d), dj_d
 aru_handed_off(a) :- call_name(w, x), (x = "sync_to_async" ; x = "database_sync_to_async"), field(c, "function", w),
     call_arg(c, _, _, v), unparen(v, a).
 
-// The cases, `cases/django-practice-async-request-user/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-async-request-user/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
     .fixture "api/app.py" from "cases/django-practice-async-request-user/api/app.py"
     .fixture "shop/api/drf.py" from "cases/django-practice-async-request-user/shop/api/drf.py"

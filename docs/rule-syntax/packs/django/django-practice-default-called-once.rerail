@@ -72,8 +72,8 @@ dco_w161_part("DateField", "date", "django.utils.timezone.now"). dco_w161_part("
 dco_w161_part("DateField", "date", "datetime.datetime.utcnow"). dco_w161_part("TimeField", "time", "django.utils.timezone.now").
 dco_w161_part("TimeField", "time", "datetime.datetime.utcnow").
 
-// The cases, `cases/django-practice-default-called-once/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-default-called-once/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
     .fixture "shop/migrations/0002_invite_key.py" from "cases/django-practice-default-called-once/shop/migrations/0002_invite_key.py"
     .fixture "shop/models.py" from "cases/django-practice-default-called-once/shop/models.py"

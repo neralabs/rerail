@@ -68,8 +68,8 @@ fir_saved_test(m) :- py_truth(m).
 fir_saved_test(m) :- cmp_pair(_, _, _, l, r), unparen(l, m), kind(r, "none").
 fir_saved_test(m) :- cmp_pair(_, _, _, l, r), unparen(r, m), kind(l, "none").
 
-// The cases, `cases/django-practice-fk-id-not-relation/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-fk-id-not-relation/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
     .fixture "shop/base.py" from "cases/django-practice-fk-id-not-relation/shop/base.py"
     .fixture "shop/models.py" from "cases/django-practice-fk-id-not-relation/shop/models.py"

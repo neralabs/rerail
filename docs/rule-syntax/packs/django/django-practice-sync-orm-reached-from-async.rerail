@@ -134,8 +134,8 @@ sora_model_instance(r, h) :- proven_type(r, t), class_def(k, t), dj_model(k), ne
 sora_model_call(c, g) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, m), nearest(c, h, dj_region_stop),
     dj_instance_class(r, h, q), !call_target(c, _), mro_method(q, m, g).
 
-// The cases, `cases/django-practice-sync-orm-reached-from-async/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-sync-orm-reached-from-async/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "shop/__init__.py" from "cases/django-practice-sync-orm-reached-from-async/shop/__init__.py"
     .fixture "shop/consumers.py" from "cases/django-practice-sync-orm-reached-from-async/shop/consumers.py"

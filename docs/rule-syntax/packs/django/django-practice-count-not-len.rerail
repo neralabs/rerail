@@ -23,8 +23,8 @@
 CountNotLen(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, "builtins.len"), posarg(c, 0, a), unparen(a, q),
     dj_qs(q), !dj_qs_call(q, "raw"), !posarg(c, 1, _), !py_empty_test(c), docof(c, d), !dj_test_doc(d).
 
-// The cases, `cases/django-practice-count-not-len/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-count-not-len/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
     .fixture "shop/test.py" from "cases/django-practice-count-not-len/shop/test.py"
     .fixture "shop/testing/factories.py" from "cases/django-practice-count-not-len/shop/testing/factories.py"

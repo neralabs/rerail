@@ -45,8 +45,8 @@ hhg_read(c, key) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "get
 
 HostHeaderWithoutGetHost(n, key) :- hhg_read(n, key), !hhg_logged(n), docof(n, d), !dj_test_doc(d).
 
-// The cases, `cases/django-practice-host-header-without-get-host/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-host-header-without-get-host/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "site/__init__.py" from "cases/django-practice-host-header-without-get-host/site/__init__.py"
     .fixture "site/tests/test_views.py" from "cases/django-practice-host-header-without-get-host/site/tests/test_views.py"

@@ -60,8 +60,8 @@ mio_field(c, x) :- dj_attname(c, x, call), !mio_pk(call).
 .decl mio_pk(call: node)
 mio_pk(call) :- call_arg(call, -1, "primary_key", v), text(v, "True").
 
-// The cases, `cases/django-practice-model-init-override/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-model-init-override/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
     .fixture "shop/base.py" from "cases/django-practice-model-init-override/shop/base.py"
     .fixture "shop/models.py" from "cases/django-practice-model-init-override/shop/models.py"

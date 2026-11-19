@@ -69,8 +69,8 @@ tam_instance_value(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, q),
 tam_instance_value(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, "django.shortcuts.get_object_or_404").
 tam_instance_value(v) :- attr_of(v, o, "user"), unparen(o, r), (text(r, "request") ; attr_of(r, _, "request")).
 
-// The cases, `cases/django-practice-task-arg-model-instance/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-task-arg-model-instance/`, read as one repository: each line ending in `# caught`
+// is reported, and no other line.
 .test cases exactly
     .fixture "proj/celery.py" from "cases/django-practice-task-arg-model-instance/proj/celery.py"
     .fixture "shop/models.py" from "cases/django-practice-task-arg-model-instance/shop/models.py"

@@ -170,8 +170,8 @@ ghw_own_method(k, x) :- ghw_handler(k, _, _), class_def(k, kq), method(bq, _, x)
 .decl ghw_self_bound(k: node, x: node, c: node)
 ghw_self_bound(k, x, c) :- ghw_self_site(x, c, _), ghw_own_method(k, x).
 
-// The cases, `cases/django-practice-get-handler-writes/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-get-handler-writes/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
     .fixture "blog/__init__.py" from "cases/django-practice-get-handler-writes/blog/__init__.py"
     .fixture "blog/api/__init__.py" from "cases/django-practice-get-handler-writes/blog/api/__init__.py"

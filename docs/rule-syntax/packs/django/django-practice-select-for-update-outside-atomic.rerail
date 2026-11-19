@@ -191,8 +191,8 @@ sfu_why(f, cat("`", cat(g, cat("` calls it outside a transaction at ", cat(p, ca
     sfu_bare_call(c, f), !sfu_entry(f), l = min m : { sfu_bare_call(b, f), line(b, m) }, line(c, l), owner(c, h), def_name(h, g),
     docof(c, d), doc(d, p, _).
 
-// The cases, `cases/django-practice-select-for-update-outside-atomic/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-select-for-update-outside-atomic/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "backend/__init__.py" from "cases/django-practice-select-for-update-outside-atomic/backend/__init__.py"
     .fixture "backend/plates/__init__.py" from "cases/django-practice-select-for-update-outside-atomic/backend/plates/__init__.py"

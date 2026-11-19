@@ -65,8 +65,8 @@ mis_later(n) :- mis_read(f, x, n), mis_read(f, x, m), earlier(m, n).
 
 MiddlewareIgnoresStreaming(n, x) :- mis_read(_, x, n), !mis_later(n).
 
-// The cases, `cases/django-practice-middleware-ignores-streaming/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-middleware-ignores-streaming/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "core/__init__.py" from "cases/django-practice-middleware-ignores-streaming/core/__init__.py"
     .fixture "core/middleware.py" from "cases/django-practice-middleware-ignores-streaming/core/middleware.py"

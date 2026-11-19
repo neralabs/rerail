@@ -79,8 +79,8 @@ lti_at_import(n) :- kind(n, "call"), !lti_framed(n).
 lti_at_import(n) :- kind(n, "call"), nearest(n, f, lti_frame), kind(f, "function_definition"), field(f, "parameters", ps),
     within(n, ps), !lti_framed(f).
 
-// The cases, `cases/django-practice-lazy-translation-at-import/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-lazy-translation-at-import/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "library/apps.py" from "cases/django-practice-lazy-translation-at-import/library/apps.py"
     .fixture "library/constants.py" from "cases/django-practice-lazy-translation-at-import/library/constants.py"

@@ -82,8 +82,8 @@ FunctionDecoratorOnMethod(e, dec, effect, fix) :- fdm_decorates(f, e, q), fdm_ca
         ", name='dispatch')` on the class.") ;
      how = "drop", fix = "Remove it; to drop the CSRF check for this view, give it authentication classes without SessionAuthentication.").
 
-// The cases, `cases/django-practice-function-decorator-on-method/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-function-decorator-on-method/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "hooks/__init__.py" from "cases/django-practice-function-decorator-on-method/hooks/__init__.py"
     .fixture "hooks/more.py" from "cases/django-practice-function-decorator-on-method/hooks/more.py"

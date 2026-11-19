@@ -99,8 +99,8 @@ bwh_in_hook(c, mq) :- bwh_receiver(mq, _, _, f, _), kind(f, "function_definition
 bwh_in_hook(c, mq) :- bwh_receiver(mq, _, _, k, k), kind(k, "call"), bwh_connected(k, a), sym_of(a, q), qualname(f, q),
     kind(f, "function_definition"), within(c, f).
 
-// The cases, `cases/django-practice-bulk-write-skips-hooks/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-bulk-write-skips-hooks/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
     .fixture "shop/__init__.py" from "cases/django-practice-bulk-write-skips-hooks/shop/__init__.py"
     .fixture "shop/migrations/0002_fill.py" from "cases/django-practice-bulk-write-skips-hooks/shop/migrations/0002_fill.py"

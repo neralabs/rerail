@@ -71,8 +71,8 @@ mcs_calls_parent(f) :- mcs_clean(c, f), mcs_formset(c), kind(k, "call"), field(k
 mcs_clean_call(f, k, o) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, o, "clean"),
     nearest(k, f, "function_definition").
 
-// The cases, `cases/django-practice-modelform-clean-calls-super/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-modelform-clean-calls-super/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "library/__init__.py" from "cases/django-practice-modelform-clean-calls-super/library/__init__.py"
     .fixture "library/base.py" from "cases/django-practice-modelform-clean-calls-super/library/base.py"

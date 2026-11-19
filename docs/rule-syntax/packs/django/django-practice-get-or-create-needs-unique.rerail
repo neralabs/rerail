@@ -154,8 +154,8 @@ goc_opaque(mc) :- goc_meta_opt(mc, "constraints", v), child(v, k, _), !kind(k, "
 .decl goc_fields_lit(k: node)
 goc_fields_lit(k) :- call_arg(k, -1, "fields", f), unparen(f, g), goc_strings(g).
 
-// The cases, `cases/django-practice-get-or-create-needs-unique/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-get-or-create-needs-unique/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "shop/base.py" from "cases/django-practice-get-or-create-needs-unique/shop/base.py"
     .fixture "shop/models.py" from "cases/django-practice-get-or-create-needs-unique/shop/models.py"

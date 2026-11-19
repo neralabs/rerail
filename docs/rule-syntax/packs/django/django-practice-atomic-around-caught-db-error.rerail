@@ -83,8 +83,8 @@ adb_no_savepoint(w) :- dj_atomic_with(w, wb), kind(e, "call"), within(e, w), !wi
 adb_savepoint(x) :- kind(x, "except_clause"), kind(c, "call"), within(c, x), field(c, "function", f), sym_of(f, q),
     (q = "django.db.transaction.savepoint_rollback" ; q = "django.db.transaction.set_rollback").
 
-// The cases, `cases/django-practice-atomic-around-caught-db-error/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-atomic-around-caught-db-error/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
 .test cases exactly
     .fixture "shop/services.py" from "cases/django-practice-atomic-around-caught-db-error/shop/services.py"
     .fixture "shop/tests/test_services.py" from "cases/django-practice-atomic-around-caught-db-error/shop/tests/test_services.py"

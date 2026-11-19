@@ -32,9 +32,9 @@ SettingsModuleImport(a, m, "its values as `settings.NAME`") :- import_alias(i, a
 .decl smi_doc(d: number)
 smi_doc(d) :- kind(a, k), (k = "assignment" ; k = "augmented_assignment"), field(a, "left", l), text(l, "INSTALLED_APPS"),
     nearest(a, s, scope), kind(s, "module"), docof(a, d).
-smi_doc(d) :- smi_dsm(c, v), docof(c, dc), doc(dc, _, mc), smi_resolves(mc, v, q), doc(d, _, q).
+smi_doc(d) :- smi_dsm(c, v), docof(c, dc), smi_mod(dc, mc), smi_resolves(mc, v, q), smi_mod(d, q).
 smi_doc(d) :- smi_star(i, m), smi_names(i, m, _), docof(i, d).
-smi_doc(d) :- smi_star(i, m), docof(i, d0), smi_doc(d0), doc(d0, _, mi), smi_resolves(mi, m, q), doc(d, _, q).
+smi_doc(d) :- smi_star(i, m), docof(i, d0), smi_doc(d0), smi_mod(d0, mi), smi_resolves(mi, m, q), smi_mod(d, q).
 // smi_dsm(c, v): c sets DJANGO_SETTINGS_MODULE to v: `os.environ.setdefault("DJANGO_SETTINGS_MODULE", "x.settings")`.
 .decl smi_dsm(c: node, v: symbol)
 smi_dsm(c, v) :- str(k, "DJANGO_SETTINGS_MODULE"), posarg(c, 0, k), posarg(c, 1, s), str(s, v).
@@ -45,31 +45,38 @@ smi_dsm(a, v) :- str(k, "DJANGO_SETTINGS_MODULE"), kind(t, "subscript"), field(t
 smi_star(i, m) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"), module_text(i, m).
 // smi_names(i, n, d): import statement i names module n, which is settings module d.
 .decl smi_names(i: node, n: symbol, d: number)
-smi_names(i, n, d) :- smi_imported(i, n), docof(i, di), doc(di, _, mi), smi_resolves(mi, n, q), doc(d, _, q), smi_doc(d).
+smi_names(i, n, d) :- smi_imported(i, n), docof(i, di), smi_mod(di, mi), smi_resolves(mi, n, q), smi_mod(d, q), smi_doc(d).
 .decl smi_imported(i: node, n: symbol)
 smi_imported(i, m) :- import_alias(i, _, m, _, _).
 smi_imported(i, @dot(m, x)) :- import_alias(i, _, m, x, _), x != "".
 smi_imported(i, m) :- smi_star(i, m).
-// smi_resolves(mi, n, q): to a file of module mi, the absolute module name n is the run's module q: n itself, or n
-// under a source root that mi sits under (document modules are named from the repository root, so to
-// `netbox/utilities/x.py`, module "netbox.utilities.x", `netbox.settings` is "netbox.netbox.settings").
+// smi_mod(d, m): m names document d: its module as Python imports it (from its package root), or its path's name. The
+// two differ below a source root, and a folder there with no `__init__.py` (a namespace package) keeps its path's
+// name: in `src/`, `shop/views.py` (a package) is "shop.views", `config/prod.py` is "src.config.prod", and
+// `from config.prod import X` finds it only as "config.prod" under the source root "src" of "src.shop.views".
+.decl smi_mod(d: number, m: symbol)
+smi_mod(d, m) :- doc(d, _, m), m != "".
+smi_mod(d, m) :- doc(d, p, _), m = @replace_all(@replace_all(p, "(/__init__)?\\.pyi?$", ""), "/", "."), m != "".
+// smi_resolves(mi, n, q): to a file named mi, the absolute module name n is the run's module q: n itself, or n under a
+// source root that mi sits under (to `netbox/utilities/x.py`, named "netbox.utilities.x" by its path, `netbox.settings`
+// is "netbox.netbox.settings").
 .decl smi_query(mi: symbol, n: symbol)
-smi_query(mi, n) :- smi_imported(i, n), docof(i, d), doc(d, _, mi).
-smi_query(mc, v) :- smi_dsm(c, v), docof(c, d), doc(d, _, mc).
+smi_query(mi, n) :- smi_imported(i, n), docof(i, d), smi_mod(d, mi).
+smi_query(mc, v) :- smi_dsm(c, v), docof(c, d), smi_mod(d, mc).
 .decl smi_root(mi: symbol, r: symbol)
 smi_root(mi, r) :- smi_query(mi, _), r = @pkg_up(mi, 1), r != "".
 smi_root(mi, r) :- smi_root(mi, r0), r = @pkg_up(r0, 1), r != "".
 .decl smi_resolves(mi: symbol, n: symbol, q: symbol)
-smi_resolves(mi, n, n) :- smi_query(mi, n), doc(_, _, n).
-smi_resolves(mi, n, q) :- smi_query(mi, n), smi_root(mi, r), q = @dot(r, n), doc(_, _, q).
+smi_resolves(mi, n, n) :- smi_query(mi, n), smi_mod(_, n).
+smi_resolves(mi, n, q) :- smi_query(mi, n), smi_root(mi, r), q = @dot(r, n), smi_mod(_, q).
 // smi_reported_doc(i): import i is in a file the rule reads: not a settings module or settings file, not
 // manage.py/wsgi.py/asgi.py, not test code.
 .decl smi_reported_doc(i: node)
 smi_reported_doc(i) :- docof(i, d), !smi_doc(d), !path_part(d, "settings"), file_name(d, s), !glob("*settings*.py", s),
     s != "manage.py", s != "wsgi.py", s != "asgi.py", !dj_test_doc(d).
 
-// The cases, `cases/django-practice-settings-module-import/`, read as one repository: each line ending in `# caught` is reported, and no
-// other line.
+// The cases, `cases/django-practice-settings-module-import/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
     .fixture "manage.py" from "cases/django-practice-settings-module-import/manage.py"
     .fixture "src/config/prod.py" from "cases/django-practice-settings-module-import/src/config/prod.py"
