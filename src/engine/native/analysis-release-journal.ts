@@ -4,6 +4,15 @@ import { openSqliteDatabase, type RerailDatabase } from "../storage/database.js"
 
 type Connection = Pick<RerailDatabase, "all" | "get" | "run">;
 
+export function releaseCutoff(id: string): number | undefined {
+  const colon = id.indexOf(":");
+  if (colon < 0) return undefined;
+  const prefix = id.slice(0, colon);
+  const cutoff = Number(prefix);
+  if (!/^\d+$/u.test(prefix) || !Number.isSafeInteger(cutoff)) throw new Error("Invalid analysis scope release cutoff");
+  return cutoff;
+}
+
 /** The attached decision log uses the rollback journal so its SQLite connection uses FULL synchronization. */
 export function attachReleaseJournal(db: Connection, path: string): void {
   if (db.get(sql`SELECT 1 FROM temp.sqlite_schema WHERE name='analysis_journal_release_insert'`)) return;
@@ -22,6 +31,18 @@ export function attachReleaseJournal(db: Connection, path: string): void {
     release_id TEXT NOT NULL REFERENCES analysis_journal_release(id) ON DELETE CASCADE,
     directory TEXT NOT NULL, path TEXT NOT NULL, identity TEXT NOT NULL, probe INTEGER NOT NULL,
     PRIMARY KEY(release_id,directory,path,identity,probe)) STRICT`);
+  db.run(sql`CREATE TABLE IF NOT EXISTS release_journal.analysis_retired_release (
+    identity TEXT NOT NULL, directory TEXT NOT NULL, release_id TEXT NOT NULL,
+    PRIMARY KEY(identity,directory,release_id)) STRICT`);
+  // A later stop of the same directory and home covers the earlier cutoff. Older receipt formats stay independent.
+  db.run(sql`CREATE TRIGGER IF NOT EXISTS release_journal.analysis_retired_release_compact
+    AFTER INSERT ON analysis_retired_release WHEN NEW.release_id GLOB '[0-9]*:j-*:*' BEGIN
+    DELETE FROM analysis_retired_release WHERE identity=NEW.identity AND directory=NEW.directory
+      AND release_id GLOB '[0-9]*:j-*:*' AND substr(release_id,-64)=substr(NEW.release_id,-64)
+      AND release_id!=(SELECT release_id FROM analysis_retired_release WHERE identity=NEW.identity AND directory=NEW.directory
+        AND release_id GLOB '[0-9]*:j-*:*' AND substr(release_id,-64)=substr(NEW.release_id,-64)
+        ORDER BY CAST(release_id AS INTEGER) DESC,release_id DESC LIMIT 1);
+    END`);
   for (const queue of queues) {
     const { table, journal, columns, keys } = queue;
     const write = `INSERT INTO ${journal} (${columns.join(",")}) VALUES (${columns.map(c => "NEW." + c).join(",")})

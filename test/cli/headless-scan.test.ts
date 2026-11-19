@@ -11,8 +11,8 @@ import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { describeScan, runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
 import {
   acquireDirectoryAnalysisGeneration, acquireNamedAnalysisRun, analysisScopeHome, codeRuleSchema, collectAnalysisCaches,
-  deleteNamedAnalysisScope, finishNamedAnalysisRegistration, loadNativeBinding, openRerailDatabase, queueAnalysisScopeReleases,
-  readAnalysisScopeGeneration, recordCheckout, RERAIL_DATABASE_FILE, scanContentStore, settleAnalysisScopeReleases,
+  deleteNamedAnalysisScope, finishNamedAnalysisRegistration, listAnalysisStores, loadNativeBinding, openRerailDatabase, queueAnalysisScopeReleases,
+  readAnalysisScopeGeneration, recordCheckout, RERAIL_DATABASE_FILE, retireAnalysisStore, scanContentStore, settleAnalysisScopeReleases,
 } from "../../src/engine/index.js";
 import { setCheckoutStarted, stopRerail } from "../../src/runtime/index.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -64,6 +64,26 @@ const scan = (repo: string, options: Partial<Parameters<typeof runHeadlessScan>[
 
 const directoryOwnerCount = (store: string): number | undefined =>
   queryContentStore<{ count: number }>(store, "SELECT count(*) AS count FROM analysis_scope_workspace_snapshot")[0]?.count;
+
+function storeRetirementFixture(home: string, control: string) {
+  const cli = (store: string, ...args: string[]) => {
+    const p = spawnSync(process.execPath, ["--import", "tsx", "src/cli/cli.ts", "--rerail-managed-child", ...args], {
+      env: { ...process.env, RERAIL_HOME: home, RERAIL_CONTENT_STORE_PATH: store }, encoding: "utf8",
+    });
+    expect(p.status, p.stderr || p.stdout).toBe(0);
+    return p.stdout;
+  };
+  const publish = (store: string, repo: string, ...extra: string[]) => {
+    const report: ScanReport = JSON.parse(cli(store, "scan", "--repo", repo, "--no-send", "--json", ...extra));
+    expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+    expect(report.cacheWarnings).toBeUndefined();
+  };
+  const stop = (root: string) => {
+    const db = openRerailDatabase(control);
+    try { db.transaction(tx => queueAnalysisScopeReleases(tx, [root], control)); } finally { db.$client.close(); }
+  };
+  return { cli, publish, stop };
+}
 
 describe("headless rerail scan", () => {
   const suiteStore = process.env.RERAIL_CONTENT_STORE_PATH;
@@ -2655,6 +2675,133 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
       await run();
     } finally { vi.unstubAllEnvs(); }
   }, 60_000);
+
+  it("retires an offline store by identity and delivers directory stops when it returns at a new path", async () => {
+    const first = checkout(), second = checkout(), home = first + "-home", control = join(home, "rerail.sqlite");
+    const former = join(home, "volume"), moved = join(home, "returned"), filename = "store.sqlite";
+    const original = join(former, filename), returned = join(moved, filename);
+    const { cli, publish, stop } = storeRetirementFixture(home, control);
+    const settle = () => settleAnalysisScopeReleases(control, -1);
+    const decisions = () => queryContentStore<{ directory: string; release_id: string }>(control + ".analysis-releases.sqlite",
+      "SELECT directory,release_id FROM analysis_retired_release ORDER BY directory");
+    const owners = (store: string) => queryContentStore<{ scope: string }>(store,
+      "SELECT DISTINCT scope FROM analysis_scope_manifest WHERE scope GLOB 'cwd:*' ORDER BY scope").map(r => r.scope);
+    mkdirSync(former, { recursive: true });
+    publish(original, first);
+    publish(original, second);
+    publish(original, first, "--revision", "HEAD", "--analysis-scope", "named-owner");
+    const [identity] = cli(original, "scope", "stores").trim().split("\t");
+    expect(identity).toBeTruthy();
+    expect(owners(original)).toHaveLength(2);
+    stop(first);
+    renameSync(former, moved);
+    expect(cli(original, "scope", "retire-store", identity!)).toContain("Retired 1");
+    expect(cli(original, "scope", "retire-store", identity!)).toContain("Retired 0");
+    expect(cli(original, "scope", "stores")).toBe("");
+    const pending = decisions();
+    expect(pending).toHaveLength(1);
+    stop(second);
+    const earlier = decisions().find(row => row.directory === second)!;
+    expect(earlier).toBeDefined();
+    stop(second);
+    settle();
+    expect(decisions()).toHaveLength(2);
+    const later = decisions().find(row => row.directory === second)!;
+    expect(Number(later.release_id.split(":")[0])).toBeGreaterThan(Number(earlier.release_id.split(":")[0]));
+    expect(decisions()).toContainEqual(pending[0]);
+    expect(existsSync(former)).toBe(false);
+
+    mkdirSync(former);
+    writeFileSync(original, "retired volume mount point");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", original);
+    const collect = vi.spyOn(loadNativeBinding(), "collectAnalysisCacheAsync").mockResolvedValue(undefined);
+    try {
+      await collectAnalysisCaches(control);
+      expect(collect.mock.calls.map(([file]) => file)).not.toContain(original);
+    } finally { collect.mockRestore(); vi.unstubAllEnvs(); }
+    rmSync(original);
+    publish(original, first);
+    const replacement = cli(original, "scope", "stores");
+    expect(replacement).not.toContain(identity + "\t");
+    expect(owners(original)).toHaveLength(1);
+    settle();
+    expect(decisions()).toHaveLength(2);
+    expect(owners(returned)).toHaveLength(2);
+    publish(returned, second);
+    expect(decisions()).toEqual([]);
+    expect(owners(original)).toHaveLength(1);
+    expect(owners(returned)).toHaveLength(1);
+    expect(cli(returned, "scope", "stores")).toContain(identity + "\t");
+    expect(cli(original, "scope", "delete", "named-owner")).toContain("Released scope");
+    expect(queryContentStore(returned, "SELECT scope FROM analysis_scope_manifest WHERE scope='named:named-owner'")).toEqual([]);
+  }, 120_000);
+
+  it("resumes a retired store through a named scan after replay fails and a replacement has registered", () => {
+    const first = checkout(), survivor = checkout(), home = first + "-home", control = join(home, "rerail.sqlite");
+    const former = join(home, "former"), moved = join(home, "moved");
+    const oldPath = join(former, "store.sqlite"), newPath = join(moved, "store.sqlite");
+    const { publish, stop } = storeRetirementFixture(home, control);
+    mkdirSync(former, { recursive: true });
+    publish(oldPath, first);
+    publish(oldPath, survivor);
+    const identity = listAnalysisStores(control)[0]!.identity;
+    stop(first);
+    renameSync(former, moved);
+    mkdirSync(former);
+    publish(oldPath, first);
+    expect(listAnalysisStores(control)).toHaveLength(2);
+    expect(retireAnalysisStore(control, identity)).toBe(1);
+    expect(listAnalysisStores(control)).toHaveLength(1);
+    expect(directoryOwnerCount(oldPath)).toBe(1);
+
+    const engine = loadNativeBinding(), remove = engine.deleteAnalysisScope;
+    const crash = vi.spyOn(engine, "deleteAnalysisScope").mockImplementationOnce((...args) => {
+      remove(...args);
+      throw new Error("interrupted after store delivery");
+    });
+    try {
+      expect(() => acquireNamedAnalysisRun(control, "retry", newPath, "interrupted")).toThrow("interrupted after store delivery");
+    } finally { crash.mockRestore(); }
+    expect(listAnalysisStores(control)).toHaveLength(1);
+    expect(directoryOwnerCount(newPath)).toBe(1);
+    expect(queryContentStore(control + ".analysis-releases.sqlite", "SELECT release_id FROM analysis_retired_release")).toHaveLength(1);
+    publish(newPath, first, "--revision", "HEAD", "--analysis-scope", "retry");
+    expect(queryContentStore(control + ".analysis-releases.sqlite", "SELECT release_id FROM analysis_retired_release")).toEqual([]);
+    expect(listAnalysisStores(control).filter(route => route.identity === identity)).toEqual([{ identity, path: newPath }]);
+    expect(directoryOwnerCount(newPath)).toBe(1);
+    expect(directoryOwnerCount(oldPath)).toBe(1);
+    stop(survivor);
+    settleAnalysisScopeReleases(control, -1);
+    expect(directoryOwnerCount(newPath)).toBe(0);
+    expect(directoryOwnerCount(oldPath)).toBe(1);
+  }, 120_000);
+
+  it("retires unused store paths without accumulating routing or release rows", () => {
+    const repo = checkout(), home = repo + "-home", control = join(home, "rerail.sqlite");
+    mkdirSync(home);
+    for (let i = 0; i < 8; i++) {
+      const path = join(home, `store-${i}.sqlite`), scanId = `scan-${i}`;
+      const run = acquireNamedAnalysisRun(control, "unused", path, scanId);
+      run.finish(false);
+      finishNamedAnalysisRegistration(control, "unused", scanId, run);
+      const registry = new Database(control + ".analysis-stores.sqlite");
+      try {
+        registry.exec("CREATE TABLE IF NOT EXISTS analysis_store(path TEXT PRIMARY KEY)");
+        registry.prepare("INSERT INTO analysis_store VALUES (?)").run(path);
+      } finally { registry.close(); }
+      expect(retireAnalysisStore(control, run.storeIdentity)).toBe(1);
+      expect(retireAnalysisStore(control, run.storeIdentity)).toBe(0);
+    }
+    expect(listAnalysisStores(control)).toEqual([]);
+    const registry = new Database(control + ".analysis-stores.sqlite", { readonly: true });
+    try {
+      for (const table of ["analysis_store", "analysis_maintenance_store", "analysis_maintenance_identity",
+        "analysis_retired_route", "analysis_retired_directory", "analysis_named_acquisition", "analysis_named_store"]) {
+        expect(registry.prepare(`SELECT count(*) FROM ${table}`).pluck().get(), table).toBe(0);
+      }
+    } finally { registry.close(); }
+    expect(queryContentStore(control + ".analysis-releases.sqlite", "SELECT release_id FROM analysis_retired_release")).toEqual([]);
+  });
 
   it("recovers committed directory stops after restoring the control database across worker crashes", async () => {
     const root = checkout(), home = root + "-home", control = join(home, "rerail.sqlite"), backup = control + ".backup", pending = control + ".pending";

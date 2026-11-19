@@ -106,6 +106,7 @@ export {
   deleteNamedAnalysisScope, finishNamedAnalysisRegistration, queueAnalysisScopeReleases, readAnalysisScopeGeneration,
   scanContentStore, settleAnalysisScopeReleases,
 } from "./native/analysis-scope.js";
+export { listAnalysisStores, retireAnalysisStore } from "./native/analysis-store-retirement.js";
 export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
 export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";

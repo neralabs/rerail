@@ -191,6 +191,12 @@ The reported scope path uses the directory name stored on disk, including its le
 Rerail records the stores used by filesystem scans and watches.
 A stop releases scopes in those stores even if the configured store changes.
 
+Use `rerail scope stores` to list each registered store identity and path.
+If a store goes offline permanently or moves, run `rerail scope retire-store <identity>`.
+Maintenance stops polling its path. Rerail remembers directory stops for that identity.
+If a scan uses the original store again, Rerail delivers those stops at its current path.
+A replacement store at the old path keeps its own scopes.
+
 ### In CI
 
 A CI runner starts with an empty Rerail home. Install packs, approve **from the base branch's content** (never the

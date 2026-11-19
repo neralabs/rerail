@@ -63,6 +63,7 @@ import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { deleteNamedAnalysisScope } from "../engine/native/analysis-scope.js";
+import { listAnalysisStores, retireAnalysisStore } from "../engine/native/analysis-store-retirement.js";
 import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
@@ -192,6 +193,8 @@ function usage(): string {
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
     "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--revision <commit-or-tree> --analysis-scope <name>] [--rules-ref <ref>] [--pack <id>]... [--rr <file>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
     "  rerail scope delete <name> [--store <file>]",
+    "  rerail scope stores",
+    "  rerail scope retire-store <identity>",
     "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]",
     "  rerail remote list|status [--json]",
     "  rerail remote remove <name|url>",
@@ -784,8 +787,17 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
     case "state": return runStateCommand(args);
     case "scope": {
       const [action, name, flag, path] = args;
+      if (action === "stores" && args.length === 1) {
+        for (const route of listAnalysisStores(defaultRerailDatabasePath())) process.stdout.write(`${route.identity}\t${JSON.stringify(route.path)}\n`);
+        return 0;
+      }
+      if (action === "retire-store" && name?.trim() && args.length === 2) {
+        const count = retireAnalysisStore(defaultRerailDatabasePath(), name);
+        process.stdout.write(`Retired ${count} maintenance routes for store ${JSON.stringify(name)}.\n`);
+        return 0;
+      }
       if (action !== "delete" || !name?.trim() || (args.length !== 2 && !(args.length === 4 && flag === "--store" && path))) {
-        throw new Error("Usage: rerail scope delete <name> [--store <file>]");
+        throw new Error("Usage: rerail scope stores\n       rerail scope retire-store <identity>\n       rerail scope delete <name> [--store <file>]");
       }
       const { store, hadMembers } = await deleteNamedAnalysisScope(defaultRerailDatabasePath(), name, path);
       process.stdout.write(hadMembers ? `Released scope ${JSON.stringify(name)} in ${store}.\n` : `No published ownership for scope ${JSON.stringify(name)} in ${store}.\n`);
