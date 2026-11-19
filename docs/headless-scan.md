@@ -147,6 +147,11 @@ Approvals apply to the policy and include bytes that the scan reads.
 A `.rr` policy load error fails the scan, including with `--rules-ref`.
 Explicit `--rr` scans use the registered repository identity when it exists.
 Paths, package configuration, and `.rerailignore` come from the selected tree.
+When an unlisted file exceeds the per-file byte limit, Rerail inspects its first 8,000 bytes.
+A NUL in that prefix skips the file as binary. A text prefix produces a byte-budget failure.
+An unreadable prefix produces a source-read failure. A revision scan reads the prefix from the Git object database.
+For a packed delta, the reader follows copy instructions to obtain the required ranges from its base.
+The prefix serves only to classify the file. Acquiring a content handle still verifies the entire object before storing its bytes.
 With `--path` or `--paths-from`, a directory selects its descendants.
 The path `.` selects the entire tree. The scan still applies the ignore rules.
 Python package lookup uses the markers in the selected tree, including markers outside the scan paths.
