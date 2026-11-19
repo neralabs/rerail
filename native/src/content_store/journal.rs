@@ -667,8 +667,7 @@ mod fsevents {
             let t = Instant::now();
             let fresh = all[at].synced.is_none_or(|(e, _)| e != epoch);
             let first = all[at].synced.is_none();
-            // The caller's bound (Q221) shortens the cookie's wait, never lengthens it.
-            let r = sync(&mut all[at], epoch, wait.map_or(WAIT.max(settle), |w| w.min(WAIT.max(settle))));
+            let r = sync(&mut all[at], epoch, WAIT.max(settle));
             if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
                 let live = &all[at];
                 let (n, history, cookie) = live.shared.seen.lock().map(|s| (s.events.len(), s.history_at, s.cookie_at)).unwrap_or((0, None, None));
