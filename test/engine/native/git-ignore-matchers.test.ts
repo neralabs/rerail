@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -144,6 +144,26 @@ describe("GitIgnoreMatchers", () => {
     const said = errors.mock.calls.map(([text]) => String(text)).filter(text => text.includes("cannot tell whether Git ignore rules changed"));
     expect(said).toHaveLength(2);
     expect(said.every(text => text.includes("cannot read the Git configuration"))).toBe(true);
+  });
+
+  it("gives a router that held the matcher before a later one took it the index Git rewrote within the time step of the later one's read", async () => {
+    const { main } = await checkout();
+    const index = join(main, ".git", "index");
+    await mkdir(join(main, "gen"));
+    await writeFile(join(main, "gen", "x.py"), "X = 1\n");
+    const matchers = new GitIgnoreMatchers();
+    const earlier = matchers.matcher(main, user("earlier"));
+    expect(earlier?.ignored("gen/x.py", false)).toBe(true);
+    // The index moves on to a whole second (a time every file system keeps exactly), and a later router reads it.
+    await writeFile(join(main, "k.py"), "K = 1\n");
+    git(main, "add", "k.py");
+    const moved = Math.ceil(Date.now() / 1000) + 1;
+    await utimes(index, moved, moved);
+    expect(matchers.matcher(main, user("later"))?.ignored("gen/x.py", false)).toBe(true);
+    // Git writes the index again within that time step: a new file with the same time.
+    git(main, "add", "-f", "gen/x.py");
+    await utimes(index, moved, moved);
+    expect(earlier?.ignored("gen/x.py", false)).toBe(false);
   });
 
   it("gives a router that asks after the checkout's .gitignore changed a matcher that follows it, and leaves an earlier one's as it was", async () => {
