@@ -10736,25 +10736,26 @@ fn view_digest(reads: Option<&[(String, u64)]>, members: &[(String, Option<u64>)
 /// changes when any rule it is derived from does. A relation no rule derives (an input, the program's facts) is
 /// named by its name, its declaration and its facts. `sccs` in the order the strata run.
 ///
-/// Read from the program's version: `f` its fields, its rules (`by_stratum`'s) by their handles in `vs`. The digest
-/// is of the tree's text (`tree_text`), written from the handles, so it is the one the tree's gave.
+/// Read from the program's version (0173 step 6): `f` its fields, its rules (`by_stratum`'s) by their handles in `vs`,
+/// each in the digest by its image hash (`RuleRef::hash`, of its texts and values, the same in every process), and
+/// each relation by its parts' (`identity_parts`).
 pub fn identities(f: Fields<'_>, vs: &body::Versions, sccs: &[BTreeSet<String>], by_stratum: &[Vec<RuleKey>]) -> HashMap<String, [u8; 32]> {
     use sha2::{Digest as _, Sha256};
     let leaf = |rel: &str| leaf_identity(f, rel);
     let mut out: HashMap<String, [u8; 32]> = HashMap::new();
     for (scc, rules) in sccs.iter().zip(by_stratum) {
         let mut h = Sha256::new();
-        h.update(b"rerail.relation/v1\0");
+        h.update(b"rerail.relation/v2\0");
         h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
         for rel in scc {
             h.update(rel.as_bytes());
-            h.update(format!("\0{}\0", tree_text::shape(&f, rel)).as_bytes());
-        }
-        let mut texts: Vec<String> = rules.iter().map(|&r| tree_text::rule(&vs.at(r))).collect();
-        texts.sort();
-        for t in &texts {
-            h.update(t.as_bytes());
             h.update(b"\0");
+            identity_parts::put(&mut h, &f, rel, true);
+        }
+        let mut hashes: Vec<u64> = rules.iter().map(|&r| vs.at(r).rule.hash()).collect();
+        hashes.sort_unstable();
+        for x in &hashes {
+            h.update(x.to_le_bytes());
         }
         for r in stratum_reads(f, vs, scc, rules) {
             if !scc.contains(&r) {
@@ -10778,9 +10779,10 @@ pub fn identities(f: Fields<'_>, vs: &body::Versions, sccs: &[BTreeSet<String>],
 pub fn leaf_identity(f: Fields<'_>, rel: &str) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut h = Sha256::new();
-    h.update(b"rerail.relation/v1\0leaf\0");
+    h.update(b"rerail.relation/v2\0leaf\0");
     h.update(rel.as_bytes());
-    h.update(tree_text::leaf(&f, rel).as_bytes());
+    h.update(b"\0");
+    identity_parts::put(&mut h, &f, rel, false);
     h.finalize().into()
 }
 
@@ -13251,7 +13253,7 @@ pub mod fields;
 pub mod acyclic;
 pub mod estimates;
 pub mod sql_kernel;
-pub mod tree_text;
+pub mod identity_parts;
 
 // cratify: `tests` is rerail-engine's (it mounts it)
 

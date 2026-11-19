@@ -943,37 +943,30 @@ fn a_versions_fields_say_what_its_readers_say() {
     fields_agree(&every_field());
 }
 
-/// A relation's identity (`plan::identities`) is a digest of the text `plan::tree_text` writes from the version's
-/// handles: the text the tree's `Debug` wrote, byte for byte, or every kept stratum's key would change. These are
-/// that text's lines for `every_field`'s rules and relations, as the tree wrote them (0276 step 6 froze them when
-/// the tree went).
+/// A relation's identity (`plan::identities`, 0173 step 6) is of its rules' and parts' hashes as the version keeps
+/// them: the same for the same program made again (parsed again, or derived with its rules copied), and another when
+/// a rule of its stratum, its declaration or its facts change.
 #[test]
-fn a_relations_identity_text_is_kept() {
-    use crate::code_rule_dsl::logic::plan::{body, body::Placed, fields::Fields, tree_text};
-    let v = every_field();
-    let rules: Vec<String> = (0..v.rules().count()).map(|k| tree_text::rule(&body::nth(&v, k))).collect();
-    let placed = Placed::whole(v.clone());
-    let f = Fields::of(&placed).unwrap();
-    let rels: Vec<String> = ["r", "k", "empty", "reach_x", "joined", "unit", "no_such_relation"].iter().map(|rel| format!("{}\n{}", tree_text::shape(&f, rel), tree_text::leaf(&f, rel))).collect();
-    let (want_rules, want_rels): (&[&str], &[&str]) = (IDENTITY_RULES, IDENTITY_RELS);
-    assert_eq!(rules, want_rules, "{rules:#?}");
-    assert_eq!(rels, want_rels, "{rels:#?}");
+fn a_relations_identity_is_its_versions_hashes() {
+    use crate::code_rule_dsl::logic::plan::{self, body, body::Placed, fields::Fields};
+    let ids = |text: &str| {
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+        let placed = Placed::whole(v.clone());
+        let f = Fields::of(&placed).unwrap();
+        let vs = body::Versions::of_placed(placed.clone());
+        let rules: Vec<_> = (0..v.rules().count()).map(body::RuleKey::program).collect();
+        let sccs = [BTreeSet::from(["r".to_owned()])];
+        (plan::identities(f, &vs, &sccs, &[rules])["r"], plan::leaf_identity(f, "e"))
+    };
+    let base = ".decl e(x: number, y: number)\n.input e\n.decl r(x: number, y: number)\n.output r\ne(1, 2).\nr(x, y) :- e(x, y).\n";
+    let (r, e) = ids(base);
+    assert_eq!(ids(base), (r, e), "made again, the same");
+    assert_ne!(ids(&base.replace("r(x, y) :- e(x, y)", "r(y, x) :- e(x, y)")).0, r, "a rule edit");
+    assert_ne!(ids(&base.replace(".decl r(x: number, y: number)", ".decl r(x: number, z: number)")).0, r, "a declaration edit");
+    let (r2, e2) = ids(&base.replace("e(1, 2).", "e(1, 3)."));
+    assert_ne!(e2, e, "a fact edit changes the input's identity");
+    assert_ne!(r2, r, "and every identity that reads it");
 }
-
-const IDENTITY_RULES: &[&str] = &[
-    "Rule { head: Atom { rel: \"r\", args: [Var(\"x\"), Call(\"cat\", [Var(\"top\"), Str(\"s\")])], neg: false, gated: false }, body: [Atom(Atom { rel: \"a\", args: [Var(\"x\"), Var(\"count_\"), Var(\"min\")], neg: false, gated: false }), Atom(Atom { rel: \"b\", args: [Wild, Top], neg: true, gated: false }), Atom(Atom { rel: \"done_x\", args: [Var(\"x\")], neg: true, gated: true }), Cmp { l: Var(\"x\"), op: \"<=\", r: Int(-9223372036854775808) }, Cmp { l: Call(\"rx\", [Var(\"x\"), Str(\"^a$\")]), op: \"=\", r: Int(1099511627776) }] }",
-    "Rule { head: Atom { rel: \"nearest\", args: [Var(\"n\")], neg: false, gated: false }, body: [Agg { var: \"n\", op: Count, over: None, atom: Atom { rel: \"a\", args: [Var(\"x\"), Wild], neg: false, gated: false } }, Agg { var: \"m\", op: Min, over: Some(\"y\"), atom: Atom { rel: \"a\", args: [Var(\"y\")], neg: false, gated: false } }, Agg { var: \"s\", op: Sum, over: None, atom: Atom { rel: \"a\", args: [Var(\"y\")], neg: false, gated: false } }, Agg { var: \"j\", op: Join { by: [\"k\", \"sep\"], sep: \", \" }, over: Some(\"y\"), atom: Atom { rel: \"ast\", args: [Var(\"y\"), Var(\"k\"), Var(\"sep\")], neg: false, gated: false } }, Agg { var: \"j2\", op: Join { by: [], sep: \"\" }, over: Some(\"y\"), atom: Atom { rel: \"a\", args: [Var(\"y\")], neg: false, gated: false } }, Ast { document: \"d\", node: \"n\", matcher: \"{\\\"kind\\\": \\\"call\\\"}\", captures: [(\"NAME\", \"v\")] }] }",
-    "Rule { head: Atom { rel: \"unit\", args: [], neg: false, gated: false }, body: [] }",
-];
-const IDENTITY_RELS: &[&str] = &[
-    "(Some([(\"c\", \"int\"), (\"d\", \"sym\")]), None, None, None, false)\nSome([(\"c\", \"int\"), (\"d\", \"sym\")])\nNone",
-    "(None, Some([[Int(-9223372036854775808), Str(\"q\\\"\\\\\\n\\u{1}é\")], [Int(-3), Str(\"\")]]), None, None, false)\nNone\nSome([[Int(-9223372036854775808), Str(\"q\\\"\\\\\\n\\u{1}é\")], [Int(-3), Str(\"\")]])",
-    "(None, Some([]), None, None, false)\nNone\nSome([])",
-    "(None, None, Some(Reach { seed: \"s\", edge: \"e\" }), None, false)\nNone\nNone",
-    "(None, None, None, Some(LatticeDecl { keys: 2, ty: \"sym\", merge: Some(\"type_join\"), widen: Some(3) }), false)\nNone\nNone",
-    "(None, None, None, None, true)\nNone\nNone",
-    "(None, None, None, None, false)\nNone\nNone",
-];
 
 // ---- the pass manager (decision 0281) ----
 

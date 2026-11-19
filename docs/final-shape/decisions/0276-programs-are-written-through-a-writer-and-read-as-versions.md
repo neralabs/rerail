@@ -589,6 +589,16 @@ Progress (2026-11-18):
     print alone, goes.
   - *Done (shared domains).* `Lowered::domains` is an `Arc<Domains>`: a part or an edit (`with_version`) shares
     its program's, never copies them.
+  - *Done (identities by the version, 0173 step 6).* A relation's identity is of its stratum's rules' image hashes
+    (sorted), its declaration's and facts' hashes, and its native's, lattice's and nullary fields
+    (`plan::identity_parts`), under `rerail.relation/v2`; not of the tree's `Debug` text written again from the handles
+    (`tree_text`, gone, with its frozen golden text). Every store's kept strata are cold once. Locked by
+    `a_relations_identity_is_its_versions_hashes`.
+  - *Met by what exists (`fields()`, `freeze`, `pass`).* The grouped field writer is `program_image::fields::FieldsMut`
+    (step 3's fields), which every pass writes through; `Builder`'s own setters are its implementation, not a second
+    surface a pass picks between. `Pipeline` is the `pass` wrapper: it takes each step's span, writer form, delta and
+    trace. Of 139 `Placed::whole` calls, 4 wrap a builder just finished, so `freeze -> Placed` would change only
+    those; not made.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 
