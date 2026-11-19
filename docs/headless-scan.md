@@ -248,6 +248,17 @@ A detached HEAD has a null ref and no `refHex`.
 - **`fingerprint`**: stable across scans, so you can tell new findings from existing ones.
 - **`failures`**: execution failures and coverage gaps, as an audit records them ([reference](reference.md#scan-and-settings-controls)).
 
+### Locations for commit findings
+
+In a `.rr` violation head, use `@git_commit_location(repo, commit)` to identify a commit.
+Add a third argument to identify a metadata field, for example `@git_commit_location(r, c, "message")`.
+Use the repository and commit from the rule. A policy can report a parent of the selected revision.
+
+The JSON finding carries `location` with `kind: "git-commit"`, `repository`, `commit`, and `field`.
+The field is null when the rule supplies two arguments. The finding's `path`, `start`, and `end` are null.
+The text report prints the repository, full commit ID and field when present.
+These values also identify the location for fingerprinting. A file named `git` keeps its file path and source position.
+
 <details>
 <summary>Exact field semantics</summary>
 
