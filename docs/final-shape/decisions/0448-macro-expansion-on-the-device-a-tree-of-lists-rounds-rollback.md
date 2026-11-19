@@ -183,3 +183,24 @@ outermost call becomes the queue's first items.
     order and sorted stably by their name's key alone, so equal names stay in position order.
     No other pass sorts: duplicate parameters are compared in their definition's SIMD group,
     and a `(`'s `)` is found in a pyramid of depth minima (below).
+- **R2, the definitions** (`rerail_metal::pp_expand::Defs`, `pd_defs`, `pd_params`,
+  `pd_items`), in the front passes' command buffer:
+  - S1, one thread a directive row: the name leaf, the `params` node, the `body` node (their
+    places in the tape: `#`, word, name, then each node);
+  - S2, one thread a parameter list's leaf, placed by a scan: each leaf checked against the one
+    before it (`parse_define`'s list as pairs: `(` or `,` then a name or `...`; a name then `,`,
+    `)` or GNU's `...`; `...` then `)`; `)` last), a bad pair setting the definition's `D_BAD`
+    by an atomic OR; each parameter's key at its slot;
+  - S4, one thread a body leaf: its parameter (its key against its definition's, a loop over
+    at most its parameters), `##` as the paste operator inside the list, and `SPACE` from the
+    bytes between it and the token before (anything but line splices).
+  - **Memory:** the parameter and body stores are rung-sized (`RUNGS` = 4, the unit's nodes
+    >> 3 at rung 0, all of them at the last); a leaf past the room sets `room`, and the unit
+    runs again at the next rung. A unit's buffers must fit the 512 MB budget: the corpus
+    runs as units of 500 files.
+  - **Names are keyed by their phase-2 spelling**: a line splice inside a name (`std\⏎int`)
+    is left out, by a slow path for a name with a `\` in it (word-wise test first), on the
+    device and in `name_key`.
+  - Every one of the corpus's 8,136 `#define`s and the unit shapes' (malformed ones, empty
+    parameter lists, GNU's and C99's variadics, `##` at the ends, splices) equals the serial
+    pass's `Def` (`the_definitions_are_the_serial_passes`).

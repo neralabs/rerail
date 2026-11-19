@@ -113,3 +113,83 @@ fn the_directives_pass_gives_the_spikes_tables() {
     same(got.dir_keys.len(), rows, "the rows' keys");
     eprintln!("{} files, {rows} directives, {} guarded", files.len(), got.guards.iter().filter(|&&g| g != 0).count());
 }
+
+/// R2 of decision 0448: every `#define`'s definition, as the setup makes it from the tape on the
+/// device (`pp_expand::definitions`: S1 a thread a row, S2 a thread a parameter list's leaf, S4 a
+/// thread a body leaf), is the serial pass's (`Pp::parse_define`, through the spike's
+/// `parallel::tables`): malformed or not, function-like, variadic, the parameters' names, and each
+/// body token's spelling, parameter, paste operator and white space before it.
+#[test]
+fn the_definitions_are_the_serial_passes() {
+    use rerail_metal::pp_expand::{D_BAD, D_DEFINE, D_FNLIKE, D_VARIADIC, I_PASTE, I_SPACE, NO_PARAM, definitions};
+    let shapes: [&[u8]; 13] = [
+        b"#define A\n#define B 1\n#define C (1)\n#define D(x) x\n",
+        b"#define F(a, b) a ## b # a b##a\n#define G(...) __VA_ARGS__\n#define H(a, ...) a __VA_ARGS__\n",
+        b"#define I(a...) a\n#define J() j\n#define K(a,) k\n#define L(a b) l\n#define M(... x) m\n",
+        b"#define N(a\n#define\n#define 1\n#define O(a, a) a\n#define P ## x ##\n",
+        b"#define Q   spaced   out  \n#define R(x)x/**/y\n#define S a\\\n  b\n",
+        b"#define T(x, y) #x #y x ## y __VA_OPT__(x)\n#undef T\n#define U(x) x\n",
+        b"#define V(...) __VA_OPT__(a ## __VA_ARGS__)\n#define W(x...) #x\n",
+        b"#if 1\n#define X 1\n#else\n#define X 2\n#endif\n",
+        b"#define Y(\n#define Z(a,b,c,d,e,f,g,h,i,j) j i h g f e d c b a\n",
+        b"#define AA (x) y\n#define BB() \n#define CC(a)\t a\n",
+        b"#define DD <a.h>\n#define EE \"s\" 'c' L\"w\" 1.2e+3\n",
+        b"#define FF(a) a##\n#define GG(a) ##a\n#define HH(a) a ## ## a\n",
+        b"#define II std\\\nint \\  \n x\n#define JJ(a\\\n) a\n",
+    ];
+    let mut files: Vec<(Vec<u8>, Vec<u8>, bool)> = Vec::new();
+    for s in shapes {
+        for cpp in [false, true] {
+            files.push((s.to_vec(), image(s, crate::pp::options(cpp)), cpp));
+        }
+    }
+    files.extend(corpus_in());
+    // Units of 500 files: a batch's buffers stay inside the device's budget (0448 §2).
+    let (mut defines, mut malformed) = (0usize, 0usize);
+    for (c, chunk) in files.chunks(500).enumerate() {
+    let unit = Unit::load(&chunk.iter().map(|(s, t, _)| (s.as_slice(), t.as_slice())).collect::<Vec<_>>()).unwrap();
+    let (got, d) = definitions(&unit).unwrap();
+    let mut rows = 0usize;
+    for (f, (src, tape, cpp)) in chunk.iter().enumerate() {
+        let f = c * 500 + f;
+        let tables = rerail_c_pp::stream::parallel::tables(crate::pp::options(*cpp), src);
+        let v = View::new(tape).unwrap();
+        let base = got.bases[f % 500] as usize;
+        for (k, w) in tables.dirs.iter().enumerate() {
+            let r = rows + k;
+            let def = d.defs[r];
+            let at = format!("file {f} directive {k}");
+            if w.kind != rerail_c_pp::tape::kind_id(rerail_c_pp::directives::Kind::Define) {
+                same(def.flags, 0, format!("{at}: no definition"));
+                continue;
+            }
+            defines += 1;
+            same(def.flags & D_DEFINE, D_DEFINE, format!("{at}: a define"));
+            let Some(want) = &w.def else {
+                malformed += 1;
+                same(def.flags & D_BAD, D_BAD, format!("{at}: malformed"));
+                continue;
+            };
+            same(def.flags & D_BAD, 0, format!("{at}: well-formed"));
+            same((def.flags & D_FNLIKE != 0, def.flags & D_VARIADIC != 0), (want.fnlike, want.variadic), format!("{at}: function-like, variadic"));
+            if want.fnlike {
+                let first = def.pfirst as usize;
+                let params: Vec<u64> = (1..def.n_params as usize).step_by(2).map(|k| d.pkeys[first + k]).filter(|&k| k != 0).collect();
+                same(params, want.params.iter().map(|p| name_key(p)).collect(), format!("{at}: the parameters {:?}", want.params.iter().map(|p| String::from_utf8_lossy(p)).collect::<Vec<_>>()));
+            }
+            same(def.n_body as usize, want.body.len(), format!("{at}: the body's tokens"));
+            for (j, (text, param, paste, space)) in want.body.iter().enumerate() {
+                let i = def.body as usize - base + j;
+                let spelled = rerail_metal::pp_eval::phase2(&src[v.start(i) as usize..v.end(i) as usize]);
+                let item = d.items[def.ifirst as usize + j];
+                let p = item & 0xffff;
+                same(&*spelled, text.as_slice(), format!("{at}: body token {j}'s spelling"));
+                same((if p == NO_PARAM { None } else { Some(p as usize) }, item & I_PASTE != 0, item & I_SPACE != 0), (*param, *paste, *space), format!("{at}: body token {j} {:?}", String::from_utf8_lossy(text)));
+            }
+        }
+        rows += tables.dirs.len();
+    }
+    same(d.defs.len(), rows, "the rows");
+    }
+    eprintln!("{} files, {defines} defines, {malformed} malformed", files.len());
+}

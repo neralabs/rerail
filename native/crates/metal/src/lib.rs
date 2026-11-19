@@ -18,6 +18,8 @@ pub mod launch_budget;
 /// The building blocks of the preprocessor's grid passes (decision 0448).
 pub mod pp_blocks;
 pub mod pp_eval;
+/// Macro expansion on the device (decision 0448).
+pub mod pp_expand;
 /// The preprocessing words on the device (decision 0348, stage 5).
 pub mod pp_on;
 /// Pre-pinned blocks (decision 0039): the device's scratch buffers, made once and reused.

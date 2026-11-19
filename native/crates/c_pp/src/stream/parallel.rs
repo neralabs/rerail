@@ -168,6 +168,19 @@ pub struct DirRow {
     pub chain: u32,
     /// The name it defines, undefines or tests (`#ifdef`, `#ifndef`, `#elifdef`, `#elifndef`).
     pub name: Option<Vec<u8>>,
+    /// A well-formed `#define`'s definition, as `Pp::parse_define` makes it.
+    pub def: Option<DefView>,
+}
+
+/// A definition as the evaluator's setup makes it from the tape (decision 0448, R2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DefView {
+    pub fnlike: bool,
+    pub variadic: bool,
+    /// The parameters' spellings (`__VA_ARGS__` for a `...` of its own).
+    pub params: Vec<Vec<u8>>,
+    /// The body's tokens: spelling, its parameter's index, a paste operator, white space before it.
+    pub body: Vec<(Vec<u8>, Option<usize>, bool, bool)>,
 }
 
 /// A file's P0 tables, as the evaluator's file pass makes them: its directives, its groups'
@@ -203,7 +216,19 @@ pub fn tables(opts: crate::Options, src: &[u8]) -> Tables {
                 _ => None,
             };
             let name = sym.map(|s| pp.syms.text(s).to_vec());
-            DirRow { kind: crate::tape::kind_id(dir.kind), text_before: dir.text_before, group: dir.group, after: dir.after, chain: chain[d], name }
+            let def = match dir.act {
+                files::Act::Define(k) => {
+                    let def = &pp.defs[k as usize];
+                    Some(DefView {
+                        fnlike: def.fnlike,
+                        variadic: def.variadic,
+                        params: def.params.iter().map(|&p| pp.syms.text(p).to_vec()).collect(),
+                        body: def.body.iter().map(|t| (pp.text(t).to_vec(), def.param(t.sym), t.flags & crate::macros::PASTE != 0, t.flags & crate::macros::SPACE != 0)).collect(),
+                    })
+                }
+                _ => None,
+            };
+            DirRow { kind: crate::tape::kind_id(dir.kind), text_before: dir.text_before, group: dir.group, after: dir.after, chain: chain[d], name, def }
         })
         .collect();
     Tables { dirs: rows, groups: tab.groups.len() as u32, guard: tab.guard.map(|g| pp.syms.text(g).to_vec()) }

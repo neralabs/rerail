@@ -79,36 +79,6 @@ kernel void pp_counts(device const PpFile* files [[buffer(0)]], device const uch
     if (code_bytes != 6u * t.codes) atomic_fetch_or_explicit(bad, 1u << 31, memory_order_relaxed);
 }
 
-// The exclusive prefix sum of `counts` (each file's first node in the unit), the total, and the
-// arguments of a dispatch of one thread a node in groups of 256. One threadgroup of 1024 threads:
-// each sums a run of files, the runs' sums are scanned, and each run is written.
-kernel void pp_scan(device const uint* counts [[buffer(0)]], device uint* bases [[buffer(1)]],
-                    device uint* total [[buffer(2)]], device uint* args [[buffer(3)]],
-                    constant uint& n [[buffer(4)]], uint l [[thread_position_in_threadgroup]],
-                    uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
-    threadgroup uint sums[32];
-    uint per = (n + 1023u) / 1024u;
-    uint a = min(l * per, n), b = min(a + per, n);
-    uint s = 0u;
-    for (uint f = a; f < b; f++) s += counts[f];
-    uint before = simd_prefix_exclusive_sum(s);
-    if (lane == 31u) sums[sg] = before + s;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (sg == 0u) sums[lane] = simd_prefix_exclusive_sum(sums[lane]);
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    uint run = sums[sg] + before;
-    for (uint f = a; f < b; f++) {
-        bases[f] = run;
-        run += counts[f];
-    }
-    if (l == 1023u) {
-        total[0] = run;
-        args[0] = (run + 255u) / 256u;
-        args[1] = 1u;
-        args[2] = 1u;
-    }
-}
-
 // The file of the unit's node `g`: the last whose first node is at or before it.
 inline uint file_of(device const uint* bases, uint n_files, uint g) {
     uint lo = 0u, hi = n_files;
@@ -128,15 +98,71 @@ inline ulong word_at(device const ulong* d, uint a) {
     return r == 0u ? lo : (lo >> r) | (d[q + 1u] << (64u - r));
 }
 
-// A name's key: its bytes a word at a time (`rerail_metal::pp_eval::name_key`).
+// Where a line splice at byte `i` (a `\\`, blanks, then a newline) ends, before `end`; `i`
+// where there is none (`rerail_c_lean::pp`'s `splice_at`).
+inline uint splice_end(device const uchar* b, uint i, uint end) {
+    uint k = i + 1u;
+    for (; k < end && (b[k] == uchar(' ') || b[k] == uchar('\t') || b[k] == 0x0bu || b[k] == 0x0cu); k++) {}
+    if (k < end && b[k] == uchar('\n')) return k + 1u;
+    if (k + 1u < end && b[k] == uchar('\r') && b[k + 1u] == uchar('\n')) return k + 2u;
+    return i;
+}
+
+// Whether a word holds the byte `c` (a zero byte of `w ^ c…c`).
+inline bool word_has(ulong w, uchar c) {
+    ulong x = w ^ (0x0101010101010101ul * ulong(c));
+    return ((x - 0x0101010101010101ul) & ~x & 0x8080808080808080ul) != 0ul;
+}
+
+inline ulong key_mix(ulong h, ulong w) {
+    h = (h ^ w) * 0xff51afd7ed558ccdul;
+    return h ^ (h >> 32);
+}
+
+// A name's key: its bytes a word at a time, line splices left out (its phase-2 spelling,
+// `rerail_metal::pp_eval::name_key`). A name with no `\\` is read a word at a time; one with
+// one is read again a byte at a time, which only a splice inside a name needs.
 inline ulong name_key(device const ulong* d, uint a, uint len) {
-    ulong h = 0x9e3779b97f4a7c15ul ^ ulong(len);
+    bool slash = false;
     for (uint k = 0u; k < len; k += 8u) {
         ulong w = word_at(d, a + k);
         uint left = len - k;
         if (left < 8u) w &= (1ul << (left * 8u)) - 1ul;
-        h = (h ^ w) * 0xff51afd7ed558ccdul;
-        h ^= h >> 32;
+        slash |= word_has(w, uchar('\\'));
+    }
+    ulong h;
+    if (!slash) {
+        h = 0x9e3779b97f4a7c15ul ^ ulong(len);
+        for (uint k = 0u; k < len; k += 8u) {
+            ulong w = word_at(d, a + k);
+            uint left = len - k;
+            if (left < 8u) w &= (1ul << (left * 8u)) - 1ul;
+            h = key_mix(h, w);
+        }
+    } else {
+        device const uchar* b = (device const uchar*)d;
+        uint end = a + len, n = 0u;
+        for (uint i = a; i < end;) {
+            uint e = b[i] == uchar('\\') ? splice_end(b, i, end) : i;
+            if (e != i) { i = e; continue; }
+            n++;
+            i++;
+        }
+        h = 0x9e3779b97f4a7c15ul ^ ulong(n);
+        ulong w = 0ul;
+        uint m = 0u;
+        for (uint i = a; i < end;) {
+            uint e = b[i] == uchar('\\') ? splice_end(b, i, end) : i;
+            if (e != i) { i = e; continue; }
+            w |= ulong(b[i]) << (8u * m);
+            i++;
+            if (++m == 8u) {
+                h = key_mix(h, w);
+                w = 0ul;
+                m = 0u;
+            }
+        }
+        if (m > 0u) h = key_mix(h, w);
     }
     h *= 0xc4ceb9fe1a85ec53ul;
     return h ^ (h >> 29);
@@ -176,7 +202,7 @@ kernel void pp_nodes(device const PpFile* files [[buffer(0)]], device const ucha
 // One thread a file walks its tape's items in order: a text line (`code`) is passed by its
 // subtree's size, a directive is one row, and a group is entered (its chain's directives are its
 // children; its branches' items after each). The first walk counts each file's directives,
-// `pp_scan` gives each file its first row, and the second writes the rows: the spike's P0
+// a scan (`pp_blocks`) gives each file its first row, and the second writes the rows: the spike's P0
 // tables (`rerail_c_pp::stream::parallel::tables`), made from the tape in place.
 
 constant uint K_CODE = 1u;
@@ -280,7 +306,7 @@ kernel void pp_dir_counts(device const PpFile* files [[buffer(0)]], device const
     counts[f] = walk_dirs(tape_at(data, files[f].tape), (device PpDir*)nullptr, 0u, groups, guarded, bad);
 }
 
-// Each file's rows from its first (`pp_scan`'s), its groups, and whether it has a guard's shape.
+// Each file's rows from its first (the scan's), its groups, and whether it has a guard's shape.
 kernel void pp_dirs(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
                     device const uint* dir_bases [[buffer(2)]], device PpDir* rows [[buffer(3)]],
                     device uint* groups [[buffer(4)]], device uint* guarded [[buffer(5)]],
