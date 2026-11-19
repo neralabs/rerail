@@ -1,16 +1,16 @@
 # Merge Assist: checkout reads off the thread; stops end late Git reads
 
-For [pull request #816](https://github.com/neralabs/rerail/pull/816), head cec5931f3. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #816](https://github.com/neralabs/rerail/pull/816), head 60fda991b. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
 **Once `stop()`'s 2 s wait is over, should Merge Assist end a scan's Git at its next read and return once that Git exits?**
 
-**We recommend:** approve it: on Windows a hook no longer waits behind a status read; a disposed runtime starts no Git; a scan ending in the wait stores; no file read of Rerail's holds a runtime's stop.
+**We recommend:** approve it: hooks no longer wait behind a status read on Windows; a disposed runtime starts no Git; a pass ending in the stop's wait stores as at `main`; the hook hears it next pass.
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 732 lines in 12 files: 250 ship, 482 are tests and text | Normal. Medium risk: every pass's Git reads run through the stop. | Nothing. It stands alone. | 2 |
+| 1,469 lines in 18 files: 454 ship, 1,015 are tests and text | Normal. Medium risk: every pass's Git reads run through the stop. | Nothing. It stands alone. | 2 |
 
 ## 2. Intent, and the gap
 
@@ -34,12 +34,12 @@ Found on 14 November 2026 on Windows 11 and Linux x64, and measured again on 18 
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, A stop ends a pass, medium risk, 178 lines; B, A status read off the thread, low risk, 35 lines; C, A repository&#x27;s read off the thread, low risk, 37 lines. Read first: service.ts, branch-git.ts, conflict-detect.ts. To skim: 482 lines of tests and 0 lines of no docs or release note.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, A stop ends a pass, medium risk, 380 lines; B, A status read off the thread, low risk, 37 lines; C, A repository&#x27;s read off the thread, low risk, 37 lines. Read first: service.ts, branch-git.ts, conflict-detect.ts. To skim: 1,004 lines of tests and 11 lines of the build doc: kept events and their key.">
 
-1. **Read first**, 8 min: `service.ts`: `#detect`, `stop`, `#checkout`, `#activeCheckout`. Does a pass ending within the wait store, one stopped after store nothing, and no file read hold the stop?
+1. **Read first**, 8 min: `service.ts`: `#detect`, `stop`, `#checkout`, `#activeCheckout`. Does a pass store as at `main`, a stopped one store nothing, and no file read hold the stop?
 2. **Read first**, 5 min: `branch-git.ts`: `readsStoppedBy`, `runRead`. Does every Git read of a pass go through `runRead`?
-3. **Read first**, 4 min: `conflict-detect.ts`: `detectConflicts`, `detectPass`. Does a stopped pass answer null on every path?
-4. 6 min: `repository-identity.ts`, `repository-registry.ts`, `repository-operations.ts`, `merge-assist-operations.ts`, `git.ts` (`GitReads.stopped`).
+3. **Read first**, 4 min: `conflict-detect.ts`: `detectConflicts`, `detectPass`. Does a stopped pass store nothing, and one that stored answer what it stored?
+4. 6 min: `conflict-hook.ts` (`handedEvents`), `repository-identity.ts`, `repository-registry.ts`, `repository-operations.ts`, `merge-assist-operations.ts`, `git.ts` (`GitReads.stopped`), `stores.ts` (`close()`), `state.ts`.
 
 **Then skim**, 8 min: Cases that count blocking processes per read, stop a scan with its read held until the stop ends it, and let a scan or detection end within the wait.
 
@@ -66,9 +66,9 @@ Start with A: every detection pass's Git reads now register with the stop's owne
 
 - **Problem:** A runtime that made its own Merge Assist closed its database while the scan read Git on, then printed a failure line.
 - **Who meets it:** Pi sessions that run Rerail in their own process, and `rerail events` without a daemon, when they end during a scan; on Windows the running Git blocks removing the folder.
-- **What it does:** `stop()` waits within its bound for the hook, the scans, and each session's or edit's work: what ends meanwhile stores what it found. Then it stops the service's `GitReads`, where every Git read of a pass registers (`readsStoppedBy`): a running Git ends, none starts, the pass stores nothing, and `stop()` resolves once that Git exits.
+- **What it does:** `stop()` waits within its bound for the hook, the scans, and each session's or edit's work: what ends meanwhile stores what it found, its events kept for the next pass's hook. Then it stops the service's `GitReads`, where every Git read of a pass registers: a running Git ends, none starts, and `stop()` resolves once that Git exits.
 - **Risk:** Medium: every detection pass's Git reads, and a session's locate, now run through the stop's owner, and a read it ends answers as a failed read.
-- **Check:** That a pass that ends within the wait stores as at `main`, and one stopped past it stores nothing: `detectConflicts` returns null when aborted, before its transaction, and `#detect` writes no last scan then. And that the stop waits for the ended Git's exit, not for the pass.
+- **Check:** That a pass that ends within the wait stores as at `main` and keeps its events (`handedEvents`, asked in the store's transaction), that the next pass hands them over once and in order and only where the stored conflicts agree, and that one stopped past it stores nothing. And that the stop waits for the ended Git's exit, not for the pass, and with no wait ends the passes in its call.
 - **Picture:** On Windows 11 with 200 remote branches, 891 to 1,095 Git processes started after dispose() at main and the failure line was printed 15 of 15 times; at this head none started and no line was printed.
 - **Method:** A `RerailRuntime` as Pi builds it, disposed at its scan's 40th Git process, five times a run: three runs per side alternating on a Windows 11 desktop (200 remote branches), one per side on Linux x64 (1,500).
 
@@ -114,7 +114,7 @@ Start with A: every detection pass's Git reads now register with the stop's owne
 
 | Option | What a user gets | Cost | What it breaks |
 |---|---|---|---|
-| Wait within the bound, end what reads Git, wait for its exit **(chosen)** | A pass that ends in time stores its result, as at `main`; no Git after the stop; a file read that never answers does not hold the stop. | About 10 lines. | Up to the bound per stop while a pass runs, as at `main`, plus the ended Git's exit. |
+| Wait within the bound, end what reads Git, wait for its exit **(chosen)** | A pass that ends in time stores its result, and the hook hears its events at the next pass; no Git after the stop; a file read that never answers does not hold the stop. | About 10 lines. | Up to the bound per stop while a pass runs, as at `main`, plus the ended Git's exit. |
 | The same, then wait for each ended pass | The same while every file read answers. | About 10 lines. | A pass waiting on a file read on a share that stopped answering holds `dispose()` and the daemon's stop until it returns: about a minute on SMB, without end on a hard NFS mount. |
 | End every pass at once | `dispose()` in tens of milliseconds. | About 5 lines. | A scan that would have ended within the bound stores nothing. |
 | Wait for every pass, no bound | Every pass stores. | About 5 lines. | `dispose()` waits for a whole scan: 10 to 20 s on a Windows 11 desktop with 200 remote branches. |
@@ -137,15 +137,15 @@ Start with A: every detection pass's Git reads now register with the stop's owne
 
 <details><summary><b>7. How it fits</b></summary>
 
-It stands alone: nothing must merge first, and nothing waits on it. #813 edits the same file and merges cleanly; #756 and #621 gain no conflict beyond their own with `main`.
+It stands alone: nothing must merge first, and nothing waits on it. #813 and #756 each edit a file this change edits, and both merge cleanly.
 
-This pull request holds main at cf5ab9083 and merges clean with it. #813 edits repository-identity.ts too and merges cleanly with it. #756 and #621 edit git.ts and gain no conflict beyond their own with main. A change of ours that follows #813 edits the same locate and will keep both functions.
+This pull request holds main at cf5d520e4 and merges clean with it. #813 edits repository-identity.ts too and merges cleanly with it. #756 edits git.ts and merges cleanly with it. A change of ours that follows #813 edits the same locate and will keep both functions.
 
-**Shared files and trial merges.** Trial merges with cec5931f3 at the pull requests' heads of 19 November, 02:06 UTC; this head holds `main` at cf5ab9083. #813 (ours, `repository-identity.ts`) merges cleanly. #756 (ours) and #621 share `git.ts` and gain no conflict beyond the one each already has with `main` there. A change of ours that follows #813 also changes the locate in `repository-identity.ts`; it will keep both functions.
+**Shared files and trial merges.** Trial merges with 60fda991b at the pull requests' heads of 19 November 2026; this head holds `main` at cf5d520e4. #813 (ours, `repository-identity.ts`) and #756 (ours, `git.ts`) merge cleanly. A change of ours that follows #813 also changes the locate in `repository-identity.ts`; it will keep both functions.
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 2 not verified, 3 smaller gaps, 2 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 2 not verified, 3 smaller gaps, 3 limits that stay</summary>
 
 1. **macOS** never ran.
 2. **The remaining cost** with reads back to back, hooks took 44 ms at the median against 35 ms with none on Windows 11: each read still starts three Git processes.
@@ -160,6 +160,7 @@ This pull request holds main at cf5ab9083 and merges clean with it. #813 edits r
 
 - A pass waiting for `gh` is not ended by the stop: `stop()` gives up on it after its bound, as at `main`, and it stores nothing once `gh` answers.
 - A pass waiting on a file read is not ended either: the stop does not wait for it, and it stores nothing and starts no Git once the read returns.
+- Kept events wait for the next change in their checkout and reach the hook with that pass's session and branches. A stop between a change's store and its hand-off drops its events, as at `main`.
 
 </details>
 
@@ -175,9 +176,9 @@ The description is the record: "How you tested it" holds the failing cases, the 
 |---|---|---|
 | Windows 11, a real daemon | Hooks every 100 to 400 ms beside the page's reads back to back, five rounds per side, `main` and this head | Hook during a read, p50: 120 to 44 ms; 168 to 63 ms with 3 of 4 processors busy; blocking Git per read 2 to 0. |
 | Windows, Linux: runtime and daemon | A `RerailRuntime` disposed at its scan's 40th Git process and `rerail daemon stop` during a session's scan, `main` and this head alternating | Windows: 891 to 1,095 Git processes after `dispose()` at `main`, none here; dispose 2.01 to 2.20 s at `main`, 2.05 to 2.15 s here; daemon stop 2.28 to 2.58 s at `main`, 2.38 to 2.79 s here. Linux: 30 to 155 Git at `main`, none here. |
-| Linux x64, tests | The 38 test files of the changed modules and their importers, the new cases 20 times, 11 mutants of the stop's lines, CI's integration job | 810 passed, 26 skipped; 20 of 20; 11 of 11 caught; passed. |
-| Windows 11, tests | The 38 files compared with `main`'s runs, the new cases over `main` and 20 times here, 7 mutants | 835 passed, 5 skipped; one timing case of `main`'s own failed once and passed five of five runs there at this head and at `main`; 3 of 4 new stop cases fail at `main`; 20 of 20; 7 of 7 caught. |
+| Linux x64, tests | The 52 test files of the changed modules and their importers, the new cases 20 times, 21 mutants of the last answer's lines, CI's integration job | 965 passed, 31 skipped; 20 of 20; 21 of 21 caught; passed. |
+| Windows 11, tests | The 52 files compared with `main`'s runs, the new cases 20 times here, 21 mutants | 993 passed, 8 skipped, none failed; 20 of 20; 21 of 21 caught. |
 
-**Sources.** This branch's diff over `main` cf5ab9083 at cec5931f3 (ad77ceb2b, read on 18 November 2026, with `main` merged in); issues #685 and #686; a real daemon and a runtime on Windows 11 and Linux x64 machines; test runs there.
+**Sources.** This branch's diff over `main` cf5ab9083 at e2599eb59 (cec5931f3, `main` merged in, and sixteen commits that answer the automated review; read on 19 November 2026); issues #685 and #686; a real daemon and a runtime on Windows 11 and Linux x64 machines; test runs there.
 
 </details>
