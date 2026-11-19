@@ -289,7 +289,7 @@ pub trait Source: Send + Sync {
         None
     }
     /// `sorted_range`, searched from `at` where it can be: a sequence of probes in the key's order (a scan in the
-    /// column's order, the other side of a merge join, decision 0402 K7) reads the column forward once, not a
+    /// column's order, the other side of a merge join, decision 0417 K7) reads the column forward once, not a
     /// search of all of it a probe. `at` is set to the range's start; any value is correct, a wrong one is slower.
     fn sorted_range_at(&self, column: usize, value: i64, _at: &mut u32) -> Option<std::ops::Range<u32>> {
         self.sorted_range(column, value)
@@ -299,7 +299,7 @@ pub trait Source: Send + Sync {
     fn sorts_rows(&self, column: usize) -> bool {
         self.sorted_rows(column, 0).is_some()
     }
-    /// The columns its rows lie in order on, in turn (a kept relation's canonical order, decision 0402 K7), when
+    /// The columns its rows lie in order on, in turn (a kept relation's canonical order, decision 0417 K7), when
     /// they do: a scan of its rows is in that order, with no sort.
     fn order(&self) -> Option<Vec<usize>> {
         None

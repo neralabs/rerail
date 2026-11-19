@@ -1,6 +1,6 @@
-# 0402: Kept facts are packed chunks, appended to a chain of mapped files
+# 0417: Kept facts are packed chunks, appended to a chain of mapped files
 
-Status: decided by the user (2026-11-18: "I would prefer a single format if possible … We certainly shouldn't be
+Status (numbered 0402 when written; renumbered at the hub merge of 2026-11-19, the hub's 0402 being byte-pair rules): decided by the user (2026-11-18: "I would prefer a single format if possible … We certainly shouldn't be
 storing 8-byte quantities … please go ahead and design and build this"). Replaces 0401 F1, F2 and F6's copy of a
 run's relation as it lies (8-byte cells in doubling chunks, its hash indexes, a cumulative delta). Keeps 0401's
 intent (F3–F5): the store's kept facts are blocks in mapped files, SQLite holds only which files, and readers

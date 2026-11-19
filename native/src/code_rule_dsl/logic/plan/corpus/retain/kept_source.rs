@@ -1,4 +1,4 @@
-//! A kept relation read in place (decision 0402 step 6): a `Source` over its entry's `Packed`, where it lies in its
+//! A kept relation read in place (decision 0417 step 6): a `Source` over its entry's `Packed`, where it lies in its
 //! space's chain of mapped files. The run's relation is a view of it (`InRel::over_source`): no row copied, no frame
 //! decoded. Its leading column is in order, so a probe of it is a binary search of the column (`sorted_range`);
 //! another column's probes go through its rows sorted by that column, made when first asked (as a relation's own

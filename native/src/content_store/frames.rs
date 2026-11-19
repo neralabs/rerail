@@ -147,7 +147,7 @@ fn frame_dir(database: &std::path::Path) -> std::path::PathBuf {
 
 /// A frame's bytes as its row names them: inline (`seg` 0: the row's `data`), or a range of a segment, mapped. `None`
 /// when that segment is not there or holds no such range: the frame is absent, derived again.
-/// A frame row's `seg` when its rows are not in the frames but in its space's chain of kept facts (decision 0402
+/// A frame row's `seg` when its rows are not in the frames but in its space's chain of kept facts (decision 0417
 /// step 6): the row is the relation's metadata only (digest, reads, types, rows), bound from the chain as it is read.
 const IN_CHAIN: i64 = -1;
 
@@ -177,7 +177,7 @@ enum Data {
     /// step 4): a run that changed a few rows of a large relation writes those, not the relation. `n`: the rows after
     /// the last; `delta_rows`: the deltas' rows.
     Chain { base: Box<Data>, deltas: Vec<Arc<Admitted>>, n: usize, delta_rows: usize },
-    /// A kept relation read where it lies in its space's chain of mapped files (decision 0402 step 5): its packed
+    /// A kept relation read where it lies in its space's chain of mapped files (decision 0417 step 5): its packed
     /// columns, their symbols the store's ids, mapped to this process's as they are read.
     Kept(Arc<KeptAt>),
     /// Its rows in its space's chain (`IN_CHAIN`), not yet bound there (`bind_kept`): read, a frame left unbound is
@@ -198,7 +198,7 @@ pub(super) struct KeptAt {
     store: Arc<super::atoms::Atoms>,
 }
 
-/// A kept relation's rows where they lie in its space's chain (decision 0402 step 6): read in place by a run, as the
+/// A kept relation's rows where they lie in its space's chain (decision 0417 step 6): read in place by a run, as the
 /// store numbers them, which are the process's ids in a process that did not fork (decision 0170).
 pub struct KeptRows {
     chain: Arc<super::kept_facts::KeptSpace>,
@@ -331,7 +331,7 @@ impl Admitted {
         Admitted { stored, data: Data::Chain { base, deltas, n: (n + added).saturating_sub(gone), delta_rows: delta_rows + gone + added } }
     }
 
-    /// Its rows where they lie in its space's chain, to read in place (decision 0402 step 6): a relation bound
+    /// Its rows where they lie in its space's chain, to read in place (decision 0417 step 6): a relation bound
     /// there, in a process whose ids are the store's (not forked, decision 0170); else none (its rows are read).
     pub fn kept_rows(&self) -> Option<KeptRows> {
         use rerail_blocks::kept::{FactKey, KeptRead as _};
@@ -344,7 +344,7 @@ impl Admitted {
         Some(KeptRows { chain: Arc::clone(&k.space), rows })
     }
 
-    /// Whether its rows are read where they lie in a chain of kept facts (decision 0402 step 5).
+    /// Whether its rows are read where they lie in a chain of kept facts (decision 0417 step 5).
     #[cfg(test)]
     pub(super) fn from_chain(&self) -> bool {
         matches!(self.data, Data::Kept(_))
@@ -640,7 +640,7 @@ impl ContentStore {
     }
 
     /// Binds each relation of `held` (a space's frames as read) whose frame its space's chain of kept facts keeps
-    /// (decision 0402 step 5): the entry's digest and types the frame's. Its rows are then read where they lie in the
+    /// (decision 0417 step 5): the entry's digest and types the frame's. Its rows are then read where they lie in the
     /// chain, not decoded; its deltas are not composed (the entry holds the rows after them, `chains` forgets them);
     /// its levels (`LEVELS_PART`, where `held` has them) are the entry's, in the entry's row order. Others stay
     /// frames until the frames are retired (step 6). Returns how many were bound.
@@ -749,7 +749,7 @@ impl ContentStore {
                 snapshot.entry(space).or_default().insert(key, frame);
             }
             drop(st);
-            // Each relation its space's chain keeps as its frame is (decision 0402 step 5): read there, not decoded.
+            // Each relation its space's chain keeps as its frame is (decision 0417 step 5): read there, not decoded.
             let mut bound = 0;
             for (space, held) in snapshot.iter_mut() {
                 bound += self.bind_kept(&connection, space, held, chains.entry(*space).or_default())?;
@@ -966,7 +966,7 @@ impl ContentStore {
                 out.insert(key, frame);
             }
         }
-        // Each relation its space's chain keeps as its frame is (decision 0402 step 5): read there, its deltas not.
+        // Each relation its space's chain keeps as its frame is (decision 0417 step 5): read there, its deltas not.
         if payload {
             let mut by: HashMap<Rel, u32> = chained.drain(..).collect();
             self.bind_kept(&connection, space, &mut out, &mut by)?;
@@ -1491,7 +1491,7 @@ impl ContentStore {
                 Some((*numbers.get(s)?, at as i64, len as i64))
             };
             let data_of = |i: usize, f: &Framed| -> (Vec<u8>, (i64, i64, i64)) {
-                // Its rows are its kept entry's (decision 0402 step 6): the row is the relation's metadata.
+                // Its rows are its kept entry's (decision 0417 step 6): the row is the relation's metadata.
                 if f.in_chain() {
                     return (Vec::new(), (IN_CHAIN, 0, 0));
                 }
@@ -1764,7 +1764,7 @@ pub struct Encoded {
 }
 
 impl Encoded {
-    /// The frame with its kept entry put beside it (decision 0402 step 6, `ContentStore::queue_kept`): the store
+    /// The frame with its kept entry put beside it (decision 0417 step 6, `ContentStore::queue_kept`): the store
     /// writes the relation's metadata only (`IN_CHAIN`), and a reader binds its rows from the space's chain. A delta
     /// frame (decision 0117 step 4) is written whole still: its base's entry holds the rows after it.
     pub fn in_chain(mut self) -> Encoded {

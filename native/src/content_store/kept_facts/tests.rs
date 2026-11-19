@@ -82,7 +82,7 @@ fn files(path: &Path) -> Vec<String> {
     out
 }
 
-/// K-R5 (decision 0402): a write appends one file of its puts only (a relation's live rows packed, a granule's
+/// K-R5 (decision 0417): a write appends one file of its puts only (a relation's live rows packed, a granule's
 /// rows, a reads-only entry, a gone entry), read with the chain as one; small writes merge into the newest small
 /// file; a write as big as the chain merges every file into one, read the same, and a reader of the old chain reads
 /// it still; the files a commit replaced go at the next write.
@@ -158,7 +158,7 @@ fn a_rolled_back_write_is_not_the_spaces() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// K-R8a (decision 0402 step 5): a run binds a relation whose frame its space's chain keeps (the same digest and
+/// K-R8a (decision 0417 step 5): a run binds a relation whose frame its space's chain keeps (the same digest and
 /// types) from the chain: its rows in canonical order, its frame's digest and reads, and its levels as the entry has
 /// them, in its rows' order (not the frame's levels part, in the frame's order); a relation whose entry is stale or
 /// missing (a store from before the chain) from its frame. A frame's levels part whose entry has none is absent
@@ -207,7 +207,7 @@ fn a_kept_relation_is_bound_from_its_chain() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// K-R9 (decision 0402 step 6): a frame whose kept entry is put beside it (`in_chain`) is written as its relation's
+/// K-R9 (decision 0417 step 6): a frame whose kept entry is put beside it (`in_chain`) is written as its relation's
 /// metadata, no rows; read back (from SQL and from the snapshot), its rows are its entry's; with no entry it is
 /// absent, so its relation is derived again; the frames' segments compacted, it stays. An entry put as given (an
 /// input's granule, read by position) is read in its order, every row (ep2's edit runs read a granule's entry in
@@ -247,7 +247,7 @@ fn a_frame_in_the_chain_is_its_metadata() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// K-R10 (decision 0402 step 6, 0401 F5): the kept facts are a virtual table: a space's relation's rows by `rel` and
+/// K-R10 (decision 0417 step 6, 0401 F5): the kept facts are a virtual table: a space's relation's rows by `rel` and
 /// `part`, newest entry only, a gone one absent; `c0 = ?` a range of the entry; columns past the arity NULL.
 #[test]
 fn kept_facts_are_a_virtual_table() {
@@ -279,7 +279,7 @@ fn kept_facts_are_a_virtual_table() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// K-R7 (decision 0402 step 4), over a real store (`RERAIL_KEPT_STORE`, a copy no run is writing): every kept entry's
+/// K-R7 (decision 0417 step 4), over a real store (`RERAIL_KEPT_STORE`, a copy no run is writing): every kept entry's
 /// rows equal its frame's as sets, and the chain's bytes against the frames' segments, with what each encoding holds.
 /// Run with `--ignored`; prints its report.
 #[test]
@@ -355,7 +355,7 @@ fn kept_entries_equal_their_frames() {
     assert_eq!((differ, no_kept), (0, 0));
 }
 
-/// Decision 0402's open question, over a real store (`RERAIL_KEPT_STORE`): what each column of the chain would take
+/// Decision 0417's open question, over a real store (`RERAIL_KEPT_STORE`): what each column of the chain would take
 /// under the candidate encodings. Leading columns and the rest apart; GROUPS' group widths; sample values. Run with
 /// `--ignored --nocapture`; prints its report.
 #[test]

@@ -754,7 +754,7 @@ impl Retained {
         let (mut rows, mut n) = self.admitted.get();
         for (rel, key) in wanted.into_iter().zip(&keys) {
             let Some(width) = prog.fields()?.arity(rel) else { return Ok(false) };
-            // Read in place where it lies in the chain (decision 0402 step 6): a relation with no levels part to
+            // Read in place where it lies in the chain (decision 0417 step 6): a relation with no levels part to
             // carry, in a process whose ids are the store's (`AdmittedFrame::kept_rows`).
             if width > 0
                 && !levels.contains_key(&(key.0.clone(), LEVELS_PART))
@@ -3277,7 +3277,7 @@ pub(in crate::code_rule_dsl) struct Handed {
 impl Handed {
     /// `held`'s frame as `write_frames` makes one written whole, encoded into the part's write (`placer`, which
     /// `write_frames` queues); `None` for a relation of no rows of its own (a view). `was`: its stored frame's digest.
-    /// Its kept entry (decision 0402) is queued here, its rows lent to the store's writer until packed; the part's
+    /// Its kept entry (decision 0417) is queued here, its rows lent to the store's writer until packed; the part's
     /// write puts its reads (`kept_reads`).
     pub(in crate::code_rule_dsl) fn of(store: &ContentStore, prog: &Placed, domains: &lower::Domains, rel: &str, held: &Arc<InRel>, was_frames: Option<&InFrames>, placer: &crate::content_store::FramePlacer) -> Option<Handed> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "a relation handed off, its frame made".into());

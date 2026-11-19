@@ -1,4 +1,4 @@
-//! `kept_facts`: the store's kept relations as an eponymous virtual table (decisions 0401 F5, 0402 K6 step 6), read
+//! `kept_facts`: the store's kept relations as an eponymous virtual table (decisions 0401 F5, 0417 K6 step 6), read
 //! where they lie in each space's chain of mapped files. A row of the table is a row of one entry:
 //!
 //! ```sql

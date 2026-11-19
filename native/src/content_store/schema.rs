@@ -27,7 +27,7 @@ pub(super) const SCHEMA_VERSION: i64 = 7;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
 pub const STORE_FILE_NAME: &str = "content-v7.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 7: a space's kept facts are a chain of packed files (decision 0402):
+/// The floor `STORE_FILE_NAME` was introduced at. 7: a space's kept facts are a chain of packed files (decision 0417):
 /// frames hold no rows, and a kept column may be a node id split at its granule, which an older binary would read as
 /// empty frames and wrong values; 6: the atoms are blocks in files beside the store (decision 0401:
 /// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
@@ -464,7 +464,7 @@ CREATE TABLE IF NOT EXISTS atom_blocks (
     tag INTEGER NOT NULL
 ) STRICT;
 
--- A space's kept facts (decisions 0401, 0402 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
+-- A space's kept facts (decisions 0401, 0417 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
 -- oldest first, each with its maker's tag (a file not its row's is refused). A run's write appends a
 -- row; a merge replaces the newest rows with one. Metadata only: the rows are in the files. Additive:
 -- an older binary reads the frames.

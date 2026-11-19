@@ -1,10 +1,10 @@
-//! A space's kept facts (decisions 0401, 0402): a chain of frozen files in `<store>.facts/<space>/`, each a
+//! A space's kept facts (decisions 0401, 0417): a chain of frozen files in `<store>.facts/<space>/`, each a
 //! `rerail_blocks::kept` file whose entries' rows are packed (each column in the bits its values need), mapped by every
 //! process that reads the space. SQLite keeps only which files the chain has (`facts_chain`), replaced in the
 //! transaction that commits a run's writes.
 //!
 //! The store's writer appends the space's next file behind the run (`write_space`): what the run put, packed there
-//! (0402 K3: freezing is encoding), merged with the chain's newest files where they weigh no more than twice what
+//! (0417 K3: freezing is encoding), merged with the chain's newest files where they weigh no more than twice what
 //! joins them, so the files' sizes grow geometrically; or with the whole chain, when what its newer entries replaced
 //! outweighs what it still reads. A merged entry is copied whole (one `memcpy`). Each file is made under a name no reader opens, frozen, renamed into place
 //! and its directory synced before its row names it. The files a committed write replaced are removed by the next
@@ -192,7 +192,7 @@ fn room_of(what: &KeptWhat) -> usize {
 /// chain of small commits stays one small file, not one file a commit (each file costs a header and a lookup).
 const MERGE_FLOOR: usize = 1 << 16;
 
-/// The bytes a put's rows are expected to pack into: about 3 bytes a value (ep2's kept facts, 0402 step 4). Weighs
+/// The bytes a put's rows are expected to pack into: about 3 bytes a value (ep2's kept facts, 0417 step 4). Weighs
 /// the new file against the chain's newest ones; never sizes anything.
 fn expected_bytes(what: &KeptWhat) -> usize {
     match what {
@@ -203,7 +203,7 @@ fn expected_bytes(what: &KeptWhat) -> usize {
 }
 
 /// Appends `space`'s next file in transaction `t`, with `puts` (each key once), merged with the chain's newest files
-/// where they weigh no more than twice what joins them (0402 K4: sizes grow geometrically, so a chain stays
+/// where they weigh no more than twice what joins them (0417 K4: sizes grow geometrically, so a chain stays
 /// logarithmic in its bytes and a value is copied a logarithmic number of times), or with the whole chain when what
 /// it holds that newer entries replaced outweighs the rest. `map` maps a forked process's atom ids to the store's.
 pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut>, map: Option<MapIds>) -> StoreResult<()> {

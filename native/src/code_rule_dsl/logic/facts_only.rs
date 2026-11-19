@@ -47,7 +47,7 @@ const FACT_STORE: &[&str] = &[
     "tape",
     "node_type",
     "frames",
-    // A space's kept facts (decisions 0401, 0402): which files its chain has.
+    // A space's kept facts (decisions 0401, 0417): which files its chain has.
     "facts_chain",
     "frame_spaces",
     // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
@@ -581,7 +581,7 @@ fn every_kept_map_is_state_or_listed() {
     assert_eq!(NOT_YET_MAPS.len(), NOT_YET_MAPS_PIN, "a cache map moved: lower NOT_YET_MAPS_PIN to {}", NOT_YET_MAPS.len());
 }
 
-/// Decision 0402: every place that writes a frame puts its kept entry too, until the frames are retired (step 6). A
+/// Decision 0417: every place that writes a frame puts its kept entry too, until the frames are retired (step 6). A
 /// frame written alone leaves the kept chain behind it (a later empty frame of `p0_absent`, its old entry kept).
 /// Each call of the engine's (the store's own delegations aside) that queues frames has a `queue_kept` within 40 lines.
 #[test]
@@ -604,5 +604,5 @@ fn every_frame_write_puts_its_kept_entry() {
             }
         }
     }
-    assert!(alone.is_empty(), "frames written with no kept entry (decision 0402): {alone:?}");
+    assert!(alone.is_empty(), "frames written with no kept entry (decision 0417): {alone:?}");
 }

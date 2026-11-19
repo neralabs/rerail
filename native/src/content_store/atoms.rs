@@ -621,7 +621,7 @@ impl Atoms {
             None => Arc::clone(&MEMORY),
         };
         vtab::install(connection, &atoms)?;
-        // The kept facts beside them (decision 0402 step 6), on a store's connection.
+        // The kept facts beside them (decision 0417 step 6), on a store's connection.
         if let Some(path) = connection.path().filter(|path| !path.is_empty()) {
             super::kept_facts::vtab::install(connection, Path::new(path))?;
         }

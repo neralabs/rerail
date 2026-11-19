@@ -427,7 +427,7 @@ pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data
              /// level or above is no row (`dead`), as a row present only below the candidate's level supports it.
              /// `u32::MAX`: none.
              cap: u32,
-             /// Declared sorted (`.decl … sorted`, decision 0402 K7): its live rows laid out in canonical order (its
+             /// Declared sorted (`.decl … sorted`, decision 0417 K7): its live rows laid out in canonical order (its
              /// columns in turn) when its component is done (`InRel::moved`).
              ordered: bool }
 
@@ -697,7 +697,7 @@ impl Rel {
             if gone_rows.contains(&row) { removed.extend_from_slice(&row); } else if rel.push(&row) && levels { *rel.level.last_mut().expect("a level pushed") = old.level[id]; }
         }
         if !levels { rel.level.clear(); }
-        // A kept relation read in place (decision 0402 step 6, a view of its entry) is counted by its view.
+        // A kept relation read in place (decision 0417 step 6, a view of its entry) is counted by its view.
         if old.k == k {
             rel.from = Some(Origin::Compacted { at: old as *const InRel as usize, old_n: old.len(), kept: rel.n, removed });
         }
@@ -1821,7 +1821,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     let mut leveled = false;
     // The relations whose statistics are kept as their rows come (`Line::Stats`).
     let mut counted: Vec<usize> = Vec::new();
-    // The relations declared sorted (`Line::Sorted`, decision 0402 K7).
+    // The relations declared sorted (`Line::Sorted`, decision 0417 K7).
     let ordered: Vec<usize> = spec.lines.iter().find_map(|l| if let Line::Sorted(r) = l { Some(r.clone()) } else { None }).unwrap_or_default();
     let mut cyclic: Vec<usize> = Vec::new();
     let mut kept_old = false;
@@ -4962,7 +4962,7 @@ impl InRel {
     fn moved(mut rel: Rel) -> InRel {
         rel.index_rest();
         rel.count_dead();
-        // Declared sorted (decision 0402 K7): laid out in canonical order, unless its rows are numbered as the kept
+        // Declared sorted (decision 0417 K7): laid out in canonical order, unless its rows are numbered as the kept
         // relation it started from numbers them (its versions are read by id, decision 0364).
         if rel.ordered && rel.from.is_none() && rel.lat.is_none() && rel.k > 0 {
             return InRel::in_canonical_order(rel);
@@ -4970,7 +4970,7 @@ impl InRel {
         InRel { vers: Default::default(), viewed: false, keyed: None, k: rel.k, n: rel.n, rows: rel.data.freeze(rel.n), view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: rel.idx, sorted: rel.sorted,
                 sketches: rel.sketches, serves: rel.serves, dead: rel.dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level, stats: rel.stats }
     }
-    /// `rel`'s live rows in canonical order (its columns in turn, as the keep orders a kept relation, decision 0402
+    /// `rel`'s live rows in canonical order (its columns in turn, as the keep orders a kept relation, decision 0417
     /// K3): one sort here, so the keep sorts nothing and its readers probe its leading columns as a range of rows in
     /// place (`runs::Sorted` over every row, on its columns but the last: on every column an order is the dedup
     /// order, which leads with a hash). Its levels follow their rows; its orders are made again as probed.
@@ -6912,7 +6912,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     }
                     else if ix.sorted && let Some(v) = &rel.view {
                         // From where the last probe of this step was (`hints`, unused by a source otherwise): probes
-                        // in the column's order are a merge over it (decision 0402 K7).
+                        // in the column's order are a merge over it (decision 0417 K7).
                         let (c, k) = (v.cols[ix.cols[ix.lead]], key[ix.lead]);
                         (Rows::Source(v), match v.src.sorted_range_at(c, k, &mut hints[0]) { Some(r) => Cands::Range(r.start, r.end), None => Cands::Slice(v.src.sorted_rows(c, k).unwrap_or(&[])) })
                     }
@@ -8031,7 +8031,7 @@ pub mod posted_tests {
         }
     }
 
-    /// K-R11 (decision 0402 K7): a relation declared sorted is laid out in canonical order when its component is
+    /// K-R11 (decision 0417 K7): a relation declared sorted is laid out in canonical order when its component is
     /// done: its live rows (a dead one left out) in its columns' order, known sorted on its leading column for the
     /// whole of them, so an order on it is its rows in place.
     #[test]
@@ -8049,7 +8049,7 @@ pub mod posted_tests {
         assert_eq!((r.ndead, r.sorted.within(&[0], 2, 0, r.n as u32)), (0, vec![(0, 4)]));
     }
 
-    /// Decision 0402 K7: a source whose rows lie in an order (`Source::order`, a kept relation read in place) is known
+    /// Decision 0417 K7: a source whose rows lie in an order (`Source::order`, a kept relation read in place) is known
     /// sorted over every row on its order's columns but the last (as a relation laid out in order is), so a scan of
     /// it for the next step's probes is not sorted again; one with no order is known in none.
     #[test]
@@ -8204,7 +8204,7 @@ pub mod posted_tests {
         assert_eq!(flat(&mut removed), rows_of(&minus));
     }
 
-    /// A relation the maintain mode starts from a kept one read in place (decision 0402 step 6, a view of its
+    /// A relation the maintain mode starts from a kept one read in place (decision 0417 step 6, a view of its
     /// entry: `n` 0, its rows its source's) has its version: its rows then are the view's (ep2's edit runs had none,
     /// "no version after its maintain mode").
     #[test]
