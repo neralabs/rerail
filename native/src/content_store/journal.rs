@@ -298,8 +298,12 @@ mod fsevents {
 
     unsafe extern "C" {
         fn dispatch_queue_create(label: *const c_char, attr: *const c_void) -> *mut c_void;
+        fn dispatch_queue_attr_make_with_qos_class(attr: *const c_void, qos: u32, relative: i32) -> *const c_void;
         fn dispatch_release(object: *mut c_void);
     }
+
+    /// `QOS_CLASS_USER_INITIATED`: work a caller waits on.
+    const QOS_USER_INITIATED: u32 = 0x19;
 
     /// The stream's own reference to `Shared` (its context's `retain`), given back when FSEvents frees the stream:
     /// what a callback reads lives as long as the stream, not only as long as `since`.
@@ -497,7 +501,15 @@ mod fsevents {
                 let _ = std::fs::remove_file(&shared.marker);
                 return Err("the journal refused the stream");
             }
-            let queue = dispatch_queue_create(c"rerail.journal".as_ptr(), std::ptr::null());
+            // The stream's callbacks run on a serial queue of their own at the QoS of a run that waits for them
+            // (Q223). On a loaded host a kept stream was told its cookie up to 4.8 s late, and one nothing for 20 s,
+            // while streams just started had theirs in 0.5 s: `fseventsd` was delivering, and the kept stream's
+            // handler was what waited. A queue made without a QoS runs it at none of its own (what the delivery
+            // carries), and `sync` waits on a condvar, which lends it no priority; under `nice` and a full machine
+            // it waits behind everything. `NULL` is a serial queue's attribute; the one made from it is the
+            // system's, never released.
+            let attr = dispatch_queue_attr_make_with_qos_class(std::ptr::null(), QOS_USER_INITIATED, 0);
+            let queue = dispatch_queue_create(c"rerail.journal".as_ptr(), attr);
             FSEventStreamSetDispatchQueue(stream, queue);
             if FSEventStreamStart(stream) == 0 {
                 FSEventStreamInvalidate(stream);

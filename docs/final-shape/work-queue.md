@@ -2874,6 +2874,13 @@ reuses another's sync.
   `a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change`,
   `an_inner_root_is_answered_by_the_root_above_it`); 34 of 34 passed in one run. Waiting at most 2 s per stream
   and starting another was tried, and is worse: slow but live streams were dropped, and every new one was slow too.
+- **Found, the late streams** (2026-11-19, by reading `journal.rs`): the lateness is a stream's own, not
+  `fseventsd`'s: a new stream had its cookie in 0.5 s while a kept one was told nothing for 20 s. What schedules a
+  stream's delivery is the dispatch queue its callbacks run on, and `start` made it with no QoS
+  (`dispatch_queue_create(.., NULL)`): the handler ran at none of its own, and `sync` waits on a condvar, which lends
+  it no priority. Under `nice -n 19` on a machine at load 20–55 it waited behind everything. The queue is now made
+  at `QOS_CLASS_USER_INITIATED` (`dispatch_queue_attr_make_with_qos_class`), the QoS of a run that waits on it.
+  Still to see: 20 of 20 on a Mac at load (none was usable to run it when this was written).
 - **Done when**: the test passes 20 of 20 on a host at load, or names why a run cannot answer.
 - **Record**: —
 
