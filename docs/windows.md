@@ -565,7 +565,13 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   process alive) takes only `\\.\pipe\` names, so while a busy engine's pipe instances are all taken that connect fails
   at once with `ENOENT`, as it does for a pipe that is gone. A plain open of the pipe, closed at once, tells the two
   apart (`EBUSY` while every instance is taken), and the proof tries again on each tick of Windows' timer, about every
-  16 ms, until its limit: an instance the engine frees, or a pipe that goes, is found within a tick. The request never
+  16 ms, until its limit: an instance the engine frees, or a pipe that goes, is found within a tick. A hook's start
+  check, which runs before each event, waits longer (`waitForInstance`): while every instance is taken it tries again
+  for up to 30 s, as long as Node's own connect waits, and the limit then counts from the connect, so the event still
+  reaches a busy daemon that frees an instance in that time; `rerail status`, `rerail daemon start` and
+  `rerail daemon stop` keep the limit from the ask. A daemon that stays hung with every instance taken holds each
+  hook about 32 s before it gives up and logs its event as lost, and `daemon.json` is kept; `rerail status` says
+  `alive but not answering` within the limit, and `rerail daemon stop` ends that daemon. The request never
   goes over the pipe opened as a file: a write its holder never reads would then hold the process until the holder
   ends. macOS and Linux treat `EPERM` as another user's.
 - `recordedDaemonAlive` (`src/runtime/daemon-control.ts`) makes both checks above, and every reader of `daemon.json`
