@@ -303,6 +303,28 @@ columns moved down, then the laid parts, their starts, the newline index), and t
 the reference's hint for the tail, so a tape within the hint is the writer's room. The lab's `zops` now compares
 `f16::write_from` with `f16::reference::write_from`: the same bytes on all 6,731 captured files.
 
+**R17, tier 2: what it is now, and the plan (2026-11-18).** Tier 2 (the compiler's `native_cpu_stream`, a
+program's words as one Cranelift function) writes format 15 in place as it parses (decision 0140): a working row
+a node (key, start, end; 12 bytes, never part of the tape) and format 15's size, offset, tail and code columns.
+Its words edit nodes already made: `WRAP` puts a node around the last one made at a level (moving the table after
+it up a cell), `MERGE` joins leaves, `REREAD` drops a node and its subtree, `RETAG` and `FIELD` reach the last
+node made or an open one, and an extra's leaf can be deferred past later nodes. It commits (numbers the codes) at
+each close of a child of the root, up to that child, which stays open to edits; an edit before the commit takes
+the codes back (`uncode`). The engine runs tier 2 in the Bitlex JSON parser (simdjson is the engine's JSON
+parser) and over tier 1's buffers on Metal (`rerail_metal::tier2_on`); tier 2 itself runs only on the CPU:
+nothing generates it on Metal yet (decision 0348).
+
+The plan, as the lean parsers' (R7a): the working rows are tier 2's window, and a format 16 run passes nodes to
+the ops at its commits, never making format 15's image. The run's context gains the writer's state and each key's
+number in the language's table. At a commit, an outlined function (a step a node, as the code commit is) opens
+each node from the last passed up to the commit point, closing those whose subtree ends before it, then commits
+the ops; the root and the kept child stay open. A commit point is final for the ops only where no word can reach
+before it: the uncoded cases (an edit before the commit) move the commit point back, not the codes. The ops are
+compiled into tier 2's module, called as its own outlined functions are, and its region is sized from the
+program's bounds, as its rows are (`Bounds`, `OVERFLOW`): a full part runs the file again with the bound's room.
+`tier2_writes_format_16_by_the_ops` parses JSON by tier 2 into 16 and 16z and compares each with `write_from` of
+its format 15 tape. Tier 2 on the device (R17's second half) waits on tier 2 on Metal.
+
 Next: tier 2 (R17).
 
 ## Requirements, each with its test
