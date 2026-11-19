@@ -19,10 +19,13 @@ test.describe("History by session", () => {
     await expect(page.locator("#content .shead .live")).toBeVisible();
     // The lead counts the sessions the daemon reports.
     await expect(page.locator("#content .hhead p")).toContainText(`${manifest.sessionIds.length} sessions, newest first.`);
-    // Every row with violations logged says how many of them were steered.
-    const withViolations = page.locator("#content .srow .c:not(.zero)");
+    // Every row with violations logged says on its meta line how many of them were steered; the row shows no event
+    // count or session id.
+    const withViolations = page.locator("#content .srow").filter({ has: page.locator(".c:not(.zero)") });
     await expect(withViolations.first()).toBeVisible();
-    await expect(withViolations.first().locator(".st")).toHaveText(/^\d+ steered$/);
+    await expect(withViolations.first().locator(".m .st")).toHaveText(/^\d+ steered$/);
+    await expect(row.locator(".m")).not.toContainText("events");
+    await expect(row.locator(".sid, .ev")).toHaveCount(0);
   });
 
   test("mature: a steer the agent declined reads Declined with its reason, is counted on the row and header, and has its own chip", async ({ page, rerail }) => {

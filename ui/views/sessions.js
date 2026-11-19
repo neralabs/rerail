@@ -149,8 +149,8 @@ function createListItem(item) {
   }
   const s = item.s;
   return h("button.srow", { "data-act": "ssel", "data-i": s.sessionId, "aria-current": "false" },
-    h("span.l", null, h("span.t"), h("span.m", null, h("span.state"), h("span.ev"), h("span.sid"))),
-    h("span.c.num", null, h("b"), h("span.st"), h("span.dc")));
+    h("span.l", null, h("span.t"), h("span.m", null, h("span.state"), h("span.vc", null, h("span.st"), h("span.dc")))),
+    h("span.c.num", null, h("b")));
 }
 
 function updateListItem(node, item) {
@@ -171,13 +171,12 @@ function updateListItem(node, item) {
   setAttr(state, "class", `state ${st ?? ""}`);
   setText(state, rowState(st, s));
   setAttr(state, "title", "Last event");
-  setText(node.querySelector(".ev"), `${fmt(s.eventCount)} events`);
-  setText(node.querySelector(".sid"), shortSessionId(s.sessionId, s.host));
+  // The meta line reads "<state>  N steered · N declined"; the count column is the violations alone.
   const c = node.querySelector(".c"), { logged, steered, declined } = violationCounts(s);
   setClass(c, "zero", logged === 0);
   setText(c.querySelector("b"), fmt(logged));
-  setText(c.querySelector(".st"), logged === 0 ? "" : `${fmt(steered)} steered`);
-  setText(c.querySelector(".dc"), declined === 0 ? "" : `${fmt(declined)} declined`);
+  setText(node.querySelector(".m .st"), logged === 0 ? "" : `${fmt(steered)} steered`);
+  setText(node.querySelector(".m .dc"), declined === 0 ? "" : `${fmt(declined)} declined`);
   const ofDeclined = declined === 0 ? "" : `, ${fmt(declined)} of them declined by the coding agent`;
   setAttr(c, "title", `${fmt(logged)} ${plural(logged, "violation")} logged, ${fmt(steered)} steered${ofDeclined}`);
 }

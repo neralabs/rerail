@@ -53,13 +53,14 @@ body[data-panel="open"] .sess > aside{display:none}
 .slist .srow .t{font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .slist .srow .m{font-size:12px;color:var(--muted-foreground);display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px}
 .slist .srow .m > span{white-space:nowrap}
-.slist .srow .m .sid{font-family:var(--font-mono);font-size:11px;color:var(--muted-foreground);opacity:.85}
-.slist .srow .c{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15;font-size:10.5px;color:var(--muted-foreground);white-space:nowrap}
+/* "N steered · N declined" after the state, as one unit: a narrow list wraps it whole onto a line of its own. */
+.slist .srow .m .dc:empty{display:none}
+.slist .srow .m .dc::before{content:"·";margin:0 6px;color:var(--muted-foreground);opacity:.6}
+.slist .srow .m .dc{color:var(--danger-foreground)}
+.slist .srow .c{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15;white-space:nowrap}
 .slist .srow .c b{font-size:16px;color:var(--foreground);font-weight:600}
 .slist .srow .c.zero b{color:var(--muted-foreground);font-weight:400}
 .slist .srow .c.zero{opacity:.7}
-.slist .srow .c .st:empty,.slist .srow .c .dc:empty{display:none}
-.slist .srow .c .dc{color:var(--danger-foreground)}
 .slhead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
 .slhead + .srows .daygrp:first-child{border-top:1px solid var(--border)}
 .sess .live{display:inline-flex;align-items:center;gap:5px;color:var(--success-foreground);font-size:12px}

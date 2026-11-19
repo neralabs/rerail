@@ -1,1 +1,1 @@
-History by session's list filters are now All, With violations and Declined steers, on one line; In progress is gone, and an old link to it opens All. A filter now opens every day of the list, so the sessions it matches show instead of staying in a folded day.
+History by session's list filters are now All, With violations and Declined steers, on one line; In progress is gone. A filter opens every day of the list, so its matches show. Each row shows its steered and declined counts beside its state, without the event count or session id.
