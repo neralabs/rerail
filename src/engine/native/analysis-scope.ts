@@ -1,4 +1,4 @@
-import { dirname, join, sep } from "node:path";
+import { dirname, join, sep, toNamespacedPath } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { and, eq, lte } from "drizzle-orm";
@@ -60,9 +60,10 @@ export async function acquireDirectoryAnalysisGeneration(databasePath: string, d
 
 /** Register the observed store and obtain its generation in one registry transaction. */
 export async function acquireDirectoryAnalysisRegistration(databasePath: string, directory: string, store: string): Promise<DirectoryAnalysisRegistration> {
-  const { cutoff, identity } = await loadNativeBinding().prepareAnalysisStoreRegistrationAsync(store, directory, analysisScopeHome(databasePath));
+  const root = storedPath(directory);
+  const { cutoff, identity } = await loadNativeBinding().prepareAnalysisStoreRegistrationAsync(store, root, analysisScopeHome(databasePath));
   const floor = Math.max(readControlGeneration(databasePath), (cutoff ?? 0) + 1);
-  return { generation: registerDirectoryAnalysisStore(databasePath, directory, store, identity, floor), identity };
+  return { generation: registerDirectoryAnalysisStore(databasePath, root, store, identity, floor), identity };
 }
 
 function recordRegistryGeneration(index: RerailDatabase, floor: number, increment: 0 | 1): number {
@@ -76,7 +77,7 @@ function recordRegistryGeneration(index: RerailDatabase, floor: number, incremen
 
 interface StoreRoute { directory: string; path: string; identity: string | null }
 
-function registerDirectoryAnalysisStore(databasePath: string, directory: string, store: string, identity: string, floor?: number): number {
+function registerDirectoryAnalysisStore(databasePath: string, root: string, store: string, identity: string, floor?: number): number {
   const index = openSqliteDatabase(storeRegistryPath(databasePath));
   try {
     return index.$client.transaction(() => {
@@ -85,7 +86,7 @@ function registerDirectoryAnalysisStore(databasePath: string, directory: string,
         directory TEXT NOT NULL, path TEXT NOT NULL, identity TEXT NOT NULL, first_generation INTEGER NOT NULL, last_generation INTEGER NOT NULL,
         PRIMARY KEY(directory,path,identity), FOREIGN KEY(directory,path) REFERENCES analysis_directory_store(directory,path) ON DELETE CASCADE ON UPDATE CASCADE) STRICT`);
       index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_maintenance_store (path TEXT PRIMARY KEY) STRICT");
-      const root = storedPath(directory), path = storedPath(store);
+      const path = storedPath(store);
       index.$client.prepare("INSERT OR IGNORE INTO analysis_directory_store VALUES (?,?)").run(root, path);
       index.$client.prepare("INSERT OR IGNORE INTO analysis_maintenance_store VALUES (?)").run(path);
       const generation = floor === undefined ? 0 : recordRegistryGeneration(index, floor, 0);
@@ -168,7 +169,7 @@ function releaseCutoff(id: string): number | undefined {
 }
 
 function discoverReleaseRoute(databasePath: string, directory: string, store: string, home: string): StoreRoute[] {
-  const identity = loadNativeBinding().owningDirectoryAnalysisStore(store, directory, home);
+  const identity = loadNativeBinding().owningDirectoryAnalysisStore(store, toNamespacedPath(directory), home, true);
   if (identity == null) return [];
   registerDirectoryAnalysisStore(databasePath, directory, store, identity);
   return [{ directory, path: store, identity }];
@@ -178,7 +179,7 @@ function deliverRelease(databasePath: string, root: string, store: string, id: s
   let failure: unknown;
   for (const identity of new Set(routes.map(route => route.identity))) {
     try {
-      loadNativeBinding().deleteAnalysisScope(store, root, true, id, identity || undefined);
+      loadNativeBinding().deleteAnalysisScope(store, toNamespacedPath(root), true, id, identity || undefined, true);
       acknowledgeRoutes(databasePath, routes.filter(route => route.identity === identity), releaseCutoff(id));
     } catch (error) { failure = error; }
   }
@@ -202,7 +203,7 @@ export function queueAnalysisScopeReleases(tx: Transaction, directories: readonl
   const home = analysisScopeHome(databasePath);
   const nextAttemptAt = Date.now();
   for (const directory of directories) {
-    tx.insert(analysisScopeReleases).values({ id: `${generation - 1}:${randomUUID()}:${home}`, directory, nextAttemptAt }).run();
+    tx.insert(analysisScopeReleases).values({ id: `${generation - 1}:${randomUUID()}:${home}`, directory: storedPath(directory), nextAttemptAt }).run();
   }
 }
 
@@ -264,8 +265,7 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
       .orderBy(analysisScopeReleases.nextAttemptAt, analysisScopeReleases.id).limit(limit).all();
     if (pending.length === 0) return;
     const failed = new Map<string, unknown>();
-    for (const { id, directory } of pending) {
-      const root = storedPath(directory);
+    for (const { id, directory: root } of pending) {
       const { fallback, registered } = analysisStores(databasePath, root, releaseCutoff(id));
       const routes = new Set(registered.map(row => row.path));
       let acknowledged = true;

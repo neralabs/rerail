@@ -616,8 +616,10 @@ pub fn existing_directory_analysis_ownership(store_path: String, directory: Stri
 }
 
 #[napi]
-pub fn owning_directory_analysis_store(store_path: String, directory: String, home: String) -> Result<Option<String>> {
-    content_store::analysis_scope::owning_directory_store(Path::new(&store_path), Path::new(&directory), &home)
+pub fn owning_directory_analysis_store(store_path: String, directory: String, home: String, recorded: Option<bool>) -> Result<Option<String>> {
+    use content_store::analysis_scope::{owning_directory_store, owning_recorded_directory_store};
+    let lookup = if recorded == Some(true) { owning_recorded_directory_store } else { owning_directory_store };
+    lookup(Path::new(&store_path), Path::new(&directory), &home)
         .map(|owner| owner.map(|identity| identity.map_or_else(String::new, |id| id.to_string())))
         .map_err(|error| Error::from_reason(error.to_string()))
 }
@@ -631,7 +633,7 @@ pub fn retire_upkeep_under(directory: String) {
 }
 
 #[napi]
-pub fn delete_analysis_scope(store_path: String, value: String, directory: bool, release: Option<String>, expected_store: Option<String>) -> Result<()> {
+pub fn delete_analysis_scope(store_path: String, value: String, directory: bool, release: Option<String>, expected_store: Option<String>, recorded: Option<bool>) -> Result<()> {
     use content_store::analysis_scope;
     let path = std::path::Path::new(&store_path);
     let receipt = directory.then(|| analysis_scope::DirectoryRelease::parse(release.as_deref())).transpose()
@@ -642,7 +644,8 @@ pub fn delete_analysis_scope(store_path: String, value: String, directory: bool,
     }
     if let Some(receipt) = receipt {
         let expected = expected_store.as_deref().map(str::parse::<i64>).transpose().map_err(|_| Error::new(Status::InvalidArg, "invalid analysis store identity"))?;
-        receipt.deliver(path, Path::new(&value), expected)
+        if recorded == Some(true) { receipt.deliver_recorded(path, Path::new(&value), expected) }
+        else { receipt.deliver(path, Path::new(&value), expected) }
     } else {
         let scope = analysis_scope::named(&value).ok_or_else(|| Error::new(Status::InvalidArg, "analysis scope name must not be empty"))?;
         let store = content_store::ContentStore::open(path).map_err(|err| Error::new(Status::GenericFailure, err.to_string()))?;

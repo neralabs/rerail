@@ -142,6 +142,9 @@ It must register the store before it can publish ownership.
 This order lets a stop find every store that can hold an ended generation.
 If the store fails to open, the run uses memory and adds no registration.
 The stop remains pending until each store for the directory accepts its release.
+The stop records the physical directory path when it enters the queue.
+Delivery and later probes use that path as a stored scope key, even if a symlink replaces the directory.
+The generation cutoff preserves a new watch that acquires the same path after the stop.
 Directory registrations record the store's SQLite identity as well as its path.
 A numbered release opens an existing database and checks its identity on the connection that delivers the release.
 If a different store occupies that path, the original store keeps its pending release.

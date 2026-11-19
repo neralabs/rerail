@@ -472,8 +472,8 @@ export interface NativeBinding {
   spawnDetached(program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string): number;
   /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
-  deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string, expectedStore?: string): void;
-  owningDirectoryAnalysisStore(storePath: string, directory: string, home: string): string | null;
+  deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string, expectedStore?: string, recorded?: boolean): void;
+  owningDirectoryAnalysisStore(storePath: string, directory: string, home: string, recorded?: boolean): string | null;
   existingDirectoryAnalysisOwnership(storePath: string, directory: string, home: string): boolean;
   retireUpkeepUnder?(directory: string): void;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */

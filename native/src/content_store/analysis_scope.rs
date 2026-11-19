@@ -135,15 +135,19 @@ pub fn named(name: &str) -> Option<String> {
 }
 
 pub fn directory(path: &Path) -> String {
-    let path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
-    format!("cwd:{}", path.to_string_lossy())
+    directory_in(path, None)
 }
 
 pub fn directory_in(path: &Path, home: Option<&str>) -> String {
-    let directory = directory(path);
+    recorded_directory(&path.canonicalize().unwrap_or_else(|_| path.to_owned()), home)
+}
+
+// A committed stop must use the path captured at enqueue, even after a rename or symlink change.
+fn recorded_directory(path: &Path, home: Option<&str>) -> String {
+    let value = path.to_string_lossy();
     match home {
-        Some(home) => format!("cwd:{home}:{}", &directory["cwd:".len()..]),
-        None => directory,
+        Some(home) => format!("cwd:{home}:{value}"),
+        None => format!("cwd:{value}"),
     }
 }
 
@@ -160,9 +164,13 @@ pub fn existing_directory_ownership(store: &Path, directory: &Path, home: &str) 
 
 // Some(None) identifies a real owner from before store identities were recorded.
 pub fn owning_directory_store(store: &Path, directory: &Path, home: &str) -> rusqlite::Result<Option<Option<i64>>> {
+    owning_recorded_directory_store(store, &directory.canonicalize().unwrap_or_else(|_| directory.to_owned()), home)
+}
+
+pub fn owning_recorded_directory_store(store: &Path, directory: &Path, home: &str) -> rusqlite::Result<Option<Option<i64>>> {
     let db = rusqlite::Connection::open_with_flags(store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let legacy = directory_in(directory, None);
-    let scoped = directory_in(directory, Some(home));
+    let legacy = recorded_directory(directory, None);
+    let scoped = recorded_directory(directory, Some(home));
     let scoped_prefix = scope_prefix(&scoped);
     let legacy_prefix = scope_prefix(&legacy);
     for table in ["analysis_scope_manifest", "analysis_scope_snapshot", "analysis_scope_workspace_snapshot"] {
@@ -295,14 +303,18 @@ impl<'a> DirectoryRelease<'a> {
     }
 
     fn apply_to(&self, tx: &rusqlite::Connection, path: &Path) -> StoreResult<usize> {
-        let scope = directory_in(path, self.home);
+        let scope = recorded_directory(path, self.home);
         let subtree = scope_prefix(&scope);
-        let legacy = self.home.map(|_| directory(path));
+        let legacy = self.home.map(|_| recorded_directory(path, None));
         release_analysis_scopes(tx, &scope, Some(&subtree), self.id, self.before, legacy.as_deref())
     }
 
     /// Pin this existing database for identity validation, schema upgrade and release.
     pub fn deliver(&self, file: &Path, directory: &Path, expected: Option<i64>) -> StoreResult<usize> {
+        self.deliver_recorded(file, &directory.canonicalize().unwrap_or_else(|_| directory.to_owned()), expected)
+    }
+
+    pub fn deliver_recorded(&self, file: &Path, directory: &Path, expected: Option<i64>) -> StoreResult<usize> {
         let mut db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         super::connection::retry_busy(&mut super::BusyRetries::default(), || {
             if let Some(expected) = expected {
@@ -334,7 +346,8 @@ impl ContentStore {
 
     pub fn delete_directory_analysis_scopes(&self, path: &Path, release: Option<&str>) -> StoreResult<usize> {
         let receipt = DirectoryRelease::parse(release)?;
-        self.immediate_transaction(|tx| receipt.apply_to(tx, path))
+        let directory = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+        self.immediate_transaction(|tx| receipt.apply_to(tx, &directory))
     }
 
     pub(super) fn analysis_snapshot_due(&self, now: i64) -> StoreResult<bool> {

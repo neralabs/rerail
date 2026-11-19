@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -1410,6 +1410,42 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
         await collectAnalysisCaches(databasePath);
         expect(collect.mock.calls.filter(([path]) => path === store)).toHaveLength(1);
       } finally { collect.mockRestore(); }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it.each(["replaced", "missing", "watched again"])("releases the recorded directory when its path is %s before delivery", async mode => {
+    const root = checkout(), other = checkout(), home = root + "-home";
+    const databasePath = join(home, "rerail.sqlite"), store = join(home, "content.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      for (const repo of [root, other]) expect((await scan(repo, { databasePath })).status).toBe("completed");
+      const owners = () => queryContentStore<{ scope: string; acquisition: number }>(store,
+        "SELECT scope, acquisition FROM analysis_scope_workspace_snapshot ORDER BY acquisition");
+      const [first, second] = owners();
+      expect(first).toBeDefined();
+      expect(second).toBeDefined();
+      const alias = join(home, "watched"), moved = join(home, "original");
+      symlinkSync(root, alias, "junction");
+      const db = openRerailDatabase(databasePath);
+      try {
+        db.transaction(tx => queueAnalysisScopeReleases(tx, [mode === "replaced" ? root : alias], databasePath));
+        rmSync(alias);
+        renameSync(root, moved);
+        if (mode === "replaced") symlinkSync(other, root, "junction");
+        if (mode === "watched again") {
+          renameSync(moved, root);
+          expect((await scan(root, { databasePath })).status).toBe("completed");
+        }
+        const latest = owners().at(-1);
+        settleAnalysisScopeReleases(databasePath, -1);
+        if (mode === "watched again") {
+          expect(latest!.acquisition).toBeGreaterThan(first!.acquisition);
+          expect(owners()).toEqual([second, latest]);
+        } else {
+          expect(owners()).toEqual([second]);
+        }
+        expect(db.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get()).toBe(0);
+      } finally { db.$client.close(); }
     } finally { vi.unstubAllEnvs(); }
   });
 
