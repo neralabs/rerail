@@ -42,9 +42,6 @@ pub const MAX_GRAPH_BYTES: u64 = 512 * 1024 * 1024;
 /// included) gets no server graph, as past `MAX_GRAPH_FILES`: the host's audit bound
 /// (`AUDIT_MAX_FILES`).
 pub const MAX_GRAPH_ENTRIES: usize = 100_000;
-// The folders a server graph does not read, beside hidden ones: the host's `IGNORED_DIRECTORIES`
-// (src/engine/code-rule/ignored-directories.ts), which its repository walk skips, generated from it.
-include!("ignored_directories.generated.rs");
 /// A source larger than this is not read for imports; it imports nothing.
 pub const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 /// How many `extends` a configuration chain follows.
@@ -587,7 +584,7 @@ const SETTLED_AFTER: Duration = Duration::from_secs(2);
 
 /// The server graph of the package whose folder (workspace-relative) is `folder`, read on disk
 /// below `root` with its `config`: its source files outside hidden folders, the host's ignored
-/// ones (`IGNORED_DIRECTORIES`), nested packages and nested checkouts (a folder holding `.git`).
+/// ones (`git_workspace::ignored_directories`), nested packages and nested checkouts (a folder holding `.git`).
 /// `overlay` replaces one source's text with a host's (`None`: deleted), for a source being
 /// edited that disk does not hold yet. `None` where the package has no graph rather than a
 /// partial one: a folder or source cannot be read, its walk lists more than `MAX_GRAPH_ENTRIES`
@@ -750,9 +747,9 @@ pub fn config_on_disk(root: &Path, folder: &str) -> Config {
 }
 
 /// Whether a server graph skips a folder of this name: a hidden one, or one the host's walk
-/// ignores (`IGNORED_DIRECTORIES`).
+/// ignores (`git_workspace::ignored_directories`).
 fn skipped_folder(name: &str) -> bool {
-    name.starts_with('.') || IGNORED_DIRECTORIES.contains(&name)
+    name.starts_with('.') || crate::git_workspace::ignored_directory(name)
 }
 
 /// Collects the ECMA source files below `directory` (paths relative to `top`), skipping the

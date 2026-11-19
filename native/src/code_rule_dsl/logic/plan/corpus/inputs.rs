@@ -274,24 +274,10 @@ fn blob_id(bytes: &[u8]) -> String {
     hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The files of `root` the corpus walk sees (`corpus_files`: none under a directory `listed_directory` refuses),
-/// relative and sorted.
-fn walk(root: &Path) -> std::io::Result<Vec<String>> {
-    let mut out = Vec::new();
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let path = entry?.path();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if path.is_dir() {
-                if super::listed_directory(name) {
-                    pending.push(path);
-                }
-            } else if let Ok(relative) = path.strip_prefix(root) {
-                out.push(relative.to_string_lossy().replace('\\', "/"));
-            }
-        }
-    }
+/// The files of `root` the corpus sees (`corpus_paths`: Git's listing in a work tree, so none Git ignores, else the
+/// walk; none under a directory the host's walk never enters), relative and sorted.
+fn walk(root: &Path) -> Result<Vec<String>> {
+    let mut out = super::corpus_paths(root)?;
     out.sort();
     Ok(out)
 }
@@ -876,7 +862,8 @@ grew(e) :- now_entry(e), !was(_, e).
         assert!(artifact_declaration("\"a\" inputs").is_err());
     }
 
-    /// The digest covers the files the globs match, by content: a change to an unmatched file keeps it.
+    /// The digest covers the files the globs match, by content: a change to an unmatched file keeps it, and so does
+    /// one under a directory the host's walk never enters (`vendor`, `.rerail`); a hidden directory's (`.github`) counts.
     #[test]
     fn an_artifacts_digest_moves_only_with_its_inputs() {
         let root = std::env::temp_dir().join(format!("rerail-artifact-digest-{}", std::process::id()));
@@ -889,9 +876,15 @@ grew(e) :- now_entry(e), !was(_, e).
         let first = inputs_digest(&root, &globs).unwrap();
         std::fs::write(root.join("README.md"), "two\n").unwrap();
         std::fs::write(root.join(".rerail/facts/x.py"), "hidden\n").unwrap();
+        std::fs::create_dir_all(root.join("vendor")).unwrap();
+        std::fs::write(root.join("vendor/x.py"), "vendored\n").unwrap();
         assert_eq!(inputs_digest(&root, &globs).unwrap(), first);
+        std::fs::create_dir_all(root.join(".github")).unwrap();
+        std::fs::write(root.join(".github/x.py"), "workflow helper\n").unwrap();
+        let hidden = inputs_digest(&root, &globs).unwrap();
+        assert_ne!(hidden, first);
         std::fs::write(root.join("pkg/a.py"), "x = 2\n").unwrap();
-        assert_ne!(inputs_digest(&root, &globs).unwrap(), first);
+        assert_ne!(inputs_digest(&root, &globs).unwrap(), hidden);
         let _ = std::fs::remove_dir_all(&root);
     }
 

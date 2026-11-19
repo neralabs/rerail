@@ -725,8 +725,9 @@
 //                                              any depth: .git, .hg, .svn, .rerail, .venv, __pycache__,
 //                                              node_modules, dist, build, .next, .turbo, coverage, target and
 //                                              vendor (src/engine/code-rule/ignored-directories.ts). Hidden
-//                                              ones (.github) are read. In a Git work tree, the corpus also
-//                                              leaves out what Git ignores.
+//                                              ones (.github) are read. In a Git work tree, the corpus (and an
+//                                              .artifact's inputs) also leaves out what Git ignores. A site
+//                                              directory (one holding a *.dist-info) skips no folder.
 // .references {"siblingLinks": […], "constructorFields": {…}, "scope": {…}}
 //                                              the reference graph's links, as the policy's `references` gives
 //                                              them, over the files of `scope` (default: every file).

@@ -455,7 +455,7 @@ fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&fron
         return Ok(None);
     }
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
-    let found = scoped(run_files(root, typing)?, &prog, options);
+    let found = scoped(corpus_files(root)?, &prog, options);
     let label = corpus_language(language.as_deref(), typing, &found);
     let files = if none_named { Default::default() } else { found.of(label) };
     let docs: Vec<&(String, String, String)> = consulted.iter().filter(|c| c.0 == "doc").collect();
@@ -2980,7 +2980,7 @@ fn run_observed(
             && options.get(constants::OWN).is_none()
             && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off")
         {
-            let found = scoped(run_files(root, typing)?, prog, options);
+            let found = scoped(corpus_files(root)?, prog, options);
             let label = corpus_language(language.as_deref(), typing, &found);
             let files = found.of(label);
             // The observer's facts: each source file of the run's grammar, its module, and its content's digest (read
@@ -3087,7 +3087,7 @@ fn run_observed(
                 let (files, label) = match listing.take() {
                     Some(listed) => listed,
                     None => {
-                        let found = scoped(run_files(root, typing)?, &prog, options);
+                        let found = scoped(corpus_files(root)?, &prog, options);
                         let label = corpus_language(language.as_deref(), typing, &found);
                         (found.of(label), label)
                     }
@@ -10332,59 +10332,54 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
     out
 }
 
-// Generated from the host's list (src/engine/code-rule/ignored-directories.ts), so a run reads the files a host's walk
-// reads: a translation sees what its original sees.
-include!("../../ignored_directories.generated.rs");
-
 /// Whether the corpus lists files under a directory of this name: every one but those the host's walk never enters
-/// (`IGNORED_DIRECTORIES`), hidden ones (`.github`) included.
+/// (`git_workspace::ignored_directories`), hidden ones (`.github`) included.
 fn listed_directory(name: &str) -> bool {
-    !IGNORED_DIRECTORIES.contains(&name)
+    !crate::git_workspace::ignored_directory(name)
 }
 
-/// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
-/// (`.rerail`), skipping the directories `listed_directory` refuses.
-pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
-    files_under(root, listed_directory)
+/// Whether `root` is a site directory (`site-packages`): it holds an installed distribution's `*.dist-info`, which
+/// `typing::deps::Installed::scan` reads. The host's ignored directories are a repository's; a site directory's
+/// packages are what Python imports, whatever their names (`vendor`, `build`, `coverage`), so none is skipped there.
+fn site_directory(root: &Path) -> bool {
+    observe(|o| o.listing(root)).is_some_and(|listing| listing.iter().any(|(name, is_dir)| *is_dir && name.ends_with(".dist-info")))
 }
 
-/// The files a run reads under `root`: a repository's (`corpus_files`), or, where it summarizes a site directory
-/// (`Typing::summarize`), every installed file. The host's ignored directories are a repository's; an installed
-/// package may be named `vendor`, `build` or `coverage`, and Python imports it, as `deps::Installed` reads it.
-fn run_files(root: &Path, typing: &Typing) -> Result<CorpusFiles> {
-    if typing.summarize.is_some() { files_under(root, |_| true) } else { corpus_files(root) }
+/// The files under `root` a run reads, relative. In a Git work tree, the files Git sees (HEAD's, less deleted, plus
+/// staged and untracked ones it does not ignore), with no walk. Outside one, where Git cannot read it, or where it
+/// sees no file under the root (one it ignores, such as fetched fixtures), the walk. Neither lists a file under a
+/// directory `listed_directory` refuses, but in a site directory (`site_directory`).
+fn corpus_paths(root: &Path) -> Result<Vec<String>> {
+    let enters: fn(&str) -> bool = if site_directory(root) { |_| true } else { listed_directory };
+    match git_files(root) {
+        Some((under, overlays)) => Ok(git_listed(under, overlays, enters)),
+        None => walked(root, enters),
+    }
 }
 
-/// The files under `root` outside the directories `enters` refuses, as `corpus_files` lists them.
-fn files_under(root: &Path, enters: fn(&str) -> bool) -> Result<CorpusFiles> {
-    let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
-    let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
-        Some(label) => by_label.entry(label).or_default().push(relative),
-        // A hidden file (`.env`, `.hidden.md`) is no text document, as in W.
-        None if !relative.rsplit('/').next().is_some_and(|name| name.starts_with('.')) => text.push(relative),
-        None => {}
-    };
-    // In a Git work tree, the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
-    // does not ignore), with no walk; the same directories skipped. Outside one, or where Git cannot read it, the walk.
-    // A root Git sees no file under (one it ignores, such as fetched fixtures) is not described by Git: walked.
-    let git = git_files(root);
-    if let Some((under, overlays)) = git {
-        let mut listed = 0;
-        for relative in &under {
-            let relative = relative.as_str();
-            let dirs: Vec<&str> = relative.split('/').collect();
-            if !dirs[..dirs.len() - 1].iter().all(|d| enters(d)) {
-                continue;
-            }
-            listed += 1;
-            classify(relative.to_owned());
-        }
-        crate::code_rule_dsl::logic::profile::decision("phase 0: corpus files", || format!("{listed} files from Git ({overlays} overlays: changed, staged or untracked), no walk"));
-    } else {
-    // Phase 0's observer lists each directory: again only when its stat changed (t23).
-    let mut pending = vec![root.to_path_buf()];
-    // The run reads its files by their canonical paths too (`Observer::canonical`): a root reached through a symlink
-    // (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is asked.
+/// Git's files under the root (`git_files`), less those under a directory `enters` refuses.
+fn git_listed(under: Vec<String>, overlays: usize, enters: fn(&str) -> bool) -> Vec<String> {
+    let listed: Vec<String> = under.into_iter().filter(|p| p.rsplit_once('/').is_none_or(|(dirs, _)| dirs.split('/').all(enters))).collect();
+    crate::code_rule_dsl::logic::profile::decision("phase 0: corpus files", || {
+        format!("{} files from Git ({overlays} overlays: changed, staged or untracked), no walk", listed.len())
+    });
+    listed
+}
+
+/// The walk, into the directories `enters` allows: phase 0's observer lists each directory, again only when its stat
+/// changed (t23).
+fn walked(root: &Path, enters: fn(&str) -> bool) -> Result<Vec<String>> {
+    preload_root(root);
+    let (mut pending, mut out) = (vec![root.to_path_buf()], Vec::new());
+    while let Some(dir) = pending.pop() {
+        walk_directory(root, &dir, enters, &mut pending, &mut out)?;
+    }
+    Ok(out)
+}
+
+/// The run reads its files by their canonical paths too (`Observer::canonical`): a root reached through a symlink
+/// (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is asked.
+fn preload_root(root: &Path) {
     observe(|o| {
         o.preload(root);
         if let Ok(real) = dunce::canonicalize(root)
@@ -10393,36 +10388,53 @@ fn files_under(root: &Path, enters: fn(&str) -> bool) -> Result<CorpusFiles> {
             o.preload(&real);
         }
     });
-    while let Some(dir) = pending.pop() {
-        let listing = observe(|o| o.listing(&dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
-        for (name, is_dir) in listing.iter() {
-            let path = dir.join(name);
-            if *is_dir {
-                if enters(name) {
-                    pending.push(path);
-                }
-                continue;
-            }
-            if !path.is_file() {
-                continue;
-            }
-            let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
-            // The language registry's suffixes (`languages/<id>.json`): Python's include stubs (`.pyi`).
-            classify(relative);
+}
+
+/// One directory of the walk: the subdirectories `enters` allows go to `pending`, the files to `out`.
+fn walk_directory(root: &Path, dir: &Path, enters: fn(&str) -> bool, pending: &mut Vec<std::path::PathBuf>, out: &mut Vec<String>) -> Result<()> {
+    let listing = observe(|o| o.listing(dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
+    for (name, is_dir) in listing.iter() {
+        let path = dir.join(name);
+        if *is_dir {
+            pending.extend(enters(name).then_some(path));
+        } else if path.is_file() {
+            out.push(path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned());
         }
     }
+    Ok(())
+}
+
+/// The corpus's files under `root` (`corpus_paths`), relative and in path order: each grammar's, by the language
+/// registry's suffixes (`languages/<id>.json`: Python's include stubs, `.pyi`), and the others as text.
+pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
+    let mut found = classified(corpus_paths(root)?);
+    sample(&mut found);
+    Ok(found)
+}
+
+/// `paths` by grammar, each sorted; a path of no grammar is text, but a hidden file (`.env`, `.hidden.md`), as in W.
+fn classified(paths: Vec<String>) -> CorpusFiles {
+    let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
+    for relative in paths {
+        match crate::code_rule_dsl::language::label_of_path(&relative) {
+            Some(label) => by_label.entry(label).or_default().push(relative),
+            None if !relative.rsplit('/').next().is_some_and(|name| name.starts_with('.')) => text.push(relative),
+            None => {}
+        }
     }
     by_label.values_mut().for_each(|files| files.sort());
     text.sort();
-    // `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
-    if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) {
-        // Documents read as text too: a rule that reads every text document (a check over the repository's docs)
-        // would otherwise read all of them in every sample.
-        for files in by_label.values_mut().chain([&mut text]) {
-            *files = files.iter().step_by(n).cloned().collect();
-        }
+    CorpusFiles { by_label, text }
+}
+
+/// `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
+/// Documents read as text too: a rule that reads every text document (a check over the repository's docs) would
+/// otherwise read all of them in every sample.
+fn sample(found: &mut CorpusFiles) {
+    let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) else { return };
+    for files in found.by_label.values_mut().chain([&mut found.text]) {
+        *files = files.iter().step_by(n).cloned().collect();
     }
-    Ok(CorpusFiles { by_label, text })
 }
 
 /// Makes the base relations `prog` reads and does not derive inputs (`select::input_columns` names a base relation).
@@ -10780,12 +10792,13 @@ impl Own {
 
 #[cfg(test)]
 pub mod tests {
-    /// The corpus lists the files a host's walk reads: under every directory but the host's `IGNORED_DIRECTORIES`
-    /// (at any depth), hidden ones (`.github`) included, from Git's listing and from the walk alike.
+    /// The corpus lists the files a host's walk reads: under every directory but the host's ignored directories (at
+    /// any depth), hidden ones (`.github`) included, from Git's listing and from the walk alike. A site directory
+    /// (one holding a `*.dist-info`) is no repository: its packages are listed whatever their names.
     #[test]
     fn the_corpus_skips_the_hosts_ignored_directories_only() {
         let listed = [".github/workflows/a.yml", ".vscode/b.yml", "wf/a.yml"];
-        let skipped: Vec<String> = super::IGNORED_DIRECTORIES.iter().flat_map(|d| [format!("{d}/a.yml"), format!("src/{d}/b.yml")]).collect();
+        let skipped: Vec<String> = crate::git_workspace::ignored_directories().iter().flat_map(|d| [format!("{d}/a.yml"), format!("src/{d}/b.yml")]).collect();
         let make = |root: &std::path::Path| {
             for path in listed.iter().copied().chain(skipped.iter().map(String::as_str)) {
                 let path = root.join(path);
@@ -10809,6 +10822,13 @@ pub mod tests {
         git(&["add", "-A"]);
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "every directory committed"]);
         assert_eq!(files(work.path()), listed, "Git's listing");
+        let site = tempfile::tempdir().unwrap();
+        make(site.path());
+        std::fs::create_dir(site.path().join("vendor-1.0.dist-info")).unwrap();
+        std::fs::write(site.path().join("vendor-1.0.dist-info/RECORD"), "vendor/a.yml,,\n").unwrap();
+        let mut every: Vec<String> = listed.iter().map(|p| p.to_string()).chain(skipped).chain(["vendor-1.0.dist-info/RECORD".to_owned()]).collect();
+        every.sort();
+        assert_eq!(files(site.path()), every, "a site directory");
     }
 
     /// A corpus in a directory Git ignores has no file Git sees, and that answer is kept too (`git_files`'s record):
