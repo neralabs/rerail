@@ -291,8 +291,8 @@ pub struct Atoms {
     state: rerail_accel::sharded::Sharded<State>,
     /// The store's guest keys as this process holds them (decision 0391), shared as the atoms are.
     guest_keys: Arc<super::guest_keys::GuestKeys>,
-    /// The text tests' verdicts for these atoms (decision 0450 step 2d), shared as the atoms are.
-    verdicts: std::sync::OnceLock<Verdicts>,
+    /// What these atoms keep of their texts (decision 0450 steps 2d, 2e): verdicts and texts, shared as the atoms are.
+    kept: std::sync::OnceLock<Kept>,
     /// Held (the lock file, exclusively locked) while this process may give out pending ids.
     /// Lock order: `lease`, then `reader`, then `state`.
     lease: Mutex<Option<File>>,
@@ -361,17 +361,25 @@ static RESERVED: LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BT
 /// Reservations nest: a component this thread runs while its own waits (a job the wait runs, such as another
 /// component's, while a join's morsels finish) reserves its atoms as its own, and the waiting one's reservation
 /// goes on when it ends.
-/// The text tests' verdicts for a store's atoms (decision 0450 step 2d): the one rolling cache of `rerail_clif::view::
-/// cache`, in a block of its own, read and written through the reads written once in CLIF (`verdict_get`,
-/// `verdict_put`) by the CPU's text tests and the kernels. An entry holds 64 symbols of one test; three generations of
-/// `VERDICT_ENTRIES` entries bound it (LRU: an entry read is copied into the head).
-pub struct Verdicts {
+/// What a store's atoms keep of their texts (decision 0450 steps 2d and 2e): the one rolling cache of
+/// `rerail_clif::view::cache`, in a block of its own, read and written through the reads written once in CLIF by the
+/// CPU and the kernels alike. It holds the text tests' verdicts (`verdict_get`, `verdict_put`: an entry 64 symbols of
+/// one test) and the text functions' texts (`text_find`, `text_open`: an entry a text, by its functions and its
+/// symbol, at most `TEXT_MOST` bytes). Three generations of `KEPT_ENTRIES` entries and `KEPT_ARENA` bytes bound it
+/// (LRU: an entry read is copied into the head).
+pub struct Kept {
     block: rerail_blocks::block::Block,
     at: usize,
 }
 
-/// A generation's entries: 2 M symbols of a test, 1 MB of the block (its pages taken as entries are written).
-pub const VERDICT_ENTRIES: u32 = 1 << 15;
+/// A generation's entries (verdicts' and texts'), and its arena's bytes: its pages taken as entries are written.
+pub const KEPT_ENTRIES: u32 = 1 << 16;
+pub const KEPT_ARENA: usize = 16 << 20;
+/// The longest text kept (decision 0450 step 2e): a longer one is made each time it is read.
+pub const TEXT_MOST: usize = 4096;
+// The entry layout the kernels read a kept text by (`metal_join`'s `row_text`: its bytes at 12, its payload at 16),
+// and the most they keep.
+const _: () = assert!(rerail_clif::view::cache::LEN == 12 && rerail_clif::view::cache::PAYLOAD == 16 && TEXT_MOST == 4096);
 
 /// A verdict (`rerail_clif::verdict_reads`): none yet, the symbol fails, it passes.
 pub const UNKNOWN: u32 = 0;
@@ -379,18 +387,18 @@ pub const FAILS: u32 = 1;
 pub const PASSES: u32 = 2;
 
 // SAFETY: the cache's words are read and written by its reads' atomics alone.
-unsafe impl Send for Verdicts {}
-unsafe impl Sync for Verdicts {}
+unsafe impl Send for Kept {}
+unsafe impl Sync for Kept {}
 
-impl Verdicts {
-    fn new() -> Verdicts {
-        use rerail_clif::view::cache::Spec;
-        let spec = Spec::new(3, VERDICT_ENTRIES, 32);
+impl Kept {
+    fn new() -> Kept {
+        use rerail_clif::view::cache::{Spec, PAYLOAD};
+        let spec = Spec::arena(3, KEPT_ENTRIES, KEPT_ARENA, PAYLOAD as usize + TEXT_MOST);
         let block = rerail_blocks::block::Block::anon(rerail_blocks::block::kind::SCRATCH, spec.bytes() + 2 * 4096);
         let at = block.alloc(spec.bytes(), 256);
         // SAFETY: the cache's bytes, in the block, which no reader has yet: zero, as a fresh mapping gives them.
         spec.init_zeroed(unsafe { std::slice::from_raw_parts_mut(block.ptr::<u8>(at), spec.bytes()) }).expect("a cache of its size");
-        Verdicts { block, at }
+        Kept { block, at }
     }
 
     /// The cache's first byte on the host (what its reads take), and its offset in its block (a kernel binds the
@@ -537,7 +545,7 @@ impl Atoms {
             // Atom 0, the empty string, is every store's.
             state: rerail_accel::sharded::Sharded::new(State { atoms, since: None, map: None }),
             guest_keys: Arc::default(),
-            verdicts: std::sync::OnceLock::new(),
+            kept: std::sync::OnceLock::new(),
             lease: Mutex::new(None),
             leased: AtomicBool::new(false),
             wanted: Mutex::new((None, false)),
@@ -576,9 +584,9 @@ impl Atoms {
         self.state.read().atoms.runs()
     }
 
-    /// The text tests' verdicts for these atoms (decision 0450 step 2d), made when a test first asks.
-    pub fn verdicts(&self) -> &Verdicts {
-        self.verdicts.get_or_init(Verdicts::new)
+    /// What these atoms keep of their texts (verdicts, texts), made when a test or a text function first asks.
+    pub fn kept(&self) -> &Kept {
+        self.kept.get_or_init(Kept::new)
     }
 
     pub(crate) fn guest_keys(&self) -> Arc<super::guest_keys::GuestKeys> {

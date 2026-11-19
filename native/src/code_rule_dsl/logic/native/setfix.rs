@@ -7572,7 +7572,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let hit = match (matcher, test, u32::try_from(v)) {
                     // The verdict kept for the symbol, else made and kept (decision 0450 step 2d).
                     (Some(m), Some(t), Ok(sym)) => {
-                        let verdicts = cx.syms.atoms.verdicts();
+                        let verdicts = cx.syms.atoms.kept();
                         match verdicts.get(*t, sym) {
                             crate::content_store::atoms::PASSES => true,
                             crate::content_store::atoms::FAILS => false,

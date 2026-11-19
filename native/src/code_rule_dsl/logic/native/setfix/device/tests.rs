@@ -438,7 +438,7 @@
         let m = crate::code_rule_dsl::logic::strings::Matcher::new("prefix", &["foo".to_owned()]).unwrap();
         let test = crate::code_rule_dsl::text::table::test_id(&m.plans).unwrap();
         let atoms = std::sync::Arc::clone(syms.read().unwrap().atoms());
-        let verdicts = atoms.verdicts();
+        let verdicts = atoms.kept();
         assert!(verdicts.put(test, zzz, true));
         let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
         let rule = format!("pos {n} v0 v1\ntest prefix v0 x:{} 1\nhead v0 v1", hex("foo"));
@@ -454,6 +454,78 @@
         assert_eq!(got, [(i64::from(foo1), 1), (i64::from(longs), 2), (i64::from(zzz), 4)], "foo1, the long name, and zzz by the verdict the CPU kept, their symbols kept");
         use crate::content_store::atoms::{FAILS, PASSES};
         assert_eq!((verdicts.get(test, foo1), verdicts.get(test, longs), verdicts.get(test, bar)), (PASSES, PASSES, FAILS), "the device's verdicts, kept for the CPU");
+    }
+
+    /// A text function of a symbol keeps its text in the one rolling cache by (functions, symbol), a chain of them by
+    /// its source symbol (decision 0450 step 2e): after a run every name's text is there, the CPU's own, and a run
+    /// again reads them back with the same rows.
+    #[test]
+    fn text_functions_keep_their_texts_in_the_one_cache() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1);").unwrap();
+        let names: Vec<String> = (0..600).map(|k| format!("pkg{}/mod_{k}/file{}.py", k % 7, k % 13)).collect();
+        for (k, name) in names.iter().enumerate() {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![name, k as i64]).unwrap();
+        }
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let rules = [
+            format!("pos {n} v0 v1\nfunc dir v2 v0\nhead v2 v1"),
+            format!("pos {n} v0 v1\nfunc rr_substr v2 v0 i:0 i:9\nfunc sql_upper v3 v2\nhead v3 v1"),
+        ];
+        let run = |device: bool| {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+            let mut spec = vec!["name dev_keep".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.push("rel h0 si empty".into());
+            spec.extend(rules.iter().map(|r| format!("seed 0 {}", hex(r))));
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "dev_keep", 0).unwrap();
+            let report = super::take_report();
+            if device {
+                assert!(report.as_ref().is_some_and(|r| r.refused.is_none()), "on the device: {report:?}");
+            }
+            super::super::close(&db, "dev_keep").unwrap();
+            let mut rows: Vec<(String, i64)> = db.prepare("SELECT sym_text(c0), c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            rows
+        };
+        let cpu = run(false);
+        let first = run(true);
+        assert_eq!(first, cpu, "the device's texts are the CPU's");
+        // Every name's texts are kept, by its symbol: `dir`'s, and the chain's by its source.
+        let syms = super::super::symbols(&db).unwrap();
+        let atoms = std::sync::Arc::clone(syms.read().unwrap().atoms());
+        let kept = atoms.kept();
+        let dir = super::text_fns_id("/dir[]").unwrap();
+        let chain = super::text_fns_id("/rr_substr[0, 9]/sql_upper[]").unwrap();
+        let read = |fns: u32, sym: u32| -> Option<String> {
+            // SAFETY: the store's cache, in its live block; an entry found is complete.
+            unsafe {
+                let r = rerail_blocks::generated_reads::text_find(kept.cache(), fns, sym);
+                (r & 3 == 0).then(|| {
+                    let e = (r & !3) as *const u8;
+                    let len = e.add(12).cast::<u32>().read() as usize - 16;
+                    String::from_utf8(std::slice::from_raw_parts(e.add(16), len).to_vec()).unwrap()
+                })
+            }
+        };
+        for name in &names {
+            let sym = u32::try_from(syms.write().unwrap().id(name)).unwrap();
+            let d = name.rsplit_once('/').map_or("", |(d, _)| d);
+            assert_eq!(read(dir, sym).as_deref(), Some(d), "{name}: dir kept");
+            assert_eq!(read(chain, sym), Some(name.chars().take(9).collect::<String>().to_ascii_uppercase()), "{name}: the chain kept by its source");
+        }
+        // Run again: the texts read back from the cache, the same rows.
+        assert_eq!(run(true), cpu, "the kept texts read back are the CPU's");
     }
 
     /// A literal test of a bound pattern, its symbols read in place (decision 0450 step 2e): a pattern holding the set
@@ -535,7 +607,7 @@
         let syms = super::super::symbols(&db).unwrap();
         let atoms = std::sync::Arc::clone(syms.read().unwrap().atoms());
         let runs = atoms.runs();
-        let verdicts = atoms.verdicts();
+        let verdicts = atoms.kept();
         use crate::content_store::atoms::{FAILS, PASSES, UNKNOWN};
         let mut wrong = Vec::new();
         let mut seen = std::collections::HashSet::new();

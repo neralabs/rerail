@@ -22,7 +22,7 @@ fn a_cpu_text_test_reads_and_keeps_its_verdicts_in_the_stores_cache() {
     let m = crate::code_rule_dsl::logic::strings::Matcher::new("prefix", &["foo".to_owned()]).unwrap();
     let test = crate::code_rule_dsl::text::table::test_id(&m.plans).unwrap();
     let atoms = Arc::clone(syms.read().unwrap().atoms());
-    let verdicts = atoms.verdicts();
+    let verdicts = atoms.kept();
     assert!(verdicts.put(test, zzz, true));
     let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
     let rule = format!("pos {n} v0 v1\ntest prefix v0 x:{} 1\nhead v0 v1", hex("foo"));

@@ -283,3 +283,27 @@ that size came from the cache's first use, a 16z block decoded, and nothing else
   in every run: 75.9-77.2 B against 77.5-80.4 B, peak 1,365-1,416 MB against 1,443-1,494 MB. No stratum ran on the
   host for an unheld symbol or the separator; the refusals at run time are the device's room (Q261) in both builds.
   Left out: the new binary's first run, which compiles the changed kernels (89 B, 25 s).
+
+## Built (2026-11-19, step 2e, the text functions' texts in the one cache)
+
+- **One cache, verdicts and texts.** The store's atoms keep one rolling cache (`atoms::Kept`, was `Verdicts`), now
+  of arena generations: 3 of `KEPT_ENTRIES` (65,536) entries and `KEPT_ARENA` (16 MB) each, an entry at most
+  `TEXT_MOST` (4 KB) of text. A verdict entry is 32 bytes (64 aligned), a text its own length. The batch holds it
+  on the device (`DevKept`), beside its atoms directory; `row_stage` takes the stage's id in it (a test's, or the
+  functions').
+- **A text function per row keeps its text** (`ROW_KEPT`) when its text argument is an input column's symbol, or a
+  kept text of one, and its other arguments are constants: the regex replacements and every `TEXTFN_*` of a text.
+  Its key is the chain of functions from the source symbol (`/dir[]`, `/rr_substr[0, 9]/sql_upper[]`: the rule's
+  function names and constants, so the CPU names a chain as the device does), named in the automata block's index
+  (`text_fns_id`), with the source symbol in key 7. One lane looks it up: a kept text is copied into the arena; a
+  text made is written to the arena, then into an entry taken for it, and completed. A text past 4 KB, a row
+  `lower` sends to the host, and a symbol the directory does not hold keep nothing.
+- Test: `text_functions_keep_their_texts_in_the_one_cache` (600 names: after a device run every name's `dir` text
+  and its chain's are in the cache, equal to the CPU's; a second run reads them back, the same rows). The 24 setfix
+  device and `metal_join` tests pass on Metal; the CPU's verdict tests pass.
+- hogql cold, Metal, profiling, format 15, load 60-70, interleaved with the build before (c7344deba), 1,629 findings
+  in every run: 75.9-76.1 B against 76.0-76.4 B, peak 1,343-1,371 MB against 1,231-1,366 MB. Left out: the new
+  binary's first run, which compiles the changed kernel (101 B, 43 s).
+- Open: the CPU's text functions make their texts per row in the morsel walk and do not read this cache yet. They
+  intern the text they make, so a kept text would spare the function's work, not the interning.
+

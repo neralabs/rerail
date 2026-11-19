@@ -115,6 +115,10 @@ pub(in crate::code_rule_dsl) const ROW_MAP: u32 = 4;
 /// A text test of a symbol (key 0) by its table, its verdict read from and kept in the one rolling cache (decision
 /// 0450 step 2d): the symbol's bytes read through the atoms directory where a verdict is not kept yet.
 pub(in crate::code_rule_dsl) const ROW_VERDICT: u32 = 5;
+/// With a text function (`ROW_MAP`, `ROW_REPLACE`) of constant arguments of a symbol, or a chain of them: its text kept
+/// in the one rolling cache (decision 0450 step 2e) by the functions' id (`P[5]`) and the source symbol (key 7). A
+/// kept text is copied into the arena; one made is kept, up to `atoms::TEXT_MOST` bytes.
+pub(in crate::code_rule_dsl) const ROW_KEPT: u32 = 1 << 9;
 pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
 pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;
@@ -1389,6 +1393,39 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
             if (lane == 0) counts[row] = uint(v == want);
             continue;
         }
+        // A text kept by (functions P[5], source symbol key 7) in the rolling cache VC (`ROW_KEPT`, decision 0450
+        // step 2e): one lane looks it up (an entry's offset from VC, what it found in the low bits); a kept text is
+        // copied into the arena.
+        bool keeps = (s.agg[0] & (1u << 9)) != 0;
+        uint ksym = 0;
+        if (keeps) {
+            long kv = key_value(s, L, row, 7);
+            keeps = kv >= 0 && kv <= long(0xffffffffu);
+            ksym = uint(kv);
+        }
+        if (keeps) {
+            ulong r = 0;
+            if (lane == 0) r = clif_text_find(VC, 0ul, P[5], ksym);
+            r = ulong(simd_shuffle(uint(r), ushort(0))) | (ulong(simd_shuffle(uint(r >> 32), ushort(0))) << 32);
+            if ((r & 3ul) == 0ul) {
+                device const uchar* e = VC + (r & ~3ul);
+                uint len = *(device const uint*)(e + 12) - 16u;
+                uint off = 0;
+                if (lane == 0) off = atomic_fetch_add_explicit(A, len, memory_order_relaxed);
+                off = simd_shuffle(off, ushort(0));
+                bool full = ulong(off) + len > ((device const uint*)A)[1];
+                if (!full) {
+                    device uchar* o = (device uchar*)A + 16 + off;
+                    for (uint i = lane; i < len; i += 32) o[i] = e[16 + i];
+                }
+                if (lane == 0) {
+                    if (full && s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+                    V[row] = full ? -1 : arena_value(off, len);
+                    counts[row] = 1;
+                }
+                continue;
+            }
+        }
         Txt y = txt_of(s, L, row, D, A, 2, s.agg[1] >> 4, unheld), z = y;
         uint f = (s.agg[0] >> 16) & 255;
         uint lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0, pad = 0;
@@ -1455,6 +1492,21 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
                     else if (f == 9) c = (c >= 'a' && c <= 'z') ? c - 32 : c;
                     o[i] = c;
                 }
+            }
+        }
+        if (keeps && !full && !unheld && len <= 4096u) {
+            // Made: kept for the next reader. Its bytes in the arena, written by the group's lanes, copied into an
+            // entry taken for them, then completed (another thread finds it pending until then).
+            simdgroup_barrier(mem_flags::mem_device);
+            ulong r = 0;
+            if (lane == 0) r = clif_text_open(VC, 0ul, P[5], ksym, len);
+            r = ulong(simd_shuffle(uint(r), ushort(0))) | (ulong(simd_shuffle(uint(r >> 32), ushort(0))) << 32);
+            if ((r & 3ul) == 1ul) {
+                device uchar* e = (device uchar*)VC + (r & ~3ul);
+                device const uchar* o = (device const uchar*)A + 16 + off;
+                for (uint i = lane; i < len; i += 32) e[16 + i] = o[i];
+                simdgroup_barrier(mem_flags::mem_device);
+                if (lane == 0) clif_cache_done(VC, 0ul, r & ~3ul);
             }
         }
         if (lane == 0) {
@@ -2155,18 +2207,17 @@ impl DevAtoms {
     }
 }
 
-/// A text test's verdicts on the device (decision 0450 step 2d): the store's one rolling cache, its wrap and the
-/// cache's offset in it, and the test's id (its slot in the automata block's index).
-pub(in crate::code_rule_dsl) struct DevVerdicts {
+/// The store's one rolling cache on the device (decision 0450 steps 2d, 2e: the text tests' verdicts, the text
+/// functions' texts): its block's wrap and the cache's offset in it.
+pub(in crate::code_rule_dsl) struct DevKept {
     cache: (metal::Buffer, u64),
-    test: u32,
 }
 
-impl DevVerdicts {
-    /// Test `test`'s verdicts in `cache` (a store's atoms' `Verdicts`).
-    pub(in crate::code_rule_dsl) fn new(cache: &crate::content_store::atoms::Verdicts, test: u32) -> Result<DevVerdicts, Error> {
+impl DevKept {
+    /// `kept` (a store's atoms' `Kept`) for the device.
+    pub(in crate::code_rule_dsl) fn new(kept: &crate::content_store::atoms::Kept) -> Result<DevKept, Error> {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-        Ok(DevVerdicts { cache: (cache.block().gpu_buffer(device), cache.at() as u64), test })
+        Ok(DevKept { cache: (kept.block().gpu_buffer(device), kept.at() as u64) })
     }
 }
 
@@ -2524,6 +2575,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// The atoms directory its text kernels read symbols' bytes through (decision 0450 step 2e), made the first
     /// time a stage reads a symbol's text and made again when the store's atoms have grown past it.
     atoms: Option<std::rc::Rc<DevAtoms>>,
+    /// The store's one rolling cache, for the verdicts and texts its text kernels keep (decision 0450 step 2e).
+    kept: Option<std::rc::Rc<DevKept>>,
     /// The relations its work writes in their blocks, each with its rows' `needed` before (decision 0427): a row
     /// its kernels could not write, past the chunks its relation holds, fails the batch, named.
     written: Vec<Written>,
@@ -2552,6 +2605,14 @@ impl Batch {
         Ok(())
     }
 
+    /// The store's one rolling cache its text kernels keep verdicts and texts in, made the first time one asks.
+    pub(in crate::code_rule_dsl) fn kept(&mut self, make: impl FnOnce() -> Result<DevKept, Error>) -> Result<(), Error> {
+        if self.kept.is_none() {
+            self.kept = Some(std::rc::Rc::new(make()?));
+        }
+        Ok(())
+    }
+
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
         Batch::with_arena(ARENA_START)
@@ -2560,7 +2621,7 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap, building: Vec::new(), atoms: None, written: Vec::new() })
+        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap, building: Vec::new(), atoms: None, kept: None, written: Vec::new() })
     }
 
     /// Notes that its kernels write `rel` (`what`): its rows' `needed` now, checked when the batch is done.
@@ -2954,9 +3015,10 @@ impl Batch {
 
     /// A mode 10 stage (`ROWTEXT`) from `left` into `out`: `row_text` (a SIMD group a row, its symbols' bytes read
     /// through the batch's atoms directory, decision 0450 step 2e), its automaton `auto` (a replacement's or a test's,
-    /// in the automata block) and, for a test of a symbol, the verdicts' cache; then its rows scattered.
+    /// in the automata block), and `id`: a test's (its verdicts) or the functions' (their texts, `ROW_KEPT`) in the
+    /// batch's rolling cache; then its rows scattered.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, auto: Option<(&DevBytes, [u32; 4])>, verdicts: Option<&DevVerdicts>,
+    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, auto: Option<(&DevBytes, [u32; 4])>, id: u32,
                                               in_slot: usize, out_slot: usize, totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
         let text = pipeline("join", "row_text", || SOURCE.to_owned())?;
         let scatter = pipeline("join", "row_scatter", || SOURCE.to_owned())?;
@@ -2971,18 +3033,18 @@ impl Batch {
         // [scratch states, states, classes, start]: a replacement's scratch holds its larger automaton's states.
         let [kept, states, classes, start] = auto.map_or([1, 0, 0, 0], |a| a.1);
         let work = Held::new(ngroups * 64 * kept.max(1) as usize)?;
-        let test = verdicts.map_or(0, |v| v.test);
-        let p = Held::of([ngroups as u32, kept, states, classes, start, test, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
+        let p = Held::of([ngroups as u32, kept, states, classes, start, id, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
         let counts = scratch(FREE, 4 * n)?;
         let values = Held::new(8 * n)?;
         let scan = Scan::new(n)?;
         let arena = self.arena()?.buffer.buffer.to_owned();
         let (g, g_at): (metal::Buffer, u64) = auto.map_or_else(|| (self.dummy.buffer.to_owned(), 0), |a| (a.0.buffer.to_owned(), a.0.at));
         let atoms = self.atoms.clone().ok_or(Error::BackendCapacity)?;
+        let cache = self.kept.clone().ok_or(Error::BackendCapacity)?;
         let dummy = self.dummy.buffer.to_owned();
         let pass = self.pass(4)?;
         let lbuf: &BufferRef = &left.buffer.buffer;
-        let (vc, vc_at) = verdicts.map_or((&*dummy, 0), |v| (&*v.cache.0, v.cache.1));
+        let (vc, vc_at) = (&*cache.cache.0, cache.cache.1);
         atoms.resident_in(pass);
         pass.run_bytes_at(&text, &[(lbuf, 0), (&dummy, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0), (&atoms.dir.0, atoms.dir.1), (vc, vc_at)],
                        stage.bytes(), (ngroups * 32).div_ceil(256));

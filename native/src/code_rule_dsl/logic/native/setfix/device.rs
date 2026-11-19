@@ -77,9 +77,10 @@ enum Kind {
     /// A stage that reads names (`str_cmp`, a cat compared): its symbols' bytes read in place through the batch's
     /// atoms directory (decision 0450 step 2e).
     Names,
-    /// A made text per row (`mj::ROWTEXT`: a cat, a regex's replacement, a text test of one), a SIMD group a row,
-    /// its symbols' bytes read in place (decision 0450 step 2e), with its automaton.
-    RowText { auto: RowAuto },
+    /// A made text per row (`mj::ROWTEXT`: a cat, a regex's replacement, a text function, a text test of one), a SIMD
+    /// group a row, its symbols' bytes read in place (decision 0450 step 2e), with its automaton; `kept`, the id its
+    /// text is kept by in the one rolling cache (`mj::ROW_KEPT`), with the source symbol (0 when it keeps none).
+    RowText { auto: RowAuto, kept: u32 },
     /// The rule's steps past the one that binds the head (`setfix::tail`): an atom over `rel` (by its key columns
     /// `cols`) and the atoms after it (`rest`: each relation, its key columns and its probe), run as one witness per
     /// binding (`mj::WITNESS`, decision 0277), as the CPU's walk runs them (decision 0229).
@@ -112,7 +113,8 @@ fn dev_atoms(batch: &mut mj::Batch, names: &Interner) -> Result<(), String> {
     let atoms = &names.atoms;
     let runs = atoms.runs();
     let end = runs.iter().map(|(r, _)| r.end).max().unwrap_or(0);
-    batch.atoms(end, || mj::DevAtoms::new(runs)).map_err(|e| format!("{e:?}: the atoms directory"))
+    batch.atoms(end, || mj::DevAtoms::new(runs)).map_err(|e| format!("{e:?}: the atoms directory"))?;
+    batch.kept(|| mj::DevKept::new(atoms.kept())).map_err(|e| format!("{e:?}: the rolling cache"))
 }
 
 /// A `ROWTEXT` stage of op `op` (`mj::ROW_*`, with a test's verdict wanted at bit 8) over operands `x` and `y` (a
@@ -122,8 +124,34 @@ fn row_stage(first: usize, op: u32, x: Key, y: Key, auto: RowAuto, deferred: &Ha
     if !matches!(st.kind, Kind::Names) {
         return Err("a made text's operands of no names".into());
     }
-    st.kind = Kind::RowText { auto };
+    st.kind = Kind::RowText { auto, kept: 0 };
     Ok(st)
+}
+
+/// The id a chain of text functions keeps its texts by (`keep_text`'s: a step `/{function}{constants:?}`, by the
+/// rule's function names, so the CPU names a chain as the device does): process-wide, by the automata block's index.
+pub(in crate::code_rule_dsl) fn text_fns_id(chain: &str) -> Option<u32> {
+    crate::code_rule_dsl::text::automata::id(&format!("text functions {chain}"))
+}
+
+/// What a text function stage `d` of `x` keeps its text by (decision 0450 step 2e): when `x` is an input column's
+/// symbol, or a kept text of one (`kept`'s, by its slot), and every other argument a constant, the chain of functions
+/// from that symbol (`step` the last, its constants in it) and its id. The stage then looks its text up by (id,
+/// source symbol, key 7) in the one rolling cache, and keeps what it makes (`mj::ROW_KEPT`).
+fn keep_text(d: &mut mj::Stage, x: Key, consts: Option<Vec<i64>>, step: &str, origin: &[Option<(Arc<InRel>, usize)>], kept: &HashMap<usize, (usize, String)>) -> Option<(u32, (usize, String))> {
+    let consts = consts?;
+    let Key::Slot(x) = x else { return None };
+    let (src, chain) = match d.agg[1] & 15 {
+        mj::OPND_SYM if origin.get(x).is_some_and(Option::is_some) => (x, String::new()),
+        mj::OPND_ARENA => kept.get(&x).cloned()?,
+        _ => return None,
+    };
+    let chain = format!("{chain}/{step}{consts:?}");
+    let id = text_fns_id(&chain)?;
+    d.agg[0] |= mj::ROW_KEPT;
+    d.key_kind[7] = mj::SLOT;
+    d.key_slot[7] = src as u32;
+    Some((id, (src, chain)))
 }
 
 thread_local! {
@@ -440,6 +468,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
     // that bound the symbol, and the functions.
     // `cat`s held back, by the slot they bind: each read only by an `eq` or `ne` after, which compares names.
     let mut deferred: HashMap<usize, (Key, Key, u32)> = HashMap::new();
+    // The arena texts kept in the rolling cache: by slot, the source symbol's slot and the chain of functions.
+    let mut kept_texts: HashMap<usize, (usize, String)> = HashMap::new();
     let mut stages = Vec::new();
     let mut i = 0;
     while i < j.steps.len() {
@@ -786,6 +816,10 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 }
                 let mut st = row_stage(i, mj::ROW_REPLACE, args[0], Key::Const(with), RowAuto::Replace { pattern, with }, &deferred, &origin, &known)?;
                 st.desc.bind_slot[0] = *out as u32;
+                if let Some((id, chain)) = keep_text(&mut st.desc, args[0], Some(vec![pattern, with]), name, &origin, &kept_texts) {
+                    st.kind = Kind::RowText { auto: RowAuto::Replace { pattern, with }, kept: id };
+                    kept_texts.insert(*out, chain);
+                }
                 stages.push(st);
                 if *out >= bound.len() {
                     bound.resize(*out + 1, false);
@@ -858,6 +892,17 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 }
                 d.agg = [mj::ROW_MAP | f << 16, xk];
                 d.bind_slot[0] = *out as u32;
+                let konst = |k: &Key| match *k {
+                    Key::Const(c) => Some(c),
+                    Key::Slot(x) => known.get(&x).copied(),
+                };
+                let mut kind = kind;
+                if ntexts > 0 {
+                    if let Some((id, chain)) = keep_text(&mut d, args[0], args[1..].iter().map(konst).collect(), name, &origin, &kept_texts) {
+                        kind = Kind::RowText { auto: RowAuto::None, kept: id };
+                        kept_texts.insert(*out, chain);
+                    }
+                }
                 if *out >= bound.len() {
                     bound.resize(*out + 1, false);
                 }
@@ -1656,16 +1701,17 @@ impl<'p> Run<'p> {
                     }
                     let left = self.tables[i].as_ref().expect("the stage's input");
                     if s.desc.mode == mj::ROWTEXT {
-                        let (auto, verdicts) = match &s.kind {
-                            Kind::RowText { auto, .. } => (row_automaton(auto, names)?, None),
+                        // Its automaton, and its id in the one rolling cache: a test's (its verdicts) or the
+                        // functions' (their texts).
+                        let (auto, id) = match &s.kind {
+                            Kind::RowText { auto, kept } => (row_automaton(auto, names)?, *kept),
                             Kind::Verdict { table, test } => {
                                 let a = Rc::new(mj::DevBytes::of(&table.automaton).map_err(|e| format!("{e:?}"))?);
-                                let v = mj::DevVerdicts::new(names.atoms.verdicts(), *test).map_err(|e| format!("{e:?}: a text test's verdicts"))?;
-                                (Some((a, [table.states, table.states, table.classes, table.start])), Some(v))
+                                (Some((a, [table.states, table.states, table.classes, table.start])), *test)
                             }
-                            _ => (None, None),
+                            _ => (None, 0),
                         };
-                        batch.row_stage(s.desc, left, auto.as_ref().map(|(b, p)| (&**b, *p)), verdicts.as_ref(), i, o, &self.totals, &self.counters, self.counter[k], &out)
+                        batch.row_stage(s.desc, left, auto.as_ref().map(|(b, p)| (&**b, *p)), id, i, o, &self.totals, &self.counters, self.counter[k], &out)
                     } else {
                         let desc = self.places[k].as_deref().map_or(s.desc, |at| narrowed(s.desc, at));
                         if let Some(probes) = &self.probes[k] {
