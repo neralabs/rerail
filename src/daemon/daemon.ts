@@ -960,9 +960,11 @@ export class TlsKeyExposedError extends Error {
 }
 
 /**
- * A TLS private key file that is empty or does not parse as a private key (`refuseUnparsed`). The daemon serves this
- * computer alone on it, as on a key others can read, so hooks keep recording; its message names the file and what it
- * must hold. Node's https server reads an empty key as no key: it would listen, say https, and fail every handshake.
+ * A TLS private key file that is empty or does not parse as a private key (`unparsedLine`), whether only its owner
+ * reads it or others can too (`loadDaemonTls`). The daemon serves this computer alone on it, as on a key others can
+ * read, so hooks keep recording; its message names the file and what it must hold, and then, when others can read it,
+ * says so as `TlsKeyExposedError`'s does. Node's https server reads an empty key as no key: it would listen, say https,
+ * and fail every handshake.
  */
 export class TlsKeyUnparsedError extends Error {
   override readonly name = "TlsKeyUnparsedError";
@@ -975,14 +977,15 @@ export class TlsKeyUnparsedError extends Error {
  * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
  * `C:\certs` say, inherits an ACL that lets every local user read it. A key file this account reads, which parses as a
  * private key, and others can read too is a `TlsKeyExposedError`, on which the daemon serves this computer alone
- * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). A key others can read that is
- * no key this account can read (a folder, a FIFO, a file this account may not read, one another program holds with a
- * lease or an oplock, one larger than any key, one that holds no key such as the certificate) or that the certificate
- * would not serve with, a key whose readers cannot be read (a missing or misspelled one), and a key only its owner
- * reads that cannot be read (a folder, a file this account may not read), is a mistake in the command and stops the
- * start within seconds. So does a certificate that is empty or does not parse (`refuseUnparsed`), in a line that names
- * the file. A key only its owner reads that is empty or does not parse, such as one that holds the certificate, is a
- * `TlsKeyUnparsedError`, on which the daemon serves this computer alone. `access` is for tests.
+ * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). A key file this account reads
+ * that is empty or does not parse, such as one that holds the certificate, is a `TlsKeyUnparsedError`, on which the
+ * daemon serves this computer alone too: when only its owner reads it, and when others can read it too beside a
+ * certificate the start would take, its line then saying both. A key others can read that is no file this account can
+ * read (a folder, a FIFO, a file this account may not read, one another program holds with a lease or an oplock, one
+ * larger than any key) or that the certificate would not serve with, a key whose readers cannot be read (a missing or
+ * misspelled one), and a key only its owner reads that cannot be read (a folder, a file this account may not read), is
+ * a mistake in the command and stops the start within seconds. So does a certificate that is empty or does not parse
+ * (`refuseUnparsed`), in a line that names the file. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -1025,60 +1028,84 @@ const CERTIFICATE_FILE: TlsFileKind = {
 };
 
 /**
- * Throws `kind.refused`, in one line that names `file`, when `text`, read from it, is empty or does not parse as `kind`.
- * The line says the file could not be read as what it must hold, which stays true of a key that needs a passphrase.
+ * One line that names `file` and says what is wrong when `text`, read from it, is empty or does not parse as `kind`;
+ * undefined when it parses. The line says the file could not be read as what it must hold, which stays true of a key
+ * that needs a passphrase.
  */
-function refuseUnparsed(kind: TlsFileKind, file: string, text: string): void {
-  if (text === "") throw kind.refused(`The ${kind.name} ${file} is empty: it must hold ${kind.holds}`);
+function unparsedLine(kind: TlsFileKind, file: string, text: string): string | undefined {
+  if (text === "") return `The ${kind.name} ${file} is empty: it must hold ${kind.holds}`;
   try {
     kind.parse(text);
+    return undefined;
   } catch (error) {
-    throw kind.refused(`The ${kind.name} ${file} could not be read as ${kind.holds}: ${errorText(error)}`);
+    return `The ${kind.name} ${file} could not be read as ${kind.holds}: ${errorText(error)}`;
   }
 }
 
+/** Throws `kind.refused` with `unparsedLine`'s line, when it has one. */
+function refuseUnparsed(kind: TlsFileKind, file: string, text: string): void {
+  const line = unparsedLine(kind, file, text);
+  if (line !== undefined) throw kind.refused(line);
+}
+
 /**
- * What a start whose key others can read throws: `TlsKeyExposedError`, on which the daemon serves this computer alone,
- * when the key is a private key this account reads (`readPrivateKey`) and the certificate would serve with it
- * (`certificateServes`); else `refusal`, main's message for this command line. On Windows a Node child opens the two
- * files first (`openedInChild`). When its open was still waiting at its bound, the start refuses; when it never got to
- * open them, the refusal says why on a line of its own, since the person would otherwise expect the daemon on loopback.
+ * What a start whose key others can read throws, when the key is a file this account reads (`readKeyFile`) beside a
+ * certificate that would serve with it (`certificateServes`): `TlsKeyExposedError` for a private key and
+ * `TlsKeyUnparsedError` for a file that holds none (`servedAlone`), on each of which the daemon serves this computer
+ * alone; else `refusal`, main's message for this command line. On Windows a Node child opens the two files first
+ * (`openedInChild`). When its open was still waiting at its bound, the start refuses; when it never got to open them,
+ * the refusal says why on a line of its own, since the person would otherwise expect the daemon on loopback.
  */
 async function refusedKey(tls: DaemonTlsFiles, refusal: string): Promise<Error> {
   const child = process.platform === "win32" ? await openedInChild([tls.keyFile, tls.certFile]) : OPENED;
   if (child.kind !== "opened") return new Error(child.kind === "held" ? refusal : `${refusal}\n${child.why}`);
-  const key = await readPrivateKey(tls.keyFile);
-  return key !== undefined && (await certificateServes(tls.certFile, key)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
+  const key = await readKeyFile(tls.keyFile);
+  return key !== undefined && (await certificateServes(tls.certFile, key)) ? servedAlone(key, refusal) : new Error(refusal);
+}
+
+/** A key file others can read, as this account read it: a private key, or the line saying it is empty or holds none. */
+type KeyFile = { readonly kind: "key"; readonly key: Buffer } | { readonly kind: "unparsed"; readonly line: string };
+
+/**
+ * The error on which the daemon serves this computer alone for `key`, a file others can read as `refusal` says. For a
+ * file that holds no key, its one line first names the file and says so, then gives `refusal`.
+ */
+function servedAlone(key: KeyFile, refusal: string): Error {
+  return key.kind === "key" ? new TlsKeyExposedError(refusal) : new TlsKeyUnparsedError(`${key.line}; ${refusal}`);
 }
 
 /**
- * What `path` holds, read once (`readWithoutWaiting`), when it is a regular file this account reads that parses as a
- * private key; undefined otherwise. A folder, a FIFO, a file another program holds with a lease, one larger than any
- * key, a certificate or any other file is no key.
+ * What `path` holds, read once (`readWithoutWaiting`), when it is a regular file this account reads: the key, when it
+ * parses as a private key; else the line `unparsedLine` gives it, empty or no key (text, the certificate, a key that
+ * needs a passphrase). Undefined for a folder, a FIFO, a file this account may not read or another program holds with a
+ * lease, one larger than any key, and one the https server would read though `createPrivateKey` does not.
  */
-async function readPrivateKey(path: string): Promise<Buffer | undefined> {
+async function readKeyFile(path: string): Promise<KeyFile | undefined> {
+  const text = await readWithoutWaiting(path).catch(() => undefined);
+  if (text === undefined) return undefined;
   try {
-    const key = await readWithoutWaiting(path);
-    if (key !== undefined) createPrivateKey(key);
-    return key;
+    createPrivateKey(text);
+    return { kind: "key", key: text };
   } catch {
-    return undefined;
+    const line = unparsedLine(PRIVATE_KEY_FILE, path, text.toString("utf8"));
+    return line === undefined ? undefined : { kind: "unparsed", line };
   }
 }
 
 /**
  * Whether the certificate at `certFile` would serve https with `key`, checked as an https start checks the two (the read
  * in `loadDaemonTls`, then `RerailDaemon.start`'s parse and the server's pairing), for a start whose key others can read,
- * which serves with neither. A certificate that cannot be read, holds no certificate or is not `key`'s throws what that
- * start throws for it beside a private key, naming a folder, whose read error names no file. A file
- * `readWithoutWaiting` does not read (a FIFO, one another program holds with a lease, one larger than any certificate)
- * serves nothing.
+ * which serves with neither. A key file that holds no key pairs with nothing: its certificate need only be one the
+ * start would take, as beside such a key only its owner reads. A certificate that cannot be read, holds no certificate
+ * or is not `key`'s throws what that start throws for it beside a private key, naming a folder, whose read error names
+ * no file. A file `readWithoutWaiting` does not read (a FIFO, one another program holds with a lease, one larger than
+ * any certificate) serves nothing.
  */
-async function certificateServes(certFile: string, key: Buffer): Promise<boolean> {
+async function certificateServes(certFile: string, key: KeyFile): Promise<boolean> {
   const cert = (await readWithoutWaiting(certFile))?.toString("utf8");
   if (cert === undefined) return false;
   refuseUnparsed(CERTIFICATE_FILE, certFile, cert);
-  createSecureContext({ cert, key });
+  if (key.kind === "key") createSecureContext({ cert, key: key.key });
   return true;
 }
 

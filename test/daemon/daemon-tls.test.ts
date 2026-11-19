@@ -331,20 +331,27 @@ Start-Sleep 60`;
     await expect(loadDaemonTls(folder, shared)).rejects.not.toBeInstanceOf(TlsKeyExposedError);
   });
 
-  it("stops the start, as main does, for a file others can read that holds no private key", async () => {
+  // Main stopped the start on each, naming only who may read the key. Each is served on as such a key only its owner
+  // reads is, in one line that says it holds no key and then that others can read it. No text: the key file is the
+  // certificate, as when --tls-cert and --tls-key name one file.
+  it.each<[string, string | undefined, string]>([
+    ["empty", "", "is empty: it must hold a PEM private key"],
+    ["of spaces", "    ", "could not be read as a PEM private key: "],
+    ["of text", "not a key\n", "could not be read as a PEM private key: "],
+    ["the certificate", undefined, "could not be read as a PEM private key: "],
+  ])("serves this computer alone on a key file others can read that is %s, in one line naming the file and both faults", async (_name, text, fault) => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
     const certFile = join(root, "cert.pem");
     await writeFile(certFile, selfSignedCertificate().cert);
-    const text = join(root, "key.txt");
-    await writeFile(text, "not a key\n");
+    const keyFile = text === undefined ? certFile : join(root, "key.pem");
+    if (text !== undefined) await writeFile(keyFile, text);
     const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
-    // The certificate, as when --tls-cert and --tls-key are swapped, and a file of text: this account reads each, and
-    // neither is a key it could serve with once the key is fixed.
-    for (const keyFile of [certFile, text]) {
-      const refused = loadDaemonTls({ certFile, keyFile }, shared);
-      await expect(refused).rejects.toThrow(`${keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only`);
-      await expect(refused).rejects.not.toBeInstanceOf(TlsKeyExposedError);
-    }
+    const error = await loadDaemonTls({ certFile, keyFile }, shared).then(() => undefined, (thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(TlsKeyUnparsedError);
+    const { message } = error as TlsKeyUnparsedError;
+    expect(message).toContain(`The TLS private key ${keyFile} ${fault}`);
+    expect(message).toContain(`; ${keyFile} can be read by other accounts (BU); a TLS private key must be readable by its owner only: icacls "${keyFile}"`);
+    expect(message).not.toContain("\n");
   });
 
   it.skipIf(process.platform === "win32")("stops the start at once for a FIFO others can read, never waiting for a writer", async () => {
