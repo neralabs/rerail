@@ -388,10 +388,10 @@ impl ContentStore {
     /// `compact_object_segments`, keeping at most `budget` segments.
     fn compact_object_segments_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {
         let (held, named, numbers) = self.object_segment_use()?;
-        let Some(from) = super::segments::retired(held, named, &numbers, floor, budget) else { return Ok(0) };
+        let Some(retiring) = super::segments::retired(held, named, &numbers, floor, budget) else { return Ok(0) };
         let dir = object_dir(&self.database_path);
         let kind = object_kind(&dir);
-        let retired = self.immediate_transaction_once(|t| super::segments::merge(t, &kind, from, placed_objects(t, from)?, |o| lose_object(t, o), |o, seg, at| move_object(t, o, seg, at)))?;
+        let retired = self.immediate_transaction_once(|t| super::segments::merge(t, &kind, retiring, placed_objects(t, retiring.0)?, |o| lose_object(t, o), |o, seg, at| move_object(t, o, seg, at)))?;
         kind.remove(&retired);
         Ok(held.saturating_sub(self.object_segment_bytes()?.0))
     }

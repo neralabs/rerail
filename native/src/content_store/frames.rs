@@ -1079,10 +1079,10 @@ impl ContentStore {
     /// `compact_frame_segments`, keeping at most `budget` segments.
     fn compact_frame_segments_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {
         let (held, named, numbers) = self.frame_segment_use()?;
-        let Some(from) = super::segments::retired(held, named, &numbers, floor, budget) else { return Ok(0) };
+        let Some(retiring) = super::segments::retired(held, named, &numbers, floor, budget) else { return Ok(0) };
         let dir = frame_dir(&self.database_path);
         let kind = frame_kind(&dir);
-        let retired = self.immediate_transaction_once(|t| super::segments::merge(t, &kind, from, placed_frames(t, from)?, |f| forget_placed(t, f), |f, seg, at| move_placed(t, f, seg, at)))?;
+        let retired = self.immediate_transaction_once(|t| super::segments::merge(t, &kind, retiring, placed_frames(t, retiring.0)?, |f| forget_placed(t, f), |f, seg, at| move_placed(t, f, seg, at)))?;
         kind.remove(&retired);
         Ok(held.saturating_sub(self.frame_segment_bytes()?.0))
     }
@@ -2109,6 +2109,32 @@ mod tests {
             let read = store.read_frame_parts_from(&space, &[(r.clone(), 0)], true, false).unwrap().remove(&(r.clone(), 0)).expect("read from the store");
             assert_eq!(read.rows().unwrap().rows, rows(i as i64), "frame {i} read from the new segment");
         }
+    }
+
+    /// A segment written after compaction chose what to merge (between its read and its write transaction) is no
+    /// merge's: it would be numbered before the merged entries, which are older, and its file may not be named yet.
+    /// Nothing is merged then; the next compaction takes it.
+    #[test]
+    fn a_segment_written_since_compaction_chose_leaves_the_merge_for_later() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let space = [7u8; 32];
+        let write = |i: u8| {
+            let put = Put { rel: rel("r", i), part: 0, digest: u64::from(i), reads: Vec::new(), rows: Rows { types: vec![0], n: 1, rows: vec![i64::from(i)] } };
+            store.queue_frames(space, vec![put], Vec::new(), None);
+            store.written().unwrap();
+        };
+        let segments = || std::fs::read_dir(frame_dir(&store.database_path)).unwrap().count();
+        (0..3).for_each(&write);
+        let (held, named, numbers) = store.frame_segment_use().unwrap();
+        let retiring = super::super::segments::retired(held, named, &numbers, u64::MAX, 0).expect("past a budget of none");
+        write(3);
+        let frames = frame_dir(&store.database_path);
+        let kind = frame_kind(&frames);
+        let merged = store.immediate_transaction_once(|t| super::super::segments::merge(t, &kind, retiring, placed_frames(t, retiring.0)?, |f| forget_placed(t, f), |f, seg, at| move_placed(t, f, seg, at))).unwrap();
+        assert_eq!((merged, segments()), (Vec::new(), 4), "nothing merged");
+        store.compact_frame_segments_within(u64::MAX, 0).unwrap();
+        assert_eq!(segments(), 1, "the next compaction merges them all");
     }
 
     #[test]

@@ -341,13 +341,13 @@ impl ContentStore {
     /// `compact_memo_pack`, keeping at most `budget` segments.
     pub(in crate::content_store) fn compact_memo_pack_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {
         let (held, named, packs) = self.memo_pack_use()?;
-        let Some(from) = retired(held, named, &packs, floor, budget) else { return Ok(0) };
+        let Some(retiring) = retired(held, named, &packs, floor, budget) else { return Ok(0) };
         let dir = pack_dir(&self.database_path);
         let kind = memo_kind(&dir);
         let retired = self.immediate_transaction_once(|t| {
             // The packs' of before, and a row whose digest is not one (`Moved::digest`), are forgotten.
             t.execute_cached("DELETE FROM memo_entries WHERE framed = 0 OR length(digest) != 32", [])?;
-            merge(t, &kind, from, placed_entries(t, from)?, |e| lose_entry(t, e), |e, seg, at| move_entry(t, e, seg, at))
+            merge(t, &kind, retiring, placed_entries(t, retiring.0)?, |e| lose_entry(t, e), |e, seg, at| move_entry(t, e, seg, at))
         })?;
         kind.remove(&retired);
         remove_old_packs(&self.database_path, &retired);
