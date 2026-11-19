@@ -129,7 +129,7 @@ pub struct VerifiedFiles<'a> {
 
 impl<'a> VerifiedFiles<'a> {
     /// The memory of the worktree whose root is `worktree`, kept in `store`.
-    pub(crate) fn new(store: Option<&'a ContentStore>, worktree: &Path) -> Self {
+    pub fn new(store: Option<&'a ContentStore>, worktree: &Path) -> Self {
         Self {
             store,
             worktree: worktree.to_string_lossy().into_owned(),
