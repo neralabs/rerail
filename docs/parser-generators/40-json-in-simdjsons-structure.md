@@ -277,6 +277,35 @@ Counts, as information (retired instructions a pass, load-only run subtracted, l
 15): the 17 files' whole parse 53.1M (step 2: 56.3M), `[1,1,…]` 206.8M (219.5M), short
 strings 70.5M (74.7M).
 
+## Step 4, done: a string read as `parse_string` reads it
+
+| simdjson | Before | Now |
+|---|---|---|
+| Stage 1 stores no mask | tier 1 stored a row of the escape part's start (an escape carry's output) for tier 2, and rows of the quote and the run's masks | none of the three (`read_at_tokens` where tier 2 makes the records): 63 stores in tier 1's code to 56 |
+| `"` opens the string; no closer scan first | the `"` edge scanned for the closer (the quote's mask made from the bytes, with the escape carry) | the record is the opener alone |
+| `copy_and_find`: 16 bytes, `cmeq` against `"` and `\`, the masks, the first bit | each part: the part's row word, the nearest bit, before the closer found already | 16 bytes, `cmeq` against `"` and `\`, two masks, `orr`, `cbnz`, the first bit (`split_next_seq`) |
+| an escape by its byte: `escape_map[escape_char]` | the word table's hash | one load of the part's code by its second byte (`Seq::codes2`) |
+| content copied, no lookup | the word table's hash | its first byte's kind (step 3's `words_read`) |
+
+**Why it is sound** (`native_cpu_stream::sequential`). The case:
+- the closer is `X &~ escaped(E)`, its one part `(E & R) &~ escaped(E)` of two bytes, with `X`
+  and `E` disjoint byte classes;
+- `R` is the region's inside, `toggle(T) &~ (T &~ prev(toggle(T), 1))`, where `T` is the
+  closer and a mask that holds at every byte of the stream;
+- the opener is the closer's output, and a region open at the file's end is refused.
+
+From a clean place (after the opener, or after a part), no `E` lies before the first byte of `X`
+or `E`, so that byte is not escaped. There, an `X` is the closer and an `E` is a part. A part's
+two bytes end a run of `E` of even length, so the place after it is clean again.
+
+The test of tier 1's starts asserts tier 1 stores no row of the run's mask, the quote's or the
+escape part's. The escape part has no mask tier 2 can make from the bytes, so this also locks
+the sequential reading. A part of one byte in place of two fails the trees test.
+
+Counts, as information (load about 15): the 17 files' whole parse 44.5M (step 3: 53.1M),
+`[1,1,…]` 190.7M (206.8M), short strings 51.1M (70.5M). Against simdjson's whole parse: 4.5×,
+3.5×, 5.6×.
+
 ## Order
 
 1. Done: step 1, above.

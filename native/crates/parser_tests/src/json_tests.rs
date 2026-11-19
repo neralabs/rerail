@@ -44,6 +44,20 @@ fn simdjson_forms_starts_are_simdjsons_indexes() {
     // pass, and writes the starts alone, as simdjson's `bit_indexer::write`.
     assert!(r.fetched_in_tier2(), "tier 2 makes the records");
     assert!(c.parser.tier1.records.is_none(), "the CPU's tier 1 has no record pass");
+    // Nor a row of what tier 2 reads from the bytes (the run's mask, the string's quote), or
+    // not at all: the string's escape part, as tier 2 reads a string as simdjson's
+    // `parse_string` does (first quote or backslash), with no escape carry.
+    let unstored = rerail_compiler::block_native::BlockNative::lower(block).cpu_unstored();
+    let read: Vec<usize> = r
+        .rules
+        .iter()
+        .filter_map(|x| match *x {
+            rerail_compiler::records::EndRule::Run(o) => Some(usize::from(o)),
+            _ => None,
+        })
+        .chain(r.readers.iter().flat_map(|rd| rd.arms.iter().map(|a| usize::from(a.closer)).chain(rd.parts.iter().map(|p| usize::from(p.start)))))
+        .collect();
+    assert!(!read.is_empty() && read.iter().all(|o| unstored.contains(o)), "the CPU's tier 1 stores no row tier 2 makes from the bytes: {read:?} against {unstored:?}");
     for line in crate::block_tests::STAGE1_EXPECTED.lines() {
         let f: Vec<&str> = line.split_whitespace().collect();
         let (path, len, n, hash) = (f[0], f[1].parse::<usize>().unwrap(), f[2].parse::<usize>().unwrap(), u64::from_str_radix(f[3], 16).unwrap());

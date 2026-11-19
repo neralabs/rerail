@@ -2029,6 +2029,83 @@ pub(crate) struct SplitParts {
     off: i8,
     parts: Vec<(u16, u8)>,
     tables: crate::native_cpu_block::RecordTables,
+    /// Where the region reads as simdjson's `parse_string` (`sequential`): its closer's byte
+    /// test and its part's (instructions of tier 1's block, read from the bytes in tier 2).
+    seq: Option<Seq>,
+}
+
+/// A region read in parts whose next token, from a clean place, is decided by the first byte of
+/// two classes (`sequential`): `x`, the closer's, and `e`, the part's first.
+#[derive(Clone)]
+pub(crate) struct Seq {
+    x: usize,
+    e: usize,
+    /// Where `E` is one byte: a part's code by its second byte (`records::pass` of the two
+    /// bytes), as simdjson's `escape_map[escape_char]`.
+    codes2: Option<Box<[u32; 256]>>,
+}
+
+/// Whether a region read in parts needs no escape carry in tier 2, as simdjson's `parse_string`
+/// needs none: its closer `X &~ escaped(E)`, its one part `(E & R) &~ escaped(E)` of two bytes
+/// (`X`, `E` disjoint byte classes), its opener the closer's output, `R` the region's inside
+/// (`toggle(T) &~ (T &~ prev(toggle(T), 1))`, `T` the closer and the file's own bytes), no
+/// closer at the file's end refused. Then, from a clean place (after the opener, whose byte is
+/// not `E`, or after a part), no `E` lies before the first byte of `X` or `E`, so it is not
+/// escaped: an `X` there is the closer, an `E` a part, the bytes before it content. A part's
+/// two bytes end a run of `E` of even length (its first not escaped), so the place after it is
+/// clean again. `R` holds at every byte between the opener and the closer, as `T` holds at
+/// neither's inside.
+pub(crate) fn sequential(block: &crate::block_native::BlockNative, a: &crate::records::ReadArm, parts: &[(u16, u8)]) -> Option<Seq> {
+    use crate::block_native::BlockInst as I;
+    let class = |x: usize| crate::native_cpu_bytes::exact_at(block, x).filter(|n| n.lo == 0 && n.hi == 0).map(|n| n.set);
+    let at = |o: u16| usize::from(block.outputs[usize::from(o)]);
+    if a.opener != a.closer || a.off != 0 || a.none != crate::records::ReadNone::Refuse || block.output_delays[usize::from(a.closer)] != 0 {
+        return None;
+    }
+    let &[(part, 2)] = parts else { return None };
+    if block.output_delays[usize::from(part)] != 0 {
+        return None;
+    }
+    let c = at(a.closer);
+    let I::AndNot(x, esc) = block.insts[c] else { return None };
+    let I::Escaped(e) = block.insts[usize::from(esc)] else { return None };
+    let (x, e) = (usize::from(x), usize::from(e));
+    let (xs, es) = (class(x)?, class(e)?);
+    if xs.iter().zip(es).any(|(p, q)| p & q != 0) {
+        return None;
+    }
+    // The part: `(E & R) &~ escaped(E)`, `R` the region's inside.
+    let I::AndNot(pe, pesc) = block.insts[at(part)] else { return None };
+    let I::Escaped(e2) = block.insts[usize::from(pesc)] else { return None };
+    if class(usize::from(e2))? != es {
+        return None;
+    }
+    let I::And(u, v) = block.insts[usize::from(pe)] else { return None };
+    let (u, v) = (usize::from(u), usize::from(v));
+    let r = match (class(u), class(v)) {
+        (Some(s), _) if s == es => v,
+        (_, Some(s)) if s == es => u,
+        _ => return None,
+    };
+    // `R = toggle(T) &~ (T &~ prev(toggle(T), 1))`, `T` the closer and a mask that holds at
+    // every byte of the stream (`file_only`): `Within(0)`, an `&` of such, or one less a test
+    // that never holds in the stream (the prefix's bytes, before it; a zero).
+    fn file_only(b: &crate::block_native::BlockNative, x: usize) -> bool {
+        match b.insts[x] {
+            I::Within(0) => true,
+            I::And(a, c) => file_only(b, usize::from(a)) && file_only(b, usize::from(c)),
+            I::AndNot(a, c) => file_only(b, usize::from(a)) && matches!(b.insts[usize::from(c)], I::Prefix(..) | I::Const(0)),
+            _ => false,
+        }
+    }
+    let I::AndNot(tg, opener) = block.insts[r] else { return None };
+    let I::Toggle(t) = block.insts[usize::from(tg)] else { return None };
+    let t = usize::from(t);
+    let closer_and_file = t == c || matches!(block.insts[t], I::And(p, q) if (usize::from(p) == c && file_only(block, usize::from(q))) || (usize::from(q) == c && file_only(block, usize::from(p))));
+    let I::AndNot(t2, pt) = block.insts[usize::from(opener)] else { return None };
+    let I::Prev(tg2, 1) = block.insts[usize::from(pt)] else { return None };
+    let I::Toggle(t3) = block.insts[usize::from(tg2)] else { return None };
+    (closer_and_file && usize::from(t2) == t && usize::from(t3) == t).then_some(Seq { x, e, codes2: None })
 }
 
 /// The region tier 2 splits (`SplitParts`), where a reader says so; refused where its parts'
@@ -2051,7 +2128,20 @@ fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error> {
     let mut parts: Vec<(u16, u8)> = rd.parts.iter().map(|p| (p.start, p.bytes)).collect();
     parts.sort_by_key(|&(o, n)| (n, o));
     let a = &rd.arms[0];
-    Ok(Some(Box::new(SplitParts { opener: a.opener, off: a.off, parts, tables })))
+    // Sequential only where tier 2 makes the records: the region's record is then its opener.
+    let mut seq = if r.fetched_in_tier2() { sequential(block, a, &parts) } else { None };
+    if let Some(sq) = seq.as_mut() {
+        let set = crate::native_cpu_bytes::exact_at(block, sq.e).map(|n| n.set).unwrap_or_default();
+        let ones: Vec<u8> = (0..=255u8).filter(|&b| set[usize::from(b) / 64] >> (b % 64) & 1 == 1).collect();
+        if let (&[e0], Ok(wt)) = (&ones[..], crate::records::WordTable::new(&r.words)) {
+            let mut t = Box::new([0u32; 256]);
+            for (b, c) in t.iter_mut().enumerate() {
+                *c = crate::records::pass(r, &wt, &[e0, b as u8], &[0], &[1], &[]).0.first().copied().unwrap_or(0);
+            }
+            sq.codes2 = Some(t);
+        }
+    }
+    Ok(Some(Box::new(SplitParts { opener: a.opener, off: a.off, parts, tables, seq })))
 }
 
 /// Each token's record made by `TOKEN` from its start (`Records::fetched_in_tier2`, page 40), as
@@ -2077,6 +2167,11 @@ pub(crate) struct Fetch {
     /// byte the byte's being in a set), that set as a table of 256 bytes (1: in it), as
     /// simdjson's `structural_or_whitespace` table.
     run_class: Vec<Option<Box<[u8; 256]>>>,
+    /// By reader: whether it reads as simdjson's `parse_string` (`sequential`): its token's
+    /// record is its opener alone, its parts split from there.
+    seq: Vec<bool>,
+    /// The first bytes whose rule is a sequential reader's, a bit each.
+    seq_bytes: [u64; 4],
 }
 
 /// The records tier 2 makes (`Fetch`), where the program says so; refused where a token's code
@@ -2133,7 +2228,22 @@ fn fetch_of(native: &Structure) -> Result<Option<Box<Fetch>>, Error> {
             _ => None,
         })
         .collect();
-    Ok(Some(Box::new(Fetch { ends, rules: r.rules.clone(), readers: r.readers.clone(), tables, nexts, kinds, worded, codes1, words, run_class })))
+    let seq: Vec<bool> = r
+        .readers
+        .iter()
+        .map(|rd| {
+            let mut parts: Vec<(u16, u8)> = rd.parts.iter().map(|p| (p.start, p.bytes)).collect();
+            parts.sort_by_key(|&(o, n)| (n, o));
+            rd.split == crate::records::Split::Tier2 && rd.arms.len() == 1 && sequential(block, &rd.arms[0], &parts).is_some()
+        })
+        .collect();
+    let mut seq_bytes = [0u64; 4];
+    for (x, &k) in ends.iter().enumerate() {
+        if matches!(r.rules.get(usize::from(k)), Some(crate::records::EndRule::Read(i)) if seq[usize::from(*i)]) {
+            seq_bytes[x / 64] |= 1 << (x % 64);
+        }
+    }
+    Ok(Some(Box::new(Fetch { ends, rules: r.rules.clone(), readers: r.readers.clone(), tables, nexts, kinds, worded, codes1, words, run_class, seq, seq_bytes })))
 }
 
 /// The first bit of output `o` at or after byte `from`, a word at a time (`records::first_bit`),
@@ -2215,7 +2325,7 @@ fn emit_rule(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, ft: &Fetch, bw: &crat
                 f.ins().brif(not, short, &[], long, &[]);
                 f.switch_to_block(short);
                 let tz = f.ins().ctz(not);
-                let k = if stride == 1 { tz } else { f.ins().udiv_imm(tz, stride) };
+                let k = lane_of(f, tz, stride);
                 let l = f.ins().iadd(s, k);
                 f.ins().jump(join, &[l.into(), zero.into()]);
                 f.switch_to_block(long);
@@ -2270,6 +2380,12 @@ fn emit_rule(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, ft: &Fetch, bw: &crat
             f.set_cold_block(not);
             f.ins().jump(join, &[s.into(), one.into()]);
             f.switch_to_block(read);
+            // Read as `parse_string` (`sequential`): the record is the opener alone, its parts
+            // and closer split from it.
+            if ft.seq[usize::from(i)] {
+                f.ins().jump(join, &[s.into(), zero.into()]);
+                return;
+            }
             let s1 = f.ins().iadd_imm(s, 1);
             let (c, none) = first_bit_from(f, e, bw, a.closer, s1, heads);
             let (shut, open) = (f.create_block(), f.create_block());
@@ -2875,8 +2991,8 @@ fn output_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_
 /// (`plain_code`), then on to `fetched`.
 fn split_token(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, s: Value, l: Value, fetched: Block, read: Option<&[u8]>) {
     let bytes = (e.ctx)(f, BYTES);
-    let k = crate::native_cpu_block::tables_consts(f, &sp.tables);
     let whole = |f: &mut FunctionBuilder<'_>| {
+        let k = crate::native_cpu_block::tables_consts(f, &sp.tables);
         let n = f.ins().isub(l, s);
         let len = f.ins().iadd_imm(n, 1);
         crate::native_cpu_block::plain_code(f, &sp.tables, k, bytes, s, len)
@@ -2888,7 +3004,8 @@ fn split_token(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, s:
         Some(kinds) => {
             let at = f.ins().iadd(bytes, s);
             let b = f.ins().uload8(types::I64, MemFlags::trusted(), at, 0);
-            let ka = f.ins().iadd(k.0, b);
+            let kind_table = crate::native_cpu_block::tables_consts(f, &sp.tables).0;
+            let ka = f.ins().iadd(kind_table, b);
             let kind = f.ins().uload8(types::I64, MemFlags::trusted().with_readonly(), ka, 0);
             if kinds.is_empty() {
                 kind
@@ -2926,6 +3043,11 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
     let at = (e.get)(f, Mem::PartAt);
     f.ins().brif(at, part, &[], record, &[]);
     f.switch_to_block(part);
+    if let Some(seq) = &sp.seq {
+        split_next_seq(f, e, sp, seq, bw, at, fetched, read_word, heads);
+        f.switch_to_block(record);
+        return;
+    }
     let pe = (e.get)(f, Mem::PartEnd);
     let c0 = f.ins().iadd_imm(pe, -i64::from(sp.off));
     let (closer, look) = (f.create_block(), f.create_block());
@@ -3013,6 +3135,106 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
         }
     }
     f.switch_to_block(record);
+}
+
+/// `split_next` where the region reads as simdjson's `parse_string` (`Seq`): from `at`, a clean
+/// place, the first byte of the closer's class or the part's, 16 bytes a vector (as
+/// `backslash_and_quote::copy_and_find`): the closer there, or a part of two bytes, or the
+/// bytes before it, the content. No closer before the file's end refuses it.
+#[allow(clippy::too_many_arguments)]
+fn split_next_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, seq: &Seq, bw: &crate::native_cpu_bytes::Bytewise<'_>, at: Value, fetched: Block, read_word: Option<&[u8]>, heads: &mut Vec<(Block, Step)>) {
+    let consts = crate::native_cpu_block::Consts::make(f);
+    let file = crate::native_cpu_bytes::File { bytes: (e.ctx)(f, BYTES), len: (e.ctx)(f, LEN), nibble: consts.nibble, weights: consts.weights, even: consts.even };
+    let stride = i64::from(bw.short_stride_x(&[seq.x, seq.e]));
+    let (scan, hit) = (f.create_block(), f.create_block());
+    f.append_block_param(scan, types::I64);
+    f.ins().jump(scan, &[at.into()]);
+    f.switch_to_block(scan);
+    heads.push((scan, Step::Word));
+    let p = f.block_params(scan)[0];
+    let m = bw.short_terms(f, &file, &[(seq.x, 0), (seq.e, 0)], p, heads);
+    let any = f.ins().bor(m[0], m[1]);
+    let more = f.create_block();
+    f.ins().brif(any, hit, &[], more, &[]);
+    // None in these 16: on, unless they reach the file's end (the region open there).
+    f.switch_to_block(more);
+    let p16 = f.ins().iadd_imm(p, 16);
+    let past = f.ins().icmp(IntCC::SignedGreaterThanOrEqual, p16, file.len);
+    (e.guard)(f, past);
+    f.ins().jump(scan, &[p16.into()]);
+    f.switch_to_block(hit);
+    let tz = f.ins().ctz(any);
+    let k = lane_of(f, tz, stride);
+    let i = f.ins().iadd(p, k);
+    let (here, content) = (f.create_block(), f.create_block());
+    let at_it = f.ins().icmp(IntCC::Equal, i, at);
+    f.ins().brif(at_it, here, &[], content, &[]);
+    // The bytes before it: a content token, the next at it.
+    f.switch_to_block(content);
+    (e.set)(f, Mem::PartAt, i);
+    let l = f.ins().iadd_imm(i, -1);
+    split_token(f, e, sp, at, l, fetched, read_word);
+    // At `at`: the closer, or a part of two bytes.
+    f.switch_to_block(here);
+    let sh = if stride == 1 { tz } else { f.ins().imul_imm(k, stride) };
+    let xbit = f.ins().ushr(m[0], sh);
+    let xbit = f.ins().band_imm(xbit, 1);
+    let (closer, part) = (f.create_block(), f.create_block());
+    f.ins().brif(xbit, closer, &[], part, &[]);
+    f.switch_to_block(closer);
+    let zero = f.ins().iconst(types::I64, 0);
+    (e.set)(f, Mem::PartAt, zero);
+    split_token(f, e, sp, at, at, fetched, read_word);
+    f.switch_to_block(part);
+    let after = f.ins().iadd_imm(at, 2);
+    (e.set)(f, Mem::PartAt, after);
+    let l = f.ins().iadd_imm(at, 1);
+    match &seq.codes2 {
+        // Its code by its second byte, one load.
+        Some(t) => {
+            let at2 = f.ins().iadd(file.bytes, l);
+            let b = f.ins().uload8(types::I64, MemFlags::trusted(), at2, 0);
+            let base = f.ins().iconst(types::I64, t.as_ptr() as i64);
+            let off = f.ins().ishl_imm(b, 2);
+            let a = f.ins().iadd(base, off);
+            let code = f.ins().uload32(MemFlags::trusted().with_readonly(), a, 0);
+            let l1 = f.ins().iadd_imm(l, 1);
+            (e.set)(f, Mem::Start, at);
+            (e.set)(f, Mem::Limit, l1);
+            (e.set)(f, Mem::Taken, code);
+            f.ins().jump(fetched, &[]);
+        }
+        None => split_token(f, e, sp, at, l, fetched, read_word),
+    }
+}
+
+/// A mask's lane from its bit (`short_word`'s masks have `stride` bits a lane): a shift where
+/// the stride is a power of two.
+fn lane_of(f: &mut FunctionBuilder<'_>, bit: Value, stride: i64) -> Value {
+    match stride {
+        1 => bit,
+        s if (s as u64).is_power_of_two() => f.ins().ushr_imm(bit, i64::from(s.trailing_zeros())),
+        s => f.ins().udiv_imm(bit, s),
+    }
+}
+
+/// A sequential region's record (`Seq`): its opener alone, the token, its parts pending from
+/// the byte after (`Mem::PartAt`). `opens`: whether the token is the region's (none: it is).
+fn split_enter_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, s: Value, opens: Option<Value>, words: Option<&[u8]>) {
+    let (enter, on) = (f.create_block(), f.create_block());
+    match opens {
+        Some(o) => {
+            f.ins().brif(o, enter, &[], on, &[]);
+        }
+        None => {
+            f.ins().jump(enter, &[]);
+        }
+    }
+    f.switch_to_block(enter);
+    let s1 = f.ins().iadd_imm(s, 1);
+    (e.set)(f, Mem::PartAt, s1);
+    split_token(f, e, sp, s, s, on, words);
+    f.switch_to_block(on);
 }
 
 /// A record that is a whole split region (`SplitParts`): at its opener's bit and past its byte.
@@ -4623,7 +4845,26 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         (Some((sp, bw)), Some(fetched)) => {
                             // A lazy token's region is entered at its switch's edge.
                             if !lazy {
-                                split_enter(&mut f, &env, sp, bw, s, l, words_read(native, &pushes, &word_kinds, pc + 1).as_deref(), &mut heads);
+                                let read = words_read(native, &pushes, &word_kinds, pc + 1);
+                                match (&sp.seq, table.fetch) {
+                                    // The token is the region's where its first byte's rule is
+                                    // its reader's (that rule tested the opener).
+                                    (Some(_), Some(ft)) => {
+                                        let bytes = (env.ctx)(&mut f, BYTES);
+                                        let at = f.ins().iadd(bytes, s);
+                                        let b = f.ins().uload8(types::I64, MemFlags::trusted(), at, 0);
+                                        let q = f.ins().ushr_imm(b, 6);
+                                        let q = f.ins().ishl_imm(q, 3);
+                                        let base = f.ins().iconst(types::I64, ft.seq_bytes.as_ptr() as i64);
+                                        let wa = f.ins().iadd(base, q);
+                                        let w = f.ins().load(types::I64, MemFlags::trusted().with_readonly(), wa, 0);
+                                        let sh = f.ins().band_imm(b, 63);
+                                        let x = f.ins().ushr(w, sh);
+                                        let opens = f.ins().band_imm(x, 1);
+                                        split_enter_seq(&mut f, &env, sp, s, Some(opens), read.as_deref());
+                                    }
+                                    _ => split_enter(&mut f, &env, sp, bw, s, l, read.as_deref(), &mut heads),
+                                }
                             }
                             f.ins().jump(fetched, &[]);
                             f.switch_to_block(fetched);
@@ -4853,8 +5094,13 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             mset(&mut f, Mem::Limit, l1);
                             mset(&mut f, Mem::Taken, code);
                             // A region read in parts: entered here, its opener the token.
-                            if let (Some(crate::records::EndRule::Read(_)), Some((sp, sbw))) = (ft.rules.get(usize::from(rule)), &split_bw) {
-                                split_enter(&mut f, &env, sp, sbw, start, l, words_read(native, &pushes, &word_kinds, usize::from(t)).as_deref(), &mut heads);
+                            if let (Some(crate::records::EndRule::Read(i)), Some((sp, sbw))) = (ft.rules.get(usize::from(rule)), &split_bw) {
+                                let read = words_read(native, &pushes, &word_kinds, usize::from(t));
+                                if sp.seq.is_some() && ft.seq[usize::from(*i)] {
+                                    split_enter_seq(&mut f, &env, sp, start, None, read.as_deref());
+                                } else {
+                                    split_enter(&mut f, &env, sp, sbw, start, l, read.as_deref(), &mut heads);
+                                }
                             }
                             f.ins().jump(word(t), &[]);
                         }

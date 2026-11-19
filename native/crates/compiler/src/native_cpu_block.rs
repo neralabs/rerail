@@ -8752,7 +8752,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     // Nor of a total no one reads by its rows (`rowless_totals`): its running word is its flag.
     let mut unmade: Vec<usize> = if made.outputs.len() != native.outputs.len() {
         Vec::new()
-    } else if records.is_some() {
+    } else if records.is_some() || made.records.as_ref().is_some_and(|r| r.fetched_in_tier2()) {
+        // Where tier 2 makes the records (page 40), the rows it makes from the bytes too.
         made.records_made().into_iter().chain(made.rowless_totals()).collect()
     } else {
         made.rowless_totals()
