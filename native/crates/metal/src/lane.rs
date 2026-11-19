@@ -15,6 +15,7 @@ use rerail_device::compute_kernel_grid::GridBindContext;
 use rerail_device::device::{ComputeEvent, ComputeFunction, ComputeQueue};
 pub use rerail_device::Pod;
 pub use rerail_device::device::{Buffer, Device, backend};
+pub use crate::runtime::HostMapped;
 
 /// A fresh buffer of the device's holding `values` (a buffer not of the pool: `crate::pool` leases those).
 pub fn buffer_of<T: Pod>(device: &Device, values: &[T]) -> Buffer {
@@ -44,36 +45,44 @@ pub fn kernel_fixed(source: &str, name: &str, constant: Option<u32>) -> Kernel {
 }
 
 /// One argument of a launch, bound at the commit.
-enum Arg<'a> {
-    Buffer(&'a str, &'a Buffer, u64),
-    Value(&'a str, Vec<u8>),
-    Local(&'a str, u64),
-    Uses(&'a Buffer),
+enum Arg {
+    Buffer(String, Buffer, u64),
+    /// A buffer at the row numbered `.0` (rows are numbered densely in their order on every backend).
+    Slot(u64, Buffer, u64),
+    /// A value at the row numbered `.0`.
+    SlotValue(u64, Vec<u8>),
+    Value(String, Vec<u8>),
+    Local(String, u64),
+    Uses(Buffer),
 }
 
-enum Grid<'a> {
+enum Grid {
     Groups([u64; 3], [u64; 3]),
-    Indirect(&'a Buffer, u64, [u64; 3], [u64; 3]),
+    Indirect(Buffer, u64, [u64; 3], [u64; 3]),
 }
 
-struct Pending<'a> {
-    kernel: &'a ComputeFunction,
-    label: String,
-    args: Vec<Arg<'a>>,
-    grid: Grid<'a>,
+/// A step of a command, in order.
+enum Step {
+    Launch { kernel: Kernel, label: String, args: Vec<Arg>, grid: Grid },
+    /// `length` bytes from `src` at its offset to `dst` at its.
+    Copy { src: Buffer, at: u64, dst: Buffer, to: u64, length: u64 },
+    /// `count` u32s of `dst` from byte `at`, each `value`.
+    Fill { dst: Buffer, at: u64, count: u64, value: u32 },
 }
 
-/// A command: launches, in order, each seeing the writes of those before it.
-pub struct Command<'a> {
+/// A command: its steps (launches, copies, fills) in order, each seeing the writes of those before it. It holds its
+/// buffers and kernels (a buffer is a reference to its memory), so a caller builds one across calls and commits it
+/// when ready.
+pub struct Command {
     label: String,
-    launches: Vec<Pending<'a>>,
+    steps: Vec<Step>,
     /// This command's key in the evaluation's records.
     key: Box<u8>,
 }
 
-impl<'a> Command<'a> {
-    pub fn new(label: &str) -> Command<'a> {
-        Command { label: label.to_owned(), launches: Vec::new(), key: Box::new(0) }
+impl Command {
+    pub fn new(label: &str) -> Command {
+        Command { label: label.to_owned(), steps: Vec::new(), key: Box::new(0) }
     }
 
     fn pointer(&self) -> usize {
@@ -81,17 +90,31 @@ impl<'a> Command<'a> {
     }
 
     /// A launch of `kernel`, recorded as `label`.
-    pub fn launch<'c>(&'c mut self, kernel: &'a ComputeFunction, label: &str) -> Launch<'c, 'a> {
-        Launch { command: self, kernel, label: label.to_owned(), args: Vec::new() }
+    pub fn launch<'c>(&'c mut self, kernel: &Kernel, label: &str) -> Launch<'c> {
+        Launch { command: self, kernel: Arc::clone(kernel), label: label.to_owned(), args: Vec::new() }
+    }
+
+    /// A copy of `length` bytes from byte `at` of `src` to byte `to` of `dst`, after the steps before it.
+    pub fn copy(&mut self, src: &Buffer, at: u64, dst: &Buffer, to: u64, length: u64) {
+        if length > 0 {
+            self.steps.push(Step::Copy { src: src.clone(), at, dst: dst.clone(), to, length });
+        }
+    }
+
+    /// `count` u32s of `dst` from byte `at` set to `value`, after the steps before it.
+    pub fn fill(&mut self, dst: &Buffer, at: u64, count: u64, value: u32) {
+        if count > 0 {
+            self.steps.push(Step::Fill { dst: dst.clone(), at, count, value });
+        }
     }
 
     /// The launches this command holds (those within the budget).
     pub fn len(&self) -> usize {
-        self.launches.len()
+        self.steps.iter().filter(|s| matches!(s, Step::Launch { .. })).count()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.launches.is_empty()
+        self.steps.is_empty()
     }
 
     /// Submits the command: refused (and nothing of it run) when the evaluation is past its launch budget.
@@ -99,8 +122,17 @@ impl<'a> Command<'a> {
         crate::launch::check_submission()?;
         let layer = rerail_accel::gpu::shared::layer().ok_or(Error::UnsupportedBackend)?;
         let mut queue = ComputeQueue::new(layer.queue);
-        for p in &self.launches {
-            bind_and_run(&queue, p).unwrap_or_else(|e| panic!("{} ({}): {e}", p.label, self.label));
+        for step in &self.steps {
+            match step {
+                Step::Launch { kernel, label, args, grid } => {
+                    bind_and_run(&queue, kernel, args, grid).unwrap_or_else(|e| panic!("{label} ({}): {e}", self.label))
+                }
+                Step::Copy { src, at, dst, to, length } => queue.enqueue_copy_between_device_regions(src, dst, *at, *to, *length),
+                Step::Fill { dst, at, count, value } => {
+                    assert_eq!(at % 4, 0, "a fill at a word");
+                    queue.enqueue_fill_array(dst, value, (*at / 4) as usize, Some(*count as usize))
+                }
+            }
         }
         let event = queue.flush();
         crate::launch::mark(self.pointer(), false);
@@ -120,72 +152,95 @@ fn index(kernel: &ComputeFunction, name: &str) -> Result<u64, String> {
     })
 }
 
-fn bind_and_run(queue: &ComputeQueue, p: &Pending<'_>) -> Result<(), String> {
-    let mut ctx = queue.new_bind_context(p.kernel);
-    for a in &p.args {
+fn bind_and_run(queue: &ComputeQueue, kernel: &ComputeFunction, args: &[Arg], grid: &Grid) -> Result<(), String> {
+    let mut ctx = queue.new_bind_context(kernel);
+    for a in args {
         match a {
-            Arg::Buffer(name, b, 0) => ctx.set_buffer(index(p.kernel, name)?, b),
-            Arg::Buffer(name, b, offset) => ctx.set_buffer_at(index(p.kernel, name)?, b, *offset)?,
-            Arg::Value(name, bytes) => ctx.set_primitive(index(p.kernel, name)?, bytes),
-            Arg::Local(name, bytes) => ctx.set_thread_group_memory(index(p.kernel, name)?, *bytes),
+            Arg::Buffer(name, b, 0) => ctx.set_buffer(index(kernel, name)?, b),
+            Arg::Buffer(name, b, offset) => ctx.set_buffer_at(index(kernel, name)?, b, *offset)?,
+            Arg::Slot(at, b, 0) => ctx.set_buffer(*at, b),
+            Arg::Slot(at, b, offset) => ctx.set_buffer_at(*at, b, *offset)?,
+            Arg::SlotValue(at, bytes) => ctx.set_primitive(*at, bytes),
+            Arg::Value(name, bytes) => ctx.set_primitive(index(kernel, name)?, bytes),
+            Arg::Local(name, bytes) => ctx.set_thread_group_memory(index(kernel, name)?, *bytes),
             Arg::Uses(b) => ctx.use_buffer(b),
         }
     }
-    match &p.grid {
+    match grid {
         Grid::Groups(groups, block) => ctx.launch(groups, block),
         Grid::Indirect(counts, offset, most, block) => ctx.launch_indirect(counts, *offset, most, block),
     }
 }
 
 /// A launch being bound.
-pub struct Launch<'c, 'a> {
-    command: &'c mut Command<'a>,
-    kernel: &'a ComputeFunction,
+pub struct Launch<'c> {
+    command: &'c mut Command,
+    kernel: Kernel,
     label: String,
-    args: Vec<Arg<'a>>,
+    args: Vec<Arg>,
 }
 
-impl<'a> Launch<'_, 'a> {
+impl Launch<'_> {
     /// A buffer row.
-    pub fn buffer(mut self, name: &'a str, buffer: &'a Buffer) -> Self {
-        self.args.push(Arg::Buffer(name, buffer, 0));
+    pub fn buffer(mut self, name: &str, buffer: &Buffer) -> Self {
+        self.args.push(Arg::Buffer(name.to_owned(), buffer.clone(), 0));
         self
     }
 
     /// A buffer row bound from byte `offset` of `buffer`.
-    pub fn buffer_at(mut self, name: &'a str, buffer: &'a Buffer, offset: u64) -> Self {
-        self.args.push(Arg::Buffer(name, buffer, offset));
+    pub fn buffer_at(mut self, name: &str, buffer: &Buffer, offset: u64) -> Self {
+        self.args.push(Arg::Buffer(name.to_owned(), buffer.clone(), offset));
+        self
+    }
+
+    /// The buffer of row `at` (by its number: a caller that binds a kernel's rows in order), from byte `offset`.
+    pub fn slot(mut self, at: u64, buffer: &Buffer, offset: u64) -> Self {
+        self.args.push(Arg::Slot(at, buffer.clone(), offset));
+        self
+    }
+
+    /// The value of row `at` (by its number), a `#[repr(C)]` value laid out as the kernel's.
+    pub fn slot_value<T: rerail_device::Pod>(mut self, at: u64, v: &T) -> Self {
+        // SAFETY: a Pod value's bytes, all initialized.
+        let bytes = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(v).cast::<u8>(), size_of::<T>()) };
+        self.args.push(Arg::SlotValue(at, bytes.to_vec()));
         self
     }
 
     /// A value row (`ARGS`, `LITERAL`): a `#[repr(C)]` value laid out as the kernel's.
-    pub fn value<T: rerail_device::Pod>(mut self, name: &'a str, v: &T) -> Self {
+    pub fn value<T: rerail_device::Pod>(mut self, name: &str, v: &T) -> Self {
         // SAFETY: a Pod value's bytes, all initialized.
         let bytes = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(v).cast::<u8>(), size_of::<T>()) };
-        self.args.push(Arg::Value(name, bytes.to_vec()));
+        self.args.push(Arg::Value(name.to_owned(), bytes.to_vec()));
         self
     }
 
     /// Threadgroup memory for a `RWLOCAL` row.
-    pub fn local(mut self, name: &'a str, bytes: u64) -> Self {
-        self.args.push(Arg::Local(name, bytes));
+    pub fn local(mut self, name: &str, bytes: u64) -> Self {
+        self.args.push(Arg::Local(name.to_owned(), bytes));
         self
     }
 
     /// A buffer the kernel reaches through an address another holds.
-    pub fn uses(mut self, buffer: &'a Buffer) -> Self {
-        self.args.push(Arg::Uses(buffer));
+    pub fn uses(mut self, buffer: &Buffer) -> Self {
+        self.args.push(Arg::Uses(buffer.clone()));
         self
     }
 
     fn buffers(&self) -> Vec<(usize, u64)> {
-        self.args.iter().filter_map(|a| if let Arg::Buffer(_, b, _) = a { Some((b.contents() as usize, b.length())) } else { None }).collect()
+        self.args
+            .iter()
+            .filter_map(|a| match a {
+                Arg::Buffer(_, b, _) | Arg::Slot(_, b, _) => Some((b.contents() as usize, b.length())),
+                _ => None,
+            })
+            .collect()
     }
 
-    fn push(self, grid: Grid<'a>, shape: ([u64; 3], [u64; 3]), indirect: bool) {
+    fn push(self, grid: Grid, shape: ([u64; 3], [u64; 3]), indirect: bool) {
         let buffers = self.buffers();
         if crate::launch::attempt(self.command.pointer(), &self.label, shape.0, shape.1, indirect, buffers) {
-            self.command.launches.push(Pending { kernel: self.kernel, label: self.label, args: self.args, grid });
+            self.command.steps.push(Step::Launch { kernel: self.kernel, label: self.label, args: self.args, grid });
         }
     }
 
@@ -201,9 +256,19 @@ impl<'a> Launch<'_, 'a> {
         self.groups([threads.div_ceil(width), 1, 1], [width, 1, 1]);
     }
 
+    /// Exactly `threads` threads (a 1-D grid), in threadgroups of the widest width up to `width` that divides them:
+    /// for a kernel that does not bound its own threads.
+    pub fn threads_exact(self, threads: u64, width: u64) {
+        let mut w = width.clamp(1, threads.max(1));
+        while threads % w != 0 {
+            w -= 1;
+        }
+        self.groups([threads / w, 1, 1], [w, 1, 1]);
+    }
+
     /// As many threadgroups as the three u32s at byte `offset` of `counts` say when it runs, at most `most`.
-    pub fn indirect(self, counts: &'a Buffer, offset: u64, most: [u64; 3], block: [u64; 3]) {
-        self.push(Grid::Indirect(counts, offset, most, block), ([0; 3], block), true);
+    pub fn indirect(self, counts: &Buffer, offset: u64, most: [u64; 3], block: [u64; 3]) {
+        self.push(Grid::Indirect(counts.clone(), offset, most, block), ([0; 3], block), true);
     }
 }
 

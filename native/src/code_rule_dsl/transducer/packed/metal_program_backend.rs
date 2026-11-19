@@ -1,7 +1,4 @@
-use super::metal_backend::launch::{
-    CheckedComputeEncoder, commit_checked, wait_checked,
-};
-use super::metal_backend::{MappedBuffer, pipeline_named};
+use rerail_metal::lane::{self, HostMapped};
 use super::metal_batch_abi::{
     FORMAT_VERSION, FinalCaptureRecord, LinkRecord as CaptureRecord, MetalGlobalArenas,
     PendingRecord, PropertyRecord, RepeatRecord, ResultRecord, TaskStatus,
@@ -10,7 +7,6 @@ use super::packed_batch::{PackedBatch, PackedExecution, PackedResultPage};
 use super::packed_workspace::WorkspaceTotals;
 use super::*;
 use crate::code_rule_dsl::tape::TapeDoc;
-use metal::{ComputePipelineState, Device, MTLSize};
 #[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -73,16 +69,16 @@ struct MetalWorkspace {
     output_storage_bytes: u32,
     task_capacity: usize,
     generation: u32,
-    pending: MappedBuffer,
-    captures: MappedBuffer,
-    cursors: MappedBuffer,
-    repeats: MappedBuffer,
-    scheduler: MappedBuffer,
-    results: MappedBuffer,
-    statuses: MappedBuffer,
-    value_states: MappedBuffer,
-    final_captures: MappedBuffer,
-    output_storage: MappedBuffer,
+    pending: HostMapped,
+    captures: HostMapped,
+    cursors: HostMapped,
+    repeats: HostMapped,
+    scheduler: HostMapped,
+    results: HostMapped,
+    statuses: HostMapped,
+    value_states: HostMapped,
+    final_captures: HostMapped,
+    output_storage: HostMapped,
 }
 
 impl MetalWorkspace {
@@ -101,7 +97,6 @@ impl MetalWorkspace {
     }
 
     fn new(
-        device: &Device,
         totals: WorkspaceTotals,
         scheduler_bytes: u32,
         output_storage_bytes: u32,
@@ -121,45 +116,23 @@ impl MetalWorkspace {
             count("ws.output_mb", output_storage_bytes as usize >> 20);
             count("ws.final_captures_mb", totals.output_captures as usize * size_of::<FinalCaptureRecord>() >> 20);
         }
-        let workspace = Self {
+        Ok(Self {
             totals,
             scheduler_bytes,
             output_storage_bytes,
             task_capacity,
             generation: 1,
-            pending: MappedBuffer::untouched::<PendingRecord>(device, totals.pending as usize)?,
-            captures: MappedBuffer::untouched::<CaptureRecord>(device, totals.captures as usize)?,
-            cursors: MappedBuffer::untouched::<CaptureRecord>(device, totals.cursors as usize)?,
-            repeats: MappedBuffer::untouched::<RepeatRecord>(device, totals.repeats as usize)?,
-            scheduler: MappedBuffer::untouched::<u8>(device, scheduler_bytes as usize)?,
-            results: MappedBuffer::untouched::<ResultRecord>(
-                device,
-                totals
-                    .candidates
-                    .checked_add(totals.results)
-                    .ok_or(Error::BackendCapacity)? as usize,
-            )?,
-            statuses: MappedBuffer::untouched::<TaskStatus>(device, task_capacity)?,
-            value_states: MappedBuffer::untouched::<u32>(device, totals.value_states as usize)?,
-            final_captures: MappedBuffer::untouched::<FinalCaptureRecord>(
-                device,
-                totals.output_captures as usize,
-            )?,
-            output_storage: MappedBuffer::untouched::<u8>(device, output_storage_bytes as usize)?,
-        };
-        for (buffer, label) in [
-            (&workspace.pending, "Tempo pending paths"),
-            (&workspace.results, "Tempo results"),
-            (&workspace.final_captures, "Tempo final captures"),
-            (&workspace.scheduler, "Tempo scheduler"),
-            (&workspace.captures, "Tempo capture links"),
-            (&workspace.cursors, "Tempo cursor links"),
-            (&workspace.repeats, "Tempo repeat links"),
-            (&workspace.output_storage, "Tempo output storage"),
-        ] {
-            buffer.buffer.set_label(label);
-        }
-        Ok(workspace)
+            pending: HostMapped::zeroed::<PendingRecord>(totals.pending as usize)?,
+            captures: HostMapped::zeroed::<CaptureRecord>(totals.captures as usize)?,
+            cursors: HostMapped::zeroed::<CaptureRecord>(totals.cursors as usize)?,
+            repeats: HostMapped::zeroed::<RepeatRecord>(totals.repeats as usize)?,
+            scheduler: HostMapped::zeroed::<u8>(scheduler_bytes as usize)?,
+            results: HostMapped::zeroed::<ResultRecord>(totals.candidates.checked_add(totals.results).ok_or(Error::BackendCapacity)? as usize)?,
+            statuses: HostMapped::zeroed::<TaskStatus>(task_capacity)?,
+            value_states: HostMapped::zeroed::<u32>(totals.value_states as usize)?,
+            final_captures: HostMapped::zeroed::<FinalCaptureRecord>(totals.output_captures as usize)?,
+            output_storage: HostMapped::zeroed::<u8>(output_storage_bytes as usize)?,
+        })
     }
 
     fn fits(
@@ -200,12 +173,11 @@ impl MetalWorkspaceLease {
         let w = self.workspace.as_ref().expect("a workspace");
         [&w.pending, &w.captures, &w.cursors, &w.repeats, &w.scheduler, &w.results, &w.statuses, &w.value_states, &w.final_captures, &w.output_storage]
             .iter()
-            .map(|buffer| buffer.buffer.length() as usize)
+            .map(|buffer| buffer.byte_length())
             .sum()
     }
 
     fn acquire(
-        device: &Device,
         totals: WorkspaceTotals,
         scheduler_bytes: u32,
         output_storage_bytes: u32,
@@ -236,7 +208,6 @@ impl MetalWorkspaceLease {
             }
             (
                 MetalWorkspace::new(
-                    device,
                     totals,
                     scheduler_bytes,
                     output_storage_bytes,
@@ -335,19 +306,19 @@ impl From<&PackedBatch> for ProgramBufferKey {
 }
 
 pub(super) struct ProgramBuffers {
-    programs: MappedBuffer,
-    words: MappedBuffer,
-    longs: MappedBuffer,
-    values: MappedBuffer,
-    strings: MappedBuffer,
-    nfa_states: MappedBuffer,
-    nfa_data: MappedBuffer,
-    nfa_ranges: MappedBuffer,
-    lua_instructions: MappedBuffer,
-    lua_members: MappedBuffer,
-    assertions: MappedBuffer,
-    assertion_data: MappedBuffer,
-    string_bytes: MappedBuffer,
+    programs: HostMapped,
+    words: HostMapped,
+    longs: HostMapped,
+    values: HostMapped,
+    strings: HostMapped,
+    nfa_states: HostMapped,
+    nfa_data: HostMapped,
+    nfa_ranges: HostMapped,
+    lua_instructions: HostMapped,
+    lua_members: HostMapped,
+    assertions: HostMapped,
+    assertion_data: HostMapped,
+    string_bytes: HostMapped,
 }
 
 pub struct CachedProgramBuffers {
@@ -360,20 +331,20 @@ pub(super) type ProgramBufferCache = Arc<Mutex<Option<CachedProgramBuffers>>>;
 #[derive(Clone)]
 pub enum Engine {
     Interpreter {
-        pipeline: ComputePipelineState,
+        kernel: lane::Kernel,
         buffers: ProgramBufferCache,
     },
     Jit {
-        pipeline: ComputePipelineState,
+        kernel: lane::Kernel,
         programs: usize,
         buffers: ProgramBufferCache,
     },
 }
 
 impl Engine {
-    fn pipeline(&self) -> &ComputePipelineState {
+    fn kernel(&self) -> &lane::Kernel {
         match self {
-            Self::Interpreter { pipeline, .. } | Self::Jit { pipeline, .. } => pipeline,
+            Self::Interpreter { kernel, .. } | Self::Jit { kernel, .. } => kernel,
         }
     }
 
@@ -385,7 +356,6 @@ impl Engine {
 
     fn program_buffers(
         &self,
-        device: &Device,
         batch: &PackedBatch,
     ) -> Result<Arc<ProgramBuffers>, Error> {
         let key = ProgramBufferKey::from(batch);
@@ -396,19 +366,19 @@ impl Engine {
             return Ok(Arc::clone(&cached.buffers));
         }
         let buffers = Arc::new(ProgramBuffers {
-            programs: MappedBuffer::from_slice(device, &batch.programs)?,
-            words: MappedBuffer::from_slice(device, &batch.words)?,
-            longs: MappedBuffer::from_slice(device, &batch.longs)?,
-            values: MappedBuffer::from_slice(device, &batch.values)?,
-            strings: MappedBuffer::from_slice(device, &batch.strings)?,
-            nfa_states: MappedBuffer::from_slice(device, &batch.nfa_states)?,
-            nfa_data: MappedBuffer::from_slice(device, &batch.nfa_data)?,
-            nfa_ranges: MappedBuffer::from_slice(device, &batch.nfa_ranges)?,
-            lua_instructions: MappedBuffer::from_slice(device, &batch.lua_instructions)?,
-            lua_members: MappedBuffer::from_slice(device, &batch.lua_members)?,
-            assertions: MappedBuffer::from_slice(device, &batch.assertions)?,
-            assertion_data: MappedBuffer::from_slice(device, &batch.assertion_data)?,
-            string_bytes: MappedBuffer::from_slice(device, &batch.string_bytes)?,
+            programs: HostMapped::from_slice(&batch.programs)?,
+            words: HostMapped::from_slice(&batch.words)?,
+            longs: HostMapped::from_slice(&batch.longs)?,
+            values: HostMapped::from_slice(&batch.values)?,
+            strings: HostMapped::from_slice(&batch.strings)?,
+            nfa_states: HostMapped::from_slice(&batch.nfa_states)?,
+            nfa_data: HostMapped::from_slice(&batch.nfa_data)?,
+            nfa_ranges: HostMapped::from_slice(&batch.nfa_ranges)?,
+            lua_instructions: HostMapped::from_slice(&batch.lua_instructions)?,
+            lua_members: HostMapped::from_slice(&batch.lua_members)?,
+            assertions: HostMapped::from_slice(&batch.assertions)?,
+            assertion_data: HostMapped::from_slice(&batch.assertion_data)?,
+            string_bytes: HostMapped::from_slice(&batch.string_bytes)?,
         });
         *slot = Some(CachedProgramBuffers {
             key,
@@ -608,14 +578,16 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
         return Ok(engine.clone());
     }
     let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
-    let engine = Engine::Interpreter { pipeline: rerail_metal::runtime::pipeline_named_fixed(&source, "run_batch", None)?, buffers: Arc::new(Mutex::new(None)) };
+    lane::device()?;
+    let engine = Engine::Interpreter { kernel: lane::kernel_fixed(&source, "run_batch", None), buffers: Arc::new(Mutex::new(None)) };
     *cached = Some(engine.clone());
     Ok(engine)
 }
 
 pub fn compile_interpreter() -> Result<Engine, Error> {
+    lane::device()?;
     Ok(Engine::Interpreter {
-        pipeline: rerail_metal::runtime::pipeline_named_fixed(&format!("{}{}", *TAPE_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch", None)?,
+        kernel: lane::kernel_fixed(&format!("{}{}", *TAPE_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch", None),
         buffers: Arc::new(Mutex::new(None)),
     })
 }
@@ -623,8 +595,8 @@ pub fn compile_interpreter() -> Result<Engine, Error> {
 /// The interpreter with a recursive group's sweep kernel (`label_passes`, `label_sweep`), compiled
 /// once per process. A program whose flags carry a route (bit 31; bit 30 captured nodes, bits 8..30
 /// the label) marks its label as each result is published; other programs run as in `run_batch`.
-pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
-    static SWEEP: Mutex<Option<ComputePipelineState>> = Mutex::new(None);
+pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<lane::Kernel, Error> {
+    static SWEEP: Mutex<Option<lane::Kernel>> = Mutex::new(None);
     let mut cached = SWEEP.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipeline) = &*cached {
         return Ok(pipeline.clone());
@@ -643,14 +615,16 @@ pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipeline
         "UKL_GLOBAL uint32_t* bits=(UKL_GLOBAL uint32_t*)(values+1);return ((ukl_atomic_load(&bits[(kind-16384u)*words+node/32u])>>(node%32u))&1u)!=0u;",
     );
     // The sweep's kernel takes the batch's rows (`run_batch`'s), after the runtime it runs tasks with.
-    let pipeline = rerail_metal::runtime::pipeline_named_fixed(&format!("{source}\n{}", include_str!("label_sweep.uglykl")), "label_sweep", None)?;
-    *cached = Some(pipeline.clone());
-    Ok(pipeline)
+    lane::device()?;
+    let kernel = lane::kernel_fixed(&format!("{source}\n{}", include_str!("label_sweep.uglykl")), "label_sweep", None);
+    *cached = Some(kernel.clone());
+    Ok(kernel)
 }
 
 pub(super) fn compile_jit(programs: &[Program]) -> Result<Engine, Error> {
+    lane::device()?;
     Ok(Engine::Jit {
-        pipeline: pipeline_named(&jit_kernel_source(programs)?, "run_batch")?,
+        kernel: lane::kernel(&jit_kernel_source(programs)?, "run_batch", None),
         programs: programs.len(),
         buffers: Arc::new(Mutex::new(None)),
     })
@@ -785,8 +759,7 @@ fn execute_packed_once(
         return Ok(PackedExecution::new(batch, PackedResultPage::empty()));
     }
     let allocation_started = std::time::Instant::now();
-    let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let queue = rerail_metal::queue()?;
+    lane::device()?;
     // Every lane reserves the widest evaluation's states: a workspace the pool refuses runs with half the lanes,
     // down to one (decision 0334 §9). Fewer lanes run its tasks in fewer at a time; the results are the same.
     let mut lanes = EXECUTION_LANES;
@@ -808,7 +781,6 @@ fn execute_packed_once(
             );
         }
         match MetalWorkspaceLease::acquire(
-            device,
             totals,
             batch.header.scheduler_byte_count,
             batch.header.workspace_byte_count,
@@ -827,9 +799,9 @@ fn execute_packed_once(
     for lane in &mut batch.evaluation_lanes {
         lane.generation = workspace.generation;
     }
-    let program_buffers = engine.program_buffers(device, &batch)?;
-    let task_buffer = MappedBuffer::from_slice(device, &batch.tasks)?;
-    let header_buffer = MappedBuffer::from_slice(device, &[batch.header])?;
+    let program_buffers = engine.program_buffers(&batch)?;
+    let task_buffer = HostMapped::from_slice(&batch.tasks)?;
+    let header_buffer = HostMapped::from_slice(&[batch.header])?;
     // The documents resident, gathered into one block (decision 0289 §4), in the batch's numbering: their views
     // where the files were, and the block where the node records were. The kernel reads nothing from the
     // children, source and line start slots; the block stands in for them.
@@ -838,11 +810,11 @@ fn execute_packed_once(
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
-    let file_buffer = MappedBuffer::from_slice(device, &table.views)?;
-    let block = table.block.as_ref().ok_or(Error::BackendFailure)?.buffer();
+    let file_buffer = HostMapped::from_slice(&table.views)?;
+    let block = table.block.as_ref().ok_or(Error::BackendFailure)?.device_buffer();
     // The derived classes alone (`has_supertype`): the classes are the codes', read on the tape.
     let supertypes = batch.metal_supertypes();
-    let supertype_buffer = MappedBuffer::from_slice(device, &supertypes)?;
+    let supertype_buffer = HostMapped::from_slice(&supertypes)?;
     let pending_buffer = &workspace.pending;
     let capture_buffer = &workspace.captures;
     let cursor_buffer = &workspace.cursors;
@@ -851,26 +823,18 @@ fn execute_packed_once(
     unsafe {
         std::ptr::copy_nonoverlapping(
             std::ptr::from_ref(&batch.global_arenas).cast::<u8>(),
-            scheduler_buffer.buffer.contents().cast::<u8>(),
+            scheduler_buffer.host(),
             std::mem::size_of_val(&batch.global_arenas),
         );
         let evaluation_start = std::mem::size_of_val(&batch.global_arenas);
         std::ptr::copy_nonoverlapping(
             batch.evaluations.as_ptr().cast::<u8>(),
-            scheduler_buffer
-                .buffer
-                .contents()
-                .cast::<u8>()
-                .add(evaluation_start),
+            scheduler_buffer.host().add(evaluation_start),
             std::mem::size_of_val(batch.evaluations.as_slice()),
         );
         std::ptr::copy_nonoverlapping(
             batch.evaluation_lanes.as_ptr().cast::<u8>(),
-            scheduler_buffer
-                .buffer
-                .contents()
-                .cast::<u8>()
-                .add(evaluation_start + std::mem::size_of_val(batch.evaluations.as_slice())),
+            scheduler_buffer.host().add(evaluation_start + std::mem::size_of_val(batch.evaluations.as_slice())),
             std::mem::size_of_val(batch.evaluation_lanes.as_slice()),
         );
     }
@@ -886,59 +850,49 @@ fn execute_packed_once(
             workspace.reused, workspace.generation,
         );
     }
-    let command = queue.new_command_buffer();
-    command.set_label("Tempo packed transducer batch");
-    let encoder = command.new_compute_command_encoder();
-    encoder.set_label("Tempo packed transducer kernel");
-    encoder.set_compute_pipeline_state(engine.pipeline());
-    for (index, buffer) in [
-        &task_buffer.buffer,
-        &header_buffer.buffer,
-        &file_buffer.buffer,
-        block,
-        &program_buffers.programs.buffer,
-        &program_buffers.words.buffer,
-        &program_buffers.longs.buffer,
-        block,
-        &supertype_buffer.buffer,
-        &pending_buffer.buffer,
-        &capture_buffer.buffer,
-        &cursor_buffer.buffer,
-        &repeat_buffer.buffer,
-        &scheduler_buffer.buffer,
-        &result_buffer.buffer,
-        &status_buffer.buffer,
-        &program_buffers.values.buffer,
-        &program_buffers.strings.buffer,
-        &program_buffers.nfa_states.buffer,
-        &program_buffers.nfa_data.buffer,
-        &program_buffers.nfa_ranges.buffer,
-        &program_buffers.lua_instructions.buffer,
-        &program_buffers.lua_members.buffer,
-        &program_buffers.assertions.buffer,
-        &program_buffers.assertion_data.buffer,
-        &program_buffers.string_bytes.buffer,
-        block,
-        &value_state_buffer.buffer,
-        block,
-        &final_capture_buffer.buffer,
-        &output_storage_buffer.buffer,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        encoder.set_buffer(index as u64, Some(buffer), 0);
+    // The rows by name (`run_batch`'s): the block stands for the node records, children, source and line starts.
+    let lanes = batch.evaluation_lanes.len() as u64;
+    let mut command = lane::Command::new("Tempo packed transducer batch");
+    let mut launch = command.launch(engine.kernel(), "Tempo packed transducer kernel");
+    for (name, buffer) in [
+        ("tasks", task_buffer.buffer()),
+        ("header", header_buffer.buffer()),
+        ("files", file_buffer.buffer()),
+        ("nodes", block),
+        ("programs", program_buffers.programs.buffer()),
+        ("words", program_buffers.words.buffer()),
+        ("longs", program_buffers.longs.buffer()),
+        ("children", block),
+        ("supertypes", supertype_buffer.buffer()),
+        ("pending", pending_buffer.buffer()),
+        ("captures", capture_buffer.buffer()),
+        ("cursors", cursor_buffer.buffer()),
+        ("repeats", repeat_buffer.buffer()),
+        ("schedulerStorage", scheduler_buffer.buffer()),
+        ("results", result_buffer.buffer()),
+        ("statuses", status_buffer.buffer()),
+        ("values", program_buffers.values.buffer()),
+        ("strings", program_buffers.strings.buffer()),
+        ("nfaStates", program_buffers.nfa_states.buffer()),
+        ("nfaData", program_buffers.nfa_data.buffer()),
+        ("nfaRanges", program_buffers.nfa_ranges.buffer()),
+        ("luaInstructions", program_buffers.lua_instructions.buffer()),
+        ("luaMembers", program_buffers.lua_members.buffer()),
+        ("assertions", program_buffers.assertions.buffer()),
+        ("assertionData", program_buffers.assertion_data.buffer()),
+        ("stringBytes", program_buffers.string_bytes.buffer()),
+        ("source", block),
+        ("valueWork", value_state_buffer.buffer()),
+        ("lineStarts", block),
+        ("finalCaptures", final_capture_buffer.buffer()),
+        ("outputStorage", output_storage_buffer.buffer()),
+    ] {
+        launch = launch.buffer(name, buffer);
     }
-    let width = engine.pipeline().thread_execution_width().max(1);
-    encoder.checked_dispatch_threads(
-        command,
-        MTLSize::new(batch.evaluation_lanes.len() as u64, 1, 1),
-        MTLSize::new(width.min(batch.evaluation_lanes.len() as u64), 1, 1),
-    );
-    encoder.end_encoding();
+    // A thread a lane, and no more: `run_batch` reads its lane by its thread.
+    launch.threads_exact(lanes, 32);
     let execution_started = std::time::Instant::now();
-    commit_checked(command)?;
-    wait_checked(command)?;
+    command.run()?;
     let execution_elapsed = execution_started.elapsed();
     if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
@@ -947,21 +901,14 @@ fn execute_packed_once(
             execution_elapsed.as_nanos(),
         );
     }
-    if command.status() == metal::MTLCommandBufferStatus::Error {
-        return Err(Error::BackendFailure);
-    }
     #[cfg(any(test, feature = "test-hooks"))]
     INVOCATIONS.set(INVOCATIONS.get() + 1);
     batch.global_arenas = unsafe {
-        scheduler_buffer
-            .buffer
-            .contents()
-            .cast::<MetalGlobalArenas>()
-            .read()
+        scheduler_buffer.host().cast::<MetalGlobalArenas>().read()
     };
     let statuses = unsafe {
         std::slice::from_raw_parts(
-            status_buffer.buffer.contents().cast::<TaskStatus>(),
+            status_buffer.host().cast::<TaskStatus>(),
             batch.tasks.len(),
         )
     };
@@ -981,7 +928,7 @@ fn execute_packed_once(
     }
     let results = unsafe {
         std::slice::from_raw_parts(
-            result_buffer.buffer.contents().cast::<ResultRecord>(),
+            result_buffer.host().cast::<ResultRecord>(),
             totals
                 .candidates
                 .checked_add(totals.results)
@@ -990,25 +937,19 @@ fn execute_packed_once(
     };
     let final_captures = unsafe {
         std::slice::from_raw_parts(
-            final_capture_buffer
-                .buffer
-                .contents()
-                .cast::<FinalCaptureRecord>(),
+            final_capture_buffer.host().cast::<FinalCaptureRecord>(),
             totals.output_captures as usize,
         )
     };
     let output_storage = unsafe {
         std::slice::from_raw_parts(
-            output_storage_buffer.buffer.contents().cast::<u8>(),
+            output_storage_buffer.host(),
             batch.header.workspace_byte_count as usize,
         )
     };
     let properties = unsafe {
         std::slice::from_raw_parts(
-            output_storage_buffer
-                .buffer
-                .contents()
-                .cast::<PropertyRecord>(),
+            output_storage_buffer.host().cast::<PropertyRecord>(),
             totals.properties as usize,
         )
     };

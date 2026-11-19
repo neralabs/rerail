@@ -284,7 +284,7 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
         encoder.set_buffer(2, Some(&out.buffer), 0);
         encoder.set_buffer(3, Some(table.block.as_ref().expect("one block bound").buffer()), 0);
         if let Some(cache) = &table.cache {
-            encoder.use_resource(cache, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
+            encoder.use_resource(cache.metal().expect("the cache on Metal"), metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
         }
         let count = table.nodes as u32;
         encoder.set_bytes(7, 4, std::ptr::from_ref(&count).cast());

@@ -1076,6 +1076,29 @@ stands on:
   forest's (125).
 - **Next in C:** the runner and the program backend on the lane, so these run on the CPU and OpenCL.
 
+**C: the runner and the program backend on the lane (2026-11-19).**
+- **A command is owned** (`lane::Command`): its steps (launches, copies, fills) in order, each holding its kernel
+  and buffers, so the runner builds one across a level's calls and runs it at the flush. The blits are its copies
+  and fills.
+- **Rows bound by number** (`Launch::slot`, `slot_value`) where a caller binds a kernel's rows in order, as the
+  runner's positional buffers do; by name elsewhere. A label kernel's block, walk statistics and spill queue are
+  found by their rows' names on every backend (`LabelKernel::of`), the pattern kernels' too.
+- **Exact grids** (`Launch::threads_exact`) for `run_batch` and the sweep, which read their lane by their thread
+  and do not bound it: Metal's non-uniform grid ran exactly the lanes, and a level's lanes need not be a power of
+  two. The other label kernels bound their own threads, or stride by the grid.
+- **Host-mapped buffers on every backend** (`runtime::HostMapped`): an anonymous mapping, wrapped by the device
+  layer, in the workspace, the programs' buffers and every runner buffer. The mapping is the holder's, not the
+  buffer's: a buffer bound to a launch is held (`Runner::retained`, the prefix as an `Arc`) until its command has
+  run. Two holders let theirs go early: the labels read after the runner had gone (a crash on the M3), and a
+  formula's statistics when profiling is off. Both are held now.
+- **The 16z cache on the device layer** (`slabs::zcache_for`): made on the process's device and placed by device
+  addresses. OpenCL 1.2's kernels follow no address a buffer holds, so a 16z batch has no cache there and is refused;
+  the other formats need no address.
+- The pattern kernels are still Metal's text (their generator is step D's); the device layer takes them as written
+  on Metal.
+- The engine's Metal tests of the program backend, the semantic conformance, the label passes, the sweep, the
+  resident interpreter, the slabs and the JIT pass on the M3 (181).
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

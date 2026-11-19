@@ -75,12 +75,12 @@ pub(in crate::code_rule_dsl) struct Ran {
 
 /// Runs `kernel` (its arguments bound by `bind`) over `queue` until no item is active: one launch, or more where
 /// every worker exited with items left.
-pub(in crate::code_rule_dsl) fn run<'a>(
-    kernel: &'a lane::Kernel,
+pub(in crate::code_rule_dsl) fn run(
+    kernel: &lane::Kernel,
     queue: &Queue,
     groups: u64,
     label: &str,
-    bind: impl for<'c> Fn(lane::Launch<'c, 'a>) -> lane::Launch<'c, 'a>,
+    bind: impl for<'c> Fn(lane::Launch<'c>) -> lane::Launch<'c>,
 ) -> Result<Ran, Error> {
     use super::metal_backend::launch::host_seconds;
     let _scope = super::metal_backend::launch::LaunchScope::enter();
