@@ -3,11 +3,12 @@
 // sees them all), slice B into chunks of rules within the unit budget, slice C by file; groups go longest first onto
 // the host that would finish them soonest. The merge concatenates a cell's logs from every host and copies the rest.
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { claimName, mergeTrees, type PackInput, planFanout, planUnits, UNIT_BUDGET_S } from "../../../scripts/ship/fanout.js";
+import { claimName, detached, mergeTrees, type PackInput, planFanout, planUnits, remoteShell, UNIT_BUDGET_S } from "../../../scripts/ship/fanout.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const rules = (n: number): string[] => ["(none)", ...Array.from({ length: n - 1 }, (_, i) => `r${String(i).padStart(3, "0")}`)];
 const python: PackInput = { pack: "python", corpora: ["fixtures", "real"], rules: rules(539), files: ["largest", "median", "small"] };
@@ -46,7 +47,7 @@ describe("planning units", () => {
 });
 
 describe("spreading units over hosts", () => {
-  const plan = planFanout([python, sql], ["h1", "h2"], ["0-3", "4-7", "8-11", "12-15"], options);
+  const plan = planFanout([python, sql], ["build-1", "build-2"], ["0-3", "4-7", "8-11", "12-15"], options);
 
   it("assigns every unit once, longest first", () => {
     expect(plan.units).toHaveLength(planUnits([python, sql], options).length);
@@ -64,7 +65,7 @@ describe("spreading units over hosts", () => {
   });
 
   it("balances the hosts", () => {
-    const [h1, h2] = [plan.load.h1!, plan.load.h2!];
+    const [h1, h2] = [plan.load["build-1"]!, plan.load["build-2"]!];
     expect(Math.max(h1, h2) / Math.min(h1, h2)).toBeLessThan(1.25);
   });
 
@@ -82,7 +83,7 @@ describe("claims", () => {
 
 describe("merging the hosts' runs", () => {
   let root = "";
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => removeFolderSync(root));
 
   it("concatenates a cell's logs from every host, once each line, and copies the other files", () => {
     root = mkdtempSync(join(tmpdir(), "fanout-merge-"));
@@ -113,5 +114,18 @@ describe("merging the hosts' runs", () => {
     writeFileSync(join(root, "h2", "files.json"), "[2]");
     expect(mergeTrees([join(root, "h1"), join(root, "h2")], join(root, "m"))).toEqual(["files.json"]);
     expect(readFileSync(join(root, "m", "files.json"), "utf8")).toBe("[1]");
+  });
+});
+
+describe("the remote shell", () => {
+  it("is plain ssh unless --ssh or SHIPBAR_SSH names another command, --ssh first", () => {
+    expect(remoteShell(undefined, {})).toEqual(["ssh"]);
+    expect(remoteShell(undefined, { SHIPBAR_SSH: "  my-wrapper  ssh " })).toEqual(["my-wrapper", "ssh"]);
+    expect(remoteShell("ssh -p 2222", { SHIPBAR_SSH: "my-wrapper ssh" })).toEqual(["ssh", "-p", "2222"]);
+    expect(() => remoteShell(" ", {})).toThrow(/empty/);
+  });
+
+  it("starts a host script detached: its own session, no hangup, output to a file, the shell back at once", () => {
+    expect(detached("work/run1", "host.sh", ["build-1", "it's"])).toBe(`cd work/run1 && (setsid nohup bash -l fanout/host.sh 'build-1' 'it'\\''s' > fanout/host.sh.out 2>&1 < /dev/null &)`);
   });
 });
