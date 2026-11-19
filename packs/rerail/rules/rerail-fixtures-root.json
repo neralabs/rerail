@@ -10,7 +10,6 @@
     ],
     "exclude": [
       "native/build.rs",
-      "native/src/code_rule_dsl/mod.rs",
       "native/src/code_rule_dsl/fixtures.rs",
       "native/target/**"
     ]
