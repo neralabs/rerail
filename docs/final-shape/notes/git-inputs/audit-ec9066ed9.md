@@ -20,6 +20,8 @@ Explicitly requesting the four IDs gave the same answers and request keys.
 A second policy joined two batch entries to one selected label. In a fresh store it requested one commit.
 The evaluation profile recorded one native metadata read, for that commit. The headless scan also reported only the root when given the same negative parent test.
 All 16 standalone revision tests passed on Linux. Six related headless tests passed on macOS.
+The Windows 11 ARM64 guest passed all 16 standalone revision tests on NTFS at `5e3712000c` in 48.70 seconds.
+The rebuilt addon passed all three headless checks for root commits, binary content and selected paths.
 [Rule examples](../../../rule-syntax/git.md#read-the-selected-commit) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Verified Git content handles
