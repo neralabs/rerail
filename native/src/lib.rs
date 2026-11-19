@@ -547,13 +547,15 @@ pub fn retire_upkeep_under(directory: String) {
 pub fn delete_analysis_scope(store_path: String, value: String, directory: bool, release: Option<String>) -> Result<()> {
     use content_store::analysis_scope;
     let path = std::path::Path::new(&store_path);
+    let receipt = directory.then(|| analysis_scope::DirectoryRelease::parse(release.as_deref())).transpose()
+        .map_err(|error| Error::new(Status::InvalidArg, error.to_string()))?;
     if !path.try_exists().map_err(|error| Error::from_reason(error.to_string()))?
-        && !(directory && release.as_deref().is_some_and(|id| id.contains(':'))) {
+        && !receipt.as_ref().is_some_and(|receipt| receipt.is_numbered()) {
         return Ok(());
     }
     let store = content_store::ContentStore::open(path).map_err(|err| Error::new(Status::GenericFailure, err.to_string()))?;
-    if directory {
-        store.delete_directory_analysis_scopes(std::path::Path::new(&value), release.as_deref())
+    if let Some(receipt) = receipt {
+        receipt.apply(&store, std::path::Path::new(&value))
     } else {
         let scope = analysis_scope::named(&value).ok_or_else(|| Error::new(Status::InvalidArg, "analysis scope name must not be empty"))?;
         store.delete_analysis_scope(&scope)

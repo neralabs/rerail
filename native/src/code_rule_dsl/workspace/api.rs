@@ -184,14 +184,22 @@ impl GitRevisionSource {
 #[napi]
 pub struct AnalysisScopeRun(Mutex<AnalysisRun>);
 
+fn analysis_generation(value: f64) -> Result<i64> {
+    if !(0.0..=analysis_scope::MAX_GENERATION as f64).contains(&value) || value.fract() != 0.0 {
+        return Err(invalid("analysis generation must be a nonnegative safe integer"));
+    }
+    Ok(value as i64)
+}
+
 #[napi]
 impl AnalysisScopeRun {
     #[napi(constructor)]
     pub fn new(store_path: String, value: String, directory: bool, id: String, generation: f64, home: Option<String>) -> Result<Self> {
+        let generation = analysis_generation(generation)?;
         let scope = if directory { analysis_scope::directory_in(Path::new(&value), home.as_deref()) }
             else { analysis_scope::named(&value).ok_or_else(|| invalid("analysis scope name must not be empty"))? };
         let store = crate::content_store::ContentStore::open(Path::new(&store_path)).map_err(|e| invalid(e.to_string()))?;
-        AnalysisRun::begin_at(store, &scope, &id, generation as i64).map(|run| Self(Mutex::new(run))).map_err(|e| invalid(e.to_string()))
+        AnalysisRun::begin_at(store, &scope, &id, generation).map(|run| Self(Mutex::new(run))).map_err(|e| invalid(e.to_string()))
     }
 
     #[napi]
@@ -254,10 +262,11 @@ impl CodeRuleDslWorkspace {
         generation: Option<f64>,
         home: Option<String>,
     ) -> Result<AsyncTask<WorkspaceStorageTask>> {
+        let generation = analysis_generation(generation.unwrap_or_default())?;
         let owner = analysis.map(|run| run.owner_for(Path::new(&store_path))).transpose()?;
         let mut task = self.storage_task(root, store_path, &secret_names)?;
         task.analysis_owner = owner;
-        task.analysis_generation = generation.unwrap_or_default() as i64;
+        task.analysis_generation = generation;
         task.analysis_home = home;
         Ok(AsyncTask::new(task))
     }

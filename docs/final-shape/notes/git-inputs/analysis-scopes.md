@@ -108,6 +108,9 @@ Rolling back that transaction can leave a gap between generations.
 Acquisition also checks the store's numbered release receipts. A scan after restoration
 of an older control database must acquire a generation above those cutoffs.
 Already running scans keep their original generations.
+The native run and workspace APIs accept nonnegative safe integer generation numbers.
+A numbered stop receipt contains its cutoff, a delivery ID, and an optional home, separated by colons.
+A malformed numbered receipt is an error. An older unnumbered delivery ID still identifies a single unconditional stop.
 It must register the store before it can publish ownership.
 This order lets a stop find every store that can hold an ended generation.
 If the store fails to open, the run uses memory and adds no registration.

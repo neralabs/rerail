@@ -245,21 +245,48 @@ fn own_snapshot(tx: &rusqlite::Connection, owner: &AnalysisOwner, workspace: &st
             Ok(())
 }
 
+pub struct DirectoryRelease<'a> {
+    id: Option<&'a str>,
+    before: Option<i64>,
+    home: Option<&'a str>,
+}
+
+pub const MAX_GENERATION: i64 = (1_i64 << 53) - 1;
+
+impl<'a> DirectoryRelease<'a> {
+    pub fn parse(id: Option<&'a str>) -> StoreResult<Self> {
+        let invalid = || super::StoreError::Invalid("invalid directory release receipt".into());
+        if id == Some("") { return Err(invalid()); }
+        let Some((cutoff, receipt)) = id.and_then(|value| value.split_once(':')) else {
+            return Ok(Self { id, before: None, home: None });
+        };
+        let (delivery, home) = receipt.split_once(':').map_or((receipt, None), |(delivery, home)| (delivery, Some(home)));
+        if delivery.is_empty() || home.is_some_and(|home| home.is_empty() || home.contains(':'))
+            || !cutoff.bytes().all(|c| c.is_ascii_digit()) {
+            return Err(invalid());
+        }
+        let before = cutoff.parse::<i64>().map_err(|_| invalid())?;
+        if before > MAX_GENERATION { return Err(invalid()); }
+        Ok(Self { id, before: Some(before), home })
+    }
+
+    pub fn is_numbered(&self) -> bool { self.before.is_some() }
+
+    pub fn apply(&self, store: &ContentStore, path: &Path) -> StoreResult<usize> {
+        let scope = directory_in(path, self.home);
+        let subtree = scope_prefix(&scope);
+        let legacy = self.home.map(|_| directory(path));
+        store.release_analysis_scopes(&scope, Some(&subtree), self.id, self.before, legacy.as_deref())
+    }
+}
+
 impl ContentStore {
     pub fn delete_analysis_scope(&self, scope: &str) -> StoreResult<usize> {
         self.release_analysis_scopes(scope, None, None, None, None)
     }
 
     pub fn delete_directory_analysis_scopes(&self, path: &Path, release: Option<&str>) -> StoreResult<usize> {
-        let (before, home) = release
-            .and_then(|id| id.split_once(':'))
-            .map_or((None, None), |(before, receipt)| {
-                (before.parse::<i64>().ok(), receipt.split_once(':').map(|(_, home)| home))
-            });
-        let scope = directory_in(path, home);
-        let subtree = scope_prefix(&scope);
-        let legacy = home.map(|_| directory(path));
-        self.release_analysis_scopes(&scope, Some(&subtree), release, before, legacy.as_deref())
+        DirectoryRelease::parse(release)?.apply(self, path)
     }
 
     fn release_analysis_scopes(&self, scope: &str, subtree: Option<&str>, release: Option<&str>, before: Option<i64>, legacy: Option<&str>) -> StoreResult<usize> {

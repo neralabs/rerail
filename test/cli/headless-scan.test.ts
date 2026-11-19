@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -1003,6 +1003,38 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
       }
     } finally {
       vi.unstubAllEnvs();
+    }
+  });
+
+  it("rejects malformed numbered stops before creating a store or changing owners", async () => {
+    const root = checkout(), databasePath = join(root + "-home", "rerail.sqlite");
+    const store = join(root + "-home", "content.sqlite"), absent = store + ".absent";
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      expect((await scan(root, { databasePath })).status).toBe("completed");
+      const home = analysisScopeHome(databasePath), binding = loadNativeBinding();
+      const owners = () => queryContentStore(store, "SELECT * FROM analysis_scope_workspace_snapshot ORDER BY scope, workspace");
+      const before = owners();
+      expect(before).toHaveLength(1);
+      for (const id of [`invalid:receipt:${home}`, "-1:receipt", "1.5:receipt", "1:", "1:id:", "1:id:extra:field", "9007199254740992:id"]) {
+        for (const path of [absent, store]) expect(() => binding.deleteAnalysisScope(path, root, true, id)).toThrow(/invalid directory release receipt/u);
+      }
+      expect(existsSync(absent)).toBe(false);
+      expect(owners()).toEqual(before);
+      expect(queryContentStore(store, "SELECT * FROM analysis_scope_release")).toHaveLength(0);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("requires safe integer generations before acquiring a run or attaching its workspace", async () => {
+    const root = checkout(), engine = loadNativeBinding(), store = join(root + "-home", "generation.sqlite");
+    const workspace = new engine.CodeRuleDslWorkspace();
+    for (const value of [NaN, Infinity, -1, 1.9, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => new engine.AnalysisScopeRun(store, root, true, "run", value)).toThrow(/nonnegative safe integer/u);
+      await expect(async () => workspace.enableStorageAsync(root, store, { files: [], folders: [] }, undefined, value)).rejects.toThrow(/nonnegative safe integer/u);
+    }
+    expect(existsSync(store)).toBe(false);
+    for (const value of [0, Number.MAX_SAFE_INTEGER]) {
+      new engine.AnalysisScopeRun(store, root, true, "run", value).finish(false);
     }
   });
 
