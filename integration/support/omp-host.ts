@@ -105,12 +105,20 @@ export class OmpHost {
     if (!response.success) throw new Error(`OMP ${String(command.type)} failed: ${response.error}`);
     return response;
   }
-  /** `timeoutMs` bounds the agent's run, for a prompt whose tools keep the daemon busy for longer than the default minute. */
+  /**
+   * Sends `message` and waits for the run it starts to end: its last `agent_end`, the one OMP does not mark
+   * `isTerminal: false`. OMP marks an `agent_end` that a queued steer or follow-up continues so, and the prompt's own
+   * result can come before that continuation. A prompt that starts no run ends at its result. `timeoutMs` bounds the
+   * agent's run, for a prompt whose tools keep the daemon busy for longer than the default minute.
+   */
   async prompt(message: string, { timeoutMs }: { timeoutMs?: number } = {}): Promise<void> {
     const from = this.frames.length;
     const response = await this.command({ type: "prompt", message });
-    await this.waitFor(frame => frame.type === "agent_end" || (frame.type === "prompt_result" && frame.id === response.id), from, timeoutMs);
-    // agent_end observers and queued steers may still be settling; the command's idle barrier handles both.
+    await this.waitFor(frame => frame.type === "prompt_result" && frame.id === response.id, from, timeoutMs);
+    if (this.frames.slice(from).some(frame => frame.type === "agent_start")) {
+      await this.waitFor(frame => frame.type === "agent_end" && frame.isTerminal !== false, from, timeoutMs);
+    }
+    // agent_end observers may still be settling; the command's idle barrier waits for them.
     await this.snapshot();
   }
   async snapshot(): Promise<HostEvidence> {
