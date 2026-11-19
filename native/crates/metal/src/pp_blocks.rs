@@ -59,8 +59,10 @@ fn zeroed(n: usize) -> Result<MappedBuffer, Error> {
     MappedBuffer::zeroed::<u32>(&crate::device()?, n.max(1))
 }
 
-/// An exclusive scan of up to `capacity` u32s, its total in `total`.
+/// An exclusive scan of up to `capacity` u32s, its total in `total`. Only the levels the
+/// capacity needs are encoded: 2 launches to 1,024 elements, 4 to 2^20, 6 past it.
 pub struct Scan {
+    levels: u32,
     plan: MappedBuffer,
     sums1: MappedBuffer,
     out1: MappedBuffer,
@@ -76,18 +78,31 @@ impl Scan {
         if n2 > BLOCK {
             return Err(Error::BackendCapacity);
         }
-        Ok(Scan { plan: zeroed(20)?, sums1: zeroed(n1)?, out1: zeroed(n1)?, sums2: zeroed(n2)?, out2: zeroed(n2)?, total: zeroed(1)? })
+        let levels = if capacity <= BLOCK { 1 } else if capacity <= BLOCK * BLOCK { 2 } else { 3 };
+        Ok(Scan { levels, plan: zeroed(20)?, sums1: zeroed(n1)?, out1: zeroed(n1)?, sums2: zeroed(n2)?, out2: zeroed(n2)?, total: zeroed(1)? })
     }
 
     /// `out` = the exclusive scan of `input`'s first `n[at]` words.
     pub fn encode(&self, enc: &Enc<'_>, n: &BufferRef, at: u32, input: &BufferRef, out: &BufferRef) -> Result<(), Error> {
         let plan = &self.plan.buffer;
         enc.run("pb_scan_plan", None, &[n, plan], &[at], Grid::Groups(1))?;
-        enc.run("pb_scan_block", None, &[input, out, &self.sums1.buffer, plan], &[0], Grid::Indirect(plan, 16))?;
-        enc.run("pb_scan_block", None, &[&self.sums1.buffer, &self.out1.buffer, &self.sums2.buffer, plan], &[1], Grid::Indirect(plan, 28))?;
-        enc.run("pb_scan_block", None, &[&self.sums2.buffer, &self.out2.buffer, &self.total.buffer, plan], &[2], Grid::Indirect(plan, 40))?;
-        enc.run("pb_scan_add", None, &[&self.out1.buffer, &self.out2.buffer, plan], &[1], Grid::Indirect(plan, 64))?;
-        enc.run("pb_scan_add", None, &[out, &self.out1.buffer, plan], &[0], Grid::Indirect(plan, 52))
+        match self.levels {
+            // One block: its sum is the total.
+            1 => enc.run("pb_scan_block", None, &[input, out, &self.total.buffer, plan], &[0], Grid::Groups(1)),
+            // Blocks, then one block of their sums.
+            2 => {
+                enc.run("pb_scan_block", None, &[input, out, &self.sums1.buffer, plan], &[0], Grid::Indirect(plan, 16))?;
+                enc.run("pb_scan_block", None, &[&self.sums1.buffer, &self.out1.buffer, &self.total.buffer, plan], &[1], Grid::Groups(1))?;
+                enc.run("pb_scan_add", None, &[out, &self.out1.buffer, plan], &[0], Grid::Indirect(plan, 52))
+            }
+            _ => {
+                enc.run("pb_scan_block", None, &[input, out, &self.sums1.buffer, plan], &[0], Grid::Indirect(plan, 16))?;
+                enc.run("pb_scan_block", None, &[&self.sums1.buffer, &self.out1.buffer, &self.sums2.buffer, plan], &[1], Grid::Indirect(plan, 28))?;
+                enc.run("pb_scan_block", None, &[&self.sums2.buffer, &self.out2.buffer, &self.total.buffer, plan], &[2], Grid::Indirect(plan, 40))?;
+                enc.run("pb_scan_add", None, &[&self.out1.buffer, &self.out2.buffer, plan], &[1], Grid::Indirect(plan, 64))?;
+                enc.run("pb_scan_add", None, &[out, &self.out1.buffer, plan], &[0], Grid::Indirect(plan, 52))
+            }
+        }
     }
 }
 
