@@ -569,6 +569,16 @@ impl Volume {
     fn of(_index: &Path) -> Self {
         Self::Local
     }
+
+    /// The volume of any folder on a system that is neither Unix nor Windows (WASI, the browser
+    /// build): remote. The host stamps a file's times by a clock a module cannot read (WASI gives
+    /// the system time, not the coarse clock Linux stamps files with), and the standard library
+    /// gives no file identity there, so no stamp tells a later file: as on a share, a question
+    /// compares the index's checksum.
+    #[cfg(not(any(unix, windows)))]
+    fn of(_index: &Path) -> Self {
+        Self::Remote
+    }
 }
 
 /// The name of the file system of the volume `folder` is on (`NTFS`, `ReFS`, `FAT32`, `exFAT`);
@@ -633,10 +643,10 @@ const REMOTE_FILE_SYSTEMS: [u32; 15] = [
 ];
 
 /// What tells one index file from another and from itself rewritten: the file's identity (device
-/// and inode on Unix; volume serial and file index on Windows), which every write of Git's
-/// changes, and its modification time and size, which a write in place changes. All three come
-/// from the one query a stat makes, so a question costs what it cost before. Git writes the index
-/// to a new file and renames it over the old one; where a volume gives an identity again (ext4
+/// and inode on Unix; volume serial and file index on Windows; none under WASI), which every write
+/// of Git's changes, and its modification time and size, which a write in place changes. All three
+/// come from the one query a stat makes, so a question costs what it cost before. Git writes the
+/// index to a new file and renames it over the old one; where a volume gives an identity again (ext4
 /// gives a freed inode number to the next new file at once), two writes within one step of the
 /// file system's clock can land the second on the identity of the file read, at its size and
 /// time. That needs the read taken within the step, so there such a stamp is not kept
@@ -655,7 +665,7 @@ struct FileStamp {
 }
 
 /// A file's modification time as its stat gives it.
-#[cfg(unix)]
+#[cfg(not(windows))]
 type FileTime = Option<std::time::SystemTime>;
 /// A file's modification time as its stat gives it: the `FILETIME` count of 100 ns.
 #[cfg(windows)]
@@ -682,8 +692,9 @@ fn file_clock() -> std::time::SystemTime {
     )
 }
 
-/// The clock this system gives file times from: the system time.
-#[cfg(all(unix, not(target_os = "linux")))]
+/// The clock this system gives file times from: the system time. Under WASI no volume reads it
+/// ([`Volume::of`]).
+#[cfg(not(any(target_os = "linux", windows)))]
 fn file_clock() -> std::time::SystemTime {
     shifted(std::time::SystemTime::now())
 }
@@ -749,23 +760,40 @@ fn time_step(time: std::time::SystemTime) -> std::time::Duration {
 
 impl FileStamp {
     /// `path`'s stamp: `Some(None)` when there is no file, `None` when the stat is refused.
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     fn of(path: &Path) -> Option<Option<Self>> {
-        use std::os::unix::fs::MetadataExt;
         let metadata = match stat(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(None),
             Err(_) => return None,
         };
-        let stamp = Self {
+        let stamp = Self::of_metadata(&metadata);
+        #[cfg(test)]
+        let stamp = tests::as_the_volume_gives_it(stamp);
+        Some(Some(stamp))
+    }
+
+    /// The stamp of the file a stat gave `metadata` of.
+    #[cfg(unix)]
+    fn of_metadata(metadata: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
             identity: (metadata.dev(), metadata.ino()),
             modified: metadata.modified().ok(),
             changed: (metadata.ctime(), metadata.ctime_nsec()),
             len: metadata.len(),
-        };
-        #[cfg(test)]
-        let stamp = tests::as_the_volume_gives_it(stamp);
-        Some(Some(stamp))
+        }
+    }
+
+    /// The stamp of the file a stat gave `metadata` of, where the standard library gives no file
+    /// identity (WASI): one identity for every file, so only the time and size tell two apart.
+    #[cfg(not(any(unix, windows)))]
+    fn of_metadata(metadata: &std::fs::Metadata) -> Self {
+        Self {
+            identity: (0, 0),
+            modified: metadata.modified().ok(),
+            len: metadata.len(),
+        }
     }
 
     /// Whether this stamp tells its file from every later one on a local volume: once the file
@@ -795,6 +823,12 @@ impl FileStamp {
     #[cfg(windows)]
     fn times(&self) -> [Option<std::time::SystemTime>; 1] {
         [file_time(self.modified)]
+    }
+
+    /// The file's modification time.
+    #[cfg(not(any(unix, windows)))]
+    fn times(&self) -> [Option<std::time::SystemTime>; 1] {
+        [self.modified]
     }
 
     /// `path`'s stamp: `Some(None)` when there is no file, `None` when it cannot be read. One open
@@ -835,7 +869,7 @@ impl FileStamp {
 }
 
 /// `path`'s metadata, as `std::fs::metadata` reads it; the cases refuse it.
-#[cfg(unix)]
+#[cfg(not(windows))]
 fn stat(path: &Path) -> std::io::Result<std::fs::Metadata> {
     #[cfg(test)]
     if tests::stat_refused() {
