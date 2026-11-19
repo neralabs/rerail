@@ -64,6 +64,16 @@ The scan still checks other requested paths whose trees it can read.
 
 ## Retention and invalidation
 
+The content store records a pending acquisition before publication. A successful transaction records the scope, run, and snapshot memberships.
+The scope supplies the stop ancestors. An insertion trigger indexes those ancestors, and deleting the scope removes its index rows.
+A failed publication rolls back those rows together. The pending acquisition can then retry or abort.
+The object and frame segment tables identify the storage files that hold fact payloads.
+
+The build computes the suffix registry version from the same ordered dialects and enabled grammars it supplies to rules.
+Each embedded rule program has an identity derived from its library text and the engine build.
+The phase reads the compiled program from the selected store and names its entry in the consuming run.
+Another process can reuse that entry while a scope owns the run.
+
 A policy can read a Git revision and a later policy can use that same answer to request a commit.
 When the engine saves an answer for reuse, it saves the rows even if the first policy uses them only in its output.
 On upgrade, the engine rechecks entries written with the earlier native-answer format before it reuses them.
