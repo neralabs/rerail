@@ -2897,9 +2897,17 @@ submitted" now hold device memory at once.
     on-CPU samples, at 562 G; ab83, ~3,300. ab84: t69 = t68 with rayon-core's `ROUNDS_UNTIL_SLEEPY` 32 -> 1
     (patched in the job's copy only), alternated with t68 at 52,000 nodes, loads 30-92: t68 564.5 / 567.9 /
     575.7, t69 564.0 / 577.3 / 560.7: no difference, and both in the low band. Not shown either way: the high
-    band has not come back since ab79, and the test needs a quiet M3. Next, when the M3 is at load ~10: ab84's
-    runs again (`tmp/m3bench4/ab84.sh`, both binaries kept on the host, no build). Also seen: a forced chunk
-    size gives 8-13 chunks run to run (52,000 nodes).
+    band has not come back since ab79, and the test needs a quiet M3. Also seen: a forced chunk size gives 8-14
+    chunks run to run (52,000 nodes).
+  - (ab85-ab88, the M3 quiet, loads 7-18) The warm-up is not low: ab86's warm-up 610.2 G, its default-sized
+    runs 581.7 / 612.8 / 632.5, its forced 588.3 / 578.6 / 581.4; ab79's 579.2 was one draw. What a quiet host
+    does is spread a run's count: t68's 13 runs at load under 20 are 556.6-661.7 G (mean 601, 8 over 600),
+    against 558-580 at loads over 30. Rayon's idle rounds are part of it: t69 (`ROUNDS_UNTIL_SLEEPY` 1), 7 runs
+    at load under 20, 572.5-623.3 (mean 587, 1 over 600). A sampled t69 run at 584.8 G (ab87) is all work: the
+    rest of the spread (t69's ~587 against ~565 busy, and its 623.3) is not placed. So instruction counts on a
+    quiet host carry up to ~100 G of idle rounds and noise; measure at a steady load, or with rayon's idle
+    rounds cut. Open: whether to carry a rayon-core patch (idle rounds cut) as a vendored crate, for the CPU an
+    idle machine spends spinning, not only for counting.
   - (accounting, before 7562bf8a94) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
