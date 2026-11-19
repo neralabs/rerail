@@ -495,6 +495,29 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     expect(result.failures).toContainEqual(expect.objectContaining({ path: "bad", message: expect.stringContaining(duplicate) }));
     const commit = literal("commit", `tree ${tree}\n\nmissing signatures\n`);
     await expect(scan(root, { revision: commit, analysisScope: "malformed" })).rejects.toThrow(`malformed Git commit ${commit}`);
+    const engine = loadNativeBinding();
+    const open = (revision: string) => new engine.GitRevisionSource(root, revision, "malformed");
+    const tag = (id: string, kind: string) => literal("tag", `object ${id}\ntype ${kind}\ntag audit\ntagger Test <a@b> 123 +0000\n\nfixture\n`);
+    const wrongTag = tag(tree, "commit");
+    expect(() => open(tag(wrongTag, "tag"))).toThrow(/declares.*commit, found tree/u);
+    expect(open(tag(tree, "tree")).tree).toBe(tree);
+    expect(() => open(tag("1".repeat(40), "tree"))).toThrow(/11111111/u);
+    for (const expression of [`${commit}^{tree}`, `${commit}:bad`]) {
+      expect(() => open(expression)).toThrow(`malformed Git commit ${commit}`);
+    }
+    const unsorted = literal("tree", Buffer.concat(["z", "a"].flatMap(name => [Buffer.from(`100644 ${name}\0`), Buffer.from(blob, "hex")])));
+    expect(() => open(unsorted).readDirectory(".")).toThrow(/entries out of order/u);
+    const expressions = [`${commit}^{tree}`, `${commit}:bad`, `${wrongTag}^{}`, `${unsorted}:a`];
+    const policy = join(root, "navigation.rr");
+    writeFileSync(policy, `#include "git.rr"
+.policy "malformed-links" revision 1
+.violation Error(at: span, exp: symbol, reason: symbol) "{exp} {reason}"
+${expressions.map(expr => `git_revision_request(r, "${expr}") :- git_root_repo(r).`).join("\n")}
+Error(@place("git", 1), e, reason) :- git_revision_error(_, e, reason).
+`);
+    const checked = await scan(root, { revision: "HEAD", analysisScope: "malformed", rr: [policy] });
+    expect(checked.violations.map(row => row.message).sort()).toEqual(expressions.map((expr, i) =>
+      `${expr} ${i === 2 ? "wrong-object-kind" : "malformed-object"}`).sort());
   });
 
   it("reports unreadable requested Git paths while scanning the paths it can read", async () => {
@@ -829,6 +852,20 @@ Broken(@place("git", 1), o) :- git_object_error(_, o, "unreadable").
     restoreTagTarget();
     restoreCommit();
     expect(await evaluate()).toEqual(["commit", "found"]);
+  });
+
+  it("continues a message search through readable history after a missing parent", () => {
+    const root = checkout();
+    const missing = "1".repeat(40);
+    const tree = git(root, "rev-parse", "HEAD^{tree}");
+    const signature = "Test <a@b> 2147483647 +0000";
+    const broken = execFileSync("git", ["hash-object", "-w", "-t", "commit", "--stdin"], {
+      cwd: root, input: `tree ${tree}\nparent ${missing}\nauthor ${signature}\ncommitter ${signature}\n\nincomplete\n`, encoding: "utf8",
+    }).trim();
+    git(root, "update-ref", "refs/heads/incomplete", broken);
+    const open = (expr: string) => new (loadNativeBinding().GitRevisionSource)(root, expr, "history");
+    expect(open(":/seed").commit).toBe(git(root, "rev-parse", "--verify", ":/seed"));
+    expect(() => open(":/unmatched")).toThrow(missing);
   });
 
   it("reports distinct revision error facts for missing names, wrong kinds and corruption", async () => {

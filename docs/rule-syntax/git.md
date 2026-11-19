@@ -54,7 +54,7 @@ The `git_revision_error` reason is one of these symbols.
 | `ambiguous-revision` | The expression matched more than one object |
 | `invalid-revision` | Git could not interpret the expression or follow its navigation |
 | `missing-object` | A required object is absent from local storage |
-| `malformed-object` | A tree contains invalid entry data |
+| `malformed-object` | A navigation step encountered invalid commit, tag, or tree data |
 | `missing-path` | A tree lacks the requested entry |
 | `wrong-object-kind` | A step requires a different Git object kind |
 | `unreadable-object` | A Git storage read failed |
@@ -64,7 +64,8 @@ The `git_revision_error` reason is one of these symbols.
 The resolver checks the objects it reads during navigation before it follows their IDs.
 Revision navigation and object facts use the recorded Git objects, as with `git --no-replace-objects`.
 To select a replacement explicitly, request its `refs/replace/<original-id>` ref.
-Global message searches report unreadable refs on standard error and continue through readable history.
+Message searches report unreadable parent links on standard error and continue through readable history.
+Global searches also skip unreadable starting refs. If the readable history has no match, the search reports its read failure.
 
 ## Relations
 

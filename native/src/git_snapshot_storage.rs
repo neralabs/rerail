@@ -98,8 +98,8 @@ impl Storage {
         roots.extend(store.alternate_db_paths().ok()?);
         let mut loose = Sha256::new();
         let mut packs = Sha256::new();
-        // Old observations predate validation of duplicate tree names.
-        loose.update(b"git-object-observation-v2");
+        // Earlier observations can contain entries sorted before their Git order was checked.
+        loose.update(b"git-object-observation-v3");
         packs.update(b"git-pack-storage-v1");
         let mut indices = Some(Vec::new());
         let mut watched = BTreeMap::new();

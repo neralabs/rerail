@@ -16,7 +16,7 @@ git_object_error(r, oid, reason) :- git_object_of(r, oid, "error", _, reason, _,
 
 // Successful records are immutable, keyed by authorized repository, object ID and decoder version.
 .decl git_record_key(repo: symbol, oid: symbol, version: symbol)
-git_record_key(r, oid, "git-record-2") :- git_root_repo(r), git_object_request(r, oid).
+git_record_key(r, oid, "git-record-3") :- git_root_repo(r), git_object_request(r, oid).
 
 .decl git_record(repo: symbol, oid: symbol, version: symbol, field: symbol, position: number, first: symbol, second: symbol, value: number, offset: number)
 git_record(r, oid, v, field, pos, a, b, n, o) :-

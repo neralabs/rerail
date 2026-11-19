@@ -45,6 +45,36 @@ pub fn resolve(repo: &Repository, expression: &str, path_base: Option<&Path>) ->
     Ok(selection(repo, expression, path_base)?.0)
 }
 
+fn commit_metadata<'a>(commit: &'a gix::Commit<'_>) -> Result<gix::objs::CommitRef<'a>> {
+    super::decoded_commit(commit).map_err(|error| lookup_error("malformed-object",
+        format_args!("malformed Git commit {}: {error}", commit.id)))
+}
+
+/// Check every link as it is followed, including the kind recorded in annotated tags.
+pub(super) fn peel_object<'repo>(
+    mut object: Object<'repo>, kind: Option<Kind>, mut read: impl FnMut(ObjectId) -> Result<Object<'repo>>,
+) -> Result<Object<'repo>> {
+    loop {
+        if kind == Some(object.kind) { return Ok(object); }
+        object = match object.kind {
+            Kind::Tag => {
+                let tag = object.into_tag();
+                let decoded = tag.decode().map_err(|e| lookup_error("malformed-object", format_args!("Git tag {}: {e}", tag.id)))?;
+                let target = read(decoded.target())?;
+                if target.kind != decoded.target_kind {
+                    return Err(lookup_error("wrong-object-kind", format_args!(
+                        "Git tag {} declares {} as {}, found {}", tag.id, target.id, decoded.target_kind, target.kind)));
+                }
+                target
+            }
+            Kind::Commit if kind == Some(Kind::Tree) => read(commit_metadata(&object.into_commit())?.tree())?,
+            _ if kind.is_none() => return Ok(object),
+            _ => return Err(lookup_error("wrong-object-kind", format_args!(
+                "Git object {} is {}, expected {}", object.id, object.kind, kind.expect("requested object kind")))),
+        };
+    }
+}
+
 pub(super) fn selection(repo: &Repository, expression: &str, path_base: Option<&Path>) -> Result<(ObjectId, bool)> {
     let mut revision = Revision {
         anchor_name: expression.split(['^', '~', ':']).next().unwrap_or_default().split("@{").next().unwrap_or_default(),
@@ -87,7 +117,7 @@ impl<'repo> Revision<'repo> {
         Ok(self.candidates.clone())
     }
 
-    fn read(&self, id: ObjectId) -> Result<Object<'repo>> {
+    fn read_object(&self, id: ObjectId) -> Result<Object<'repo>> {
         rerail_prof::count("git.revision_object_reads", 1);
         verified_object(self.repo, id).map_err(|error| {
             let reason = match error.kind() {
@@ -95,29 +125,18 @@ impl<'repo> Revision<'repo> {
                 std::io::ErrorKind::InvalidData => "corrupt-object",
                 _ => "unreadable-object",
             };
-            self.read_failure
-                .borrow_mut()
-                .get_or_insert_with(|| lookup_error(reason, format_args!("Git object {id}: {error}")));
             lookup_error(reason, format_args!("Git object {id}: {error}"))
         })
     }
 
-    fn peel(&self, mut id: ObjectId, kind: Option<Kind>) -> Result<Object<'repo>> {
-        loop {
-            let object = self.read(id)?;
-            if kind == Some(object.kind) {
-                return Ok(object);
-            }
-            id = match object.kind {
-                Kind::Tag => object.into_tag().target_id()?.detach(),
-                Kind::Commit if kind == Some(Kind::Tree) => {
-                    object.into_commit().tree_id()?.detach()
-                }
-                _ if kind.is_none() => return Ok(object),
-                _ => return Err(lookup_error("wrong-object-kind",
-                    format_args!("Git object {id} is {}, expected {}", object.kind, kind.expect("requested object kind")))),
-            };
-        }
+    fn read(&self, id: ObjectId) -> Result<Object<'repo>> {
+        self.read_object(id).inspect_err(|error| {
+            self.read_failure.borrow_mut().get_or_insert_with(|| lookup_error(failure_reason(error), failure_detail(error)));
+        })
+    }
+
+    fn peel(&self, id: ObjectId, kind: Option<Kind>) -> Result<Object<'repo>> {
+        peel_object(self.read(id)?, kind, |target| self.read(target))
     }
 
     fn navigate(&mut self, step: impl Fn(&Self, ObjectId) -> Result<ObjectId>) -> Result<()> {
@@ -204,13 +223,25 @@ impl<'repo> Revision<'repo> {
         let mut seen = HashSet::new();
         let mut pending = gix::revwalk::PriorityQueue::new();
         let mut order = 0;
-        let mut enqueue = |commit: gix::Commit<'repo>, pending: &mut gix::revwalk::PriorityQueue<_, _>| -> Result<()> {
-            pending.insert((commit.committer()?.time()?.seconds, std::cmp::Reverse(order)), commit);
-            order += 1;
-            Ok(())
+        let mut first_error = None;
+        let mut enqueue = |id, commit: Result<gix::Commit<'repo>>, pending: &mut gix::revwalk::PriorityQueue<_, _>| {
+            let candidate = commit.and_then(|commit| {
+                let time = commit_metadata(&commit)?.time()?.seconds;
+                Ok((time, commit))
+            });
+            match candidate {
+                Ok((time, commit)) => {
+                    pending.insert((time, std::cmp::Reverse(order)), commit);
+                    order += 1;
+                }
+                Err(error) => {
+                    eprintln!("Git message search skipped {id}: {}", failure_detail(&error));
+                    first_error.get_or_insert(error);
+                }
+            }
         };
         for commit in tips {
-            if seen.insert(commit.id) { enqueue(commit, &mut pending)?; }
+            if seen.insert(commit.id) { enqueue(commit.id, Ok(commit), &mut pending); }
         }
         while let Some(commit) = pending.pop_value() {
             if matcher.matches(commit.message_raw_sloppy()).map_err(|error| lookup_error("invalid-revision", error))? ^ negated {
@@ -222,11 +253,13 @@ impl<'repo> Revision<'repo> {
             {
                 for parent in commit.parent_ids() {
                     let id = parent.detach();
-                    if seen.insert(id) { enqueue(self.read(id)?.try_into_commit()?, &mut pending)?; }
+                    if seen.insert(id) {
+                        enqueue(id, self.read_object(id).and_then(Object::try_into_commit), &mut pending);
+                    }
                 }
             }
         }
-        Err(lookup_error("missing-revision", format_args!("No Git commit message matched {pattern:?}")))
+        Err(first_error.unwrap_or_else(|| lookup_error("missing-revision", format_args!("No Git commit message matched {pattern:?}"))))
     }
 }
 
@@ -399,10 +432,9 @@ impl delegate::Navigate for Revision<'_> {
                 {
                     return Err(message!("Shallow history ends at {}", commit.id).raise());
                 }
-                commit
-                    .parent_ids()
+                commit_metadata(commit)?
+                    .parents()
                     .nth(number)
-                    .map(gix::Id::detach)
                     .ok_or_else(|| {
                         message!("Git commit {} has no parent {}", commit.id, number + 1).raise()
                     })

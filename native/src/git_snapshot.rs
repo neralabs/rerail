@@ -84,6 +84,11 @@ fn decode_tree(tree: gix::Tree<'_>) -> io::Result<Arc<[RawTreeEntry]>> {
         }
         Ok(RawTreeEntry { name: name.to_vec(), mode: entry.mode().value(), target: entry.id().detach() })
     }).collect::<io::Result<Vec<_>>>()?;
+    if entries.windows(2).any(|pair| gix::objs::tree::name_order(
+        &pair[0].name, pair[0].is_tree(), &pair[1].name, pair[1].is_tree(),
+    ).is_gt()) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("entries out of order in Git tree {}", tree.id)));
+    }
     let entries = sorted_entries(entries);
     if let Some(pair) = entries.windows(2).find(|pair| pair[0].name == pair[1].name) {
         return Err(io::Error::new(io::ErrorKind::InvalidData,
@@ -589,13 +594,12 @@ impl Snapshot {
         let (id, commit, tree, selects_path) = {
             let invocation = relative(invocation)?;
             let base = work.as_ref().map(|_| invocation.as_path());
-            let (mut target, selects_path) = revision::selection(&repo, revision, base)
+            let (target, selects_path) = revision::selection(&repo, revision, base)
                 .map_err(|e| format!("{revision}: {}", revision::failure_detail(&e)))?;
-            let object = loop {
-                let object = verified_object(&repo, target).map_err(|e| format!("{target}: {e}"))?;
-                if object.kind != gix::object::Kind::Tag { break object; }
-                target = object.into_tag().target_id().map_err(|e| e.to_string())?.detach();
-            };
+            let object = verified_object(&repo, target).map_err(|e| format!("{target}: {e}"))?;
+            let object = revision::peel_object(object, None, |id| verified_object(&repo, id)
+                .map_err(|e| gix::Error::from_error(error(format_args!("{id}: {e}")))))
+                .map_err(|e| format!("{revision}: {}", revision::failure_detail(&e)))?;
             let id = object.id;
             match object.kind {
                 gix::object::Kind::Commit => {
