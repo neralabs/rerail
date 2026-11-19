@@ -399,6 +399,37 @@ the opener, neither `X` nor `E` for content). It reads only the kinds one of the
 kind every one of them shares is a constant. Content given the closer's bytes fails the trees
 test.
 
+## Step 10, done: the loop's state in registers
+
+simdjson's stage 2 keeps `src` and `next_structural` in registers through the loop. Ours kept
+`PartAt` and the token's end in the frame: loaded and stored at every string part. The cause
+was in the compiler:
+- the loop's cold calls (a wide tape entry, a refusal) took the platform's convention, which
+  keeps 10 registers (x19 to x28) across a call and clobbers the rest;
+- a few values made at the function's entry (the constant zero every word uses, `ctx`'s
+  fields) were live through all of it, in registers the state then lacked;
+- every read of a `ctx` field moved the pinned register to another one first.
+
+The fixes:
+- **A calling convention for the cold helpers.** The vendored Cranelift's `preserve_most`
+  (`PATCHES.md`), as LLVM's: the callee saves every general register it writes but the
+  returns' and the scratch ones.
+- **Values made where they are used.** Constants and `ctx` field reads used in another block
+  are made again in that block, from the pinned register (`remat_far`).
+- **The pinned register as an address's base.** A load from `get_pinned_reg` reads x21 in
+  place (aarch64; r15 on x86-64), as `sp`.
+- **No stores nobody reads.** A store to a stack slot no load of the slot reads is dropped
+  (`drop_dead_slot_stores`).
+- **The token's end held too.** `LastEnd` joins the state held as SSA values (`HELD_IN_ONE`).
+
+The string loop now matches `parse_string`'s: its cursor, the token's start and the next
+structural's index stay in registers. The starts test asserts it on aarch64: no word of the
+string loops or the continue states reads or writes the frame. With the helpers on the
+platform's convention, it fails at the root string loop.
+
+The frame is still read at a scope's close (the stack of open scopes, as simdjson's
+`is_array[depth]`) and in the numbers' and atoms' words.
+
 ## Order
 
 1. Done: step 1, above.

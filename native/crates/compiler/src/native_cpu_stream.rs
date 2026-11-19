@@ -730,12 +730,12 @@ pub(crate) const STATE_SLOTS: usize = Mem::COUNT as usize;
 pub const HELD_IN_RULES: [u32; 0] = [];
 
 /// The fields tier 2 holds as SSA values where it is one function (`Cut::one`): those every
-/// token reads and writes (the next token's index, its start, limit and code, the nodes made
-/// and open, a split region's cursor), as simdjson's stage 2 keeps `next_structural` in a
-/// register. Seven, with `ctx`, within the ten registers a call keeps (x19 to x28): the loop's
-/// cold calls (a wide tape entry) clobber the rest, and eleven held were spilled more (1,482
-/// frame references in JSON's code against 1,339). The rest stays in the frame.
-pub const HELD_IN_ONE: [u32; 7] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::PartAt as u32];
+/// token reads and writes (the next token's index, its start, limit and code, the end of the
+/// token before, the nodes made and open, a split region's cursor), as simdjson's stage 2
+/// keeps `next_structural` and `src` in registers. The loop's cold calls keep the caller's
+/// general registers (`preserve_most`), and the values from far away are made again where used
+/// (`remat_far`), so these stay in registers. The rest stays in the frame, read where used.
+pub const HELD_IN_ONE: [u32; 8] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::LastEnd as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::PartAt as u32];
 
 /// A compare tree over a byte (or a place), as rustc lowers a `match` (LLVM's switch lowering):
 /// `runs` are runs of one target (the first from 0, the last on to `end`, past every value the
@@ -981,6 +981,14 @@ fn outline(module: &mut JITModule, name: &str, params: usize, returns: usize, pi
     }
     for _ in 0..returns {
         signature.returns.push(AbiParam::new(types::I64));
+    }
+    // A cold helper preserves the caller's general registers (`preserve_most`, the vendored
+    // Cranelift's): the caller's loop state stays in its registers across the call, where the
+    // platform's convention leaves it 10 (x19 to x28) and spills the rest around every call.
+    // Its returns are in the two registers the convention gives up.
+    #[cfg(cranelift_preserve_most)]
+    if returns <= 2 {
+        signature.call_conv = cranelift_codegen::isa::CallConv::PreserveMost;
     }
     let id = module.declare_function(name, Linkage::Local, &signature).map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
@@ -6328,6 +6336,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
             state_in_registers(&mut func);
         }
         drop_unused_loads(&mut func);
+        drop_dead_slot_stores(&mut func);
+        remat_far(&mut func);
         lowered.push(Lowered { func, heads, targets, exits, tails });
     }
     if times {
@@ -6795,6 +6805,98 @@ fn state_in_registers(func: &mut cranelift_codegen::ir::Function) {
 /// read on a path are dead, but Cranelift keeps a load that is not read-only (it orders it with
 /// the stores). A load that can not trap has no effect but its value: removing an unread one
 /// changes nothing, as the lean parser's code loads a field only where it is used.
+/// Values made again where they are used (rematerialized), not kept live from far away: a
+/// constant used in a block other than its own, and where `ctx` is in the pinned register (the
+/// one function, `pin_one`), a read-only load from it (a `ctx` field) likewise, from the
+/// register. One value through the function held a register (or a spill slot) through all of
+/// it, as the constant zero every word uses did, against the loop's state. Once a block, before
+/// its first use there.
+fn remat_far(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{InstructionData, Opcode};
+    let entry = func.layout.entry_block().expect("an entry");
+    let param = func.dfg.block_params(entry).first().copied();
+    // `ctx` in the pinned register: the entry sets it from its parameter.
+    let pinned = func.layout.block_insts(entry).any(|i| func.dfg.insts[i].opcode() == Opcode::SetPinnedReg && func.dfg.inst_args(i).first().map(|&v| func.dfg.resolve_aliases(v)) == param);
+    let blocks: Vec<Block> = func.layout.blocks().collect();
+    for b in blocks {
+        let mut made: std::collections::HashMap<Value, Value> = std::collections::HashMap::new();
+        let insts: Vec<cranelift_codegen::ir::Inst> = func.layout.block_insts(b).collect();
+        for inst in insts {
+            let mut vals: Vec<Value> = func.dfg.inst_values(inst).map(|v| func.dfg.resolve_aliases(v)).collect();
+            vals.dedup();
+            for v in vals {
+                if made.contains_key(&v) {
+                    continue;
+                }
+                let Some(d) = func.dfg.value_def(v).inst() else { continue };
+                if func.layout.inst_block(d) == Some(b) {
+                    continue;
+                }
+                let data = func.dfg.insts[d];
+                let ty = func.dfg.value_type(v);
+                let new = match data {
+                    InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } => {
+                        let mut pos = FuncCursor::new(func).at_inst(inst);
+                        Some(pos.ins().iconst(ty, imm))
+                    }
+                    InstructionData::Load { opcode: Opcode::Load, arg, flags, offset }
+                        if pinned && flags.readonly() && flags.can_move() && Some(func.dfg.resolve_aliases(arg)) == param =>
+                    {
+                        let mut pos = FuncCursor::new(func).at_inst(inst);
+                        let base = pos.ins().get_pinned_reg(types::I64);
+                        Some(pos.ins().load(ty, flags, base, offset))
+                    }
+                    _ => None,
+                };
+                if let Some(n) = new {
+                    made.insert(v, n);
+                }
+            }
+            let raw: std::collections::HashMap<Value, Value> = func.dfg.inst_values(inst).filter_map(|x| made.get(&func.dfg.resolve_aliases(x)).map(|&n| (x, n))).collect();
+            if !raw.is_empty() {
+                func.dfg.map_inst_values(inst, |x| raw.get(&x).copied().unwrap_or(x));
+            }
+        }
+    }
+}
+
+/// Stores to an explicit stack slot at an offset no `stack_load` of that slot reads, where no
+/// `stack_addr` takes the slot's address, dropped: state a program never reads (the marks'
+/// `Live` in a program with no mark) is not written a token.
+fn drop_dead_slot_stores(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::ir::{InstructionData, Opcode};
+    let mut read: std::collections::HashSet<(cranelift_codegen::ir::StackSlot, i64)> = std::collections::HashSet::new();
+    let mut escaped: std::collections::HashSet<cranelift_codegen::ir::StackSlot> = std::collections::HashSet::new();
+    let blocks: Vec<Block> = func.layout.blocks().collect();
+    for &b in &blocks {
+        for inst in func.layout.block_insts(b) {
+            match func.dfg.insts[inst] {
+                InstructionData::StackLoad { opcode: Opcode::StackLoad, stack_slot, offset } => {
+                    read.insert((stack_slot, i64::from(offset)));
+                }
+                InstructionData::StackLoad { stack_slot, .. } => {
+                    escaped.insert(stack_slot);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut dead = Vec::new();
+    for &b in &blocks {
+        for inst in func.layout.block_insts(b) {
+            if let InstructionData::StackStore { opcode: Opcode::StackStore, stack_slot, offset, .. } = func.dfg.insts[inst] {
+                if !escaped.contains(&stack_slot) && !read.contains(&(stack_slot, i64::from(offset))) {
+                    dead.push(inst);
+                }
+            }
+        }
+    }
+    for inst in dead {
+        func.layout.remove_inst(inst);
+    }
+}
+
 fn drop_unused_loads(func: &mut cranelift_codegen::ir::Function) {
     loop {
         let mut used = std::collections::HashSet::new();

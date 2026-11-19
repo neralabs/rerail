@@ -59,6 +59,29 @@ fn simdjson_forms_starts_are_simdjsons_indexes() {
         .collect();
     assert!(!loops.is_empty(), "the string loops");
     assert_eq!(c.parser.tier2.part_scans, loops, "the part scan in the string loops alone");
+    // The loop's state in registers, as simdjson's `src` and `next_structural`: no word of the
+    // string loops or the continue states (the `TOKEN`s whose switch takes the `,` and no
+    // escape) reads or writes the frame. Their cold calls keep the caller's registers
+    // (`preserve_most`), and `ctx`'s fields are read from the pinned register in place.
+    #[cfg(target_arch = "aarch64")]
+    {
+        use rerail_compiler::native_ir::StructuralOperation;
+        let continues = (0..native.structural.len()).filter(|&pc| matches!(native.structural[pc].operation, StructuralOperation::Token { .. })).filter(|&pc| match native.structural.get(pc + 1).map(|w| w.operation) {
+            Some(StructuralOperation::Switch { table }) => native.switches[usize::from(table)].word(14).is_some() && native.switches[usize::from(table)].word(0).is_none(),
+            _ => false,
+        });
+        let hot: Vec<u32> = loops.iter().copied().chain(continues).flat_map(|pc| [pc as u32, pc as u32 + 1]).collect();
+        assert!(hot.len() > loops.len() * 2, "the continue states");
+        let t2 = &c.parser.tier2;
+        for &(pc, from, to) in t2.word_ranges.iter().filter(|r| hot.contains(&r.0)) {
+            for at in (from as usize..to as usize).step_by(4) {
+                let w = u32::from_le_bytes(t2.code_bytes[at..at + 4].try_into().unwrap());
+                // A load or store (op0 `x1x0`), not a literal load (no base), with `sp` its base.
+                let on_frame = (w >> 25) & 0b101 == 0b100 && (w >> 24) & 0x3b != 0x18 && (w >> 5) & 31 == 31;
+                assert!(!on_frame, "word {pc} reads or writes the frame at {at:#x}: {w:#010x}");
+            }
+        }
+    }
     // Nor a row of what tier 2 reads from the bytes (the run's mask, the string's quote), or
     // not at all: the string's escape part, as tier 2 reads a string as simdjson's
     // `parse_string` does (first quote or backslash), with no escape carry.

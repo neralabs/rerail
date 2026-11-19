@@ -1,4 +1,4 @@
-# Cranelift 0.125.4, with `clmul`
+# Cranelift 0.125.4, with `clmul` and `preserve_most`
 
 crates.io's cranelift-codegen 0.125.4 (Wasmtime 38.0.4), with one instruction added: `clmul`,
 a carry-less multiply. It is the source of neralabs/wasmtime, branch `nera/clmul-v38.0.4`
@@ -29,10 +29,19 @@ Four crates change; each is crates.io's 0.125.4 with the branch's diff for it:
   - `links = "cranelift_codegen"` and `cargo:clmul=1` in `build.rs`, so a dependent's build
     script sees `DEP_CRANELIFT_CODEGEN_CLMUL` (rerail's `compiler/build.rs` sets the cfg
     `cranelift_clmul` from it).
+  - a calling convention, `preserve_most` (`CallConv::PreserveMost`), as LLVM's, for a cold
+    helper. The callee saves every general register it writes but the returns' and the
+    scratch ones (aarch64: x0, x1, x9, x16, x17; x86-64: rax, rdx, r11), so a caller's values
+    stay in registers across the call. Vectors stay as the platform's default. Arguments and
+    returns are System V's (at most two returns). `build.rs` emits `cargo:preserve_most=1`,
+    and rerail's `compiler/build.rs` sets the cfg `cranelift_preserve_most` from it;
+  - a load or store whose base is `get_pinned_reg` reads the pinned register in place (aarch64
+    `amode`, x64 `to_amode`), as `sp`, where it was first moved to a register of its own.
 - `cranelift-codegen-meta-0.125.4`: the instruction, and the two ISA flags.
 - `cranelift-assembler-x64-meta-0.125.4`: `pclmulqdq`, and its CPU feature.
 - `cranelift-native-0.125.4`: detects `pmull` and `pclmulqdq` on the host.
 
 Rerail builds against upstream Cranelift as well: without `DEP_CRANELIFT_CODEGEN_CLMUL` the
-cfg is off and a toggle is the rounds. The other workspaces (`native/wasm`, `tools/bitlex`)
+cfg is off and a toggle is the rounds; without `DEP_CRANELIFT_CODEGEN_PRESERVE_MOST` the cold
+helpers take the platform's convention. The other workspaces (`native/wasm`, `tools/bitlex`)
 keep upstream.
