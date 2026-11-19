@@ -140,6 +140,11 @@ const KEYWORDS: &[&str] = &[
 /// A grammar's name (a rule's, a kind's, a word's: `import_header`, `"`, `?.`) as a Rust name:
 /// its letters, digits and `_`, each other character by its name; upper case for a constant.
 fn rust_name(name: &str, upper: bool) -> String {
+    rust_name_of(name, upper)
+}
+
+/// `rust_name`, for the other generators (`rust_block`).
+pub(crate) fn rust_name_of(name: &str, upper: bool) -> String {
     let mut out = String::new();
     for c in name.chars() {
         let part = match c {

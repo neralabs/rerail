@@ -157,6 +157,6 @@ corpus is 447 the same, 44 refused, 0 differ; `aot_tapes_are_the_jits` passes.
 
 ## Order of the rest
 
-1. A and B: the structured tier 1 emitter.
+1. B: the block loop's questions about tokens moved into the token loop (0451, "What is left").
 
-D, G, E and F are done (above).
+D, G, E and F are done (above). A is done by 0451.

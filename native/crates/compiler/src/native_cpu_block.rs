@@ -2795,7 +2795,13 @@ impl RecordTables {
             let (b, two) = (at & 255, at >= 256);
             let rule = r.ends.get(b).copied().unwrap_or(crate::records::NO_RULE);
             let wordy = r.words.iter().any(|w| w.first() == Some(&(b as u8)));
-            let row = match r.rules.get(usize::from(rule)) {
+            // The row of the byte's pair rule: its own, or the rule its reader goes on to
+            // (`Reader::other`: `/` alone or `/=`, of the comments' reader), as `pair_of` above.
+            let pair_rule = match r.rules.get(usize::from(rule)) {
+                Some(&crate::records::EndRule::Read(i)) => r.readers.get(usize::from(i)).map_or(usize::from(rule), |rd| usize::from(rd.other)),
+                _ => usize::from(rule),
+            };
+            let row = match r.rules.get(pair_rule) {
                 Some(&crate::records::EndRule::Next(i)) => r.nexts[usize::from(i)].row.get(b).copied().unwrap_or(0),
                 _ => 0,
             };

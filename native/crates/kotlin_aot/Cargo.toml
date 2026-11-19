@@ -15,6 +15,8 @@ generated = ["dep:rerail-compiler", "dep:rerail-kotlin-parser"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }
+# The generated tier 1's block loop, on simdjson's backends as the lean lexer's (`kotlin_lean`'s `block.rs`).
+rerail-simd8 = { path = "../simd8" }
 rerail-kotlin-parser = { path = "../kotlin_parser" }
 rerail-kotlin-lean = { path = "../kotlin_lean" }
 

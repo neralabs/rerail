@@ -90,6 +90,8 @@ fn statements_and_expressions_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    val a = 1 + 2 * 3\n    b.c(d, e)\n    f[g] = h\n    if (a) b else c\n    x?.y ?: z\n    !a && b || c\n    for (i in 0..10) {}\n    while (true) {}\n}\n",
         "fun f() {\n    x = 1\n    x += y\n    a.b.c = d\n    a[1][2] = 3\n    a.b().c = 4\n}\n",
+        // `/=` at the comments' reader's byte: the pair its other rule reads (the JIT read `/` alone).
+        "fun f() {\n    w /= scale\n    h = a / b // c\n    d /= 2 /* e */\n}\n",
         "fun f() {\n    if (a < b && c >= d) return\n    else throw e\n}\n",
         "fun f() {\n    a\n        .b()\n        ?.c\n    -d\n    e !in f\n    g is H\n    i++\n    j!!\n}\n",
         "fun f() = g(a = 1, b)\n",
