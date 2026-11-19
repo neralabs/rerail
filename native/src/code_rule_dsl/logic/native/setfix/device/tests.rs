@@ -213,8 +213,10 @@
                     let r = report.as_ref().expect("a device report");
                     assert!(r.refused.is_none(), "{r:?}");
                     assert!(r.rounds > 3, "the recursion takes rounds: {r:?}");
-                    // A set head's rows written in place with their rounds (decision 0325 step 4); a lattice's read.
-                    assert_eq!(r.placed > 0, lattice.is_none(), "{r:?}");
+                    // A set head's rows written in place with their rounds (decision 0325 step 4); a lattice's folded
+                    // in place in its one relation (decision 0384 step 5, R3). Every row placed: none read back (R4).
+                    assert!(r.placed > 0, "{r:?}");
+                    assert_eq!(r.placed, r.distinct, "no head row read back: {r:?}");
                 }
                 super::super::close(&db, "dev_lev").unwrap();
                 let held = super::super::held(&db, "h0").expect("the relation held");
@@ -228,6 +230,83 @@
             assert!(got[0].iter().any(|r| r.2 > 3), "rows of later rounds");
             assert_eq!(got[0], got[1], "the device's rows and levels are the CPU's ({lattice:?})");
         }
+    }
+
+    /// Decision 0384 step 5 (R5): the device folds a `min` lattice's rounds into its one relation through its key map
+    /// in its block; the relation takes the rows as they lie and the map as its own, and a CPU fold goes on in that
+    /// map (the device's slots are the host's: one hash, one layout). Its rows and each key's changes are those of a
+    /// fold made on the CPU alone.
+    #[test]
+    fn a_cpu_fold_goes_on_in_the_devices_key_map() {
+        use crate::code_rule_dsl::facts::rows::{BlockVec, Part};
+        use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+        use super::super::keys::{KeyMap, SLOT};
+        if !mj::available() {
+            return;
+        }
+        let lattice = super::super::TestLattice::min;
+        // Round r: keys 0..400 + 300r (new keys each round), each value lower for some keys each round; a key's rows
+        // more than once in a round (the fold groups them).
+        let round = |r: i64| -> Vec<i64> {
+            (0..400 + 300 * r).flat_map(|key| [[key, 1000 - r * (key % 3)], [key, 1001]]).flatten().collect()
+        };
+        let mut cpu = lattice();
+        for r in 0..4 {
+            cpu.fold(&round(r));
+        }
+        let mut rel = lattice();
+        let (code, top, after) = rel.device_lattice();
+        let lat = mj::LatCode { code, top, after };
+        let part = Part::for_writes_with_room(2, 1, 64 << 20).unwrap();
+        let mut map: Option<KeyMap> = None;
+        let mut had = 0usize;
+        for r in 0..3 {
+            let rows = round(r);
+            let n = rows.len() / 2;
+            assert!(part.reserve((had + n) as u64));
+            let need = (2 * (had + n)).next_power_of_two().max(16);
+            let old = match map.take() {
+                Some(m) if m.places() >= need => {
+                    map = Some(m);
+                    None
+                }
+                old => {
+                    // SAFETY: the fold's first pass writes every slot before any read.
+                    map = Some(KeyMap::of(unsafe { BlockVec::unwritten_in(Some(&part.home()), need * SLOT) }, had));
+                    Some(old)
+                }
+            };
+            let m = map.as_ref().unwrap();
+            let first = match &old {
+                None => mj::MapFirst::Ready,
+                Some(None) => mj::MapFirst::Clear,
+                Some(Some(o)) => mj::MapFirst::Grow(super::map_at(o)),
+            };
+            assert!(r == 0 || matches!(first, mj::MapFirst::Grow(_)), "the map grows on the device");
+            let r_rel = mj::DevRel::in_block(&part.in_block(had as u32), 2).unwrap();
+            let u = mj::Table::of_rows(2, &rows).unwrap();
+            let changed = mj::Table::new(2, n).unwrap();
+            let counters = mj::Words::zeroed(2).unwrap();
+            let mut batch = super::direct_batch(None).unwrap();
+            batch.lattice_fold(&u, n, &r_rel, had, 1, lat, super::map_at(m), first, &counters, &changed, None, None).unwrap();
+            batch.finish().unwrap();
+            drop(old);
+            let added = counters.get(1) as usize;
+            // SAFETY: the batch finished; `lat_merge` wrote every new key's row.
+            unsafe { part.written_more(added as u32) };
+            had += added;
+            map.as_mut().unwrap().held(had);
+        }
+        assert_eq!(had, 400 + 300 * 2, "a row a key");
+        let map = map.unwrap();
+        assert!(map.facts().is_some_and(|f| std::sync::Arc::ptr_eq(f, part.home().facts())), "the map in its relation's block");
+        assert!(rel.take_folded(part, map));
+        assert_eq!(rel.len(), had, "the rows taken as they lie");
+        // The CPU's fold goes on in the device's map: held keys found, new keys put, the map grown.
+        rel.fold(&round(3));
+        let (got, want) = (rel.live(), cpu.live());
+        assert_eq!(got.len(), 400 + 300 * 3);
+        assert_eq!(got, want, "the device's fold, then the CPU's, is the CPU's alone");
     }
 
     /// Text tests on the device: each test's verdicts per distinct symbol made by its automaton, the same rows as
@@ -873,20 +952,25 @@
     /// refused `attr_of`, 2026-11-17).
     #[test]
     fn a_view_made_in_a_refused_batch_is_made_again() {
-        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::core;
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
         use crate::code_rule_dsl::logic::native::setfix::InRel;
-        use crate::code_rule_dsl::model::FileInput;
         use crate::code_rule_dsl::transducer::packed::metal_join as mj;
         use std::sync::Arc;
         if !mj::available() {
             return;
         }
         crate::test_languages();
+        // Tapes held in vectors of their own, not where the device reads them (a parse not placed): the batch's views
+        // are made, not read in place (decision 0353 step 4d).
+        let lang = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let grammar = Arc::new(crate::code_rule_dsl::tape::Grammar::new(lang).unwrap());
         let docs: Vec<Document> = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a):\n        return a\n"].iter().enumerate().map(|(at, source)| {
             let path = format!("r{at}.py");
-            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
-            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            let source = Arc::new((*source).to_owned());
+            let image = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+            let lines = Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::of(lang)));
+            let facts = Arc::new(core::from_image(source, &grammar, image, lines).unwrap());
             Document { key: (5 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
         }).collect();
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -894,7 +978,7 @@
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
         let all = sources(&store, docs).unwrap();
         let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
-        assert!(src.device_view().is_some(), "made on the device");
+        assert!(src.device_view().is_some_and(|d| d.in_place.is_none()), "made on the device");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
         // Encoded into a batch the refusal drops uncommitted: nothing ran it.
         let mut refused = mj::Batch::new().expect("the device");
@@ -942,7 +1026,7 @@
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
         let all = sources(&store, docs).unwrap();
         let device = rerail_accel::gpu::join::device().expect("the device");
-        let mut seen = 0;
+        let (mut seen, mut in_place) = (0, 0);
         // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name.
         for name in ["node", "child", "field", "core_node", "line"] {
             let src = &all.iter().find(|(n, s)| *n == name && s.python_batch().is_some()).unwrap_or_else(|| panic!("{name}")).1;
@@ -952,18 +1036,39 @@
             assert!(n > 0, "{name}: rows");
             // Every column, and a subset out of order, as a stratum asks for.
             for cols in [(0..k).collect::<Vec<_>>(), vec![k - 1, 0]] {
-                let out = mj::DevRel::empty(cols.len(), n).unwrap();
-                let mut batch = mj::Batch::new().expect("the device");
-                batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
-                batch.finish().unwrap();
-                for (j, &c) in cols.iter().enumerate() {
-                    let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
-                    assert_eq!(out.column(j), &host[..], "{name}: column {c}");
-                }
                 seen += 1;
+                // Made (a batch whose tapes are not on the device: `a_view_made_in_a_refused_batch_is_made_again`).
+                if d.in_place.is_none() {
+                    let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                    let mut batch = mj::Batch::new().expect("the device");
+                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
+                    batch.finish().unwrap();
+                    for (j, &c) in cols.iter().enumerate() {
+                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                        assert_eq!(out.column(j), &host[..], "{name}: column {c}");
+                    }
+                }
+                // Read in place (decision 0353 step 4d): the views' reads over the batch's directory, copied out of
+                // the view by `rows_copy`, are the same rows; nothing made them.
+                if let Some(v) = d.in_place.clone() {
+                    let view = mj::DevRel::view(k, n, v.clone()).unwrap();
+                    let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                    let mut batch = mj::Batch::new().expect("the device");
+                    let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                    batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                    batch.finish().unwrap();
+                    // A 16z batch's blocks through its cache (0353 step 4b): every read found room.
+                    assert_eq!(v.cache_failed(), 0, "{name}: the 16z cache had room: {:?}", v.cache_counts());
+                    for (j, &c) in cols.iter().enumerate() {
+                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                        assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
+                    }
+                    in_place += 1;
+                }
             }
         }
         assert_eq!(seen, 10);
+        assert_eq!(in_place, 10, "node, child, field, core_node and line read in place");
         // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
@@ -986,20 +1091,27 @@
                 assert!(!guest.is_empty(), "the guest's places are rows");
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }
-            for name in ["line", "end_line", "col", "docof"] {
-                let src = &core_views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
-                let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
-                let n = src.len();
-                assert_eq!(d.rows, n, "{name}");
-                assert!(n > 0, "{name}: rows");
-                for cols in [vec![0, 1], vec![1]] {
-                    let out = mj::DevRel::empty(cols.len(), n).unwrap();
-                    let mut batch = mj::Batch::new().expect("the device");
-                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
-                    batch.finish().unwrap();
-                    for (j, &c) in cols.iter().enumerate() {
-                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
-                        assert_eq!(out.column(j), &host[..], "{name}: column {c}");
+            // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
+            // directory, its tapes and core.rr's lines in the batch's block; a guest's (a copied stretch) through its
+            // host's lines and its placement. With the guest and without.
+            let own_views = shaped(&store, make(), &Projection::core()).unwrap();
+            for views in [&core_views, &own_views] {
+                for name in ["line", "end_line", "col", "docof"] {
+                    let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
+                    let v = src.device_view().and_then(|d| d.in_place.clone()).unwrap_or_else(|| panic!("{name}: read in place"));
+                    let n = src.len();
+                    assert!(n > 0, "{name}: rows");
+                    for cols in [vec![0, 1], vec![1]] {
+                        let view = mj::DevRel::view(2, n, v.clone()).unwrap();
+                        let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                        let mut batch = mj::Batch::new().expect("the device");
+                        let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                        batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                        batch.finish().unwrap();
+                        for (j, &c) in cols.iter().enumerate() {
+                            let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                            assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
+                        }
                     }
                 }
             }

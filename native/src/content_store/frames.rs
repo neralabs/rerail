@@ -2001,6 +2001,45 @@ fn decode_reads_all(mut bytes: &[u8]) -> Vec<(String, u64)> {
 mod tests {
     use super::*;
 
+    /// A store's file copied without its packs (a test's store, cloned from its template's file alone) has rows naming
+    /// a pack that is not there. A writer that began that pack again from its start made those rows name the new
+    /// entries' bytes, and a reader of one read another entry's ("a corpus memo entry does not decompress"). Each batch
+    /// is a new segment numbered past every recorded one, so none is begun again: a copied row misses, and every entry
+    /// read is the one put under its part. PR #508's 62b554c01 (t47).
+    #[test]
+    fn a_store_copied_without_its_packs_reads_no_other_entrys_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let space = local_space(&[6u8; 32]);
+        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], over: false };
+        let (original, copied) = (dir.path().join("original.sqlite"), dir.path().join("copy.sqlite"));
+        ContentStore::open(&original).unwrap().put_memo_entries(&space, (0..8).map(|p| put(p, 1)).collect(), 4).unwrap();
+        // As a template's file is published: whole, with no identity of its own, and without its folders.
+        rusqlite::Connection::open(&original).unwrap().execute("VACUUM INTO ?1", [copied.to_string_lossy()]).unwrap();
+        rusqlite::Connection::open(&copied).unwrap().execute_batch("DELETE FROM store_identity; PRAGMA journal_mode=WAL;").unwrap();
+        let store = ContentStore::open(&copied).unwrap();
+        let copied_parts: Vec<i64> = (0..8).collect();
+        let written = |round: i64| (0..8).map(move |p| 100 + round * 8 + p);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                for round in 0..20 {
+                    store.put_memo_entries(&space, written(round).map(|p| put(p, 2)).collect(), 4).unwrap();
+                }
+            });
+            s.spawn(|| {
+                for _ in 0..200 {
+                    for (part, blob) in store.memo_entries(&space, &copied_parts, true).unwrap() {
+                        assert!(blob.bytes.bytes().iter().all(|&b| b == 1), "copied part {part} read bytes another entry was put with");
+                    }
+                }
+            });
+        });
+        assert!(store.memo_entries(&space, &copied_parts, true).unwrap().is_empty(), "a copied row whose pack is not there misses");
+        let all: Vec<i64> = (0..20).flat_map(written).collect();
+        let read = store.memo_entries(&space, &all, true).unwrap();
+        assert_eq!(read.len(), all.len());
+        assert!(read.values().all(|b| b.bytes.bytes().iter().all(|&x| x == 2)), "each entry put on the copy reads back as put");
+    }
+
 
 
     #[test]

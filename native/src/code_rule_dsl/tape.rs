@@ -52,6 +52,7 @@ pub mod resident;
 pub mod validated;
 /// A document's tape through one API, in the run's format (decision 0293).
 pub mod formats;
+pub mod placed;
 pub mod token_census;
 /// Python's tape from the lean parser (`rerail_python_lean`).
 pub mod python_lean;
@@ -394,11 +395,13 @@ pub enum Held {
 /// Format 15's columns (above), its code table, and the table as the tape API reads it (made once).
 #[derive(Clone)]
 pub struct Columns15 {
-    /// The five columns (code, size, base, off, tail) in one buffer, each from a `COLUMN_ALIGN` boundary and
-    /// padded with zeros, as the stored image lays them after its header: one base addresses every column, as a
-    /// reader of the tape in place takes it (decision 0310).
-    bytes: Vec<u8>,
-    /// Each column's start in `bytes`, and its length.
+    /// The five columns (code, size, base, off, tail), from `base` in `bytes`, each from a `COLUMN_ALIGN` boundary
+    /// and padded with zeros, as the stored image lays them after its header: one base addresses every column, as a
+    /// reader of the tape in place takes it (decision 0310). A loaded image is placed: `bytes` is the stored image
+    /// in its slab's room, read where it lies (decision 0353 step 4a); a parser's holds its columns alone.
+    bytes: rerail_tape_format::home::Home,
+    base: usize,
+    /// Each column's start from `base`, and its length.
     at: [(usize, usize); 5],
     pub widths: [u8; 3],
     pub codes: Vec<Code>,
@@ -1130,54 +1133,97 @@ fn encode_node<'l>(
 impl TapeImage {
     /// The tape as the store keeps it: format 15's bytes, or format 16's (or 16z's) as held.
     pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
+        let mut bytes = Vec::with_capacity(self.stored_len());
+        self.emit(&mut |b| bytes.extend_from_slice(b))?;
+        Ok(bytes)
+    }
+
+    /// The tape as the store keeps it (`to_bytes`), written straight into its home, a slab's room (decision 0353
+    /// step 4a): the store's writer and every reader take it there.
+    pub fn place_stored(&self) -> Result<rerail_tape_format::home::Home, String> {
+        let len = self.stored_len();
+        placed::place(len, |out| {
+            let mut at = 0;
+            self.emit(&mut |b| {
+                out[at..at + b.len()].copy_from_slice(b);
+                at += b.len();
+            })
+            .map_err(std::io::Error::other)?;
+            debug_assert_eq!(at, len, "the stored length");
+            Ok(())
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    /// The length of the bytes the store keeps (`to_bytes`).
+    pub fn stored_len(&self) -> usize {
         match &self.held {
-            Held::F15(c) => self.to_bytes15(c),
-            Held::F16(t) => Ok(t.as_bytes().to_vec()),
-            Held::F16Z(t) => Ok(t.as_bytes().to_vec()),
+            Held::F15(c) => {
+                let alias_bytes = c.kind_aliases.iter().map(|(name, _)| 5 + name.len()).sum::<usize>();
+                let code_bytes = c.codes.iter().map(Code::stored_len).sum::<usize>();
+                HEADER_BYTES + c.columns_bytes().len() + code_bytes + alias_bytes
+            }
+            Held::F16(t) => t.as_bytes().len(),
+            Held::F16Z(t) => t.as_bytes().len(),
         }
     }
 
-    fn to_bytes15(&self, c: &Columns15) -> Result<Vec<u8>, String> {
+    /// The bytes the store keeps, in order, to `put`.
+    fn emit(&self, put: &mut dyn FnMut(&[u8])) -> Result<(), String> {
+        match &self.held {
+            Held::F15(c) => self.emit15(c, put),
+            Held::F16(t) => {
+                put(t.as_bytes());
+                Ok(())
+            }
+            Held::F16Z(t) => {
+                put(t.as_bytes());
+                Ok(())
+            }
+        }
+    }
+
+    fn emit15(&self, c: &Columns15, put: &mut dyn FnMut(&[u8])) -> Result<(), String> {
         let language =
             super::language::tape_tag(self.language).ok_or("unsupported tape language")?;
         let alias_bytes = c.kind_aliases.iter().map(|(name, _)| 5 + name.len()).sum::<usize>();
         let code_bytes = c.codes.iter().map(Code::stored_len).sum::<usize>();
         let lengths = [c.node_count(), c.codes.len(), code_bytes, c.kind_aliases.len(), alias_bytes];
-        let mut bytes = Vec::with_capacity(
-            HEADER_BYTES
-                + c.bytes.len()
-                + code_bytes
-                + alias_bytes,
-        );
-        bytes.extend_from_slice(TAPE_MAGIC);
-        bytes.push(language);
-        bytes.extend_from_slice(&c.widths);
-        bytes.extend_from_slice(&TAPE_FORMAT_VERSION.to_le_bytes());
-        bytes.extend_from_slice(&(self.source_len as u64).to_le_bytes());
+        put(TAPE_MAGIC);
+        put(&[language]);
+        put(&c.widths);
+        put(&TAPE_FORMAT_VERSION.to_le_bytes());
+        put(&(self.source_len as u64).to_le_bytes());
         for length in lengths {
-            bytes.extend_from_slice(&(length as u64).to_le_bytes());
+            put(&(length as u64).to_le_bytes());
         }
-        debug_assert_eq!(bytes.len() % COLUMN_ALIGN, 0);
-        bytes.extend_from_slice(&c.bytes);
+        put(c.columns_bytes());
         for code in &c.codes {
-            bytes.extend_from_slice(&code.kf.to_le_bytes());
-            bytes.push(code.flags);
-            bytes.extend_from_slice(&code.alias.to_le_bytes());
-            bytes.push(code.class_count);
+            put(&code.kf.to_le_bytes());
+            put(&[code.flags]);
+            put(&code.alias.to_le_bytes());
+            put(&[code.class_count]);
             for class in code.classes() {
-                bytes.extend_from_slice(&class.to_le_bytes());
+                put(&class.to_le_bytes());
             }
         }
         for (name, named) in &c.kind_aliases {
-            bytes.push(u8::from(*named));
-            bytes.extend_from_slice(
-                &u32::try_from(name.len())
-                    .map_err(|_| "contextual grammar alias length overflow")?
-                    .to_le_bytes(),
-            );
-            bytes.extend_from_slice(name.as_bytes());
+            put(&[u8::from(*named)]);
+            put(&u32::try_from(name.len()).map_err(|_| "contextual grammar alias length overflow")?.to_le_bytes());
+            put(name.as_bytes());
         }
-        Ok(bytes)
+        Ok(())
+    }
+
+    /// A stored tape placed in a room (decision 0353 step 4a), read where it lies: format 15's columns, or format 16
+    /// (or 16z) as stored. Nothing is copied.
+    pub fn from_home(home: rerail_tape_format::home::Home, grammar: &Arc<Grammar>) -> Result<Self, String> {
+        use rerail_tape_format::f16::{MAGIC16, MAGIC16Z};
+        let magic = home.get(..8).ok_or("a short tape")?;
+        if magic != MAGIC16 && magic != MAGIC16Z {
+            return Self::read_image_in(&home, grammar, Some(&home));
+        }
+        Self::sixteen(home, grammar)
     }
 
     /// A stored tape, in the format it was stored in (its magic): format 15's columns, or format 16 (or 16z) held
@@ -1188,17 +1234,23 @@ impl TapeImage {
         if magic != MAGIC16 && magic != MAGIC16Z {
             return Self::read_image(bytes, grammar);
         }
+        Self::sixteen(bytes.to_vec().into(), grammar)
+    }
+
+    /// A format 16 or 16z tape held as stored, in `bytes`.
+    fn sixteen(bytes: rerail_tape_format::home::Home, grammar: &Arc<Grammar>) -> Result<Self, String> {
+        use rerail_tape_format::f16::{MAGIC16, Tape16, Tape16Z};
         let tag = super::language::tape_tag(grammar.lang).ok_or("unsupported tape language")?;
-        if bytes[header::LANGUAGE] != tag {
+        if bytes.get(header::LANGUAGE) != Some(&tag) {
             return Err("tape image grammar mismatch".into());
         }
         let lang = rerail_tape_format::f16::lang(tag).ok_or("a format 16 tape of a language without its table")?;
-        let held = if magic == MAGIC16 {
-            let t = Tape16::from_bytes(bytes.to_vec())?;
+        let held = if bytes[..8] == *MAGIC16 {
+            let t = Tape16::from_bytes(bytes)?;
             t.reader(lang)?;
             Held::F16(Arc::new(t))
         } else {
-            let t = Tape16Z::from_bytes(bytes.to_vec())?;
+            let t = Tape16Z::from_bytes(bytes)?;
             t.reader(lang)?;
             Held::F16Z(Arc::new(t))
         };
@@ -1217,12 +1269,26 @@ impl TapeImage {
     /// An image of format 15's columns (code, size, base, off, tail), laid out in one buffer.
     fn of15(columns: [&[u8]; 5], widths: [u8; 3], codes: Vec<Code>, kind_aliases: Vec<(String, bool)>, language: GrammarDialect, source_len: usize, source_digest: Option<[u8; 32]>) -> Self {
         let (bytes, at) = Columns15::laid(columns);
-        Self { held: Held::F15(Columns15 { bytes, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
+        Self { held: Held::F15(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
     }
 
     /// The tape as held.
     pub fn held(&self) -> &Held {
         &self.held
+    }
+
+    /// Whether its bytes are placed in a room (a slab's, decision 0353 step 4a), not its own.
+    pub fn placed(&self) -> bool {
+        self.room().is_some()
+    }
+
+    /// The room the tape is placed in (`placed`), which says where the device reads it.
+    pub fn room(&self) -> Option<&std::sync::Arc<dyn rerail_tape_format::home::Room>> {
+        match &self.held {
+            Held::F15(c) => c.bytes.room(),
+            Held::F16(t) => t.home().room(),
+            Held::F16Z(t) => t.home().room(),
+        }
     }
 
     /// Format 15's columns, where it is held in format 15.
@@ -1248,6 +1314,12 @@ impl TapeImage {
 
     /// The image `bytes` hold, of a `grammar` file.
     fn read_image(bytes: &[u8], grammar: &Grammar) -> Result<Self, String> {
+        Self::read_image_in(bytes, grammar, None)
+    }
+
+    /// A stored format 15 image (`read_image`), its columns read where they lie in `placed` (whose bytes are
+    /// `bytes`, decision 0353 step 4a) or laid out in a buffer of their own.
+    fn read_image_in(bytes: &[u8], grammar: &Grammar, placed: Option<&rerail_tape_format::home::Home>) -> Result<Self, String> {
         let mut reader = TapeReader { bytes, offset: 0 };
         if reader.take(8)? != TAPE_MAGIC {
             return Err("wrong tape image magic".into());
@@ -1293,6 +1365,7 @@ impl TapeImage {
             return Err("invalid contextual grammar alias count".into());
         }
         // Each column, then its padding to `COLUMN_ALIGN`, which must be zero.
+        let columns_at = reader.offset;
         let mut columns: [&[u8]; 5] = [&[]; 5];
         for (column, length) in columns.iter_mut().zip(lengths) {
             *column = reader.take(length)?;
@@ -1353,6 +1426,17 @@ impl TapeImage {
         }
         if reader.offset != bytes.len() {
             return Err("trailing tape image bytes".into());
+        }
+        if let Some(home) = placed {
+            // The columns as the stored image lays them, from `columns_at`: each padded to `COLUMN_ALIGN`.
+            let mut at = [(0, 0); 5];
+            let mut start = 0;
+            for (k, column) in columns.iter().enumerate() {
+                at[k] = (start, column.len());
+                start = padded(start + column.len());
+            }
+            let c = Columns15 { bytes: home.clone(), base: columns_at, at, widths, codes, kind_aliases, table: Default::default() };
+            return Ok(Self { held: Held::F15(c), language, source_len, source_digest: None });
         }
         Ok(Self::of15(columns, widths, codes, kind_aliases, language, source_len, None))
     }
@@ -1864,7 +1948,13 @@ impl Columns15 {
     /// Column `k` (`CODE` … `TAIL`).
     pub fn column(&self, k: usize) -> &[u8] {
         let (start, length) = self.at[k];
-        &self.bytes[start..start + length]
+        &self.bytes[self.base + start..self.base + start + length]
+    }
+
+    /// The columns, laid out from `base`, each padded.
+    fn columns_bytes(&self) -> &[u8] {
+        let (start, length) = self.at[Self::TAIL];
+        &self.bytes[self.base..self.base + padded(start + length)]
     }
 
     pub fn code(&self) -> &[u8] {
@@ -1889,7 +1979,7 @@ impl Columns15 {
 
     /// The buffer every column lies in, and where each starts in it: what a reader in place takes.
     pub fn laid_out(&self) -> (&[u8], [usize; 5]) {
-        (&self.bytes, self.at.map(|(start, _)| start))
+        (self.columns_bytes(), self.at.map(|(start, _)| start))
     }
 
     /// A test's change of column `k` (its bytes, or its length): the columns laid out again.
@@ -1897,7 +1987,8 @@ impl Columns15 {
     pub fn edit(&mut self, k: usize, change: impl FnOnce(&mut Vec<u8>)) {
         let mut columns: Vec<Vec<u8>> = (0..5).map(|k| self.column(k).to_vec()).collect();
         change(&mut columns[k]);
-        (self.bytes, self.at) = Self::laid(std::array::from_fn(|k| columns[k].as_slice()));
+        let (bytes, at) = Self::laid(std::array::from_fn(|k| columns[k].as_slice()));
+        (self.bytes, self.base, self.at) = (bytes.into(), 0, at);
         self.table = Default::default();
     }
 
@@ -1940,8 +2031,12 @@ impl Columns15 {
     }
 
     fn estimated_bytes(&self) -> usize {
-        self.bytes.capacity()
-            + self.codes.capacity() * std::mem::size_of::<Code>()
+        // A placed image's bytes are its slab's, counted there.
+        let own = match &self.bytes {
+            rerail_tape_format::home::Home::Own(v) => v.capacity(),
+            rerail_tape_format::home::Home::Placed(_) => 0,
+        };
+        own + self.codes.capacity() * std::mem::size_of::<Code>()
             + self.kind_aliases.capacity() * std::mem::size_of::<(String, bool)>()
             + self.kind_aliases.iter().map(|(name, _)| name.capacity()).sum::<usize>()
     }
@@ -2695,6 +2790,12 @@ impl TapeDoc {
         })
     }
 
+    /// Whether the tokens the tape leaves out right after `parent`'s child `child` (its index among
+    /// the children) begin with `word` (`Doc::implied_after`, RER-131).
+    pub fn transducer_implied_after(&self, parent: u32, child: usize, word: &[&str]) -> bool {
+        self.implied_after(&self.root_node().at(parent, UNKNOWN), child, word) == Some(true)
+    }
+
     pub fn transducer_descendants(&self, node: u32) -> Range<u32> {
         read!("size");
         read_at!("tape size", node);
@@ -3171,6 +3272,18 @@ impl Doc for TapeDoc {
     fn get_node_text<'a>(&'a self, node: &Self::Node<'a>) -> Cow<'a, str> {
         Cow::Borrowed(&self.source[node.range()])
     }
+    /// The implied word the tape leaves out in the gap after `parent`'s child `child`
+    /// (`tokens::stored_gaps`: the word before the next named child, or after the last), RER-131.
+    fn implied_after<'a>(&'a self, parent: &TapeNode<'a>, child: usize, word: &[&str]) -> Option<bool> {
+        let grammar = tokens::TokenGrammar::of_dialect(self.grammar.lang)?;
+        // `stored_gaps` reads an ast-grep node: the parent's, rebuilt over a root of this document.
+        let root = ast_grep_core::AstGrep::doc(self.clone());
+        let parent = root.adopt(root.root().get_inner_node().at(parent.index, parent.up));
+        let (children, gaps) = tokens::stored_gaps(&grammar, &parent)?;
+        let next = (child + 1..children.len()).find(|&at| children[at].is_named() && !children[at].is_extra());
+        let gap = next.map_or(&gaps.end, |at| &gaps.before[at]);
+        Some(gap.len() >= word.len() && gap.iter().zip(word).all(|((text, _), token)| text == token))
+    }
 }
 
 
@@ -3208,18 +3321,13 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
     let root = tree.tree.root_node();
     let image = TapeImage::encode_tree_image(root, &grammar, source, None, &|| false)?;
     let filter = grammar.kinds.grammar().and_then(|language| tokens::TokenGrammar::of(lang, language));
-    let ellipsis = |node: TsNode<'_>| {
-        node.utf8_text(source.as_bytes()).ok().and_then(|text| lang.extract_meta_var(text)).is_some_and(|var| {
-            matches!(var, ast_grep_core::meta_var::MetaVariable::Multiple | ast_grep_core::meta_var::MetaVariable::MultiCapture(_))
-        })
-    };
     // In the encoder's preorder: a record per stored node.
-    let mut ends = Vec::new();
+    let mut ends: Vec<Option<Vec<String>>> = Vec::new();
     let mut single = Vec::new();
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         let at = ends.len();
-        ends.push(false);
+        ends.push(None);
         let stored = filter.as_deref().and_then(|filter| filter.stored_children(node));
         // `is_single_node` (ast-grep's `pattern.rs`) over tree-sitter's node, whose first child
         // the tape holds (the walk descends to it).
@@ -3237,9 +3345,16 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
             Some(stored) => children.iter().zip(stored).filter_map(|(child, &kept)| kept.then_some(*child)).collect(),
         };
         if let Some(stored) = &stored {
+            // The implied tokens after the last stored child: the pattern ends its children with
+            // them, as one goal (`PatternNode::children_end`), which an ellipsis before it leaves.
             let last = stored.iter().rposition(|&kept| kept);
-            let implied_after = stored[last.map_or(0, |last| last + 1)..].iter().any(|&kept| !kept);
-            ends[at] = implied_after && last.is_none_or(|last| !ellipsis(children[last]));
+            let word: Vec<String> = children.iter().zip(stored).skip(last.map_or(0, |last| last + 1))
+                .filter(|(_, kept)| !**kept)
+                .filter_map(|(child, _)| child.utf8_text(source.as_bytes()).ok().map(str::to_owned))
+                .collect();
+            if !word.is_empty() {
+                ends[at] = Some(word);
+            }
         }
         stack.extend(kept.into_iter().rev());
     }
@@ -3255,9 +3370,9 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
 /// What a pattern's tree-sitter nodes say that its tape leaves out, per record
 /// (`ast_grep_core::matcher::PatternShape`, `native/vendor/ast-grep-core-0.51.0/PATCHES.md`).
 pub struct PatternShape {
-    /// Whether the node ended in implied tokens after its last child (unless that child is an
-    /// ellipsis, which takes every candidate anyway): its pattern ends its children there.
-    pub(crate) ends: Vec<bool>,
+    /// The implied tokens' texts, in order, where the node ended in implied tokens after its last
+    /// child: its pattern ends its children there.
+    pub(crate) ends: Vec<Option<Vec<String>>>,
     /// Whether tree-sitter's node is single (`is_single_node`): one child, or one and a MISSING
     /// or empty one. A tape's node can have one child where tree-sitter's had tokens too.
     pub(crate) single: Vec<bool>,

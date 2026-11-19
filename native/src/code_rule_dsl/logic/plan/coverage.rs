@@ -25,7 +25,6 @@
 use super::*;
 use crate::content_store::ContentStore;
 use crate::code_rule_dsl::logic::front::AggOp;
-use crate::code_rule_dsl::logic::rr::parse;
 use crate::code_rule_dsl::logic::strings::functions::{Kind, all as functions};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -289,13 +288,13 @@ fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
 /// Runs `src` (whose probe relation is `rel`) on SQLite, the native engine and the device; the verdict, or why the
 /// probe did not run at all.
 fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
-    let p = parse(src).map_err(|e| format!("unparsed: {e}"))?;
+    let p = crate::code_rule_dsl::logic::rr::parse_version(src).map_err(|e| format!("unparsed: {e}"))?;
     let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
         let (_path, store, db) = fresh();
         // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it.
         crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
+        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
         let was = placement::set_binding(binding);
         let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).map_err(|e| format!("stats: {e}"))?, BTreeSet::new(), modes);
         placement::set_binding(was);

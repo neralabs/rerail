@@ -1,7 +1,26 @@
-//! `file_local::factorize_exports` on the version (decision 0099; 0281's path, step 5): the tree pass one for one,
-//! reading the split from the version (`FileLocal`). Variables are read by name, as the tree reads them, so each
-//! choice, counter and name is the tree's; each round's program is a version of its own, split again to check the
-//! parts stay file-local.
+//! The factorized store across the chunk boundary (decision 0099; 0281's path, step 5). An export (a file-local
+//! relation only the cross-file part reads) whose every rule joins parts that meet only at a variable its head
+//! projects away is handed on as the parts, not as their product: `fl853_p4_outer(f, x) :- rr_inside_ks5(f, p),
+//! bound_in(p, x)` held 295 k rows over the 486 fixture files, and is handed on as `fz_a(f, p)` and `fz_b(p, x)`,
+//! each about the size of its own part. The cross-file readers read the parts where they read the product
+//! (`p4_outer(f, x) :- p4_read(_, x, f, _), fz_a(f, p), fz_b(p, x)`): their join is the cross part's ordinary join,
+//! per key, from the columns they bind.
+//!
+//! - **Each part** keeps its own comparisons and negations (`keeps::factors`), and is reduced by the others' keys
+//!   (`fz_a(f, p) :- …, fzk_b(p)`, `fzk_b(p) :- bound_in(p, x)`): every row stored then joins, so a part never holds
+//!   more rows than the product it replaces.
+//! - **When:** decided from the program alone, before the first chunk: the per-file memo's key is a digest of the
+//!   file-local part (`corpus::memo::program_digest`), which names the exports, so the choice must not depend on a
+//!   chunk's rows. A changed choice (another engine, `RERAIL_FACTORIZE=off`) is another key, a memo miss.
+//!   The relation is factorized when at least two of its parts may hold many rows per key (a part that is a node's
+//!   attributes, `parent(n, p), text(p, t)`, holds one, and the product is no larger than the other part); when every
+//!   read of it is positive, in a cross-file rule that binds a column of it (so the reader's join starts from a
+//!   bound part, not the whole product again); and when the readers' copies stay few (one per rule of the relation,
+//!   at most `FACTOR_COPIES`).
+//!
+//! A relation whose parts the split does not find file-local is left whole. The split is read from the version
+//! (`FileLocal`); variables are read by name, so each choice, counter and name is fixed by the program; each round's
+//! program is a version of its own, split again to check the parts stay file-local.
 
 use super::super::FileLocal;
 use super::{BodyItem, Made, NOwned, Round, lit_vars, name, term_vars, write};
@@ -12,8 +31,8 @@ use crate::code_rule_dsl::logic::program_image::manager::{self, Cx, ProgramPass,
 use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit as L, LitRef, RuleRef, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-/// Each export whose rules join parts meeting at a key handed on as the parts (`factorize_exports`): the lines it
-/// reports. Off (`on` false) where the run's options turn the factorized store off (`factorize_on`).
+/// Each export whose rules join parts meeting at a key handed on as the parts (the module comment): a line per
+/// relation factorized. Off (`on` false) where the run's options turn the factorized store off (`factorize_on`).
 pub struct FactorizeExports {
     pub on: bool,
     pub lines: Vec<String>,
@@ -27,7 +46,8 @@ impl FactorizeExports {
 
 type Keys = BTreeMap<String, Vec<Vec<usize>>>;
 
-/// `file_local::determined`: the variables `lits` of `rule` determine from `known`.
+/// The variables `lits` of `rule` determine from `known`: an atom whose relation has a key all of whose columns are
+/// known (or constants) determines its other variables; so does an equality, and a nearest ancestor its node.
 fn determined(v: &Version, rule: RuleRef<'_>, lits: &[LitRef<'_>], mut known: BTreeSet<String>, keys: &Keys) -> BTreeSet<String> {
     loop {
         let before = known.len();
@@ -65,7 +85,8 @@ fn determined(v: &Version, rule: RuleRef<'_>, lits: &[LitRef<'_>], mut known: BT
     }
 }
 
-/// `file_local::functional`: whether `part` holds at most one row per value of `key`.
+/// Whether `part` holds at most one row per value of `key`: its head variables (`head`) follow from the key through
+/// atoms read by a key of their relation (`keys`, `relation_keys`), equalities and nearest ancestors.
 fn functional(v: &Version, rule: RuleRef<'_>, part: &[LitRef<'_>], key: &str, head: &[String], keys: &Keys) -> bool {
     let mut vars = BTreeSet::new();
     part.iter().for_each(|l| vars.extend(lit_vars(v, rule, *l)));
@@ -73,7 +94,11 @@ fn functional(v: &Version, rule: RuleRef<'_>, part: &[LitRef<'_>], key: &str, he
     head.iter().filter(|h| vars.contains(h.as_str())).all(|h| known.contains(h.as_str()))
 }
 
-/// `file_local::relation_keys` on the version.
+/// Keys of the program's relations, as far as the program shows them: a node's attributes by the node (`docof`,
+/// `text`, `node` by its node, and a view of one); the tree's edges by the child, and by the parent with the field or
+/// the index (`child(p, c, i)`, `field(p, f, c)`); a lattice by its key columns; and a derived relation by a column
+/// that, in every rule, determines the head (`determined`), found to a fixpoint. They price the factorized store's
+/// test only (a part of one row a key holds no more rows than the product): a wrong key costs rows, never findings.
 fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
     let mut keys: Keys = BTreeMap::new();
     for rel in f.inputs() {
@@ -250,7 +275,7 @@ impl ProgramPass for FactorizeExports {
             if chosen.is_empty() {
                 return Ok(());
             }
-            // Each part named from its content (`helper_name`), as the tree names it.
+            // Each part named from its content (`helper_name`).
             let mut used = HashMap::new();
             let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
             let mut declare = |rel: String, cols: Vec<(String, String)>| {
@@ -340,7 +365,7 @@ impl ProgramPass for FactorizeExports {
                 stands.insert(rel.clone(), per_rule);
             }
             // The relation's rules go; each read becomes the parts of each of its rules, the key and the variables
-            // the read leaves open named apart (the open ones by the copy's depth, as the tree names them).
+            // the read leaves open named apart (the open ones by the copy's depth).
             let mut out: Vec<Made<'_>> = Vec::with_capacity(program.len());
             for m in program {
                 let head = match &m.head {

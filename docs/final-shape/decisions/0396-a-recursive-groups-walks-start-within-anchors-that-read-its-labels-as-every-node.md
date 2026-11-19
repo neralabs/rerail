@@ -48,12 +48,31 @@ The plan also said to try semi-naive rounds only if the census showed the gap wa
    - On Metal, the group anchors' one evaluation already cost about 98 ms of formula time. A per-round anchor would
      pay that every round.
    - d84724a6c's per-label sweep skip already passes over the nodes whose read labels did not change.
-6. **Locked by:**
+6. **The formula reader evaluates a set without remaking what it can read** (`compile_sets::Reader`, 2026-11-18).
+   The group anchors cost about half of what they saved in the sweeps (0.9 s of 1.9 s). A census of their shapes
+   (564 distinct, 6,940 evaluations) found three causes:
+   - a label read as every node left `Or([…, All])`, and steps over every node (`Child { of: All }`,
+     `Parent(All)`), each made by a pass over the whole tape;
+   - long nested `or`s of kinds, each part a row of its own;
+   - each label and text row copied before it was read.
+   So now:
+   - `labels_unknown` simplifies: an `or` with every node is every node (`Set::or`), nested ones flattened.
+   - A step over every node is a row the tape's `Index` keeps (`over_all`), as it keeps the kinds' postings.
+   - A conjunction tests first, then tests each child, descendant or following-sibling step only at the members
+     left (`within`, as the device's conjunctions do).
+   - An `or` gathers its parts into one row: a kind's postings set into it directly.
+   - A label's or text slot's row is read where it is (`Row::Borrowed`), and a supertype's row where the index
+     keeps it.
+   The members are the same, and the 0036 formula passes, which use the same reader, get the same speedup.
+7. **Locked by:**
    - `anchor_rows_per_answer` asserts on every tape that no start outside a group anchor emits with the settled
      labels.
    - `anchored_walks_find_the_unanchored_roots` and `on_metal_anchored_walks_find_the_unanchored_roots` find the
      same roots with anchors as without.
    - Under `RERAIL_PROF`, the CPU test also asserts that the groups' sweeps dropped starts.
+   - `formula_rows_are_the_sets_members` checks the reader against the sets' members node by node (`set_members`):
+     each label program's anchor, its group anchor and its formula on three tapes with their labels settled. 30,300
+     sets; none differ.
 
 ## Evidence
 
@@ -78,6 +97,14 @@ group anchors were toggled within one build by a temporary switch, removed befor
 
   The labelling's process CPU is dominated by the facts' rows (`fact_rows.tape`, about 20 s), and its totals moved
   with the load.
+- **CPU, the reader of §6** (the same test, load average 45 to 50):
+
+  | stage | before §6 | after |
+  |---|---|---|
+  | `anchor.eval` (all 14,230 anchors) | 1,361 ms | 542 ms |
+  | the group anchors (against the 7,290 others' 443 ms) | about 918 ms | about 100 ms |
+  | the sweeps in all | 3.49 s | 2.78 s (−37% against the 4.43 s without group anchors) |
+  | `labels.formulas` (0036's passes) | 5.5–5.9 s | 4.9 s |
 - **Metal** (`on_metal_anchored_walks_find_the_unanchored_roots`, `RERAIL_GPU_KERNEL_TIMES`, device µs, the warmed
   anchored run):
 
@@ -97,6 +124,5 @@ group anchors were toggled within one build by a temporary switch, removed befor
 
 ## Not yet
 
-- The CPU's anchor evaluation costs about half of what it saves in the sweeps (debug build): 6,940 more
-  evaluations at about 0.13 ms each. They read the same column sets per tape. Their cost is the next lever here,
-  not more rounds.
+- Passes with the same anchor are still evaluated once each, per tape (up to four passes a shape). After §6 the
+  group anchors cost about 0.1 s of the sweeps' 2.8 s, so they are not deduplicated.

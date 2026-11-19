@@ -245,6 +245,12 @@ pub struct Observer {
     own: Vec<PathBuf>,
     /// Output directories named this run under no root the store has a cursor for yet (`own_output`).
     unreported: Vec<PathBuf>,
+    /// How long after its recording an answer is checked by `stat` though the journal names nothing there
+    /// ([`JOURNAL_SETTLE_NS`]); a test that asks for trust at once sets it to 0.
+    settle_ns: i64,
+    /// The least the journal is waited for ([`JOURNAL_WAIT_LEAST_NS`]); a test that asks for the journal's answer
+    /// whatever it costs sets it high.
+    wait_least_ns: u64,
     /// The observer's own journal of the roots checked by their listings (decision 0400): each path named, with the
     /// generation of the check that named it (`observed_changes`, read a part at a time with the answers), the last
     /// generation, and the oldest a record may ask from (collection drops older rows).
@@ -257,6 +263,20 @@ pub struct Observer {
     /// listings instead (`journal::since`): none in a run; a test of the journal sets a few seconds.
     journal_settle: std::time::Duration,
 }
+
+/// What checking one kept answer by its `stat` costs, about (a warm `lstat` on APFS, with the compare): the journal is
+/// waited for no longer than the answers under a root would take so (Q221).
+pub const STAT_NS: u64 = 4_000;
+/// The least the journal is waited for: a cookie on an idle machine came in 10 ms (t48), under which a tree's `stat`s
+/// are cheaper anyway.
+pub const JOURNAL_WAIT_LEAST_NS: u64 = 2_000_000;
+/// How long after an answer's recording the journal's silence is not enough to trust it (Q189). FSEvents' history
+/// merges a path's events within a window: a change made just after a run read the path (the run's cursor taken
+/// between the two) was replayed under the earlier event's id, before the cursor, and the next run, told nothing,
+/// trusted the old answer: a missed edit (the bench's full shape, 2026-11-18, on the M3, 1 to 2 steps a run). An
+/// answer recorded within the window is checked by its `stat` instead: the same stat keeps it (no read, no write),
+/// another is read again. 3.5 s apart were merged; the window's length is not documented, so it is wide.
+pub const JOURNAL_SETTLE_NS: i64 = 120_000_000_000;
 
 /// A root a run watches.
 struct Root {
@@ -402,7 +422,7 @@ impl Observer {
             _ => None,
         });
         let (generation, floor) = (meta_int(LISTING_GEN).unwrap_or(0), meta_int(LISTING_FLOOR).unwrap_or(0));
-        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), changes: BTreeMap::new(), generation, floor, list_max: list_max(), journal_settle: std::time::Duration::ZERO }
+        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), changes: BTreeMap::new(), generation, floor, list_max: list_max(), journal_settle: std::time::Duration::ZERO, settle_ns: JOURNAL_SETTLE_NS, wait_least_ns: JOURNAL_WAIT_LEAST.load(std::sync::atomic::Ordering::Relaxed) }
     }
 
     /// Records `dir` as a directory a run writes its outputs into: rerail's own (decision 0284), for this observer
@@ -571,8 +591,17 @@ impl Observer {
             return None;
         }
         let e = self.known(path)?;
+        // Recorded within the journal's settle window: its silence may hide a merged event (Q189).
+        if self.settling(&e) {
+            return None;
+        }
         self.counts.trusted += 1;
         Some(e)
+    }
+
+    /// Whether `e` was recorded within the journal's settle window ([`JOURNAL_SETTLE_NS`]).
+    fn settling(&self, e: &Entry) -> bool {
+        now_ns().saturating_sub(e.recorded_ns) < self.settle_ns
     }
 
     fn stat(&mut self, path: &Path) -> Option<(Kind, Stat)> {
@@ -650,6 +679,10 @@ impl Observer {
         }
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return false };
         if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(&dir, &r.path)) || self.known(path).is_some() {
+            return false;
+        }
+        // A listing recorded within the journal's settle window is not trusted for an absence (Q189): `stat` says.
+        if self.known(dir).is_some_and(|e| self.settling(&e)) {
             return false;
         }
         let listing = match self.known(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
@@ -886,7 +919,11 @@ impl Observer {
                 self.check_listed(root, volume, cursor.as_deref());
                 continue;
             }
-            match super::journal::since(std::slice::from_ref(&root), cursor.as_deref(), &cookies, self.journal_settle) {
+            // The journal is waited for no longer than checking every answer kept under the root by its `stat`
+            // would take (Q221: planning costs no more than running, 0122); slower, it is checked so.
+            let kept = self.entries.range::<Path, _>((std::ops::Bound::Included(root.as_path()), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(&root)).count();
+            let wait = std::time::Duration::from_nanos((kept as u64).saturating_mul(STAT_NS).max(self.wait_least_ns));
+            match super::journal::since_within(std::slice::from_ref(&root), cursor.as_deref(), &cookies, self.journal_settle, Some(wait)) {
                 // The replay may not hold every change made before this run (its marker was not in its history):
                 // the root is checked by its listings, keeping the journal's cursor (decision 0400, step 2).
                 super::journal::Since::Behind { cursor: next } => self.check_behind(root, volume, &next),
@@ -1971,8 +2008,8 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
     }
     let mut db = Connection::open(path)?;
     db.busy_timeout(std::time::Duration::from_secs(10))?;
-    // The roots, by volume: (key, root, its directory's real path, cursor).
-    let mut roots: Vec<(String, String, PathBuf, Option<PathBuf>, Option<u64>)> = {
+    // The roots, by volume: (key, root, its directory's real path, cursor, the cursor's text).
+    let mut roots: Vec<(String, String, PathBuf, Option<PathBuf>, Option<u64>, Option<String>)> = {
         let mut st = db.prepare("SELECT key, value FROM observer_meta WHERE key LIKE 'journal:%'")?;
         st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, rusqlite::types::Value>(1)?)))?
             .flatten()
@@ -1980,28 +2017,32 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                 let mut parts = key.splitn(3, ':');
                 let (_, volume, root) = (parts.next()?, parts.next()?.to_owned(), PathBuf::from(parts.next()?));
                 let real = plain(&root).then(|| std::fs::canonicalize(&root).ok()).flatten();
-                let cursor = text_cursor(&value).and_then(|c| c.parse().ok());
-                Some((key, volume, root, real, cursor))
+                let text = text_cursor(&value);
+                let cursor = text.as_deref().and_then(|c| c.parse().ok());
+                Some((key, volume, root, real, cursor, text))
             })
             .collect()
     };
     // Newest cursor first: of two names of one directory, the first is kept.
     roots.sort_by(|a, b| b.4.cmp(&a.4));
-    let mut kept: Vec<(String, PathBuf, PathBuf)> = Vec::new();
+    // Two names with the same cursor were asked by one run (a root reached through a symlink, its files read by
+    // their canonical paths too, `Observer::canonical`): both are in use, each with its own answers, and both are
+    // kept. Dropped, the next run asked the other name again and wrote its first cursor back (Q243).
+    let mut kept: Vec<(String, PathBuf, PathBuf, Option<String>)> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
-    for (key, volume, root, real, _) in &roots {
+    for (key, volume, root, real, _, text) in &roots {
         match real {
-            Some(real) if !kept.iter().any(|(v, _, r)| v == volume && r == real) => kept.push((volume.clone(), root.clone(), real.clone())),
+            Some(real) if !kept.iter().any(|(v, _, r, t)| v == volume && r == real && (t.is_none() || t != text)) => kept.push((volume.clone(), root.clone(), real.clone(), text.clone())),
             _ => dropped.push(key.clone()),
         }
     }
     // A root under another kept is asked as part of it (`watch_above` takes the widest).
-    let under: Vec<usize> = (0..kept.len()).filter(|&i| kept.iter().enumerate().any(|(j, (v, _, r))| j != i && *v == kept[i].0 && kept[i].2.starts_with(r) && kept[i].2 != *r)).collect();
+    let under: Vec<usize> = (0..kept.len()).filter(|&i| kept.iter().enumerate().any(|(j, (v, _, r, _))| j != i && *v == kept[i].0 && kept[i].2.starts_with(r) && kept[i].2 != *r)).collect();
     for &i in under.iter().rev() {
-        let (volume, root, _) = kept.remove(i);
+        let (volume, root, _, _) = kept.remove(i);
         dropped.push(cursor_key_text(&volume, &root));
     }
-    let held = |path: &Path| plain(path) && kept.iter().any(|(_, root, _)| path.starts_with(root));
+    let held = |path: &Path| plain(path) && kept.iter().any(|(_, root, _, _)| path.starts_with(root));
     // What a run recorded lately is kept though no root holds it: a root a run first asks has no cursor stored until
     // that run's end (`settle_roots`), and collection may run before it, in the same process or another.
     let young = |recorded_ns: i64| now_ns().saturating_sub(recorded_ns) < UNHELD_GRACE_NS;
@@ -2248,6 +2289,10 @@ mod tests {
         let mut o = Observer::open(Some(store));
         o.list_max = 0;
         o.journal_settle = std::time::Duration::from_secs(5);
+        // Trust at once: these runs follow each other within the settle window, as no test can wait it out; and the
+        // journal's answer whatever it costs.
+        o.settle_ns = 0;
+        o.wait_least_ns = 2_000_000_000;
         o
     }
 
@@ -2301,6 +2346,56 @@ mod tests {
         assert!(third.forgotten >= 1 && third.hashed == 1, "the edited file is read again: {third}");
         assert_ne!(after[2], digests[2]);
         assert_eq!([after[0], after[1], after[3], after[4]], [digests[0], digests[1], digests[3], digests[4]]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Q189: FSEvents' history can merge a change made just after a run read a path into the path's earlier event,
+    /// replayed under an id before the run's cursor: the next run is told nothing. An answer recorded within the
+    /// settle window is then checked by `stat`, and the edit read; with no window (as before) it was missed. The merge
+    /// is made here by moving the root's stored cursor past the edit's event, which is what the replay amounts to.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing() {
+        let base = std::env::temp_dir().join(format!("rerail-settle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("m.py");
+        std::fs::write(&file, "x = 1\n").unwrap();
+        aged(&file);
+        let store = base.join("store.files");
+        let run = |settle: i64| {
+            let mut o = Observer::open(Some(&store));
+            o.settle_ns = settle;
+            o.wait_least_ns = 2_000_000_000;
+            o.begin();
+            o.watch(std::slice::from_ref(&root));
+            let digest = o.digest(&file).unwrap();
+            o.flush();
+            o.written();
+            (o.counts, digest)
+        };
+        // Recorded, then asked again so the root holds a cursor and the answer is kept.
+        let (_, first) = run(0);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        run(0);
+        // The edit, then the cursor moved past its event: the journal names nothing since.
+        let edit_and_hide = |text: &str| {
+            std::fs::write(&file, text).unwrap();
+            aged(&file);
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let volume = super::super::journal::volume(&root).expect("a volume");
+            let id = super::super::journal::current_id().to_string();
+            let db = Connection::open(&store).unwrap();
+            db.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![cursor_key(&root, volume), id]).unwrap();
+        };
+        edit_and_hide("x = 22\n");
+        let (missed, stale) = run(0);
+        assert_eq!((stale, missed.hashed), (first, 0), "with no window the journal's silence is trusted: the edit is missed ({missed})");
+        edit_and_hide("x = 333\n");
+        let (checked, fresh) = run(JOURNAL_SETTLE_NS);
+        assert!(checked.stats >= 1 && checked.hashed == 1, "within the window the answer is checked and the edit read: {checked}");
+        assert_ne!(fresh, first);
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -3277,4 +3372,12 @@ fn journal_on() -> bool {
 /// Turns the observer's use of the journal on or off for the process, whatever `RERAIL_JOURNAL` says.
 pub fn set_journal(on: bool) {
     JOURNAL.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The least the observers made after this wait for the journal ([`JOURNAL_WAIT_LEAST_NS`] until set): a test that
+/// asks for the journal's answer whatever it costs raises it (Q221).
+static JOURNAL_WAIT_LEAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(JOURNAL_WAIT_LEAST_NS);
+
+pub fn set_journal_wait_least(wait: std::time::Duration) {
+    JOURNAL_WAIT_LEAST.store(wait.as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 }

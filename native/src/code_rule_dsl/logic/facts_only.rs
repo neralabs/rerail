@@ -49,6 +49,14 @@ const FACT_STORE: &[&str] = &[
     "frames",
     // A space's kept facts (decisions 0401, 0417): which files its chain has.
     "facts_chain",
+    // The segments frames, sources and tapes lie in (decision 0295 step 5): where the rows are, as `memo_packs`. (From
+    // PR #508's 5420af2ef and rr-align's 6e917ffec, t47.)
+    "frame_segments",
+    "object_segments",
+    // Each guest's key by its identity (decision 0391): a name, as `strings`.
+    "guest_keys",
+    // The observer's journal of what it saw change (decision 0400): observations, not a result kept for later.
+    "observed_changes",
     "frame_spaces",
     // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
     "frame_confirmed",
@@ -59,13 +67,6 @@ const FACT_STORE: &[&str] = &[
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
     "memo_entries",
     "memo_packs",
-    // The segments frames, sources and tapes lie in (decision 0295 step 5): where the rows are, as `memo_packs`.
-    "frame_segments",
-    "object_segments",
-    // Each guest's key by its identity (decision 0391): a name, as `strings`.
-    "guest_keys",
-    // The observer's journal of what it saw change (decision 0400): observations, not a result kept for later.
-    "observed_changes",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
@@ -270,14 +271,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
     // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
-    // A live connection's file and symbol table, by its handle (dropped as it closes, `forget_scope`): state of the
-    // connections, not a result kept.
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
-    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
     // pending atoms no committed row may hold yet, not a result kept.
@@ -381,7 +376,8 @@ const STATE: &[(&str, &str)] = &[
     // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
     // once before a run's first wave, not a cache of anything else.
     ("content_store/frames.rs", "SNAPSHOTS"),
-    // Each record kind's apply function, registered by its kind: a registry.
+    // Each record kind's apply function, registered by its kind (decision 0306): a registry of code. (PR #508's
+    // 5420af2ef, t47; a test's own log of the records it applied is in its tests, not listed.)
     ("content_store/record.rs", "KINDS"),
     // The stores forgotten (`ContentStore::forget`), by path and file, so the frames job leaves them: state of the
     // stores' lifetimes, no result.
@@ -418,6 +414,8 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/write_back.rs", "WRITERS"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
+    // A run's given versions of its changed reads (`give_versions`), dropped with its engine: the run's state.
+    ("code_rule_dsl/logic/native/setfix.rs", "GIVEN"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[

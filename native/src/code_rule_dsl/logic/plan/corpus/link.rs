@@ -1,11 +1,11 @@
-//! The programs of a run linked into one (decision 0089, 0091; 0281's path, step 7a-2), over parts that are trees
-//! (`front::Program`: the tools, and a debug build's check) or versions (`Versioned`: the run). `combine_linked` is
-//! written once over `Part`: what it reads of a part is its header (`Part::head`, the program less its rules) and
+//! The programs of a run linked into one (decision 0089, 0091; 0281's path, step 7a-2), over parts that are versions
+//! (`Versioned`). `combine_linked_as` is written over `Part`: what it reads of a part is its header (`Part::head`, the program less its rules) and
 //! its rules' heads and reads; what it edits is the header and which rules are kept (`Part::drop_heads`). The link
 //! copies each part's rules with their relations renamed (`Names`): a version's from its image, with no tree.
 
-use crate::code_rule_dsl::logic::front::{self, Program};
+use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::logic::program_image::build::Rewrite;
+use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
 use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Builder, Version};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -16,7 +16,7 @@ fn plan(e: impl ToString) -> crate::code_rule_dsl::logic::plan::Error {
     crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string())
 }
 
-/// A program of the run, as `combine_linked` reads and edits it.
+/// A program of the run, as `combine_linked_as` reads and edits it.
 pub(super) trait Part: Sized + Send {
     /// The programs linked.
     type Linked;
@@ -24,17 +24,25 @@ pub(super) trait Part: Sized + Send {
     const KEEPS: bool = false;
     /// What the link takes of a part's rules.
     type Rules;
-    /// A part from its tree.
-    fn of_tree(prog: Program) -> Result<Self>;
+    /// A part from its version.
+    fn of_version(v: Arc<Version>) -> Result<Self>;
     /// A part lowered in its library's scope (`Text::lower_in`), given the run's rows (decision 0249); `found`, its
     /// image as the caller read it with the others' (`images::read_all`).
     fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self>;
     /// The library linked once (decision 0089).
     fn library(l: &crate::code_rule_dsl::logic::rr::Library) -> Result<Self>;
-    /// The program less its rules: what is read of it besides them (a tree's is the program).
-    fn head(&self) -> &Program;
-    /// `head`, to edit.
-    fn head_mut(&mut self) -> &mut Program;
+    /// The linked program's fields before its rules, which `Merged` merges each part's into.
+    type Fields: FieldsMut;
+    /// No fields.
+    fn fields() -> Self::Fields;
+    /// A part's header as `into_parts` takes it out.
+    type Header;
+    /// The header's fields.
+    fn header_fields(h: &Self::Header) -> &dyn ProgramFields;
+    /// The program's fields: what is read of it besides its rules.
+    fn head(&self) -> &dyn ProgramFields;
+    /// `f` on the program's fields, to edit them.
+    fn edit_head(&mut self, f: &mut dyn FnMut(&mut dyn FieldsMut)) -> Result<()>;
     /// Each rule: its head's relation, and the relations its atoms and aggregates read.
     fn rules(&self) -> Vec<(String, Vec<String>)>;
     /// Whether a rule makes `rel`.
@@ -45,21 +53,21 @@ pub(super) trait Part: Sized + Send {
     fn shown(&self, heads: &BTreeSet<String>) -> Vec<String>;
     /// Drops each rule whose head `gone` names.
     fn drop_heads(&mut self, gone: &dyn Fn(&str) -> bool);
-    /// Bounded to the documents it shows (`hiding::hide`).
+    /// Bounded to the documents it shows (`preparation::hide::Hide`).
     fn hide(&mut self, bound: u32) -> Result<()>;
     /// `rr::lower::undo_on_request`.
-    fn undo_on_request(&mut self);
+    fn undo_on_request(&mut self) -> Result<()>;
     /// The part alone, as the linked program.
     fn alone(self) -> Result<Self::Linked>;
     /// Its header, taken out, and its rules, renamed by `names`.
-    fn into_parts(self, names: &Names) -> (Program, Self::Rules);
-    /// The linked program of `header` and each part's rules, in order. A rule `core.rr` gives (its head is the
+    fn into_parts(self, names: &Names) -> (Self::Header, Self::Rules);
+    /// The linked program of `fields` and each part's rules, in order. A rule `core.rr` gives (its head is the
     /// engine's) is taken once.
-    fn link(header: Program, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked>;
+    fn link(fields: Self::Fields, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked>;
     /// `link`, and how many of the linked rules are each part's (in the parts' order), where a link of this form is
     /// kept (decision 0373: `Versioned`'s).
-    fn link_counted(header: Program, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<Vec<usize>>)> {
-        Ok((Self::link(header, rules, core)?, None))
+    fn link_counted(fields: Self::Fields, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<Vec<usize>>)> {
+        Ok((Self::link(fields, rules, core)?, None))
     }
     /// The linked program as the version a kept link holds, where it is one.
     fn linked_version(_linked: &Self::Linked) -> Option<&Arc<Version>> {
@@ -128,191 +136,203 @@ impl Names {
     }
 }
 
-/// The header `prog` (its rules taken out) merged into `all`'s, its relations renamed by `names`.
-pub(super) fn link_header(all: &mut Program, prog: Program, names: &Names) {
-    let rename = |rel: &str| names.rename(rel);
-    all.nullary.extend(prog.nullary.iter().map(|rel| rename(rel)));
-    for (rel, cols) in prog.decls {
-        all.decls.entry(rename(&rel).into()).or_insert(cols);
+/// The parts' fields merged (`merge`) into the linked program's (`all`), each part's relations renamed by its
+/// names: declarations, rows, inputs and outputs stated on `all` as they come, the fields of lists and maps gathered
+/// and stated once (`finish`). The combine states the documents read, the text globs and the shared kind sets.
+pub(super) struct Merged<F: FieldsMut> {
+    all: F,
+    pub(super) doc_scopes: Option<Vec<(Vec<String>, Vec<String>)>>,
+    pub(super) text_globs: Vec<String>,
+    pub(super) kindsets: BTreeMap<String, Vec<String>>,
+    nullary: BTreeSet<String>,
+    lattice: BTreeMap<String, front::ast::LatticeDecl>,
+    qualifiers: BTreeMap<String, BTreeSet<String>>,
+    tapes: BTreeMap<String, BTreeSet<usize>>,
+    natives: BTreeMap<String, front::ast::Native>,
+    demand: Vec<String>,
+    policies: Vec<serde_json::Value>,
+    shapes: Vec<front::ast::Shape>,
+    layouts: BTreeMap<String, Vec<front::LayoutFact>>,
+    rx_spans: BTreeSet<(front::ast::SpanIn, String)>,
+    ast_patterns: BTreeSet<String>,
+    settings: Vec<(String, String)>,
+}
+
+impl<F: FieldsMut> Merged<F> {
+    pub(super) fn new(all: F) -> Self {
+        Merged {
+            all,
+            doc_scopes: None,
+            text_globs: Vec::new(),
+            kindsets: BTreeMap::new(),
+            nullary: BTreeSet::new(),
+            lattice: BTreeMap::new(),
+            qualifiers: BTreeMap::new(),
+            tapes: BTreeMap::new(),
+            natives: BTreeMap::new(),
+            demand: Vec::new(),
+            policies: Vec::new(),
+            shapes: Vec::new(),
+            layouts: BTreeMap::new(),
+            rx_spans: BTreeSet::new(),
+            ast_patterns: BTreeSet::new(),
+            settings: Vec::new(),
+        }
     }
-    for (rel, decl) in prog.lattice {
-        all.lattice.insert(rename(&rel), decl);
-    }
-    for (rel, rows) in prog.facts {
-        all.facts.insert(rename(&rel), rows);
-    }
-    for (rel, words) in prog.qualifiers {
-        all.qualifiers.entry(rename(&rel)).or_default().extend(words);
-    }
-    for (rel, cols) in prog.tapes {
-        all.tapes.entry(rename(&rel)).or_default().extend(cols);
-    }
-    for (rel, mut native) in prog.natives {
-        native.rename_reads(rename);
-        all.natives.insert(rename(&rel), native);
-    }
-    for list in [(&mut all.inputs, prog.inputs), (&mut all.outputs, prog.outputs), (&mut all.demand, prog.demand)] {
-        for rel in list.1 {
+
+    /// A part's fields `prog` merged, its relations renamed by `names`. Its documents read, text globs, kind sets and
+    /// globals (`front::GLOBAL` settings) are the combine's, not merged.
+    pub(super) fn merge(&mut self, prog: &dyn ProgramFields, names: &Names) {
+        let rename = |rel: &str| names.rename(rel);
+        self.nullary.extend(prog.nullary().iter().map(|rel| rename(rel)));
+        for rel in prog.declared_names() {
+            let to = rename(&rel);
+            if !self.all.declares(&to) {
+                let cols = prog.columns_of(&rel).unwrap_or_default();
+                let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+                self.all.declare(&to, &pairs);
+            }
+        }
+        for (rel, decl) in prog.lattice() {
+            self.lattice.insert(rename(&rel), decl);
+        }
+        for rel in prog.fact_names() {
+            let rows = prog.fact_rows(&rel);
+            self.all.set_facts(&rename(&rel), &rows);
+        }
+        for (rel, words) in prog.qualifiers() {
+            self.qualifiers.entry(rename(&rel)).or_default().extend(words);
+        }
+        for (rel, cols) in prog.tapes() {
+            self.tapes.entry(rename(&rel)).or_default().extend(cols);
+        }
+        for (rel, mut native) in prog.natives() {
+            native.rename_reads(rename);
+            self.natives.insert(rename(&rel), native);
+        }
+        for rel in prog.input_names() {
+            self.all.add_input(&rename(&rel));
+        }
+        for rel in prog.output_names() {
+            self.all.add_output(&rename(&rel));
+        }
+        for rel in prog.demand() {
             let rel = rename(&rel);
-            if !list.0.contains(&rel) {
-                list.0.push(rel);
+            if !self.demand.contains(&rel) {
+                self.demand.push(rel);
+            }
+        }
+        self.policies.extend(prog.policies());
+        // Its relations' layouts (decision 0361), as renamed.
+        for (rel, mut facts) in prog.layouts() {
+            facts.iter_mut().for_each(|f| f.rename(&rename));
+            front::add_layout(self.layouts.entry(rename(&rel)).or_default(), facts);
+        }
+        // Its join shape directives, on its relations as renamed (O-join-shape-directives).
+        for mut shape in prog.shapes() {
+            shape.head = rename(&shape.head);
+            shape.lit = rename(&shape.lit);
+            if let front::ShapeWait::After(a) = &mut shape.wait {
+                *a = rename(a);
+            }
+            if !self.shapes.contains(&shape) {
+                self.shapes.push(shape);
+            }
+        }
+        // What the batch makes for the program's rules: its regexes over spans, its AST patterns.
+        self.rx_spans.extend(prog.rx_spans());
+        self.ast_patterns.extend(prog.ast_patterns());
+        for mut setting in prog.settings() {
+            if setting.0 == front::GLOBAL {
+                continue;
+            }
+            if matches!(setting.0.as_str(), "input" | "output")
+                && let Some((rel, params)) = setting.1.split_once('(')
+            {
+                setting.1 = format!("{}({params}", rename(rel));
+            }
+            if !self.settings.contains(&setting) {
+                self.settings.push(setting);
             }
         }
     }
-    all.policies.extend(prog.policies);
-    // Its relations' layouts (decision 0361), as renamed.
-    for (rel, mut facts) in prog.layouts {
-        facts.iter_mut().for_each(|f| f.rename(&rename));
-        front::add_layout(all.layouts.entry(rename(&rel)).or_default(), facts);
-    }
-    // Its join shape directives, on its relations as renamed (O-join-shape-directives).
-    for mut shape in prog.shapes {
-        shape.head = rename(&shape.head);
-        shape.lit = rename(&shape.lit);
-        if let front::ShapeWait::After(a) = &mut shape.wait {
-            *a = rename(a);
+
+    /// The linked fields, every gathered one stated.
+    pub(super) fn finish(mut self) -> F {
+        use crate::code_rule_dsl::logic::program_facts::Field;
+        let all = &mut self.all;
+        if !self.nullary.is_empty() {
+            all.set_field(Field::Nullary(&self.nullary));
         }
-        if !all.shapes.contains(&shape) {
-            all.shapes.push(shape);
+        if !self.lattice.is_empty() {
+            all.set_field(Field::Lattice(&self.lattice));
         }
-    }
-    // What the batch makes for the program's rules: its regexes over spans, its AST patterns.
-    all.rx_spans.extend(prog.rx_spans);
-    all.ast_patterns.extend(prog.ast_patterns);
-    for mut setting in prog.settings {
-        if matches!(setting.0.as_str(), "input" | "output")
-            && let Some((rel, params)) = setting.1.split_once('(')
-        {
-            setting.1 = format!("{}({params}", rename(rel));
+        if !self.qualifiers.is_empty() {
+            all.set_field(Field::Qualifiers(&self.qualifiers));
         }
-        if !all.settings.contains(&setting) {
-            all.settings.push(setting);
+        if !self.tapes.is_empty() {
+            all.set_field(Field::Tapes(&self.tapes));
         }
+        if !self.natives.is_empty() {
+            all.set_field(Field::Natives(&self.natives));
+        }
+        if !self.demand.is_empty() {
+            all.set_field(Field::Demand(&self.demand));
+        }
+        if !self.policies.is_empty() {
+            all.set_field(Field::Policies(&self.policies));
+        }
+        if !self.shapes.is_empty() {
+            all.set_field(Field::Shapes(&self.shapes));
+        }
+        if !self.layouts.is_empty() {
+            all.set_field(Field::Layouts(&self.layouts));
+        }
+        if !self.rx_spans.is_empty() {
+            all.set_field(Field::RxSpans(&self.rx_spans));
+        }
+        if !self.ast_patterns.is_empty() {
+            all.set_field(Field::AstPatterns(&self.ast_patterns));
+        }
+        // Stated if empty too: the linked fields read back as a program's (`Builder::set_field`'s program row).
+        all.set_field(Field::Settings(&self.settings));
+        if self.doc_scopes.is_some() {
+            all.set_field(Field::DocScopes(self.doc_scopes.as_deref()));
+        }
+        if !self.text_globs.is_empty() {
+            all.set_field(Field::TextGlobs(&self.text_globs));
+        }
+        if !self.kindsets.is_empty() {
+            all.set_field(Field::Kindsets(&self.kindsets));
+        }
+        self.all
     }
 }
 
-impl Part for Program {
-    type Linked = Program;
-    type Rules = Vec<front::Rule>;
-    fn of_tree(prog: Program) -> Result<Self> {
-        Ok(prog)
-    }
-    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self> {
-        // The tree's path reads its image itself.
-        let _ = found;
-        let mut prog = read.lower_in(text, library, scoped, store)?.expect("a modular text");
-        extra.add_to(&mut prog);
-        Ok(prog)
-    }
-    fn library(l: &crate::code_rule_dsl::logic::rr::Library) -> Result<Self> {
-        Ok(l.program().clone())
-    }
-    fn head(&self) -> &Program {
-        self
-    }
-    fn head_mut(&mut self) -> &mut Program {
-        self
-    }
-    fn rules(&self) -> Vec<(String, Vec<String>)> {
-        self.rules
-            .iter()
-            .map(|r| {
-                let reads = r
-                    .body
-                    .iter()
-                    .filter_map(|l| match l {
-                        front::Literal::Atom(a) | front::Literal::Agg { atom: a, .. } => Some(a.rel.to_string()),
-                        _ => None,
-                    })
-                    .collect();
-                (r.head.rel.to_string(), reads)
-            })
-            .collect()
-    }
-    fn has_head(&self, rel: &str) -> bool {
-        self.rules.iter().any(|r| r.head.rel == rel)
-    }
-    fn rule_count(&self) -> usize {
-        self.rules.len()
-    }
-    fn shown(&self, heads: &BTreeSet<String>) -> Vec<String> {
-        self.rules.iter().filter(|r| heads.contains(r.head.rel.as_str())).map(|r| format!("{r:?}")).collect()
-    }
-    fn drop_heads(&mut self, gone: &dyn Fn(&str) -> bool) {
-        self.rules.retain(|r| !gone(r.head.rel.as_str()));
-    }
-    fn hide(&mut self, bound: u32) -> Result<()> {
-        super::hiding::hide(self, bound);
-        Ok(())
-    }
-    fn undo_on_request(&mut self) {
-        crate::code_rule_dsl::logic::rr::lower::undo_on_request(self);
-    }
-    fn alone(self) -> Result<Self::Linked> {
-        Ok(self)
-    }
-    fn into_parts(mut self, names: &Names) -> (Program, Self::Rules) {
-        let mut rules = std::mem::take(&mut self.rules);
-        let atom = |a: &mut front::Atom| a.rel = names.rename(&a.rel).into();
-        for rule in &mut rules {
-            atom(&mut rule.head);
-            for l in &mut rule.body {
-                match l {
-                    front::Literal::Atom(a) => atom(a),
-                    front::Literal::Agg { atom: a, .. } => atom(a),
-                    front::Literal::Nearest { kindset, .. } => {
-                        if let Some(shared) = names.set_of.get(kindset) {
-                            *kindset = shared.clone();
-                        }
-                    }
-                    front::Literal::Cmp { .. } | front::Literal::Ast { .. } => {}
-                }
-            }
-        }
-        (self, rules)
-    }
-    fn link(mut header: Program, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked> {
-        for rule in rules.into_iter().flatten() {
-            if !(core.contains(rule.head.rel.as_str()) && header.rules.contains(&rule)) {
-                header.rules.push(rule);
-            }
-        }
-        Ok(header)
-    }
-}
-
-/// A part as a version: its image (a stored one handed on unread), its header as edited, and the relations whose
-/// rules are dropped. The edits are made on the version where a pass reads its rules (`settle`), or at the link,
-/// which copies the rules kept under the header as edited.
+/// A part as a version: its image (a stored one handed on unread), its fields' edits made on it as an overlay
+/// (`edit_head`), and the relations whose rules are dropped. The drops are made on the version where a pass reads
+/// its rules (`settle`), or at the link, which copies the rules kept.
 pub(super) struct Versioned {
     v: Arc<Version>,
-    /// Its header as edited. The header `v` holds is decoded again where an edit is settled (`settle`), not kept
-    /// beside it: a part that is only linked never copies it.
-    head: Program,
-    edited: bool,
     dropped: BTreeSet<String>,
 }
 
 impl Versioned {
-    fn of(v: Arc<Version>) -> Result<Self> {
-        let head = v.header(&Default::default()).map_err(plan)?;
-        Ok(Versioned { v, head, edited: false, dropped: BTreeSet::new() })
+    fn of(v: Arc<Version>) -> Self {
+        Versioned { v, dropped: BTreeSet::new() }
     }
     fn kept(&self) -> impl Iterator<Item = crate::code_rule_dsl::logic::program_image::RuleRef<'_>> {
         self.v.rules().filter(|r| !self.dropped.contains(self.v.rel_name(r.head().rel())))
     }
-    /// The edits made on the version.
+    /// The drops made on the version.
     fn settle(&mut self) -> Result<()> {
-        if !self.edited && self.dropped.is_empty() {
+        if self.dropped.is_empty() {
             return Ok(());
         }
         let v = Arc::clone(&self.v);
-        let was = v.header(&Default::default()).map_err(plan)?;
         let mut b = Builder::on(&v);
-        b.set_header(&was, &self.head);
         b.retain(|r| !self.dropped.contains(v.rel_name(r.head().rel())));
         self.v = b.finish().map_err(plan)?.0;
-        self.edited = false;
         self.dropped.clear();
         Ok(())
     }
@@ -324,15 +344,12 @@ pub(super) fn undone_on_request(v: &Arc<Version>) -> Result<Arc<Version>> {
     undone_with(v, |head, rules| crate::code_rule_dsl::logic::rr::lower::undo_on_request_in(head, rules))
 }
 
-/// Version `v` with `undo` (`rr::lower::undo_on_request_in`, `undo_round`) made of its header and rules: the rules
-/// it drops by head gone, its header as it leaves it.
-pub(super) fn undone_with(v: &Arc<Version>, undo: impl FnOnce(&mut Program, &mut dyn crate::code_rule_dsl::logic::rr::lower::RuleSet)) -> Result<Arc<Version>> {
-    let was = v.header(&Default::default()).map_err(plan)?;
-    let mut head = was.clone();
+/// Version `v` with `undo` (`rr::lower::undo_on_request_in`, `undo_round`) made of its fields and rules: the rules
+/// it drops by head gone, its fields as it leaves them.
+pub(super) fn undone_with(v: &Arc<Version>, undo: impl FnOnce(&mut dyn FieldsMut, &mut dyn crate::code_rule_dsl::logic::rr::lower::RuleSet)) -> Result<Arc<Version>> {
     let mut dropped = BTreeSet::new();
-    undo(&mut head, &mut Kept { v, dropped: &mut dropped });
     let mut b = Builder::on(v);
-    b.set_header(&was, &head);
+    undo(&mut b, &mut Kept { v, dropped: &mut dropped });
     b.retain(|r| !dropped.contains(v.rel_name(r.head().rel())));
     Ok(b.finish().map_err(plan)?.0)
 }
@@ -386,9 +403,16 @@ impl Part for Versioned {
     type Linked = Arc<Version>;
     const KEEPS: bool = true;
     type Rules = (Arc<Version>, BTreeSet<String>, Names);
-    fn of_tree(prog: Program) -> Result<Self> {
-        let (v, _) = Builder::of_program(&prog).and_then(|b| b.finish()).map_err(plan)?;
-        Versioned::of(v)
+    type Fields = Builder<'static>;
+    fn fields() -> Builder<'static> {
+        Builder::base()
+    }
+    type Header = Arc<Version>;
+    fn header_fields(h: &Arc<Version>) -> &dyn ProgramFields {
+        &**h
+    }
+    fn of_version(v: Arc<Version>) -> Result<Self> {
+        Ok(Versioned::of(v))
     }
     fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self> {
         let v = {
@@ -396,19 +420,26 @@ impl Part for Versioned {
             read.lower_in_version(text, library, scoped, store, found)?.expect("a modular text")
         };
         let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's part: its header".into());
-        let mut part = Versioned::of(v)?;
-        extra.add_to(part.head_mut());
+        let mut part = Versioned::of(v);
+        part.edit_head(&mut |b| extra.add_to(b))?;
         Ok(part)
     }
     fn library(l: &crate::code_rule_dsl::logic::rr::Library) -> Result<Self> {
-        Versioned::of(Arc::clone(&l.version))
+        Ok(Versioned::of(Arc::clone(&l.version)))
     }
-    fn head(&self) -> &Program {
-        &self.head
+    fn head(&self) -> &dyn ProgramFields {
+        &*self.v
     }
-    fn head_mut(&mut self) -> &mut Program {
-        self.edited = true;
-        &mut self.head
+    fn edit_head(&mut self, f: &mut dyn FnMut(&mut dyn FieldsMut)) -> Result<()> {
+        let edited = {
+            let mut b = Builder::on(&self.v);
+            f(&mut b);
+            if b.is_empty() { None } else { Some(b.finish().map_err(plan)?.0) }
+        };
+        if let Some(v) = edited {
+            self.v = v;
+        }
+        Ok(())
     }
     fn rules(&self) -> Vec<(String, Vec<String>)> {
         self.kept().map(|r| (self.v.rel_name(r.head().rel()).to_owned(), r.reads().map(|a| self.v.rel_name(a.rel()).to_owned()).collect())).collect()
@@ -431,29 +462,36 @@ impl Part for Versioned {
         let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("hide", Arc::clone(&self.v));
         p.program(&mut super::preparation::hide::Hide::new(bound));
         let (v, _) = p.finish().map_err(plan)?;
-        *self = Versioned::of(v)?;
+        *self = Versioned::of(v);
         Ok(())
     }
-    fn undo_on_request(&mut self) {
-        self.edited = true;
-        let Versioned { v, head, dropped, .. } = self;
-        crate::code_rule_dsl::logic::rr::lower::undo_on_request_in(head, &mut Kept { v, dropped });
+    fn undo_on_request(&mut self) -> Result<()> {
+        let Versioned { v, dropped } = self;
+        let edited = {
+            let mut b = Builder::on(v);
+            crate::code_rule_dsl::logic::rr::lower::undo_on_request_in(&mut b, &mut Kept { v, dropped });
+            if b.is_empty() { None } else { Some(b.finish().map_err(plan)?.0) }
+        };
+        if let Some(e) = edited {
+            *v = e;
+        }
+        Ok(())
     }
     fn alone(mut self) -> Result<Self::Linked> {
         self.settle()?;
         Ok(self.v)
     }
-    fn into_parts(self, names: &Names) -> (Program, Self::Rules) {
+    fn into_parts(self, names: &Names) -> (Arc<Version>, Self::Rules) {
         let names = Names { i: names.i, own: names.own.clone(), request: names.request.clone(), set_of: names.set_of.clone() };
-        (self.head, (self.v, self.dropped, names))
+        (Arc::clone(&self.v), (self.v, self.dropped, names))
     }
-    fn link(header: Program, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked> {
-        Ok(Self::link_counted(header, rules, core)?.0)
+    fn link(fields: Builder<'static>, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked> {
+        Ok(Self::link_counted(fields, rules, core)?.0)
     }
-    fn link_counted(header: Program, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<Vec<usize>>)> {
-        let mut b = Builder::of_program(&header).map_err(plan)?;
-        // The header's own rules first (a version part's header holds none): no part's.
-        let mut counts = vec![header.rules.len()];
+    fn link_counted(fields: Builder<'static>, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<Vec<usize>>)> {
+        let mut b = fields;
+        // The fields hold no rules: the first count (the header's own rules, in the kept link's record) is none.
+        let mut counts = vec![0];
         for (v, dropped, names) in &rules {
             let mut n = 0;
             for r in v.rules().filter(|r| !dropped.contains(v.rel_name(r.head().rel()))) {

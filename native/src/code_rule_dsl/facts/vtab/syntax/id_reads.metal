@@ -51,6 +51,9 @@ static_assert(__builtin_offsetof(Numbering, run_at) == 288, "Numbering.run_at");
 static_assert(__builtin_offsetof(Numbering, rank_starts) == 304, "Numbering.rank_starts");
 static_assert(__builtin_offsetof(Numbering, rank_ends) == 336, "Numbering.rank_ends");
 static_assert(__builtin_offsetof(Numbering, jumps) == 368, "Numbering.jumps");
+#ifndef CLIF_VIEW_SPACE
+#define CLIF_VIEW_SPACE thread
+#endif
 #ifndef clif_view
 #define clif_view(v,a) (v)[(a)/4u]
 #endif
@@ -67,6 +70,26 @@ inline uchar clif_u8(device const uchar* t,uint a){return t[a];}
 inline ushort clif_u16(device const uchar* t,uint a){return (a&1u)==0u?*(device const ushort*)(t+a):ushort(clif_word(t,a));}
 inline uint clif_u32(device const uchar* t,uint a){return clif_lo(t,a);}
 inline ulong clif_u64(device const uchar* t,uint a){return clif_word(t,a);}
+#endif
+#ifndef CLIF_CACHE_HELPERS
+#define CLIF_CACHE_HELPERS 1
+inline ulong clif_cword(device const uchar* t,ulong a){device coherent(device) const ulong* w=(device coherent(device) const ulong*)(t+(a&~7ul));uint s=uint(a&7ul)*8u;return s==0u?w[0]:(w[0]>>s)|(w[1]<<(64u-s));}
+inline uchar clif_c8(device const uchar* t,ulong a){return *(device coherent(device) const uchar*)(t+a);}
+inline ushort clif_c16(device const uchar* t,ulong a){return (a&1ul)==0ul?*(device coherent(device) const ushort*)(t+a):ushort(clif_cword(t,a));}
+inline uint clif_c32(device const uchar* t,ulong a){return (a&3ul)==0ul?*(device coherent(device) const uint*)(t+a):uint(clif_cword(t,a));}
+inline ulong clif_c64(device const uchar* t,ulong a){return clif_cword(t,a);}
+inline void clif_st8(device const uchar* t,ulong a,ulong x){*(device coherent(device) uchar*)(t+a)=uchar(x);}
+inline void clif_stw(device const uchar* t,ulong a,ulong x,uint n){device coherent(device) ulong* w=(device coherent(device) ulong*)(t+(a&~7ul));uint s=uint(a&7ul)*8u;ulong m=n==64u?~0ul:((1ul<<n)-1ul);x&=m;w[0]=(w[0]&~(m<<s))|(x<<s);if(s+n>64u){uint r=64u-s;w[1]=(w[1]&~(m>>r))|(x>>r);}}
+inline void clif_st16(device const uchar* t,ulong a,ulong x){if((a&1ul)==0ul)*(device coherent(device) ushort*)(t+a)=ushort(x);else clif_stw(t,a,x,16u);}
+inline void clif_st32(device const uchar* t,ulong a,ulong x){if((a&3ul)==0ul)*(device coherent(device) uint*)(t+a)=uint(x);else clif_stw(t,a,x,32u);}
+inline void clif_st64(device const uchar* t,ulong a,ulong x){if((a&7ul)==0ul)*(device coherent(device) ulong*)(t+a)=x;else clif_stw(t,a,x,64u);}
+inline uint clif_ald(device const uchar* t,ulong a){return atomic_load_explicit((device atomic_uint*)(t+a),memory_order_relaxed);}
+inline void clif_ast(device const uchar* t,ulong a,uint x){atomic_store_explicit((device atomic_uint*)(t+a),x,memory_order_relaxed);}
+inline uint clif_aadd(device const uchar* t,ulong a,uint x){return atomic_fetch_add_explicit((device atomic_uint*)(t+a),x,memory_order_relaxed);}
+// A strong compare-and-swap: the value seen, which is `e` where it swapped (a weak one's spurious failure tried again,
+// a bounded number of times, then reported as a value other than `e`).
+inline uint clif_acas(device const uchar* t,ulong a,uint e,uint n){for(uint k=0u;k<64u;k++){uint x=e;if(atomic_compare_exchange_weak_explicit((device atomic_uint*)(t+a),&x,n,memory_order_relaxed,memory_order_relaxed))return e;if(x!=e)return x;}return ~e;}
+inline void clif_fence(){atomic_thread_fence(mem_flags::mem_device,memory_order_seq_cst,thread_scope_device);}
 #endif
 inline uint clif_num_is(device const uchar* t,ulong a0,uint a1,uint a2);
 inline uint clif_num_rank(device const uchar* t,ulong a0,uint a1,uint a2);

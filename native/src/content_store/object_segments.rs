@@ -26,11 +26,22 @@ pub(super) fn object_dir(database: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// A tape's bytes where they live, which the writer takes as they are (decision 0353 step 4a: a tape's home, a
+/// slab's room).
+pub type TapeBytes = Arc<dyn TapeHeld>;
+
+/// What holds a tape's bytes: any byte owner, which its maker can find again (`Any`: the engine's tape home, whose
+/// room a later read of the queued tape reads in place).
+pub trait TapeHeld: AsRef<[u8]> + std::any::Any + Send + Sync {}
+impl<T: AsRef<[u8]> + std::any::Any + Send + Sync> TapeHeld for T {}
+
 /// A stored object's bytes: decompressed into memory (a row of its own), or where they are in a segment, mapped.
 #[derive(Clone)]
 pub enum ObjectBytes {
     Heap(Arc<Vec<u8>>),
     Mapped(SegmentBytes),
+    /// A tape queued for the writer, in its home (decision 0353 step 4a: a slab's room, read there).
+    Tape(TapeBytes),
 }
 
 impl std::ops::Deref for ObjectBytes {
@@ -39,6 +50,7 @@ impl std::ops::Deref for ObjectBytes {
         match self {
             ObjectBytes::Heap(b) => b,
             ObjectBytes::Mapped(b) => b.bytes(),
+            ObjectBytes::Tape(b) => (**b).as_ref(),
         }
     }
 }
@@ -49,6 +61,7 @@ impl ObjectBytes {
         match self {
             ObjectBytes::Heap(b) => Arc::try_unwrap(b).unwrap_or_else(|b| (*b).clone()),
             ObjectBytes::Mapped(b) => b.bytes().to_vec(),
+            ObjectBytes::Tape(b) => (*b).as_ref().to_vec(),
         }
     }
 }
@@ -165,7 +178,7 @@ pub(super) struct Item {
     grammar_version: i64,
     tape_format_version: i64,
     source: Arc<String>,
-    tape: Arc<Vec<u8>>,
+    tape: TapeBytes,
     tape_identity: HashKey,
     /// Whether the run's manifest names the source once written (`ContentStore::name_sources`).
     named: bool,
@@ -196,12 +209,12 @@ impl ObjectGather {
         if self.at.contains_key(&item.key) {
             return;
         }
-        self.bytes += item.source.len() + item.tape.len();
+        self.bytes += item.source.len() + (*item.tape).as_ref().len();
         self.at.insert(item.key, self.items.len());
         self.items.push(item);
     }
     fn held(item: &Item) -> Held {
-        Arc::new(QueuedTape(ObjectBytes::Heap(Arc::clone(&item.tape))))
+        Arc::new(QueuedTape(ObjectBytes::Tape(Arc::clone(&item.tape))))
     }
 }
 
@@ -223,13 +236,13 @@ impl Gather for ObjectGather {
             return None;
         }
         let n = self.items.len() * 2;
-        let lens = self.items.iter().flat_map(|i| [i.source.len(), i.tape.len()]);
+        let lens = self.items.iter().flat_map(|i| [i.source.len(), (*i.tape).as_ref().len()]);
         let mut w = SegmentWriter::new(&self.dir, n, rerail_blocks::journal::reserve_for(n, lens, ALIGN));
         let mut placed = true;
         for (i, item) in self.items.iter().enumerate() {
             let key = i as i64;
             let digest = item.canonical.sha256_bytes().unwrap_or_default();
-            let (source, tape) = (item.source.as_bytes(), &item.tape[..]);
+            let (source, tape) = (item.source.as_bytes(), (*item.tape).as_ref());
             if w.put(source.len(), key, &digest, |out| out.copy_from_slice(source)).is_err() || w.put(tape.len(), key, &digest, |out| out.copy_from_slice(tape)).is_err() {
                 placed = false;
                 break;
@@ -254,7 +267,7 @@ impl Gather for ObjectGather {
                 grammar_version: i.grammar_version,
                 tape_format_version: i.tape_format_version,
                 source_len: i.source.len(),
-                tape_len: i.tape.len(),
+                tape_len: (*i.tape).as_ref().len(),
                 tape_identity: i.tape_identity,
                 named: i.named,
             })
@@ -288,7 +301,7 @@ impl ObjectsWrite {
             }
             ObjectsWrite::Each(items) => {
                 for i in items.iter() {
-                    let (id, _) = store.put_source_and_tape(i.source.as_bytes(), i.canonical, i.grammar_id, i.grammar_version, i.tape_format_version, &i.tape)?;
+                    let (id, _) = store.put_source_and_tape(i.source.as_bytes(), i.canonical, i.grammar_id, i.grammar_version, i.tape_format_version, (*i.tape).as_ref())?;
                     if i.named {
                         store.name_sources([id]);
                     }
@@ -312,8 +325,8 @@ impl ContentStore {
     /// written (`name_sources`).
     /// Where the queue is full a lone write is dropped, and the next run parses the file again.
     #[allow(clippy::too_many_arguments)]
-    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<String>, tape: Arc<Vec<u8>>, named: bool) -> StoreResult<()> {
-        let tape_identity = HashKey::tape_identity(canonical, &tape);
+    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<String>, tape: TapeBytes, named: bool) -> StoreResult<()> {
+        let tape_identity = HashKey::tape_identity(canonical, (*tape).as_ref());
         let mut item = Some(Item { key, canonical, grammar_id, grammar_version, tape_format_version, source: Arc::clone(source), tape, tape_identity, named });
         let dir = object_dir(&self.database_path);
         let make = || ObjectGather { dir, items: Vec::new(), at: HashMap::new(), bytes: 0 };
@@ -321,7 +334,7 @@ impl ContentStore {
             return Ok(());
         }
         let item = item.take().expect("the file, not gathered");
-        let frames = Arc::new(self.source_and_tape_frames(item.source.as_bytes(), canonical, &item.tape)?);
+        let frames = Arc::new(self.source_and_tape_frames(item.source.as_bytes(), canonical, (*item.tape).as_ref())?);
         let write = ObjectsWrite::Lone { canonical, grammar: (grammar_id, grammar_version, tape_format_version), frames: Arc::clone(&frames), named: item.named };
         self.write_back_unless_full(Syms::None, "a tape and its source", frames.bytes(), vec![(key, Some(frames as Held))], write.work());
         Ok(())
@@ -652,10 +665,10 @@ mod tests {
         let queue = || {
             let _waves = write_back::run_waves();
             for (i, (source, tape)) in files.iter().enumerate() {
-                store.queue_source_and_tape(key(i), HashKey::sha256(source.as_bytes()), 7, 1, 1, source, Arc::clone(tape), true).unwrap();
+                store.queue_source_and_tape(key(i), HashKey::sha256(source.as_bytes()), 7, 1, 1, source, Arc::clone(tape) as TapeBytes, true).unwrap();
                 match i {
                     // Gathered: read where the run holds it.
-                    0 => assert!(matches!(store.queued_tape(&key(0)), Some(Ok(ObjectBytes::Heap(_))))),
+                    0 => assert!(matches!(store.queued_tape(&key(0)), Some(Ok(ObjectBytes::Tape(_))))),
                     // The gather full: placed, read in its segment, the wave not sealed yet.
                     3 => assert!(matches!(store.queued_tape(&key(0)), Some(Ok(ObjectBytes::Mapped(_))))),
                     _ => {}

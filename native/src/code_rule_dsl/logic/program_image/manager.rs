@@ -471,6 +471,14 @@ impl Store {
         out.sort_by_key(|(name, ..)| *name);
         out
     }
+    /// `a`, analysis `A` of this version read from a store apart from a stored run's rows (the kept plans' entry,
+    /// decision 0361 step 5), held as if computed and counted as loaded: the one held already, if any.
+    pub fn hold<A: Analysis>(&self, a: Arc<A>) -> Arc<A> {
+        *self.loaded.lock().entry(A::NAME).or_default() += 1;
+        let e = Entry { value: a, reads: A::READS, name: A::NAME, maintain: maintain_as::<A>, agrees: agrees_as::<A>, version: A::VERSION, rows: rows_as::<A> };
+        let kept = self.of.lock().entry(TypeId::of::<A>()).or_insert(e).value.clone();
+        kept.downcast::<A>().expect("an entry of its type")
+    }
     /// Whether analysis `A` is held.
     pub fn holds<A: Analysis>(&self) -> bool {
         self.of.lock().contains_key(&TypeId::of::<A>())
@@ -1088,6 +1096,8 @@ pub struct Pipeline<'s> {
     /// The request record by rule, carried through each step (`AskedByRule`); `None` once a step is read from a
     /// keyed store (its delta unknown: the record is left as the output states it).
     asked: Option<AskedByRule>,
+    /// A step read from the store left the record to be read again from its output (`load`).
+    asked_again: bool,
 }
 
 /// The request record (`Version::asked`, decision 0174's `asked` rows) by rule id, carried through a pipeline's
@@ -1108,15 +1118,18 @@ impl AskedByRule {
         if asked.is_empty() {
             return None;
         }
-        let mut by = HashMap::new();
+        // A record whose length is not its relation's rule count gates nothing (every reader of it checks: `prune`,
+        // the embed slice, lowering): it is carried as no record.
+        let (mut by, mut reqs) = (HashMap::new(), BTreeSet::new());
         for (req, readers) in &asked {
             let Some(rel) = v.rel(req) else { continue };
             let ids: Vec<RuleId> = v.heads(rel).map(|r| r.id()).collect();
             if ids.len() == readers.len() {
                 by.extend(ids.into_iter().zip(readers.iter().cloned()));
+                reqs.insert(req.clone());
             }
         }
-        Some(AskedByRule { by, reqs: asked.into_keys().collect() })
+        Some(AskedByRule { by, reqs })
     }
     fn step(&mut self, from: &Version, out: &Version, delta: &Delta) {
         let (was, stated) = (from.asked(), out.asked());
@@ -1130,6 +1143,12 @@ impl AskedByRule {
         let mut next = HashMap::new();
         // A pass that states the record itself (the merge renames readers) is taken at its word where its record
         // holds an entry a rule.
+        // A request the step states first (a later round's, `SourcesOnRequest`) is carried from here on.
+        for (req, by) in &stated {
+            if !self.reqs.contains(req) && out.rel(req).is_some_and(|rel| out.heads(rel).count() == by.len()) {
+                self.reqs.insert(req.clone());
+            }
+        }
         for req in &self.reqs {
             let Some(rel) = out.rel(req) else { continue };
             if let Some(by) = stated.get(req).filter(|by| was.get(req) != Some(*by) && by.len() == out.heads(rel).count()) {
@@ -1281,7 +1300,7 @@ impl<'s> Pipeline<'s> {
 
     pub fn new(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
         let asked = AskedByRule::of(&v);
-        Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None, asked }
+        Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None, asked, asked_again: false }
     }
     /// A pipeline whose steps are keyed and kept in `steps` (0281 §6). A step's key is a chain: the input version's
     /// identity (`identity`), the pipeline's name and the engine build, then for each step so far its pass's `NAME`,
@@ -1382,6 +1401,9 @@ impl<'s> Pipeline<'s> {
             (Some(asked), Carry::Step) => asked.step(from, &out, &delta),
             (Some(asked), Carry::Onto(kept)) => *asked = asked.onto(&kept, &out, &delta),
             (Some(asked), Carry::Is(now)) => *asked = now,
+            // A pipeline that began with no record carries the one its first step states (the lowering's tail: the
+            // requests made on request, `SourcesOnRequest`), unless a stored step left it to be read on `load`.
+            (None, _) if !self.asked_again && from.asked().is_empty() => self.asked = AskedByRule::of(&out),
             (None, _) => {}
         }
         let cx = Cx { v: &out, store: out.analyses(), pass, decided: &self.decided, asked: None };
@@ -1622,7 +1644,10 @@ impl<'s> Pipeline<'s> {
         if found.pass != pass || found.version != version {
             return Ok(Some(key));
         }
+        // Its delta unknown, the record is read again from its output once it is opened (`load`): each step's output
+        // states its record (`record`).
         self.asked = None;
+        self.asked_again = true;
         let input = self.stages.last().map_or((self.v.size(), self.v.digest()), |s| s.output);
         self.stages.push(Stage { pass, ran: Ran::Stored, form: Form::Unchanged, visited: 0, input, output: found.output, delta: 0, touched: Reads::default() });
         self.decided.borrow_mut().extend(found.decided.iter().cloned());
@@ -1639,6 +1664,9 @@ impl<'s> Pipeline<'s> {
             return Err(format!("{}: {}: its stored output is not the program its step recorded", self.name, found.pass));
         }
         self.v = v;
+        if std::mem::take(&mut self.asked_again) {
+            self.asked = AskedByRule::of(&self.v);
+        }
         Ok(())
     }
 
@@ -1646,6 +1674,12 @@ impl<'s> Pipeline<'s> {
     fn keep_step(&mut self, key: StepKey, pass: &'static str, version: u32, step: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
         let from = self.decided.borrow().len();
         step(self)?;
+        if self.keyed.is_none() {
+            return Ok(());
+        }
+        // A step stored holds its record (as the pipeline's end states it, `state_asked`): a run that reads the step
+        // from the store goes on from the record a run that made it had (`load` reads it again).
+        self.state_asked()?;
         let Some(k) = &self.keyed else { return Ok(()) };
         let decided = self.decided.borrow()[from..].to_vec();
         k.steps.keep(&key, &StepRecord { pass: pass.to_owned(), version, image: [0; 32], output: (self.v.size(), self.v.digest()), decided }, &self.v)
@@ -1684,7 +1718,10 @@ impl<'s> Pipeline<'s> {
         let v = self.v.clone();
         let mut b = v.builder();
         b.set_asked(&asked);
-        self.v = b.finish_overlay()?;
+        let stated = b.finish_overlay()?;
+        let cx = Cx { v: &stated, store: stated.analyses(), pass: "the request record stated", decided: &self.decided, asked: None };
+        stated.analyses().carry(v.analyses(), &cx, &Delta::of(&v, &stated))?;
+        self.v = stated;
         Ok(())
     }
     /// The last version, or the first step's error.
@@ -1958,8 +1995,6 @@ pub fn rebase(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Vers
     if 2 * (removed.len() + added.len()) > last.size().max(1) {
         return Ok(None);
     }
-    let lists = crate::code_rule_dsl::logic::front::Lists::default();
-    let (was, header) = (last.header(&lists)?, new.header(&lists)?);
     // The rebased rules' order: `last`'s kept, then `new`'s others, each by its head and hash.
     let gone: HashSet<_> = removed.iter().copied().collect();
     let order: Vec<(&str, u64)> = last.rules().filter(|r| !gone.contains(&r.id())).map(|r| (last.rel_name(r.head().rel()), r.hash())).chain(added.iter().map(|r| (new.rel_name(r.head().rel()), r.hash()))).collect();
@@ -1971,7 +2006,7 @@ pub fn rebase(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Vers
     for r in added {
         b.copy(new, r);
     }
-    b.set_header(&was, &header);
+    b.state_fields_as(last, new);
     if let Some(asked) = asked {
         b.set_asked(&asked);
     }
@@ -2010,8 +2045,6 @@ pub fn rebase_output(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<A
     if 2 * (removed.len() + added.len()) > last.size().max(1) {
         return Ok(None);
     }
-    let lists = crate::code_rule_dsl::logic::front::Lists::default();
-    let (was, header) = (last.header(&lists)?, new.header(&lists)?);
     let mut b = Builder::on(last);
     for id in removed {
         b.remove(id);
@@ -2019,7 +2052,7 @@ pub fn rebase_output(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<A
     for r in added {
         b.copy_as_is(new, r);
     }
-    b.set_header(&was, &header);
+    b.state_fields_as(last, new);
     b.finish_overlay().map(Some)
 }
 

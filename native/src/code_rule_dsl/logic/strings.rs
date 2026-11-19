@@ -462,7 +462,7 @@ impl Vocabulary {
 }
 
 /// The values a relation's column can hold when they come from the program's constants alone: a fact relation's
-/// (rows matching the atom's constants), a constant relation's (`typing::file_local::constant_relations`), or a
+/// (rows matching the atom's constants), a constant relation's (`typing::file_local::FileLocal::constants`), or a
 /// derived column every rule fills from such a column or a literal (with its facts' values, where it has facts). A
 /// superset is enough for its one reader, `implied_set_tests`. `None` where a value may come from anything else.
 fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(String, usize)>) -> Option<std::collections::BTreeSet<String>> {
@@ -675,7 +675,7 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
         // Each string the rule's text relations give: from a batch's column (`None`), or else from the first atom
         // that gives it over an answered `TEXT_COLUMNS` relation itself (the atom, and its column). A string only a
         // copy of an answered column gives stays tested per row: a native reading the copy would keep the copy
-        // whole (a relation a native reads is not factorized, `typing::file_local::factorize_exports`), and with it
+        // whole (a relation a native reads is not factorized, `typing::file_local::FactorizeExports`), and with it
         // its reads of `node_text` in the cross-file part.
         let mut texts: HashMap<String, Option<(usize, usize)>> = HashMap::new();
         for (at, a) in rule.body.iter().enumerate().filter_map(|(i, l)| match l {

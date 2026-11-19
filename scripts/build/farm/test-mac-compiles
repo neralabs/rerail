@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""A test of this Mac's compiles on a farm host: the bytes a host gives are this Mac's own.
+
+    scripts/build/farm/test-mac-compiles HOST
+
+Builds a small crate here (registry crates with and without a proc-macro, ones whose build script
+writes OUT_DIR, one that bundles C), recording each rustc call. Then it compiles each library compile the farm would
+send (`remote_eligible`) on HOST, through the farm's own path (`farm.remote`, the mirror daemon and
+the host's agent), into a second directory, and compares every output with this Mac's, byte for
+byte. A compile the farm keeps here (`not on HOST: ...` in its log) is reported as such, not as a
+failure. Run it after a change to how a host compiles, on a Mac host and on a Linux one.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+here = os.path.dirname(os.path.abspath(__file__))
+
+if len(sys.argv) > 2 and sys.argv[1] == "--record":
+    # cargo's RUSTC_WRAPPER in the build below: record the call, then run it.
+    with open(sys.argv[2], "a") as f:
+        f.write(json.dumps({"cwd": os.getcwd(), "args": sys.argv[3:], "env": dict(os.environ)}) + "\n")
+    # (and the farm's record of it, as its wrapper keeps one: a Linux host builds a proc-macro from it)
+    sys.path.insert(0, here)
+    import farm
+    args = sys.argv[4:]
+    if farm.value(args, "--crate-name") and farm.value(args, "--out-dir"):
+        farm.record_call(args, farm.value(args, "--out-dir"), farm.value(args, "--crate-name"), dict(os.environ))
+    os.execv(sys.argv[3], sys.argv[3:])
+
+sys.path.insert(0, here)
+import farm  # noqa: E402
+
+if len(sys.argv) != 2:
+    sys.exit(__doc__)
+name = sys.argv[1]
+host = next((h for h in farm.hosts() if h["name"] == name), None)
+if host is None:
+    sys.exit(f"test-mac-compiles: no host {name} in the farm's configuration")
+health = farm.health(host, fresh=True)
+if not health.get("ok"):
+    sys.exit(f"test-mac-compiles: {name} is not usable: {health.get('why')}")
+
+toolchain = open(os.path.join(here, "../../../rust-toolchain.toml")).read().split('channel = "')[1].split('"')[0]
+# Under this Mac's home: a Linux host's container holds only that (farm-agent, `xc_container`).
+work = os.path.join(farm.HOME, "Library/Caches/rerail-farm/test-mac-compiles", str(os.getpid()))
+crate = os.path.join(work, "probe")
+os.makedirs(os.path.join(crate, "src"))
+open(os.path.join(crate, "Cargo.toml"), "w").write(
+    '[package]\nname = "probe"\nversion = "0.1.0"\nedition = "2021"\n[workspace]\n'
+    '[dependencies]\nmemchr = "2"\nserde = { version = "1", features = ["derive"] }\nthiserror = "2"\nregex = "1"\n'
+    'zstd = "0.13"\n')
+open(os.path.join(crate, "src/lib.rs"), "w").write(
+    "#[derive(serde::Serialize)]\npub struct P { pub a: u8 }\npub fn f(h: &[u8]) -> Option<usize> { memchr::memchr(b'x', h) }\n"
+    "#[derive(Debug, thiserror::Error)]\n#[error(\"e\")]\npub struct E;\n"
+    "pub fn g(t: &str) -> bool { regex::Regex::new(\"a+\").unwrap().is_match(t) }\n"
+    "pub fn z(b: &[u8]) -> Vec<u8> { zstd::encode_all(b, 1).unwrap() }\n")
+calls = os.path.join(work, "calls.jsonl")
+LOG = os.environ["RERAIL_FARM_LOG"] = os.path.join(work, "farm.log")
+# (a wrapper of its own in place of the farm's: this build records, and compiles here)
+env = dict(os.environ, RUSTC_WRAPPER=os.path.join(work, "record"), CARGO_TARGET_DIR=os.path.join(work, "a"))
+open(env["RUSTC_WRAPPER"], "w").write(f"#!/bin/sh\nexec {sys.executable} {os.path.abspath(__file__)} --record {calls} \"$@\"\n")
+os.chmod(env["RUSTC_WRAPPER"], 0o755)
+build = subprocess.run(["nice", "-n", "19", "cargo", f"+{toolchain}", "build", "-q"], cwd=crate, env=env)
+if build.returncode:
+    sys.exit(f"test-mac-compiles: the build here failed (kept: {work})")
+
+a, b = os.path.join(work, "a"), os.path.join(work, "b")
+failures, same, kept = [], 0, []
+for line in open(calls):
+    call = json.loads(line)
+    rustc, args = call["args"][0], call["args"][1:]
+    if not farm.remote_eligible(args) or not any(call["cwd"].startswith(p + "/") for p in farm.IN_PLACE):
+        continue
+    if "link" not in farm.emits(args):
+        continue
+    crate_name = farm.value(args, "--crate-name")
+    out_a = os.path.abspath(farm.value(args, "--out-dir"))
+    out_b = out_a.replace(a, b, 1)
+    os.makedirs(out_b, exist_ok=True)
+    i = args.index("--out-dir")
+    args_b = args[:i + 1] + [out_b] + args[i + 2:]
+    before = os.path.getsize(LOG) if os.path.exists(LOG) else 0
+    os.chdir(call["cwd"])
+    ok = farm.remote(host, rustc, args_b, call["env"], time.time())
+    if not ok:
+        why = open(LOG, errors="replace").read()[before:].strip().splitlines()[-1:] if os.path.exists(LOG) else []
+        kept.append(f"{crate_name}: {why[0] if why else 'kept here'}")
+        continue
+    extra = farm.codegen(args, "extra-filename") or ""
+    for out in (f"lib{crate_name}{extra}.rlib", f"lib{crate_name}{extra}.rmeta"):
+        pa, pb = os.path.join(out_a, out), os.path.join(out_b, out)
+        if not os.path.exists(pa):
+            continue
+        if not os.path.exists(pb):
+            failures.append(f"{crate_name}: {out} did not come back")
+        elif open(pa, "rb").read() != open(pb, "rb").read():
+            failures.append(f"{crate_name}: {out} differs from this Mac's")
+        else:
+            same += 1
+            print(f"ok   {crate_name}: {out} is this Mac's bytes")
+
+for k in kept:
+    print(f"here {k}")
+for f in failures:
+    print(f"FAIL {f}")
+if failures or not same:
+    print(f"{len(failures)} failed, {same} the same (kept: {work})")
+    sys.exit(1)
+# (moved out first, then deleted there: deletes outside /tmp are refused on this machine)
+gone = f"/tmp/ai-trash/test-mac-compiles-{os.getpid()}"
+os.makedirs("/tmp/ai-trash", exist_ok=True)
+shutil.move(work, gone)
+shutil.rmtree(gone)
+print(f"all passed: {same} outputs the same, {len(kept)} compiled here")

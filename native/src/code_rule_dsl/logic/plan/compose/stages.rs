@@ -23,12 +23,10 @@ pub(super) fn bind(p: &Placed, db: &Connection, inputs: &mut Inputs, rel: &str, 
 
 /// `p` edited by `b`, a builder on `p.v` that only removes rules (each rule left where it was) and states parts. The
 /// maintained program's parts stay as they were: no edit here touches them, as the tree's edits did not.
-fn edited(p: &Placed, b: Builder<'_>) -> Result<Placed> {
+fn edited(_: &Placed, b: Builder<'_>) -> Result<Placed> {
     let (v, _) = b.finish().map_err(Error::Plan)?;
     let ids = v.rules().map(|r| r.id()).collect();
-    let mut out = Placed::new(v, ids, true);
-    out.maint = p.maint.clone();
-    Ok(out)
+    Ok(Placed::new(v, ids, true))
 }
 
 /// `p` with `rels` made inputs, one edit: their rules, facts and natives gone, and each an input after those it has.

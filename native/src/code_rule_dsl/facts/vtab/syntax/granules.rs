@@ -61,7 +61,7 @@ const _: () = assert!(INDEX_BITS == rerail_blocks::packed::ID_SPLIT, "a kept id 
 pub const INDEX: u32 = 1 << INDEX_BITS;
 const SLOTS: u32 = 1 << SLOT_BITS;
 /// The top slots, from `SLOTS - 1` down, hold a document's spans: up to `SPAN_SLOTS << INDEX_BITS` of them.
-pub(super) const SPAN_SLOTS: u32 = 16;
+pub(super) const SPAN_SLOTS: u32 = rerail_clif::ids::SPAN_SLOTS;
 /// The positions (`span_low`) a document may have: past them a run fails (`super::Batch::build`), never wraps.
 pub const POSITIONS: u64 = SPAN_SLOTS as u64 * INDEX as u64;
 /// The first slot of the spans'.

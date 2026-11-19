@@ -3231,6 +3231,7 @@ dependencies = [
  "rerail-clif",
  "rerail-compiler",
  "rerail-tape-format",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -3563,6 +3564,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-kotlin-aot"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rerail-compiler",
+ "rerail-kotlin-aot",
+ "rerail-kotlin-lean",
+ "rerail-kotlin-parser",
+]
+
+[[package]]
 name = "rerail-kotlin-lean"
 version = "0.1.0"
 dependencies = [
@@ -3635,6 +3647,7 @@ dependencies = [
  "rerail-lang",
  "rerail-markdown-inline-lean",
  "rerail-markdown-lean",
+ "rerail-metal",
  "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",

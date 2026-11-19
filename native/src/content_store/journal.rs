@@ -71,6 +71,12 @@ pub fn volume(path: &Path) -> Option<[u8; 16]> {
     }
 }
 
+/// FSEvents' latest event id: a test's cursor taken now (`observe`'s Q189 test).
+#[cfg(all(test, target_os = "macos"))]
+pub fn current_id() -> u64 {
+    fsevents::current_id()
+}
+
 /// A new outermost run begins: a question asked after this is answered with every change made before it (each kept
 /// stream waits for a cookie once, `fsevents::sync`). Runs inside it share its answer.
 pub fn next_epoch() {
@@ -102,8 +108,15 @@ pub fn prepare(roots: &[(PathBuf, String)], cookie_dir: &Path) {
 /// (fil's remedy; none in a run, whose roots are then checked by their listings, a few seconds in a test of the
 /// journal itself).
 pub fn since(roots: &[PathBuf], cursor: Option<&str>, cookie_dir: &Path, settle: std::time::Duration) -> Since {
+    since_within(roots, cursor, cookie_dir, settle, None)
+}
+
+/// `since`, waiting for the journal at most `wait` (Q221): the caller's checking every answer it keeps under the roots
+/// costs it, and a slower journal answers `Lost`, its cursor one the stream was told everything before. The stream is
+/// kept: only this question went unanswered.
+pub fn since_within(roots: &[PathBuf], cursor: Option<&str>, cookie_dir: &Path, settle: std::time::Duration, wait: Option<std::time::Duration>) -> Since {
     let at = std::time::Instant::now();
-    let r = since_backend(roots, cursor, cookie_dir, settle);
+    let r = since_backend(roots, cursor, cookie_dir, settle, wait);
     if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
         let what = match &r { Since::Changed { paths, .. } => format!("{} paths", paths.len()), Since::Lost { why, .. } => format!("lost: {why}"), Since::Behind { .. } => "behind".to_owned() };
         eprintln!("journal: {:.3} s, {} roots ({}), {what}", at.elapsed().as_secs_f64(), roots.len(), roots.first().map_or(String::new(), |r| r.display().to_string()));
@@ -111,17 +124,17 @@ pub fn since(roots: &[PathBuf], cursor: Option<&str>, cookie_dir: &Path, settle:
     r
 }
 
-fn since_backend(roots: &[PathBuf], cursor: Option<&str>, cookie_dir: &Path, settle: std::time::Duration) -> Since {
+fn since_backend(roots: &[PathBuf], cursor: Option<&str>, cookie_dir: &Path, settle: std::time::Duration, wait: Option<std::time::Duration>) -> Since {
     match backend() {
         #[cfg(target_os = "macos")]
-        Backend::FsEvents => match fsevents::since(roots, cursor.and_then(|c| c.parse().ok()), cookie_dir, settle) {
+        Backend::FsEvents => match fsevents::since_within(roots, cursor.and_then(|c| c.parse().ok()), cookie_dir, settle, wait) {
             Since::Changed { paths, cursor } => Since::Changed { paths, cursor: cursor.to_string() },
             Since::Lost { cursor, why } => Since::Lost { cursor: cursor.map(|c| c.to_string()), why },
             Since::Behind { cursor } => Since::Behind { cursor: cursor.to_string() },
         },
         Backend::Watchman(bin) => {
             // Watchman's daemon was running when the change was made: what it names is told live, not replayed.
-            let _ = (cookie_dir, settle);
+            let _ = (cookie_dir, settle, wait);
             watchman::since(&bin, roots, cursor)
         }
         Backend::Off => Since::Lost { cursor: None, why: "no journal on this system" },
@@ -299,6 +312,13 @@ mod fsevents {
     // (`observe::forget`).
     const LOST: u32 = 0x2 | 0x4 | 0x8 | 0x20 | 0x40 | 0x80;
     const HISTORY_DONE: u32 = 0x10;
+    /// An item's bytes or name changed: created, removed, renamed, modified (`kFSEventStreamEventFlagItem…`), or a
+    /// rescan of its directory (`MustScanSubDirs`).
+    const CONTENT: u32 = 0x100 | 0x200 | 0x800 | 0x1000 | 0x1;
+    /// Only its metadata changed: inode metadata (an access time set, a mode), Finder info, owner, extended
+    /// attributes. Its bytes are as they were, so an event of these alone names no change (Q152: a host's agent setting
+    /// the access times of the files a command will read made a warm run forget their answers).
+    const META: u32 = 0x400 | 0x2000 | 0x4000 | 0x8000;
     /// How long a replay may wait for its cookie.
     const WAIT: Duration = Duration::from_secs(2);
 
@@ -312,6 +332,9 @@ mod fsevents {
     struct Seen {
         /// Each with its id, in the order they came.
         events: Vec<(u64, String)>,
+        /// The latest id told, of any event (a change, a cookie, history's end): every change before it has come,
+        /// as a stream is told in id order.
+        last: u64,
         history_done: bool,
         /// The cookies seen, with their events' ids and how many events had come before each.
         cookies: std::collections::HashMap<String, (u64, usize)>,
@@ -341,6 +364,7 @@ mod fsevents {
         let mut seen = shared.seen.lock().unwrap_or_else(|e| e.into_inner());
         for i in 0..n {
             let (path, flag, id) = unsafe { (CStr::from_ptr(*paths.add(i)).to_string_lossy().into_owned(), *flags.add(i), *ids.add(i)) };
+            seen.last = seen.last.max(id);
             if flag & LOST != 0 {
                 seen.lost = Some("the system dropped or renumbered events");
             }
@@ -359,6 +383,9 @@ mod fsevents {
                 let at = seen.events.len();
                 seen.cookies.entry(path).or_insert((id, at));
                 seen.cookie_at = Some(Instant::now());
+                continue;
+            }
+            if flag & META != 0 && flag & CONTENT == 0 {
                 continue;
             }
             seen.events.push((id, path));
@@ -476,8 +503,9 @@ mod fsevents {
     /// now has a later id than each, and comes after them. The cookie's id: what it has been told up to it is
     /// complete, so a replay from it misses nothing (and no id need be asked of the system).
     ///
-    /// `wait`: how long the cookie may take (`WAIT` in a run; a test of the journal gives its settle budget).
-    fn sync(live: &mut Live, epoch: u64, wait: Duration) -> Result<u64, &'static str> {
+    /// `wait`: how long the cookie may take (`WAIT` in a run, less where the caller bounds it (Q221); a test of the
+    /// journal gives its settle budget). Under `WAIT`, a cookie not come is `Late::Slower`, the stream kept.
+    fn sync(live: &mut Live, epoch: u64, wait: Duration) -> Result<u64, Late> {
         if let Some((e, now)) = live.synced
             && e == epoch
         {
@@ -485,9 +513,9 @@ mod fsevents {
         }
         let cookie = format!("{}{}", live.shared.cookie, COUNTER.fetch_add(1, Ordering::Relaxed));
         if std::fs::write(&cookie, b"").is_err() {
-            return Err("no cookie could be written");
+            return Err(Late::Lost("no cookie could be written"));
         }
-        let deadline = Instant::now() + wait;
+        let (bounded, deadline) = (wait < WAIT, Instant::now() + wait);
         let mut seen = live.shared.seen.lock().unwrap_or_else(|e| e.into_inner());
         while !(seen.cookies.contains_key(&cookie) && seen.history_done) && seen.lost.is_none() {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -498,19 +526,35 @@ mod fsevents {
         }
         let done = seen.history_done.then(|| seen.cookies.get(&cookie).copied()).flatten();
         seen.cookies.clear();
-        let lost = seen.lost;
+        let (lost, last) = (seen.lost, seen.last);
         drop(seen);
         let _ = std::fs::remove_file(&cookie);
         if live.synced.is_none() {
             let _ = std::fs::remove_file(&live.shared.marker);
         }
         if let Some(why) = lost {
-            return Err(why);
+            return Err(Late::Lost(why));
         }
-        let Some((id, at)) = done else { return Err("the cookie's event did not arrive") };
+        let Some((id, at)) = done else {
+            return Err(if bounded { Late::Slower(last) } else { Late::Lost("the cookie's event did not arrive") });
+        };
         live.synced = Some((epoch, id));
         live.syncs.push((id, at));
         Ok(id)
+    }
+
+    /// Why a stream could not answer: it lost track (`Lost`: dropped), or its cookie came later than the caller's
+    /// bound (`Slower`: kept, with the latest id it was told, which every change before has reached).
+    enum Late {
+        Lost(&'static str),
+        Slower(u64),
+    }
+
+    /// The system's latest event id (a test's stand-in for a cursor taken now).
+    #[cfg(test)]
+    pub(super) fn current_id() -> u64 {
+        // SAFETY: no arguments; returns the latest id.
+        unsafe { FSEventsGetCurrentEventId() }
     }
 
     pub(super) fn volume(path: &Path) -> Option<[u8; 16]> {
@@ -536,6 +580,9 @@ mod fsevents {
     pub(super) fn prepare(roots: &[(PathBuf, u64)], cookie_dir: &Path) {
         // SAFETY: no arguments; returns the latest id.
         let now = unsafe { FSEventsGetCurrentEventId() };
+        if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
+            eprintln!("journal prepared at id {now}: {} roots", roots.len());
+        }
         let Ok(cookie_dir) = std::fs::canonicalize(cookie_dir) else { return };
         let mut real: Vec<(PathBuf, u64)> = roots.iter().filter(|(_, c)| *c <= now).filter_map(|(r, c)| Some((std::fs::canonicalize(r).ok()?, *c))).collect();
         real.sort();
@@ -565,7 +612,12 @@ mod fsevents {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn since(roots: &[PathBuf], cursor: Option<u64>, cookie_dir: &Path, settle: Duration) -> Since {
+        since_within(roots, cursor, cookie_dir, settle, None)
+    }
+
+    pub(super) fn since_within(roots: &[PathBuf], cursor: Option<u64>, cookie_dir: &Path, settle: Duration, wait: Option<Duration>) -> Since {
         // The id now, asked of the system only where no stream's cookie gives one (it waits on `fseventsd`): a change
         // after it is the next replay's.
         // SAFETY: no arguments; returns the latest id.
@@ -636,10 +688,12 @@ mod fsevents {
             }
             let synced = match r {
                 Ok(synced) => synced,
-                Err(why) => {
+                Err(Late::Lost(why)) => {
                     all.remove(at);
                     return Since::Lost { cursor: Some(now()), why };
                 }
+                // Every change before the latest id told has come; the caller checks what it keeps from there.
+                Err(Late::Slower(last)) => return Since::Lost { cursor: Some(last.max(cursor)), why: "the journal is slower than checking what is kept" },
             };
             // A stream's first answer is its history's: trusted only with the marker written before it in it.
             if first && !all[at].shared.seen.lock().map(|s| s.marker_in_history).unwrap_or(false) {
@@ -668,6 +722,13 @@ mod fsevents {
             // one missed.
             let live = &all[at];
             let first = live.syncs.iter().rev().find(|(id, _)| *id == cursor).map_or(0, |(_, k)| *k);
+            if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
+                // Each event the stream holds, as it came against the sync the question is from (Q189's evidence).
+                for (k, (id, path)) in seen.events.iter().enumerate() {
+                    eprintln!("journal event {id} {} {path}", if k >= first { "after" } else { "before" });
+                }
+                eprintln!("journal asked from {cursor}, synced at {synced}");
+            }
             for (_, path) in &seen.events[first.min(seen.events.len())..] {
                 let path = Path::new(path.trim_end_matches('/'));
                 let Some((real_root, root)) = real.iter().find(|(r, _)| path.starts_with(r)) else { continue };
@@ -762,6 +823,26 @@ mod tests {
         next_epoch();
         let (paths, _) = changed!(base, since(std::slice::from_ref(&root), Some(settled), &cookies, SETTLE));
         assert!(paths.is_empty(), "nothing since: {paths:?}");
+        // A journal slower than the caller's bound (Q221; nothing is slower than none) answers `Lost`, with a cursor
+        // no earlier than the one asked, which every change before has reached; the stream is kept for the next.
+        next_epoch();
+        match super::fsevents::since_within(std::slice::from_ref(&root), Some(settled), &cookies, SETTLE, Some(std::time::Duration::ZERO)) {
+            Since::Lost { cursor: Some(c), why } => assert!(why.contains("slower") && c >= settled, "{why}: {c} against {settled}"),
+            other => panic!("a bound of nothing is slower than any journal: {other:?}"),
+        }
+        // A file whose times are set, its mtime to what it was (as a host's agent marks a file a command will read),
+        // is not named: its bytes are as they were. Written, it is.
+        let kept = root.join("sub/kept.py");
+        let mtime = std::fs::metadata(&kept).unwrap().modified().unwrap();
+        std::fs::File::options().write(true).open(&kept).unwrap().set_times(std::fs::FileTimes::new().set_accessed(std::time::SystemTime::now()).set_modified(mtime)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        next_epoch();
+        let Since::Changed { paths, cursor: touched } = since(std::slice::from_ref(&root), Some(settled), &cookies, SETTLE) else { panic!("a replay") };
+        assert!(!paths.contains(&kept), "an access time set is no change: {paths:?}");
+        std::fs::write(&kept, "x = 2\n").unwrap();
+        next_epoch();
+        let Since::Changed { paths, .. } = since(std::slice::from_ref(&root), Some(touched), &cookies, SETTLE) else { panic!("a replay") };
+        assert!(paths.contains(&kept), "a write is named: {paths:?}");
         // A root under one asked is answered by the same stream, kept for the process: a change made since the
         // run's question is told to the next run.
         std::fs::write(root.join("sub/later.py"), "z = 3\n").unwrap();

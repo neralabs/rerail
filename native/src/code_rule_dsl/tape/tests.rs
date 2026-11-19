@@ -5156,6 +5156,55 @@ fn every_tape_format_reads_the_document_as_restored() {
     }
 }
 
+/// Decision 0353 step 4a: a stored tape placed in its home (a slab's room, where the host has a device) and read
+/// there answers every node question as the same tape read from a buffer of its own, in each format.
+#[test]
+fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
+    use super::formats::Format;
+    use rerail_tape_format::tape::{Tape, children};
+    let source: String = (0..400).map(|i| format!("x{i} = f(a, {i})\n")).collect();
+    let (_, doc, _, _) = fixture(&source, GrammarDialect::Python);
+    let grammar = Arc::new(Grammar::new(GrammarDialect::Python).unwrap());
+    for format in Format::ALL {
+        let bytes = doc.doc_tape().image().clone().in_format(format, source.as_bytes()).to_bytes().unwrap();
+        let own = TapeImage::from_bytes(&bytes, &grammar).unwrap();
+        let home = super::placed::place(bytes.len(), |out| {
+            out.copy_from_slice(&bytes);
+            Ok(())
+        })
+        .unwrap();
+        let placed = TapeImage::from_home(home, &grammar).unwrap();
+        assert_eq!(placed.format(), format, "held as stored");
+        #[cfg(target_os = "macos")]
+        assert_eq!(placed.placed(), rerail_metal::METAL_DEVICE.is_some(), "{format:?}: in a slab's room where there is a device");
+        assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
+        let (own, placed) = (super::formats::DocTape::new(Arc::new(own), Arc::new(source.clone())), super::formats::DocTape::new(Arc::new(placed), Arc::new(source.clone())));
+        let (a, b) = (own.tape(), placed.tape());
+        rerail_tape_format::with_tape!(a, |a| {
+            rerail_tape_format::with_tape!(b, |b| {
+                assert_eq!(a.len(), b.len());
+                for i in 0..a.len() {
+                    let at = |what: &str| format!("{format:?}: {what} of {i}");
+                    assert_eq!(a.table().entry(a.code(i)), b.table().entry(b.code(i)), "{}", at("code"));
+                    assert_eq!((a.start(i), a.end(i)), (b.start(i), b.end(i)), "{}", at("span"));
+                    assert_eq!(a.subtree_end(i), b.subtree_end(i), "{}", at("subtree"));
+                    assert_eq!(a.parent(i), b.parent(i), "{}", at("parent"));
+                    assert_eq!(children(&a, i).collect::<Vec<_>>(), children(&b, i).collect::<Vec<_>>(), "{}", at("children"));
+                }
+            });
+        });
+        let ((ta, va), (tb, vb)) = (own.in_place().unwrap(), placed.in_place().unwrap());
+        // A 16z view names its tape by an id of its own (its blocks' keys in a cache): the rest is the same.
+        let unnamed = |mut v: rerail_clif::view::TapeView| {
+            if v.format == rerail_clif::view::F16Z_FORMAT {
+                (v.side[2], v.side[3]) = (0, 0);
+            }
+            v
+        };
+        assert_eq!((ta, unnamed(va)), (tb, unnamed(vb)), "{format:?}: the reads' bytes and view");
+    }
+}
+
 /// Decision 0293 §4: a file's documents stored in each format (`FileImage::in_format`, then as the store keeps and
 /// reads them) are held as stored, and the documents restored from them answer every node question as format 15's
 /// do: a Python file of several blocks, and a host whose language has no format 16 table (kept as format 15) with a
@@ -5269,7 +5318,8 @@ fn the_lean_parsers_write_each_format_directly() {
 
 /// The reads written once in CLIF (decision 0310), JIT-compiled whole, read a document's tape where it is held as
 /// the document reads it, in every format a run may hold: format 15's columns in their one buffer, format 16's
-/// arrays, and a 16z tape's blocks laid out as format 16 once. Every node's code (through the device's codes: kind,
+/// arrays, and a 16z tape's blocks as stored, a block decoded into the reader's slot where a read falls (0353 step
+/// 4b). Every node's code (through the device's codes: kind,
 /// field, flags), parent, next sibling, children, subtree and span; one document past a side-list part (1,024
 /// nodes), with gaps and lengths past a byte.
 #[test]
@@ -5295,6 +5345,9 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
             });
             assert_eq!(doc.doc_tape().image().format(), format, "held as {format:?}");
             let (tape, view) = doc.doc_tape().in_place().unwrap();
+            let reader = rerail_clif::view::Reader::new(&view, tape.as_ptr());
+            // SAFETY: the reader's view, which this thread alone reads.
+            let view = unsafe { &*reader.view() };
             let codes = resident::doc_codes(&doc).unwrap();
             let none = |v: Option<u32>| v.unwrap_or(NONE);
             let n = doc.transducer_len() as u32;
@@ -5421,4 +5474,105 @@ fn scala_tapes_from_the_lean_parser_are_tree_sitters() {
         ],
         &["class A {\n", "def f( = 1\n", "val x = (1,\n"],
     );
+}
+
+/// A node reached without its parent (an anchor's, a binary search's: `TapeDoc::node`; a walk's, `dfs`) reads it from
+/// the parents the document keeps once one is asked (`DocTape::parents`), not from a search of the tape a step: every
+/// node's parent and climb are the tree's, and the parents are kept once, 4 bytes a node. Format 15 stores no parent;
+/// its search a step made the shipped Node.js built-in tables slower. On format 16 the test pins the parents and
+/// climbs alone; the bytes kept are the format's.
+/// PR #508's 765ed3f2e (t47).
+#[test]
+fn a_node_reached_without_its_parent_reads_the_kept_parents() {
+    use ast_grep_core::source::SgNode as _;
+    let source = format!(
+        "class C:\n{}",
+        "    def m(self, a):\n        return [a + 1 for b in a if b]\n".repeat(200)
+    );
+    const NONE: u32 = u32::MAX;
+    let (_, tape, _, _) = fixture(&source, GrammarDialect::Python);
+    // The tree's parents, from the subtrees open around each node: a pass that keeps none.
+    let parents: Vec<u32> = tape
+        .transducer_parents()
+        .map(|parent| parent.unwrap_or(NONE))
+        .collect();
+    let id = |node: TapeNode<'_>| node.node_id() as u32;
+    let walked: Vec<TapeNode<'_>> = tape.root_node().dfs().collect();
+    assert_eq!(
+        walked.iter().map(|&node| id(node)).collect::<Vec<_>>(),
+        (0..parents.len() as u32).collect::<Vec<_>>()
+    );
+    for (index, &up) in parents.iter().enumerate() {
+        let index = index as u32;
+        for node in [tape.node(index), walked[index as usize]] {
+            assert_eq!(node.parent().map_or(NONE, id), up, "parent of {index}");
+            let mut climb = Vec::new();
+            let mut at = up;
+            while at != NONE {
+                climb.push(at);
+                at = parents[at as usize];
+            }
+            assert_eq!(
+                node.ancestors(tape.root_node()).map(id).collect::<Vec<_>>(),
+                climb,
+                "ancestors of {index}"
+            );
+        }
+        assert_eq!(
+            tape.transducer_parent(index),
+            (up != NONE).then_some(up),
+            "transducer parent of {index}"
+        );
+    }
+}
+
+/// `using` as a name (#735's grammars, Patch 18 and Patch 30) reads without a syntax error on the product's path:
+/// the lean parser refuses every `using`, and tree-sitter, which once read it as a declaration's keyword and left
+/// every TypeScript clause of such a file source-incomplete (src/cli/rule-draft.ts), reads it as a name.
+/// PR #508's 7410a263b (t47).
+#[test]
+#[ignore = "PR #508 7410a263b not ported: Q245"]
+fn using_as_a_name_reads_without_an_error_on_the_products_path() {
+    use crate::code_rule_dsl::tape::ecma_lean;
+    use rerail_ecma_lean::Dialect;
+    let sources = [
+        "const using = [1]; using.filter(x => x)\n",
+        "function f(using: number[]) { return using.length; }\n",
+    ];
+    for (dialect, gd) in [
+        (Dialect::JavaScript, GrammarDialect::JavaScript),
+        (Dialect::TypeScript, GrammarDialect::TypeScript),
+        (Dialect::Tsx, GrammarDialect::Tsx),
+    ] {
+        let grammar = Grammar::new(gd).unwrap();
+        for source in sources {
+            // A parameter's type is TypeScript's: JavaScript reads the first only.
+            if dialect == Dialect::JavaScript && source.contains(": number") {
+                continue;
+            }
+            let product = TapeImage::parse(&grammar, source, &|| false)
+                .expect("read to its end")
+                .unwrap_or_else(|e| panic!("{gd:?}: {source:?}: {e}"));
+            let doc = TapeDoc::restore(
+                Arc::new(source.to_owned()),
+                Arc::clone(&grammar),
+                &product.primary,
+                &|| false,
+            )
+            .unwrap();
+            assert_eq!(
+                doc.syntax_error_ranges(),
+                Vec::<std::ops::Range<usize>>::new(),
+                "{gd:?}: {source:?}"
+            );
+            // Accepted, the lean parser's tape is the product's.
+            if let Ok(Ok(lean)) = ecma_lean::encode(dialect, &grammar, source, &|| false) {
+                assert_eq!(
+                    product.primary.to_bytes().unwrap(),
+                    lean.to_bytes().unwrap(),
+                    "{gd:?}: {source:?}"
+                );
+            }
+        }
+    }
 }

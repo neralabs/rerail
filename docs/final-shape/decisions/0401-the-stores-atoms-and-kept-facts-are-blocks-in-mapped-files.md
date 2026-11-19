@@ -344,7 +344,7 @@ rolled up: with no base, a roll-up is due only past four deltas.
 Open: the peak footprint rose 65 MB while the heap fell 83 MB and RSS fell 149 MB. The footprint is above the RSS, so
 it counts pages that are not resident. The different store states may be the cause. So may the atoms writer's
 writable shared mapping of `d4` (50 MB): the writer is opened only to append, and this warm run appended one atom.
-Neither `footprint` nor `vmmap` can attach to a process over the farm's ssh session, so it is not yet known (Q214).
+Neither `footprint` nor `vmmap` can attach to a process over the farm's ssh session, so it is not yet known (Q230).
 
 ### The keep beside the frames (step 6, 2026-11-18)
 

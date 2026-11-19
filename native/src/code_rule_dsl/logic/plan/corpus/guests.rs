@@ -45,7 +45,7 @@ pub(super) const SPLICE: &str = "rr_splice_req";
 pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
 /// The relations a rule reads guests and values through (`rr::lower`'s guest relations): a program none of whose
 /// needed rules reads one makes no guest.
-pub(super) const READS: [&str; 10] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node", "parse_of", "unparse_of", "splice_of"];
+pub(in crate::code_rule_dsl) const READS: [&str; 10] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node", "parse_of", "unparse_of", "splice_of"];
 /// Every relation a request is read from: a run with a rule deriving one makes guests.
 pub(in crate::code_rule_dsl) const REQUESTS: [&str; 5] = ["embed", "embed_value", DEMAND, PARSE, SPLICE];
 /// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's): the
@@ -287,7 +287,7 @@ pub(super) struct Guests {
 pub(super) enum Seen {
     /// Files and code in the run's language: a rule that names no guest.
     Code,
-    /// And annotations: a relation whose copies for them were folded into it (`hiding::fold_own` widens its bound).
+    /// And annotations: a relation whose copies for them were folded into it (`combining::FoldOwn` widens its bound).
     Annotations,
     /// Every guest: a rule enters one through a guest relation (`hiding::ENTRIES`, `READS`), or reads an AST
     /// matcher's literal.

@@ -203,7 +203,7 @@ layout, not a promise the rules must keep: the engine makes it true.
 - The engine is told by its component's spec (`sorted <rels>`), from the `.decl`'s qualifier (decision 0099's
   list, `front::QUALIFIERS`).
 
-**Merge joins** (2026-11-18, Q217). A join of two relations in order on the join key is a merge: the outer side
+**Merge joins** (2026-11-18, Q251). A join of two relations in order on the join key is a merge: the outer side
 scanned in order and the inner side read forward from where the last key's rows began. The engine had both
 halves: a scan whose rows are known sorted on the next probe's key is not sorted again (`scan_order`, decision
 0187), and a probe of a sorted order keeps a cursor (`candidates()`' hints, `Index::find_at`). Two gaps stopped a
@@ -347,4 +347,4 @@ sorted or a cursor's probe has no work to save there.
 4. (measured) ep2: the chain's bytes against the frames', K-R7.
 5. (built) Bind kept relations from the chain in place of the frames; K-R8a, K-R8.
 6. (built) The frames hold no rows (6a, K-R9); kept relations read in place (6b); the virtual table (6c, K-R10).
-7. (built) Sorted outputs (K7, K-R11; Q217).
+7. (built) Sorted outputs (K7, K-R11; Q251).

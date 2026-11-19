@@ -17,16 +17,15 @@ pub type Matchers = [(String, String, Vec<String>)];
 
 /// The projection of the program `v` (its fields besides its rules `head`), reading `reads`, with its long text and
 /// anchors: `Projection::of(prog, reads).with_long_text(prog, matchers)` of its tree.
-pub fn projection(v: &Version, head: &crate::code_rule_dsl::logic::front::Program, reads: BTreeSet<String>, matchers: &Matchers) -> Projection {
+pub fn projection(v: &Version, reads: BTreeSet<String>, matchers: &Matchers) -> Projection {
     let (spans, token_text) = span_text_demand(v);
     let derived: BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
-    let outputs: BTreeSet<String> = head.outputs.iter().cloned().collect();
+    let outputs: BTreeSet<String> = v.output_names().into_iter().collect();
     crate::code_rule_dsl::logic::profile::projection_plan_of(|| users(v), &outputs, &reads);
     let core = crate::code_rule_dsl::facts::core::core_names();
-    let core_shape = !core.is_empty() && core.iter().all(|r| head.decls.contains_key(r.as_str()));
-    let partial: BTreeSet<String> = head
-        .facts
-        .get(crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY)
+    let core_shape = !core.is_empty() && core.iter().all(|r| v.declares(r));
+    let partial: BTreeSet<String> = v
+        .fact_values(crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY, &Default::default())
         .into_iter()
         .flatten()
         .filter_map(|row| match row.as_slice() {
@@ -34,10 +33,12 @@ pub fn projection(v: &Version, head: &crate::code_rule_dsl::logic::front::Progra
             _ => None,
         })
         .collect();
-    let error_triple = head.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
-    let parts = ProjectionParts { spans, token_text, core_shape, partial, error_triple, derived, rx_spans: head.rx_spans.iter().cloned().collect(), ast_patterns: head.ast_patterns.iter().cloned().collect() };
+    let error_triple = v.columns_of("syntax_error").is_some_and(|cols| cols.len() == 3);
+    let rx_spans = v.rx_spans().expect("a version's spans are read");
+    let ast_patterns = v.ast_patterns().expect("a version's patterns are read");
+    let parts = ProjectionParts { spans, token_text, core_shape, partial, error_triple, derived, rx_spans: rx_spans.into_iter().collect(), ast_patterns: ast_patterns.into_iter().collect() };
     let demand = text_kind_demand(v, matchers);
-    let anchors = if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|x| x == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(v, &head.settings, matchers) };
+    let anchors = if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|x| x == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(v, &v.settings().expect("a version's settings are read"), matchers) };
     Projection::of_parts(parts, reads).with_long_text_parts(demand, anchors)
 }
 
