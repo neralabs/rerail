@@ -3817,7 +3817,7 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Do**: from a sample, name where it waits (a GPU hang, a compile, or a lock), then fix it at its cause.
 - **Done when**: 180 runs, three at a time, have none past 60 s.
 
-### Q189. Format 16 on Metal: a relation's descriptor overwritten while its index was built (1 hogql run in 9)
+### Q189. Format 16 on Metal: a relation's descriptor overwritten while its index was built (1 hogql run in 9) — done 2026-11-18
 
 - **Found** (2026-11-18, the merge of Native-and-GPU-strata 871ac76f0 into oscar): hogql cold on Metal
   (`tmp/hogql/run.sh`, the `len` rule, a debug engine with `test-hooks`, on the M3), in format 16: one run of 9
@@ -3851,6 +3851,6 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Fixed**: `Building` and `Written` (each relation a batch writes, checked when it is done) hold the relation
   (`DevRel::holder`: its own `Part`, or the one `in_block` reads, now kept as `kept`) until the batch is done or
   failed.
-- **Since the fix**: 66 hogql runs (16z and 16 in turn, three at a time, M3; 30, then 36), all 1,629, no panic,
-  no bound fired; the device join's 29 tests pass. Short of the 180 this item asks.
-- **Done when**: 180 format 16 runs, three at a time, have no panic.
+- **Since the fix**: 184 hogql runs (16z and 16 in turn, three at a time, M3; batches of 30, 36, 40, 36 and 42),
+  all 1,629, no panic, no bound fired; the device join's 29 tests pass.
+- **Done when**: 180 format 16 runs, three at a time, have no panic. Met (184).
