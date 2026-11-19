@@ -786,6 +786,8 @@ impl Task for WorkspaceStorageTask {
             // and interactive edits evaluate without reuse. Only a root outside any repository is
             // expected; any other cause is reported, so reuse is never lost silently.
             let discovery_started = Instant::now();
+            // Only the open is under a Git read's time limit (`git_workspace::discover`): the walk
+            // and status of a large checkout may take longer, as they always could.
             let discovered = crate::git_workspace::discover(std::path::Path::new(&self.root));
             let discovery_milliseconds = discovery_started.elapsed().as_secs_f64() * 1000.0;
             let discovered = match discovered {
