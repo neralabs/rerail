@@ -6223,6 +6223,8 @@ fn run_observed(
         mentioned: std::collections::HashSet<i64>,
         /// The slice's request lines of each round, for the entries (`memo::GUESTS`).
         slice_rounds: Vec<BTreeMap<String, Arc<output::Rows>>>,
+        /// What the chunk's work held at its most (bytes, `rows::Chunk::held_most`): what the next are sized by.
+        held: usize,
     }
     /// What the main thread keeps of a chunk between its `Begin` and its `Finish`.
     struct Ctx {
@@ -6521,7 +6523,8 @@ fn run_observed(
             }
         }
         crate::code_rule_dsl::logic::native::forget_inputs(db);
-        Ok(Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mentioned, slice_rounds })
+        let held = crate::code_rule_dsl::facts::rows::chunk_held_most().unwrap_or(0);
+        Ok(Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mentioned, slice_rounds, held })
     };
     // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
     // shares, which a few rows of each kept whole and the memory line counted whole.
@@ -6775,7 +6778,7 @@ fn run_observed(
         phase("wait", statements.count());
         statements.enter("local");
         let Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, start_dev_mb, at_once, mut chunk_partials, cone } = ctx;
-        let Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mut mentioned, slice_rounds } = ev;
+        let Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mut mentioned, slice_rounds, held } = ev;
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
         }
@@ -6832,13 +6835,18 @@ fn run_observed(
             }
         }
         if chunk_nodes_built > 0 {
-            // What this chunk added at its peak (the lifetime peak, when it rose here; else the footprint now).
+            // What this chunk's own work held at its most (Q203 item 3): its live blocks and its jobs' heap
+            // (`rows::Chunk::held_most`), a function of its work. The process's footprint is the memory line's
+            // (`start_mb`), not a chunk's size: one-time allocations and the chunks beside it are in it, and pages
+            // reused hid a chunk's growth (the same chunks measured 1 to 1,471 MB, so a run cut 7 to 14 chunks).
             let (now, max) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
-            let added = host_added_mb([start_mb, start_max_mb, start_dev_mb], [now, max, device_mb()]);
+            let footprint_added = host_added_mb([start_mb, start_max_mb, start_dev_mb], [now, max, device_mb()]);
+            let added = held.div_ceil(1 << 20);
             // The memory line is the host's: the device's room is the Metal budget's, on top of it (decision 0126).
             let start_mb = start_mb.saturating_sub(start_dev_mb);
-            let measured = added as f64 * 1048576.0 / (chunk_nodes_built * at_once) as f64;
-            // Credible only above the noise of pages reused: until one is, one chunk at a time, of the probe's size.
+            let measured = held as f64 / chunk_nodes_built as f64;
+            let _ = at_once;
+            // A chunk too small to hold a block's worth sizes nothing: one chunk at a time, of the probe's size.
             let credible = added >= CHUNK_CREDIBLE_MB;
             if credible {
                 per_node_most.set(per_node_most.get().max(measured));
@@ -6874,9 +6882,9 @@ fn run_observed(
                 )
             });
             crate::code_rule_dsl::logic::profile::decision("chunk size", || if credible {
-                format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({measured:.0} bytes a node, {per_node:.0} the most this run); the next are about {next} nodes, {allowed} at once ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB shared by the chunks at once; at most {chunk_nodes})")
+                format!("a chunk of {chunk_nodes_built} nodes held {added} MB at its most ({measured:.0} bytes a node, {per_node:.0} the most this run; the footprint rose {footprint_added} MB meanwhile); the next are about {next} nodes, {allowed} at once ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB shared by the chunks at once; at most {chunk_nodes})")
             } else {
-                format!("a chunk of {chunk_nodes_built} nodes added {added} MB, under {CHUNK_CREDIBLE_MB} MB (pages freed before it reused): it sizes nothing; the next are about {next} nodes, {allowed} at once")
+                format!("a chunk of {chunk_nodes_built} nodes held {added} MB, under {CHUNK_CREDIBLE_MB} MB: it sizes nothing; the next are about {next} nodes, {allowed} at once")
             });
             // The memory line, not the chunk's own size, set it: every stratum and matcher launch runs per chunk, so
             // a cut chunk is a smaller grain for the device and more runs for the same work (the profile's warnings).

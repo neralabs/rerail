@@ -6396,7 +6396,8 @@ pub fn walks_whole<R>(f: impl FnOnce() -> R) -> R {
 
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     c.copy(&["WALKS_WHOLE"], &WALKS_WHOLE);
-    c.cloned(&["CHUNK"], &crate::code_rule_dsl::facts::rows::CHUNK);
+    // The chunk, with its account of what the job holds (`rows::enter_chunk`, Q203 item 3).
+    c.part(&["CHUNK"], crate::code_rule_dsl::logic::run_state::Shared(crate::code_rule_dsl::facts::rows::CHUNK.with(|c| c.borrow().clone()), crate::code_rule_dsl::facts::rows::enter_chunk));
 }
 
 /// Rows a cut left that a walk going on from it read in their order, unsorted (`scan_order`, decision 0294).
