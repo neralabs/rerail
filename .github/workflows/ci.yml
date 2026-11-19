@@ -1355,6 +1355,14 @@ jobs:
       - name: Take dist/ from the built package
         run: mv "$RUNNER_TEMP/built/dist" dist
 
+      - name: THROWAWAY compare dist/ built on Windows with the build job's
+        if: matrix.shard == 1
+        run: |
+          mv dist "$RUNNER_TEMP/linux-dist"
+          npm run build:js > /dev/null
+          if diff -rq "$RUNNER_TEMP/linux-dist" dist; then echo "dist/ identical: $(find dist -type f | wc -l) files"; else diff -r "$RUNNER_TEMP/linux-dist" dist | head -50; fi
+          rm -rf dist && mv "$RUNNER_TEMP/linux-dist" dist
+
       # A runner's first Python start reads the interpreter and its standard library cold: about a second here, but
       # 0.5 to 11 s once the tests run beside it, and up to 87 s, past the 30 s a test may take, in the test of
       # write_provenance (test/scripts/pack-data/provenance.test.ts). Later starts take about 0.1 s, so the tests that
