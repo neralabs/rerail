@@ -41,6 +41,8 @@ import {
   processAlive,
   readDaemonState,
   recordedDaemonAlive,
+  recordedDaemonStatus,
+  recordedDaemonStatusForEvent,
   relaunchDaemon,
   runningDaemonEngineEndpoint,
   startDaemon,
@@ -751,6 +753,23 @@ describe("a state file Windows left behind", () => {
     // Elsewhere the pid decides, and an EPERM is another user's process.
     expect(await recordedDaemonAlive(state, { ...windows([]), platform: "linux" })).toBe(true);
     expect(await recordedDaemonAlive(state, { ...windows([]), platform: "linux", kill: denied, ...proving })).toBe(false);
+  });
+
+  // main's proof connected to a busy pipe as Node does, waiting for a free instance before its limit began: a hook's
+  // event reached a daemon that freed one within 30 s. A command answers within its limit from the ask.
+  it("lets a hook's read wait for a free instance of the engine pipe before its event, where a command's read keeps its limit", async () => {
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability" });
+    const asked: Array<[number, boolean]> = [];
+    const machine: DaemonMachine = {
+      ...windows([PIPE_NAME]),
+      capabilityProof: async (_socketPath, _accessToken, timeoutMs, options) => {
+        asked.push([timeoutMs, options?.waitForInstance ?? false]);
+        return "proved";
+      },
+    };
+    expect(await recordedDaemonStatusForEvent(state, machine)).toBe("alive");
+    expect(await recordedDaemonStatus(state, machine)).toBe("alive");
+    expect(asked).toEqual([[2_000, true], [2_000, false]]);
   });
 
   it("keeps the state of a daemon this user started elevated, found by its engine's proof, and drops one nothing proves", async () => {

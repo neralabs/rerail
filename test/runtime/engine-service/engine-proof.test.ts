@@ -10,9 +10,9 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadNativeBinding, LOCKS_DIR } from "../../../src/engine/index.js";
-import { DAEMON_STATE_FILE, lookupDaemon, type DaemonState } from "../../../src/runtime/daemon-control.js";
+import { DAEMON_STATE_FILE, lookupDaemon, recordedDaemonStatus, recordedDaemonStatusForEvent, type DaemonState } from "../../../src/runtime/daemon-control.js";
 import { engineCapabilityProof, engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
@@ -128,6 +128,7 @@ const folders: string[] = [];
 const closers: Array<() => void> = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   for (const close of closers.splice(0)) close();
   for (const socket of sockets.splice(0)) socket.destroy();
   await Promise.all(children.splice(0).map(async (child) => {
@@ -441,6 +442,43 @@ describe.runIf(process.platform === "win32")("the engine proof, against a busy e
     expect(await answerOrWait(answered, waits)).toBe("refused");
     expect(waits.asked, "the waits the proof asked for, in ms").toHaveLength(BUSY_TRIES + 1);
     expect(waits.asked.filter(ms => ms >= TIMER_TICK_MS), "the waits of a timer tick or longer, in ms").toEqual([]);
+  }, 45_000);
+
+  // main's proof connected as Node does, which waits up to 30 s for a free instance before the proof's own limit began:
+  // a hook's event reached a busy daemon that freed one in that time. Both proofs ask while every instance is taken; the
+  // clock they read then moves past a command's 2 s and stays inside the 30 s, and only then is an instance freed.
+  it("waits past its limit for a free instance when a hook asks, as main's connect did, where a command's proof answers silent", async () => {
+    const path = pipePath("instance");
+    const engine = startNode(HELD_ENGINE, [PROOF_MODULE, path], true, true);
+    const line = linesOf(engine);
+    expect(await line()).toMatch(/^busy [1-9]\d* EBUSY$/u);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const command = engineCapabilityProof(path, "capability", 2_000);
+    const event = engineCapabilityProof(path, "capability", 2_000, { waitForInstance: true });
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(await command).toBe("silent");
+    engine.stdin!.write("go\n");
+    expect(await line()).toBe("free");
+    // The engine then has the proof's 2 s from the connect, not from the ask.
+    expect(await event).toBe("proved");
+  }, 45_000);
+
+  // The same through what a hook's start check asks of the daemon daemon.json records, here this process with the
+  // engine's pipe: the daemon is alive once it frees an instance, where a command's read finds it silent.
+  it("lets a hook's read of the recorded daemon find it alive once its busy pipe frees an instance, where a command's read finds it silent", async () => {
+    const path = pipePath("hook-read");
+    const engine = startNode(HELD_ENGINE, [PROOF_MODULE, path], true, true);
+    const line = linesOf(engine);
+    expect(await line()).toMatch(/^busy [1-9]\d* EBUSY$/u);
+    const state = daemonState(process.pid, path);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const command = recordedDaemonStatus(state);
+    const event = recordedDaemonStatusForEvent(state);
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(await command).toBe("silent");
+    engine.stdin!.write("go\n");
+    expect(await line()).toBe("free");
+    expect(await event).toBe("alive");
   }, 45_000);
 
   // The engine start asks before it listens beside a held pipe: a busy engine of this home read as another process

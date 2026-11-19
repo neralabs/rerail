@@ -13,7 +13,8 @@ import {
 } from "../api/presentation-contracts.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import {
-  DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, recordedDaemonStatus, type DaemonState,
+  DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, recordedDaemonStatus, recordedDaemonStatusForEvent,
+  type DaemonState, type RecordedDaemon,
 } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
@@ -150,11 +151,17 @@ function unavailable(
 class NotAnswering extends Error {}
 
 /**
- * Whether the daemon `state` records may be read now (`recordedDaemonStatus`): false when it is gone. One whose engine
- * stayed silent to the proof runs but is busy: it is sent nothing, and this throws `NotAnswering`.
+ * How a reader asks what may be made of the recorded daemon: as a command or the status line does, within the proof's
+ * limit (`recordedDaemonStatus`), or as a hook does before its event (`recordedDaemonStatusForEvent`).
  */
-async function readableDaemon(state: DaemonState): Promise<boolean> {
-  const recorded = await recordedDaemonStatus(state);
+type DaemonStatusRead = (state: DaemonState) => Promise<RecordedDaemon>;
+
+/**
+ * Whether the daemon `state` records may be read now (`status`): false when it is gone. One whose engine stayed silent
+ * to the proof runs but is busy: it is sent nothing, and this throws `NotAnswering`.
+ */
+async function readableDaemon(state: DaemonState, status: DaemonStatusRead = recordedDaemonStatus): Promise<boolean> {
+  const recorded = await status(state);
   if (recorded === "silent") throw new NotAnswering("The Rerail daemon's engine did not answer in time");
   return recorded === "alive";
 }
@@ -430,7 +437,8 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
  * ask this first.
  */
 export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
-  const state = await daemonRepositoryState(cwd, host);
+  // A hook's start check, before its event: it waits for a busy daemon's engine pipe as main's hook did.
+  const state = await daemonRepositoryState(cwd, host, recordedDaemonStatusForEvent);
   return state === "not-answering" ? null : state;
 }
 
@@ -440,11 +448,14 @@ export async function readRepositoryState(cwd: string, host: RerailHost): Promis
  */
 export type SummaryState = RepositoryStartState | "not-answering" | null;
 
-/** Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`). */
-async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<SummaryState> {
+/**
+ * Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`), and
+ * asks the recorded daemon's state through `status`.
+ */
+async function daemonRepositoryState(cwd: string, host: RerailHost, status: DaemonStatusRead = recordedDaemonStatus): Promise<SummaryState> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return null;
+    if (typeof daemon === "string" || !(await readableDaemon(daemon.state, status))) return null;
     const response = await get(daemon, `/api/presentation?${presentationQuery(cwd, daemon, { host })}`, presentationReadSchema);
     return response.repositoryState;
   } catch (error) {
