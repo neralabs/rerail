@@ -221,8 +221,11 @@ class Options {
     let value = option;
     const escape = field("escape");
     if (escape !== undefined) {
-      if (escape !== "regex") fail([...path, "escape"], `unknown escape \`${escape}\`; expected regex`);
-      value = Array.isArray(value) ? value.map(item => escapeRegex(text(item, path))) : escapeRegex(text(value, path));
+      if (escape !== "regex" && escape !== "sql") fail([...path, "escape"], `unknown escape \`${escape}\`; expected regex or sql`);
+      const encode = (item: CodeRuleDslValue) => escape === "sql"
+        ? `CAST(X'${Buffer.from(text(item, path), "utf8").toString("hex")}' AS TEXT)`
+        : escapeRegex(text(item, path));
+      value = Array.isArray(value) ? value.map(encode) : encode(value);
     }
     const map = field("map");
     if (map !== undefined) {
@@ -286,6 +289,11 @@ function optionDeclarations(defines: Array<[Path, JsonObject]>): Map<string, Cod
     }
   }
   return declared;
+}
+
+/** The names of the options a document (as written) declares. Throws a `CodeRuleOptionError` for an invalid declaration. */
+export function codeRuleDeclaredOptions(document: unknown): ReadonlySet<string> {
+  return new Set(optionDeclarations(codeRuleDefines(document)).keys());
 }
 
 /** The effective values of a document's options: each `config` value, else its default. */

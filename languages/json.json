@@ -1,0 +1,24 @@
+{
+  "format": "rerail.language/v1",
+  "id": "json",
+  "status": "supported",
+  "family": "json",
+  "dialects": [
+    {
+      "label": "json",
+      "variant": "Json",
+      "suffixes": [".json"],
+      "parser": "bitlex",
+      "grammar": "ast-grep:Json",
+      "tapeTag": 14
+    }
+  ],
+  "capabilities": {
+    "scope": "refused",
+    "value": "refused",
+    "arguments": "refused",
+    "calls": "refused",
+    "formatArgs": "refused"
+  },
+  "suppressions": []
+}

@@ -2,7 +2,7 @@
 //! the reports ESLint 10.11.0 keeps after applying the fixtures' directive comments
 //! (`fixtures/ecma/suppress/generate_eslint.mjs`).
 
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 

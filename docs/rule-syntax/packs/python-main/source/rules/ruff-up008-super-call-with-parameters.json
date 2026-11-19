@@ -1,0 +1,927 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-up008-super-call-with-parameters",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Call super() without arguments inside methods; passing the class and instance explicitly is redundant on Python 3.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "super-with-class-and-instance",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "scope-boundary": {
+       "any": [
+        {
+         "kind": "function_definition"
+        },
+        {
+         "kind": "lambda"
+        },
+        {
+         "kind": "class_definition"
+        },
+        {
+         "kind": "list_comprehension"
+        },
+        {
+         "kind": "set_comprehension"
+        },
+        {
+         "kind": "dictionary_comprehension"
+        },
+        {
+         "kind": "generator_expression"
+        }
+       ]
+      },
+      "callable": {
+       "any": [
+        {
+         "kind": "function_definition"
+        },
+        {
+         "kind": "lambda"
+        }
+       ]
+      },
+      "bare-super": {
+       "kind": "identifier",
+       "resolves": {
+        "global": [
+         "super"
+        ]
+       }
+      },
+      "builtins-super": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "builtins.super"
+        ]
+       }
+      },
+      "param-unit": {
+       "any": [
+        {
+         "kind": "identifier",
+         "inside": {
+          "stopBy": "neighbor",
+          "any": [
+           {
+            "kind": "parameters"
+           },
+           {
+            "kind": "lambda_parameters"
+           }
+          ]
+         }
+        },
+        {
+         "kind": "typed_parameter"
+        },
+        {
+         "kind": "default_parameter"
+        },
+        {
+         "kind": "typed_default_parameter"
+        }
+       ]
+      },
+      "positional-param": {
+       "matches": "param-unit",
+       "not": {
+        "any": [
+         {
+          "precedes": {
+           "stopBy": "end",
+           "kind": "positional_separator"
+          }
+         },
+         {
+          "follows": {
+           "stopBy": "end",
+           "any": [
+            {
+             "kind": "list_splat_pattern"
+            },
+            {
+             "kind": "keyword_separator"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      },
+      "first-param": {
+       "matches": "positional-param",
+       "nthChild": {
+        "position": 1,
+        "ofRule": {
+         "matches": "positional-param"
+        }
+       },
+       "any": [
+        {
+         "kind": "identifier",
+         "pattern": "$P"
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "identifier",
+          "nthChild": 1,
+          "pattern": "$P"
+         }
+        }
+       ]
+      },
+      "own-class-binding": {
+       "has": {
+        "stopBy": {
+         "matches": "scope-boundary"
+        },
+        "kind": "identifier",
+        "regex": "^__class__$",
+        "binds": {
+         "bindings": {
+          "min": 1
+         }
+        }
+       }
+      },
+      "class-cell-reference": {
+       "any": [
+        {
+         "kind": "function_definition",
+         "has": {
+          "stopBy": {
+           "any": [
+            {
+             "kind": "class_definition"
+            },
+            {
+             "kind": "decorated_definition",
+             "has": {
+              "stopBy": "neighbor",
+              "field": "definition",
+              "kind": "class_definition"
+             }
+            }
+           ]
+          },
+          "matches": "cell-name"
+         }
+        },
+        {
+         "kind": "function_definition",
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "decorated_definition",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "decorator",
+           "has": {
+            "stopBy": {
+             "any": [
+              {
+               "kind": "class_definition"
+              },
+              {
+               "kind": "decorated_definition",
+               "has": {
+                "stopBy": "neighbor",
+                "field": "definition",
+                "kind": "class_definition"
+               }
+              }
+             ]
+            },
+            "matches": "cell-name"
+           }
+          }
+         }
+        },
+        {
+         "kind": "lambda",
+         "has": {
+          "stopBy": "neighbor",
+          "field": "body",
+          "any": [
+           {
+            "matches": "cell-name"
+           },
+           {
+            "has": {
+             "stopBy": {
+              "any": [
+               {
+                "kind": "class_definition"
+               },
+               {
+                "kind": "decorated_definition",
+                "has": {
+                 "stopBy": "neighbor",
+                 "field": "definition",
+                 "kind": "class_definition"
+                }
+               }
+              ]
+             },
+             "matches": "cell-name"
+            }
+           }
+          ]
+         }
+        }
+       ]
+      },
+      "slots-dataclass": {
+       "kind": "class_definition",
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "decorated_definition",
+        "has": {
+         "stopBy": "neighbor",
+         "kind": "decorator",
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "call",
+          "all": [
+           {
+            "has": {
+             "stopBy": "neighbor",
+             "field": "function",
+             "any": [
+              {
+               "kind": "identifier"
+              },
+              {
+               "kind": "attribute"
+              }
+             ],
+             "resolves": {
+              "import": [
+               "dataclasses.dataclass"
+              ]
+             }
+            }
+           },
+           {
+            "has": {
+             "stopBy": "neighbor",
+             "field": "arguments",
+             "has": {
+              "stopBy": "neighbor",
+              "kind": "keyword_argument",
+              "all": [
+               {
+                "has": {
+                 "stopBy": "neighbor",
+                 "field": "name",
+                 "regex": "^slots$"
+                }
+               },
+               {
+                "has": {
+                 "stopBy": "neighbor",
+                 "field": "value",
+                 "matches": "true-p"
+                }
+               }
+              ]
+             }
+            }
+           }
+          ]
+         }
+        }
+       }
+      },
+      "bare-super-p": {
+       "any": [
+        {
+         "matches": "bare-super"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "bare-super-p"
+         }
+        },
+        {
+         "kind": "list_splat",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "bare-super-p"
+         }
+        }
+       ]
+      },
+      "any-super-p": {
+       "any": [
+        {
+         "matches": "bare-super"
+        },
+        {
+         "matches": "builtins-super"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "any-super-p"
+         }
+        },
+        {
+         "kind": "list_splat",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "any-super-p"
+         }
+        }
+       ]
+      },
+      "ident-p": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "ident-p"
+         }
+        }
+       ]
+      },
+      "true-p": {
+       "any": [
+        {
+         "kind": "true"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "true-p"
+         }
+        }
+       ]
+      },
+      "cell-name": {
+       "kind": "identifier",
+       "regex": "^(?:super|__class__)$",
+       "not": {
+        "any": [
+         {
+          "binds": {
+           "bindings": {
+            "min": 1
+           }
+          }
+         },
+         {
+          "inside": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "kind": "attribute"
+          }
+         },
+         {
+          "inside": {
+           "stopBy": "neighbor",
+           "field": "name",
+           "kind": "keyword_argument"
+          }
+         }
+        ]
+       }
+      },
+      "chain": {
+       "params": [
+        "C"
+       ],
+       "rule": {
+        "any": [
+         {
+          "kind": "parenthesized_expression",
+          "has": {
+           "stopBy": "neighbor",
+           "not": {
+            "kind": "comment"
+           },
+           "matches": {
+            "chain": {
+             "C": "$C"
+            }
+           }
+          }
+         },
+         {
+          "all": [
+           {
+            "any": [
+             {
+              "kind": "identifier",
+              "pattern": "$SEG"
+             },
+             {
+              "kind": "attribute",
+              "has": {
+               "stopBy": "neighbor",
+               "field": "attribute",
+               "pattern": "$SEG"
+              }
+             }
+            ]
+           },
+           {
+            "inside": {
+             "stopBy": "end",
+             "kind": "class_definition",
+             "pattern": "$K",
+             "compare": {
+              "left": "K",
+              "op": "eq",
+              "right": "C",
+              "text": "node"
+             },
+             "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "pattern": "$KN"
+             }
+            }
+           },
+           {
+            "compare": {
+             "left": "KN",
+             "op": "eq",
+             "right": "SEG"
+            }
+           },
+           {
+            "any": [
+             {
+              "kind": "identifier",
+              "inside": {
+               "stopBy": "end",
+               "kind": "class_definition",
+               "pattern": "$K2",
+               "compare": {
+                "left": "K2",
+                "op": "eq",
+                "right": "C",
+                "text": "node"
+               },
+               "not": {
+                "inside": {
+                 "stopBy": "end",
+                 "kind": "class_definition"
+                }
+               }
+              }
+             },
+             {
+              "kind": "attribute",
+              "inside": {
+               "stopBy": "end",
+               "kind": "class_definition",
+               "pattern": "$PC",
+               "has": {
+                "stopBy": {
+                 "kind": "class_definition"
+                },
+                "kind": "class_definition",
+                "pattern": "$CC",
+                "compare": {
+                 "left": "CC",
+                 "op": "eq",
+                 "right": "C",
+                 "text": "node"
+                }
+               }
+              },
+              "has": {
+               "stopBy": "neighbor",
+               "field": "object",
+               "matches": {
+                "chain": {
+                 "C": "$PC"
+                }
+               }
+              }
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     },
+     "rule": {
+      "kind": "call",
+      "all": [
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "field": "function",
+         "matches": "any-super-p"
+        }
+       },
+       {
+        "arguments": {
+         "signature": [
+          "cls_slot",
+          "obj_slot",
+          "over_slot",
+          "/"
+         ],
+         "bind": {
+          "A": "cls_slot",
+          "B": "obj_slot"
+         },
+         "absent": [
+          "over_slot"
+         ]
+        }
+       },
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "field": "arguments",
+         "pattern": "$ARGS"
+        }
+       },
+       {
+        "any": [
+         {
+          "has": {
+           "stopBy": "neighbor",
+           "field": "function",
+           "matches": "bare-super-p"
+          }
+         },
+         {
+          "inside": {
+           "stopBy": {
+            "matches": "scope-boundary"
+           },
+           "matches": "class-cell-reference",
+           "not": {
+            "matches": "own-class-binding"
+           }
+          }
+         }
+        ]
+       },
+       {
+        "not": {
+         "inside": {
+          "stopBy": {
+           "matches": "scope-boundary"
+          },
+          "any": [
+           {
+            "kind": "parameters"
+           },
+           {
+            "kind": "lambda_parameters"
+           },
+           {
+            "kind": "type",
+            "inside": {
+             "stopBy": "neighbor",
+             "field": "return_type",
+             "kind": "function_definition"
+            }
+           }
+          ]
+         }
+        }
+       },
+       {
+        "inside": {
+         "stopBy": {
+          "matches": "scope-boundary"
+         },
+         "matches": "callable",
+         "has": {
+          "stopBy": "neighbor",
+          "field": "parameters",
+          "has": {
+           "stopBy": "neighbor",
+           "matches": "first-param"
+          }
+         }
+        }
+       },
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "field": "arguments",
+         "has": {
+          "stopBy": "neighbor",
+          "nthChild": {
+           "position": 2,
+           "ofRule": {
+            "not": {
+             "kind": "comment"
+            }
+           }
+          },
+          "matches": "ident-p",
+          "any": [
+           {
+            "kind": "identifier",
+            "pattern": "$B2"
+           },
+           {
+            "has": {
+             "stopBy": "end",
+             "kind": "identifier",
+             "pattern": "$B2"
+            }
+           }
+          ]
+         }
+        }
+       },
+       {
+        "compare": {
+         "left": "B2",
+         "op": "eq",
+         "right": "P"
+        }
+       },
+       {
+        "not": {
+         "inside": {
+          "stopBy": {
+           "kind": "class_definition"
+          },
+          "kind": "class_definition",
+          "matches": "slots-dataclass"
+         }
+        }
+       },
+       {
+        "any": [
+         {
+          "all": [
+           {
+            "has": {
+             "stopBy": "neighbor",
+             "field": "arguments",
+             "has": {
+              "stopBy": "neighbor",
+              "nthChild": {
+               "position": 1,
+               "ofRule": {
+                "not": {
+                 "kind": "comment"
+                }
+               }
+              },
+              "matches": "ident-p",
+              "any": [
+               {
+                "regex": "^__class__$"
+               },
+               {
+                "has": {
+                 "stopBy": "end",
+                 "kind": "identifier",
+                 "regex": "^__class__$"
+                }
+               }
+              ]
+             }
+            }
+           },
+           {
+            "inside": {
+             "stopBy": {
+              "matches": "scope-boundary"
+             },
+             "matches": "callable",
+             "not": {
+              "matches": "own-class-binding"
+             }
+            }
+           },
+           {
+            "inside": {
+             "stopBy": "end",
+             "kind": "class_definition"
+            }
+           }
+          ]
+         },
+         {
+          "all": [
+           {
+            "inside": {
+             "stopBy": {
+              "kind": "class_definition"
+             },
+             "kind": "class_definition",
+             "pattern": "$C0"
+            }
+           },
+           {
+            "has": {
+             "stopBy": "neighbor",
+             "field": "arguments",
+             "has": {
+              "stopBy": "neighbor",
+              "nthChild": {
+               "position": 1,
+               "ofRule": {
+                "not": {
+                 "kind": "comment"
+                }
+               }
+              },
+              "matches": {
+               "chain": {
+                "C": "$C0"
+               }
+              }
+             }
+            }
+           },
+           {
+            "not": {
+             "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "all": [
+               {
+                "has": {
+                 "stopBy": "neighbor",
+                 "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                   "not": {
+                    "kind": "comment"
+                   }
+                  }
+                 },
+                 "matches": "ident-p",
+                 "any": [
+                  {
+                   "kind": "identifier",
+                   "pattern": "$T0"
+                  },
+                  {
+                   "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "pattern": "$T0"
+                   }
+                  }
+                 ]
+                }
+               },
+               {
+                "inside": {
+                 "stopBy": "neighbor",
+                 "kind": "call",
+                 "inside": {
+                  "stopBy": {
+                   "matches": "scope-boundary"
+                  },
+                  "matches": "callable",
+                  "any": [
+                   {
+                    "has": {
+                     "stopBy": {
+                      "matches": "scope-boundary"
+                     },
+                     "compare": {
+                      "left": "SH",
+                      "op": "eq",
+                      "right": "T0"
+                     },
+                     "any": [
+                      {
+                       "any": [
+                        {
+                         "kind": "identifier"
+                        },
+                        {
+                         "kind": "dotted_name"
+                        }
+                       ],
+                       "pattern": "$SH",
+                       "binds": {
+                        "bindings": {
+                         "min": 1
+                        }
+                       }
+                      },
+                      {
+                       "any": [
+                        {
+                         "kind": "function_definition"
+                        },
+                        {
+                         "kind": "class_definition"
+                        }
+                       ],
+                       "has": {
+                        "stopBy": "neighbor",
+                        "field": "name",
+                        "pattern": "$SH"
+                       }
+                      },
+                      {
+                       "kind": "identifier",
+                       "pattern": "$SH",
+                       "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "nonlocal_statement"
+                       }
+                      }
+                     ]
+                    }
+                   },
+                   {
+                    "has": {
+                     "stopBy": {
+                      "any": [
+                       {
+                        "kind": "function_definition"
+                       },
+                       {
+                        "kind": "lambda"
+                       },
+                       {
+                        "kind": "class_definition"
+                       }
+                      ]
+                     },
+                     "kind": "named_expression",
+                     "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "pattern": "$SW"
+                     },
+                     "compare": {
+                      "left": "SW",
+                      "op": "eq",
+                      "right": "T0"
+                     }
+                    }
+                   }
+                  ]
+                 }
+                }
+               }
+              ]
+             }
+            }
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.ARGS",
+    "code": "UP008",
+    "message": "Drop the arguments and call `super()`; inside a method it already uses the enclosing class and the method's first parameter.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "UP008"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

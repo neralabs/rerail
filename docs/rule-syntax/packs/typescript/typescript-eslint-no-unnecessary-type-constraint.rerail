@@ -1,0 +1,17 @@
+.policy "typescript-eslint-no-unnecessary-type-constraint" revision 5
+.description "Remove extends any and extends unknown constraints from TypeScript type parameters; they constrain nothing."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+// typescript-eslint's no-unnecessary-type-constraint: every type already extends `any` and `unknown`, so such a
+// constraint says nothing. Reported at the type parameter.
+//   function f<T extends any>() {}   class A<T extends unknown> {}   <T extends any>() => x     → reported
+//   function f<T extends object>() {}   function f<T>() {}                                       fine
+// No options. The rule's suggestion (remove the constraint) is not offered here.
+.violation no_unnecessary_type_constraint(at: node, x: symbol, c: symbol) code "@typescript-eslint/no-unnecessary-type-constraint" "Constraining the generic type `{x}` to `{c}` does nothing and is unnecessary."
+    suppress eslint "@typescript-eslint/no-unnecessary-type-constraint"
+    suppress oxlint "no-unnecessary-type-constraint"
+    suppress biome "lint/complexity/noUselessTypeConstraint"
+no_unnecessary_type_constraint(p, x, c) :- kind(p, "type_parameter"), field(p, "name", n), text(n, x),
+    field(p, "constraint", k), child(k, t, 0), kind(t, "predefined_type"), text(t, c), (c = "any" ; c = "unknown").

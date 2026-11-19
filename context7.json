@@ -10,6 +10,7 @@
     "content-addressed-workspace-store.md",
     "merge-assist-v1-build.md",
     "repository-packs.md",
+    "sql-executor.md",
     "transducer-design.md",
     "windows.md"
   ],
