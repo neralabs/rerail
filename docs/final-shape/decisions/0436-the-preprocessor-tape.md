@@ -191,6 +191,24 @@ passes' arrays (user, 2026-11-18). The serial pass is the reference for the outp
     dispatch's arguments), so the passes after it are sized on the device;
   - `pp_names`: each identifier leaf's key, its bytes 8 at a time, one thread a node.
 
-  The host loads the files into one buffer and lists them (`Unit::load`), then encodes. On
-  803 corpus files (2.2 M nodes), the device's reader gives every node as `View` does and every
-  key is the CPU's (`the_names_pass_reads_the_tapes_in_place`).
+  - `pp_dir_counts`, `pp_scan`, `pp_dirs`: the directives, a file pass, a prefix sum and a file
+    pass. One thread a file walks its tape's items (a text line passed by its subtree's size, a
+    group entered), and writes each directive's row: its node, kind, the text tokens before it,
+    the group it is read in and the one after it, and its chain. These are the spike's P0 tables
+    (`parallel::tables`), made from the tape in place;
+  - `pp_dir_keys`: one thread a row, each directive's name key (a `#define`'s, `#undef`'s,
+    `#ifdef`'s, …), the key the names pass gave its leaf;
+  - `pp_guards`: one thread a file, its include guard's key, where the walk found a guard's shape.
+
+  The host loads the files into one buffer and lists them (`Unit::load`, the bounds from each
+  tape's header), then encodes every pass in one command buffer (`evaluate`), each sized by the
+  scan before it. On every file of both corpora (3,138 files, 9.3 M nodes), the device's reader
+  gives every node as `View` does and every key is the CPU's
+  (`the_names_pass_reads_the_tapes_in_place`); every directive row, name key, group count and
+  guard is the spike's (`the_directives_pass_gives_the_spikes_tables`: 58,301 directives, 89
+  guards).
+  - **Next: P1's rounds** on the device: the instances' layout (sizes bottom-up, bases top-down,
+    a scan a depth), the definitions' table (rows sorted by key and position, a search per use,
+    `push_macro`/`pop_macro` matched by depth), the tests, the chains' first true arm and the
+    groups' activity, and the includes (each resolved by the host between rounds, the files it
+    loads added to the unit).
