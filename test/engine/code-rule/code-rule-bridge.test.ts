@@ -3037,6 +3037,22 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     ]);
   });
 
+  // `git worktree remove` deletes the worktree's files, its `.git` file among them, while Git still lists the worktree,
+  // and a walk may read it then. Each file gone by then was taken as a deletion and checked in Log, a batch whose checks
+  // held a rule-breaking Write's check elsewhere past the hook's wait.
+  it("records nothing of a worktree removed while a walk reads it: its files went with it", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    auditGeneratedEdits.mockClear();
+    // Partway through the removal: its `.git` file and its sources are gone, its folder and Git's list of it not yet.
+    await rm(join(worktree, ".git"));
+    await removeFolder(join(worktree, "src"));
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([]);
+  });
+
   it("records a shell write in another worktree in Log, so it steers no session, and steers on one in its own folder", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));

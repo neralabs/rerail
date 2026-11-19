@@ -1115,6 +1115,15 @@ function discoveryGap(discovery: SourceDiscovery): string | undefined {
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
+/** Whether an entry is at `path` (`lstat`: a link counts as itself); one that cannot be read for another cause counts as there. */
+async function entryExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    return !hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTDIR");
+  }
+}
 function sha256(data: string | Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
@@ -2435,7 +2444,7 @@ export class CodeRuleBridge {
     const kept = this.#keptWorktreePaths(start.worktrees);
     for (const [root, findings] of found) {
       const worktree = sessionPath(discovery.root, root);
-      if (!start.worktrees.has(worktree)) continue;
+      if (!start.worktrees.has(worktree) || (await this.#removedWhileRead(root, worktree, findings))) continue;
       snapshots.set(worktree, findings.snapshot);
       takeCheckouts(root, findings, { heads, unmerged, passed: scan.unmerged });
       this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
@@ -2448,6 +2457,19 @@ export class CodeRuleBridge {
     // Not this take's to record: the session keeps what it saw of them (`#takeSnapshots`).
     for (const path of views.keys()) previous.delete(path);
     return { walk, scan, snapshots, views };
+  }
+
+  /**
+   * Whether the worktree at `root` was removed while the walk read it: the walk lacks a source the session's snapshot of
+   * it holds, and its `.git` entry is gone now. `git worktree remove` deletes that entry with the worktree's files while
+   * Git still lists the worktree, so those files went with it and none is an edit, as for a worktree gone before the walk
+   * began (`#syncWorktrees`). A file deleted in a worktree that stays leaves its `.git`, and is an edit.
+   */
+  async #removedWhileRead(root: string, worktree: string, findings: WorktreeFindings): Promise<boolean> {
+    const before = this.#worktreeView.snapshot(worktree);
+    if (before === undefined) return false;
+    for (const path of before.sources.keys()) if (!findings.snapshot.sources.has(path)) return !(await entryExists(join(root, ".git")));
+    return false;
   }
 
   /** The paths under each of `worktrees` (session-relative) where the session's own view differs from its snapshot. */
