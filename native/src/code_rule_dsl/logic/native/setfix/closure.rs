@@ -182,6 +182,8 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         step_ns: (0..=rest.len()).map(|_| Default::default()).collect(),
         from: (0..rest.len()).collect(),
         plan_steps: rest.len(),
+        // The steps' ranges as they were: their ends are slots bound before them, the removed first step's too.
+        ranges: j.ranges[1..].to_vec(),
     };
     let rest = JoinRule { probes: super::probes(&rest.steps, &rest.out), ..rest };
     Some(Closure { col, rest, y })

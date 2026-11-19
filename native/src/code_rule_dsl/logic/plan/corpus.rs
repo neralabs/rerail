@@ -8912,6 +8912,8 @@ fn run_observed(
     let mut cross_derived_again = 0;
     let mut cross_quiet = (0, 0);
     let mut cross_skipped = 0;
+    // What the cross part binds as rows it holds: its held base relations and the exports (`Stats::held`).
+    cross_stats.held = Arc::new(base_held.keys().chain(&split.exports).cloned().collect());
     let (mut cross_changed, mut cross_again) = (Vec::new(), BTreeMap::new());
     let cross_delta_counts = [0usize; 6];
     let mut cross_recursive = 0;

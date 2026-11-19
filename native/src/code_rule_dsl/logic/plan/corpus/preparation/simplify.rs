@@ -2545,6 +2545,21 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, c: usize) -> bool {
         })
 }
 
+/// Whether every rule of derived relation `rel` reads only relations a split can hold per file: inputs, natives, and
+/// derived relations with a location column (`location_column`). Only then does a projection keep a location its
+/// readers do not read: the split partitions such a relation's rows by it. A rule that also joins a relation of no
+/// location is no file's, and a location kept there only multiplies its rows: `bcgp_decorated`'s zero count read
+/// `!rr_agg15($a, $b, $p, _)`, whose helper over `rr_ctx16($a, $b, $p)` (pairs of a decorator and a later def, no
+/// location) kept each line's span, a row per line between every pair (3.6-10 M rows priced for 25,425 pairs).
+fn file_local_reads(v: &Version, f: &Fields<'_>, heads: &BTreeSet<&str>, rel: &str) -> bool {
+    v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).all(|r| {
+        r.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).filter(|a| !a.neg()).all(|a| {
+            let name = v.rel_name(a.rel());
+            name == rel || !heads.contains(name) || (0..a.args().count()).any(|c| location_column(v, f, name, c))
+        })
+    })
+}
+
 /// The columns each relation's readers read (`project_unread_columns`' first step): `None` where something reads it
 /// whole.
 fn columns_read(v: &Version) -> HashMap<String, Option<BTreeSet<usize>>> {
@@ -2591,7 +2606,7 @@ impl ProgramPass for ProjectAll {
         let f = Fields::over(v, &d);
         let heads: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
         let mut keep_of: HashMap<String, Vec<usize>> = HashMap::new();
-        for rel in heads {
+        for &rel in &heads {
             if kept(&f, rel) || f.nullary(rel) || f.answer(rel) {
                 continue;
             }
@@ -2599,6 +2614,7 @@ impl ProgramPass for ProjectAll {
             let Some(n) = f.arity(rel) else { continue };
             let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();
             if !keep.iter().any(|&c| location_column(v, &f, rel, c))
+                && file_local_reads(v, &f, &heads, rel)
                 && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, c))
             {
                 keep.push(c);

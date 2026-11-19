@@ -5197,15 +5197,26 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   pair in a def again. The keys are chained now, fewest atoms first, each part's keys within the previous key, and
   each part is reduced by the last (the keys every part holds, as before). `vmi_known`'s strata 3.2 s → 0.004 s;
   the pair 5.29 → 1.78 s CPU, findings equal to `RERAIL_FACTORIZE=off`.
+- **5. A zero count over a range** (`bounded-composed-graph-paths`' `bcgp_decorated`, `count : { bcgp_line(p, l, _),
+  l > a, l < b, !bcgp_at_line(p, l) } = 0`: 8.2 s of the policy's 9.9 s alone). Four parts, each needed:
+  - `preparation/simplify.rs` (`file_local_reads`): the read is `!rr_agg15($a, $b, $p, _)`, but the projection kept
+    the line's span as a location column, so the helper was a row per line between each pair. A location is kept only
+    where every relation the rules read is a file's; `rr_ctx16` (the pairs) is none.
+  - `plan.rs`, the search: past the bound head a step passes on one binding (`setfix::tail`), as the greedy order
+    priced it; the step's reads stay priced (priced at one row, a pair-led order read every line of its file: 28.6 s).
+  - `setfix::ranges`, `Found::within`, `InRel::index_then`, and `range_pass` in the search: a probe whose new column
+    later comparisons bound by values bound before reads a range of an order on its key then that column, which a
+    held input (`Stats::held`: the cross part's held bases and exports) or a derived relation has. The comparisons
+    stay as filters.
+  - `setfix`, a fused step (`rowcode`) past the head: it stopped at no witness, so every line in range reached the
+    head (25.4 M for 25,426 pairs). It now ends at the first, gathering 8 rows first, then 8 times more.
+  - `rr_agg15`: 8.15 s → 0.036 s, 201,542 lines read; the policy 9.9 → 0.85 s CPU, 154 G → 8.3 G instructions; the
+    50 policies 320 G → 261.5 G instructions, 0.80 GB peak, 53 findings, the same as before.
 - **Fixed on the way:** `retain/frame_tests.rs` called `KeptInput::load` without its `news` argument since t43
   step 19, so `rerail-logic`'s test target did not build.
 - **Open, in order:**
-  - `bounded-composed-graph-paths`' `bcgp_decorated` (8 s of 10 alone): `count : { … } = 0` becomes a negated
-    read (`existence_as_reads`), but its helper `rr_agg15` keeps the counted `_` as a column and so enumerates every
-    line between each decorator and each later def. An existence helper should drop it, and stop at a pair's first
-    line (a range probe that ends at its first row).
   - 11,500 strata for 50 policies, about 1 ms each, on 91 files: fixed costs that do not shrink with the files.
-  - 2.4 GB peak on 91 files: to break down before any larger sample.
+  - The peak: 2.4 GB on 91 files before 5, 0.80 GB after.
   - The rest by policy (`each.sh`), then the 901-file sample, once the per-file cost is known from the 91.
 
 ### Q243. At 2,410 files the mode is priced above a derive for deltas of 0.1% of the rows read

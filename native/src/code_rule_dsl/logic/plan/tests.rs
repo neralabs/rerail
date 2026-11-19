@@ -3277,3 +3277,34 @@ fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
     assert!(super::prepared_to_store().is_none(), "nothing new to store");
     assert!(std::sync::Arc::ptr_eq(&read, &prepared::Prepared::of_version(&v)), "held by the version");
 }
+
+/// A probe whose new variable later comparisons bound reads a range (`setfix::ranges`), and past the head's variables
+/// a step passes on one witness a binding (`setfix::tail`). A zero count's helper, `h(a, b, p) :- ctx(a, b, p),
+/// line(p, l, _), !at(p, l), l > a, l < b` (`bounded-composed-graph-paths`' `rr_agg15`; 91 files: 25,425 pairs, 6,027
+/// lines of 9 files), was searched from `line` (46.7 M work), each line probing its file's pairs; from `ctx`, each
+/// pair reads its lines between its ends and stops at the first.
+#[test]
+fn a_probe_bounded_by_comparisons_reads_a_range() {
+    let p = parse(".decl ctx(a:number,b:number,p:number)\n.decl src(p:number,l:number,s:number)\n.decl at(p:number,l:number)\n.input ctx, src, at\n.decl line(p:number,l:number,s:number)\nline(p,l,s) :- src(p,l,s).\n.decl h(a:number,b:number,p:number)\nh(a,b,p) :- ctx(a,b,p), line(p,l,_), !at(p,l), l > a, l < b.\n.output h\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [
+        ("ctx", 25_425.0, vec![212.0, 330.0, 2.0]),
+        ("line", 6_027.0, vec![9.0, 3_535.0, 6_027.0]),
+        ("at", 700.0, vec![9.0, 700.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    model.stats.solve(["h"].into_iter().map(str::to_owned).collect());
+    let r = p.rules.iter().find(|r| r.head.rel == "h").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let order: Vec<_> = order.iter().filter_map(|s| r.body[s.at].atom()).filter(|a| !a.neg).map(|a| a.rel.as_str()).collect();
+    assert_eq!(order, ["ctx", "line"], "{order:?}, work={work}");
+    // A pair's lines between its ends, a ninth of its file's as the comparisons are priced (a third each).
+    assert!(work < 5e6, "a range a pair: {work}");
+}

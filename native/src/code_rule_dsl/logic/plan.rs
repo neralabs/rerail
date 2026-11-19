@@ -489,6 +489,10 @@ pub struct Stats {
     solving_digest: u128,
     /// Input rel → index column lists.
     indexes: std::sync::Arc<HashMap<String, Vec<Vec<String>>>>,
+    /// The inputs the run binds as rows it holds, not a view of a source (`setfix::input_of`'s `held_rel`): the
+    /// cross part's base relations held and the file-local part's exports. A probe of one reads its sorted order, so a
+    /// range of its next column is read as a range (`setfix::ranges`, `Model::plan_rule`'s `range_pass`).
+    pub held: std::sync::Arc<BTreeSet<String>>,
     /// Documents (node-id intervals, `stat_docrange`), if the facts have them.
     docs: Option<i64>,
     /// Exact postings of the program's constants: table → (column, value) → n. By table first: a relation's are
@@ -617,6 +621,7 @@ impl Stats {
             heavy_mark: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
+            held: Default::default(),
             sized: BTreeSet::new(),
             solving_digest: 0,
             indexes: Default::default(),
@@ -795,6 +800,7 @@ impl Stats {
             heavy_mark: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
+            held: Default::default(),
             sized: BTreeSet::new(),
             solving_digest: 0,
             indexes: Default::default(),
@@ -975,6 +981,7 @@ impl Model {
             heavy_mark: Default::default(),
             obs: rules.iter().filter_map(|r| Some((*r, st.obs.get(r)?.clone()))).collect(),
             solving: BTreeSet::new(),
+            held: st.held.clone(),
             sized: BTreeSet::new(),
             solving_digest: 0,
             indexes: st.indexes.clone(),
@@ -4417,6 +4424,37 @@ impl Model {
                 Price::Descend(size) => Some((rows * size, rows * size, Some(Mode::Descend))),
             }
         };
+        // The share of a join's rows a range read leaves (`setfix::ranges`): a positive atom of a relation rules make,
+        // not this component, probed by a bound key, whose new variable later comparisons bound by values bound
+        // already, reads only the rows between them, in the order on its key then that column (`index_then`). The
+        // comparisons still pass their share on as filters; this prices the rows read. `bcgp_line($p, $l, _)` probed by
+        // `$p` with `$l > $a, $l < $b` reads a pair's lines between its decorator and its def, not its file's.
+        let range_pass = |i: usize, bound: u128| -> f64 {
+            let j = joins[i];
+            let Lit::Atom(a) = b.view(j) else { return 1.0 };
+            let rel = b.rel(a);
+            // Rows a rule made here, or an input the run holds (`Stats::held`): rows with an order to range over. A
+            // view of a source reads its own indexes.
+            if a.neg() || jmask[i] & bound == 0 || !(self.derived.contains(rel) || self.stats.held.contains(rel)) || self.view_src.contains_key(rel) || self.stats.solving.contains(rel) {
+                return 1.0;
+            }
+            let mut new = jmask[i] & !bound;
+            let mut best = 1.0f64;
+            while new != 0 {
+                let v = new.trailing_zeros();
+                new &= new - 1;
+                let mut share = 1.0;
+                for (k, &f) in filters.iter().enumerate() {
+                    if matches!(b.view(f), Lit::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, .. }) && lit_bits[f] & !bound == 1u128 << v {
+                        share *= pass[k];
+                    }
+                }
+                best = best.min(share);
+            }
+            best
+        };
+        // The head's variables as bits, where every one is a join's (`step`'s witness cut needs them all bound).
+        let head_bits: Option<u128> = head_vars.iter().try_fold(0u128, |m, v| var_ids[v.index()].filter(|&k| k < 128).map(|k| m | 1u128 << k));
         // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
         let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
         let mut closed: Vec<(u128, u128)> = vec![(0, 0); 1 << joins.len()];
@@ -4482,6 +4520,16 @@ impl Model {
                     let p = price(i, *bound);
                     let by = match p { Price::Atom(_, _, by) => by, _ => "" };
                     let Some((w, mut out, mode)) = priced(p, left) else { continue };
+                    let w = w * range_pass(i, *bound);
+                    // Past the head's variables the walk passes on one witness a binding (`setfix::tail`), so the
+                    // steps after pay for the bindings, not the rows. The step itself still reads its rows until a
+                    // witness, and all of them where there is none: its work stays. Priced at one row read
+                    // (`step`'s greedy cut), `rr_agg15($a, $b, $p) :- rr_ctx16($a, $b, $p), bcgp_line($p, $l, _),
+                    // !bcgp_at_line($p, $l), $l > $a, $l < $b` led from the pairs (64.8 K) and read every line of
+                    // each pair's file: 28.6 s against 5.4 s led from the lines.
+                    if head_bits.is_some_and(|h| h & !*bound == 0) && out > left {
+                        out = left;
+                    }
                     let fan = if left > 0.0 { out / left } else { 0.0 };
                     let unfounded = (prev == 0 || from.unfounded) && no_rows_when_priced(i);
                     candidates += 1;
@@ -4539,8 +4587,11 @@ impl Model {
                 let rel = b.rel(a);
                 let cols: Vec<String> = (0..b.args(j).len()).map(|c| format!("ndv {:?} fan {:?}", self.ndv.get(&(rel.to_owned(), c)), self.stats.fan.get(&(rel.to_owned(), c)))).collect();
                 eprintln!(
-                    "plan show   atom {}: card {:?} lazy {} solving {} prior_later {} col {:?} | {}",
+                    "plan show   atom {}: derived {} held {} view {} card {:?} lazy {} solving {} prior_later {} col {:?} | {}",
                     b.show_atom(a),
+                    self.derived.contains(rel),
+                    self.stats.held.contains(rel),
+                    self.view_src.contains_key(rel),
                     self.stats.card.get(rel),
                     self.stats.lazy.0.contains_key(rel),
                     self.stats.solving.contains(rel),
