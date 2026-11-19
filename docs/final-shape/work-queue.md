@@ -5135,3 +5135,17 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   edit to an included file; which one failed was not printed.
 - **To do:** run it cold beside the 0275 tests until it fails with its message; suspects are the observer's view of
   the edited include (decision 0105's flush) and the store's queued entry being found before its write settles.
+
+### Q241. Four observer tests fail in `rerail-store`'s own test target
+
+- **Found** (2026-11-19, beside 0364's kept-facts gather): `cargo nextest run -p rerail-store --lib --features
+  test-hooks` did not compile. `rerail-clif`'s `view_reads` needed its `ir` feature, and two journal tests called
+  `since` without `settle`. Both are fixed, and the merge in 718434dca had dropped the caller's bound (Q184) from
+  `fsevents::since_within`, which is restored: `the_journal_names_what_changed_since_its_cursor` passes.
+- Four `observe::tests` fail with and without that restore, on the M1 Max:
+  `an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing`,
+  `a_directory_that_cannot_be_listed_names_what_it_held`, `a_small_root_is_checked_by_listings_not_stats`,
+  `a_listing_names_an_edited_file_and_no_other`. Their stats run past what they expect (for example 7 stats where
+  none are wanted).
+- **To do:** run them on this Mac to tell a host's journal from the code. Then bisect from 718434dca, the last
+  merge into `journal.rs` and `observe.rs`.
