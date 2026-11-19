@@ -1545,11 +1545,6 @@ impl Tape16Z {
         &self.buf
     }
 
-    /// The pieces: `PIECES` a block.
-    fn pieces(&self) -> usize {
-        PIECES * self.p.block_count()
-    }
-
     /// The stored tape, held as it is: its header, its regions and its piece index are checked against its length,
     /// and each piece against where it decodes to. No piece is decoded.
     pub fn from_bytes(buf: impl Into<crate::home::Home>) -> Result<Self, String> {

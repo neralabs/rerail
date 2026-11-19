@@ -4691,6 +4691,8 @@ pub(crate) fn install_languages() {
     embed::install_embedders(vec![
         #[cfg(feature = "lang-blade")]
         (language::Via::CompiledView, &embed::compiled_view::CompiledView),
+        #[cfg(feature = "lang-html")]
+        (language::Via::RawText, &embed::raw_text::RawText),
         #[cfg(feature = "lang-vue")]
         (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
         #[cfg(any(test, feature = "test-hooks"))]
