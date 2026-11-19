@@ -1,12 +1,18 @@
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClaudeStatusLine } from "../../../src/setup/index.js";
 
-const mocks = vi.hoisted(() => ({ command: vi.fn(), presentation: vi.fn() }));
+const mocks = vi.hoisted(() => ({ command: vi.fn(), presentation: vi.fn(), gitBash: vi.fn<() => string | undefined>() }));
 vi.mock("../../../src/setup/claude-status-store.js", () => ({ readClaudeStatusCommand: mocks.command }));
+vi.mock("../../../src/engine/git.js", async importOriginal => ({
+  ...await importOriginal<Record<string, unknown>>(),
+  gitBash: mocks.gitBash,
+}));
 vi.mock("../../../src/presentation/session-presentation.js", () => ({
   readPresentation: mocks.presentation,
   fallbackPresentation: (reason: string) => ({ text: reason }),
@@ -34,11 +40,60 @@ async function render(input = Buffer.from('{"session_id":"claude-1","cwd":"/work
   return Buffer.concat(chunks);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   mocks.command.mockReset().mockReturnValue(undefined);
   mocks.presentation.mockResolvedValue({ presence: "compact" });
+  const git = await vi.importActual<typeof import("../../../src/engine/git.js")>("../../../src/engine/git.js");
+  mocks.gitBash.mockReset().mockImplementation(() => git.gitBash());
 });
+
+const drives: string[] = [];
+const roots: string[] = [];
+afterEach(async () => {
+  // A drive goes before its folder: Windows keeps a folder a drive maps.
+  for (const drive of drives.splice(0)) execFileSync("subst", [drive, "/d"], { stdio: "ignore" });
+  await Promise.all(roots.splice(0).map(async root => await removeFolder(root)));
+});
+
+/**
+ * A folder of this test reached as the root of a free drive, holding the stand-ins `rerail-git\bin\bash.exe` and
+ * `msys64\usr\bin\bash.exe` and an empty `session`, as a drive holding a person's bash is reached. Vitest runs test
+ * files at once and every file shares the user's drive letters, so this file takes only X to Z (the PATH search's
+ * tests take R to T, the start state's earlier-spelling tests U to W), and the next one where `subst` refuses a letter.
+ */
+async function driveWithBash(): Promise<{ root: string; drive: string }> {
+  const root = await mkdtemp(join(tmpdir(), "rerail-claude-bash-"));
+  roots.push(root);
+  for (const folder of [join("rerail-git", "bin"), join("msys64", "usr", "bin")]) {
+    await mkdir(join(root, folder), { recursive: true });
+    await writeFile(join(root, folder, "bash.exe"), "");
+  }
+  await mkdir(join(root, "session"));
+  for (const name of "XYZ") {
+    const drive = `${name}:`;
+    if (existsSync(`${drive}\\`)) continue;
+    try {
+      execFileSync("subst", [drive, root], { stdio: "ignore" });
+      drives.push(drive);
+      return { root, drive };
+    } catch {
+      // Taken since the check above: the next one.
+    }
+  }
+  throw new Error("no free drive letter from X to Z");
+}
+
+/** How the previous status line is started on Windows, with `named` as CLAUDE_CODE_GIT_BASH_PATH, from `folder`. */
+function spawnFrom(folder: string, command: string, named: string): ReturnType<typeof previousStatusSpawn> {
+  const before = process.cwd();
+  process.chdir(folder);
+  try {
+    return previousStatusSpawn(command, "win32", { CLAUDE_CODE_GIT_BASH_PATH: named });
+  } finally {
+    process.chdir(before);
+  }
+}
 
 describe("composed Claude status", () => {
   it("selects the installed project predecessor independently of the global registration", async () => {
@@ -172,11 +227,64 @@ describe("composed Claude status", () => {
     expect(previousStatusSpawn(command, "win32", { CLAUDE_CODE_GIT_BASH_PATH: "bash.exe" })).toEqual(previousStatusSpawn(command, "win32", {}));
   });
 
-  it("finds Git Bash beside Git where CLAUDE_CODE_GIT_BASH_PATH starts at the root of the current drive, which Rerail would not start", () => {
+  it("finds Git Bash beside Git where CLAUDE_CODE_GIT_BASH_PATH starts at the root of the current drive and names no file there", () => {
     const command = "bash ~/.claude/statusline.sh";
-    for (const named of [String.raw`\Program Files\Git\bin\bash.exe`, "/Program Files/Git/bin/bash.exe"]) {
+    for (const named of [String.raw`\rerail-no-such-folder\bin\bash.exe`, "/rerail-no-such-folder/bin/bash.exe"]) {
       expect(previousStatusSpawn(command, "win32", { CLAUDE_CODE_GIT_BASH_PATH: named }), named).toEqual(previousStatusSpawn(command, "win32", {}));
     }
+  });
+
+  // Windows reads a path without a drive on the drive of the current folder, as Claude Code does, and so did the start
+  // before such a path was refused: the bash keeps its place there, named by its drive, Git Bash beside Git or not.
+  it.runIf(process.platform === "win32")("on Windows starts the bash CLAUDE_CODE_GIT_BASH_PATH starts at the root of the current drive, by its path on that drive, where no Git Bash sits beside Git", async () => {
+    const command = "bash ~/.claude/statusline.sh";
+    const { drive } = await driveWithBash();
+    mocks.gitBash.mockReturnValue(undefined);
+    for (const named of [String.raw`\rerail-git\bin\bash.exe`, "/rerail-git/bin/bash.exe"]) {
+      expect(spawnFrom(`${drive}\\session`, command, named), named).toEqual({ file: `${drive}\\rerail-git\\bin\\bash.exe`, args: ["-c", command], shell: false });
+    }
+  });
+
+  it.runIf(process.platform === "win32")("on Windows keeps another bash CLAUDE_CODE_GIT_BASH_PATH starts at the root of the current drive over Git Bash beside Git", async () => {
+    const command = "bash ~/.claude/statusline.sh";
+    const { drive } = await driveWithBash();
+    mocks.gitBash.mockReturnValue(String.raw`C:\Program Files\Git\bin\bash.exe`);
+    expect(spawnFrom(`${drive}\\session`, command, String.raw`\msys64\usr\bin\bash.exe`)).toEqual({ file: `${drive}\\msys64\\usr\\bin\\bash.exe`, args: ["-c", command], shell: false });
+  });
+
+  it.runIf(process.platform === "win32")("on Windows finds Git Bash beside Git where CLAUDE_CODE_GIT_BASH_PATH starts at the root of the current drive and that drive holds no such file", async () => {
+    const command = "bash ~/.claude/statusline.sh";
+    const { root, drive } = await driveWithBash();
+    const besideGit = String.raw`C:\Program Files\Git\bin\bash.exe`;
+    mocks.gitBash.mockReturnValue(besideGit);
+    // The same folder reached on the drive the temporary folder lies on, which holds no `\rerail-git`.
+    expect(spawnFrom(join(root, "session"), command, String.raw`\rerail-git\bin\bash.exe`)).toEqual({ file: besideGit, args: ["-c", command], shell: false });
+    // A bare name stays passed over beside a file it names in the current folder.
+    expect(spawnFrom(`${drive}\\rerail-git\\bin`, command, "bash.exe")).toEqual({ file: besideGit, args: ["-c", command], shell: false });
+  });
+
+  // A file in the repository the session runs in is the repository's, not the person's bash: Git's own search skips such
+  // a folder too, and so does the PATH search.
+  it.runIf(process.platform === "win32")("on Windows never starts a bash CLAUDE_CODE_GIT_BASH_PATH names in a repository at the root of the current drive", async () => {
+    const command = "bash ~/.claude/statusline.sh";
+    const { root, drive } = await driveWithBash();
+    await mkdir(join(root, ".git"));
+    const besideGit = String.raw`C:\Program Files\Git\bin\bash.exe`;
+    mocks.gitBash.mockReturnValue(besideGit);
+    expect(spawnFrom(`${drive}\\session`, command, String.raw`\rerail-git\bin\bash.exe`)).toEqual({ file: besideGit, args: ["-c", command], shell: false });
+    mocks.gitBash.mockReturnValue(undefined);
+    expect(spawnFrom(`${drive}\\session`, command, String.raw`\rerail-git\bin\bash.exe`)).toEqual({ file: command, args: [], shell: true });
+  });
+
+  // On Linux and macOS a backslash is part of a file name, so there `\bash.exe` names a file in the current folder.
+  it.skipIf(process.platform === "win32")("on Linux and macOS, playing Windows, passes over a CLAUDE_CODE_GIT_BASH_PATH such as \\bash.exe, which names a file in the current folder there", async () => {
+    const command = "bash ~/.claude/statusline.sh";
+    const here = await mkdtemp(join(tmpdir(), "rerail-claude-bash-"));
+    roots.push(here);
+    await writeFile(join(here, String.raw`\bash.exe`), "");
+    const besideGit = String.raw`C:\Program Files\Git\bin\bash.exe`;
+    mocks.gitBash.mockReturnValue(besideGit);
+    expect(spawnFrom(here, command, String.raw`\bash.exe`)).toEqual({ file: besideGit, args: ["-c", command], shell: false });
   });
 
   it("draws Rerail's line when the prior command cannot be started at all", async () => {

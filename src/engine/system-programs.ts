@@ -87,30 +87,32 @@ function searchedEntries(env: NodeJS.ProcessEnv, windows: boolean): string[] {
 
 /**
  * The folder a Windows PATH entry names on this machine, as a list of one, or none. One that names one folder
- * ({@link namesOneFile}) is read as written. On a Windows machine one from the root of the current drive (`\tools`)
- * is read where Windows and Node read it, on the drive of this process's current folder, and named with that drive
- * ({@link currentDriveFolder}): a program start reads a path without a drive on the drive of the child's folder, which
- * can be another, so the search would check one file and the start run another.
+ * ({@link namesOneFile}) is read as written, one from the root of the current drive (`\tools`) as
+ * {@link fromCurrentDrive} reads it: a program start reads a path without a drive on the drive of the child's folder,
+ * which can be another, so the search would check one file and the start run another.
  */
 function searchedFolder(entry: string): string[] {
   if (namesOneFile(entry)) return [entry];
-  const folder = process.platform === "win32" && /^[\\/]/u.test(entry) ? currentDriveFolder(entry) : undefined;
+  const folder = fromCurrentDrive(entry);
   return folder === undefined ? [] : [folder];
 }
 
 /**
- * `entry`, a path from the root of the current drive, on the drive (or server share) of this process's current folder;
- * undefined where that folder lies in the repository nearest the current folder, as for a repository cloned to a drive's
- * root: its files are the repository's, not the person's programs, and Git's own search skips such a folder too. Only
- * the nearest repository counts, as in Git's search: from a submodule or a nested clone of a repository at a drive's
- * root, the outer repository's folder is read as before.
+ * `path`, written from the root of the current drive (`\tools`, `/Git/bin/bash.exe`), named with the drive (or server
+ * share) of this process's current folder, where Windows and Node read it on a Windows machine. Undefined elsewhere,
+ * where such a path has no drive to take; for a path that does not start at a root; and where the path lies in the
+ * repository nearest the current folder, as for a repository cloned to a drive's root: its files are the repository's,
+ * not the person's programs, and Git's own search skips such a folder too. Only the nearest repository counts, as in
+ * Git's search: from a submodule or a nested clone of a repository at a drive's root, the outer repository's files are
+ * read as before.
  */
-function currentDriveFolder(entry: string): string | undefined {
+export function fromCurrentDrive(path: string): string | undefined {
+  if (process.platform !== "win32" || !/^[\\/]/u.test(path)) return undefined;
   const here = process.cwd();
-  const folder = win32.resolve(here, entry);
+  const named = win32.resolve(here, path);
   const repository = enclosingRepository(here);
-  // Both lie on the drive of the current folder, so a folder outside the repository is reached from it by going up.
-  return repository !== undefined && win32.relative(repository, folder).split("\\")[0] !== ".." ? undefined : folder;
+  // Both lie on the drive of the current folder, so a path outside the repository is reached from it by going up.
+  return repository !== undefined && win32.relative(repository, named).split("\\")[0] !== ".." ? undefined : named;
 }
 
 /** The nearest folder at or above `folder` that holds a `.git` entry, read from disk without running Git. */
