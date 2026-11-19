@@ -5488,3 +5488,11 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Steps**: 0431's five. Step 1 (the record and the R1–R4 tests, ignored, each failing for its reason) is done.
 - **Done when**: R1–R8 hold, their tests pass unignored, no guest document, key range, embed slice or batch rebuild
   is left, and PostHog's findings are unchanged on CPU and Metal.
+
+### Q262. (Q208 again) `r7_the_recheck_order_is_priced` fails: 2 recheck lines unpriced after "a use added"
+
+- **Seen** (2026-11-18, m1max, at 24740af51 and at 2e9d16bc8, alone and in a batch): `ran.shape.rechecks_unpriced`
+  is 2 after the "a use added" edit; Q208 (done) had it 0. Not a load or timing failure: it fails every time, in 4 s.
+- **Not 0431's**: it fails with 0431's step 2 stashed. A merge since Q208 brought it in; to bisect between Q208's
+  commit and 24740af51 on the maintain mode's recheck lines (`bound_head_order`, `plan_rule_reused`).
+- **Done when**: R7 passes, and the test names the unpriced line when it fails.
