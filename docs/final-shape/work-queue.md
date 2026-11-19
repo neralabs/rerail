@@ -4405,7 +4405,7 @@ Found 2026-11-18, merging the hub (ffc390de8) into phased-facts.
     `wait.unwrap_or(WAIT.max(settle))` made two `observe` tests fail, so the hub's form stays. Which bound the
     journal owes its callers is open.
 
-### Q242. The inline pricing (0099) prices a data-layer demand relation at 1e12 rows, and its unfolding never ends (open)
+### Q242. The inline pricing (0099) prices a data-layer demand relation at 1e12 rows, and its unfolding never ends (done)
 
 Found 2026-11-18, running the data-layer rules (`docs/rule-syntax/data-layer`, 57) over corpus0's first 50 files
 after the phases went on the run path (0083).
@@ -4422,8 +4422,15 @@ after the phases went on the run path (0083).
 - **Bisected:** no subset of the pack with `versioned-table-names` reproduces it below 7 rules
   (`plan-helpers-allowlist`, `plan-optimizer-v2`, `plan-scope-side-effects`, `post-op-no-internal-dispatch`,
   `post-op-side-effects`, `public-api-triples`): each part alone finishes in 30–53 s, together past 180 s.
-- **Open:** where `estimate`'s rows for the cone's library relations come from in a combined program (a missing
-  card defaulting large is the first suspect), and whether a negative added work should be possible at all.
+- **Done** (2026-11-18): two faults in `keeps::estimate`, with a test each.
+  - `calibrated_rows` returned the plan's rows, not its steps'. For a plan taken as prepared (0361 step 5) those
+    are the facts-only model's at its nominal scale: `asgstmt` 0 rows where its steps make 146.
+  - A column's distinct values were the minimum over every rule's binding columns: `assign_chain`'s first column
+    took its base case's 1 value (from `asgstmt`'s 0 rows), `ast_name`'s took `rr_long_text_node`'s 2,068. Now the
+    sum of each rule's, a constant one value, and a recursion passing the column on from the relation adds none.
+  - `p6_write` is now estimated at 28 rows (1,727 made) instead of 985 M; the demand relation is stored, and the 8
+    rules run in 60 s (profiled) instead of past 180 s. All 57 rules run over the 50 files.
+  - `RERAIL_KEEPS_TRACE=<text>` prints the pricing's estimates for relations whose names hold the text.
 
 ### Q243. A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (open)
 
