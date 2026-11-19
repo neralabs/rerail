@@ -2036,7 +2036,7 @@ impl Lowerer {
 
     /// A rule of fixed shape the walk makes (a helper's, a demand's), head `rel(args)` and `body` written term by term;
     /// once, when `once` (a demand: left out when written before). Nothing in a replay, whose deciding walk wrote it.
-    fn fixed_rule(&mut self, rel: &str, args: &[Term], body: &[Literal], once: bool) {
+    pub(super) fn fixed_rule(&mut self, rel: &str, args: &[Term], body: &[Literal], once: bool) {
         if self.replay.is_some() {
             return;
         }

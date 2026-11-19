@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 
 use super::At;
 use super::{Lowerer, ty};
-use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Rule, Term, is_axis};
+use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Term, is_axis};
 
 const CORE: &str = include_str!("../../../../../../docs/rule-syntax/lib/core.rr");
 
@@ -146,7 +146,8 @@ impl Lowerer {
             let (params, body) = definition(rel);
             let cols: Vec<(&str, &str)> = DECLS[rel].iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
             self.prog.declare(&name, &cols);
-            self.write(Rule { head: Atom { rel: name.clone().into(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body: body.into() });
+            let args: Vec<Term> = params.iter().map(|p| var(p)).collect();
+            self.fixed_rule(&name, &args, &body, false);
         }
         name
     }
