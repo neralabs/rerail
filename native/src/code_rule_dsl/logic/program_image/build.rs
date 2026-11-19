@@ -22,7 +22,7 @@ use super::encoder::{self, CellText, Decl, Encoder, FactRel, Parts};
 use super::handles::{AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 use super::version::{Made, Version, max_ranges};
 use super::{ABOUT_BIT, AtomId, Cell, RelId, RuleId, Slot, kind};
-use crate::code_rule_dsl::logic::front::{ast::{Program, Rule, Value}, name::List};
+use crate::code_rule_dsl::logic::front::{ast::{Rule, Value}, name::List};
 use crate::code_rule_dsl::logic::program_facts::Facts;
 use std::sync::Arc;
 
@@ -93,38 +93,7 @@ impl Builder<'static> {
     pub fn base() -> Builder<'static> {
         Builder { parent: None, ids: None, enc: Encoder::new(None), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
     }
-    /// A new base of `prog`, every part its own. Refuses what the image has no form for (maintenance's parts, which
-    /// the text refuses too: `of_program_less_maintenance`) and a comparison it does not know.
-    pub fn of_program(prog: &Program) -> Result<Builder<'static>, String> {
-        if !prog.again.is_empty() || !prog.together.is_empty() {
-            return Err(super::bad("maintenance's parts (again, together) have no image"));
-        }
-        Builder::of_program_less_maintenance(prog)
-    }
-    /// A new base of all of `prog` but maintenance's parts (`again`, `together`), which a maintained program's version
-    /// holds beside its image (decision 0215, `plan::body::Maint`).
-    pub fn of_program_less_maintenance(prog: &Program) -> Result<Builder<'static>, String> {
-        let mut b = Builder::base();
-        for r in &prog.rules {
-            b.add(r)?;
-        }
-        b.set_program_header(prog);
-        Ok(b)
-    }
 
-    /// `prog`'s header but maintenance's parts on a base whose rules are written: its declarations, facts, inputs,
-    /// outputs and `.about` rows. The lowering writes a text's rules in its walk, then this (decision 0377 step 3).
-    pub fn set_program_header(&mut self, prog: &Program) {
-        for (n, c) in &prog.decls {
-            self.declare_names(n, c.as_slice());
-        }
-        for (r, rows) in &prog.facts {
-            self.set_facts(r, rows);
-        }
-        self.set_inputs(&prog.inputs);
-        self.set_outputs(&prog.outputs);
-        self.set_about(&super::about_of(prog));
-    }
 }
 
 /// A new base (`Builder::base`): a lowerer's header before it states anything.
@@ -892,63 +861,6 @@ impl Version {
         Builder::on(self)
     }
 
-    /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds
-    /// both programs (a test, the trace's replay); a pass states its edit instead.
-    pub fn diff<'p>(self: &'p Arc<Self>, to: &Program) -> Result<Builder<'p>, String> {
-        let mut want: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
-        let mut scratch = Encoder::new(None);
-        for (k, r) in to.rules.iter().enumerate() {
-            let at = scratch.tree_rule(r)?;
-            want.entry(scratch.rule_hash_of(at)).or_default().push(k);
-        }
-        let mut b = Builder::on(self);
-        let mut kept = vec![false; to.rules.len()];
-        for r in self.rules() {
-            match want.get_mut(&r.hash()).and_then(Vec::pop) {
-                Some(k) => kept[k] = true,
-                None => b.remove(r.id()),
-            }
-        }
-        for (r, k) in to.rules.iter().zip(&kept) {
-            if !k {
-                b.add(r)?;
-            }
-        }
-        for (n, c) in &to.decls {
-            let cols: Vec<(&str, &str)> = c.iter().map(|(a, t)| (a.as_str(), t.as_str())).collect();
-            if self.decl_of(n).is_none_or(|d| d.hash() != encoder::decl_hash(n, cols.iter().copied())) {
-                b.declare(n, &cols);
-            }
-        }
-        for d in self.decls() {
-            if !to.decls.contains_key(self.text(d.name())) {
-                b.undeclare(self.text(d.name()));
-            }
-        }
-        for (rel, rows) in &to.facts {
-            if self.find(rel).and_then(|a| self.facts(a)).is_none_or(|f| f.hash() != Builder::hash_rows(rel, false, rows)) {
-                b.set_facts(rel, rows);
-            }
-        }
-        for f in self.all_facts() {
-            if !to.facts.contains_key(self.text(f.name())) {
-                b.drop_facts(self.text(f.name()));
-            }
-        }
-        let about = super::about_of(to);
-        let old: std::collections::BTreeMap<&str, u64> = self.about_facts().into_iter().map(|f| (self.text(f.name()), f.hash())).collect();
-        let new: std::collections::BTreeMap<&str, u64> = about.iter().map(|(r, rows)| (r.as_str(), Builder::hash_rows(r, true, rows))).collect();
-        if old != new {
-            b.set_about(&about);
-        }
-        if self.inputs_hash() != encoder::names_hash(0, to.inputs.iter().map(String::as_str)) {
-            b.set_inputs(&to.inputs);
-        }
-        if self.outputs_hash() != encoder::names_hash(1, to.outputs.iter().map(String::as_str)) {
-            b.set_outputs(&to.outputs);
-        }
-        Ok(b)
-    }
 }
 
 /// Which relations' fields a part keeps (`Version::part`): its natives', its lattices' and its gates' (by key).

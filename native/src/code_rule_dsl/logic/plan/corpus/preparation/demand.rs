@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 type Result<T> = std::result::Result<T, String>;
 
 /// Native about rows `name` with the rows of `drop`'s relations left out and `add` added, in `program_facts::
-/// write_about`'s order: by the native's name (column 1), then by column 2 where it is a number.
+/// write_field`'s order: by the native's name (column 1), then by column 2 where it is a number.
 pub(super) fn edit_native_rows(b: &mut Builder<'_>, name: &str, drop: &HashSet<String>, add: Vec<Vec<Cell>>) {
     let mut rows = b.about_rows(name);
     let rel_of = |b: &Builder<'_>, r: &[Cell]| match r.get(1) {

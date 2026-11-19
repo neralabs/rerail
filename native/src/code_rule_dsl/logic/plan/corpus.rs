@@ -89,7 +89,7 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_LIBRARIES",
     "RERAIL_REQUESTS",
     "RERAIL_SCOPE_GUARDS",
-    // The `.rr` lowering: source attributes answered eagerly (`sources_on_request`), node ids compared raw
+    // The `.rr` lowering: source attributes answered eagerly (`on_request::SourcesOnRequest`), node ids compared raw
     // (`lowering_tail::OrderNodes`).
     "RERAIL_NODE_SOURCES",
     "RERAIL_ORDER_RAW",
@@ -1424,7 +1424,7 @@ pub fn cone_on_version(
     Ok(p.finish()?.0)
 }
 
-/// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
+/// The requests `on_request::SourcesOnRequest` made, narrowed where the split finds them cross-file to the asked node's own
 /// document (`file_local::RequestsFileLocal`): a node's attribute is its document's, answered in its chunk while the
 /// chunk's batch holds the text (O-cross-file-answers). Then the answers still cross-file made eager
 /// (`answers_where_documents_are_version`). A program that answers no attribute on request is left as it is.
@@ -1878,7 +1878,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
 }
 
 /// `combine_linked_as` as a splice into the combine's last link (decision 0373): the programs whose image changed
-/// lowered and read as the merge reads each (`own_part`, the request, `undo_on_request`, the header's kind sets,
+/// lowered and read as the merge reads each (`own_part`, the request, `undone_on_request`, the header's kind sets,
 /// globals and policy), and where each one's interface is its slot's, its rules written in its slot's place and every
 /// other program's copied from the last link (`Part::spliced`). `None` where nothing is kept for the run's shape, or a
 /// program's interface changed: the programs are then linked whole, and the link kept again.

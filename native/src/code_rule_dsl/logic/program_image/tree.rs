@@ -1,8 +1,8 @@
 //! A version read as today's tree (`front::ast::Program`), by its handles: every caller not yet moved to ids reads this.
 //! Each atom is made a `Name` once; lists are interned from scratch stacks, so a read allocates no list of its own.
 use super::handles::{AggRef, Lit, RuleRef, TermRef, Terms};
-use super::{AtomId, Cell, Version, assemble};
-use crate::code_rule_dsl::logic::front::{ast::{AggOp, Atom, Literal, Program, Rule, Term, Value}, name::{List, Lists, Name}};
+use super::{AtomId, Cell, Version};
+use crate::code_rule_dsl::logic::front::{ast::{AggOp, Atom, Literal, Rule, Term, Value}, name::{List, Lists, Name}};
 use crate::code_rule_dsl::logic::program_facts::Facts;
 use std::collections::BTreeMap;
 
@@ -119,36 +119,4 @@ impl<'v> Tree<'v> {
         out
     }
 
-    /// The whole program.
-    pub fn program(self) -> Result<Program, String> {
-        let v = self.v;
-        self.program_of(v.rules())
-    }
-
-    /// The program, its rules `rules` (the version's, in a program's order: a pass's overlay keeps its own).
-    pub fn program_of<'r>(mut self, rules: impl Iterator<Item = RuleRef<'r>>) -> Result<Program, String> {
-        let v = self.v;
-        let rules: Vec<Rule> = rules.map(|r| self.rule(r)).collect();
-        let mut decls = BTreeMap::new();
-        for d in v.decls() {
-            let cols: Vec<(Name, Name)> = d.cols().map(|(n, t)| (self.name(n), self.name(t))).collect();
-            let name = self.name(d.name());
-            decls.insert(name, self.lists.columns(&cols));
-        }
-        let mut facts = BTreeMap::new();
-        for f in v.all_facts() {
-            let rows = self.rows(f);
-            facts.insert(self.text(f.name()), rows);
-        }
-        let mut about = Facts::new();
-        for f in v.about_facts() {
-            let rows = self.rows(f);
-            about.insert(self.text(f.name()), rows);
-        }
-        // A version that states no field has no program row; the field readers read it as empty (`about_values`).
-        about.entry("program".to_owned()).or_insert_with(|| vec![[Value::Str(super::ABOUT.to_owned().into())].into()]);
-        let inputs = v.inputs().map(|a| self.text(a)).collect();
-        let outputs = v.outputs().map(|a| self.text(a)).collect();
-        assemble(rules, decls, facts, about, inputs, outputs)
-    }
 }

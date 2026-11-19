@@ -1,4 +1,4 @@
-//! A version's other fields (its `.about` rows, `program_facts::write_about`), read by type: the answers, the
+//! A version's other fields (its `.about` rows, `program_facts::write_field`), read by type: the answers, the
 //! natives, the lattices and the gates, each relation by its id. An analysis reads these, never the rows.
 //!
 //! Every relation an about row names has an id (`RELATION_COLUMNS`, made so by the builder), as every relation a

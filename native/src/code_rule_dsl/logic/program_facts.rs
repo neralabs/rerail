@@ -1,10 +1,10 @@
 //! A rule program as facts (decision 0074): every rule, literal, atom and term, every declaration and setting, as a
-//! row of a fixed schema, so a rule can read a program as data. A program written as facts reads back as the same
-//! program (`program`).
+//! row of a fixed schema, so a rule can read a program as data (`write_version`); a field's rows read back as the field
+//! (`fields`).
 //!
 //! These rows are not how a program is kept (decision 0155): a kept program is its `.rr` text (`program_text`). The
 //! rows are made from a program when asked for, and the text's `.about` part is the rows of what has no syntax
-//! (`write_about`).
+//! (`write_field`).
 //!
 //! The schema, one program `p` among several in a document:
 //!
@@ -26,7 +26,7 @@
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
 
 use super::front::name::Name;
-use super::front::ast::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
+use super::front::ast::{LatticeDecl, Native, Shape, ShapeWait, SpanIn, Value};
 use super::front::ast::{Gate, Report};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -174,9 +174,6 @@ struct Writer<'a> {
     terms: i64,
     atoms: i64,
     literals: i64,
-    /// Whether the parts `.rr` syntax writes are written too (rules, declarations, facts, inputs, outputs), or only
-    /// the rest (`write_about`, decision 0155).
-    syntax: bool,
 }
 
 impl Writer<'_> {
@@ -190,138 +187,6 @@ impl Writer<'_> {
             None => {
                 self.facts.insert(rel.to_owned(), vec![row.into()]);
             }
-        }
-    }
-
-    fn term(&mut self, term: &Term) -> i64 {
-        let t = self.terms;
-        self.terms += 1;
-        let (kind, num, text) = match term {
-            Term::Var(v) => ("var", 0, v.as_str()),
-            Term::Wild => ("wild", 0, ""),
-            Term::Int(i) => ("int", *i, ""),
-            Term::Branded(b) => ("atom", b.value(), brand_tag(*b)),
-            Term::Str(x) => ("str", 0, x.as_str()),
-            Term::Top => ("top", 0, ""),
-            Term::Call(f, _) => ("call", 0, f.as_str()),
-        };
-        self.row("term", vec![n(t), s(kind), n(num), s(text)]);
-        if let Term::Call(_, args) = term {
-            for (i, arg) in args.iter().enumerate() {
-                let u = self.term(arg);
-                self.row("call_arg", vec![n(t), n(i), n(u)]);
-            }
-        }
-        t
-    }
-
-    fn atom(&mut self, atom: &Atom) -> i64 {
-        let a = self.atoms;
-        self.atoms += 1;
-        self.row("atom", vec![n(a), s(&atom.rel), n(atom.neg as i64), n(atom.gated as i64)]);
-        for (i, arg) in atom.args.iter().enumerate() {
-            let t = self.term(arg);
-            self.row("arg", vec![n(a), n(i), n(t)]);
-        }
-        a
-    }
-
-    fn literal(&mut self, literal: &Literal) -> i64 {
-        let l = self.literals;
-        self.literals += 1;
-        match literal {
-            Literal::Atom(atom) => {
-                let a = self.atom(atom);
-                self.row("lit_atom", vec![n(l), n(a)]);
-            }
-            Literal::Cmp { l: left, op, r: right } => {
-                let (left, right) = (self.term(left), self.term(right));
-                self.row("lit_cmp", vec![n(l), n(left), s(op), n(right)]);
-            }
-            Literal::Agg { var, op, over, atom } => {
-                let a = self.atom(atom);
-                let name = match op {
-                    AggOp::Count => "count",
-                    AggOp::Min => "min",
-                    AggOp::Max => "max",
-                    AggOp::Sum => "sum",
-                    AggOp::Product => "product",
-                    AggOp::Join { .. } => "join",
-                };
-                self.row("lit_agg", vec![n(l), s(var), s(name), n(a)]);
-                if let Some(over) = over {
-                    self.row("agg_over", vec![n(l), s(over)]);
-                }
-                if let AggOp::Join { by, sep } = op {
-                    self.row("agg_join", vec![n(l), s(sep)]);
-                    for (i, v) in by.iter().enumerate() {
-                        self.row("agg_by", vec![n(l), n(i), s(v)]);
-                    }
-                }
-            }
-            Literal::Nearest { n: node, a, kindset } => self.row("lit_nearest", vec![n(l), s(node), s(a), s(kindset)]),
-            Literal::Ast { document, node, matcher, captures } => {
-                self.row("lit_ast", vec![n(l), s(document), s(node), s(matcher)]);
-                for (i, (name, v)) in captures.iter().enumerate() {
-                    self.row("ast_capture", vec![n(l), n(i), s(name), s(v)]);
-                }
-            }
-        }
-        l
-    }
-
-    fn program(&mut self, prog: &Program) {
-        self.row("program", vec![]);
-        if self.syntax {
-            self.syntax_parts(prog);
-        }
-        self.rest(prog);
-    }
-
-    /// What `.rr` syntax writes of `prog`: its rules, declarations, facts' rows, inputs and outputs.
-    fn syntax_parts(&mut self, prog: &Program) {
-        for (r, rule) in prog.rules.iter().enumerate() {
-            let head = self.atom(&rule.head);
-            self.row("rule", vec![n(r), n(head)]);
-            for (k, literal) in rule.body.iter().enumerate() {
-                let l = self.literal(literal);
-                self.row("body", vec![n(r), n(k), n(l)]);
-            }
-        }
-        for (rel, cols) in &prog.decls {
-            self.row("relation", vec![s(rel), n(cols.len())]);
-            for (i, (col, ty)) in cols.iter().enumerate() {
-                self.row("decl", vec![s(rel), n(i), s(col), s(ty)]);
-            }
-        }
-        for (rel, rows) in &prog.facts {
-            for (row, values) in rows.iter().enumerate() {
-                self.row("fact_row", vec![s(rel), n(row), n(values.len())]);
-                for (i, v) in values.iter().enumerate() {
-                    let (kind, num, text) = match v {
-                        Value::Int(x) => ("int", *x, ""),
-                        Value::Branded(b) => ("atom", b.value(), brand_tag(*b)),
-                        Value::Str(x) => ("str", 0, x.as_str()),
-                    };
-                    self.row("fact", vec![s(rel), n(row), n(i), s(kind), n(num), s(text)]);
-                }
-            }
-        }
-        for (k, rel) in prog.inputs.iter().enumerate() {
-            self.row("input", vec![n(k), s(rel)]);
-        }
-        for (k, rel) in prog.outputs.iter().enumerate() {
-            self.row("output", vec![n(k), s(rel)]);
-        }
-    }
-
-    /// The rest: what `.rr` syntax has no form for, and each relation of facts by name (one may have no rows).
-    fn rest(&mut self, prog: &Program) {
-        for f in Field::all_of(prog) {
-            self.field(&f);
-        }
-        for rel in prog.facts.keys() {
-            self.row("fact_rel", vec![s(rel)]);
         }
     }
 
@@ -519,7 +384,7 @@ impl Writer<'_> {
     }
 }
 
-/// One of a program's fields besides its rules, declarations, facts, inputs and outputs: what `write_about` writes,
+/// One of a program's fields besides its rules, declarations, facts, inputs and outputs: what `write_field` writes,
 /// a field at a time, so a version's field is stated where it is (`Builder::set_field`, decision 0276 §3) and read
 /// where it is (`Version`'s readers in `program_image::fields`), with no program decoded.
 #[derive(Clone, Copy)]
@@ -576,41 +441,11 @@ impl<'a> Field<'a> {
         }
     }
 
-    /// Every field of `prog`, in the order `write_about` writes them.
-    pub fn all_of(prog: &'a Program) -> [Field<'a>; 20] {
-        [
-            Field::Nullary(&prog.nullary),
-            Field::Qualifiers(&prog.qualifiers),
-            Field::Tapes(&prog.tapes),
-            Field::Shapes(&prog.shapes),
-            Field::Lattice(&prog.lattice),
-            Field::Kindsets(&prog.kindsets),
-            Field::Demand(&prog.demand),
-            Field::DemandDropped(&prog.demand_dropped),
-            Field::MagicExtras(prog.magic_extras),
-            Field::MagicReport(prog.magic_report.as_ref()),
-            Field::Gates(&prog.gates),
-            Field::Policies(&prog.policies),
-            Field::Settings(&prog.settings),
-            Field::Natives(&prog.natives),
-            Field::DocScopes(prog.doc_scopes.as_deref()),
-            Field::TextGlobs(&prog.text_globs),
-            Field::AstPatterns(&prog.ast_patterns),
-            Field::Answers(&prog.answers),
-            Field::Asked(&prog.asked_by),
-            Field::RxSpans(&prog.rx_spans),
-        ]
-    }
 }
 
 /// Field `f`'s rows, as facts of program `p` (each of `f.relations()` that has rows).
 pub fn write_field(facts: &mut Facts, p: &str, f: &Field<'_>) {
-    Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: false }.field(f);
-}
-
-/// `prog` as facts of program `p`, added to `facts`.
-pub fn write(facts: &mut Facts, p: &str, prog: &Program) {
-    Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: true }.program(prog);
+    Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0 }.field(f);
 }
 
 /// Version `v` as facts of program `p`, added to `facts`: its rules, literals, atoms and terms read through their
@@ -618,7 +453,7 @@ pub fn write(facts: &mut Facts, p: &str, prog: &Program) {
 /// rows, renamed to `p`).
 pub fn write_version(facts: &mut Facts, p: &str, v: &super::program_image::Version) {
     use super::program_image::{AggRef, AtomRef, Lit, RuleRef, TermRef};
-    let mut w = Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: true };
+    let mut w = Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0 };
     fn term(w: &mut Writer<'_>, v: &super::program_image::Version, r: RuleRef<'_>, t: TermRef<'_>) -> i64 {
         let id = w.terms;
         w.terms += 1;
@@ -738,12 +573,6 @@ pub fn write_version(facts: &mut Facts, p: &str, v: &super::program_image::Versi
     }
 }
 
-/// What of `prog` its `.rr` text has no syntax for (`program_text`, decision 0155), as facts of program `p`: `program`
-/// reads them back as a program of those parts alone.
-pub fn write_about(facts: &mut Facts, p: &str, prog: &Program) {
-    Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: false }.program(prog);
-}
-
 /// Why facts do not read back as a program.
 fn bad(what: impl std::fmt::Display) -> String {
     format!("program facts: {what}")
@@ -752,75 +581,6 @@ fn bad(what: impl std::fmt::Display) -> String {
 /// One program's rows of the schema, by relation, and the ids they index.
 struct Reader<'a, C: Cell> {
     rows: BTreeMap<&'a str, Vec<&'a [C]>>,
-    terms: Dense<&'a [C]>,
-    call_args: Kids,
-    atoms: Dense<&'a [C]>,
-    args: Kids,
-    /// Each rule's body literals, in order.
-    bodies: Kids,
-}
-
-/// Rows by id: a vector when the ids are dense (as `Writer` numbers them), else a map. Any numbering reads back.
-enum Dense<T> {
-    Vec(Vec<Option<T>>),
-    Map(rustc_hash::FxHashMap<i64, T>),
-}
-
-impl<T> Dense<T> {
-    fn of(items: Vec<(i64, T)>) -> Self {
-        let n = items.len();
-        match items.iter().map(|(k, _)| *k).max() {
-            Some(max) if items.iter().all(|(k, _)| *k >= 0) && (max as usize) < 2 * n + 64 => {
-                let mut v: Vec<Option<T>> = (0..=max as usize).map(|_| None).collect();
-                for (k, t) in items {
-                    v[k as usize] = Some(t);
-                }
-                Dense::Vec(v)
-            }
-            None => Dense::Vec(Vec::new()),
-            _ => Dense::Map(items.into_iter().collect()),
-        }
-    }
-
-    fn get(&self, k: i64) -> Option<&T> {
-        match self {
-            Dense::Vec(v) => usize::try_from(k).ok().and_then(|k| v.get(k)).and_then(Option::as_ref),
-            Dense::Map(m) => m.get(&k),
-        }
-    }
-
-    fn take(&mut self, k: i64) -> Option<T> {
-        match self {
-            Dense::Vec(v) => usize::try_from(k).ok().and_then(|k| v.get_mut(k)).and_then(Option::take),
-            Dense::Map(m) => m.remove(&k),
-        }
-    }
-}
-
-/// An owner's children (`arg(a, i, t)`, `call_arg(t, i, u)`, `body(r, k, l)`): each owner's, ordered by index, as
-/// one sorted list and the owner's range of it.
-struct Kids {
-    children: Vec<i64>,
-    at: Dense<(u32, u32)>,
-}
-
-impl Kids {
-    fn of<C: Cell>(rows: &[&[C]]) -> Result<Self, String> {
-        let mut all: Vec<(i64, i64, i64)> = rows.iter().map(|r| Ok((int(&r[0])?, int(&r[1])?, int(&r[2])?))).collect::<Result<_, String>>()?;
-        all.sort_unstable();
-        let mut at: Vec<(i64, (u32, u32))> = Vec::new();
-        for (i, (owner, _, _)) in all.iter().enumerate() {
-            match at.last_mut() {
-                Some((o, (_, n))) if o == owner => *n += 1,
-                _ => at.push((*owner, (i as u32, 1))),
-            }
-        }
-        Ok(Kids { children: all.into_iter().map(|(_, _, c)| c).collect(), at: Dense::of(at) })
-    }
-
-    fn of_owner(&self, owner: i64) -> &[i64] {
-        self.at.get(owner).map_or(&[], |&(s, n)| &self.children[s as usize..(s + n) as usize])
-    }
 }
 
 fn int<C: Cell>(v: &C) -> Result<i64, String> {
@@ -861,40 +621,11 @@ impl<'a, C: Cell> Reader<'a, C> {
         if !rows.contains_key("program") {
             return Err(bad(format!("no program {p:?}")));
         }
-        let get = |rel: &str| rows.get(rel).map_or(&[][..], Vec::as_slice);
-        let terms = Dense::of(get("term").iter().map(|row| Ok((int(&row[0])?, *row))).collect::<Result<Vec<_>, String>>()?);
-        let atoms = Dense::of(get("atom").iter().map(|row| Ok((int(&row[0])?, *row))).collect::<Result<Vec<_>, String>>()?);
-        let call_args = Kids::of(get("call_arg"))?;
-        let args = Kids::of(get("arg"))?;
-        let bodies = Kids::of(get("body"))?;
-        Ok(Reader { rows, terms, call_args, atoms, args, bodies })
+        Ok(Reader { rows })
     }
 
     fn get(&self, rel: &str) -> &[&'a [C]] {
         self.rows.get(rel).map_or(&[], Vec::as_slice)
-    }
-
-    fn term(&self, t: i64) -> Result<Term, String> {
-        let row = self.terms.get(t).ok_or_else(|| bad(format!("no term {t}")))?;
-        Ok(match str_of(&row[1])? {
-            "var" => Term::Var(text(&row[3])?.into()),
-            "wild" => Term::Wild,
-            "int" => Term::Int(int(&row[2])?),
-            "atom" => Term::Branded(branded(text(&row[3])?.as_str(), int(&row[2])?)?),
-            "str" => Term::Str(text(&row[3])?.into()),
-            "top" => Term::Top,
-            "call" => {
-                let args = self.call_args.of_owner(t).iter().map(|u| self.term(*u)).collect::<Result<Vec<_>, _>>()?;
-                Term::Call(text(&row[3])?.into(), args.into())
-            }
-            other => return Err(bad(format!("no term kind {other}"))),
-        })
-    }
-
-    fn atom(&self, a: i64) -> Result<Atom, String> {
-        let row = self.atoms.get(a).ok_or_else(|| bad(format!("no atom {a}")))?;
-        let args = self.args.of_owner(a).iter().map(|t| self.term(*t)).collect::<Result<Vec<_>, _>>()?;
-        Ok(Atom { rel: text(&row[1])?.into(), args: args.into(), neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
     }
 
     /// Rows of `rel` keyed by their first column (an id), each row less that column.
@@ -904,117 +635,6 @@ impl<'a, C: Cell> Reader<'a, C> {
             out.entry(int(&row[0])?).or_default().push(&row[1..]);
         }
         Ok(out)
-    }
-
-    fn literals(&self) -> Result<Dense<Literal>, String> {
-        let mut out: Vec<(i64, Literal)> = Vec::new();
-        for row in self.get("lit_atom") {
-            out.push((int(&row[0])?, Literal::Atom(self.atom(int(&row[1])?)?)));
-        }
-        for row in self.get("lit_cmp") {
-            let op = text(&row[2])?;
-            let op = super::front::ast::operator(&op).ok_or_else(|| bad(format!("no operator {op:?}")))?;
-            out.push((int(&row[0])?, Literal::Cmp { l: self.term(int(&row[1])?)?, op, r: self.term(int(&row[3])?)? }));
-        }
-        let over = self.by_id("agg_over")?;
-        let join = self.by_id("agg_join")?;
-        let by = self.by_id("agg_by")?;
-        for row in self.get("lit_agg") {
-            let l = int(&row[0])?;
-            let op = match str_of(&row[2])? {
-                "count" => AggOp::Count,
-                "min" => AggOp::Min,
-                "max" => AggOp::Max,
-                "sum" => AggOp::Sum,
-                "product" => AggOp::Product,
-                "join" => {
-                    let sep = join.get(&l).and_then(|r| r.first()).ok_or_else(|| bad(format!("join {l} without its separator")))?;
-                    let by = ordered(by.get(&l).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
-                    AggOp::Join { by, sep: text(&sep[0])? }
-                }
-                other => return Err(bad(format!("no aggregate {other}"))),
-            };
-            let over = over.get(&l).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
-            out.push((l, Literal::Agg { var: text(&row[1])?, op, over, atom: self.atom(int(&row[3])?)? }));
-        }
-        for row in self.get("lit_nearest") {
-            out.push((int(&row[0])?, Literal::Nearest { n: text(&row[1])?, a: text(&row[2])?, kindset: text(&row[3])? }));
-        }
-        let captures = self.by_id("ast_capture")?;
-        for row in self.get("lit_ast") {
-            let l = int(&row[0])?;
-            let captures = ordered(captures.get(&l).into_iter().flatten().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
-            out.push((l, Literal::Ast { document: text(&row[1])?, node: text(&row[2])?, matcher: text(&row[3])?, captures }));
-        }
-        Ok(Dense::of(out))
-    }
-
-    fn program(&self) -> Result<Program, String> {
-        let mut prog = Program::default();
-        let mut literals = self.literals()?;
-        let mut rules = Vec::new();
-        for row in self.get("rule") {
-            let r = int(&row[0])?;
-            let body = self.bodies.of_owner(r).iter().map(|l| literals.take(*l).ok_or_else(|| bad(format!("rule {r}: a literal twice or none")))).collect::<Result<Vec<_>, String>>()?;
-            rules.push((r, Rule { head: self.atom(int(&row[1])?)?, body: body.into() }));
-        }
-        prog.rules = ordered(rules);
-        let decls = self.by_id_text("decl")?;
-        for row in self.get("relation") {
-            let rel = text(&row[0])?;
-            let cols = ordered(decls.get(&rel).into_iter().flatten().map(|d| Ok((int(&d[0])?, (text(&d[1])?, text(&d[2])?)))).collect::<Result<Vec<_>, String>>()?);
-            if cols.len() as i64 != int(&row[1])? {
-                return Err(bad(format!("{rel} has {} of its {} columns", cols.len(), int(&row[1])?)));
-            }
-            prog.decls.insert(rel.into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
-        }
-        prog.nullary = self.nullary()?;
-        prog.qualifiers = self.qualifiers()?;
-        prog.tapes = self.tapes()?;
-        prog.lattice = self.lattice()?;
-        // Keyed by the relation's name as the rows hold it, borrowed.
-        let mut values: rustc_hash::FxHashMap<(&str, i64), Vec<(i64, Value)>> = Default::default();
-        for row in self.get("fact") {
-            let v = match str_of(&row[3])? {
-                "int" => Value::Int(int(&row[4])?),
-                "atom" => Value::Branded(branded(text(&row[5])?.as_str(), int(&row[4])?)?),
-                _ => Value::Str(text(&row[5])?.into()),
-            };
-            values.entry((str_of(&row[0])?, int(&row[1])?)).or_default().push((int(&row[2])?, v));
-        }
-        let mut facts: BTreeMap<String, Vec<(i64, Vec<Value>)>> = BTreeMap::new();
-        for row in self.get("fact_rel") {
-            facts.entry(text(&row[0])?).or_default();
-        }
-        for row in self.get("fact_row") {
-            let (rel, k) = (text(&row[0])?, int(&row[1])?);
-            let row_values = ordered(values.remove(&(str_of(&row[0])?, k)).unwrap_or_default());
-            if row_values.len() as i64 != int(&row[2])? {
-                return Err(bad(format!("{rel} row {k} has {} of its {} values", row_values.len(), int(&row[2])?)));
-            }
-            facts.entry(rel).or_default().push((k, row_values));
-        }
-        prog.facts = facts.into_iter().map(|(rel, rows)| (rel, ordered(rows).into_iter().map(crate::code_rule_dsl::logic::front::name::List::from).collect())).collect();
-        let list = |rel: &str| -> Result<Vec<String>, String> { Ok(ordered(self.get(rel).iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?)) };
-        prog.inputs = list("input")?;
-        prog.outputs = list("output")?;
-        prog.demand = self.demand()?;
-        prog.kindsets = self.kindsets()?;
-        prog.demand_dropped = self.demand_dropped()?;
-        prog.magic_extras = self.magic_extras()?;
-        prog.magic_report = self.magic_report()?;
-        prog.gates = self.gates()?;
-        prog.shapes = self.shapes()?;
-        prog.policies = self.policies()?;
-        prog.settings = self.settings()?;
-        prog.natives = self.natives()?;
-        prog.rx_spans = self.rx_spans()?;
-        prog.ast_patterns = self.ast_patterns()?;
-        prog.doc_scopes = self.doc_scopes()?;
-        prog.text_globs = self.text_globs()?;
-        prog.answers = self.answers()?;
-        prog.asked_by = self.asked()?;
-        Ok(prog)
     }
 
     // -- the fields besides rules, declarations, facts, inputs and outputs, each read alone (`Field`) --
@@ -1262,11 +882,6 @@ impl Fields<'_> {
     pub fn text_globs(&self) -> Result<Vec<String>, String> { self.0.text_globs() }
     pub fn answers(&self) -> Result<BTreeMap<String, Vec<String>>, String> { self.0.answers() }
     pub fn asked(&self) -> Result<BTreeMap<String, Vec<BTreeSet<String>>>, String> { self.0.asked() }
-}
-
-/// Program `p` of `facts`, as it was written.
-pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
-    Reader::of(facts, p)?.program()
 }
 
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).

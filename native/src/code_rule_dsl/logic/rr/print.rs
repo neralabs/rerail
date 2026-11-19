@@ -291,7 +291,7 @@ impl<'v> Printer<'v> {
 const BUILTINS: [&str; 2] = ["match_all", "match_group"];
 
 /// The program's `.rr` text: as written, its node attributes inputs again where the lowering answered them on request
-/// (decision 0174, `lower::undo_on_request`), which reading the text makes again.
+/// (decision 0174, `lower::undone_on_request`), which reading the text makes again.
 pub fn print_version(v: &Arc<Version>) -> Result<String, Error> {
     if super::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| v.declares(a.req)) {
         let written = super::lower::undone_on_request(v).map_err(Error::Syntax)?;

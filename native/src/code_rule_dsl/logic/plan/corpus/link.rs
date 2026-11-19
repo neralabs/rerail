@@ -55,7 +55,7 @@ pub(super) trait Part: Sized + Send {
     fn drop_heads(&mut self, gone: &dyn Fn(&str) -> bool);
     /// Bounded to the documents it shows (`preparation::hide::Hide`).
     fn hide(&mut self, bound: u32) -> Result<()>;
-    /// `rr::lower::undo_on_request`.
+    /// `rr::lower::undone_on_request`.
     fn undo_on_request(&mut self) -> Result<()>;
     /// The part alone, as the linked program.
     fn alone(self) -> Result<Self::Linked>;

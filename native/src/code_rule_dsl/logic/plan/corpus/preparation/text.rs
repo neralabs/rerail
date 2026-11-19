@@ -1067,7 +1067,7 @@ impl RulePass for TextRelations {
         }
         natives.extend(std::mem::take(&mut self.defined));
         if !natives.is_empty() {
-            // As `program_facts::write_about` writes them: by the native's name, each one's patterns in order.
+            // As `program_facts::write_field` writes them: by the native's name, each one's patterns in order.
             let mut tests = b.about_rows("native_text_test");
             let mut pats = b.about_rows("native_text_pattern");
             let p = tests.first().or(pats.first()).map(|r| r[0]).unwrap_or_else(|| Cell::Str(b.atom(crate::code_rule_dsl::logic::program_image::ABOUT)));

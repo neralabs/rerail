@@ -1007,7 +1007,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
 
 /// The alias the library linked from modules `keys` is kept under.
 /// The values of the switches that change lowering (`plan::corpus::COMBINING`: `RERAIL_NODE_SOURCES` in
-/// `sources_on_request`, `RERAIL_ORDER_RAW` and `RERAIL_NODE_IDS` in `lowering_tail::OrderNodes`), for an image's
+/// `on_request::SourcesOnRequest`, `RERAIL_ORDER_RAW` and `RERAIL_NODE_IDS` in `lowering_tail::OrderNodes`), for an image's
 /// key: an image lowered under one value is not another's. Only those set: an unset switch keeps the key every run
 /// has had, and the engine's shipped images (decision 0264) with it.
 fn switched(bytes: &mut Vec<u8>) {
