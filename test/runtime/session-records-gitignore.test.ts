@@ -94,7 +94,9 @@ describe("session records in a checkout", () => {
     const earlier = join(storageRoot, "0".repeat(64), "events.jsonl");
     await mkdir(dirname(earlier), { recursive: true });
     await writeFile(earlier, "{}\n");
-    await openToOtherAccounts(storageRoot);
+    // On Windows the folder takes the checkout's entry for Users, as a folder Git or mkdir makes there does; elsewhere
+    // a loose umask, as Git's or a person's may be, leaves it 0755.
+    if (POSIX_MODES) await openToOtherAccounts(storageRoot);
     expect(await readableByOthers(storageRoot)).toBe(true);
     await openOneSession(checkout, storageRoot, databasePath);
     expect(await readableByOthers(storageRoot)).toBe(false);

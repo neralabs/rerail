@@ -63,7 +63,8 @@ export function keepFolderPrivate(folder: string, options: KeepFolderPrivate = {
  * Keeps a folder that another program may have made its owner's alone. Elsewhere than Windows, as
  * {@link keepFolderPrivate} does. On Windows, outside the profile folder, it reads the folder's ACL (one `icacls`) and,
  * when the folder still takes entries from its parent's, as one Git, `mkdir` or an earlier release made does, gives it
- * the owner-only ACL, which everything already in it then inherits; a folder with an ACL of its own is left as it is.
+ * the owner-only ACL, which everything already in it then inherits. An entry set on the folder itself for another
+ * account is someone's choice and stays, and a folder with an ACL of its own is left as it is.
  * A folder it cannot read or change (another account's, or one on a file system with no ACLs) is named on stderr,
  * which a daemon writes to its log, and never fails the caller.
  */
