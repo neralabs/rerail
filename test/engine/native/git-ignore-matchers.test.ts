@@ -118,6 +118,22 @@ describe("GitIgnoreMatchers", () => {
     expect(matchers.size).toBe(1);
   });
 
+  it("lets a router that asks again after the checkout's .gitignore changed go of the matcher it held, dropping one no router holds", async () => {
+    const { main } = await checkout();
+    const matchers = new GitIgnoreMatchers();
+    const first = matchers.matcher(main, user("again"));
+    expect(matchers.matcher(main, user("keeps"))).toBe(first);
+
+    await writeFile(join(main, ".gitignore"), "gen2/\n");
+    const second = matchers.matcher(main, user("again"));
+    expect(second).not.toBe(first);
+    expect(matchers.matcher(main, user("again"))).toBe(second);
+    // The router that took the first one and did not ask again keeps it.
+    expect(matchers.size).toBe(2);
+    matchers.release(user("keeps"));
+    expect(matchers.size).toBe(1);
+  });
+
   it("follows a nested .gitignore added, changed and removed before a router asks, where the shared matcher last read that folder", async () => {
     const { linked } = await checkout();
     const matchers = new GitIgnoreMatchers();

@@ -702,6 +702,72 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect([opensIn(), matchers.size]).toEqual([2, 0]);
   });
 
+  /** A worktree whose own `.gitignore` ignores `gen/`, which holds a Python file, and the router of a session beside it. */
+  async function worktreeIgnoringGen(id: string) {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await writeFile(join(worktree, ".gitignore"), "gen/\n");
+    await mkdir(join(worktree, "gen"), { recursive: true });
+    await writeFile(join(worktree, "gen", "x.py"), "seed\n");
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace(id);
+    return { databasePath, session, worktree, audits, auditor, gen: walked(session, worktree, "gen") };
+  }
+
+  function setStarted(databasePath: string, checkout: string, started: boolean): void {
+    const database = openRerailDatabase(databasePath);
+    try {
+      setCheckoutStarted(database, recordCheckout(database, checkout), started);
+    } finally {
+      database.$client.close();
+    }
+  }
+
+  it("gives a worktree's lane, as it opens, Git's ignore rules as they are then, not those a walk's question read before they changed", async () => {
+    const { worktree, audits, auditor, gen } = await worktreeIgnoringGen("lane-reads-now");
+    expect(auditor.walkView().ignoresPath(gen, true)).toBe(true);
+
+    await writeFile(join(worktree, ".gitignore"), "other/\n");
+    // The edit opens the worktree's lane, which reads Git's ignore rules now, as a lane that opened its own did.
+    await edit(auditor, "lane-reads-now", 1, join(worktree, "gen", "x.py"));
+    expect(violations(audits)).toEqual([{ checkout: worktree, path: "gen/x.py", code: "SESSION", mode: "block" }]);
+    expect(auditor.ignoredEdit(join(worktree, "gen", "x.py"))).toBeUndefined();
+  });
+
+  it("reads a worktree's Git ignore rules again once it is started after a stop, as its new lane did", async () => {
+    const { databasePath, worktree, auditor, gen } = await worktreeIgnoringGen("started-again");
+    const view = () => auditor.walkView();
+    expect([view().ignoresPath(gen, true), view().acceptsPath(`${gen}/x.py`)]).toEqual([true, false]);
+
+    setStarted(databasePath, worktree, false);
+    auditor.refreshCodeRules();
+    await writeFile(join(worktree, ".gitignore"), "other/\n");
+    setStarted(databasePath, worktree, true);
+    auditor.refreshCodeRules();
+    expect([view().ignoresPath(gen, true), view().acceptsPath(`${gen}/x.py`)]).toEqual([false, true]);
+  });
+
+  it("opens a worktree's Git ignore rules again after an open that failed, and says the failure once", async () => {
+    const { worktree, audits, auditor, gen } = await worktreeIgnoringGen("open-again");
+    const binding = loadNativeBinding();
+    const open = binding.openGitIgnoreMatcher.bind(binding);
+    let failures = 1;
+    const opens = vi.spyOn(binding, "openGitIgnoreMatcher").mockImplementation(root => {
+      if (root !== worktree || failures === 0) return open(root);
+      failures -= 1;
+      throw new Error("cannot read Git excludes: the configuration was being written");
+    });
+    cleanups.push(async () => { opens.mockRestore(); });
+    const errors = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    cleanups.push(async () => { errors.mockRestore(); });
+
+    // The first question finds no rules and leaves the folder in, as rules that cannot be read do; the next reads them.
+    expect([auditor.walkView().ignoresPath(gen, true), auditor.walkView().ignoresPath(gen, true)]).toEqual([false, true]);
+    await edit(auditor, "open-again", 1, join(worktree, "gen", "x.py"));
+    expect(violations(audits)).toEqual([]);
+    expect(errors.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
+  });
+
   it("judges a sibling worktree from a session that started in a worktree", async () => {
     const { databasePath, session, worktree, root } = await repositoryWithWorktree(outside);
     const sibling = join(root, "elsewhere", "sibling");

@@ -4,7 +4,8 @@
  * audited held one index per worktree per session. A router that asks gets the shared matcher while the matcher says a
  * matcher opened now would read the rules it read (`sourcesUnchanged`: the engine reads the configuration again as
  * Git does, includes and conditions among it, and stamps the files it read whole), and a fresh one otherwise, which the
- * routers that ask after it share. A router keeps the matcher it was given for its life, as it kept the one it opened.
+ * routers that ask after it share. A router keeps the matcher it was given until it asks again, as a lane of its opens
+ * where a lane of its own opened its own matcher.
  */
 import { loadNativeBinding, type NativeGitIgnoreMatcher } from "./native.js";
 
@@ -28,25 +29,40 @@ export class GitIgnoreMatchers {
   /**
    * `root`'s matcher for `user`: the shared one while it reads the rules a matcher opened now would, else one opened
    * now; null outside Git, asked again at each call. A failed open throws to each user that asks while none is open, as
-   * a router's own open did.
+   * a router's own open did. A user that asks again uses only the answer: it lets go of the matcher it held for `root`.
    */
   matcher(root: string, user: object): NativeGitIgnoreMatcher | null {
+    const shared = this.#unchangedCurrent(root) ?? this.#opened(root);
+    this.#letGo(user, held => held.root === root && held !== shared);
+    if (shared === undefined) return null;
+    shared.users.add(user);
+    return shared.matcher;
+  }
+
+  /** `root`'s current matcher while it reads the rules a matcher opened now would. */
+  #unchangedCurrent(root: string): Shared | undefined {
     const current = this.#current.get(root);
-    if (current !== undefined && sourcesUnchanged(current.matcher)) {
-      current.users.add(user);
-      return current.matcher;
-    }
+    return current !== undefined && sourcesUnchanged(current.matcher) ? current : undefined;
+  }
+
+  /** A matcher opened now for `root`, current from now on; undefined outside Git. */
+  #opened(root: string): Shared | undefined {
     const matcher = this.#open(root);
-    if (matcher === null) return null;
-    const shared: Shared = { root, matcher, users: new Set([user]) };
+    if (matcher === null) return undefined;
+    const shared: Shared = { root, matcher, users: new Set() };
     this.#current.set(root, shared);
     this.#held.add(shared);
-    return matcher;
+    return shared;
   }
 
   /** Ends `user`'s use of every matcher; one no user holds is dropped, and its index with it. */
   release(user: object): void {
-    for (const shared of [...this.#held]) {
+    this.#letGo(user, () => true);
+  }
+
+  /** Ends `user`'s use of each matcher `which` names; one no user holds is dropped. */
+  #letGo(user: object, which: (shared: Shared) => boolean): void {
+    for (const shared of [...this.#held].filter(which)) {
       shared.users.delete(user);
       if (shared.users.size > 0) continue;
       this.#held.delete(shared);
