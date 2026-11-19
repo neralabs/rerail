@@ -38,8 +38,6 @@
 //                  dj_in_atomic(n, a)          n runs inside atomic region a (a with-body or an atomic def), with no
 //                                              nested def or class between them
 //                  dj_region_stop(k)           the node kinds whose code runs later: def, lambda, class
-//                  dj_scope_stop(k)            dj_region_stop's kinds and the module: n runs when b's code runs is
-//                                              `within(n, b), nearest(n, s, dj_scope_stop), within(b, s)`
 //                  dj_atomic_like_with(w, b)   with-statement w calls a wrapper named like atomic; b is its body
 //                  dj_in_transaction(n)        n runs in atomic (dj_in_atomic) or in a dj_atomic_like_with body
 //                  dj_atomic_requests_value(v) v is the value a settings file gives ATOMIC_REQUESTS
@@ -262,16 +260,9 @@ dj_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, 
 // Also the stop set for "the def this code runs in": nearest(n, f, dj_region_stop).
 .decl dj_region_stop(k: symbol)
 dj_region_stop("function_definition"). dj_region_stop("lambda"). dj_region_stop("class_definition").
-// dj_scope_stop: dj_region_stop and the module, so every node has a nearest one. "n runs when b's code runs" (n below
-// b with no def, lambda or class between) is `within(n, b), nearest(n, s, dj_scope_stop), within(b, s)`: n's
-// nearest scope holds b. That is `within_stop(n, b, dj_region_stop)` without the negation within_stop lowers to,
-// which today's engine reads wrong when b comes from a relation read through sym_of (ENGINE-BUGS.md, bug 10).
-.decl dj_scope_stop(k: symbol)
-dj_scope_stop("function_definition"). dj_scope_stop("lambda"). dj_scope_stop("class_definition").
-dj_scope_stop("module").
 .decl dj_in_atomic(n: node, a: node)
-dj_in_atomic(n, b) :- dj_atomic_with(_, b), within(n, b), nearest(n, s, dj_scope_stop), within(b, s).
-dj_in_atomic(n, f) :- dj_atomic_def(f), field(f, "body", b), within(n, b), nearest(n, f, dj_scope_stop).
+dj_in_atomic(n, b) :- dj_atomic_with(_, b), within_stop(n, b, dj_region_stop).
+dj_in_atomic(n, f) :- dj_atomic_def(f), field(f, "body", b), within_stop(n, b, dj_region_stop).
 // dj_atomic_like_with(w, b): with-statement w's item calls a wrapper named like atomic, not atomic itself (Saleor's
 // `traced_atomic_transaction()`, label-studio's `conditional_atomic(...)`), which opens a transaction around b.
 .decl dj_atomic_like_with(w: node, b: node)
@@ -283,7 +274,7 @@ dj_atomic_like_with(w, b) :- kind(w, "with_statement"), child(w, wc, _), kind(wc
 //   with traced_atomic_transaction(): order.save()   dj_in_transaction(<order.save()>)
 .decl dj_in_transaction(n: node)
 dj_in_transaction(n) :- dj_in_atomic(n, _).
-dj_in_transaction(n) :- dj_atomic_like_with(_, b), within(n, b), nearest(n, s, dj_scope_stop), within(b, s).
+dj_in_transaction(n) :- dj_atomic_like_with(_, b), within_stop(n, b, dj_region_stop).
 // dj_atomic_requests_value(v): outside test code, v is the value a settings file gives a database's ATOMIC_REQUESTS:
 // a dict entry (`"ATOMIC_REQUESTS": True`), `DATABASES["default"]["ATOMIC_REQUESTS"] = v`, or `dict(ATOMIC_REQUESTS=v)`.
 // A top-level `ATOMIC_REQUESTS = True` is no Django setting.

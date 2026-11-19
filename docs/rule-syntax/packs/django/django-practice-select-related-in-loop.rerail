@@ -58,7 +58,7 @@ srl_unchunked(q) :- kind(c, "call"), field(c, "function", f), attr_of(f, q, "ite
 // srl_use(q, x, u, rel): u is `x.rel` read per row of q's loop, outside nested defs, lambdas and classes.
 .decl srl_use(q: node, x: symbol, u: node, rel: symbol)
 srl_use(q, x, u, rel) :- srl_loop(q, x, b), attr_of(u, o, rel), kind(o, "identifier"), text(o, x),
-    within(u, b), nearest(u, s, dj_scope_stop), within(b, s), !within(u, q).
+    within_stop(u, b, dj_region_stop), !within(u, q).
 // srl_cached(c, u): call c on manager u is answered from a prefetch_related cache: `<manager>.all()` with nothing chained after it,
 // `<manager>.count()`, `<manager>.exists()`.
 .decl srl_cached(c: node, u: node)

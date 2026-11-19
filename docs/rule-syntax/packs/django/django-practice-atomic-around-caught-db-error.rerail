@@ -68,8 +68,8 @@ adb_cache(o) :- kind(o, "subscript"), field(o, "value", v), sym_of(v, q), prefix
 
 // adb_unguarded_db(b): try body b runs a database call outside any atomic block nested in b.
 .decl adb_unguarded_db(b: node)
-adb_unguarded_db(b) :- kind(t, "try_statement"), field(t, "body", b), adb_db_call(c), within(c, b),
-    nearest(c, s, dj_scope_stop), within(b, s), !adb_guarded(c, b).
+adb_unguarded_db(b) :- kind(t, "try_statement"), field(t, "body", b), adb_db_call(c), within_stop(c, b, dj_region_stop),
+    !adb_guarded(c, b).
 .decl adb_guarded(c: node, b: node)
 adb_guarded(c, b) :- kind(t, "try_statement"), field(t, "body", b), adb_db_call(c), within(c, b),
     dj_atomic_with(w, wb), within(w, b), within(c, wb), !adb_no_savepoint(w).
