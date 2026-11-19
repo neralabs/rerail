@@ -28,8 +28,14 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SELF = fileURLToPath(import.meta.url);
+/** zstd's window for the artifact, both ways (decompression needs it named too). */
+const LONG = "--long=31";
 
-/** One leg: the tests whose path holds any of `filters` (every test when empty) and none of `skip`. */
+/**
+ * One leg: the tests whose path holds any of `filters` (every test when empty) and none of `skip`, in the test binaries
+ * `binaries` names (by crate or test target: the binary's name without its hash), or in every binary but those
+ * `exclude` names.
+ */
 const SELECTED = [
   // Nine tests hold 25 of the 108 test-minutes, two of them 8 minutes each (scratch run 44354698909, `--report-time`):
   // the slowest leg, at 7.5 minutes. The legs run 4.7 to 7.5 minutes each (scratch run 44360932319); logic and typing
@@ -49,13 +55,32 @@ const SELECTED = [
     skip: ["code_rule_dsl::logic::rr::", "code_rule_dsl::logic::convert::"],
   },
   { id: "sql", name: "tests, SQL executor and slice", filters: ["code_rule_dsl::sql_executor::", "code_rule_dsl::slice::"], skip: [] },
+  // The rr parser's corpus checks: 4.3 and 1.5 of the last leg's 10 minutes (CI run 44383070532), two tests 2.6 and 2.2.
+  { id: "parsers", name: "tests, rr parser corpora", filters: [], skip: [], binaries: ["rerail_parser_tests", "rerail_rr_parser"] },
 ];
 
-/** The legs, in order; the last runs every test the others' filters do not name. */
+/** The legs, in order; the last runs every test the others do not select. */
 export const LEGS = [
   ...SELECTED,
-  { id: "rest", name: "tests, the rest", filters: [], skip: SELECTED.flatMap((leg) => leg.filters) },
+  {
+    id: "rest",
+    name: "tests, the rest",
+    filters: [],
+    skip: SELECTED.flatMap((leg) => (leg.binaries === undefined ? leg.filters : [])),
+    exclude: SELECTED.flatMap((leg) => leg.binaries ?? []),
+  },
 ];
+
+/** A test binary's name: its file's, without cargo's hash or `.exe`. */
+export function binaryName(exe) {
+  return exe.split(/[/\\]/u).at(-1).replace(/\.exe$/u, "").replace(/-[0-9a-f]{16}$/u, "");
+}
+
+/** Whether `leg` runs tests of the binary `exe`. */
+export function legRuns(leg, exe) {
+  const name = binaryName(exe);
+  return leg.binaries === undefined ? !(leg.exclude ?? []).includes(name) : leg.binaries.includes(name);
+}
 
 /** A leg's libtest arguments. */
 export function legArgs(leg) {
@@ -156,7 +181,10 @@ function build(dir) {
     if (!isAbsolute(binary.exe)) binary.exe = resolve(binary.cwd, binary.exe);
   }
   const all = new Map(binaries.map((binary) => [binary.exe, list(binary, [])]));
-  const byLeg = new Map(LEGS.map((leg) => [leg.id, new Map(binaries.map((binary) => [binary.exe, list(binary, legArgs(leg))]))]));
+  const byLeg = new Map(LEGS.map((leg) => [
+    leg.id,
+    new Map(binaries.map((binary) => [binary.exe, legRuns(leg, binary.exe) ? list(binary, legArgs(leg)) : new Set()])),
+  ]));
   const problems = coverProblems(all, byLeg);
   const total = [...all.values()].reduce((sum, tests) => sum + tests.size, 0);
   console.log(`${binaries.length} test binaries, ${total} tests`);
@@ -169,8 +197,9 @@ function build(dir) {
     process.exit(1);
   }
 
+  // A binary with no test to run (cargo's empty harnesses) stays behind.
   const manifest = {
-    binaries: binaries.map((binary) => ({
+    binaries: binaries.filter((binary) => all.get(binary.exe).size > 0).map((binary) => ({
       exe: binary.exe,
       cwd: binary.cwd,
       env: binary.env,
@@ -178,8 +207,10 @@ function build(dir) {
     })),
   };
   writeFileSync(join(ROOT, "target", "native-tests.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  const files = ["target/native-tests.json", ...binaries.map((binary) => relative(ROOT, binary.exe))];
-  const tar = spawnSync("tar", ["-I", "zstd -T0 -3", "-cf", join(dir, "native-tests.tar.zst"), ...files], { cwd: ROOT, stdio: "inherit" });
+  const files = ["target/native-tests.json", ...manifest.binaries.map((binary) => relative(ROOT, binary.exe))];
+  // The binaries share most of their code (each links the dependencies): a 2 GB window finds it across files, 1.25 GB to
+  // 0.79 GB for 44383070532's (level 3; level 9 saves 0.07 GB more at twice the time).
+  const tar = spawnSync("tar", ["-I", `zstd -T0 -3 ${LONG}`, "-cf", join(dir, "native-tests.tar.zst"), ...files], { cwd: ROOT, stdio: "inherit" });
   if (tar.status !== 0) process.exit(tar.status ?? 1);
   // The `rust` job's matrix: the legs with a test to run.
   const legs = LEGS.filter((leg) => manifest.binaries.some((binary) => binary.tests[leg.id] > 0)).map(({ id, name }) => ({ leg: id, name }));
@@ -214,7 +245,7 @@ function runBinary(binary, args) {
 async function run(id, dir) {
   const leg = LEGS.find((candidate) => candidate.id === id);
   if (leg === undefined) throw new Error(`no leg ${id}: ${LEGS.map((candidate) => candidate.id).join(", ")}`);
-  const tar = spawnSync("tar", ["-I", "zstd", "-xf", join(dir, "native-tests.tar.zst")], { cwd: ROOT, stdio: "inherit" });
+  const tar = spawnSync("tar", ["-I", `zstd -d ${LONG}`, "-xf", join(dir, "native-tests.tar.zst")], { cwd: ROOT, stdio: "inherit" });
   if (tar.status !== 0) process.exit(tar.status ?? 1);
   const { binaries } = JSON.parse(readFileSync(join(ROOT, "target", "native-tests.json"), "utf8"));
   const args = legArgs(leg);

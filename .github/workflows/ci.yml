@@ -388,15 +388,65 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
           FILES: ${{ github.event.pull_request.changed_files || 0 }}
           RUSTUP_TOOLCHAIN: stable
+        # The base's package.json, when the pull request changes it: only the scripts that run cargo reach the crates.
+        run: |
+          base=()
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$FILES" -lt 3000 ]; then
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed.txt"
+            if grep -qx package.json "$RUNNER_TEMP/changed.txt" \
+              && gh api "repos/$GITHUB_REPOSITORY/contents/package.json?ref=$BASE" -H 'Accept: application/vnd.github.raw' > "$RUNNER_TEMP/base-package.json"; then
+              base=(--base-package-json "$RUNNER_TEMP/base-package.json")
+            fi
+          else
+            echo Cargo.lock > "$RUNNER_TEMP/changed.txt"
+          fi
+          node scripts/check/ci/rust-selection.mjs "$RUNNER_TEMP/changed.txt" "${base[@]}" --github >> "$GITHUB_OUTPUT"
+
+  # Which unit test files a pull request can affect (scripts/check/ci/test-selection.mjs): those whose import closure, or
+  # the paths its files name, hold a changed file. The unit jobs run only those, on as many shards as their share needs
+  # (`unit-shards`, `windows-shards`), or none ('[]': their jobs and the Windows engine's build skip). Everything off pull
+  # requests, past 3000 files, and when the step fails: `unit` 'all', `unit-tests` empty, every shard. Its own job, so
+  # the `npm ci` it needs is off the path of the jobs that need `changes` alone.
+  select-tests:
+    name: Select the unit tests
+    needs: changes
+    if: needs.changes.outputs.release-pr != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      unit: ${{ steps.select.outputs.unit || 'all' }}
+      unit-tests: ${{ steps.select.outputs.unit == 'some' && steps.select.outputs.unit-tests || '' }}
+      unit-shards: ${{ steps.select.outputs.unit-shards || '[1, 2]' }}
+      windows-shards: ${{ steps.select.outputs.windows-shards || '[1, 2, 3, 4, 5]' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - id: select
+        name: Select the unit tests to run
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          FILES: ${{ github.event.pull_request.changed_files || 0 }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$FILES" -lt 3000 ]; then
             gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed.txt"
           else
-            echo Cargo.lock > "$RUNNER_TEMP/changed.txt"
+            echo package-lock.json > "$RUNNER_TEMP/changed.txt"
           fi
-          node scripts/check/ci/rust-selection.mjs "$RUNNER_TEMP/changed.txt" --github >> "$GITHUB_OUTPUT"
+          node scripts/check/ci/test-selection.mjs "$RUNNER_TEMP/changed.txt" --github >> "$GITHUB_OUTPUT"
 
   # Uploads, as this run's artifacts, every set of archives the jobs below download (.github/actions/pack-test-data,
   # `fetch: "true"`): every tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the
@@ -513,8 +563,8 @@ jobs:
 
   # rustfmt (on the files scripts/check/check-rustfmt/files.txt lists) and clippy, the engine's own tests, and the
   # profiling labs' checks, side by side; nothing downstream waits for them. They keep no Actions cache (the
-  # repository's 10 GB hold the other jobs' entries): each compiles from scratch, and the tests' compile happens once
-  # per run (rust-tests-build).
+  # repository's 10 GB hold the other jobs' entries): clippy and the test build start from main's compile cache (an
+  # artifact), and the tests' compile happens once per run (rust-tests-build).
   rust-clippy:
     name: Rust engine (fmt, clippy)
     needs: changes
@@ -528,8 +578,10 @@ jobs:
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # actions: main's compile cache, an artifact of another run.
     permissions:
       contents: read
+      actions: read
     # Line tables keep file:line in panics at a fraction of full debuginfo; nothing here builds twice incrementally.
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
@@ -555,14 +607,28 @@ jobs:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
 
+      # sccache, starting from main's newest clippy store (an artifact): the dependencies' check builds are fetched.
+      - id: compile-cache
+        uses: ./.github/actions/rust-compile-cache
+        with:
+          name: clippy
+          ref: ${{ env.WARM_REF }}
+
       - name: Run fmt, clippy
         run: npm run check:native
+
+      - name: Save the compile cache for later runs
+        if: env.SAVE_WARM == 'true'
+        uses: ./.github/actions/rust-compile-cache/save
+        with:
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
 
   # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/ci/native-test-legs.mjs): it runs
   # `cargo test --workspace` with that script as cargo's target runner, which records each test binary with the
   # working directory and environment cargo gives it instead of running it, and runs the doc tests. It then lists every
   # binary's tests whole and under each leg's filters, fails unless each test is in exactly one leg, and hands the
-  # binaries on as an artifact (1.5 GB). It reads no pack test data, so it starts with the test-data job. A cold compile
+  # binaries on as an artifact (0.8 GB). It reads no pack test data, so it starts with the test-data job. A cold compile
   # takes 13 to 17 minutes on the 4-vCPU runner; from main's compile cache (.github/actions/rust-compile-cache, an
   # artifact a push to main saves) about 5. Without one it compiles cold: never a failure.
   rust-tests-build:
@@ -644,8 +710,9 @@ jobs:
   # test data (native/src/code_rule_dsl/test_support.rs's callers): Ruff's fixtures, SQLFluff's expected findings and
   # fixtures, eslint-plugin-vue's fixtures, and the data-layer port's recordings and rule corpus (the converter, census,
   # replay and text tests), restored from what the test-data job saved, so the job runs where that job does (the note
-  # at the top). Each leg runs 3 to 8 minutes of tests after a minute taking the binaries; the slowest, the waves', is
-  # bounded by its two 8-minute tests. The test watchdog stops a hung test at 10 minutes (native/src/test_watchdog.rs):
+  # at the top). Each leg runs 3 to 8 minutes of tests; taking the binaries took 16 s to 4.4 minutes in 44383070532, so
+  # the artifact holds only binaries with tests, packed with a long window (1.46 to 0.79 GB). The slowest leg, the
+  # waves', is bounded by its two 8-minute tests. The test watchdog stops a hung test at 10 minutes (native/src/test_watchdog.rs):
   # the timeout leaves room for that.
   rust:
     name: Rust engine (${{ matrix.name }})
@@ -846,14 +913,15 @@ jobs:
           cargo test --manifest-path scripts/profiling/preparation/Cargo.toml --locked --target-dir target/sql-preparation-lab
 
   # The tree watch's FSEvents adapter (native/src/tree_watch/fsevents.rs) is compiled out everywhere but macOS, so its
-  # tests and the tree watch's shared tests run here, on the engine's inputs, gated as the rust job is. They read no
-  # pack test data. A debug build, as in the rust job.
+  # tests and the tree watch's shared tests run here, when the change reaches its crate (rerail-tree-watch, which builds
+  # without the engine: a minute or two cold, where the engine's test target took 16). They read no pack test data. A
+  # debug build, as in the rust job.
   rust-macos:
     name: Rust engine (macOS tree watch)
     needs: changes
     if: >-
       ${{
-        needs.changes.outputs.rust-engine != 'false' &&
+        (needs.changes.outputs.rust-all != 'false' || contains(fromJSON(needs.changes.outputs.rust-packages), 'rerail-tree-watch')) &&
         needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
         (
           github.event_name != 'pull_request' ||
@@ -861,11 +929,9 @@ jobs:
         )
       }}
     runs-on: macos-15
-    timeout-minutes: 30
-    # actions: main's compile cache, an artifact of another run.
+    timeout-minutes: 15
     permissions:
       contents: read
-      actions: read
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -876,9 +942,6 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # build.rs refuses the Unicode names table's LFS pointer.
-      - uses: ./.github/actions/lfs
-
       - id: rust-toolchain
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
@@ -888,21 +951,9 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - id: compile-cache
-        uses: ./.github/actions/rust-compile-cache
-        with:
-          name: test
-          ref: ${{ env.WARM_REF }}
 
       - name: Tree watch tests
-        run: "cargo test --manifest-path native/Cargo.toml --lib tree_watch::"
-
-      - name: Save the compile cache for later runs
-        if: env.SAVE_WARM == 'true'
-        uses: ./.github/actions/rust-compile-cache/save
-        with:
-          artifact: ${{ steps.compile-cache.outputs.artifact }}
-          dir: ${{ steps.compile-cache.outputs.dir }}
+        run: cargo test --manifest-path Cargo.toml -p rerail-tree-watch --lib
 
   # Builds the package once: dist/ and the release native engine, handed to every test job as an artifact. An engine an
   # earlier run built from the same inputs is downloaded, not built (.github/actions/engine-artifact); otherwise the
@@ -995,14 +1046,18 @@ jobs:
           retention-days: 1
 
   # Both shards read every pack's test data (packs.test.ts, complexity-rules.test.ts and the native tests share them),
-  # restored from what the test-data job saved.
+  # restored from what the test-data job saved. Runs the test files select-tests chose (all of them, or `unit-tests`),
+  # on its `unit-shards`; none when it chose none.
   unit:
-    name: Unit tests (${{ matrix.shard }}/2)
-    needs: [build, test-data]
+    name: Unit tests (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: [build, test-data, select-tests]
     if: >-
       ${{
-        github.event_name != 'pull_request' ||
-        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        needs.select-tests.outputs.unit != 'none' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -1011,7 +1066,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: ${{ fromJSON(needs.select-tests.outputs.unit-shards) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1032,10 +1087,14 @@ jobs:
       # The pack validation's check 4 leaves scoring the fixtures to the conformance check (the conformance and tools jobs
       # below), which scores the same fixtures through the same runner and fails on the same failures, so they are scored
       # once (test/engine/catalog/packs.test.ts). The pack publish gate (release-packs.yml) still scores them itself.
+      # TESTS: the selected files' paths, read into words (none holds a space); empty runs every file.
       - name: Unit tests
         env:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
-        run: npm test -- --shard=${{ matrix.shard }}/2
+          TESTS: ${{ needs.select-tests.outputs.unit-tests }}
+        run: |
+          read -ra tests <<< "$TESTS"
+          npm test -- --passWithNoTests --shard=${{ matrix.shard }}/${{ strategy.job-total }} "${tests[@]}"
 
       # Every statement, branch and function of reading a repository's own lint config is run by its tests, file by
       # file (package.json `test:coverage:lint-config`). Once, on the first shard.
@@ -1048,10 +1107,10 @@ jobs:
   # Gated as the shards are.
   build-windows:
     name: Build (Windows)
-    needs: changes
+    needs: [changes, select-tests]
     if: >-
       ${{
-        needs.changes.outputs.release-pr != 'true' &&
+        needs.changes.outputs.release-pr != 'true' && needs.select-tests.outputs.windows-shards != '[]' &&
         (
           github.event_name != 'pull_request' ||
           (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
@@ -1144,8 +1203,8 @@ jobs:
 
   # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch) are
   # compiled out on Linux, where the rust job runs every other test; these filters select them and the Windows-neutral
-  # tests beside them: the process and tree watch tests are the engine's, the import roots' rerail-lang-ecma's, which
-  # mounts `import_target`. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only
+  # tests beside them: the process tests are the engine's, the tree watch's rerail-tree-watch's, the import roots'
+  # rerail-lang-ecma's, which mounts `import_target`. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only
   # Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust job, through its own compile
   # cache. Its own job, beside build-windows and the shards rather than on one of them. Gated as the rust job is, and
   # only when the change selects the engine's tests (`rust-engine`).
@@ -1203,7 +1262,7 @@ jobs:
           ref: ${{ env.WARM_REF }}
 
       - name: Engine Windows tests
-        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma --lib -- process:: code_rule_dsl::import_target:: tree_watch:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
+        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
 
       - name: Save the compile cache
         if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}
@@ -1222,11 +1281,14 @@ jobs:
   # build-windows' artifact; the package is built here, which takes seconds.
   unit-windows:
     name: Unit tests (Windows, ${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: [test-data, build-windows]
+    needs: [test-data, build-windows, select-tests]
     if: >-
       ${{
-        github.event_name != 'pull_request' ||
-        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        needs.select-tests.outputs.windows-shards != '[]' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
       }}
     runs-on: windows-2025
     # A shard took 4 to 9 minutes with the engine downloaded (44363497802).
@@ -1236,7 +1298,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: ${{ fromJSON(needs.select-tests.outputs.windows-shards) }}
     defaults:
       run:
         shell: bash
@@ -1273,12 +1335,19 @@ jobs:
       # As in the unit job, with TEMP and TMP at runner.temp, a long path. The runner's TEMP is an 8.3 short path
       # (C:\Users\RUNNER~1\...), and Rerail's tests compare long paths: Rerail records a checkout by its long path, and
       # the tests expect the temporary folder's path as given, so 42 of them fail on the spelling alone.
+      # The test files select-tests chose (TESTS: their paths, read into words; empty runs every file), or none when it
+      # chose only the hook test below. vitest's own shim, from bash, starts node directly: npm's cmd.exe would cut the list
+      # at 8,191 characters, CreateProcess takes 32,767.
       - name: Unit tests
+        if: needs.select-tests.outputs.unit != 'none'
         env:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-        run: npm test -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+          TESTS: ${{ needs.select-tests.outputs.unit-tests }}
+        run: |
+          read -ra tests <<< "$TESTS"
+          node_modules/.bin/vitest run --dir test --passWithNoTests --shard=${{ matrix.shard }}/${{ strategy.job-total }} "${tests[@]}"
 
       # The integration job runs on Linux only. This file replays a Claude Code session through the built hook as
       # Claude Code runs it on Windows (dist/harness/hook-launcher.js), against a daemon of this build, including a
@@ -1879,6 +1948,7 @@ jobs:
       - lint
       - audit
       - changes
+      - select-tests
       - test-data
       - test-data-in-s3
       - rust-clippy

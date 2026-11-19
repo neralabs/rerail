@@ -271,6 +271,5 @@ pub mod code_rule_dsl {
 }
 #[path = "../../../src/git_ignore.rs"]
 pub mod git_ignore;
-#[path = "../../../src/panic_boundary.rs"]
-pub mod panic_boundary;
+pub use rerail_tree_watch::panic_boundary;
 // cratify: mounts end

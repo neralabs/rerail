@@ -39,7 +39,7 @@ lang-vue = ["rerail-device-metal/lang-vue", "rerail-facts/lang-vue", "rerail-lan
 # The engine without its Node addon (the `rerail-engine` CLI, the browser build): `#[napi]` items compile as plain
 # Rust and register nothing, so a binary links only what it calls rather than the addon's whole API (workspace
 # service, editor, suppressions, embeddings, git). Never on for the addon `npm run build` makes.
-headless = ["napi-derive/noop", "rerail-device-metal/headless", "rerail-facts/headless", "rerail-lang/headless", "rerail-lang-ecma/headless", "rerail-lang-json/headless", "rerail-lang-php/headless", "rerail-lang-python/headless", "rerail-lang-rust/headless", "rerail-lang-sql/headless", "rerail-logic/headless", "rerail-rr/headless", "rerail-sessions/headless", "rerail-transducer/headless", "rerail-w/headless"]
+headless = ["napi-derive/noop", "rerail-tree-watch/headless", "rerail-device-metal/headless", "rerail-facts/headless", "rerail-lang/headless", "rerail-lang-ecma/headless", "rerail-lang-json/headless", "rerail-lang-php/headless", "rerail-lang-python/headless", "rerail-lang-rust/headless", "rerail-lang-sql/headless", "rerail-logic/headless", "rerail-rr/headless", "rerail-sessions/headless", "rerail-transducer/headless", "rerail-w/headless"]
 # The CLI's `dump` (rules in the earlier JSON/YAML form, compiled and printed as `rir`): off, the CLI links no
 # part of that compiler (the addon still has it).
 dump-cli = ["rerail-device-metal/dump-cli", "rerail-facts/dump-cli", "rerail-lang/dump-cli", "rerail-lang-ecma/dump-cli", "rerail-lang-json/dump-cli", "rerail-lang-php/dump-cli", "rerail-lang-python/dump-cli", "rerail-lang-rust/dump-cli", "rerail-lang-sql/dump-cli", "rerail-logic/dump-cli", "rerail-rr/dump-cli", "rerail-sessions/dump-cli", "rerail-transducer/dump-cli", "rerail-w/dump-cli"]
@@ -88,6 +88,8 @@ base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 # Relational kernels on every lane and the executor that batches their launches (decision 0098).
 rerail-accel = { path = "../accel" }
+# The tree watch, built apart (`crates/tree_watch`) so its tests build without the engine; its sources stay in `src/`.
+rerail-tree-watch = { path = "crates/tree_watch" }
 # The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
 rerail-store = { path = "crates/store", features = ["test-hooks"] }
 ast-grep-core = "=0.51.0"
