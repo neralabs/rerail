@@ -441,7 +441,7 @@ fn file_clock() -> std::time::SystemTime {
 /// it ([`time_step`]).
 #[cfg(target_os = "linux")]
 fn past_step(modified: std::time::SystemTime, now: std::time::SystemTime) -> bool {
-    now >= modified + time_step(modified)
+    now > modified + time_step(modified)
 }
 
 /// The step of the file system that gave `time`, read from its digits: a file system keeps times
@@ -1413,21 +1413,21 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A time is left once the clock reads the next step its digits show: a nanosecond time at the
-    /// next nanosecond, a time of 100 ns steps (NTFS) or of 10 ms steps (exFAT) a step on, and a
-    /// whole second, which a file system of one or two seconds a step gives, two seconds on.
+    /// A time is left once the clock reads later than the next step its digits show: a nanosecond
+    /// time a nanosecond on, a time of 100 ns steps (NTFS) or of 10 ms steps (exFAT) a step on, and
+    /// a whole second, which a file system of one or two seconds a step gives, two seconds on.
     #[cfg(target_os = "linux")]
     #[test]
     fn says_when_the_file_clock_has_left_a_files_time() {
         let at = |seconds: u64, nanos: u32| std::time::UNIX_EPOCH + Duration::new(seconds, nanos);
-        assert!(!past_step(at(10, 501), at(10, 501)));
-        assert!(past_step(at(10, 501), at(10, 502)));
-        assert!(!past_step(at(10, 234_567_800), at(10, 234_567_899)));
-        assert!(past_step(at(10, 234_567_800), at(10, 234_567_900)));
-        assert!(!past_step(at(10, 10_000_000), at(10, 19_999_999)));
-        assert!(past_step(at(10, 10_000_000), at(10, 20_000_000)));
-        assert!(!past_step(at(10, 0), at(11, 999_999_999)));
-        assert!(past_step(at(10, 0), at(12, 0)));
+        assert!(!past_step(at(10, 501), at(10, 502)));
+        assert!(past_step(at(10, 501), at(10, 503)));
+        assert!(!past_step(at(10, 234_567_800), at(10, 234_567_900)));
+        assert!(past_step(at(10, 234_567_800), at(10, 234_567_901)));
+        assert!(!past_step(at(10, 10_000_000), at(10, 20_000_000)));
+        assert!(past_step(at(10, 10_000_000), at(10, 20_000_001)));
+        assert!(!past_step(at(10, 0), at(12, 0)));
+        assert!(past_step(at(10, 0), at(12, 1)));
     }
 
     /// While it lives, a file this process cannot read: one with no permissions on Unix, one held
