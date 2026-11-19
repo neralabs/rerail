@@ -87,13 +87,15 @@ export class OmpHost {
       return host;
     } catch (error) { await host.close(); throw error; }
   }
+  /** The first frame from `from` on that `predicate` takes, looked for at least once, then until `timeoutMs` is up. */
   private async waitFor(predicate: (frame: Frame) => boolean, from = 0, timeoutMs = 60_000): Promise<Frame> {
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
+    for (;;) {
       const found = this.frames.slice(from).find(predicate);
       if (found) return found;
       if (this.failure) throw this.failure;
       if (this.closed) throw new Error(`OMP exited (${this.exitCode}): ${this.errors.join("")}`);
+      if (Date.now() >= deadline) break;
       await delay(10);
     }
     throw new Error(`Standalone OMP timed out: ${this.errors.join("")}\n${JSON.stringify(this.frames.slice(-5))}`);
@@ -111,12 +113,13 @@ export class OmpHost {
    * result can come before that continuation. A prompt that starts no run ends at its result. `timeoutMs` bounds the
    * agent's run, for a prompt whose tools keep the daemon busy for longer than the default minute.
    */
-  async prompt(message: string, { timeoutMs }: { timeoutMs?: number } = {}): Promise<void> {
+  async prompt(message: string, { timeoutMs = 60_000 }: { timeoutMs?: number } = {}): Promise<void> {
     const from = this.frames.length;
     const response = await this.command({ type: "prompt", message });
+    const deadline = Date.now() + timeoutMs;
     await this.waitFor(frame => frame.type === "prompt_result" && frame.id === response.id, from, timeoutMs);
     if (this.frames.slice(from).some(frame => frame.type === "agent_start")) {
-      await this.waitFor(frame => frame.type === "agent_end" && frame.isTerminal !== false, from, timeoutMs);
+      await this.waitFor(frame => frame.type === "agent_end" && frame.isTerminal !== false, from, deadline - Date.now());
     }
     // agent_end observers may still be settling; the command's idle barrier waits for them.
     await this.snapshot();
