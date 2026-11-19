@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { PACKAGE_ROOT } from "../package-root.js";
 import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
+import type { EngineGitExit, EngineGitRun, EngineStartedGit } from "../git-start.js";
 
 export interface NativeHealth {
   ok: boolean;
@@ -503,6 +504,17 @@ export interface NativeBinding {
    * the handle it kept, so a pid Windows has given to another process is no answer. A binary built before it lacks it.
    */
   detachedExitCode?(pid: number): number | null;
+  /**
+   * Linux only: starts Git through `posix_spawn`, which copies nothing of this process (`git-start.ts`). A binary built
+   * before it lacks it.
+   */
+  startGit?(program: string, args: string[], env: string[], pipeStderr: boolean): EngineStartedGit;
+  /** Linux only: reaps a child `startGit` started once its exit pipe has closed. A binary built before it lacks it. */
+  reapGit?(pid: number): EngineGitExit;
+  /**
+   * Linux only: runs Git as `spawnSync` does, through `posix_spawn` (`git-start.ts`). A binary built before it lacks it.
+   */
+  runGit?(program: string, args: string[], env: string[], timeoutMs: number | undefined, maxBuffer: number): EngineGitRun;
   /**
    * Windows only: whether every path's owner is one Git for Windows takes as this process's user (the user, or the
    * Administrators group while the process's token is a member); false when an owner cannot be read, and on every
