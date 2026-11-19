@@ -134,11 +134,12 @@ function updateEvent(node, ev) {
   if (pay.dataset.sig !== paySig) { pay.dataset.sig = paySig; pay.replaceChildren(...(isOpen ? payload(ev) : [])); }
 }
 
+/** A violation's card: its rule's title, which opens the rule, the rule id, then its badges, over what Rerail said. */
 function createCorr(item) {
   return h("div.corr", { id: `c-${item.key}`, "data-key": item.key },
-    h("div.ch", null, h("b"), h("span.mono"), h("span.badge.outcome"),
-      h("span.badge.declined", { hidden: true, title: "The coding agent didn’t follow this steer and recorded why with rerail feedback." }, "Declined"),
-      h("div.act", null, h("button.btn.sm.ghost", { "data-act": "detail" }, "Open rule"))),
+    h("div.ch", null, h("button.ctitle"), h("span.mono"),
+      h("span.badges", null, h("span.badge.outcome"),
+        h("span.badge.declined", { hidden: true, title: "The coding agent didn’t follow this steer and recorded why with rerail feedback." }, "Declined"))),
     h("dl.beats", null, h("dt.nera", null, "Rerail said"), h("dd.said"),
       h("dt.reason", { hidden: true }, "Agent said"), h("dd.reason", { hidden: true }),
       h("dt.where", null, "Where"), h("dd.where", null, h("code"))));
@@ -164,7 +165,13 @@ function whereText(f) {
 function updateCorr(node, item) {
   const c = item.c, f = c.finding;
   // A rule taken out of the repository since keeps its card: named from its pack, else by id, with nothing to open.
-  setText(node.querySelector("b"), c.rule === null ? `${packRuleOf(f.ruleId)?.rule.title ?? f.ruleId} (no longer in this repository)` : titleOf(c.rule));
+  // The title opens the rule; a removed rule's title is plain text, with nothing to open.
+  const title = node.querySelector(".ctitle"), opens = c.rule !== null;
+  setText(title, opens ? titleOf(c.rule) : `${packRuleOf(f.ruleId)?.rule.title ?? f.ruleId} (no longer in this repository)`);
+  setAttr(title, "data-act", opens ? "detail" : null);
+  setAttr(title, "data-i", opens ? f.ruleId : null);
+  setAttr(title, "disabled", !opens);
+  setAttr(title, "title", opens ? "Open the rule" : null);
   setText(node.querySelector(".mono"), f.ruleId);
   const result = violationOutcome(f);
   node.dataset.outcome = result;
@@ -172,8 +179,6 @@ function updateCorr(node, item) {
   setText(badge, result === "logged" ? "Logged" : "Steered");
   setAttr(badge, "title", result === "logged" ? "Rerail recorded it; the coding agent wasn’t told." : "Rerail told the coding agent.");
   updateDeclined(node, c.declined);
-  setAttr(node.querySelector("[data-act=detail]"), "data-i", f.ruleId);
-  setAttr(node.querySelector("[data-act=detail]"), "hidden", c.rule === null);
   setText(node.querySelector(".said"), f.message);
   const where = whereText(f);
   setText(node.querySelector("dd.where code"), where);

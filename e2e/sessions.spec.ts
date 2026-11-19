@@ -44,6 +44,19 @@ test.describe("History by session", () => {
     // Every other card, steered or logged, has no decline on record and says nothing about one.
     await expect(page.locator("#content .corr dd.reason:visible")).toHaveCount(1);
 
+    // The title is the way to its rule: no Open rule button, and a click or Enter on the title opens the rule's sheet.
+    await expect(page.locator("#content .corr").getByText("Open rule")).toHaveCount(0);
+    const title = declined.locator(".ctitle");
+    await title.click();
+    await expect(page.locator("#panel")).toContainText("typescript-eslint-no-non-null-assertion");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#panel")).toBeHidden();
+    await title.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#panel")).toContainText("typescript-eslint-no-non-null-assertion");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#panel")).toBeHidden();
+
     await page.locator('#content [data-act="sfilter"][data-i="declined"]').click();
     await expect(page).toHaveURL(/#sessions\?filter=declined$/);
     await expect(page.locator("#content .srow")).toHaveCount(1);

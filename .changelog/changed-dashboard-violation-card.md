@@ -1,0 +1,1 @@
+On History by session's violation cards, the rule's title opens the rule, underlined on hover, in place of the Open rule button. The rule id and the Steered, Logged or Declined badges sit on lines of their own under the title.

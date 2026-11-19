@@ -125,9 +125,12 @@ body[data-panel="open"] .sess > aside{display:none}
 .corr[data-outcome="steered"]{background:var(--steer-bg)}
 .corr.hit{animation:hit 1.2s ease-out}
 @keyframes hit{0%{box-shadow:0 0 0 6px var(--brand-subtle-hover)}100%{box-shadow:0 0 0 0 transparent}}
-.corr .ch{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;color:var(--muted-foreground)}
-.corr .ch b{color:var(--foreground);font-weight:600;font-size:13px}
-.corr .ch .act{margin-left:auto;display:flex;gap:6px}
+/* Title, then the rule id, then the badges, each on its own line. The title opens the rule, underlined on hover. */
+.corr .ch{display:flex;flex-direction:column;align-items:flex-start;gap:3px;font-size:12px;color:var(--muted-foreground)}
+.corr .ch .ctitle{color:var(--foreground);font-weight:600;font-size:13px;text-align:left;text-underline-offset:2px}
+.corr .ch .ctitle:not(:disabled):hover{text-decoration:underline}
+.corr .ch .ctitle:disabled{cursor:text}
+.corr .ch .badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:3px}
 .beats{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 12px;margin:8px 0 0;font-size:13px}
 .beats dt{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);padding-top:2px}
 .beats dt.nera{color:var(--brand-foreground)}
