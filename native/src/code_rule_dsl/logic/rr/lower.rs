@@ -2124,7 +2124,14 @@ impl Lowerer {
     /// position `start` to `end` (`decide_conjunction`): each replays the conjunction into the open rule. Nothing in
     /// a replay, whose deciding walk wrote them. What their literals say of their variables (`Scan`).
     #[allow(clippy::too_many_arguments)]
-    fn write_combinations(&mut self, (start, n, end): (usize, usize, usize), rel: &str, args: &[Term], prefix: &[Literal], lits: &[LitAt], context: &BTreeSet<String>) -> Result<Scan, Error> {
+    fn write_combinations(&mut self, decided: (usize, usize, usize), rel: &str, args: &[Term], prefix: &[Literal], lits: &[LitAt], context: &BTreeSet<String>) -> Result<Scan, Error> {
+        self.write_combinations_as(decided, rel, args, prefix, lits, context, false)
+    }
+
+    /// `write_combinations`; with `unset`, each rule's `unset(x)` bind the empty value, as in a rule's own body (an
+    /// aggregate's helper).
+    #[allow(clippy::too_many_arguments)]
+    fn write_combinations_as(&mut self, (start, n, end): (usize, usize, usize), rel: &str, args: &[Term], prefix: &[Literal], lits: &[LitAt], context: &BTreeSet<String>, unset: bool) -> Result<Scan, Error> {
         if self.replay.is_some() {
             return Ok(Scan::default());
         }
@@ -2133,6 +2140,36 @@ impl Lowerer {
         let scan = self.scan.replace(Scan::default());
         let mut r = Ok(());
         for k in 0..n {
+            if unset {
+                // The empty value's variables, of the combination's literals (a bridge until a scan of them alone).
+                let chosen = self.body_of(start, |me| me.conjunction_put(lits, context, k));
+                let chosen = match chosen.and_then(|(_, c)| unset_vars(&c).map(|u| (c, u))) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        r = Err(e);
+                        break;
+                    }
+                };
+                let (chosen, vars) = chosen;
+                let vars = match unset_vars(prefix) {
+                    Ok(p) => vars.into_iter().chain(p).collect(),
+                    Err(e) => {
+                        r = Err(e);
+                        break;
+                    }
+                };
+                self.begin_rule(rel, args.to_vec(), vars);
+                r = prefix.iter().cloned().chain(chosen).try_for_each(|l| self.emit(l));
+                if r.is_err() {
+                    self.drop_rule();
+                    break;
+                }
+                r = self.end_rule();
+                if r.is_err() {
+                    break;
+                }
+                continue;
+            }
             self.replay = Some(start);
             self.begin_helper_rule(rel, args);
             r = prefix.iter().try_for_each(|l| self.emit(l.clone())).and_then(|()| self.conjunction_put(lits, context, k).map(|_| ()));
@@ -4678,7 +4715,7 @@ impl Lowerer {
             return Err(Error::Syntax(format!("{agg}: {v} is not bound in its body")));
         }
         let name = self.fresh("agg");
-        let mut bodies = self.conjunction(body, outer)?;
+        let decided = self.decide_conjunction(body, outer)?;
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by
         // a context relation: the rule's other literals, projected on those variables.
         // `match_all` over a text the rule binds reads it, as a test does: its spans or texts come from the context.
@@ -4703,6 +4740,7 @@ impl Lowerer {
         let by_attributes = inner.iter().filter(|v| outer.contains(*v) && with_attributes.contains(*v) && !without.contains(*v)).count();
         let bound = if by_attributes >= 2 { without } else { with_attributes };
         let needed: Vec<String> = inner.iter().filter(|v| outer.contains(*v) && !bound.contains(*v)).cloned().collect();
+        let mut prefix = Vec::new();
         if !needed.is_empty() {
             // The context holds every variable the body shares with the rule, those the body binds too: projected on
             // the tested ones alone (`ctx(j)`), it crossed every row of the body (`child(al, a, k)`, every argument of
@@ -4710,23 +4748,25 @@ impl Lowerer {
             let shared: Vec<String> = ordered.iter().filter(|v| outer.contains(*v)).cloned().collect();
             let span_subject = body.iter().any(|l| matches!(self.lit(l), L::Atom { rel, args, .. } if matches!(rel.as_str(), "match_all" | "match") && matches!(args.get(1).map(|a| self.tv(a)), Some(T::Var(v)) if needed.contains(&v))));
             self.span_context = span_subject;
+            // A context takes the literals beside: the body's combinations are written beside them, as decided.
+            let siblings = self.siblings.clone();
             let ctx = self.context(&shared);
+            self.siblings = siblings;
             self.span_context = false;
-            let ctx = ctx?;
-            for b in &mut bodies {
-                b.insert(0, Literal::Atom(ctx.clone()));
-            }
+            prefix.push(Literal::Atom(ctx?));
         }
-        let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).collect();
         let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone().into())).collect();
         // The empty value inside the body is the constant, as in a rule's own body.
-        let rules = bodies.into_iter().map(|b| unset(args.clone(), b)).collect::<Result<Vec<_>, _>>()?;
+        let scan = self.write_combinations_as(decided, &name, &args, &prefix, body, outer, true)?;
         // Shared only by the clauses of the same heads: aggregate demand narrows a helper by its readers' contexts
         // (`rr_demand_agg_…`), so one shared with a reader the program does not reach (`body_len`'s count beside
         // `catch_all_body`'s in b110) was computed for that reader's rows too. A relation's clauses are reached, and
         // kept (`rr::unreached_dropped`), together.
-        let stem = format!("agg {}", self.heads.iter().cloned().collect::<Vec<_>>().join(","));
-        let name = self.helper_once(name, &stem, types, rules);
+        if self.replay.is_none() {
+            let stem = format!("agg {}", self.heads.iter().cloned().collect::<Vec<_>>().join(","));
+            self.prog.declare_cols(&name, cols.iter().map(|c| (c.clone(), scan.type_of(c))));
+            self.once.push((name.clone(), stem, decided.1));
+        }
         // The helper keeps every column (`count` counts distinct rows), but only the rule's variables group it.
         let args = cols.iter().map(|c| if outer.contains(c) || own(c) { Term::Var(c.clone().into()) } else { Term::Wild }).collect();
         Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name.into(), args, neg: false, gated: false } }])
