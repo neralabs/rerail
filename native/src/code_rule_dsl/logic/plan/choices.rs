@@ -180,9 +180,13 @@ impl Drop for Durable {
 pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
     // Memory is ahead of the store (decision 0102): choices this process holds are the newest there are, so the store
     // is read only for a program this process has not planned. Nor does the read wait for the writer: what a queued
-    // write holds is in memory already.
-    if let Some(c) = kept().lock().expect("the kept choices").get(key) {
-        return holds(c.nodes, nodes).then(|| c.clone());
+    // write holds is in memory already. A chunk's are its view's (Q261).
+    let held = match super::chunk_choices() {
+        Some(c) => c.own.lock().iter().rev().find(|(k, _)| k == key).map(|(_, c)| c.clone()).or_else(|| c.at.get(key).cloned()),
+        None => kept().lock().expect("the kept choices").get(key).cloned(),
+    };
+    if let Some(c) = held {
+        return holds(c.nodes, nodes).then_some(c);
     }
     // Decoded when first looked up: a run asks for a few of the entries read at its start (decoding them all there was
     // 0.07 s of an edit's).
@@ -191,12 +195,66 @@ pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
         let (_, _, entries, texts) = &**d.as_ref()?;
         entries.get(&path(key)).and_then(|entry| decode_chosen(&texts.0, entry, &texts.1))
     })?;
-    keep(*key, found.clone());
+    match super::chunk_choices() {
+        // What the store held is the same for every chunk: kept in the chunk's view, not written again at filing.
+        Some(c) => c.take(*key, found.clone(), false),
+        None => keep(*key, found.clone()),
+    }
     holds(found.nodes, nodes).then_some(found)
 }
 
-/// Keeps the choices made for program `key`, in this process and in the store.
+/// The choices a chunk reads and makes (Q261): the process's as filed when it began, and its own, filed into the
+/// process's and the store in the chunks' order (`file`). Before, the first chunk to plan a program, by the clock,
+/// chose its inlining and demand for every chunk after (one hogql run in three inlined differently).
+pub(super) struct ChunkChoices {
+    at: Arc<HashMap<[u8; 32], Chosen>>,
+    own: parking_lot::Mutex<Vec<([u8; 32], Chosen)>>,
+    /// What it took since it last handed them on (`made_in`), and whether it made them (to keep in the store).
+    out: parking_lot::Mutex<Vec<([u8; 32], Chosen, bool)>>,
+}
+
+/// The process's choices now, for a chunk to begin from.
+pub(super) fn snapshot() -> Arc<HashMap<[u8; 32], Chosen>> {
+    Arc::new(kept().lock().expect("the kept choices").clone())
+}
+
+pub(super) fn chunk_choices(at: &Arc<HashMap<[u8; 32], Chosen>>) -> Arc<ChunkChoices> {
+    Arc::new(ChunkChoices { at: Arc::clone(at), own: Default::default(), out: Default::default() })
+}
+
+/// What a chunk chose (with whether it was made there), for its filing.
+pub(super) fn made_in(c: &ChunkChoices) -> Vec<([u8; 32], Chosen, bool)> {
+    std::mem::take(&mut *c.out.lock())
+}
+
+impl ChunkChoices {
+    fn take(&self, key: [u8; 32], chosen: Chosen, made: bool) {
+        self.own.lock().push((key, chosen.clone()));
+        self.out.lock().push((key, chosen, made));
+    }
+}
+
+/// Files a chunk's choices into the process's, in the order it made them; those it made, into the store too.
+pub(super) fn file(made: Vec<([u8; 32], Chosen, bool)>) {
+    for (key, chosen, here) in made {
+        if here {
+            remember_now(key, chosen);
+        } else {
+            keep(key, chosen);
+        }
+    }
+}
+
+/// Keeps the choices made for program `key`, in this process and in the store; in a chunk, at its filing.
 pub(super) fn remember(key: [u8; 32], chosen: Chosen) {
+    if let Some(c) = super::chunk_choices() {
+        c.take(key, chosen, true);
+        return;
+    }
+    remember_now(key, chosen);
+}
+
+fn remember_now(key: [u8; 32], chosen: Chosen) {
     keep(key, chosen.clone());
     DURABLE.with(|d| {
         let d = d.borrow();

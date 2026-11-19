@@ -5360,6 +5360,12 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   memo every chunk reads as it runs; with `RERAIL_JOINS=off` runs plan alike and retire 78.6-79.1 B against 87-89 B.
   (c) Threads' coordination: 3-7 B more than one thread's 80.1-80.3 B, rising with load. The first-chunk `pre_k`
   difference was (a).
-- **Open**: (b), the user's choice; a new binary's first run (15 chunks, the cone's rounds); 2 (row blocks
-  reserved large and grown in place, tails released); the Metal peak footprint at big chunks
-  (1.36-1.47 GB, the count's most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
+- **Done** (decision 0444, 2026-11-19): (b). The joins' memo and the planning choices (inline or store, demand:
+  found with the memo off, one run in three inlined differently, the first chunk to plan a program choosing for all)
+  follow the chunks' order as Q88's plans do; lines are noted by work; exploration draws from a fixed seed. hogql
+  CPU: 81.9-83.1 B, the same inline choices in 6 of 6 runs; Metal 76.6-81.1 B, 3 of 3.
+- **Open**: a new binary's first run (15 chunks, the cone's rounds); 2 (row blocks reserved large and grown in
+  place, tails released); on Metal, the device's room at run time: 14-49 stratum runs a run refused on the device
+  (`BackendFailure: an index of N rows`) and run on the host, by what the chunks beside them hold (0444,
+  "Measured"); (c), the threads' coordination; the Metal peak footprint at big chunks (1.36-1.47 GB, the count's
+  most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.

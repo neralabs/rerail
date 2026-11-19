@@ -1545,6 +1545,10 @@ pub struct ChunkView {
     kept: arc_swap::ArcSwap<Plans>,
     own: parking_lot::Mutex<rustc_hash::FxHashSet<PlanKey>>,
     observed: Option<keeps::SharedObserved>,
+    /// The joins' memo as the run's was filed when it began, with its own writes (Q261, `joins::ChunkMemo`).
+    memo: Arc<joins::ChunkMemo>,
+    /// The planning choices (inline or store, demand) likewise (Q261, `choices::ChunkChoices`).
+    choices: Arc<choices::ChunkChoices>,
 }
 
 impl ChunkView {
@@ -1565,7 +1569,7 @@ impl ChunkView {
 
 /// What a chunk planned, learnt and observed (`in_view`), for the run's in the chunks' order (`OrderedPlans::file`).
 #[derive(Default)]
-pub struct ChunkPlans(Vec<(PlanKey, Kept)>, Option<keeps::Observed>);
+pub struct ChunkPlans(Vec<(PlanKey, Kept)>, Option<keeps::Observed>, Vec<joins::Op>, Vec<([u8; 32], choices::Chosen, bool)>);
 
 /// Q88: the run's plans and observations as its chunks are filed, in their order. Chunk `n` (from 0) sees them as they
 /// were once chunks `0..=n - window` were filed; what it made is the run's when it is filed.
@@ -1573,8 +1577,9 @@ pub struct OrderedPlans {
     run: SharedPlans,
     observed: Option<keeps::SharedObserved>,
     window: usize,
-    /// The run's plans and observations once `first + i` chunks were filed, for those a chunk to begin may see.
-    snapshots: std::collections::VecDeque<(Arc<Plans>, Option<Arc<keeps::Observed>>)>,
+    /// The run's plans, observations and joins' memo once `first + i` chunks were filed, for those a chunk to begin
+    /// may see.
+    snapshots: std::collections::VecDeque<(Arc<Plans>, Option<Arc<keeps::Observed>>, Arc<joins::Memo>, ChoicesAt)>,
     first: usize,
     begun: usize,
     filed: usize,
@@ -1585,7 +1590,7 @@ impl OrderedPlans {
     pub fn begin(window: usize) -> Option<Self> {
         let run = share_plans()?;
         let observed = keeps::share_observed();
-        let at = (run.kept.load_full(), keeps::observed_now(&observed));
+        let at = (run.kept.load_full(), keeps::observed_now(&observed), joins::snapshot(), choices::snapshot());
         let observed = at.1.is_some().then_some(observed);
         Some(OrderedPlans { run, observed, window: window.max(1), snapshots: [at].into(), first: 0, begun: 0, filed: 0 })
     }
@@ -1600,23 +1605,27 @@ impl OrderedPlans {
             self.snapshots.pop_front();
             self.first += 1;
         }
-        let (plans, observed) = self.snapshots[at - self.first].clone();
+        let (plans, observed, memo, chosen) = self.snapshots[at - self.first].clone();
         Arc::new(ChunkView {
             kept: arc_swap::ArcSwap::new(plans),
             own: Default::default(),
             observed: self.observed.as_ref().map(|_| keeps::chunk_observed(observed)),
+            memo: joins::chunk_memo(&memo),
+            choices: choices::chunk_choices(&chosen),
         })
     }
 
     /// Files the next chunk's plans and observations into the run's, in the chunks' order.
     pub fn file(&mut self, made: ChunkPlans) {
-        let ChunkPlans(plans, observed) = made;
+        let ChunkPlans(plans, observed, ops, chosen) = made;
         self.run.publish(plans);
         if let (Some(run), Some(o)) = (&self.observed, observed) {
             keeps::file_observed(run, o);
         }
+        joins::file_ops(ops);
+        choices::file(chosen);
         self.filed += 1;
-        let at = (self.run.kept.load_full(), self.observed.as_ref().and_then(keeps::observed_now));
+        let at = (self.run.kept.load_full(), self.observed.as_ref().and_then(keeps::observed_now), joins::snapshot(), choices::snapshot());
         self.snapshots.push_back(at);
     }
 }
@@ -1638,7 +1647,20 @@ pub fn in_view<R>(view: &Arc<ChunkView>, f: impl FnOnce() -> R) -> (R, ChunkPlan
     };
     let kept = view.kept.load();
     let plans = keys.into_iter().filter_map(|k| kept.get(&k).map(|e| (k, e.kept()))).collect();
-    (r, ChunkPlans(plans, view.observed.as_ref().map(keeps::observed_made)))
+    (r, ChunkPlans(plans, view.observed.as_ref().map(keeps::observed_made), joins::ops_of(&view.memo), choices::made_in(&view.choices)))
+}
+
+/// The planning choices kept in the process, as a chunk begins from them (`choices::snapshot`).
+type ChoicesAt = Arc<std::collections::HashMap<[u8; 32], choices::Chosen>>;
+
+/// The joins' memo a chunk's planning on this thread reads and writes (Q261): its view's, where one is entered.
+fn chunk_memo() -> Option<Arc<joins::ChunkMemo>> {
+    PLANS.with(|p| p.borrow().as_ref().and_then(|s| s.view.as_ref()).map(|v| Arc::clone(&v.memo)))
+}
+
+/// The planning choices a chunk's planning on this thread reads and makes (Q261): its view's, where one is entered.
+fn chunk_choices() -> Option<Arc<choices::ChunkChoices>> {
+    PLANS.with(|p| p.borrow().as_ref().and_then(|s| s.view.as_ref()).map(|v| Arc::clone(&v.choices)))
 }
 
 /// A kept plan as the run shares it (decision 0301): its order and what its search found of it (work per node,
@@ -14535,5 +14557,50 @@ mod ordered_tests {
         assert_eq!(plans_get(&1).and_then(|k| k.5), None, "unfiled");
         ordered.file(m2);
         assert_eq!(plans_get(&1).and_then(|k| k.5), Some(5.0), "filed");
+    }
+
+    /// Q261: the joins' memo follows the chunks' order as the plans do. A note chunk 0 writes is in no view of a
+    /// chunk beside it, nor the run's until chunk 0 is filed; chunk 2 (a window of 2) begins with it.
+    #[test]
+    fn a_chunk_sees_the_joins_notes_filed_before_its_window_never_a_neighbours() {
+        let _plans = KeepPlans::start(None);
+        let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
+        let key: PlanKey = 0x0261_0001;
+        let order = [Step { at: 0, mode: None }, Step { at: 1, mode: None }];
+        let noted = || joins::note(&key).is_some();
+        let (v0, v1) = (ordered.next(), ordered.next());
+        let ((), m0) = in_view(&v0, || joins::put_tried(key, 7, &order, 3.0));
+        assert!(in_view(&v0, noted).0, "a chunk reads its own notes");
+        assert!(!in_view(&v1, noted).0, "a neighbour's, finished first");
+        assert!(!noted(), "the run's memo holds no chunk's until it is filed");
+        ordered.file(m0);
+        assert!(noted(), "chunk 0 filed");
+        assert!(!in_view(&v1, noted).0, "a view stays as its chunk began");
+        let ((), m1) = in_view(&v1, || ());
+        ordered.file(m1);
+        assert!(in_view(&ordered.next(), noted).0, "chunk 2 begins with chunk 0's");
+        joins::clear();
+    }
+
+    /// Q261: so do the planning choices (inline or store, demand). A program chunk 0 chose for is chosen again by a
+    /// chunk beside it, not taken from chunk 0 by whichever planned first; chunk 2 takes chunk 0's.
+    #[test]
+    fn a_chunk_takes_the_planning_choices_filed_before_its_window_never_a_neighbours() {
+        let _plans = KeepPlans::start(None);
+        let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
+        let key = [0x61u8; 32];
+        let chosen = |rel: &str| choices::Chosen { version: None, inlined: vec![rel.to_owned()], demanded: Vec::new(), nodes: 1000.0 };
+        let taken = || choices::lookup(&key, 1000.0).map(|c| c.inlined);
+        let (v0, v1) = (ordered.next(), ordered.next());
+        let ((), m0) = in_view(&v0, || choices::remember(key, chosen("a")));
+        assert_eq!(in_view(&v0, taken).0, Some(vec!["a".to_owned()]), "a chunk takes its own");
+        assert_eq!(in_view(&v1, taken).0, None, "a neighbour's, made first");
+        assert_eq!(taken(), None, "the process's hold no chunk's until it is filed");
+        let ((), m1) = in_view(&v1, || choices::remember(key, chosen("b")));
+        ordered.file(m0);
+        assert_eq!(taken(), Some(vec!["a".to_owned()]));
+        ordered.file(m1);
+        assert_eq!(taken(), Some(vec!["b".to_owned()]), "filed in the chunks' order: the later chunk's stands");
+        assert_eq!(in_view(&ordered.next(), taken).0, Some(vec!["a".to_owned()]), "chunk 2 begins with chunk 0's");
     }
 }
