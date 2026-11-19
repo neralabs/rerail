@@ -194,19 +194,57 @@ enum Logged {
     /// What a lowering made once a program logged, which a replay skips: it reads none of it again
     /// (`within_stop_relation`).
     Skip(usize),
+    /// An outlined literal's alternatives (`outline_put`): those kept in the rule, those of the helper relation, and
+    /// the variables it shares with the rule, its columns.
+    Kept(Vec<usize>, Vec<usize>, Vec<String>),
 }
 
 /// What the literals a helper's rules are written with say of their variables, in the order written (decision 0276
 /// A3.4): each variable's type, from the first literal that gives one, and the variables it is equated to, in order
-/// (`Scan::type_of`, what `type_of` reads of whole bodies).
-#[derive(Clone, Default)]
+/// (`Scan::type_of`), what they bind (`Scan::grounds`) and the empty values they set.
+#[derive(Clone)]
 struct Scan {
     types: BTreeMap<String, (Option<String>, Vec<String>)>,
+    /// Every variable the literals name.
+    vars: BTreeSet<String>,
+    /// The variables a positive atom binds.
+    bound: BTreeSet<String>,
+    /// The equalities `x = t`, each with t's variables, and the `nearest(n, a)`, which bind x and a from them.
+    binds: Vec<(String, BTreeSet<String>)>,
+    /// Whether an `unset` is among them, and the variables of the positive ones (`unset_vars`).
+    unset: bool,
+    unset_vars: Result<BTreeSet<String>, Error>,
+}
+
+impl Default for Scan {
+    fn default() -> Self {
+        Scan { types: BTreeMap::new(), vars: BTreeSet::new(), bound: BTreeSet::new(), binds: Vec::new(), unset: false, unset_vars: Ok(BTreeSet::new()) }
+    }
 }
 
 impl Scan {
-    /// A helper column's type: the first literal's that gives `v` one, else its first equal's (not one already
-    /// followed), else a symbol.
+    /// Whether the literals, as a rule body of their own, bind each of `vars`: by a positive atom, `nearest` from a
+    /// bound node, or an equality from bound ones, to a fixed point.
+    fn grounds(&self, vars: &[String]) -> bool {
+        let mut bound = self.bound.clone();
+        loop {
+            let before = bound.len();
+            for (x, from) in &self.binds {
+                if !bound.contains(x) && from.iter().all(|v| bound.contains(v)) {
+                    bound.insert(x.clone());
+                }
+            }
+            if bound.len() == before {
+                break;
+            }
+        }
+        vars.iter().all(|v| bound.contains(v))
+    }
+
+    /// A helper column's type: the first literal's that gives `v` one (the column it fills in an atom, else the type
+    /// of the aggregate or the computation that assigns it: `k = 0 - i` is a number, which a `join` orders by value),
+    /// else its first equal's, not one already followed (a context's `$F = $n` gives F n's type, a node, not the
+    /// symbol a column no literal types falls back to, which an ordered comparison refuses), else a symbol.
     fn type_of(&self, v: &str) -> String {
         self.type_through(v, &mut BTreeSet::new())
     }
@@ -234,8 +272,6 @@ enum Sink {
     /// The rule open on the header, its variables `unset(x)` binds empty, and the negated test held back.
     /// (`None`: `unset(x)` written as it is, in a helper's rule.)
     Rule(crate::code_rule_dsl::logic::program_image::Open, Option<BTreeSet<String>>, Option<Literal>),
-    /// The literals of one alternative, for a helper that still reads whole bodies (`alts_of`, decision 0276 A3.4).
-    Trees(Vec<Literal>),
 }
 
 impl Clone for Writing {
@@ -313,10 +349,10 @@ struct Lowerer {
     /// The demand relations the text declares itself (O101): a printed program (`rr::print`) carries the demands
     /// it was lowered with, so reading it back makes none again.
     printed_demands: BTreeSet<String>,
-    /// The helper relations made so far (`helper_once`), by their stem, columns and rules (`once_key`): an identical
+    /// The helper relations made so far, by their stem, columns and rules (`once_key`): an identical
     /// one is that relation again (`merge_helpers`).
     helpers: std::collections::HashMap<HelperKey, String>,
-    /// The helpers `helper_once` declared, in the order made: each name, its stem and its rules' count then (the key's
+    /// The helpers the walk declared, in the order made: each name, its stem and its rules' count then (the key's
     /// rules: a helper's first rules; demand may add more). Linking shares a module's helper that one an earlier
     /// module made equals, as one lowering of them all would (`append`), so a module's image keeps them.
     once: Vec<(String, String, usize)>,
@@ -853,7 +889,7 @@ pub struct ModuleParts {
     pub next: usize,
     /// How many of `prog.inputs`, first, its `.input` statements state.
     pub stated: usize,
-    /// The helpers `helper_once` made: name, stem, its rules' count then (`Lowerer::once`).
+    /// The helpers the walk made: name, stem, its rules' count then (`Lowerer::once`).
     pub once: Vec<(String, String, usize)>,
     /// What each derived relation's rules read.
     pub deps: Vec<(String, String)>,
@@ -1122,7 +1158,7 @@ impl Lowerer {
                 rename.insert(name.clone(), new);
             }
         }
-        // A helper `helper_once` made that equals one an earlier module made is that one, as in one lowering of them
+        // A helper the walk made that equals one an earlier module made is that one, as in one lowering of them
         // all (decision 0225 §6 with 0246): in the order made, each renamed before the next's key reads it.
         let mut into: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         for (name, stem, k) in std::mem::take(&mut m.once) {
@@ -2113,6 +2149,39 @@ impl Lowerer {
             _ => {}
         }
         let scan = self.scan.as_mut().expect("a scan");
+        scan.vars.extend(l.vars());
+        match l {
+            Literal::Atom(a) if a.rel == "unset" => {
+                scan.unset = true;
+                if !a.neg
+                    && let Ok(vars) = &mut scan.unset_vars
+                {
+                    match a.args.as_slice() {
+                        [Term::Var(v)] => {
+                            vars.insert(v.to_string());
+                        }
+                        [Term::Wild] => {}
+                        _ => scan.unset_vars = not_yet("`unset` of a value"),
+                    }
+                }
+                if !a.neg {
+                    scan.bound.extend(a.vars());
+                }
+            }
+            Literal::Atom(a) if !a.neg => scan.bound.extend(a.vars()),
+            Literal::Cmp { l, op: "=", r } => {
+                // Either side, a variable, from the other's.
+                for (x, t) in [(l, r), (r, l)] {
+                    if let Term::Var(x) = x {
+                        let mut vs = BTreeSet::new();
+                        t.vars(&mut vs);
+                        scan.binds.push((x.to_string(), vs));
+                    }
+                }
+            }
+            Literal::Nearest { n, a, .. } => scan.binds.push((a.clone(), [n.clone()].into())),
+            _ => {}
+        }
         for (v, ty) in typed {
             let e = scan.types.entry(v).or_default();
             if e.0.is_none() {
@@ -2127,6 +2196,20 @@ impl Lowerer {
                 }
             }
         }
+    }
+
+    /// What alternative `f` writes says of its variables (`Scan`), replaying the log from `start`; it writes nothing.
+    fn scan_alternative(&mut self, start: usize, f: impl FnOnce(&mut Self) -> Result<usize, Error>) -> Result<Scan, Error> {
+        let replay = std::mem::replace(&mut self.replay, Some(start));
+        let sink = self.open.0.take();
+        let off = std::mem::replace(&mut self.off, false);
+        let outer = self.scan.replace(Scan::default());
+        let r = f(self);
+        let made = std::mem::replace(&mut self.scan, outer).expect("the scan");
+        self.open.0 = sink;
+        self.off = off;
+        self.replay = replay;
+        r.map(|_| made)
     }
 
     /// Decides conjunction `lits`, writing nothing: where its log begins and ends, and its count of combinations
@@ -2169,37 +2252,19 @@ impl Lowerer {
         let mut r = Ok(());
         for k in 0..n {
             if unset {
-                // The empty value's variables, of the combination's literals (a bridge until a scan of them alone).
-                let chosen = self.body_of(start, |me| f(me, k));
-                let chosen = match chosen.and_then(|(_, c)| unset_vars(&c).map(|u| (c, u))) {
-                    Ok(c) => c,
+                // The empty value's variables, of the combination's literals: a scan of them, then their rule.
+                let vars = self.scan_alternative(start, |me| f(me, k)).and_then(|s| s.unset_vars).and_then(|v| unset_vars(prefix).map(|p| v.into_iter().chain(p).collect()));
+                match vars {
+                    Ok(vars) => self.begin_rule(rel, args.to_vec(), vars),
                     Err(e) => {
                         r = Err(e);
                         break;
                     }
-                };
-                let (chosen, vars) = chosen;
-                let vars = match unset_vars(prefix) {
-                    Ok(p) => vars.into_iter().chain(p).collect(),
-                    Err(e) => {
-                        r = Err(e);
-                        break;
-                    }
-                };
-                self.begin_rule(rel, args.to_vec(), vars);
-                r = prefix.iter().cloned().chain(chosen).try_for_each(|l| self.emit(l));
-                if r.is_err() {
-                    self.drop_rule();
-                    break;
                 }
-                r = self.end_rule();
-                if r.is_err() {
-                    break;
-                }
-                continue;
+            } else {
+                self.begin_helper_rule(rel, args);
             }
             self.replay = Some(start);
-            self.begin_helper_rule(rel, args);
             r = prefix.iter().try_for_each(|l| self.emit(l.clone())).and_then(|()| f(self, k).map(|_| ()));
             debug_assert!(r.is_err() || self.replay == Some(end), "a combination replays its conjunction's names");
             if r.is_err() {
@@ -2229,10 +2294,6 @@ impl Lowerer {
         }
         let (unset, held) = match self.open.0.as_mut() {
             None => return Ok(()),
-            Some(Sink::Trees(lits)) => {
-                lits.push(l);
-                return Ok(());
-            }
             Some(Sink::Rule(_, unset, held)) => (unset, held),
         };
         let is_unset = matches!(&l, Literal::Atom(a) if a.rel == "unset" && !a.neg);
@@ -2312,65 +2373,6 @@ impl Lowerer {
         self.replay.unwrap_or(self.log.len())
     }
 
-    /// The alternatives of a lowering that writes the alternative it is told to (`f(me, pick)`, its count of
-    /// alternatives), as bodies: it runs once to decide, writing none, then once per alternative into a sink of
-    /// literals, replaying the names its first run made. A bridge for the helpers that still read whole bodies
-    /// (decision 0276 A3.4).
-    fn alts_of(&mut self, mut f: impl FnMut(&mut Self, usize) -> Result<usize, Error>) -> Result<Vec<Vec<Literal>>, Error> {
-        let start = self.position();
-        let replaying = self.replay.is_some();
-        let sink = self.open.0.take();
-        let off = std::mem::replace(&mut self.off, true);
-        let mut run = |me: &mut Self| -> Result<Vec<Vec<Literal>>, Error> {
-            let n = f(me, usize::MAX)?;
-            let end = me.position();
-            let mut out = Vec::with_capacity(n);
-            for i in 0..n {
-                me.replay = Some(start);
-                me.off = false;
-                me.open.0 = Some(Sink::Trees(Vec::new()));
-                let r = f(me, i);
-                let Some(Sink::Trees(lits)) = me.open.0.take() else { unreachable!("the sink of literals") };
-                r?;
-                debug_assert_eq!(me.replay, Some(end), "an alternative replays its lowering's names");
-                out.push(lits);
-            }
-            me.replay = replaying.then_some(end);
-            Ok(out)
-        };
-        let out = run(self);
-        if out.is_err() {
-            // An error ends the clause; where its log stands no longer matters.
-            self.replay = if replaying { self.replay } else { None };
-        }
-        self.open.0 = sink;
-        self.off = off;
-        out
-    }
-
-    /// Bodies `alts`, alternatives of a lowering that still makes them whole: the one picked written (`alt`). Their
-    /// count. (A bridge, decision 0276 A3.4.)
-    fn put_alts(&mut self, alts: Vec<Vec<Literal>>, pick: usize) -> Result<usize, Error> {
-        let n = alts.len();
-        for (i, body) in alts.into_iter().enumerate() {
-            self.alt(i, pick, |me| body.into_iter().try_for_each(|l| me.emit(l)))?;
-        }
-        Ok(n)
-    }
-
-    /// The literals `f` writes, replaying the log from `start` into a sink of literals: one body. (A bridge,
-    /// decision 0276 A3.4.)
-    fn body_of<R>(&mut self, start: usize, f: impl FnOnce(&mut Self) -> Result<R, Error>) -> Result<(R, Vec<Literal>), Error> {
-        let replay = std::mem::replace(&mut self.replay, Some(start));
-        let sink = self.open.0.replace(Sink::Trees(Vec::new()));
-        let off = std::mem::replace(&mut self.off, false);
-        let r = f(self);
-        let Some(Sink::Trees(lits)) = std::mem::replace(&mut self.open.0, sink) else { unreachable!("the sink of literals") };
-        self.off = off;
-        self.replay = replay;
-        Ok((r?, lits))
-    }
-
     /// Ends rule `o`, open on the header (`Builder::open_rule`), as one the walk wrote; left out in a replay.
     fn close(&mut self, o: crate::code_rule_dsl::logic::program_image::Open) {
         if self.replay.is_some() {
@@ -2398,7 +2400,7 @@ impl Lowerer {
         Ok(args)
     }
 
-    /// `v`, the walk's version, with each helper `helper_once` made that equals one made before (`once_key`, in the
+    /// `v`, the walk's version, with each helper it made that equals one made before (`once_key`, in the
     /// order made, each named as the merges before it leave it) merged into that one (`relinked`); `once` keeps the
     /// rest.
     fn merge_helpers(&mut self, v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
@@ -2609,19 +2611,22 @@ impl Lowerer {
             }
             let args = written.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
             for k in 0..combinations {
+                // The empty value's variables, of the combination's literals (a scan of them), then its rule.
                 self.subs.truncate(1);
                 let heads = self.heads_at(c);
-                let (_, chosen) = self.body_of(0, |me| me.clause_put(heads, body.clone(), k))?;
-                let unset = unset_vars(&chosen)?;
+                let unset = self.scan_alternative(0, |me| me.clause_put(heads, body.clone(), k).map(|(_, n)| n))?.unset_vars?;
                 if let Some(m) = &head.modal {
                     self.modal.insert(self.written(), m.clone());
                 }
                 self.begin_rule(&rel, args.clone(), unset);
-                for l in chosen {
-                    if let Err(e) = self.emit(l) {
-                        self.drop_rule();
-                        return Err(e);
-                    }
+                self.subs.truncate(1);
+                let heads = self.heads_at(c);
+                self.replay = Some(0);
+                let r = self.clause_put(heads, body.clone(), k);
+                self.replay = None;
+                if let Err(e) = r {
+                    self.drop_rule();
+                    return Err(e);
                 }
                 self.end_rule()?;
             }
@@ -2708,36 +2713,35 @@ impl Lowerer {
             self.siblings = enclosing;
             let mut n = r?;
             // Alternatives multiply: `(a ; b), (c ; d)` is four rules, and `within_stop` is two. Past OUTLINE_PAST of
-            // them, a literal's alternatives are a helper relation (`outline`), and `within_stop(n, a, S)` over a kind
+            // them, a literal's alternatives are a helper relation (`outline_put`), and `within_stop(n, a, S)` over a kind
             // set is one atom of `rr_wstop_<S>`, S's relation (`within_stop_relation`). A nest of them was otherwise
             // exponential: a Rust policy of 200 lines lowered to 101,423 rules. Below it, they stay in the rule, whose
             // own literals narrow each.
             let outline = outlined || (logged.is_none() && combinations * n > OUTLINE_PAST && n > 1);
             if outline {
-                // Its alternatives whole: replayed from where the literal began.
-                let replaying = self.replay.is_some();
-                self.replay = Some(start);
                 let enclosing = self.siblings.clone();
                 self.siblings = lits.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, l)| l.clone()).chain(enclosing.iter().cloned()).collect();
-                let alts = self.alts_of(|me, p| me.literal_put(lit, &outer, p));
+                // A replay has not lowered it yet: it runs to the literal's end, writing nothing.
+                let decided = if outlined { self.decide(|me, p| me.literal_put(lit, &outer, p)) } else { Ok((start, n, self.position())) };
+                let r = decided.and_then(|decided| {
+                    if let L::Atom { rel, args, neg: false } = self.lit(lit)
+                        && rel == "within_stop"
+                        && let [n, a, stop] = args.as_slice()
+                        && self.node_set(stop).is_none()
+                    {
+                        let r = self.within_stop_relation(stop)?;
+                        let atom = Literal::Atom(Atom { rel: r.into(), args: [self.term(n)?, self.term(a)?].into(), neg: false, gated: false });
+                        self.alt(0, picks[i], |me| me.emit(atom))?;
+                        Ok(1)
+                    } else {
+                        let mut used: Vec<String> = context.iter().cloned().collect();
+                        lits.iter().enumerate().filter(|(j, _)| *j != i).for_each(|(_, l)| self.scope_vars(l, &mut used));
+                        let used: BTreeSet<String> = used.into_iter().collect();
+                        self.outline_put(decided, &used, picks[i], |me, p| me.literal_put(lit, &outer, p))
+                    }
+                });
                 self.siblings = enclosing;
-                let alts = alts?;
-                let end = self.replay.expect("replaying");
-                self.replay = replaying.then_some(end);
-                let out = if let L::Atom { rel, args, neg: false } = self.lit(lit)
-                    && rel == "within_stop"
-                    && let [n, a, stop] = args.as_slice()
-                    && self.node_set(stop).is_none()
-                {
-                    let r = self.within_stop_relation(stop)?;
-                    vec![vec![Literal::Atom(Atom { rel: r.into(), args: [self.term(n)?, self.term(a)?].into(), neg: false, gated: false })]]
-                } else {
-                    let mut used: Vec<String> = context.iter().cloned().collect();
-                    lits.iter().enumerate().filter(|(j, _)| *j != i).for_each(|(_, l)| self.scope_vars(l, &mut used));
-                    let used: BTreeSet<String> = used.into_iter().collect();
-                    self.outline(alts, &used)
-                };
-                n = self.put_alts(out, picks[i])?;
+                n = r?;
             }
             combinations *= n;
             counts.push((n, outline));
@@ -2819,7 +2823,7 @@ impl Lowerer {
         match self.lit(lit) {
             L::Group { alts, neg: false } => {
                 if let Some(set) = self.test_set(&alts, false)? {
-                    return self.put_alts(vec![set], pick);
+                    return one(self, &mut |me| set.iter().try_for_each(|l| me.emit(l.clone())));
                 }
                 // `(a ; b)`: each alternative's combinations, in turn.
                 let mut offset = 0;
@@ -2834,7 +2838,7 @@ impl Lowerer {
                     if let Some(Literal::Cmp { r, .. }) = set.last_mut() {
                         *r = Term::Int(0);
                     }
-                    return self.put_alts(vec![set], pick);
+                    return one(self, &mut |me| set.iter().try_for_each(|l| me.emit(l.clone())));
                 }
                 // `!(a, b)`: no row of the conjunction, through a helper relation of the variables it shares with the
                 // rule; `!(a ; b)` is `!a, !b`.
@@ -2842,7 +2846,7 @@ impl Lowerer {
                 for alt in &alts {
                     out.push(self.negated_conjunction(alt, outer)?);
                 }
-                self.put_alts(vec![out], pick)
+                one(self, &mut |me| out.iter().try_for_each(|l| me.emit(l.clone())))
             }
             L::Pattern { subject, pattern, selector, neg } => one(self, &mut |me| me.pattern(&subject, &pattern, selector.as_deref(), neg)),
             L::Atom { rel, args, neg } if matches!(rel.as_str(), "nearest" | "inside" | "has" | "within_stop") && args.len() == 3 && self.node_set(&args[2]).is_some() => self.node_axis(&rel, &args, neg, outer, pick),
@@ -3144,36 +3148,87 @@ impl Lowerer {
         Ok(())
     }
 
+    /// A literal's alternatives with those that ground the variables they share with `used` (the rest of the rule)
+    /// as one helper relation `rr_or<k>(shared)`, a rule each, and one atom in their place (as `!(…)` is
+    /// `rr_not<k>`). An alternative that leaves one unbound (it does not name it) stays as it is. The literal is
+    /// decided from log position `start` to `end` with `n` alternatives (`decide`), and `f` writes the one it is told
+    /// to; each kept one and each helper rule replays it. Its count of alternatives, writing the `pick`th.
+    fn outline_put(&mut self, (start, n, end): (usize, usize, usize), used: &BTreeSet<String>, pick: usize, mut f: impl FnMut(&mut Self, usize) -> Result<usize, Error>) -> Result<usize, Error> {
+        let (keep, out, shared) = match self.replay {
+            Some(at) => {
+                debug_assert_eq!(at, end);
+                let Some(Logged::Kept(keep, out, shared)) = self.log.get(at).cloned() else { panic!("a replayed outline reads its alternatives") };
+                self.replay = Some(at + 1);
+                (keep, out, shared)
+            }
+            None => {
+                let scans = (0..n).map(|p| self.scan_alternative(start, |me| f(me, p))).collect::<Result<Vec<_>, _>>()?;
+                let shared: BTreeSet<&String> = scans.iter().flat_map(|s| s.vars.iter()).filter(|v| used.contains(*v)).collect();
+                let shared: Vec<String> = shared.into_iter().cloned().collect();
+                // `unset(x)` is lowered in a rule's own body only (`unset_literal`).
+                let (out, keep): (Vec<usize>, Vec<usize>) = (0..n).partition(|&p| !scans[p].unset && scans[p].grounds(&shared));
+                let (keep, out) = if out.len() < 2 { (keep.into_iter().chain(out).collect(), Vec::new()) } else { (keep, out) };
+                self.log.push(Logged::Kept(keep.clone(), out.clone(), shared.clone()));
+                (keep, out, shared)
+            }
+        };
+        let helper = if out.is_empty() {
+            None
+        } else {
+            let name = self.fresh("or");
+            let args: Vec<Term> = shared.iter().map(|c| Term::Var(c.as_str().into())).collect();
+            if self.replay.is_none() {
+                let at = self.log.len();
+                let sink = self.open.0.take();
+                let off = std::mem::replace(&mut self.off, false);
+                let scan = self.scan.replace(Scan::default());
+                let mut r = Ok(());
+                for &p in &out {
+                    self.begin_helper_rule(&name, &args);
+                    self.replay = Some(start);
+                    r = f(self, p).map(|_| ());
+                    self.replay = None;
+                    if r.is_err() {
+                        self.drop_rule();
+                        break;
+                    }
+                    r = self.end_rule();
+                    if r.is_err() {
+                        break;
+                    }
+                }
+                let made = std::mem::replace(&mut self.scan, scan).expect("the scan");
+                self.open.0 = sink;
+                self.off = off;
+                r?;
+                debug_assert_eq!(at, self.log.len(), "a helper's rules replay their names");
+                self.prog.declare_cols(&name, shared.iter().map(|c| (c.clone(), made.type_of(c))));
+            }
+            Some(Literal::Atom(Atom { rel: name.into(), args: args.into(), neg: false, gated: false }))
+        };
+        // The kept alternatives, each replayed from where the literal began, then the helper's atom.
+        let after = self.replay;
+        for (j, &p) in keep.iter().enumerate() {
+            self.alt(j, pick, |me| {
+                if me.off {
+                    return Ok(());
+                }
+                me.replay = Some(start);
+                let r = f(me, p);
+                me.replay = after;
+                r.map(|_| ())
+            })?;
+        }
+        if let Some(atom) = helper {
+            self.alt(keep.len(), pick, |me| me.emit(atom))?;
+            return Ok(keep.len() + 1);
+        }
+        Ok(keep.len())
+    }
+
     /// `!(l, …)`: a helper relation of the conjunction, over the variables it shares with the rule (an aggregate's
     /// inside it too: `shared_vars`), bound inside it by a context relation where the conjunction only tests them,
     /// negated. A variable only the conjunction has is its own (Soufflé's scoping).
-    /// A literal's alternatives with those that ground the variables they share with `used` (the rest of the rule)
-    /// as one helper relation `rr_or<k>(shared)`, a rule each, and one atom in their place (as `!(…)` is
-    /// `rr_not<k>`). An alternative that leaves one unbound (it does not name it) stays as it is.
-    fn outline(&mut self, alts: Vec<Vec<Literal>>, used: &BTreeSet<String>) -> Vec<Vec<Literal>> {
-        let mut shared = BTreeSet::new();
-        for b in &alts {
-            for l in b {
-                shared.extend(l.vars().into_iter().filter(|v| used.contains(v)));
-            }
-        }
-        let shared: Vec<String> = shared.into_iter().collect();
-        // `unset(x)` is lowered in a rule's own body only (`unset`).
-        let unset = |b: &[Literal]| b.iter().any(|l| matches!(l, Literal::Atom(a) if &*a.rel == "unset"));
-        let (out, keep): (Vec<_>, Vec<_>) = alts.into_iter().partition(|b| !unset(b) && grounds(b, &shared));
-        if out.len() < 2 {
-            return keep.into_iter().chain(out).collect();
-        }
-        let name = self.fresh("or");
-        let cols: Vec<(String, String)> = shared.iter().map(|c| (c.clone(), self.type_of(c, &out).to_string())).collect();
-        self.prog.declare_cols(&name, cols);
-        let head = Atom { rel: name.into(), args: shared.iter().map(|c| Term::Var(c.as_str().into())).collect(), neg: false, gated: false };
-        for body in out {
-            self.write(Rule { head: head.clone(), body: merge_negated_tests(body).into() });
-        }
-        keep.into_iter().chain([vec![Literal::Atom(head)]]).collect()
-    }
-
     fn negated_conjunction(&mut self, lits: &[LitAt], outer: &BTreeSet<String>) -> Result<Literal, Error> {
         let shared: Vec<String> = self.shared_vars(lits).into_iter().filter(|v| outer.contains(v)).collect();
         let bound: BTreeSet<String> = self.body_vars(&lits.iter().filter(|l| self.binds_columns(l)).cloned().collect::<Vec<_>>());
@@ -4804,81 +4859,6 @@ impl Lowerer {
         Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name.into(), args, neg: false, gated: false } }])
     }
 
-    /// A helper column's type: the column it fills in the body's atoms, else the type of the aggregate or the
-    /// computation that assigns it (`k = 0 - i` is a number, which a `join` orders by value).
-    fn type_of(&self, v: &str, bodies: &[Vec<Literal>]) -> String {
-        self.type_through(v, bodies, &mut BTreeSet::new())
-    }
-
-    /// `type_of`, following `x = y` between variables: a context's `$F = $n` gives F n's type (a node), not the
-    /// symbol a column no literal types falls back to, which an ordered comparison refuses.
-    fn type_through(&self, v: &str, bodies: &[Vec<Literal>], seen: &mut BTreeSet<String>) -> String {
-        if !seen.insert(v.to_owned()) {
-            return "sym".to_owned();
-        }
-        let mut alias: Option<String> = None;
-        for literal in bodies.iter().flatten() {
-            if let Literal::Cmp { l: Term::Var(x), op: "=", r: Term::Var(y) } = literal
-                && alias.is_none()
-            {
-                if x == v && !seen.contains(y.as_str()) {
-                    alias = Some(y.to_string());
-                } else if y == v && !seen.contains(x.as_str()) {
-                    alias = Some(x.to_string());
-                }
-            }
-        }
-        for literal in bodies.iter().flatten() {
-            match literal {
-                Literal::Atom(a) if !a.neg => {
-                    for (i, t) in a.args.iter().enumerate() {
-                        if *t == Term::Var(v.to_owned().into()) {
-                            if crate::code_rule_dsl::logic::front::is_axis(&a.rel) {
-                                return "node".to_owned();
-                            }
-                            if let Some(cols) = self.prog.columns_of(a.rel.as_str())
-                                && let Some((_, ty)) = cols.get(i)
-                            {
-                                return ty.to_string();
-                            }
-                        }
-                    }
-                }
-                Literal::Nearest { n, a, .. } if n == v || a == v => return "node".to_owned(),
-                // A computed value: a number from arithmetic and the functions of numbers, else a symbol.
-                Literal::Cmp { l: Term::Var(x), op: "=", r: r @ (Term::Int(_) | Term::Call(..)) } if x == v => {
-                    let number = match r {
-                        Term::Int(_) => true,
-                        Term::Call(f, _) => {
-                            matches!(f.as_str(), "add" | "sub" | "mul" | "div" | "mod" | "max" | "min" | "strlen" | "to_number" | "to_float" | "count_matches")
-                                || f.starts_with("float_") && f != "float_str"
-                        }
-                        _ => false,
-                    };
-                    return if number { "int" } else { "sym" }.to_owned();
-                }
-                Literal::Cmp { l: Term::Var(x), op: "=", r: Term::Str(_) } if x == v => return "sym".to_owned(),
-                Literal::Agg { var, op, over, atom } if var == v => {
-                    return match op {
-                        AggOp::Count | AggOp::Sum | AggOp::Product => "int".to_owned(),
-                        AggOp::Join { .. } => "sym".to_owned(),
-                        AggOp::Min | AggOp::Max => {
-                            let col = atom.args.iter().position(|t| over.as_ref().is_some_and(|o| *t == Term::Var(o.clone().into())));
-                            col.and_then(|c| self.prog.columns_of(atom.rel.as_str())?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(|| "int".to_owned())
-                        }
-                    };
-                }
-                Literal::Ast { document, .. } if document == v => return "int".to_owned(),
-                Literal::Ast { node, captures, .. } if node == v || captures.iter().any(|(_, c)| c == v) => return "node".to_owned(),
-                _ => {}
-            }
-        }
-        match alias {
-            Some(y) => self.type_through(&y, bodies, seen),
-            None => "sym".to_owned(),
-        }
-    }
-
     fn term(&mut self, t: &At) -> Result<Term, Error> {
         Ok(match self.tv(t) {
             T::Var(v) if v == "top" && !self.top_is_var => Term::Top,
@@ -5016,16 +4996,6 @@ pub(super) fn float_key(f: f64) -> i64 {
 /// Each `unset(x)` is taken out and `x` replaced by it in the rule; `!unset(x)` is `x != -1`. Its text is "":
 /// `text(x, t)` of it is `t = ""` (O77). (A `@place` with no valid line is `unset` too: `PLACE`.)
 pub(super) const UNSET: i64 = -1;
-
-fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Literal>), Error> {
-    let vars = unset_vars(&body)?;
-    head.iter_mut().for_each(|t| unset_term(t, &vars));
-    let mut rest = Vec::with_capacity(body.len());
-    for l in body {
-        rest.extend(unset_literal(l, &vars)?);
-    }
-    Ok((head, rest))
-}
 
 /// The variables a body's `unset(x)` bind to the empty value.
 fn unset_vars(body: &[Literal]) -> Result<BTreeSet<String>, Error> {
@@ -5404,61 +5374,10 @@ fn world_demand(rel: &str) -> Option<&'static str> {
 
 
 
-/// How many alternatives a conjunction multiplies into before a disjunction in it is outlined (`conjunction`).
+/// How many alternatives a conjunction multiplies into before a disjunction in it is outlined (`conjunction_put`).
 const OUTLINE_PAST: usize = 16;
 
-/// Whether `body`, as a rule body of its own, binds each of `vars`: by a positive atom, `nearest` from a bound
-/// node, or an equality from bound ones, to a fixed point.
-fn grounds(body: &[Literal], vars: &[String]) -> bool {
-    let mut bound: BTreeSet<String> = BTreeSet::new();
-    for l in body {
-        if let Literal::Atom(a) = l
-            && !a.neg
-        {
-            bound.extend(a.vars());
-        }
-    }
-    loop {
-        let before = bound.len();
-        for l in body {
-            match l {
-                Literal::Cmp { l: Term::Var(a), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(a) } if !bound.contains(a.as_str()) => {
-                    let mut vs = BTreeSet::new();
-                    r.vars(&mut vs);
-                    if vs.iter().all(|v| bound.contains(v)) {
-                        bound.insert(a.to_string());
-                    }
-                }
-                Literal::Nearest { n, a, .. } if bound.contains(n.as_str()) => {
-                    bound.insert(a.to_string());
-                }
-                _ => {}
-            }
-        }
-        if bound.len() == before {
-            break;
-        }
-    }
-    vars.iter().all(|v| bound.contains(v))
-}
 
-
-
-/// Adjacent negations of one test of one string, `!glob("a", s), !glob("b", s)`, as one negated test of the set.
-pub fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
-    let mut out: Vec<Literal> = Vec::new();
-    for literal in body {
-        match out.last_mut() {
-            Some(last) => {
-                if let Some(l) = merge_negated_test(last, literal) {
-                    out.push(l);
-                }
-            }
-            None => out.push(literal),
-        }
-    }
-    out
-}
 
 /// A negated test of a string, `!glob("a", s)` (`op(s, p) = 0`): its operation, string and pattern.
 fn negated_test(l: &Literal) -> Option<(&str, &Term, &Term)> {
