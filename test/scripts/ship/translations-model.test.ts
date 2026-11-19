@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   compareFindings,
   type Declaration,
+  DeclarationError,
   DECLARATION_FORMAT,
   emptyDeclaration,
   exampleFiles,
@@ -73,7 +74,7 @@ describe("the gate", () => {
   const pack = ["same", "diff", "none", "gone"];
 
   it("passes a run that matches its declaration", () => {
-    const d = declaration({ untranslated: { none: "the engine has no comments" }, different: { diff: { reason: "the original misses a re-export", right: "translation", counts: { examples: { originalOnly: 0, translationOnly: 2 }, elsewhere: { originalOnly: 9, translationOnly: 9 } } } } });
+    const d = declaration({ untranslated: { none: "the engine has no comments" }, different: { diff: { reason: "the original misses a re-export", right: "translation", counts: { examples: { originalOnly: 0, translationOnly: 2 } } } } });
     const results = [result("same", { examples: [0, 0] }), result("diff", { examples: [0, 2] }), { rule: "none", status: "untranslated" as const, corpora: {} }];
     expect(gateProblems(d, results, ["examples"], pack)).toEqual([]);
   });
@@ -96,14 +97,14 @@ describe("the gate", () => {
   });
 
   it("fails a rule without a translation that is not listed, and a listed one that is translated now", () => {
-    expect(gateProblems(declaration({}), [{ rule: "none", status: "untranslated", corpora: {} }], [], pack)).toEqual(["none: has no translation and is not listed in untranslated"]);
+    expect(gateProblems(declaration({}), [{ rule: "none", status: "untranslated", corpora: {} }], ["examples"], pack)).toEqual(["none: has no translation and is not listed in untranslated"]);
     expect(gateProblems(declaration({ untranslated: { same: "no comments" } }), [result("same", { examples: [0, 0] })], ["examples"], pack)).toEqual(["same: is translated now; remove it from untranslated"]);
   });
 
   it("fails any failed rule, listed or not", () => {
     const failed: RuleResult = { rule: "none", status: "failed", message: "examples: the translation failed: boom", corpora: {} };
-    expect(gateProblems(declaration({}), [failed], [], pack)).toEqual(["none: failed: examples: the translation failed: boom"]);
-    expect(gateProblems(declaration({ untranslated: { none: "boom" } }), [failed], [], pack)).toEqual(["none: failed: examples: the translation failed: boom"]);
+    expect(gateProblems(declaration({}), [failed], ["examples"], pack)).toEqual(["none: failed: examples: the translation failed: boom"]);
+    expect(gateProblems(declaration({ untranslated: { none: "boom" } }), [failed], ["examples"], pack)).toEqual(["none: failed: examples: the translation failed: boom"]);
   });
 
   it("fails entries without their explanation, and entries naming no rule of the pack", () => {
@@ -117,8 +118,31 @@ describe("the gate", () => {
   });
 
   it("lists, but does not ask for explanations of, a pack that does not gate", () => {
-    const d = declaration({ equivalent: false, different: { diff: { reason: NOT_EXPLAINED, right: "unknown", counts: { examples: { originalOnly: 1, translationOnly: 0 } } } } });
+    const d = declaration({ equivalent: false, different: { diff: { reason: NOT_EXPLAINED, right: "unknown", counts: { examples: { originalOnly: 1, translationOnly: 0 }, elsewhere: { originalOnly: 9, translationOnly: 9 } } } } });
     expect(gateProblems(d, [result("diff", { examples: [1, 0] })], ["examples"], pack)).toEqual([]);
+  });
+
+  it("fails a gating run that compared no corpus, and counts listed on a corpus it did not compare", () => {
+    expect(gateProblems(declaration({}), [], [], pack)).toEqual(["the run compared no corpus"]);
+    expect(gateProblems(declaration({ equivalent: false }), [], [], pack)).toEqual([]);
+    const d = declaration({ different: { diff: { reason: "why", right: "original", counts: { examples: { originalOnly: 1, translationOnly: 0 }, gone: { originalOnly: 2, translationOnly: 0 } } } } });
+    expect(gateProblems(d, [result("diff", { examples: [1, 0] })], ["examples"], pack)).toEqual(["diff: listed in different with counts on gone, which the run did not compare"]);
+  });
+
+  it("fails an untranslated rule still listed in different", () => {
+    const d = declaration({ untranslated: { none: "no comments" }, different: { none: { reason: "why", right: "original", counts: { examples: { originalOnly: 1, translationOnly: 0 } } } } });
+    expect(gateProblems(d, [{ rule: "none", status: "untranslated", corpora: {} }], ["examples"], pack)).toEqual(["none: has no translation; remove it from different"]);
+  });
+
+  it("fails a same rule its original failed on files of for another reason than syntax errors, and the original's failures of no rule", () => {
+    const same = (originalFailures: string[]): RuleResult => ruleResult({ rule: "same", translation: "same.rerail", corpora: { examples: { original: [f("x.ts", 1)], translation: [f("x.ts", 1)], originalFailures } } });
+    const parse = ["source-incomplete: file did not parse: error regions cover 90% of it, first at line 1, column 3", "source-incomplete: file has syntax errors", "source-partial: read around 2 error regions"];
+    expect(same(parse).status).toBe("same");
+    expect(gateProblems(declaration({}), [same(parse)], ["examples"], pack)).toEqual([]);
+    expect(gateProblems(declaration({}), [same([...parse, "budget-exceeded: spent"])], ["examples"], pack)).toEqual(["same: on examples, the original failed on 1 file(s) for another reason than syntax errors; the first: budget-exceeded: spent"]);
+    expect(gateProblems(declaration({ equivalent: false }), [same(["budget-exceeded: spent"])], ["examples"], pack)).toEqual([]);
+    expect(gateProblems(declaration({}), [same(parse)], ["examples"], pack, { examples: ["adapter-error: boom", "adapter-error: again"] })).toEqual(["on examples, the original's run had 2 failure(s) of no rule; the first: adapter-error: boom"]);
+    expect(gateProblems(declaration({ equivalent: false }), [same(parse)], ["examples"], pack, { examples: ["adapter-error: boom"] })).toEqual([]);
   });
 });
 
@@ -137,6 +161,12 @@ describe("the declaration", () => {
     expect(() => parseDeclaration(JSON.stringify({ ...base, equivalent: "yes" }), "p")).toThrow(/equivalent/);
     expect(() => parseDeclaration(JSON.stringify({ ...base, different: { r: { reason: "x", right: "both", counts: {} } } }), "p")).toThrow(/right/);
     expect(() => parseDeclaration(JSON.stringify({ ...base, different: { r: { reason: "x", right: "original", counts: { e: { originalOnly: 1 } } } } }), "p")).toThrow(/counts/);
+  });
+
+  it("says why a file is not one with a DeclarationError, for text that is not JSON too", () => {
+    expect(() => parseDeclaration("{ not json", "p")).toThrow(DeclarationError);
+    expect(() => parseDeclaration("{ not json", "p")).toThrow(/^equivalence\.json of p: not JSON: /);
+    expect(() => parseDeclaration("[]", "p")).toThrow(new DeclarationError("equivalence.json of p: not a JSON object"));
   });
 
   it("is rewritten from a run, keeping reasons and the counts of corpora not run", () => {
