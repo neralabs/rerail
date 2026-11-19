@@ -54,7 +54,7 @@ impl Git {
     pub(super) fn new(root: &Path) -> Self {
         let (repo, tree, commit) = match crate::git_workspace::snapshot::repository(root) {
             Some((repo, _, tree, commit)) => (Some(repo), Some(tree), commit),
-            None => (gix::discover(root).ok(), None, None),
+            None => (gix::discover(root).ok().map(snapshot::physical_objects), None, None),
         };
         let repository = repo.and_then(|repo| {
             use sha2::Digest as _;

@@ -531,6 +531,7 @@ pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String,
                 let (text, inputs) = read_artifact(root, &declared, path);
                 artifact_entry(&text, &inputs)
             }
+            "git_object_predicate" => return crate::code_rule_dsl::logic::strings::git::predicate_still(root, path, digest),
             "git_root_repo" => return super::git::still(root, digest),
             "git_rev" | "git_index" => return crate::code_rule_dsl::logic::strings::git::still(what, path, digest),
             "base" => {

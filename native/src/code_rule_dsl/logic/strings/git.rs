@@ -1,14 +1,10 @@
 //! `@git_commit(sha)` and `@git_has(sha, path)`: questions about Git objects, answered in process from the
 //! object store of the repository that holds the run's root, through gix. Never a `git` subprocess.
 //!
-//! A full or abbreviated object id names immutable content, so an answer never goes stale: it is kept for the
-//! process, and no invalidation is needed. Only the names that move are read again each run, and recorded for the
-//! whole-run cutoff (`consulted`, `still`): the index (`@git_tracked`), `HEAD` and the base reference (`git_rev`,
-//! `revisions`). Paths are relative to the run's root, as every policy path is.
-//!
-//! With no repository, or an object id that is malformed or ambiguous, a call has no value (NULL), so the row is
-//! not derived: never a confident 0.
+//! Each run observes the requested objects and index. The whole-run cutoff checks those observations
+//! before it reuses an answer. Paths are relative to the run root.
 
+use crate::git_workspace::snapshot::{physical_objects, resolve_revision, revision_failure_reason, verified_object};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -58,13 +54,7 @@ impl Drop for Scope {
 /// The run's root: later calls answer from the repository that holds it, opened on the first call.
 pub(in crate::code_rule_dsl) fn set_root(root: &Path) {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    let state = state.get_or_insert_with(State::default);
-    if state.root.as_deref() != Some(root) {
-        *state = State { root: Some(root.to_owned()), ..State::default() };
-    }
-    // The index moves between runs; object answers do not.
-    state.index = None;
-    state.answers.retain(|(name, _, _), _| *name != "git_tracked");
+    *state = Some(State { root: Some(root.to_owned()), ..State::default() });
 }
 
 fn sha256_file(path: &Path) -> String {
@@ -91,7 +81,7 @@ fn open(root: &Path) -> Option<Repo> {
     if let Some((repo, prefix, tree, commit)) = crate::git_workspace::snapshot::repository(root) {
         return Some(Repo { repo, prefix, snapshot: Some((tree, commit)) });
     }
-    let repo = gix::discover(root).ok()?;
+    let repo = physical_objects(gix::discover(root).ok()?);
     if repo.workdir().is_none() {
         return Some(Repo { repo, prefix: PathBuf::new(), snapshot: None });
     }
@@ -114,24 +104,32 @@ fn resolve(repo: &gix::Repository, sha: &str) -> Option<gix::ObjectId> {
 
 fn commit(repo: &Repo, sha: &str) -> Option<bool> {
     let Some(id) = resolve(&repo.repo, sha) else { return Some(false) };
-    Some(repo.repo.find_object(id).ok()?.kind == gix::object::Kind::Commit)
+    let object = verified_object(&repo.repo, id).ok()?;
+    if object.kind != gix::object::Kind::Commit { return Some(false); }
+    object.into_commit().decode().ok()?;
+    Some(true)
 }
 
 fn has(repo: &Repo, sha: &str, path: &str) -> Option<bool> {
     let Some(id) = resolve(&repo.repo, sha) else { return Some(false) };
-    let object = repo.repo.find_object(id).ok()?;
+    let object = verified_object(&repo.repo, id).ok()?;
     if !matches!(object.kind, gix::object::Kind::Commit | gix::object::Kind::Tree) {
         return Some(false);
     }
-    let tree = object.peel_to_tree().ok()?;
-    Some(tree.lookup_entry_by_path(repo.prefix.join(path)).ok()?.is_some())
+    let full = repo.prefix.join(path);
+    let relative = full.to_str()?.replace(std::path::MAIN_SEPARATOR, "/");
+    match resolve_revision(&repo.repo, &format!("{id}:{relative}"), Some(Path::new(""))) {
+        Ok(_) => Some(true),
+        Err(error) if matches!(revision_failure_reason(&error), "missing-path" | "wrong-object-kind") => Some(false),
+        Err(_) => None,
+    }
 }
 
 fn answer(name: &'static str, sha: &str, path: &str) -> Value {
     let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let state = guard.get_or_insert_with(State::default);
     let key = (name, sha.to_owned(), path.to_owned());
-    if let Some(known) = state.answers.get(&key) {
+    if name == "git_tracked" && let Some(known) = state.answers.get(&key) {
         return known.map_or(Value::Null, |b| Value::Integer(b.into()));
     }
     let found = if name == "git_tracked" {
@@ -167,10 +165,28 @@ pub(super) fn git_tracked(path: &str) -> Value {
 pub fn consulted(root: &Path) -> Vec<(String, String, String)> {
     let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let Some(state) = guard.as_ref() else { return Vec::new() };
-    match (&state.root, &state.index) {
-        (Some(r), Some(index)) if r == root => vec![("git_index".to_owned(), r.to_string_lossy().into_owned(), index.as_ref().map(|i| i.1.clone()).unwrap_or_default())],
-        _ => Vec::new(),
+    if state.root.as_deref() != Some(root) { return Vec::new(); }
+    let mut rows = Vec::new();
+    if let Some(index) = &state.index {
+        rows.push(("git_index".to_owned(), root.to_string_lossy().into_owned(), index.as_ref().map(|i| i.1.clone()).unwrap_or_default()));
     }
+    for ((name, sha, path), value) in &state.answers {
+        if *name != "git_tracked" {
+            let key = serde_json::to_string(&(name, sha, path)).expect("string tuple");
+            rows.push(("git_object_predicate".to_owned(), key, serde_json::to_string(value).expect("optional boolean")));
+        }
+    }
+    rows
+}
+
+pub fn predicate_still(root: &Path, key: &str, expected: &str) -> bool {
+    let Ok((name, sha, path)) = serde_json::from_str::<(&str, &str, &str)>(key) else { return false };
+    let value = open(root).and_then(|repo| match name {
+        "git_commit" => commit(&repo, sha),
+        "git_has" => has(&repo, sha, path),
+        _ => None,
+    });
+    serde_json::to_string(&value).expect("optional boolean") == expected
 }
 
 /// The commit `rev` names: a revision spec (`HEAD~1`, `origin/main`, an id).

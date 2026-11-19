@@ -154,6 +154,11 @@ fn missing() -> io::Error {
     io::Error::from(io::ErrorKind::NotFound)
 }
 
+pub fn physical_objects(mut repo: gix::Repository) -> gix::Repository {
+    repo.objects.ignore_replacements = true;
+    repo
+}
+
 pub fn verified_object(repo: &gix::Repository, id: gix::ObjectId) -> io::Result<gix::Object<'_>> {
     let object = repo.try_find_object(id).map_err(error)?.ok_or_else(missing)?;
     gix::objs::Data::new(&object.data, object.kind, id.kind()).verify_checksum(id.as_ref())
@@ -300,7 +305,7 @@ impl View {
         REPOSITORY.with(|slot| {
             let mut slot = slot.borrow_mut();
             if slot.as_ref().is_none_or(|(id, _)| *id != epoch) {
-                *slot = Some((epoch, repository.repo.to_thread_local()));
+                *slot = Some((epoch, physical_objects(repository.repo.to_thread_local())));
             }
             drop(repository);
             Ok(f(&slot.as_ref().unwrap().1, storage.as_deref(), epoch.1))
@@ -512,7 +517,7 @@ impl Snapshot {
     }
 
     fn open(source: &Path, revision: &str, scope: Option<String>) -> Result<Self, String> {
-        let repo = gix::discover(source).map_err(|e| e.to_string())?;
+        let repo = physical_objects(gix::discover(source).map_err(|e| e.to_string())?);
         let prefix = if let Some(work) = repo.workdir() {
             source
                 .canonicalize()
@@ -523,9 +528,9 @@ impl Snapshot {
         } else {
             PathBuf::new()
         };
-        let (id, commit, tree) = {
+        let (id, commit, tree, selects_path) = {
             let base = repo.workdir().map(|_| prefix.as_path());
-            let mut target = resolve_revision(&repo, revision, base)
+            let (mut target, selects_path) = revision::selection(&repo, revision, base)
                 .map_err(|e| format!("{revision}: {}", revision::failure_detail(&e)))?;
             let object = loop {
                 let object = verified_object(&repo, target).map_err(|e| format!("{target}: {e}"))?;
@@ -536,12 +541,13 @@ impl Snapshot {
             match object.kind {
                 gix::object::Kind::Commit => {
                     let tree = object.into_commit().tree_id().map_err(|e| e.to_string())?.detach();
-                    (id, Some(id), tree)
+                    (id, Some(id), tree, selects_path)
                 }
-                gix::object::Kind::Tree => (id, None, id),
+                gix::object::Kind::Tree => (id, None, id, selects_path),
                 _ => return Err(format!("{revision}: Git object {id} is {}, expected a commit or tree", object.kind)),
             }
         };
+        let prefix = if selects_path { PathBuf::new() } else { prefix };
         let git_dir = repo
             .git_dir()
             .canonicalize()
@@ -608,7 +614,7 @@ pub fn repository(
     let v = view(root)?;
     let under = root.strip_prefix(&v.root).ok()?;
     Some((
-        v.repository.lock().unwrap_or_else(|e| e.into_inner()).repo.to_thread_local(),
+        physical_objects(v.repository.lock().unwrap_or_else(|e| e.into_inner()).repo.to_thread_local()),
         v.prefix.join(under),
         v.tree,
         v.commit,

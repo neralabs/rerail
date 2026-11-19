@@ -1,6 +1,7 @@
 //! The on-disk representation of objects, independent of decoded Git facts.
 
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub struct Storage {
@@ -8,7 +9,7 @@ pub struct Storage {
     loose: Sha256,
     packs: Sha256,
     indices: Option<Vec<PackIndex>>,
-    watched: Vec<(PathBuf, [u8; 32])>,
+    watched: BTreeMap<PathBuf, [u8; 32]>,
 }
 
 impl std::fmt::Debug for Storage {
@@ -23,11 +24,24 @@ enum PackIndex {
 }
 
 impl PackIndex {
-    fn contains(&self, id: &gix::hash::oid) -> bool {
-        match self {
-            Self::Single(index) => index.lookup(id).is_some(),
-            Self::Multi(index) => index.lookup(id).is_some(),
+    fn observe(&self, id: &gix::hash::oid, files: &BTreeMap<PathBuf, [u8; 32]>, stamp: &mut Sha256) -> Option<()> {
+        let (index_path, pack_path) = match self {
+            Self::Single(index) => {
+                if index.lookup(id).is_none() { return Some(()); }
+                (index.path(), index.path().with_extension("pack"))
+            }
+            Self::Multi(index) => {
+                let Some(entry) = index.lookup(id) else { return Some(()) };
+                let (pack, _) = index.pack_id_and_pack_offset_at_index(entry).ok()?;
+                let name = index.index_names().get(pack as usize)?;
+                (index.path(), index.path().parent()?.join(name).with_extension("pack"))
+            }
+        };
+        for path in [index_path, pack_path.as_path()] {
+            hash_path(stamp, path);
+            stamp.update(files.get(path)?);
         }
+        Some(())
     }
 }
 
@@ -41,7 +55,7 @@ impl Storage {
         loose.update(b"git-loose-storage-v1");
         packs.update(b"git-pack-storage-v1");
         let mut indices = Some(Vec::new());
-        let mut watched = Vec::new();
+        let mut watched = BTreeMap::new();
         for root in &roots {
             hash_path(&mut loose, root);
             watch(&mut watched, Some(&mut loose), root.join("info/alternates"))?;
@@ -88,9 +102,10 @@ impl Storage {
     pub fn object(&self, id: gix::ObjectId) -> Option<String> {
         let oid = id.to_string();
         let mut stamp = self.loose.clone();
-        // Git can prefer a pack over a loose copy. Only omit pack state when
-        // every readable index proves that this object is loose-only.
-        if self.indices.as_ref().is_none_or(|indices| indices.iter().any(|index| index.contains(id.as_ref()))) {
+        // More than one pack can supply the same object. Include each possible source.
+        if self.indices.as_ref().and_then(|indices| {
+            indices.iter().try_for_each(|index| index.observe(id.as_ref(), &self.watched, &mut stamp))
+        }).is_none() {
             stamp.update(self.packs.clone().finalize());
         }
         for root in &self.roots {
@@ -100,14 +115,14 @@ impl Storage {
     }
 }
 
-fn watch(watched: &mut Vec<(PathBuf, [u8; 32])>, combined: Option<&mut Sha256>, path: PathBuf) -> Option<()> {
+fn watch(watched: &mut BTreeMap<PathBuf, [u8; 32]>, combined: Option<&mut Sha256>, path: PathBuf) -> Option<()> {
     let metadata = metadata(&path)?;
     let mut digest = Sha256::new();
     hash_stat(&mut digest, metadata.as_ref());
     if let Some(combined) = combined {
         hash_stat(combined, metadata.as_ref());
     }
-    watched.push((path, digest.finalize().into()));
+    watched.insert(path, digest.finalize().into());
     Some(())
 }
 

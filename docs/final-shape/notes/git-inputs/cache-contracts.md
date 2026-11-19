@@ -84,6 +84,7 @@ Verifying the final ID cannot detect a change to an earlier object that redirect
 Revision resolution must verify each object before it uses that object's contents to find the next ID.
 A loose object's storage observation depends only on the loose copies that Git can use when no pack index lists the object.
 Use a conservative pack observation when an index cannot prove whether it contains the object.
+When the indexes identify the packs that contain an object, the observation covers those packs and their indexes.
 A source request checks the same storage observation before it uses saved content.
 It verifies bytes from changed storage against the Git object ID.
 The scan reports unreadable selected sources by path and continues to check readable sources.

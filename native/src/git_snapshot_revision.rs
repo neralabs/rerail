@@ -42,7 +42,12 @@ pub fn failure_detail(error: &gix::Error) -> String {
 }
 
 pub fn resolve(repo: &Repository, expression: &str, path_base: Option<&Path>) -> Result<ObjectId> {
+    Ok(selection(repo, expression, path_base)?.0)
+}
+
+pub(super) fn selection(repo: &Repository, expression: &str, path_base: Option<&Path>) -> Result<(ObjectId, bool)> {
     let mut revision = Revision {
+        selects_path: false,
         repo,
         path_base,
         reference: None,
@@ -57,13 +62,14 @@ pub fn resolve(repo: &Repository, expression: &str, path_base: Option<&Path>) ->
     }
     parsed?;
     match revision.candidates.as_slice() {
-        [id] => Ok(*id),
+        [id] => Ok((*id, revision.selects_path)),
         [] => Err(lookup_error("missing-revision", "No Git revision matched")),
         _ => Err(lookup_error("ambiguous-revision", format_args!("Ambiguous Git revision {expression:?}"))),
     }
 }
 
 struct Revision<'repo> {
+    selects_path: bool,
     repo: &'repo Repository,
     path_base: Option<&'repo Path>,
     reference: Option<gix::Reference<'repo>>,
@@ -153,11 +159,22 @@ impl<'repo> Revision<'repo> {
         }
         let mut segments = path.split(|byte| *byte == b'/').peekable();
         while let Some(name) = segments.next() {
-            let entry = tree.find_entry(name).ok_or_else(|| {
-                lookup_error("missing-path", format_args!("Git path {path:?} does not exist in tree {}", tree.id))
+            let tree_id = tree.id;
+            let entries = super::decode_tree(tree).map_err(|error| {
+                lookup_error("malformed-object", format_args!("Git tree {tree_id}: {error}"))
             })?;
-            let target = entry.id().detach();
+            let index = entries.binary_search_by(|entry| entry.name.as_slice().cmp(name)).map_err(|_| {
+                lookup_error("missing-path", format_args!("Git path {path:?} does not exist in tree {tree_id}"))
+            })?;
+            let entry = &entries[index];
+            let target = entry.target;
             if segments.peek().is_none() {
+                return Ok(target);
+            }
+            if !entry.is_tree() {
+                return Err(lookup_error("wrong-object-kind", format_args!("Git path component in {path:?} is not a directory")));
+            }
+            if segments.clone().eq([&b""[..]]) {
                 return Ok(target);
             }
             let object = self.read(target)?;
@@ -261,10 +278,10 @@ impl delegate::Revision for Revision<'_> {
         use delegate::ReflogLookup;
         let mut reference = match &self.reference {
             Some(reference) => reference.clone(),
-            None => self
-                .repo
-                .head_ref()?
-                .ok_or_else(|| message("No branch reflog for HEAD").raise())?,
+            None => match self.repo.head_ref()? {
+                Some(branch) => branch,
+                None => self.repo.find_reference("HEAD")?,
+            },
         };
         if !reference.log_exists()? {
             reference.follow_to_object()?;
@@ -388,6 +405,7 @@ impl delegate::Navigate for Revision<'_> {
 
     fn peel_until(&mut self, kind: delegate::PeelTo<'_>) -> Result<()> {
         use delegate::PeelTo;
+        self.selects_path |= matches!(kind, PeelTo::Path(_));
         self.navigate(|revision, id| match kind {
             PeelTo::ValidObject => Ok(revision.read(id)?.id),
             PeelTo::RecursiveTagObject => Ok(revision.peel(id, None)?.id),
@@ -397,6 +415,9 @@ impl delegate::Navigate for Revision<'_> {
     }
 
     fn find(&mut self, pattern: &BStr, negated: bool) -> Result<()> {
+        if pattern.is_empty() && !negated {
+            return self.navigate(|revision, id| Ok(revision.peel(id, Some(Kind::Commit))?.id));
+        }
         let matcher = MessagePattern::new(pattern).map_err(|error| {
             lookup_error("invalid-revision", format_args!("Invalid Git message pattern {pattern:?}: {error}"))
         })?;
@@ -408,9 +429,20 @@ impl delegate::Navigate for Revision<'_> {
         }
         let references = self.repo.references()?;
         let mut tips = Vec::new();
+        let mut first_error = None;
         for reference in references.all()? {
-            let id = reference?.follow_to_object()?.detach();
-            let object = self.peel(id, None)?;
+            let mut reference = reference?;
+            let name = reference.name().to_owned();
+            let result = reference.follow_to_object().and_then(|id| self.peel(id.detach(), None));
+            let object = match result {
+                Ok(object) => object,
+                Err(error) => {
+                    let error = self.read_failure.borrow_mut().take().unwrap_or(error);
+                    eprintln!("Git message search skipped {name}: {}", failure_detail(&error));
+                    first_error.get_or_insert(error);
+                    continue;
+                }
+            };
             if object.kind == Kind::Commit {
                 tips.push(object.id);
             }
@@ -421,7 +453,10 @@ impl delegate::Navigate for Revision<'_> {
                 tips.push(object.id);
             }
         }
-        self.candidates = vec![self.matching_commit(tips, pattern, &matcher, negated)?];
+        let found = self.matching_commit(tips, pattern, &matcher, negated).map_err(|error| {
+            if failure_reason(&error) == "missing-revision" { first_error.unwrap_or(error) } else { error }
+        })?;
+        self.candidates = vec![found];
         Ok(())
     }
 

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -558,9 +558,10 @@ Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
     git(root, "commit", "-qm", "second commit");
     git(root, "tag", "-am", "annotated release", "release");
     git(root, "pack-refs", "--all");
+    git(root, "checkout", "--quiet", "--detach", "HEAD");
     const short = git(root, "rev-parse", "--short", "HEAD");
     const expressions = [
-      short, "@", "main", "HEAD@{1}", "release", "release^{}", ":a.py", ":./a.py",
+      short, "@", "main", "HEAD@{1}", "@{0}", "@{1}", "HEAD:src/", "HEAD^{/}", "release", "release^{}", ":a.py", ":./a.py",
       "HEAD:./src", ":/seed", "HEAD^{/^seed}", ":/^(seed|missing)", "HEAD^{/!-^second}",
     ];
     const policy = join(root, "refs.rr");
@@ -576,10 +577,80 @@ Resolved(@place("git", 1), e, o) :- git_revision(_, e, o).
     expect(report.violations.map(finding => finding.message).sort()).toEqual(
       expressions.map(expr => `${expr} ${git(root, "rev-parse", "--verify", expr)}`).sort(),
     );
+    for (const [revision, field] of [["HEAD:src/", "tree"], ["HEAD^{/}", "commit"], ["@{0}", "commit"], ["@{1}", "commit"]] as const) {
+      const selected = await scan(root, { revision, analysisScope: "expressions" });
+      expect(selected.source?.[field]).toBe(git(root, "rev-parse", "--verify", revision));
+    }
+    const nested = new (loadNativeBinding().GitRevisionSource)(join(root, "src"), "HEAD:./", "expressions");
+    expect(nested.readFile("nested.py", 100)?.toString()).toBe("nested = 1\n");
     for (const [revision, field] of [["HEAD:./src", "tree"], ["HEAD^{/^seed}", "commit"], [":/^seed", "commit"]] as const) {
       const selected = await scan(join(root, "src"), { revision, analysisScope: "expressions" });
       expect(selected.source?.[field]).toBe(git(root, "rev-parse", "--verify", revision));
     }
+  });
+
+  it("reads physical objects and explicitly addresses replacements in both interfaces", async () => {
+    const root = checkout();
+    const original = git(root, "rev-parse", "HEAD");
+    writeFileSync(join(root, "a.py"), "clean = 1\n");
+    git(root, "commit", "-qam", "replacement");
+    const replacement = git(root, "rev-parse", "HEAD");
+    git(root, "replace", original, replacement);
+    const selector = `refs/replace/${original}`;
+    const policy = join(root, "physical.rr");
+    writeFileSync(policy, `
+#include "git.rr"
+.policy "physical" revision 1
+.violation Message(at: span, expr: symbol, message: symbol) "{expr} {message}"
+git_revision_request(r, "${original}") :- git_root_repo(r).
+git_revision_request(r, "${selector}") :- git_root_repo(r).
+git_object_request(r, o) :- git_revision(r, _, o).
+Message(@place("git", 1), expr, msg) :- git_revision(r, expr, o), git_subject(r, o, msg).
+`);
+    const resolved = await scan(root, { revision: original, analysisScope: "replace", rr: [policy] });
+    expect(resolved.violations.map(v => v.message).sort()).toEqual([`${original} seed`, `${selector} replacement`].sort());
+    expect((await scan(root, { revision: original, analysisScope: "replace" })).violations.map(v => v.path)).toEqual(["a.py"]);
+    expect((await scan(root, { revision: selector, analysisScope: "replace" })).violations).toEqual([]);
+  });
+
+  it("finds a commit past an unreadable blob tag and retracts a legacy answer for a damaged commit", async () => {
+    const root = checkout();
+    const first = git(root, "rev-parse", "HEAD");
+    git(root, "commit", "--allow-empty", "-qm", "second");
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: "other", encoding: "utf8" }).trim();
+    git(root, "tag", "unrelated", blob);
+    const damage = (id: string) => {
+      const file = join(root, ".git/objects", id.slice(0, 2), id.slice(2));
+      const saved = readFileSync(file);
+      chmodSync(file, 0o644);
+      writeFileSync(file, deflateSync(Buffer.from("blob 1\0x")));
+      return () => writeFileSync(file, saved);
+    };
+    const policy = join(root, "damage.rr");
+    writeFileSync(policy, `
+#include "git.rr"
+.policy "damage" revision 1
+.violation Found(at: span) "found"
+.violation Commit(at: span) "commit"
+.violation Broken(at: span, oid: symbol) "{oid}"
+git_revision_request(r, ":/second") :- git_root_repo(r).
+git_object_request(r, "${first}") :- git_root_repo(r).
+git_object_request(r, "${blob}") :- git_root_repo(r).
+Found(@place("git", 1)) :- git_revision(_, ":/second", _).
+Commit(@place("git", 1)) :- git_root_repo(_), @git_commit("${first}") = 1.
+Broken(@place("git", 1), o) :- git_object_error(_, o, "unreadable").
+`);
+    const evaluate = async () => (await scan(root, { rr: [policy], revision: "HEAD", analysisScope: "damage" })).violations.map(v => v.message).sort();
+    expect(await evaluate()).toEqual(["commit", "found"]);
+    const restoreTagTarget = damage(blob);
+    expect(await evaluate()).toEqual([blob, "commit", "found"].sort());
+    const selected = await scan(root, { revision: ":/second", analysisScope: "damage" });
+    expect(selected.source?.commit).toBe(git(root, "rev-parse", "HEAD"));
+    const restoreCommit = damage(first);
+    expect(await evaluate()).toEqual([blob, first, "found"].sort());
+    restoreTagTarget();
+    restoreCommit();
+    expect(await evaluate()).toEqual(["commit", "found"]);
   });
 
   it("reports distinct revision error facts for missing names, wrong kinds and corruption", async () => {
@@ -590,7 +661,14 @@ Resolved(@place("git", 1), e, o) :- git_revision(_, e, o).
     const object = join(root, ".git", "objects", tag.slice(0, 2), tag.slice(2));
     chmodSync(object, 0o644);
     writeFileSync(object, deflateSync(Buffer.from("blob 4\0oops")));
+    const literalTree = (bytes: Buffer) => execFileSync("git", ["hash-object", "--literally", "-w", "-t", "tree", "--stdin"], {
+      cwd: root, input: bytes, encoding: "utf8",
+    }).trim();
+    const malformed = literalTree(Buffer.from("absent entry terminator"));
+    const gitlink = literalTree(Buffer.concat([Buffer.from("160000 link\0"), Buffer.from(git(root, "rev-parse", "HEAD^{tree}"), "hex")]));
     const errors = new Map([
+      [`${gitlink}:link/a.py`, "wrong-object-kind"],
+      [`${malformed}:a.py`, "malformed-object"],
       ["mian", "missing-revision"],
       [`${blob}^{tree}`, "wrong-object-kind"],
       ["broken^{}", "corrupt-object"],
@@ -1531,10 +1609,12 @@ Unreadable(@place("tree", 1), why) :- git_tree_walk_error(_, _, _, why).
     }));
     const original = readFileSync(target);
     expect(evaluate()).toEqual([["Complete", "complete"]]);
-    if (representation === "loose") {
-      const unrelated = git(root, "rev-parse", "HEAD:a.py");
-      execFileSync("git", ["pack-objects", join(objects, "pack/unrelated")], { cwd: root, input: `${unrelated}\n` });
-      const profile = join(home, "after-unrelated-pack");
+    const unrelated = git(root, "rev-parse", "HEAD:a.py");
+    const base = join(objects, "pack/unrelated");
+    const suffix = execFileSync("git", ["pack-objects", base], { cwd: root, input: `${unrelated}\n`, encoding: "utf8" }).trim();
+    for (const state of ["created", "touched"]) {
+      if (state === "touched") utimesSync(`${base}-${suffix}.pack`, new Date(), new Date());
+      const profile = join(home, `unrelated-pack-${state}`);
       expect(evaluate(profile)).toEqual([["Complete", "complete"]]);
       const decodes = readFileSync(join(profile, "profile.txt"), "utf8").match(/^\s*count\s+(\d+)\s+git\.tree_decodes$/mu)?.[1];
       expect(Number(decodes ?? 0)).toBe(0);
