@@ -15,42 +15,37 @@ sl_named(p, name, g) :- sl_basename(p, name), git_inventory_host_name(_, name, g
 sl_suffix(ext, g, order, built) :- !git_inventory_host_registry(_), source_grammar_suffix(g, ext, order, built).
 sl_suffix(ext, g, 0, 1) :- git_inventory_host_suffix(_, ext, g).
 
-.decl sl_candidate(path: symbol, suffix: symbol, length: number, order: number, grammar: symbol, built: number)
-sl_candidate(p, ext, strlen(ext), order, g, built) :-
-    sl_basename(p, name), sl_suffix(ext, g, order, built), !sl_named(p, _, _),
-    suffix(ext, name), strlen(ext) < strlen(name).
+// Registry decisions depend only on selector facts. A batch supplies placements separately.
+.decl sl_option(kind: symbol, selector: symbol, grammar: symbol, priority: number, built: number)
+sl_option("name", n, g, 0, 1) :- git_inventory_host_name(_, n, g).
+sl_option("suffix", s, g, i, b) :- sl_suffix(s, g, i, b).
 
-// Describe the candidates before selecting one. Generate the same key wherever
-// the same set of registry entries applies.
-.decl sl_evidence(path: symbol, entry: symbol)
-sl_evidence(p, cat("name ", @json_str(name), " ", @json_str(g))) :- sl_named(p, name, g).
-sl_evidence(p, cat("suffix ", @json_str(ext), " ", @json_str(g), " ", to_string(i), " ", to_string(built))) :-
-    sl_candidate(p, ext, _, i, g, built).
-
-.decl source_language_key(path: symbol, inputs: symbol, algorithm: symbol)
-source_language_key(p, @sha256(entries), "basename-v4") :-
-    source_language_request(p), entries = join e by e sep "\n" : { sl_evidence(p, e) }.
+.decl sl_evidence(kind: symbol, selector: symbol, entry: symbol)
+sl_evidence(t, s, cat(@json_str(g), " ", to_string(i), " ", to_string(b))) :- sl_option(t, s, g, i, b).
+.decl sl_selector_key(kind: symbol, selector: symbol, inputs: symbol)
+sl_selector_key(t, s, @sha256(cat(t, " ", @json_str(s), " ", entries))) :-
+    sl_option(t, s, _, _, _), entries = join e by e sep "\n" : { sl_evidence(t, s, e) }.
 
 .decl source_language_classification_key(inputs: symbol, algorithm: symbol)
-source_language_classification_key(k, "basename-v4") :- source_language_key(_, k, "basename-v4").
-
-.decl sl_names_for_key(inputs: symbol, grammar: symbol)
-sl_names_for_key(k, g) :- source_language_key(p, k, _), sl_named(p, _, g).
-
-.decl sl_suffixes_for_key(inputs: symbol, length: number, order: number, grammar: symbol, built: number)
-sl_suffixes_for_key(k, n, i, g, built) :- source_language_key(p, k, _), sl_candidate(p, _, n, i, g, built).
-
-.decl sl_longest(inputs: symbol, length: number)
-sl_longest(k, n) :-
-    sl_suffixes_for_key(k, _, _, _, _), n = max len : { sl_suffixes_for_key(k, len, _, _, _) }.
+source_language_classification_key(k, "basename-v5") :- sl_selector_key(_, _, k).
 
 .decl source_language_classification(inputs: symbol, grammar: symbol)
-source_language_classification(k, g) :- source_language_classification_key(k, _), sl_names_for_key(k, g).
 source_language_classification(k, g) :-
-    source_language_classification_key(k, _), sl_longest(k, n),
-    i = max j : { sl_suffixes_for_key(k, n, j, _, _) },
-    sl_suffixes_for_key(k, n, i, g, 1).
+    source_language_classification_key(k, _), sl_selector_key(t, s, k),
+    i = max j : { sl_option(t, s, _, j, _) }, sl_option(t, s, g, i, 1).
 .cache source_language_classification by source_language_classification_key
+
+.decl sl_match(path: symbol, suffix: symbol, length: number)
+sl_match(p, s, strlen(s)) :- sl_basename(p, name), sl_suffix(s, _, _, _), !sl_named(p, _, _),
+    suffix(s, name), strlen(s) < strlen(name).
+
+.decl sl_placement(path: symbol, kind: symbol, selector: symbol)
+sl_placement(p, "name", name) :- sl_named(p, name, _).
+sl_placement(p, "suffix", s) :- sl_match(p, s, n), n = max len : { sl_match(p, _, len) }.
+
+.decl source_language_key(path: symbol, inputs: symbol, algorithm: symbol)
+source_language_key(p, k, "basename-v5") :- sl_placement(p, t, s), sl_selector_key(t, s, k).
+source_language_key(p, @sha256(""), "basename-v5") :- source_language_request(p), !sl_placement(p, _, _).
 
 .decl source_language_result(path: symbol, inputs: symbol, grammar: symbol)
 source_language_result(p, k, g) :- source_language_key(p, k, _), source_language_classification(k, g).

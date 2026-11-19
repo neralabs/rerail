@@ -143,6 +143,10 @@ Configuration that affects later name resolution alone does not enter the parse 
 Python module names depend on the presence of package markers in the selected tree.
 The marker lookup can read paths outside the scan path selection.
 
+The worktree applies Git ignores before classification. The durable classifier receives basenames.
+It classifies sensitive names in memory. Registry entries determine the classification facts.
+Each inventory batch joins its paths to those facts. Reopening the store can reuse them across batch boundaries.
+
 ### 4.1 Suffix selection example
 
 A path-only selector has a path and registry key, without a blob or commit key:

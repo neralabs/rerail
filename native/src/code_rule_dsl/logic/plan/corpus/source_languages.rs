@@ -61,18 +61,21 @@ pub fn classify(
         include_str!("../../../../../../docs/rule-syntax/lib/source-language.rr"), "\n",
         include_str!("../../../typing/programs/workspace-source-languages.rr"),
     )).map_err(|error| Error::Plan(error.to_string()))?;
+    let basename = |path: &str| path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    let names: std::collections::BTreeSet<_> = paths.iter().map(|path| basename(path)).collect();
     let options = serde_json::json!({
         "reuse": false,
         "inputFiles": [],
-        "workspaceLanguagePaths": paths,
+        "workspaceLanguagePaths": names,
         "workspaceLanguageRegistry": registry,
     });
     let image = run_fact_image(&program, root, &options)?;
     let outputs = Outputs::of(&image).map_err(Error::Plan)?;
-    outputs.rows("source_language").iter().map(|row| {
+    let labels = outputs.rows("source_language").iter().map(|row| {
         let (Value::Text(path), Value::Text(language)) = (row.get(0), row.get(1)) else {
             return Err(Error::Plan("invalid source language fact".into()));
         };
         Ok((path.to_owned(), language.to_owned()))
-    }).collect()
+    }).collect::<Result<HashMap<_, _>>>()?;
+    Ok(paths.iter().filter_map(|path| Some((path.clone(), labels.get(&basename(path))?.clone()))).collect())
 }

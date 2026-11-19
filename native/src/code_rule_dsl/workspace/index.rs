@@ -360,6 +360,15 @@ impl WorkspaceIndexTask {
             None
         };
         let append = |pending: &mut Vec<String>, files: &mut Vec<PendingFile>, git_ignore: &mut Option<crate::git_ignore::GitIgnore>, failures: &mut Vec<Value>| -> Result<bool> {
+            if let Some(matcher) = git_ignore {
+                pending.retain(|path| match matcher.ignored(&format!("{prefix}{path}"), false) {
+                    Ok(ignored) => !ignored,
+                    Err(message) => {
+                        failures.push(read_failure(path, "source-incomplete", &message));
+                        true
+                    }
+                });
+            }
             if pending.is_empty() {
                 return Ok(false);
             }
@@ -369,9 +378,12 @@ impl WorkspaceIndexTask {
                 }).collect()
             } else {
                 let classify = SOURCE_CLASSIFIER.get().ok_or_else(|| invalid("source language classifier is unavailable"))?;
-                classify(
-                    &repository.worktree_root, storage.store.database_path(), owner.clone(), pending, &registry,
-                ).map_err(invalid)?
+                let (private, public): (Vec<_>, Vec<_>) = pending.iter().cloned().partition(|path| secret(path));
+                let mut labels = classify(&repository.worktree_root, storage.store.database_path(), owner.clone(), &public, &registry).map_err(invalid)?;
+                if !private.is_empty() {
+                    labels.extend(classify(&repository.worktree_root, Path::new(":memory:"), None, &private, &registry).map_err(invalid)?);
+                }
+                labels
             };
             for path in pending.drain(..) {
                 let (language, unlisted) = match labels.remove(&path) {
@@ -380,13 +392,6 @@ impl WorkspaceIndexTask {
                     _ => continue,
                 };
                 let repository_path = format!("{prefix}{path}");
-                if let Some(matcher) = git_ignore {
-                    match matcher.ignored(&repository_path, false) {
-                        Ok(true) => continue,
-                        Ok(false) => {}
-                        Err(message) => failures.push(read_failure(&path, "source-incomplete", &message)),
-                    }
-                }
                 if files.len() == max_files {
                     return Ok(true);
                 }

@@ -1628,6 +1628,63 @@ Unreadable(@place("tree", 1), why) :- git_tree_walk_error(_, _, _, why).
     expect(evaluate()).toEqual([["Complete", "complete"]]);
   }, 30_000);
 
+  it("keeps excluded worktree names out of the durable language classifier", async () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    const store = join(home, "content.sqlite");
+    const secret = "untracked-private-client-7db9.pem";
+    const ignored = "ignored-private-client-1b07.py";
+    writeFileSync(join(root, secret), "certificate");
+    writeFileSync(join(root, ".gitignore"), "*.hidden.py\n");
+    const ignoredPath = ignored.replace(".py", ".hidden.py");
+    writeFileSync(join(root, ignoredPath), "NEEDLE");
+    const document = { ...(needle("wide", "NEEDLE") as object), scope: { include: ["**/*"], exclude: [] } };
+    writeRule(root, "needle.json", document);
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      const report = await scan(root);
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      expect(report.violations.map(v => v.path)).toContain("a.py");
+      expect(report.violations.map(v => v.path)).not.toContain(ignoredPath);
+      for (const basename of [secret, ignoredPath]) {
+        // The atom dictionary can hold plain strings as well as packed segments.
+        const found = queryContentStore(store, "SELECT 1 FROM atom_segment WHERE instr(bytes, cast(? AS blob))>0 LIMIT 1", [basename]);
+        expect(found, basename).toEqual([]);
+        expect(readFileSync(store).includes(Buffer.from(basename)), basename).toBe(false);
+      }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("retains language decisions across inventory batches and process restarts", () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    mkdirSync(home);
+    // More than two 4096-file batches. Only the Python file needs parsing.
+    for (let i = 0; i < 8204; i++) writeFileSync(join(root, `unlisted-${i}.unlisted`), "");
+    writeRule(root, "needle.json", {
+      format: "rerail.policy/v1", id: "python", revision: 1, mode: "log", scope: { include: ["**/*"], exclude: [] },
+      clauses: [{ id: "assignment", violation: { code: "ASSIGN", anchor: "witness.span", message: "assignment" },
+        forbid: { ast: { language: "python", rule: { kind: "assignment" } } } }],
+    });
+    const evaluate = (state: string) => {
+      const profile = join(home, state);
+      const report: ScanReport = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, home], {
+        encoding: "utf8", env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(home, "content.sqlite") },
+        input: `
+          import { join } from "node:path";
+          import { runHeadlessScan } from "./src/cli/headless-scan.ts";
+          const [repo, home] = process.argv.slice(2);
+          console.log(JSON.stringify(await runHeadlessScan({ repo, databasePath: join(home, "rerail.sqlite"), scope: "repository", packs: [], version: "test" })));
+        `,
+      }));
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      expect(report.violations.map(v => v.path)).toContain("a.py");
+      return Number(readFileSync(join(profile, "profile.txt"), "utf8").match(/^\s*count\s+(\d+)\s+source_language\.evaluations$/mu)?.[1] ?? 0);
+    };
+    expect(evaluate("cold")).toBeGreaterThan(0);
+    expect(evaluate("reopened")).toBe(0);
+  }, 120_000);
+
   it("reopens the store after registry and parser version changes", () => {
     const root = checkout();
     const home = `${root}-home`;
