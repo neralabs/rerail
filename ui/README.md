@@ -13,10 +13,10 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   many of its conflicts are open and not quiet, Settings).
 - `routes.js` holds the routes as pure functions of the URL: `#overview`, `#pack/<id>`, `#created`, `#packs`,
   `#packs?review=1`, `#create`, `#history` (`?rule=<id>`, and `?outcome=steered|logged` for its chip), `#sessions`
-  (`?filter=violations|in-progress` for its chip), `#settings`, `#merge` (`?conflict=<id>` brings that conflict into
-  view, as the session's line links it) and `#rule/<id>`, and the links from before
-  v8 (`#rules`, `#activity`, `#rule-packs`). `shell.js` applies them and holds what every view shares: render on
-  demand, the toast and clipboard, the theme, the writes, opening and closing the sheet, navigation.
+  (`?filter=violations|declined` for its chip), `#settings`, `#merge` (`?conflict=<id>` brings that conflict
+  into view, as the session's line links it) and `#rule/<id>`, and the links from before v8 (`#rules`, `#activity`,
+  `#rule-packs`). `shell.js` applies them and holds what every view shares: render on demand, the toast and clipboard,
+  the theme, the writes, opening and closing the sheet, navigation.
 - `actions.js` holds the actions any region may carry (open the sheet, move to a view or repository, a rule's
   switch, a pack's Add and Remove, the time range); `sheet.js` the sheet's own and what a poll loads while it is open.
 - `views/` holds one module per view (`overview`, `pack` for a pack page and Created by you, `packs` for the catalog
@@ -40,12 +40,12 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 - Pure derivations, without the DOM: `derive.js` (a rule's title, mode, scope and a pack's suppression comments),
   `first-open.js` (the Overview: the repository's first-open state, the Violations steered tally, the Most violations
   logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as filtered and sorted, the
-  whole-pack switch's state, the catalog's kinds and order), `history-model.js` (which rules History by rule lists
-  under its All · Steered · Logged chips and which one it shows), `sessions-model.js` (a session's events as turns
-  and tool calls), `settings-model.js` (coding agent states and the install date), `repo-rules.js` (what Settings and
-  the repository menu say of a repository's rule counts) and `merge-model.js` (Merge Assist's conflicts and
-  their order, its status strip, readiness checklist and Settings form, the sidebar's count, and which pull request
-  links are safe to open).
+  whole-pack switch's state, the catalog's kinds and order), `history-model.js` (which rules History by rule lists under
+  its All · Steered · Logged chips and which one it shows), `sessions-model.js` (a session's events as turns and tool
+  calls, and the steers its coding agent declined, joined to their cards), `settings-model.js` (coding agent states and
+  the install date), `repo-rules.js` (what Settings and the repository menu say of a repository's rule counts) and
+  `merge-model.js` (Merge Assist's conflicts and their order, its status strip, readiness checklist and Settings form,
+  the sidebar's count, and which pull request links are safe to open).
   `format.js` formats numbers and dates; `dom.js` builds and reconciles elements.
 - `css/base.css` styles the frame and the shared pieces, `css/sheet.css` the sheet, and `css/<view>.css` each view.
   `tokens.generated.css` holds the design tokens, generated from Nera's tokens by `scripts/generate/ui/tokens.mjs`;
