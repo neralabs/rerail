@@ -1,0 +1,206 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c419-unnecessary-comprehension-in-call",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass a generator expression to any() and all() instead of a list or set comprehension; it saves memory and lets them stop early.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-comprehension-in-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "any",
+                      "all"
+                    ],
+                    "import": [
+                      "builtins.any",
+                      "builtins.all"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "not-argument": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            },
+            "first-argument": {
+              "any": [
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "matches": "not-argument"
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "keyword_argument"
+                          },
+                          {
+                            "kind": "dictionary_splat"
+                          }
+                        ]
+                      }
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "has": {
+                        "field": "function",
+                        "matches": "callee"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "first-argument"
+                  }
+                }
+              ]
+            },
+            "target": {
+              "any": [
+                {
+                  "kind": "list_comprehension"
+                },
+                {
+                  "kind": "set_comprehension"
+                }
+              ],
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "field": "body",
+                      "any": [
+                        {
+                          "kind": "await"
+                        },
+                        {
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "await"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "for_in_clause",
+                      "regex": "^async\\b"
+                    }
+                  }
+                ]
+              },
+              "all": [
+                {
+                  "matches": "first-argument"
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "COMP"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$COMP"
+              },
+              {
+                "matches": "in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.COMP",
+        "code": "C419",
+        "message": "Drop the comprehension's brackets or braces to pass a generator expression so the call can stop early; keep the comprehension only if every element must be evaluated for its side effects.",
+        "each": "COMP",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C419"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

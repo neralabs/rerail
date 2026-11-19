@@ -1,5 +1,5 @@
 use super::{build_for_test, resolve_index};
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::ops::Range;

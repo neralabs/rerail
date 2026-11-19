@@ -15,16 +15,19 @@ name: Pull request issue labels
 # of the pull request, reads only numbers and label names from the API, and holds only a GITHUB_TOKEN that can label
 # pull requests. No workflow here gates on a pull request label, so a label a fork's pull request takes from an issue
 # unlocks nothing.
+#
+# No concurrency group, so no run is ever cancelled. Every new pull request runs this twice: the `blacksmith-sh` app
+# edits its description seconds after it opens. A cancelled run stays among the head's check runs, and the automated
+# review counts it as a failed check. A group cancels runs even with `cancel-in-progress: false`: a run that is still
+# waiting when a newer one arrives is cancelled. Runs that overlap are safe: each reads the pull request's labels and
+# closing issues when it starts and only adds labels, so together they leave the labels that runs one after another
+# would.
 
 on:
   pull_request_target:
     types: [opened, reopened, edited]
 
 permissions: {}
-
-concurrency:
-  group: pr-issue-labels-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
 
 jobs:
   labels:

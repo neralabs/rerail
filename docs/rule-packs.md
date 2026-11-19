@@ -99,7 +99,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 
 1. **Fetch** every listed pack into a staging folder. Nothing in the repository is read until the person allows it.
 2. **Keep newer versions** the computer already has installed.
-3. **Ask** which fitting packs to install.
+3. **Ask** which suggested packs to install.
 4. **Install only what the answer carries:** "Yes", "Change rule packs…" (`--answer choose`), "Not now" (`--answer not-now`) or "Skip, I'll pick packs".
 5. **Verify** the catalog still loads every pack; otherwise put the change back and ask again.
 
@@ -158,7 +158,7 @@ A pack must pass:
 1. **Package:** `package.json` is a pack's, named for its `pack.json` `id` and installed under that name.
 2. **`pack.json`:** valid, and every listed document exists.
 3. **Core range:** includes the active Rerail's version.
-4. **Compilation:** every code rule compiles.
+4. **Compilation:** every code rule compiles, or is refused only for reading a token a tape may leave out.
 5. **No clash:** no other loading pack has its pack id or one of its rules.
 
 <details>
@@ -169,7 +169,7 @@ The catalog reads only packs the packs folder's `package.json` lists as its own 
 1. **Package.** `package.json` matches `rulePackPackageSchema`, named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`. So `@neralabs/rerail-pack-foo` in a `rerail-pack-foo` folder is left out (`it is installed as rerail-pack-foo, but its package.json names @neralabs/rerail-pack-foo`): no package borrows Rerail's publisher.
 2. **`pack.json`.** Valid (`rulePackFileSchema`, `match` included); every listed document carries the listed id. A rule document the schema refuses is named with its first issue (`Rule pack complexity: rules/<rule>.json clauses.0.forbid.ast.language Invalid option: …`).
 3. **Core range.** Prereleases included. It is the reason given whenever it leaves this Rerail out, also for a pack whose `pack.json` or rule documents this Rerail cannot read: a pack made for a newer Rerail holds what an older one does not know, and `it needs a newer Rerail (>=0.1.5-0) than this one (0.1.4)` says what to do where the refusal of an unknown field or language would not.
-4. **Compilation.** One refused only as `language-not-supported` loads, inactive until the engine reads its language; any other refusal leaves the pack out.
+4. **Compilation.** One refused only as `language-not-supported` loads, inactive until the engine reads its language. One refused for reading a token a tape may leave out (`a token test reads a token the tape may leave out`) is a form older packs were written in, which this engine no longer answers: the pack loads, and that rule alone is skipped where a repository runs it and reported, with the engine's reason, as any rule that fails to compile when it loads. A newer version of the pack runs it again. Any other refusal leaves the pack out.
 5. **No clash.** Rerail's own wins (`pack id sql is taken by @neralabs/rerail-pack-sql`); between third parties, the first by package name. Install location never decides. While Rerail's own pack for an id is installed but left out (by its core range, say), the other is left out too (`pack id sql is kept for @neralabs/rerail-pack-sql, which is installed but left out`). Repositories adding the id run nothing until Rerail's loads.
 
 Reasons are written for the person reading set-up, `rerail packs list` or `rerail update`:
@@ -250,6 +250,14 @@ A rule document is a `rerail.policy/v1` code rule or a conversation rule; no `pa
 - **Trust.** The folder comes from the working tree, so whatever a branch commits there runs in every started checkout of that branch and reaches the coding agent. Rerail has not reviewed it, so approval is needed again after each edit ([approval](rule-scoping.md#approval)). To keep rules to one worktree, exclude the folder from Git (`.git/info/exclude`).
 
 </details>
+
+## Packs a repository lists
+
+In [internal testing](internal-testing.md): a repository can list the packs it runs in `.rerail/packs.json`, by
+published pack and exact version or by a folder in the repository, each for the whole repository or only the
+`folders` it names, so every machine scanning a commit runs the same rules. Today only the headless `rerail scan`
+reads it ([headless scan](headless-scan.md#packs-the-repository-lists));
+a session still runs the packs its machine attaches ([design](repository-packs.md)).
 
 ## Where a pack's rules live
 

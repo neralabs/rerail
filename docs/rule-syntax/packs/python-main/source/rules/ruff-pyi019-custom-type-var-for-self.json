@@ -1,0 +1,406 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi019-custom-type-var-for-self",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Self instead of a custom type variable to annotate the instance or class a method works on; Self is shorter and needs no type variable.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "static-ref": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {"import": ["builtins.staticmethod", "abc.abstractstaticmethod"], "global": ["staticmethod"]}
+              },
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "static-ref"}}
+            ]
+          },
+          "class-ref": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {"import": ["builtins.classmethod", "abc.abstractclassmethod"], "global": ["classmethod"]}
+              },
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "class-ref"}}
+            ]
+          },
+          "abstract-ref": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {"import": ["abc.abstractmethod", "abc.abstractclassmethod", "abc.abstractstaticmethod", "abc.abstractproperty"]}
+              },
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "abstract-ref"}}
+            ]
+          },
+          "overload-ref": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {"import": ["typing.overload", "typing_extensions.overload", "_typeshed.overload"]}
+              },
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "overload-ref"}}
+            ]
+          },
+          "static-deco": {"any": [{"matches": "static-ref"}, {"kind": "call", "has": {"stopBy": "neighbor", "field": "function", "matches": "static-ref"}}]},
+          "class-deco": {"any": [{"matches": "class-ref"}, {"kind": "call", "has": {"stopBy": "neighbor", "field": "function", "matches": "class-ref"}}]},
+          "typevar-rhs": {"any": [{"matches": "typevar-call"}, {"kind": "assignment", "has": {"stopBy": "neighbor", "field": "right", "matches": "typevar-rhs"}}]},
+          "typevar-call": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                  "resolves": {"import": ["typing.TypeVar", "typing_extensions.TypeVar", "_typeshed.TypeVar"]}
+                }
+              },
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "typevar-call"}}
+            ]
+          },
+          "metaclass-base": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {"global": ["type"], "import": ["builtins.type", "abc.ABCMeta", "enum.EnumMeta", "enum.EnumType"]}
+              },
+              {"kind": "subscript", "has": {"stopBy": "neighbor", "field": "value", "kind": "identifier", "resolves": {"global": ["type"]}}},
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "class_definition",
+                      "has": {"stopBy": "neighbor", "field": "superclasses", "has": {"stopBy": "neighbor", "matches": "metaclass-base"}}
+                    }
+                  }
+                }
+              },
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "metaclass-base"}}
+            ]
+          },
+          "declares-D": {
+            "any": [
+              {"has": {"stopBy": "neighbor", "kind": "identifier", "pattern": "$D"}},
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "constrained_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "not": {"follows": {"stopBy": "end", "kind": "type"}},
+                    "has": {"stopBy": "neighbor", "kind": "identifier", "pattern": "$D"}
+                  }
+                }
+              },
+              {"kind": "type_default", "has": {"stopBy": "neighbor", "field": "name", "matches": "declares-D"}}
+            ]
+          },
+          "own-type-param-N": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "parameters",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "function_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type_parameters",
+                  "kind": "type_parameter",
+                  "has": {"stopBy": "neighbor", "matches": "declares-D", "compare": {"left": "D", "op": "eq", "right": "N"}}
+                }
+              }
+            }
+          },
+          "typevar-assigned-N": {
+            "inside": {
+              "stopBy": {"kind": "class_definition"},
+              "kind": "class_definition",
+              "any": [
+                {"matches": "scope-typevar-N"},
+                {
+                  "inside": {
+                    "stopBy": {"all": [{"any": [{"kind": "function_definition"}, {"kind": "module"}]}, {"matches": "scope-binds-N"}]},
+                    "any": [{"kind": "function_definition"}, {"kind": "module"}],
+                    "matches": "scope-typevar-N"
+                  }
+                }
+              ]
+            }
+          },
+          "first-param": {
+            "any": [{"kind": "typed_parameter"}, {"kind": "typed_default_parameter"}],
+            "has": {"stopBy": "neighbor", "kind": "identifier"},
+            "not": {"follows": {"stopBy": "end", "not": {"any": [{"kind": "comment"}, {"kind": "line_continuation"}, {"regex": "^[(),]$"}]}}}
+          },
+          "typevar-ident": {
+            "kind": "identifier",
+            "pattern": "$N",
+            "any": [
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "assignment",
+                      "not": {"has": {"stopBy": "neighbor", "field": "type", "kind": "type"}},
+                      "has": {"stopBy": "neighbor", "field": "right", "matches": "typevar-rhs"}
+                    },
+                    "value": {"matches": "typevar-call"}
+                  }
+                }
+              },
+              {"matches": "own-type-param-N"}
+            ]
+          },
+          "typevar-ref": {"any": [{"matches": "typevar-ident"}, {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "typevar-ref"}}]},
+          "typevar-named-N": {"any": [{"matches": "own-type-param-N"}, {"matches": "typevar-assigned-N"}]},
+          "self-annotation": {
+            "any": [
+              {"matches": "typevar-ref"},
+              {
+                "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+                "parse": {
+                  "grammar": "annotation",
+                  "any": [
+                    {"has": {"stopBy": "neighbor", "kind": "identifier", "capture": "N"}},
+                    {
+                      "has": {"stopBy": "neighbor", "kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "kind": "identifier", "capture": "N"}}
+                    }
+                  ]
+                },
+                "matches": "typevar-named-N"
+              }
+            ]
+          },
+          "cls-annotation": {
+            "any": [
+              {
+                "kind": "generic_type",
+                "has": {"stopBy": "neighbor", "kind": "identifier", "resolves": {"global": ["type"]}},
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "not": {"has": {"stopBy": "neighbor", "regex": "^,$"}},
+                      "has": {"stopBy": "neighbor", "has": {"stopBy": "neighbor", "matches": "typevar-ref"}}
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript",
+                    "not": {"has": {"stopBy": "neighbor", "regex": "^,$"}},
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "identifier",
+                          "resolves": {"global": ["type"]},
+                          "not": {"follows": {"stopBy": "end", "kind": "identifier"}}
+                        }
+                      },
+                      {"has": {"stopBy": "neighbor", "kind": "identifier", "capture": "N", "follows": {"stopBy": "neighbor", "regex": "^\\[$"}}}
+                    ]
+                  }
+                },
+                "matches": "typevar-named-N"
+              }
+            ]
+          },
+          "implicit-class-method": {"has": {"stopBy": "neighbor", "field": "name", "regex": "^(?:__new__|__init_subclass__|__class_getitem__)$"}},
+          "static-fn": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {"stopBy": "neighbor", "kind": "decorator", "has": {"stopBy": "neighbor", "matches": "static-deco"}}
+            }
+          },
+          "class-fn": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {"stopBy": "neighbor", "kind": "decorator", "has": {"stopBy": "neighbor", "matches": "class-deco"}}
+            }
+          },
+          "abstract-fn": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {"stopBy": "neighbor", "kind": "decorator", "has": {"stopBy": "neighbor", "matches": "abstract-ref"}}
+            }
+          },
+          "overload-fn": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {"stopBy": "neighbor", "kind": "decorator", "has": {"stopBy": "neighbor", "matches": "overload-ref"}}
+            }
+          },
+          "class-method": {
+            "all": [
+              {"any": [{"matches": "class-fn"}, {"matches": "implicit-class-method"}]},
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "parameters",
+                  "kind": "parameters",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "first-param",
+                    "has": {"stopBy": "neighbor", "field": "type", "has": {"stopBy": "neighbor", "matches": "cls-annotation"}}
+                  }
+                }
+              }
+            ]
+          },
+          "instance-method": {
+            "all": [
+              {"not": {"matches": "class-fn"}},
+              {"not": {"matches": "implicit-class-method"}},
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "parameters",
+                  "kind": "parameters",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "first-param",
+                    "has": {"stopBy": "neighbor", "field": "type", "has": {"stopBy": "neighbor", "matches": "self-annotation"}}
+                  }
+                }
+              }
+            ]
+          },
+          "binds-N": {
+            "any": [
+              {
+                "kind": "expression_statement",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "assignment",
+                  "has": {"stopBy": "neighbor", "field": "left", "kind": "identifier", "pattern": "$B"},
+                  "compare": {"left": "B", "op": "eq", "right": "N"}
+                }
+              },
+              {
+                "any": [{"kind": "function_definition"}, {"kind": "class_definition"}],
+                "has": {"stopBy": "neighbor", "field": "name", "pattern": "$B"},
+                "compare": {"left": "B", "op": "eq", "right": "N"}
+              },
+              {"kind": "decorated_definition", "has": {"stopBy": "neighbor", "field": "definition", "matches": "binds-N"}}
+            ]
+          },
+          "scope-binds-N": {
+            "has": {
+              "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}, {"kind": "decorated_definition"}]},
+              "matches": "binds-N"
+            }
+          },
+          "scope-typevar-N": {
+            "has": {
+              "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}, {"kind": "decorated_definition"}]},
+              "kind": "expression_statement",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "assignment",
+                "not": {"has": {"stopBy": "neighbor", "field": "type", "kind": "type"}},
+                "all": [
+                  {"has": {"stopBy": "neighbor", "field": "left", "kind": "identifier", "pattern": "$L"}},
+                  {"has": {"stopBy": "neighbor", "field": "right", "matches": "typevar-rhs"}}
+                ],
+                "compare": {"left": "L", "op": "eq", "right": "N"}
+              },
+              "not": {
+                "any": [
+                  {"precedes": {"stopBy": "end", "matches": "later-binds-N"}},
+                  {
+                    "inside": {
+                      "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}, {"kind": "decorated_definition"}, {"kind": "module"}]},
+                      "not": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}, {"kind": "decorated_definition"}, {"kind": "module"}]},
+                      "precedes": {"stopBy": "end", "matches": "later-binds-N"}
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "later-binds-N": {
+            "any": [
+              {"matches": "binds-N"},
+              {
+                "not": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}, {"kind": "decorated_definition"}]},
+                "has": {
+                  "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}, {"kind": "decorated_definition"}]},
+                  "matches": "binds-N"
+                }
+              }
+            ]
+          },
+          "method": {
+            "kind": "function_definition",
+            "inside": {
+              "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+              "kind": "class_definition",
+              "not": {"has": {"stopBy": "neighbor", "field": "superclasses", "has": {"stopBy": "neighbor", "matches": "metaclass-base"}}}
+            },
+            "not": {"any": [{"matches": "static-fn"}, {"matches": "abstract-fn"}, {"matches": "overload-fn"}]},
+            "any": [{"matches": "class-method"}, {"matches": "instance-method"}]
+          }
+        }
+      }
+    },
+    {
+      "id": "custom-type-var-for-self",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "function_definition",
+            "matches": "method",
+            "regex": "^(?:async[ \\t]+)?def[ \\t]+\\w+(?P<R>(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)|(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->(?:[^:\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\]]*\\])*\\])*?|(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->[^:]*?)[ \\t]*:",
+            "not": {"has": {"stopBy": "neighbor", "field": "return_type", "has": {"stopBy": "neighbor", "kind": "parenthesized_expression"}}}
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.R",
+        "code": "PYI019",
+        "message": "Replace the custom type variable `$N` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `$N` here.",
+        "suppress": {"noqa": {"codes": ["PYI019"]}}
+      }
+    },
+    {
+      "id": "custom-type-var-for-self-parenthesized-return",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "function_definition",
+            "matches": "method",
+            "regex": "^(?:async[ \\t]+)?def[ \\t]+\\w+(?P<R>(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-\"\\x27]|-[^>\"\\x27])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->[ \\t]*(?:\\(\\s*)+(?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*?)(?:(?:\\s|#[^\\n]*)*\\))+[ \\t]*:",
+            "has": {"stopBy": "neighbor", "field": "return_type", "has": {"stopBy": "neighbor", "kind": "parenthesized_expression"}}
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.R",
+        "code": "PYI019",
+        "message": "Replace the custom type variable `$N` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `$N` here.",
+        "suppress": {"noqa": {"codes": ["PYI019"]}}
+      }
+    }
+  ]
+}

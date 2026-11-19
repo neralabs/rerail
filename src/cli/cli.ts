@@ -49,9 +49,11 @@ import {
   dashboardLink,
   daemonNotRunningMessage,
   lookupDaemon,
+  NOT_HOME_DAEMON_NOTE,
   openInBrowser,
   openDashboard,
   startDaemon,
+  STOP_ANSWERS,
   stopDaemon,
   keepAutostartClaim,
   DAEMON_ACCESS_TOKEN_FILE,
@@ -76,6 +78,7 @@ import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
+import { ENGINE_USAGE, runEngineCommand } from "./engine-cli.js";
 import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
 import { runMergeAssistCommand } from "./merge-assist-cli.js";
@@ -262,7 +265,7 @@ function usage(): string {
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json> [--approve]",
     "  rerail rules show <rule id> [--repo <dir>]",
-    "  rerail rules test <draft.json | rule.json> [--repo <dir>] [--json]",
+    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail rules approve [<rule id | pack> …] [--repo <dir>]",
@@ -284,6 +287,7 @@ function usage(): string {
     "  rerail remote remove <name|url>",
     "  rerail remote push [--json]",
     "  rerail remote exclude|include [--repo <dir>]",
+    ...ENGINE_USAGE,
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail merge-assist [status|on|off|scan|conflicts|dismiss <conflict-id>] [--repo <dir>] [--json]   experimental: needs RERAIL_EXPERIMENTAL_MERGE_ASSIST=1",
     "  rerail merge-assist settings [--hook-command '<json argv>' | --no-hook] [--hook-timeout <seconds>] [--repo <dir>] [--json]   experimental: needs RERAIL_EXPERIMENTAL_MERGE_ASSIST=1",
@@ -467,6 +471,7 @@ function hookHealthLines(home: string): string[] {
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */
 function printDaemonStatus(lookup: DaemonLookup): number {
   if (lookup.status === "absent") {
+    if (lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
     process.stdout.write(`${daemonNotRunningMessage()}\n`);
     return 3;
   }
@@ -666,17 +671,20 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
   return 0;
 }
 
+/** `rerail daemon start [options]` or `rerail daemon stop`, in `home`. */
+async function runDaemonVerb(args: readonly string[], home: string): Promise<number> {
+  const [verb, ...rest] = args;
+  if (verb === "start") return await runDaemonStartCommand(rest, home);
+  if (verb === "stop" && rest.length === 0) {
+    process.stdout.write(STOP_ANSWERS[await stopDaemon(home)]);
+    return 0;
+  }
+  throw new Error(`Usage: rerail daemon start [options] | rerail daemon stop\n\n${usage()}`);
+}
+
 /** The daemon commands need only the launcher home; they never load an activation policy. */
 async function runDaemonCommand(command: string, args: readonly string[], home: string): Promise<number | undefined> {
-  if (command === "daemon") {
-    const [verb, ...rest] = args;
-    if (verb === "start") return await runDaemonStartCommand(rest, home);
-    if (verb === "stop" && rest.length === 0) {
-      process.stdout.write(await stopDaemon(home) === "stopped" ? "Rerail daemon stopped.\n" : "The Rerail daemon is not running.\n");
-      return 0;
-    }
-    throw new Error(`Usage: rerail daemon start [options] | rerail daemon stop\n\n${usage()}`);
-  }
+  if (command === "daemon") return await runDaemonVerb(args, home);
   if (command === "status") return await runStatusCommand(home);
   if (command === "manage") return await runManageCommand(args);
   return undefined;
@@ -711,9 +719,10 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
   const firstOption = rawArgs.findIndex(argument => argument.startsWith("--"));
   const positionals = command === "stop" ? rawArgs.slice(0, firstOption === -1 ? rawArgs.length : firstOption) : [];
   const args = rawArgs.slice(positionals.length);
+  // `stop` never asks, so it gets no reader and what is typed ahead stays for the shell.
+  if (command === "stop") return runStopCommand(args, positionals, setupIo(args, false));
   const io = setupIo(args);
   try {
-    if (command === "stop") return runStopCommand(args, positionals, io);
     if (args.includes(JSON_FLAG)) {
       const step = await startStep(args, context, machinePlace(context));
       io.say(JSON.stringify(step));
@@ -970,6 +979,7 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
     case "packs": return await runPacksCommand(args, usage);
     case "reset": return runResetCommand(args, usage);
     case "feedback": return await runFeedbackCommand(args, usage, { packageVersion });
+    case "engine": return runEngineCommand(args, usage);
     case "scrub": return await runScrubCommand(args, usage);
     case "start":
     case "stop":

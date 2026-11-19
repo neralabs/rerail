@@ -177,7 +177,7 @@ again), add it again, and show its block alone with the same question.
      What it checks   <in plain words>
      Where it runs    When I edit a file under <folder> | When I run <command> | When you or I say <…>
      Applies to       All of <this repo's name> | This worktree only (<its folder name>)
-     What happens     Steer: I'm told in the session and fix it. I'm not stopped.
+     What happens     Steer: Rerail tells me as I work, and I fix it. I'm not stopped.
      How often        Every time | The first time only
      Tested           Would have caught <N> places in this repo | Would have caught <N> places under <folder>/
 
@@ -197,7 +197,7 @@ again), add it again, and show its block alone with the same question.
      name them in place of "in this repo": "Would have caught 2 places under src/, web/ (…)". A command rule gets no repo
      pass, so its Tested row gives the cases: "Caught 4 of 4 cases, let 5 of 5 through". That alone is no reason for
      `Not sure`.
-   - **Log rules.** The What happens row reads "Log: Rerail keeps a record. I'm not told."
+   - **Log rules.** The What happens row reads "Log: Rerail only records it, for you to review. I'm not told."
    - **Rows you are unsure of.** Mark the row `Not sure`. Below the card, show one line from this repo that the rule catches and
      one that it misses, and set the rule to Log.
    - **Rules from the shortlist.** Put one line above the card: `From: <the evidence, e.g. "you corrected this 3 times">`.

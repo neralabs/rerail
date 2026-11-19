@@ -99,7 +99,8 @@ Code rules check the files the agent edits; command rules check the commands it 
 
 - **Code rules** catch cross-layer imports, a call that bypasses a helper, a blocking call in async code, an old path
   still written in a `Justfile`, or a file in the wrong folder. A clause is a `regex` over a file's text or path, a
-  `file` query, or a syntax query over Python, JavaScript, TypeScript, PHP, Blade, Rust, SQL, Vue or Java.
+  `file` query, or a syntax query over Python, JavaScript, TypeScript, PHP, Blade, Rust, SQL, Vue, Java, C, C++ or
+  Go.
 - **Command rules** catch force pushes, `--no-verify` or publishing.
 
 </details>
@@ -146,6 +147,7 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 ```sh
 rerail rules test draft.json            # validate, run the cases, list the matches in the repo; writes nothing
 rerail rules test draft.json --json     # the same, listing every match and every file the rule could not check
+rerail rules test rule.rerail           # a .rerail rule file: run the tests it carries (.test ... .end)
 rerail rules add draft.json             # store it in your library and add it, on, to this repo
 rerail rules approve <id>               # after reading it: it steers instead of running in Log
 rerail rules export --output rules.json # your rules, to read or edit one

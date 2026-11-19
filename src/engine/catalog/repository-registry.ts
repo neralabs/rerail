@@ -154,7 +154,7 @@ function deleteCheckoutSettings(db: Writer, checkoutPaths: readonly string[]): v
     db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, paths))).run();
   }
   // The keys `runtime/merge-assist/state.ts` keeps per checkout (`STATE_KEYS`).
-  const keys = checkoutPaths.flatMap(path => [`conflicts:${path}`, `scan:${path}`, `scanning:${path}`]);
+  const keys = checkoutPaths.flatMap(path => [`conflicts:${path}`, `scan:${path}`, `scanning:${path}`, `unheard:${path}`]);
   for (const run of statementRuns(keys)) db.delete(mergeAssistState).where(inArray(mergeAssistState.key, run)).run();
 }
 
@@ -290,6 +290,14 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
     throw error;
   }
   return lookupAt(db, repositoryIdentityLocation(workspace), new Map());
+}
+
+/**
+ * {@link lookupCheckout} at a location the caller read ({@link repositoryIdentityLocationAsync}, which runs its Git off
+ * the thread): a recorded checkout is found with no Git process.
+ */
+export function lookupCheckoutAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
+  return lookupAt(db, location, new Map());
 }
 
 function lookupAt(db: Reader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {

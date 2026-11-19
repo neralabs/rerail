@@ -1,0 +1,337 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf063-access-annotations-from-class-dict",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the dedicated get_annotations function instead of reading annotations from an object's __dict__; direct access is not forward-compatible with deferred annotation evaluation.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "annotations-literal": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "value": {
+                  "type": "str",
+                  "eq": "__annotations__"
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "string_start",
+                    "regex": "[fFtT]"
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "annotations-literal"
+                }
+              }
+            ]
+          },
+          "dict-access": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^\\.$"
+                      },
+                      "regex": "^__dict__$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "dict-access"
+                }
+              }
+            ]
+          },
+          "get-method": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^\\.$"
+                      },
+                      "regex": "^get$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "dict-access",
+                      "precedes": {
+                        "stopBy": "end",
+                        "regex": "^\\.$"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "get-method"
+                }
+              }
+            ]
+          },
+          "argument": {
+            "not": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            }
+          },
+          "get-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "get-method",
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "keyword_argument"
+                        },
+                        {
+                          "kind": "dictionary_splat"
+                        }
+                      ]
+                    }
+                  },
+                  "all": [
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "argument"
+                        },
+                        "min": 1,
+                        "max": 2
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "annotations-literal",
+                        "not": {
+                          "follows": {
+                            "stopBy": "end",
+                            "matches": "argument"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "subscript-access": {
+            "kind": "subscript",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "dict-access",
+                  "precedes": {
+                    "stopBy": "end",
+                    "regex": "^\\[$"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "annotations-literal",
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^\\[$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                }
+              }
+            ]
+          },
+          "get-in-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "get-call",
+                    "capture": "HIT"
+                  },
+                  {
+                    "matches": "get-in-string"
+                  }
+                ]
+              }
+            }
+          },
+          "subscript-in-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "subscript-access",
+                    "capture": "HIT"
+                  },
+                  {
+                    "matches": "subscript-in-string"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "annotations-from-dict-get",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "get-call",
+                "pattern": "$HIT"
+              },
+              {
+                "matches": "get-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.HIT",
+        "code": "RUF063",
+        "message": "Use `annotationlib.get_annotations(obj)` (3.14+), `inspect.get_annotations(obj)` (3.10+) or `typing_extensions.get_annotations(obj)` instead of `__dict__.get(\"__annotations__\")`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF063"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "annotations-from-dict-subscript",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "subscript-access",
+                "pattern": "$HIT"
+              },
+              {
+                "matches": "subscript-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.HIT",
+        "code": "RUF063",
+        "message": "Use `annotationlib.get_annotations(obj)` (3.14+), `inspect.get_annotations(obj)` (3.10+) or `typing_extensions.get_annotations(obj)` instead of `__dict__[\"__annotations__\"]`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF063"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

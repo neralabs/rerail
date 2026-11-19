@@ -103,8 +103,8 @@ export const violationOutcome = finding => (finding.logged ? "logged" : "steered
 
 /** One sentence per mode, as the rule panel explains it. */
 export const MODE_PLAIN = {
-  log: "Rerail records the violation for you. Your coding agent isn’t told.",
-  steer: "Rerail tells the coding agent as it works.",
+  log: "Rerail only records it, for you to review. Your coding agent isn’t told.",
+  steer: "Rerail tells your coding agent as it works, so it fixes it.",
   block: "Block is not in this release. Rerail steers instead.",
 };
 

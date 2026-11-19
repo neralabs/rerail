@@ -12,14 +12,14 @@ import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
-import { searchGitFrom } from "../engine/git.js";
+import { prepareDaemonGit } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { daemonExit } from "./daemon-exit.js";
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type EngineService } from "../runtime/engine-service.js";
-import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-pipe.js";
+import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/daemon/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
@@ -30,6 +30,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
+import type { RerailApiStores } from "../api/operation.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
@@ -118,6 +119,12 @@ export interface RerailDaemonOptions {
   enginePlatform?: NodeJS.Platform;
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
+  /**
+   * Keeps what a coding agent's status line shows drawn ahead of time, from the daemon's `stores`, until the daemon
+   * closes and stops it. The daemon's entry point passes presentation's (`keepClaudeStatusFiles`), a layer above the
+   * daemon's; omitted, nothing is drawn ahead.
+   */
+  statusLines?: (stores: RerailApiStores) => { stop(): Promise<void> };
   /**
    * The certificate (a PEM chain, leaf first) and private key to serve https with; omitted, the daemon serves http.
    * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
@@ -494,6 +501,8 @@ export class RerailDaemon {
   /** What this daemon wrote to the state file, which its close removes only while the file still holds it. */
   #recordText: string | undefined;
   #provenanceMove: { readonly stop: AbortController; readonly done: Promise<void> } | undefined;
+  /** What `RerailDaemonOptions.statusLines` started: stopped first on close, while the stores it reads are open. */
+  #statusLines: { stop(): Promise<void> } | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
@@ -603,6 +612,7 @@ export class RerailDaemon {
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, worktreeWalks, ...sharedMergeAssist,
       });
       await daemon.#announce(remembered);
+      daemon.#statusLines = options.statusLines?.(stores);
       daemon.#startCheckoutPruning();
       daemon.#startProvenanceMove();
       return daemon;
@@ -753,6 +763,7 @@ export class RerailDaemon {
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
     try {
+      await this.#statusLines?.stop();
       this.#provenanceMove?.stop.abort();
       await this.#provenanceMove?.done;
       // Pruning stops first: a remote sink that fails to stop must not leave a pass free to commit after close begins.
@@ -1228,7 +1239,7 @@ async function packageVersion(): Promise<string> {
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
  */
-type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCheck" | "remoteRefused">;
+type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "statusLines" | "recordCheck" | "remoteRefused">;
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's
@@ -1366,9 +1377,11 @@ function reportStart(daemon: RerailDaemon): void {
 async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
   // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
-  // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them.
+  // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them. Only
+  // the daemon, which lives on, asks whether the home share is there: off the network that ask is pending about 21 s,
+  // and it would keep a hook or a command alive that long after its work.
   const workspaceRoot = arguments_.workspaceRoot ?? process.cwd();
-  searchGitFrom(workspaceRoot);
+  prepareDaemonGit(workspaceRoot);
   const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
   // here naming the first. A checkout's daemon is a dev build with its own content store and skips this lock. Every

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b108-hardcoded-tmp-directory",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Avoid hardcoded paths under /tmp, /var/tmp, or /dev/shm in Python; shared temp directories invite symlink and race attacks, so use the tempfile module.",
   "scope": {
@@ -19,26 +19,130 @@
           "rule": {
             "any": [
               {
-                "kind": "string",
+                "any": [
+                  {
+                    "kind": "string",
+                    "not": {
+                      "any": [
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "kind": "concatenated_string"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "string_start",
+                            "regex": "(?i)^[rubft]*f"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
                 "not": {
                   "inside": {
                     "stopBy": "neighbor",
-                    "kind": "concatenated_string"
+                    "kind": "expression_statement"
                   }
+                },
+                "value": {
+                  "regex": "^(?:/tmp|/var/tmp|/dev/shm)"
                 }
               },
               {
-                "kind": "concatenated_string"
+                "kind": "string_content",
+                "regex": "^(?:/tmp|/var/tmp|/dev/shm)",
+                "any": [
+                  {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "kind": "interpolation"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "f-string"
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "kind": "string_start"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "f-string",
+                      "any": [
+                        {
+                          "not": {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "concatenated_string"
+                            }
+                          }
+                        },
+                        {
+                          "matches": "run-start-piece"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "run-start-piece",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "(?i)^[rubft]*f"
+                  }
+                },
+                "value": {
+                  "regex": "^(?:/tmp|/var/tmp|/dev/shm)"
+                }
               }
-            ],
-            "not": {
-              "inside": {
+            ]
+          },
+          "utils": {
+            "f-string": {
+              "kind": "string",
+              "has": {
                 "stopBy": "neighbor",
-                "kind": "expression_statement"
+                "kind": "string_start",
+                "regex": "(?i)^[rubft]*f"
               }
             },
-            "value": {
-              "regex": "^(?:/tmp|/var/tmp|/dev/shm)"
+            "run-start-piece": {
+              "kind": "string",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "concatenated_string",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "interpolation"
+                }
+              },
+              "not": {
+                "follows": {
+                  "stopBy": "neighbor",
+                  "kind": "string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_end",
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "kind": "interpolation"
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         }
