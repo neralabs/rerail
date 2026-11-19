@@ -199,6 +199,22 @@ describe("headless rerail scan", () => {
     expect(report.violations).toEqual([expect.objectContaining({ path: "a.py", ruleId: "needle" })]);
   });
 
+  it.each(["revision", "filesystem"])("renders the current diagnostic text after a message-only edit on the %s provider", async provider => {
+    const root = checkout();
+    const policy = join(root, "wording.rr");
+    const options = provider === "revision" ? { revision: "HEAD", analysisScope: "wording" } : {};
+    for (const word of ["first", "second", "first"]) {
+      writeFileSync(policy, `#include "git.rr"
+.policy "wording" revision 1
+.violation Seen(at: span, value: symbol) "${word} {value}"
+Seen(@place("git", 1), "message") :- git_root_repo(_).
+`);
+      const report = await scan(root, { ...options, rr: [policy] });
+      expect(report.status).toBe("completed");
+      expect(report.violations.map(row => row.message)).toEqual([`${word} message`]);
+    }
+  });
+
   it("uses the current include and its matching policy digest after an edit and a revert", async () => {
     const root = checkout();
     const policy = join(root, "live.rr");

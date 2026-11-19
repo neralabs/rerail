@@ -55,13 +55,21 @@ fn switches() -> Vec<u8> {
     out
 }
 
-fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
+fn key(given: &super::Texts<'_>, added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
     // v4: the run's settings keyed as the rows it adds (decision 0249), the texts as the files'.
     h.update(b"rerail.run-reuse/v4\0");
-    for p in programs {
+    for p in given.programs {
         h.update((p.len() as u64).to_le_bytes());
         h.update(p.as_bytes());
+    }
+    // A handed program's plan key omits message text. These outputs contain rendered messages.
+    if let Some(read) = given.read {
+        for (_, template) in read.settings.iter().filter(|(key, _)| key == crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE) {
+            h.update(b"rendered-message\0");
+            h.update((template.len() as u64).to_le_bytes());
+            h.update(template.as_bytes());
+        }
     }
     added.hash(&mut h);
     h.update(options.to_string().as_bytes());
@@ -262,7 +270,7 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     }
     let programs = given.programs;
     let checking = super::thread_usage();
-    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
+    let key = key(given, &settings(root, options)?, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
         miss(&format!("no record under the run's key {} (programs {}; {})", &key[..CUTOFF.len() + 12], programs.len(), key_parts(programs, root, options, typing)));
         return Ok(None);
@@ -370,7 +378,7 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         miss("not recorded: nothing consulted");
         return Ok(());
     }
-    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
+    let key = key(given, &settings(root, options)?, root, options, modes, typing);
     let mut consulted = rule_files(given, options)?;
     let mut read: Vec<(String, String, String)> = report.consulted.iter().cloned().chain(report.phase_runs.iter().flat_map(|r| r.report.consulted.iter().cloned())).collect();
     read.sort();
