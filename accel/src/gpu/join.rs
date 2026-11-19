@@ -422,6 +422,17 @@ impl<'a> Pass<'a> {
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
+    /// `run_bytes`, each buffer bound at its offset (a structure inside a block: decision 0450 step 2c).
+    pub fn run_bytes_at(&self, pipeline: &ComputePipelineState, buffers: &[(&BufferRef, u64)], bytes: &[u8], groups: usize) {
+        self.encoder.set_compute_pipeline_state(pipeline);
+        for (i, (b, off)) in buffers.iter().enumerate() {
+            self.encoder.set_buffer(i as u64, Some(b), *off);
+        }
+        self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
+        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(GROUP, 1, 1));
+        self.dispatches.set(self.dispatches.get() + 1);
+    }
+
     /// `run_bytes`, its threadgroups the three words at `offset` of `grid` (written by the device before it).
     pub fn run_bytes_indirect(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], bytes: &[u8], grid: &BufferRef, offset: u64) {
         self.encoder.set_compute_pipeline_state(pipeline);

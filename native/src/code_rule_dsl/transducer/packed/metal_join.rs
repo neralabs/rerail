@@ -2281,15 +2281,16 @@ impl DevText {
 
 /// A text test's automaton on the device (`text::table`).
 pub(in crate::code_rule_dsl) struct DevTable {
-    table: Held,
+    table: DevBytes,
     states: u32,
     classes: u32,
     start: u32,
 }
 
 impl DevTable {
-    pub(in crate::code_rule_dsl) fn upload(t: &crate::code_rule_dsl::text::table::Table) -> Result<DevTable, Error> {
-        Ok(DevTable { table: Held::of(t.bytes.iter().copied()).map_err(|_| Error::BackendCapacity)?, states: t.states, classes: t.classes, start: t.start })
+    /// Test table `t` where the automata block holds it (decision 0450 step 2c): nothing uploaded.
+    pub(in crate::code_rule_dsl) fn of(t: &crate::code_rule_dsl::text::table::Table) -> Result<DevTable, Error> {
+        Ok(DevTable { table: DevBytes::of(&t.automaton)?, states: t.states, classes: t.classes, start: t.start })
     }
 }
 
@@ -2538,14 +2539,19 @@ fn sized_min() -> usize {
     })
 }
 
-/// Bytes the device reads (a regex's automaton for `TEXTFN_REGEX`).
+/// An automaton the device reads (a test's table, a regex's replacement automata) where the automata block holds it
+/// (decision 0450 step 2c): the block's no-copy wrap, bound at the automaton's offset. Nothing is uploaded, and no
+/// thread keeps it: a command buffer that binds it keeps the wrap.
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) struct DevBytes {
-    held: Held,
+    buffer: metal::Buffer,
+    at: u64,
 }
 
 impl DevBytes {
-    pub(in crate::code_rule_dsl) fn upload(bytes: &[u8]) -> Result<DevBytes, Error> {
-        Ok(DevBytes { held: Held::of(bytes.iter().copied()).map_err(|_| Error::BackendCapacity)? })
+    pub(in crate::code_rule_dsl) fn of(a: &crate::code_rule_dsl::text::automata::Automaton) -> Result<DevBytes, Error> {
+        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        Ok(DevBytes { buffer: crate::code_rule_dsl::text::automata::block().gpu_buffer(device), at: a.at as u64 })
     }
 }
 
@@ -3064,10 +3070,10 @@ impl Batch {
         let values = Held::new(8 * n)?;
         let scan = Scan::new(n)?;
         let arena = self.arena()?.buffer.buffer.to_owned();
-        let g: metal::Buffer = auto.map_or_else(|| self.dummy.buffer.to_owned(), |a| a.0.held.buffer.to_owned());
+        let (g, g_at): (metal::Buffer, u64) = auto.map_or_else(|| (self.dummy.buffer.to_owned(), 0), |a| (a.0.buffer.to_owned(), a.0.at));
         let pass = self.pass(4)?;
         let lbuf: &BufferRef = &left.buffer.buffer;
-        pass.run_bytes(&text, &[lbuf, &names.buffer.buffer, &arena, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &values.buffer, &g, &work.buffer, &p.buffer],
+        pass.run_bytes_at(&text, &[(lbuf, 0), (&names.buffer.buffer, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0)],
                        stage.bytes(), (ngroups * 32).div_ceil(256));
         scan.encode(pass, &counts)?;
         pass.run_bytes(&scatter, &[lbuf, &values.buffer, &totals.buffer.buffer, &counts, &out.buffer.buffer], stage.bytes(), groups(n));
@@ -3173,11 +3179,6 @@ impl Batch {
         Ok(())
     }
 
-    /// Keeps `table` until the batch's work completes (its verdicts read it).
-    pub(in crate::code_rule_dsl) fn hold_table(&mut self, table: DevTable) {
-        self.keep.push(table.table);
-    }
-
     /// The verdicts of `table` for `text`'s terms, as bits by symbol into `bits` (zeroed, at least `text.span` bits).
     pub(in crate::code_rule_dsl) fn verdicts(&mut self, text: &DevText, table: &DevTable, bits: &DevRel) -> Result<(), Error> {
         if text.terms == 0 {
@@ -3191,7 +3192,7 @@ impl Batch {
         // SAFETY: plain integers.
         let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 32) };
         let pass = self.pass(1)?;
-        pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &table.table.buffer, &bits.buffer.buffer, &scratch.buffer], bytes, (groups * 32).div_ceil(256));
+        pass.run_bytes_at(&kernel, &[(&text.packed.buffer.buffer, 0), (&table.table.buffer, table.table.at), (&bits.buffer.buffer, 0), (&scratch.buffer, 0)], bytes, (groups * 32).div_ceil(256));
         self.keep.push(scratch);
         Ok(())
     }
@@ -3214,7 +3215,7 @@ impl Batch {
             // SAFETY: plain integers.
             let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 32) };
             let pass = self.pass(8)?;
-            pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &table.held.buffer, &z.buffer, &lens.buffer, &out.buffer.buffer, &scratch.buffer], bytes, (groups * 32).div_ceil(256));
+            pass.run_bytes_at(&kernel, &[(&text.packed.buffer.buffer, 0), (&table.buffer, table.at), (&z.buffer, 0), (&lens.buffer, 0), (&out.buffer.buffer, 0), (&scratch.buffer, 0)], bytes, (groups * 32).div_ceil(256));
             if write == 0 {
                 scan.encode(pass, &lens.buffer)?;
             }

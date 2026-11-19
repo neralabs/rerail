@@ -1595,27 +1595,16 @@ fn column_text(e: &mut Entry, rel: &InRel, col: usize, rep: &mut Report, names: 
     Ok(t)
 }
 
-/// Regex `regex`'s automata for its replacements on the device (`text::table::Replacer`), and their states; kept while
-/// the thread runs (a command buffer may read them). Refused for a regex the device has no automata for.
+/// Regex `regex`'s automata for its replacements on the device (`text::table::Replacer`), where the automata block
+/// holds them (decision 0450 step 2c), and their states. Refused for a regex the device has no automata for.
 fn automata(regex: &str) -> Result<(Rc<mj::DevBytes>, u32), String> {
-    thread_local! {
-        static AUTOMATA: RefCell<HashMap<String, (Rc<mj::DevBytes>, u32)>> = RefCell::new(HashMap::new());
-    }
-    if let Some(a) = AUTOMATA.with_borrow(|a| a.get(regex).cloned()) {
-        return Ok(a);
-    }
     let r = crate::code_rule_dsl::text::table::replacer(regex).map_err(|e| format!("replace_all has no device form: {e}"))?;
-    let a = (Rc::new(mj::DevBytes::upload(&r.bytes).map_err(|e| format!("{e:?}"))?), r.states);
-    AUTOMATA.with_borrow_mut(|m| m.insert(regex.to_owned(), a.clone()));
-    Ok(a)
+    Ok((Rc::new(mj::DevBytes::of(&r.automaton).map_err(|e| format!("{e:?}"))?), r.states))
 }
 
 /// A `ROWTEXT` stage's automaton on the device and `Batch::row_stage`'s numbers for it ([its scratch's states, a
-/// test table's states, classes, start]); a test's tables kept while the thread runs.
+/// test table's states, classes, start]), where the automata block holds it.
 fn row_automaton(auto: &RowAuto, names: &Interner) -> Result<Option<(Rc<mj::DevBytes>, [u32; 4])>, String> {
-    thread_local! {
-        static TESTS: RefCell<HashMap<String, Rc<mj::DevBytes>>> = RefCell::new(HashMap::new());
-    }
     Ok(match auto {
         RowAuto::None => None,
         RowAuto::Replace { pattern, with } => {
@@ -1625,15 +1614,8 @@ fn row_automaton(auto: &RowAuto, names: &Interner) -> Result<Option<(Rc<mj::DevB
             let (a, states) = automata(&names.name(*pattern))?;
             Some((a, [states, 0, 0, 0]))
         }
-        RowAuto::Test { table, key } => {
-            let b = match TESTS.with_borrow(|t| t.get(key).cloned()) {
-                Some(b) => b,
-                None => {
-                    let b = Rc::new(mj::DevBytes::upload(&table.bytes).map_err(|e| format!("{e:?}"))?);
-                    TESTS.with_borrow_mut(|t| t.insert(key.clone(), b.clone()));
-                    b
-                }
-            };
+        RowAuto::Test { table, .. } => {
+            let b = Rc::new(mj::DevBytes::of(&table.automaton).map_err(|e| format!("{e:?}"))?);
             Some((b, [table.states, table.states, table.classes, table.start]))
         }
     })
@@ -1714,11 +1696,10 @@ fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text
             return Ok(v.clone());
         }
         let text = column_text(e, rel, col, rep, names)?;
-        let dt = mj::DevTable::upload(table).map_err(|e| format!("{e:?}"))?;
+        let dt = mj::DevTable::of(table).map_err(|e| format!("{e:?}"))?;
         let words = text.span.div_ceil(64).max(1);
         let bits = Rc::new(mj::DevRel::words(words, |v| v.fill(0)).map_err(|e| format!("{e:?}: verdicts of {} symbols", text.span))?);
         batch.verdicts(&text, &dt, &bits).map_err(|e| format!("{e:?}"))?;
-        batch.hold_table(dt);
         rep.sorts += 1;
         e.bytes += bits.bytes();
         e.verdicts.push(((oc, key.to_owned()), bits.clone()));

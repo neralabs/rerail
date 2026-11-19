@@ -28,6 +28,8 @@
 //! A lowering records which rewrites applied and which production fired (`Lowered`), for
 //! diagnostics and counters (`text.production.<name>`).
 
+/// The device's automata in one block (decision 0450 step 2c).
+pub mod automata;
 pub mod canon;
 pub mod plan;
 pub mod productions;

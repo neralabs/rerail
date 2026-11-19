@@ -74,7 +74,7 @@ Asked why the device caches relations at all, the user set the rule (2026-11-19)
 | `RESIDENT` `texts`, `unions` | symbols' names copied for the device (0353 row 5) | none: the kernels read the strings block (0353 step 6) | 2 |
 | `RESIDENT` entry of a view read in place (`DevRel::view`) and its sorts | indexes the view's probes built | the chunk block, or a probe through the tape (0353 step 4) | 3 |
 | `RESIDENT` entry of rows uploaded or a view made (`upload`, `expand_view`) | copies (0353 rows 4, 5) | none: removed by 0353 steps 4, 6; until then made at each stratum, never cached | 3 |
-| `AUTOMATA`, `TESTS` (device) | the device's automata, by pattern | a block of compiled automata, by the pattern's hash | 4 |
+| `AUTOMATA`, `TESTS` (device) | the device's automata, by pattern | a block of compiled automata, by the pattern's hash (`text::automata`, built in 2c) | 4 |
 | `InRel::idx` (`Csr`: hash table and ids) | the CPU's indexes, apart from a whole source's | the relation's block, the index the GPU reads (`try_reserve_index_buckets`) | 5 |
 | `InRel::chains`, `sorted` | sorted orders | the relation's block | 5 |
 | `InRel::dead` | the dead rows | the relation's dead-row delta in its block (`InBlock::dead`) | 5 |
@@ -97,7 +97,11 @@ Asked why the device caches relations at all, the user set the rule (2026-11-19)
      stored is dropped; its atoms are read in the store's chain.
    - **2b.** A family of reads over the atoms chain, written once in CLIF: an id's bytes, for the Rust host, the
      JIT and the kernels.
-   - **2c.** The text tests' automata in a block (step 4 brought forward), run by a read in CLIF.
+   - **2c.** The text tests' automata in a block (step 4 brought forward). Built without the CLIF read this step first
+     named: the device runs a table by composing 32 bytes' transition functions across a SIMD group, which CLIF
+     cannot express, and a CPU read of the table would be a loop a byte at a time, which the compiler refuses. The
+     CPU runs the same lowered plans through its word-at-a-time searchers (`text::plan::Compiled`), as before; the
+     table is made from those plans, and `a_tests_table_answers_as_its_matcher` keeps the two answering alike.
    - **2d.** The verdict cache: the one rolling cache, keyed by (test, symbol), filled by running the test's
      automaton over the symbol's bytes; read by the CPU's text tests and the kernels. The device's verdicts by
      column, its names uploaded (`texts`, `unions`) and `column_symbols` go.
@@ -148,3 +152,19 @@ pending into a new buffer.
 - Tests: `the_directorys_reads_find_every_atom_where_its_block_holds_it` (blocks, a run that begins past its block's
   first id), and in `a_commit_past_a_blocks_room_starts_the_next` every sampled id across a rolled-up base and pending
   blocks reads as `Interner::str` does. A kernel reading through a device directory comes with 2d, its first reader.
+
+## Built (2026-11-19, step 2c)
+
+- `text::automata`: one block holds every test table and replacement automaton, each written once, at a 256-byte
+  offset, under an index of 16,384 slots of 64 bytes in the same block, keyed by a hash of the plans' key (or the
+  pattern). A slot is published by its state (Release) and read with no lock; a refusal is kept with why.
+  `text::table`'s two process-wide maps (`TABLES`, `MADE`) go, and so do the device's thread-local `AUTOMATA` and
+  `TESTS` and every upload of an automaton (`DevTable::upload`, `DevBytes::upload`, `hold_table`). The kernels bind
+  the block's no-copy wrap at the automaton's offset (`Pass::run_bytes_at`).
+- The block is the process's, as the maps it replaces were: automata come from the rules' patterns, not from
+  relations.
+- Tests: `an_automaton_is_made_once_into_the_block_and_found_there`; the table and replacer tests read their bytes
+  from the block; the 16 setfix device tests pass on a Mac, `text_tests_on_the_device_are_the_cpus` and
+  `text_functions_on_the_device_are_the_cpus` among them.
+- hogql cold, profiling, format 15, load 52-59: Metal 75.6 B against 2a's 76.0 B, peak 1,335 against 1,369 MB, no
+  stratum refused; CPU 84.6 B, 348 MB. 1,629 findings in every run.
