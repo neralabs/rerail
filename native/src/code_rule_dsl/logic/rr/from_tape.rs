@@ -4,13 +4,14 @@
 //! (`tape_format::View`): each node's kind, field and span from its columns, its children by their subtree sizes,
 //! with no node decoded ahead and no index of children made.
 //!
-//! Every statement kind and term kind of decision 0061 maps back to the form `lower` takes (`syntax::Item`,
-//! `syntax::Lit`, `syntax::Term`). Texts come from the source by the nodes' spans: a string is unescaped as the lexer
-//! does (`string_value`), a backtick literal loses its fences (`code_body`).
+//! A statement is a node (`Stmt`), read by what it is (`S`) and its readers here; a clause is read by `clause::Reads`.
+//! No statement or term is made into another form (decision 0276, stage 6 A). Texts come from the source by the
+//! nodes' spans: a string is unescaped as the lexer does (`string_value`), a backtick literal loses its fences
+//! (`code_body`).
 
 use super::Error;
 use super::syntax;
-use super::syntax::{Code, Fix, Head, Item, Lines, Lit, Statement, Suppress, Term};
+use super::syntax::Lines;
 use super::tape::{ERROR, Field, Kind};
 use rerail_rr_syntax::tape_format::{CODE_EXTRA, View};
 
@@ -77,20 +78,6 @@ impl RrFile {
 pub struct Stmt {
     file: std::sync::Arc<RrFile>,
     node: u32,
-}
-
-/// A `.violation`'s declaration: its relation and columns, its code (a constant or a column, and the codes a column
-/// may hold), its tag column, its message, its fixes and its suppressions.
-#[derive(Clone, Debug)]
-pub struct Violation {
-    pub name: String,
-    pub cols: Vec<(String, String)>,
-    pub code: Option<Code>,
-    pub code_in: Option<String>,
-    pub tag: Option<String>,
-    pub message: String,
-    pub fixes: Vec<Fix>,
-    pub suppress: Vec<Suppress>,
 }
 
 /// What a statement is, read off its node (`Stmt::read`): its kind, with the names its readers match on.
@@ -282,16 +269,13 @@ impl<'a> Tape<'a> {
     }
 
     /// A column named in braces: an identifier, or the braces' text as written (`raw_text`), trimmed as the parser does.
-    fn brace_column(&self, n: u32) -> String {
+    /// A `{column}`'s name.
+    pub fn brace_column(&self, n: u32) -> String {
         self.text(n).trim_start_matches('{').trim_end_matches('}').trim().to_owned()
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn statements(&self) -> Result<Vec<Statement>, Error> {
-        self.kids(0).map(|s| Ok((self.statement(s)?, self.line(s)))).collect()
-    }
-
-    fn columns(&self, n: u32) -> Result<Vec<(String, String)>, Error> {
+    /// A declaration's columns: (name, type).
+    pub fn columns(&self, n: u32) -> Result<Vec<(String, String)>, Error> {
         let list = self.one(n, Field::Columns)?;
         self.all(list, Field::Column).map(|c| Ok((self.name(c, Field::Name)?, self.ty(self.one(c, Field::Type)?)?))).collect()
     }
@@ -373,21 +357,10 @@ impl<'a> Tape<'a> {
         Ok((output, names, params))
     }
 
-    /// A `.lattice`'s relation, base type and operations.
+    /// A `.lattice`'s relation, base type and operations: each one's name and its value's node.
     #[allow(clippy::type_complexity)]
-    pub fn lattice(&self, s: u32) -> Result<(String, String, Vec<(String, Term)>), Error> {
-        let ops = self
-            .all(s, Field::Operation)
-            .map(|o| {
-                let value = self.one(o, Field::Value)?;
-                let term = if self.is(value, Kind::FunctorCall) && self.get(value, Field::Arguments).is_none() {
-                    Term::Call { name: self.name(value, Field::Function)?, functor: true, args: Vec::new() }
-                } else {
-                    self.term(value)?
-                };
-                Ok((self.name(o, Field::Name)?, term))
-            })
-            .collect::<Result<_, Error>>()?;
+    pub fn lattice(&self, s: u32) -> Result<(String, String, Vec<(String, u32)>), Error> {
+        let ops = self.all(s, Field::Operation).map(|o| Ok((self.name(o, Field::Name)?, self.one(o, Field::Value)?))).collect::<Result<_, Error>>()?;
         Ok((self.name(s, Field::Name)?, self.get(s, Field::Base).map_or_else(String::new, |b| self.text(b).to_owned()), ops))
     }
 
@@ -396,41 +369,10 @@ impl<'a> Tape<'a> {
         self.all(s, Field::Argument).map(|a| self.string(a)).collect()
     }
 
-    /// A `.violation`'s declaration (`syntax::Item::Violation`'s fields).
-    pub fn violation(&self, s: u32) -> Result<Violation, Error> {
-        let (mut code, mut code_in, mut tag) = (None, None, None);
-        for c in self.all(s, Field::Code) {
-            if self.is(c, Kind::CodeColumn) {
-                code = Some(Code::Column(self.brace_column(self.one(c, Field::Column)?)));
-                code_in = self.get(c, Field::Codes).map(|x| self.string(x)).transpose()?;
-            } else {
-                code = Some(Code::Constant(self.string(c)?));
-            }
-        }
-        if let Some(t) = self.all(s, Field::Tag).last() {
-            tag = Some(self.brace_column(self.one(t, Field::Column)?));
-        }
-        let fixes = self
-            .all(s, Field::Fix)
-            .map(|f| {
-                Ok(Fix {
-                    name: self.name(f, Field::Relation)?,
-                    safe: self.has_token(f, "safe"),
-                    title: self.string(self.one(f, Field::Description)?)?,
-                })
-            })
-            .collect::<Result<_, Error>>()?;
-        let suppress = self
-            .all(s, Field::Suppress)
-            .map(|l| {
-                Ok(Suppress {
-                    tool: self.name(l, Field::Tool)?,
-                    rules: self.all(l, Field::Rule).map(|r| self.string(r)).collect::<Result<_, _>>()?,
-                    over: self.get(l, Field::Over).map(|o| self.brace_column(o)),
-                })
-            })
-            .collect::<Result<_, Error>>()?;
-        Ok(Violation { name: self.name(s, Field::Name)?, cols: self.columns(s)?, code, code_in, tag, message: self.string(self.one(s, Field::Message)?)?, fixes, suppress })
+    /// A `.violation`'s name, columns and message. Its code, tag, fixes and suppressions are its nodes' own fields
+    /// (`Field::Code`, `Tag`, `Fix`, `Suppress`), read where they are.
+    pub fn violation(&self, s: u32) -> Result<(String, Vec<(String, String)>, String), Error> {
+        Ok((self.name(s, Field::Name)?, self.columns(s)?, self.string(self.one(s, Field::Message)?)?))
     }
 
     /// The names of a `.violation`'s fixes.
@@ -464,161 +406,6 @@ impl<'a> Tape<'a> {
             self.all(s, Field::Body).collect(),
         ))
     }
-
-    /// A clause's heads, body and edits, in the statement parser's form, which the lowering takes.
-    #[allow(clippy::type_complexity)]
-    pub fn clause(&self, s: u32) -> Result<(Vec<Head>, Vec<Lit>, Vec<Term>), Error> {
-        Ok((
-            self.all(s, Field::Head).map(|h| self.head(h)).collect::<Result<_, _>>()?,
-            self.get(s, Field::Body).map_or_else(|| Ok(Vec::new()), |b| self.body(b))?,
-            self.all(s, Field::Edit).map(|e| self.term(e)).collect::<Result<_, _>>()?,
-        ))
-    }
-
-    /// Statement `s` in the statement parser's form (`syntax::Item`), for the tape tests' comparison.
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn statement(&self, s: u32) -> Result<Item, Error> {
-        Ok(match self.what(s)? {
-            S::Include(path) => Item::Include(path),
-            S::Decl(_) => {
-                let (name, cols, tail) = self.decl(s)?;
-                Item::Decl { name, cols, tail }
-            }
-            S::Edit(name) => Item::Edit { name: name.to_owned() },
-            S::Functor(name) => Item::Functor { name: name.to_owned() },
-            S::Type(name) => Item::Type { name: name.to_owned() },
-            S::Io { .. } => {
-                let (output, names, params) = self.io(s)?;
-                Item::Io { output, names, params }
-            }
-            S::Lattice(_) => {
-                let (name, base, ops) = self.lattice(s)?;
-                Item::Lattice { name, base, ops }
-            }
-            S::Pragma => Item::Pragma(self.pragma(s)?),
-            S::Violation(_) => {
-                let Violation { name, cols, code, code_in, tag, message, fixes, suppress } = self.violation(s)?;
-                Item::Violation { name, cols, code, code_in, tag, message, fixes, suppress }
-            }
-            S::Policy => Item::Policy(self.policy(s)?),
-            S::Test => {
-                let (name, exactly, uses, body) = self.block(s)?;
-                Item::Test { name, exactly, uses, items: body.into_iter().map(|c| Ok((self.statement(c)?, self.line(c)))).collect::<Result<_, Error>>()? }
-            }
-            S::Fixtures => {
-                let (name, _, _, body) = self.block(s)?;
-                Item::Fixtures { name, items: body.into_iter().map(|c| Ok((self.statement(c)?, self.line(c)))).collect::<Result<_, Error>>()? }
-            }
-            S::Setting { key, text } => Item::Setting { key: key.to_owned(), text: text.to_owned() },
-            S::Clause => {
-                let (heads, body, edits) = self.clause(s)?;
-                Item::Clause { heads, body, edits }
-            }
-        })
-    }
-
-    fn head(&self, h: u32) -> Result<Head, Error> {
-        Ok(Head {
-            modal: self.get(h, Field::Modal).map(|m| self.text(m).to_owned()),
-            rel: self.name(h, Field::Relation)?,
-            args: self.arguments(self.one(h, Field::Arguments)?)?,
-        })
-    }
-
-    fn arguments(&self, list: u32) -> Result<Vec<Term>, Error> {
-        self.all(list, Field::Argument).map(|a| self.term(a)).collect()
-    }
-
-    /// A body or a group's: its alternatives, each a conjunction.
-    fn alternatives(&self, b: u32) -> Result<Vec<Vec<Lit>>, Error> {
-        if self.is(b, Kind::Disjunction) {
-            self.all(b, Field::Alternative).map(|c| self.conjunction(c)).collect()
-        } else {
-            Ok(vec![self.conjunction(b)?])
-        }
-    }
-
-    /// A clause's or an aggregate's body: one conjunction, or a group of the alternatives.
-    fn body(&self, b: u32) -> Result<Vec<Lit>, Error> {
-        let alts = self.alternatives(b)?;
-        Ok(if alts.len() == 1 { alts.into_iter().next().expect("one") } else { vec![Lit::Group { alts, neg: false }] })
-    }
-
-    fn conjunction(&self, c: u32) -> Result<Vec<Lit>, Error> {
-        self.all(c, Field::Literal).map(|l| self.literal(l)).collect()
-    }
-
-    fn literal(&self, l: u32) -> Result<Lit, Error> {
-        Ok(match self.kind(l) {
-            k if k == Kind::Atom as u16 => Lit::Atom { rel: self.name(l, Field::Relation)?, args: self.arguments(self.one(l, Field::Arguments)?)?, neg: false },
-            k if k == Kind::Negation as u16 => match self.literal(self.one(l, Field::Operand)?)? {
-                Lit::Atom { rel, args, neg } => Lit::Atom { rel, args, neg: !neg },
-                Lit::Pattern { subject, pattern, selector, neg } => Lit::Pattern { subject, pattern, selector, neg: !neg },
-                Lit::Group { alts, neg } => Lit::Group { alts, neg: !neg },
-                Lit::Cmp { .. } => return bad("a negated comparison"),
-            },
-            k if k == Kind::Comparison as u16 => Lit::Cmp {
-                l: self.term(self.one(l, Field::Left)?)?,
-                op: op(self.text(self.one(l, Field::Operator)?))?,
-                r: self.term(self.one(l, Field::Right)?)?,
-            },
-            k if k == Kind::PatternMatch as u16 => Lit::Pattern {
-                subject: self.term(self.one(l, Field::Subject)?)?,
-                pattern: code_body(self.text(self.one(l, Field::Pattern)?)).to_owned(),
-                selector: self.get(l, Field::Selector).map(|s| self.string(s)).transpose()?,
-                neg: false,
-            },
-            k if k == Kind::Group as u16 => Lit::Group { alts: self.alternatives(self.one(l, Field::Body)?)?, neg: false },
-            _ => return bad("an unknown literal"),
-        })
-    }
-
-    fn term(&self, t: u32) -> Result<Term, Error> {
-        let compact = || self.text(t).split_whitespace().collect::<String>();
-        Ok(match self.kind(t) {
-            k if k == Kind::Variable as u16 => Term::Var(self.text(t).to_owned()),
-            k if k == Kind::Wildcard as u16 => Term::Wild,
-            k if k == Kind::Number as u16 => Term::Num(compact().parse().map_err(|_| Error::Syntax(format!("tape: bad number {:?}", self.text(t))))?),
-            k if k == Kind::Float as u16 => Term::Float(compact()),
-            k if k == Kind::String as u16 => Term::Str(self.string(t)?),
-            k if k == Kind::CodeLiteral as u16 => Term::Tick(code_body(self.text(t)).to_owned()),
-            k if k == Kind::JsonObject as u16 => Term::Json(self.text(t).to_owned()),
-            k if k == Kind::Call as u16 || k == Kind::FunctorCall as u16 => Term::Call {
-                name: self.name(t, Field::Function)?,
-                functor: k == Kind::FunctorCall as u16,
-                args: self.get(t, Field::Arguments).map_or_else(|| Ok(Vec::new()), |a| self.arguments(a))?,
-            },
-            k if k == Kind::BinaryExpression as u16 => Term::Bin {
-                op: op(self.text(self.one(t, Field::Operator)?))?,
-                l: Box::new(self.term(self.one(t, Field::Left)?)?),
-                r: Box::new(self.term(self.one(t, Field::Right)?)?),
-            },
-            k if k == Kind::UnaryExpression as u16 => Term::Bin { op: "-", l: Box::new(Term::Num(0)), r: Box::new(self.term(self.one(t, Field::Operand)?)?) },
-            k if k == Kind::ParenthesizedExpression as u16 => self.term(self.one(t, Field::Expression)?)?,
-            k if k == Kind::Aggregate as u16 => Term::Agg {
-                // `count` is implied: the aggregate with a body alone.
-                op: self.get(t, Field::Operator).map_or("count", |o| self.text(o)).to_owned(),
-                over: self.get(t, Field::Value).map(|v| self.term(v).map(Box::new)).transpose()?,
-                by: self.all(t, Field::Key).map(|k| self.term(k)).collect::<Result<_, _>>()?,
-                sep: self.get(t, Field::Separator).map(|s| self.string(s)).transpose()?,
-                body: self.body(self.one(t, Field::Body)?)?,
-            },
-            k if k == Kind::NamedArgument as u16 => Term::Named(self.name(t, Field::Name)?, Box::new(self.term(self.one(t, Field::Value)?)?)),
-            _ => return bad("an unknown term"),
-        })
-    }
-}
-
-/// The statements of `src` as the statement parser's form (`syntax::Item`): what the tape tests compare with the
-/// parser's statements. The engine reads a file's statements off its tape (`RrFile`).
-#[cfg(any(test, feature = "test-hooks"))]
-pub fn statements(src: &str) -> Result<Vec<Statement>, Error> {
-    let file = RrFile::read(src)?;
-    let t = file.tape();
-    if t.v.is_empty() {
-        return Ok(Vec::new());
-    }
-    t.statements()
 }
 
 /// The first error a `.rr` file's parse gives, as running it would report it: its line and message

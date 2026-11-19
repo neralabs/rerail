@@ -62,7 +62,7 @@ pub use self::core::is_core;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::from_tape::{S, Stmt};
-use rerail_rr_syntax::syntax::{Code, Fix, Suppress, Term as STerm, quote};
+use rerail_rr_syntax::syntax::quote;
 use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, LatticeDecl, List, Literal, Native, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
@@ -543,10 +543,11 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
             }
             S::Lattice(_) => {
                 let (name, base, ops) = t.lattice(node).map_err(at)?;
-                let Some((_, STerm::Call { name: lub, functor: true, .. })) = ops.iter().find(|(op, _)| op == "Lub") else {
+                let lub = ops.iter().find(|(op, _)| op == "Lub").and_then(|&(_, v)| if t.is(v, super::tape::Kind::FunctorCall) { t.name(v, super::tape::Field::Function).ok() } else { None });
+                let Some(lub) = lub else {
                     return Err(at(Error::Syntax(format!(".lattice {name} has no `Lub -> @f`"))));
                 };
-                l.lattices.insert(name, (ty(&base), lub.clone()));
+                l.lattices.insert(name, (ty(&base), lub));
             }
             S::Pragma => match t.pragma(node).map_err(at)?.as_slice() {
                 [magic, relations] if magic == "magic-transform" => {
@@ -578,8 +579,7 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
             S::Setting { key, text } if key == "layout" => layouts.push((text.to_owned(), line)),
             S::Setting { key, text } => l.prog.push_setting(key.to_owned(), text.to_owned()),
             S::Violation(_) => {
-                let super::from_tape::Violation { name, cols, code, code_in, tag, suppress, fixes, message } = t.violation(node).map_err(at)?;
-                l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?
+                l.violation(&t, node).map_err(at)?
             }
             S::Clause => {
                 l.start_clause(st.file().clone());
@@ -2054,26 +2054,37 @@ impl Lowerer {
     /// `suppress` and `fix` lines and `code {c} in "re"` are settings of the findings layer, as `.mode` is:
     /// `suppress V tool "rule", … [over {c}]`, `fix V [safe] F "title"` and `code_in V "re"`.
     #[allow(clippy::too_many_arguments)]
-    fn violation(&mut self, name: String, cols: Vec<(String, String)>, code: Option<Code>, code_in: Option<String>, tag: Option<String>, suppress: Vec<Suppress>, fixes: Vec<Fix>, message: String) -> Result<(), Error> {
+    fn violation(&mut self, t: &super::from_tape::Tape<'_>, s: u32) -> Result<(), Error> {
+        use super::tape::{Field as F, Kind as K};
+        let (name, cols, message) = t.violation(s)?;
         let Some((_, at)) = cols.first() else { return Err(Error::Syntax(format!(".violation {name} has no `at` column"))) };
         if !matches!(at.as_str(), "node" | "span" | "loc") {
             return Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span or a loc, not a {at}")));
         }
         let node = at == "node";
-        let column = |c: &String| cols.iter().position(|(n, _)| n == c).ok_or_else(|| Error::Syntax(format!(".violation {name}: no column {c}")));
-        let tag = tag.as_ref().map(column).transpose()?;
-        let code = match code {
-            None => FindingCode::Name,
-            Some(Code::Column(c)) => FindingCode::Column(column(&c)?),
-            Some(Code::Constant(c)) => FindingCode::Constant(c),
+        let column = |c: &str| cols.iter().position(|(n, _)| n == c).ok_or_else(|| Error::Syntax(format!(".violation {name}: no column {c}")));
+        let tag = match t.all(s, F::Tag).last() {
+            Some(x) => Some(column(&t.brace_column(t.one(x, F::Column)?))?),
+            None => None,
         };
-        for s in suppress {
-            let rules = s.rules.iter().map(|r| quote(r)).collect::<Vec<_>>().join(", ");
-            let over = s.over.map(|c| format!(" over {{{c}}}")).unwrap_or_default();
-            self.prog.push_setting("suppress".to_owned(), format!("{name} {} {rules}{over}", s.tool));
+        // `code {column} in "re"` or `code "C"`: the last one written.
+        let (mut code, mut code_in) = (FindingCode::Name, None);
+        for c in t.all(s, F::Code) {
+            if t.is(c, K::CodeColumn) {
+                code = FindingCode::Column(column(&t.brace_column(t.one(c, F::Column)?))?);
+                code_in = t.get(c, F::Codes).map(|x| t.string(x)).transpose()?;
+            } else {
+                code = FindingCode::Constant(t.string(c)?);
+            }
         }
-        for f in fixes {
-            self.prog.push_setting("fix".to_owned(), format!("{name} {}{} {}", if f.safe { "safe " } else { "" }, f.name, quote(&f.title)));
+        for l in t.all(s, F::Suppress) {
+            let rules = t.all(l, F::Rule).map(|r| t.string(r).map(|r| quote(&r))).collect::<Result<Vec<_>, _>>()?.join(", ");
+            let over = t.get(l, F::Over).map(|o| format!(" over {{{}}}", t.brace_column(o))).unwrap_or_default();
+            self.prog.push_setting("suppress".to_owned(), format!("{name} {} {rules}{over}", t.name(l, F::Tool)?));
+        }
+        for f in t.all(s, F::Fix) {
+            let safe = if t.has_token(f, "safe") { "safe " } else { "" };
+            self.prog.push_setting("fix".to_owned(), format!("{name} {safe}{} {}", t.name(f, F::Relation)?, quote(&t.string(t.one(f, F::Description)?)?)));
         }
         if let Some(re) = code_in {
             self.prog.push_setting("code_in".to_owned(), format!("{name} {}", quote(&re)));

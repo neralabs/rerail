@@ -440,6 +440,11 @@ Progress (2026-11-18):
       `rr::clause::Reads`, a trait: the lowering supplies its substitutions, a file (`RrFile`) reads a clause as
       written. The clause checks (`check`'s grounding, strata and undeclared reads, the tape type check, the
       token-read refusal) read through it, and no reader takes `Tape::clause`'s parser form.
+    - *Done (A2, from_tape's forms).* `from_tape` makes no parser form: `Tape::clause` and its term readers go, and
+      so does the `Violation` holder. The lowering reads a `.violation`'s code, tag, fixes and suppressions off its
+      node and writes each as it reaches it, and a `.lattice`'s `Lub` off its value's node. The tape tests' parity
+      check compares each statement's kind, name, line and heads with the parser's (and each clause passes
+      `check_clause`) instead of converting the tape to the parser's form. Left for A2: the coverage census.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,

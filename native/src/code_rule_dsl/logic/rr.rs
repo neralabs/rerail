@@ -85,7 +85,7 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
         .filter_map(|s| match s.what()? {
             S::Violation(_) => {
                 let (t, n) = s.tape();
-                t.violation(n).ok().map(|v| (v.name, v.message))
+                t.violation(n).ok().map(|(name, _, message)| (name, message))
             }
             S::Setting { key, text } if key == lower::findings::MESSAGE => setting_template(text),
             _ => None,
