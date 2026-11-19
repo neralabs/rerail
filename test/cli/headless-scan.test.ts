@@ -1468,6 +1468,7 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
     writeFileSync(join(root, ".rerailignore"), "ignored/\n");
     git(root, "add", "other", "src", ".rerailignore");
     git(root, "commit", "-qm", "source");
+    const firstRevision = git(root, "rev-parse", "HEAD");
     const walk = join(root, "walk.rr");
     writeFileSync(walk, `
 #include "git.rr"
@@ -1486,16 +1487,16 @@ Referenced(src) :- reference_edge(src, _, _).
 `);
     const script = `
       import { runHeadlessScan } from "./src/cli/headless-scan.ts";
-      const [repo, databasePath, ...rr] = process.argv.slice(2);
+      const [repo, databasePath, revision, ...rr] = process.argv.slice(2);
       console.log(JSON.stringify(await runHeadlessScan({
-        repo, databasePath, rr, revision: "HEAD", analysisScope: "order",
+        repo, databasePath, rr, revision, analysisScope: "order",
         scope: "repository", packs: [], version: "test",
       })));
     `;
-    const evaluate = (caseName: string, paths: string[], state: string) => {
+    const evaluate = (caseName: string, paths: string[], state: string, revision = "HEAD") => {
       const home = join(root, caseName);
       const profile = join(home, `profile-${state}`);
-      const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, join(home, "home.sqlite"), ...paths], {
+      const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, join(home, "home.sqlite"), revision, ...paths], {
         input: script, encoding: "utf8",
         env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(home, "content.sqlite") },
       })) as ScanReport;
@@ -1507,15 +1508,19 @@ Referenced(src) :- reference_edge(src, _, _).
           : ["other/a.py", "src/a.py", "src/independent.py"]);
       const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8").matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)]
         .map(([, count, name]) => [name, Number(count)]));
-      expect(counters.get("git.tree_decodes") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 3 : 2);
-      expect(counters.get("reference.tape_summaries") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 8 : 1);
-      expect(counters.get("reference.binding_contributions") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 8 : 1);
+      if (state !== "revisited") expect(counters.get("git.tree_decodes") ?? 0).toBe(["warm", "settings", "revisited"].includes(state) ? 0 : state === "cold" ? 3 : 2);
+      expect(counters.get("reference.tape_summaries") ?? 0).toBe(["warm", "revisited", "settings"].includes(state) ? 0 : state === "cold" ? 8 : 1);
+      expect(counters.get("reference.binding_contributions") ?? 0).toBe(["warm", "revisited", "settings"].includes(state) ? 0 : state === "cold" ? 8 : 1);
       expect(counters.get("source_ast.parses") ?? 0).toBe(0);
-      expect(counters.get("reference.name_links") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 3 : 1);
+      expect(counters.get("reference.name_links") ?? 0).toBe(["warm", "settings", "revisited"].includes(state) ? 0 : state === "cold" ? 3 : 1);
     };
     evaluate("walk-first", [walk, references], "cold");
     evaluate("references-first", [references, walk], "cold");
     evaluate("references-first", [references, walk], "warm");
+    const originalPolicy = readFileSync(references, "utf8");
+    writeFileSync(references, originalPolicy.replace(".language python", '.language python\n.references {"constructorFields":{"fieldToParameter":{"replace":"^state_","by":""}}}'));
+    evaluate("references-first", [references, walk], "settings");
+    writeFileSync(references, originalPolicy);
     writeFileSync(join(root, "src/b.py"), "def replacement():\n    pass\n");
     git(root, "add", "src/b.py");
     git(root, "commit", "-qm", "change the target file");
@@ -1528,7 +1533,46 @@ Referenced(src) :- reference_edge(src, _, _).
     git(root, "add", "src/b.py");
     git(root, "commit", "-qm", "bind the name again");
     evaluate("references-first", [references, walk], "restored");
-  }, 90_000);
+    evaluate("references-first", [references, walk], "revisited", firstRevision);
+    const store = join(root, "references-first/content.sqlite");
+    const owned = () => queryContentStore<{ n: number }>(store, `
+      SELECT count(DISTINCT u.space) AS n FROM frame_program_used u
+      JOIN corpus_manifest_plans p ON p.plan_digest=u.program
+      JOIN analysis_scope_manifest a USING(manifest_id)
+      WHERE u.space=u.program AND a.scope='named:order'
+    `)[0]!.n;
+    // Both the source and link phases have an owned image for each of the four trees.
+    expect(owned()).toBeGreaterThanOrEqual(8);
+    loadNativeBinding().deleteAnalysisScope(store, "order", false);
+    expect(owned()).toBe(0);
+  }, 120_000);
+
+  it("refreshes the field link that consulted a changed constructor mapping", async () => {
+    const root = checkout();
+    const policy = join(root, "constructor.rr");
+    writeFileSync(join(root, "a.py"), [
+      "class DB:", "    def read(self): pass",
+      "class Client:", "    def __init__(self, dependency: DB): pass",
+      "    def run(self): return self.state_dependency.read()", "",
+    ].join("\n"));
+    git(root, "commit", "-qam", "constructor field");
+    const evaluate = async (fields: boolean) => {
+      writeFileSync(policy, `
+#include "core.rr"
+.policy "constructor" revision 1
+.language python
+${fields ? '.references {"constructorFields":{"fieldToParameter":{"replace":"^state_","by":""}}}' : ""}
+.violation Field(at: node) "field resolves"
+Field(src) :- reference_edge(src, dst, "field"), node_text(dst, body), contains("def read", body).
+`);
+      const report = await scan(root, { revision: "HEAD", analysisScope: "fields", rr: [policy] });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      return report.violations.map(v => v.message);
+    };
+    expect(await evaluate(false)).toEqual([]);
+    expect(await evaluate(true)).toEqual(["field resolves"]);
+    expect(await evaluate(false)).toEqual([]);
+  });
 
   it("reuses an inherited method link across unrelated edits and invalidates its absent override", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-method-link-")));

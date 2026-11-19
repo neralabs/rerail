@@ -1247,6 +1247,7 @@ fn max_deltas() -> u32 {
 /// stored and current, and each input's digest by document. Rows are read only for what the run then reads.
 #[derive(Clone, Default)]
 pub(in crate::code_rule_dsl) struct InFrames {
+    pub(super) owner: Option<[u8; 32]>,
     space: [u8; 32],
     /// Each relation and input of the program, as its frame names it.
     names: HashMap<String, FrameRel>,
@@ -1260,6 +1261,12 @@ pub(in crate::code_rule_dsl) struct InFrames {
     /// The relations admitted with their statistics part at their rows' digest (decision 0120 §3): written again
     /// only if their rows change.
     stats_kept: std::collections::HashSet<String>,
+}
+
+impl InFrames {
+    pub(super) fn same_rows(&self, other: &Self) -> bool {
+        self.inputs == other.inputs && self.derived == other.derived
+    }
 }
 
 /// The digest of `read` a derived relation records (t33 K4): as `known` has it (an input as the run bound it, a
@@ -2232,6 +2239,13 @@ impl Retained {
         Ok(Ok(Some(out)))
     }
 
+    /// Another fact space needs the rows that the current space kept without reading.
+    pub(super) fn admit_for_copy(&mut self, store: &ContentStore, program: &Placed, relations: &[String]) -> Result<bool> {
+        if !self.admit(store, program, relations)? { return Ok(false); }
+        self.rels.extend(self.late.take());
+        Ok(true)
+    }
+
     /// Derived relation `rel`'s rows, as held or read back from the frames.
     pub(in crate::code_rule_dsl) fn read_derived(&self, store: &ContentStore, rel: &str) -> Result<Option<Vec<Vec<i64>>>> {
         if let Some(k) = self.rels.get(rel) {
@@ -2514,14 +2528,14 @@ impl Retained {
         // program that reuses an earlier one's frames (an edit, decision 0302) holds them, once: the earlier one
         // superseded, nothing else keeps them.
         if puts.is_empty() && retags.is_empty() && delta_out.is_empty() {
-            store.hold_frames(was.space, was.names.values().cloned().collect(), super::run_token(), self.key);
+            store.hold_frames(was.space, was.names.values().cloned().collect(), super::run_token(), was.owner.unwrap_or(self.key));
             return Ok(written);
         }
         // Mapped (decision 0212): every atom a frame holds is in an `s` column (a text-owned input's owners too, in its
         // documents' table), its digests and granules are of content, so a forked process's frames are written as the
         // store numbers them, and read back as the reader does. Keyed by this process's numbering, they were dropped
         // after a fork, and every next run derived the cross part again.
-        crate::code_rule_dsl::logic::profile::behind(|| store.queue_encoded_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key))));
+        crate::code_rule_dsl::logic::profile::behind(|| store.queue_encoded_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), was.owner.unwrap_or(self.key)))));
         Ok(written)
     }
 }

@@ -14,6 +14,7 @@ enum Table {
     Base,
     Subclass,
     ClassCandidates,
+    ConstructorParameters,
 }
 
 type Read = (Table, String);
@@ -95,11 +96,19 @@ impl Graph {
         self.reference_classes.get(short)
     }
 
+    pub fn constructor_parameters(&self, field: &str) -> Option<Vec<String>> {
+        self.note_binding(Table::ConstructorParameters, field);
+        crate::code_rule_dsl::calls::contracts::get(self.reference_contracts).constructor_names(field)
+    }
+
     fn binding_stamp(&self, (table, text): &Read) -> Option<[u8; 32]> {
         fn digest(rows: impl Serialize) -> [u8; 32] {
             Sha256::digest(serde_json::to_vec(&rows).expect("binding rows serialize")).into()
         }
 
+        if *table == Table::ConstructorParameters {
+            return crate::code_rule_dsl::calls::contracts::get(self.reference_contracts).constructor_names(text).map(digest);
+        }
         if *table == Table::ClassCandidates {
             return self.reference_classes.get(text).map(|classes| {
                 digest(classes.iter().map(Name::text).collect::<Vec<_>>())
@@ -121,7 +130,7 @@ impl Graph {
                 (target.text(), kind)
             }).collect::<Vec<_>>()),
             Table::Subclass => digest(self.subclasses.get(&name)?.iter().map(Name::text).collect::<Vec<_>>()),
-            Table::ClassCandidates => unreachable!("class candidates use an unqualified name"),
+            Table::ClassCandidates | Table::ConstructorParameters => unreachable!("lookups by unqualified text handled above"),
         })
     }
 

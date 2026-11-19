@@ -279,7 +279,7 @@ impl PythonLinks for Graph {
         followed: &mut Vec<Name>,
     ) -> Link {
         let order = self.reference_order(class, followed);
-        let names = crate::code_rule_dsl::calls::contracts::get(self.reference_contracts).constructor_names(field);
+        let names = self.constructor_parameters(field);
         for base in order {
             if let Some(names) = &names {
                 for parameter in names {

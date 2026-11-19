@@ -42,7 +42,6 @@ const VIAS: [&str; 9] = ["param_type", "field", "bare", "unqualified", "self", "
 /// over (W's code rule scope; `None`: none).
 struct Config {
     key: contracts::Key,
-    constructors: String,
     bindings: String,
     scope: Option<CodeRuleScope>,
 }
@@ -52,7 +51,7 @@ impl Config {
     fn of(prog: &Program) -> Result<Self> {
         let mut settings = prog.settings.iter().filter(|(key, _)| key == "references");
         let Some((_, text)) = settings.next() else {
-            return Ok(Config { key: 0, constructors: "null".to_owned(), bindings: "[null,null]".to_owned(), scope: Some(scope(None)?) });
+            return Ok(Config { key: 0, bindings: "null".to_owned(), scope: Some(scope(None)?) });
         };
         if settings.next().is_some() {
             return Err(Error::Plan("more than one .references setting".into()));
@@ -66,10 +65,8 @@ impl Config {
         let key = contracts::compile(object.get("siblingLinks"), object.get("constructorFields"), "/references", usize::MAX).map_err(|e| bad(e.reason.clone()))?;
         // A scope including nothing (an event's empty scope) holds no file; W refuses to compile one.
         let empty = object.get("scope").and_then(|s| s.get("include")).and_then(Value::as_array).is_some_and(Vec::is_empty);
-        let constructors = object.get("constructorFields").unwrap_or(&Value::Null).to_string();
-        let bindings = serde_json::to_string(&(object.get("siblingLinks"), object.get("constructorFields")))
-            .map_err(|error| bad(error.to_string()))?;
-        Ok(Config { key, constructors, bindings, scope: if empty { None } else { Some(scope(object.get("scope"))?) } })
+        let bindings = object.get("siblingLinks").unwrap_or(&Value::Null).to_string();
+        Ok(Config { key, bindings, scope: if empty { None } else { Some(scope(object.get("scope"))?) } })
     }
 }
 
@@ -183,7 +180,7 @@ impl Files {
                 Ok((Arc::clone(path), file))
             }).collect::<Result<_>>()?;
             Graph::link_references_with(key, prepared, |graph, names| {
-                let links = reference_facts::link(root, names.iter().map(|name| name.text()), &self.config.constructors, &reference_facts::LinkProvider {
+                let links = reference_facts::link(root, names.iter().map(|name| name.text()), &reference_facts::LinkProvider {
                     resolve: &|name| graph.resolve_reference_link(name),
                     is_current: &|answer| graph.reference_link_is_current(answer),
                 })?;

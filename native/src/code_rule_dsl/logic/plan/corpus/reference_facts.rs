@@ -98,9 +98,9 @@ pub fn run(root: &Path, sources: &[Source], preparation: &Preparation<'_>) -> Re
     }).collect()
 }
 
-pub fn link<'a>(root: &Path, names: impl Iterator<Item = &'a str>, constructors: &str, provider: &LinkProvider<'_>) -> Result<HashMap<String, String>> {
+pub fn link<'a>(root: &Path, names: impl Iterator<Item = &'a str>, provider: &LinkProvider<'_>) -> Result<HashMap<String, String>> {
     use front::Value::Str;
-    let keys: Vec<_> = names.map(|name| vec![Str(name.into()), Str(constructors.into())]).collect();
+    let keys: Vec<_> = names.map(|name| vec![Str(name.into())]).collect();
     if keys.is_empty() { return Ok(HashMap::new()); }
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
     let program = crate::code_rule_dsl::logic::rr::parse(concat!(

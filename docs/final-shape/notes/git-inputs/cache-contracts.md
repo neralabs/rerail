@@ -285,18 +285,13 @@ Use paths and definition ranges for the saved targets. Join them to node IDs aft
 The scope or revision does not enter a link key in place of these facts.
 Test an unchanged run, removal and addition of an export, and an edit in an unrelated module.
 An unchanged run should link zero names. A changed binding should only relink its dependents.
-In a two-package probe, each package had a caller and its imported target.
-The unchanged run restored all six summaries and linked both names again.
-Removing and then restoring the target in one package rebuilt one summary and linked both names on each run.
-Only the affected caller's finding changed.
-
 ### Reference binding inputs
 
-Retain each file's contribution to the binding index by its summary, placement, and reference settings.
+Retain each file's contribution to the binding index by its summary, placement, and sibling-link settings.
 Assemble the current bindings from those contributions.
 Count a contribution when the engine computes it from the summary.
 
-A link request names the reference and the constructor fields setting.
+A link request names the reference and the resolver version.
 The answer records the exact table entries that the resolver reads.
 It records absent entries and candidate lists as well as successful lookups.
 If an observation changes, the request phase refreshes the link.
@@ -310,6 +305,14 @@ The integration test uses three callers in two packages.
 Both cold policy orders link three names. Reopening the unchanged revision links zero.
 Removing an export, editing an independent definition in the same package, and restoring the export each link one name.
 The cached graph also matches the eager resolver for a package with inheritance and constructor field references.
+
+File binding contributions read sibling-link settings. A constructor-field lookup records the field and
+its effective parameter names, including a missing mapping. Only links that consulted a changed mapping need another lookup.
+
+A named revision run retains the reference facts for its tree. A new tree can reuse the preceding run's
+unchanged answers. Returning to a retained tree can reuse its own answers. The run still checks each link's
+binding observations. Each retained tree can occupy additional space for its reference facts.
+Releasing the last owning scope makes those facts eligible for collection.
 
 ## 7. Mutable observations and failure retry
 

@@ -6891,6 +6891,26 @@ fn run_observed(
         // A kept manifest names the rounds' key, which keeps their frames (decision 0227); their record names it too,
         // and goes with it (decision 0252, `observe::collect`).
         part_keys.lock().expect("the parts' keys").extend(rounds_key);
+        // A new tree starts from the preceding run. A retained tree can start from its own round.
+        let history = if !matches!(given.reference_inputs, reference_facts::Input::None)
+            && let (Some(tree), Some(key), Some(round)) = (crate::git_workspace::snapshot::scoped_tree(root), rounds_key, &round)
+        {
+            use sha2::{Digest, Sha256};
+            let mut hash = Sha256::new();
+            hash.update(b"rerail.revision-rounds/v1");
+            hash.update(rounds_space_of(&key));
+            hash.update(tree.as_slice());
+            let atoms = store.atoms_handle();
+            for (rel, source) in &constants_in {
+                let cells = retain::cells_of(&atoms, &round.placed, &round.domains, rel, source.columns().len());
+                hash.update((rel.len() as u64).to_le_bytes());
+                hash.update(rel.as_bytes());
+                hash.update(retain::digest(source.as_ref(), &cells).to_le_bytes());
+            }
+            let revision: [u8; 32] = hash.finalize().into();
+            part_keys.lock().expect("the parts' keys").push(revision);
+            Some(revision)
+        } else { None };
         let rounds_record = rounds_key.as_ref().map(|k| format!("cone-rounds:{}", crate::content_store::observe::hex(&rounds_space_of(k))));
         let rounds_journal: Option<(Vec<(std::path::PathBuf, String)>, Vec<std::path::PathBuf>, u64)> = rounds_record.as_ref().and_then(|key| {
             observe(|o| {
@@ -6968,13 +6988,29 @@ fn run_observed(
             // A request answered in place (the rounds, a stratum needed at once): it waits for its own ticket.
             let mut answer = |rel: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> { asks.borrow_mut().ask(rel, rows) };
             // The rounds from the last run's final round, kept in the store.
-            let rounds_space = rounds_key.as_ref().map(&rounds_space_of).unwrap_or_default();
+            let mut rounds_space = rounds_key.as_ref().map(&rounds_space_of).unwrap_or_default();
             let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs, constants: &constants_at, ledger: &load_ledger_in };
             // Only what the stored frames hold that is current is known here; rows are read when a round needs them.
             let mut from_rounds = None;
+            let mut alternate = None;
+            let mut owner = None;
             if let (Some(r), Some(store), Some(key)) = (&round, &cone_handle, rounds_key) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the cone's rounds, from the frames".into());
-                let k = retain::Retained::from_frames(store, rounds_space, key, key, &r.placed, r.components(), &rounds_in.constant_digests(&store.atoms_handle(), &r.placed, &r.domains))?;
+                let digests = rounds_in.constant_digests(&store.atoms_handle(), &r.placed, &r.domains);
+                let load = |space| retain::Retained::from_frames(store, space, key, key, &r.placed, r.components(), &digests);
+                let mut k = load(rounds_space)?;
+                if let Some(revision) = history {
+                    let mut saved = load(revision)?;
+                    if r.missing(&saved).is_empty() {
+                        std::mem::swap(&mut k, &mut saved);
+                        rounds_space = revision;
+                        owner = Some(revision);
+                    }
+                    alternate = saved.take_frames();
+                    if owner.is_none() && let Some(target) = &mut alternate {
+                        target.owner = Some(revision);
+                    }
+                }
                 let missing = r.missing(&k);
                 if missing.is_empty() {
                     from_rounds = Some(k);
@@ -7027,7 +7063,7 @@ fn run_observed(
                 let path = std::path::Path::new(&text);
                 roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !path.starts_with(n) && !(req == "rr_dir_req" && n.parent() == Some(path)))
             };
-            let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: Some(&still_fn), texts: &vocabulary_cone });
+            let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, owner, alternate: alternate.as_ref(), db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: Some(&still_fn), texts: &vocabulary_cone });
             let mut gave_up = None;
             if let (Some(r), Some(on), Some(k)) = (&round, &on, from_rounds) {
                 load_ledger_in.lock().unwrap_or_else(|e| e.into_inner()).rounds = true;
@@ -7231,7 +7267,7 @@ fn run_observed(
                 let mut out = Vec::with_capacity(rows.len());
                 if rel == reference_facts::LINK_VALIDATE {
                     for row in rows {
-                        let [_, _, _, answer] = row.as_slice() else { return Err(Error::Plan("invalid retained reference link".into())); };
+                        let [_, _, answer] = row.as_slice() else { return Err(Error::Plan("invalid retained reference link".into())); };
                         if (provider.is_current)(&text(*answer)?) {
                             out.push(row.clone());
                         }
@@ -7239,7 +7275,7 @@ fn run_observed(
                     return Ok(vec![(reference_facts::LINK_VALIDATE.to_owned(), out)]);
                 }
                 for row in rows {
-                    let [name, _, _] = row.as_slice() else { return Err(Error::Plan("invalid reference link key".into())) };
+                    let [name, _] = row.as_slice() else { return Err(Error::Plan("invalid reference link key".into())) };
                     let result = (provider.resolve)(&text(*name)?);
                     let mut answer = row.clone();
                     answer.extend(atoms(&[&result])?);

@@ -630,6 +630,12 @@ pub fn fact_root(path: &Path) -> Option<PathBuf> {
     Some(v.cache_root.join(path.strip_prefix(&v.root).ok()?))
 }
 
+/// The selected tree whose facts a named analysis may retain.
+pub fn scoped_tree(path: &Path) -> Option<gix::ObjectId> {
+    let v = view(path)?;
+    v.scope.as_ref().map(|_| v.tree)
+}
+
 pub fn analysis_scope(path: &Path) -> Option<String> {
     view(path)?.scope.clone()
 }

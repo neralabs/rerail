@@ -370,6 +370,8 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     /// them, written back behind the run.
     pub(in crate::code_rule_dsl) store: &'a crate::content_store::ContentStore,
     pub(in crate::code_rule_dsl) space: [u8; 32],
+    pub(super) owner: Option<[u8; 32]>,
+    pub(super) alternate: Option<&'a retain::InFrames>,
     pub(in crate::code_rule_dsl) db: &'a Connection,
     pub(in crate::code_rule_dsl) modules: &'a Modules,
     pub(in crate::code_rule_dsl) lowered: &'a lower::Lowered,
@@ -439,10 +441,11 @@ impl RoundProgram {
         let domains = &self.domains;
         let atoms = on.store.atoms_handle();
         // What the store holds of the program before the rounds: what the rounds write back is compared with it.
-        let was = match &kept {
+        let mut was = match &kept {
             Some(k) => k.frames().cloned(),
             None => retain::Retained::from_frames(on.store, on.space, on.key, on.key, &self.placed, &self.sccs, &inputs.constant_digests(&atoms, &self.placed, domains))?.frames().cloned(),
         };
+        if let Some(was) = &mut was { was.owner = on.owner; }
         if let Some(k) = &kept {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/the last run's, from the frames".into());
             let program = &self.placed;
@@ -632,7 +635,7 @@ impl RoundProgram {
         for (req, _) in &answers.asked {
             *answered.entry(req.clone()).or_insert(0) += 1;
         }
-        let next = kept.expect("a round ran");
+        let mut next = kept.expect("a round ran");
         // Written back as any kept part is (t33 K4): each relation whose rows or reads differ from its frame, each
         // input's granules whose documents' rows changed. What no round derived again stays as stored.
         let written = match &was {
@@ -642,7 +645,16 @@ impl RoundProgram {
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                next.write_frames(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new())?
+                // Admit quiet rows before either write if the other fact space needs them.
+                let different = on.alternate.is_some_and(|target| !was.same_rows(target));
+                let copied = !different || next.admit_for_copy(on.store, &self.placed, &cut.clean.iter().cloned().collect::<Vec<_>>())?;
+                let write = |target, cut| next.write_frames(on.store, target, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, cut, &sources, &digests, &BTreeSet::new(), &HashMap::new());
+                let mut written = write(was, &cut)?;
+                if let Some(target) = on.alternate.filter(|_| copied) {
+                    let complete = retain::Cut { clean: BTreeSet::new(), strata: (0, 0), changed: Vec::new() };
+                    written += write(target, if different { &complete } else { &cut })?;
+                }
+                written
             }
             None => 0,
         };
