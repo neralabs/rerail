@@ -179,6 +179,8 @@ fn nearest_costs(cap: usize) {
     let t = std::time::Instant::now();
     let cpu = solve_cpu(&sys);
     let cpu_worklist = t.elapsed();
+    // Read by Metal's comparisons below (macOS); kept elsewhere so the worklist's time is the solve's.
+    std::hint::black_box(&cpu);
     // One pass in preorder.
     let t = std::time::Instant::now();
     let mut one = vec![NONE; n];
