@@ -1828,7 +1828,6 @@ fn reads_of(v: &crate::code_rule_dsl::logic::program_image::Version, head: &str)
 /// no-access-state-in-setstate) finds its rows in a pack. The library linked alone dropped it, and the react pack
 /// failed on `no such table: main.keyed_kind`. PR #508's 363b91c0b (t47).
 #[test]
-#[ignore = "PR #508 363b91c0b not ported: Q241"]
 fn a_librarys_kind_set_is_a_relation_its_includers_read_in_a_pack() {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
     let reads = ".language typescript\n#include \"tsx/react-class.rr\"\n.decl keyed(p: node)\nkeyed(p) :- kind(p, k), keyed_kind(k).\n.output keyed\n";
@@ -1844,7 +1843,6 @@ fn a_librarys_kind_set_is_a_relation_its_includers_read_in_a_pack() {
 /// vitest's expect-expect (`name_of`) failed the typescript pack as unbounded value cycles, though each is bounded
 /// alone. PR #508's 363b91c0b (t47).
 #[test]
-#[ignore = "PR #508 363b91c0b not ported: Q241"]
 fn a_value_cycle_a_library_relation_bounds_is_bounded_in_a_pack() {
     let cycle = ".language typescript\n#include \"tsx/ts-b.rr\"\n\
                  .decl ua(x: node, a: node)\nua(x, a) :- kind(x, \"unary_expression\"), field(x, \"argument\", e), deparen(e, a).\n\
@@ -1861,7 +1859,6 @@ fn a_value_cycle_a_library_relation_bounds_is_bounded_in_a_pack() {
 /// its request, over its facts. Taken as the library's, they read the library's relation without them, and
 /// clippy-decimal-literal-representation found nothing in a pack. PR #508's 363b91c0b (t47).
 #[test]
-#[ignore = "PR #508 363b91c0b not ported: Q241"]
 fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
     let stating = ".language rust\n#include \"rust/syntax-literals.rr\"\n.decl hit(n: node)\nhit(n) :- dec_lit_repr(n).\n.output hit\nlit_repr_threshold(16384).\n";

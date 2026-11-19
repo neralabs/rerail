@@ -440,6 +440,30 @@ fn scope_report_globs(settings: &[(String, String)]) -> Vec<String> {
     scope_list(settings, &["report", "dirs"]).into_iter().map(|d| format!("{}/**", d.trim_end_matches('/'))).collect()
 }
 
+/// A library linked for the programs that include it (`rr::lower_library`, decision 0089) keeps each kind set its files
+/// declare as a relation: `kind_sets` drops a set no rule of the library reads as an atom, which holds of a whole
+/// program but not of a library, whose includers may read it (`kind(p, k), keyed_kind(k)` in
+/// react-no-access-state-in-setstate, beside `tsx/react-class.rr`'s `inside(c, m, keyed_kind)`: "no such table:
+/// main.keyed_kind" in the react pack). A program lowered in the library's scope reads the library's relation, so the
+/// set is the library's again: declared, its kinds its facts. On the library's version (PR #508's 363b91c0b, t47).
+pub fn keep_declared_kind_sets(v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, modules: &[Module]) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
+    let sets = ProgramFields::kindsets(&**v);
+    let add: Vec<(&String, &Vec<String>)> = sets
+        .iter()
+        .filter(|(set, _)| !v.declares(set) && modules.iter().any(|m| m.written.get(*set).is_some_and(|cols| cols.len() == 1)))
+        .collect();
+    if add.is_empty() {
+        return Ok(std::sync::Arc::clone(v));
+    }
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(v);
+    for (set, kinds) in add {
+        FieldsMut::declare(&mut b, set, &[("k", "sym")]);
+        let rows: Vec<List<Value>> = kinds.iter().map(|k| [Value::Str(k.as_str().into())].into()).collect();
+        FieldsMut::set_facts(&mut b, set, &rows);
+    }
+    b.finish().map(|(v, _)| v).map_err(Error::Syntax)
+}
+
 /// A rule file lowered alone (decision 0246 §1): each clause rewritten to the core rules it lowers to, its
 /// declarations, facts and settings, and what lowering's whole-program half reads of them (its `.violation`s, its
 /// `must, may` relations and heads, its kind sets). What needs the whole program is `link`'s.
