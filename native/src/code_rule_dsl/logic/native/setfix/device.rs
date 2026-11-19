@@ -1135,8 +1135,6 @@ fn narrowed(mut d: mj::Stage, at: &[u32]) -> mj::Stage {
 }
 
 thread_local! {
-    /// Per rule (its spec's hash) and stage: the rows out per row of the input table's space, last seen.
-    static GROWTH: RefCell<HashMap<(u64, usize), f64>> = RefCell::default();
     static LAST: RefCell<Option<Report>> = const { RefCell::new(None) };
 }
 
@@ -1460,7 +1458,7 @@ impl<'p> Run<'p> {
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
-    fn guess(&self, k: usize, cap_in: usize, nr: usize) -> usize {
+    fn guess(&self, k: usize, cap_in: usize, nr: usize, own: &HashMap<(u64, usize), f64>) -> usize {
         let s = &self.plan.stages[k];
         match &s.kind {
             Kind::Atom { .. } | Kind::Own { .. } if s.desc.mode == mj::JOIN => {
@@ -1468,7 +1466,8 @@ impl<'p> Run<'p> {
                 if s.desc.nkeys == 0 && cap_in == 1 {
                     return nr.max(1);
                 }
-                let seen = GROWTH.with_borrow(|g| g.get(&(self.plan.key, k)).copied());
+                // The component's own rounds' growth, else the stage's as filed before its chunk (decision 0450 step 7).
+                let seen = own.get(&(self.plan.key, k)).copied().or_else(|| crate::code_rule_dsl::logic::plan::joins::growth(self.plan.key, k));
                 let want = seen.map_or(cap_in.saturating_mul(2), |r| ((cap_in as f64 * r * 1.25).ceil() as usize).max(16));
                 want.min(most).clamp(1, GUESS_MAX.max(cap_in))
             }
@@ -1524,7 +1523,7 @@ impl<'p> Run<'p> {
                     let right = self.rels[k].as_ref().map(|(r, ix)| (&**r, ix.as_deref()));
                     let cap_in = self.caps[i];
                     if self.caps[o] == 0 {
-                        self.caps[o] = self.guess(k, cap_in, right.map_or(0, |r| r.0.rows));
+                        self.caps[o] = self.guess(k, cap_in, right.map_or(0, |r| r.0.rows), &own.growth);
                     }
                     let cap = self.caps[o];
                     if 8 * self.plan.nslots.max(1) * cap > table_max() {
@@ -1998,7 +1997,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
         if placed.contains(&head) {
             out.push(n as u64);
             rep.rows += n as u64;
-            counted(r, plan, j, rep);
+            let _ = counted(r, plan, j, rep);
             continue;
         }
         let uniq = r.uniq.as_ref().expect("the head's distinct rows");
@@ -2040,7 +2039,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
         }
         out.push(n as u64);
         rep.rows += n as u64;
-        counted(r, plan, j, rep);
+        let _ = counted(r, plan, j, rep);
     }
     drop(_h);
     rep.decode_cpu += thread_cpu() - d0;
@@ -2223,6 +2222,9 @@ struct Own {
     total: HashMap<usize, Rc<mj::DevRel>>,
     delta: HashMap<usize, Rc<mj::DevRel>>,
     sorts: HashMap<(usize, bool, Vec<usize>), Rc<mj::DevIndex>>,
+    /// The growths its rounds saw (`counted`), by rule and stage: a round's next is guessed from them, in the
+    /// component's own order, before the run's memo as filed (decision 0450 step 7).
+    growth: HashMap<(u64, usize), f64>,
 }
 
 impl Own {
@@ -2328,7 +2330,9 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         out.push(r.map(|r| {
             let last = r.io.last().map_or(0, |io| io.1);
             rep.rows += u64::from(r.totals.get(last));
-            counted(&r, plan, j, rep);
+            for (k, g) in counted(&r, plan, j, rep) {
+                own.growth.insert((plan.key, k), g);
+            }
             let distinct = r.totals.get(r.totals.len - 1) as usize;
             (r, distinct)
         }));
@@ -2700,7 +2704,10 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
 
 /// Each step's observed counts after `r` ran, as the CPU's walk makes them, into `j`'s (the replanner's fanouts),
 /// and the growth seen, for the next chunk's guesses.
-fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) {
+/// The run's counts into its rule's, and the growth each stage saw, for the next runs' guesses: (stage, rows out per
+/// row of its input's space), filed into the joins' memo too.
+fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) -> Vec<(usize, f64)> {
+    let mut grew = Vec::new();
     // Counts as the CPU's walk makes them: each stage's entries are the rows out of the stage before.
     let get = |slot: usize| if slot == 0 { 1u64 } else { u64::from(r.totals.get(slot)) };
     if plan.nsteps > 0 {
@@ -2730,11 +2737,14 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) {
                 next[0].set(next[0].get() + v);
             }
         }
-        // The growth seen, for the next chunk's guess.
+        // The growth seen, for the next runs' guesses.
         if i != o && r.caps[i] > 0 {
-            GROWTH.with_borrow_mut(|g| g.insert((plan.key, k), n_out as f64 / r.caps[i] as f64));
+            let g = n_out as f64 / r.caps[i] as f64;
+            crate::code_rule_dsl::logic::plan::joins::note_growth(plan.key, k, g);
+            grew.push((k, g));
         }
     }
+    grew
 }
 
 #[cfg(test)]

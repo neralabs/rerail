@@ -269,7 +269,6 @@ const STATE: &[(&str, &str)] = &[
     // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
-    ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
     // A live connection's file and symbol table, by its handle (dropped as it closes, `forget_scope`): state of the
     // connections, not a result kept.

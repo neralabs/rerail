@@ -28,3 +28,5 @@ npm run --silent check:ui-tokens
 python3 scripts/check/check-dev-features.py
 # Blocks are never copied into another data structure (decision 0353): a commit that adds a copy is refused.
 python3 scripts/check/check-no-block-copies.py
+# Nor kept beside its block in a thread's or the process's map (decision 0450, R7): a commit that adds one is refused.
+python3 scripts/check/check-no-relation-maps.py

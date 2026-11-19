@@ -372,3 +372,29 @@ that size came from the cache's first use, a 16z block decoded, and nothing else
 
   On Metal the device finds more of its indexes built: 215-248 a run against 189-229.
 
+## Built (2026-11-19, step 7: the growths in the joins' memo; R7's check)
+
+- **A device stage's growth** (rows out per row of its input's space, which guesses its next run's space) is in the
+  joins' memo (0444), by rule and stage, not a thread-local map (`GROWTH`, gone). A chunk's strata read it as filed
+  before the chunk began, never as its own or a neighbour's strata ran: a chunk's growths are kept for its filing
+  (`joins::note_growth`) and filed in the chunks' order, a stage's most of the chunk standing (`Op::within`). A
+  recursive component's rounds read their own rounds' growths first, in the component's order (`Own::growth`).
+- **R7's check**: `scripts/check/check-no-relation-maps.py` (pre-commit, beside `check-no-block-copies.py`)
+  refuses a commit that adds a `static`, thread-local or process-wide, whose type holds a collection, in the
+  engine's data paths, unless it or the line above names it `state: bookkeeping`, `state: not relation data`, or
+  `state (0450 step N)`.
+- Tests: `a_stages_growth_is_read_as_filed_never_as_the_threads_ran` (plan.rs, beside 0444's R1);
+  `a_relation_moved_for_an_index_lives_until_its_batch_is_done` (below).
+- **Found while measuring: step 3 gave back a relation the GPU was building an index into.** When a relation's
+  block or directory has no room for an index, `Batch::index` moves it (a view's fresh home of no columns, or the
+  relation copied, 0353 row 6) and hands it back in the index (`DevIndex::moved`). `RESIDENT` held that index, and
+  with it the moved relation, past the stratum; after step 3 nothing held it past the stage that encoded it. So the
+  relation was released while the batch built into it, and another made in its place. Of 16 hogql runs on Metal of
+  the builds with it (04a2cf4cc, 4242a36f5), one stopped at Q253's check (an index count reset, "a relation's
+  descriptor overwritten while its index was built") and one gave 1,037 findings instead of 1,629. The batch now
+  keeps every relation it moves until its work completes: 12 of 12 runs gave 1,629, none stopped.
+- hogql cold, Metal, profiling, format 15, load 31-38, four pairs against step 5a's build, then eight runs alone:
+  74.7-78.5 B (ten of twelve 74.7-76.5 B) against 75.5-76.8 B; peak 1,322-1,463 MB against 1,313-1,457 MB.
+  Stages run again after an overflow: 96-103 a run, against 91-100. The growths no longer follow the threads, but
+  the reruns still differ between runs (the device's room, the text arena): R6 stays open.
+

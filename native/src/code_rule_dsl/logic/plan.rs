@@ -14582,6 +14582,36 @@ mod ordered_tests {
         joins::clear();
     }
 
+    /// Decision 0450 step 7: a device stage's growth (rows out per row in, which sizes its next run's space) is read as
+    /// filed before its chunk's window began, never as a chunk beside it or the chunk's own strata ran, by the
+    /// threads' timing; a chunk's growths are filed whatever order its threads wrote them in, each its most.
+    #[test]
+    fn a_stages_growth_is_read_as_filed_never_as_the_threads_ran() {
+        let _plans = KeepPlans::start(None);
+        let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
+        let (rule, stage) = (0x0450_0007u64, 3);
+        let seen = || joins::growth(rule, stage);
+        let (v0, v1) = (ordered.next(), ordered.next());
+        let ((), m0) = in_view(&v0, || {
+            joins::note_growth(rule, stage, 2.0);
+            joins::note_growth(rule, stage, 5.0);
+            joins::note_growth(rule, stage, 3.0);
+        });
+        assert_eq!(in_view(&v0, seen).0, None, "a chunk's own strata read its growth as filed when it began");
+        assert_eq!(in_view(&v1, seen).0, None, "a neighbour's");
+        assert_eq!(seen(), None, "the run's holds no chunk's until it is filed");
+        let ((), m1) = in_view(&v1, || {
+            joins::note_growth(rule, stage, 4.0);
+            joins::note_growth(rule, stage, 1.0);
+        });
+        ordered.file(m0);
+        assert_eq!(seen(), Some(5.0), "a chunk's most");
+        ordered.file(m1);
+        assert_eq!(seen(), Some(4.0), "filed in the chunks' order: the later chunk's stands");
+        assert_eq!(in_view(&ordered.next(), seen).0, Some(5.0), "chunk 2 begins with chunk 0's");
+        joins::clear();
+    }
+
     /// Q261: so do the planning choices (inline or store, demand). A program chunk 0 chose for is chosen again by a
     /// chunk beside it, not taken from chunk 0 by whichever planned first; chunk 2 takes chunk 0's.
     #[test]

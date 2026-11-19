@@ -266,6 +266,9 @@ pub(super) struct Memo {
     written: FxHashMap<PlanKey, u64>,
     /// Proposals a one-shot process holds until its run ends (`propose`, `drain`): its line, orders, walked work.
     held: Vec<(PlanKey, Vec<(Vec<StoredStep>, f64)>, Option<f64>)>,
+    /// A device stage's rows out per row of its input's space, by rule (its spec's hash) and stage, as last filed:
+    /// its next run's space is guessed from it (decision 0450 step 7, was the device's thread-local `GROWTH`).
+    growth: FxHashMap<(u64, usize), f64>,
 }
 
 /// What a chunk reads and writes of the memo (Q261): the run's as filed when it began, with its own writes, and
@@ -296,7 +299,7 @@ pub(super) fn file_ops(mut ops: Vec<Op>) {
     if ops.is_empty() {
         return;
     }
-    ops.sort_by_key(Op::key);
+    ops.sort_by(|a, b| a.key().cmp(&b.key()).then_with(|| a.within(b)));
     let mut m = MEMO.write();
     for op in &ops {
         op.apply(&mut m);
@@ -309,6 +312,28 @@ fn read<R>(f: impl FnOnce(&Memo) -> R) -> R {
         Some(c) => f(&c.memo.read()),
         None => f(&MEMO.read()),
     }
+}
+
+/// Writes `op` for the run's memo alone: in a chunk, kept for its filing and not read by the chunk meanwhile, so what
+/// the chunk's strata read is the memo as filed when it began, whatever order its threads ran in.
+fn write_filed(op: Op) {
+    match super::chunk_memo() {
+        Some(c) => c.ops.lock().push(op),
+        None => {
+            op.apply(&mut MEMO.write());
+        }
+    }
+}
+
+/// A device stage's growth as filed (decision 0450 step 7): rows out per row of its input's space, by its rule's
+/// spec hash and the stage.
+pub fn growth(rule: u64, stage: usize) -> Option<f64> {
+    read(|m| m.growth.get(&(rule, stage)).copied())
+}
+
+/// A device stage's growth seen, for the chunks after this one (`growth`): a chunk's most stands.
+pub fn note_growth(rule: u64, stage: usize, ratio: f64) {
+    write_filed(Op::Growth { rule, stage, ratio });
 }
 
 /// Writes `op` to the memo this thread reads; in a chunk, kept for its filing too. What `op` answers.
@@ -343,6 +368,8 @@ pub(super) enum Op {
     /// `take_trial`, `take_forced`: answer whether it was taken.
     TakeTrial { key: PlanKey },
     TakeForced { key: PlanKey },
+    /// `note_growth`.
+    Growth { rule: u64, stage: usize, ratio: f64 },
 }
 
 impl Op {
@@ -350,6 +377,16 @@ impl Op {
         match self {
             Op::Tried { key, .. } | Op::CutTrial { key, .. } | Op::Slow { key, .. } | Op::Exact { key, .. } | Op::Line { key, .. } | Op::Check { key, .. } | Op::TakeTrial { key } | Op::TakeForced { key } => *key,
             Op::Raise { key, .. } => key.unwrap_or(0),
+            Op::Growth { rule, .. } => PlanKey::from(*rule),
+        }
+    }
+
+    /// Two writes of one key in the order they are filed in, where the order a chunk's threads wrote them in must not
+    /// count: a stage's growths by stage, then ascending, so its most is filed last and stands.
+    fn within(&self, other: &Op) -> std::cmp::Ordering {
+        match (self, other) {
+            (Op::Growth { stage: a, ratio: x, .. }, Op::Growth { stage: b, ratio: y, .. }) => a.cmp(b).then(x.total_cmp(y)),
+            _ => std::cmp::Ordering::Equal,
         }
     }
 
@@ -444,6 +481,10 @@ impl Op {
             }
             Op::TakeTrial { key } => m.notes.get(key).is_some_and(|n| n.critical >= critical_share()) && m.trialled.insert(*key),
             Op::TakeForced { key } => m.forced.remove(key),
+            Op::Growth { rule, stage, ratio } => {
+                m.growth.insert((*rule, *stage), *ratio);
+                true
+            }
         }
     }
 }
