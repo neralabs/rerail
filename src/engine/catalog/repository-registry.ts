@@ -9,7 +9,7 @@ import { dirname, parse } from "node:path";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
-import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
+import { gitExecutable, GitUnavailableError } from "../git.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
   checkoutIdentity,
@@ -206,16 +206,16 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
   }
-  return lookupAt(db, repositoryIdentityLocation(workspace), new Map());
+  return lookupAt(db, repositoryIdentityLocation(workspace));
 }
 
-function lookupAt(db: Reader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {
+function lookupAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
   const { id, marked } = checkoutIdentity(location);
   const cloneId = id ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
   const recorded = location.git && cloneId === null ? undefined : recordedRepositoryAt(db, checkoutPath, cloneId);
   const knownClone = recorded ?? (cloneId === null ? undefined : cloneRepository(db, cloneId));
-  const repositoryKey = knownClone ?? remoteRepository(db, location, checkoutPath, remoteKeys);
+  const repositoryKey = knownClone ?? remoteRepository(db, location);
   return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, marked || knownClone !== undefined ? cloneId : null);
 }
 
@@ -226,41 +226,15 @@ function recordedRepositoryAt(db: Reader, checkoutPath: string, cloneId: string 
   return recorded !== undefined && (cloneId === null || recorded.cloneId === cloneId) ? recorded.key : undefined;
 }
 
-/** The known repository the checkout's remote names, its remote read once per `remoteKeys`; a folder outside git has none. */
-function remoteRepository(
-  db: Reader,
-  location: RepositoryIdentityLocation,
-  checkoutPath: string,
-  remoteKeys: Map<string, RepositoryKey | undefined>,
-): RepositoryKey | undefined {
-  if (!location.git) return undefined;
-  if (!remoteKeys.has(checkoutPath)) remoteKeys.set(checkoutPath, remoteKeyOf(location.workspaceRoot));
-  const remoteKey = remoteKeys.get(checkoutPath);
+/** Check the effective remote for an unrecorded Git checkout. Git includes and branch configuration can change between calls. */
+function remoteRepository(db: Reader, location: RepositoryIdentityLocation): RepositoryKey | undefined {
+  const remoteKey = location.git ? remoteKeyOf(location.workspaceRoot) : undefined;
   return remoteKey === undefined ? undefined : repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey;
 }
 
-/**
- * A `lookupCheckout` for many workspaces over one connection, as the daemon answers per request: each
- * workspace's git location is read once (a folder outside git is located again, so a later `git init` is seen),
- * and the database is read on every call, so adoption and new records show at once.
- */
+/** A resolver tied to the open catalog connection. Each call sees the checkout currently at the requested path. */
 export function createCheckoutResolver(db: Reader): (workspace: string) => CheckoutContext | undefined {
-  const locations = new Map<string, RepositoryIdentityLocation>();
-  const remoteKeys = new Map<string, RepositoryKey | undefined>();
-  return workspace => {
-    try {
-      gitExecutable();
-    } catch (error) {
-      if (error instanceof GitUnavailableError) return undefined;
-      throw error;
-    }
-    let location = locations.get(workspace);
-    if (location === undefined) {
-      location = repositoryIdentityLocation(workspace);
-      if (location.git) locations.set(workspace, location);
-    }
-    return lookupAt(db, location, remoteKeys);
-  };
+  return workspace => lookupCheckout(db, workspace);
 }
 
 function moveRepositorySettings(db: Writer, fromKey: RepositoryKey, toKey: RepositoryKey): void {
@@ -407,16 +381,8 @@ export function repositoryHistoryIds(repository: RepositoryListing): string[] {
 
 /** Whether git still lists `checkoutPath` as a worktree of its clone; true where git can't say (outside git, no git). */
 function listedByGit(checkoutPath: string): boolean {
-  let listed;
-  try {
-    listed = runGit(checkoutPath, ["worktree", "list", "--porcelain"], { timeout: 10_000 });
-  } catch (error) {
-    if (error instanceof GitUnavailableError) return true;
-    throw error;
-  }
-  if (listed.status !== 0) return true;
-  return listed.stdout.split("\n").filter(line => line.startsWith("worktree "))
-    .some(line => storedPath(line.slice("worktree ".length)) === checkoutPath);
+  const listed = worktreeRegistry(checkoutPath);
+  return listed === undefined || listed.worktrees.some(path => storedPath(path) === checkoutPath);
 }
 
 /** Forget checkouts whose folder is gone or that git no longer lists as a worktree, with their own settings. */

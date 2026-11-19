@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import {
   adoptRemote,
+  createCheckoutResolver,
   linkAlias,
   listRepositories,
   lookupCheckout,
@@ -69,6 +70,42 @@ function settingOwners(database: RerailDatabase): unknown[] {
 }
 
 describe("the repository registry", () => {
+  it("resolves the current linked checkout through moves, replacement, and restoration", async () => {
+    const root = await temporary("rerail-resolver-replace-"), db = open(join(root, "home.sqlite"));
+    const a = gitRepository(join(root, "a")), b = gitRepository(join(root, "b"));
+    const first = recordCheckout(db, a), second = recordCheckout(db, b);
+    const path = join(root, "linked"), moved = join(root, "moved");
+    git(a, "worktree", "add", "--detach", path);
+    const lookup = createCheckoutResolver(db);
+    expect(lookup(path)?.repositoryKey).toBe(first.repositoryKey);
+    git(a, "worktree", "move", path, moved);
+    expect(lookup(path)).toBeUndefined();
+    git(b, "worktree", "add", "--detach", path);
+    expect(lookup(path)).toEqual(lookupCheckout(db, path));
+    expect(lookup(path)?.repositoryKey).toBe(second.repositoryKey);
+    git(b, "worktree", "remove", path);
+    git(a, "worktree", "move", moved, path);
+    expect(lookup(path)?.repositoryKey).toBe(first.repositoryKey);
+  });
+
+  it("observes changed, removed, and included origin URLs in a long-lived resolver", async () => {
+    const root = await temporary("rerail-resolver-remote-"), db = open(join(root, "home.sqlite"));
+    const a = "https://example.invalid/team/alpha", b = "https://example.invalid/team/beta";
+    const first = recordCheckout(db, gitRepository(join(root, "a"), a));
+    const second = recordCheckout(db, gitRepository(join(root, "b"), b));
+    const clone = gitRepository(join(root, "clone"), a), lookup = createCheckoutResolver(db);
+    expect(lookup(clone)?.repositoryKey).toBe(first.repositoryKey);
+    git(clone, "remote", "set-url", "origin", b);
+    expect(lookup(clone)?.repositoryKey).toBe(second.repositoryKey);
+    git(clone, "remote", "remove", "origin");
+    expect(lookup(clone)).toBeUndefined();
+    const include = join(root, "remotes.config");
+    git(clone, "config", "include.path", include);
+    for (const [url, key] of [[a, first.repositoryKey], [b, second.repositoryKey]] as const) {
+      writeFileSync(include, `[remote "origin"]\n  url = ${url}\n`);
+      expect(lookup(clone)?.repositoryKey).toBe(key);
+    }
+  });
   it("puts clones that share a remote and worktrees that share a clone in one repository", async () => {
     const root = await temporary("rerail-registry-join-");
     const database = open(join(root, "rerail.sqlite"));

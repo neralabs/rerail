@@ -122,8 +122,7 @@ export function sessionNoteRules(workspace: string, databasePath = defaultRerail
 }
 
 /**
- * The effective state of many workspaces over one open connection, as the daemon answers per request. Each
- * workspace's git location is read once; the database is read on every call.
+ * Resolve each workspace's current checkout and read its start state over the daemon's open connection.
  */
 export function startStateReader(database: RerailDatabase): (workspace: string) => RepositoryStartState {
   const resolveCheckout = createCheckoutResolver(database);
@@ -132,8 +131,7 @@ export function startStateReader(database: RerailDatabase): (workspace: string) 
 
 /**
  * The per-event check of a resident runtime. OMP and Pi sessions outlive a stop issued from another
- * session, the CLI or the dashboard, so they read the state again on every event: a few indexed rows
- * over a connection held for the runtime's life.
+ * session, the CLI or the dashboard. They check the current checkout and its settings on every event.
  */
 export class RepositoryStartWatch {
   readonly #database: RerailDatabase;

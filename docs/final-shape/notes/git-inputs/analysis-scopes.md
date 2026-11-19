@@ -75,6 +75,11 @@ Older records contain only a hash of the Git directory pathname. Their original 
 Rules can still enumerate those records by scope and scan ID.
 Passive catalog lookup checks the same directory identity before using saved checkout settings.
 A fresh clone can still inherit repository-wide settings through its remote.
+The catalog checks the current checkout and its effective remote when the daemon looks up settings.
+If a different linked worktree takes the old path, the next lookup uses the replacement's repository.
+Registration and pruning use the same Git worktree list. A newline in a path belongs to its name.
+On older Git versions, Rerail reads the linked paths from the common directory's worktree registrations.
+If Rerail cannot read the registry, pruning keeps the recorded checkout.
 The native `scanRrPoliciesAsync` call acquires one run for a durable batch when the caller omits the run handle.
 The batch publishes once all policies and required source reads succeed. A failed batch preserves the earlier owners of its scope.
 An explicit run handle lets the caller group several evaluations before publication.

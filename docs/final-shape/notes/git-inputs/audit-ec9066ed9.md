@@ -2,6 +2,14 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Checkout lookup and pruning after `f15ea8b95`
+
+Cases 81, 82, 86 and 87 now have regression tests. Registration and pruning kept the newline-named worktree and its setting with Git 2.50.1 and 2.35.8. Both catalog suites passed all 28 tests with Git 2.35.8. The five catalog and runtime suites passed 55 tests with the system Git.
+
+The long-lived resolver reads the current checkout on each call. It follows linked-worktree replacement and restoration. An unrecorded clone sees a changed or removed remote, including a remote loaded from an updated include file. The registry reuses a worktree list only after checking the common directory and its registration records.
+
+Fresh discovery has a cost. In 30 warm resolver calls per checkout, the median was 8.69 ms for a recorded checkout and 22.83 ms for an unrecorded clone. This used one open catalog connection on macOS with a one-minute load average of 8.87. The latter lookup also asks Git for the effective remote.
+
 ## Status at `4b4c8754e`
 
 Seventeen implementation issues or performance questions and five rule-interface gaps remain in this review.
