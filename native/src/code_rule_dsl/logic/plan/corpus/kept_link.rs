@@ -17,11 +17,36 @@ use crate::content_store::{ContentStore, HashKey, SourceId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-/// A program's place in the kept link: its image's key and its interface's digest.
+/// A program's place in the kept link: its image's key and its interface.
 #[derive(Clone)]
 pub(super) struct Slot {
     pub key: [u8; 32],
-    pub interface: [u8; 32],
+    pub interface: Interface,
+}
+
+/// The terms of a program's interface, in the merge's order (`interface`'s arguments).
+pub(super) const TERMS: [&str; 12] = ["its place", "its bound", "its guests", "its request asked", "its policy", "its text globs", "its kind sets", "their shared names", "its own names", "its request", "its header", "its core rules"];
+
+/// A program's interface: each term's digest (`TERMS`), so that a slot whose interface changed names what changed.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct Interface(Vec<[u8; 32]>);
+
+impl Interface {
+    /// The terms that differ from `was`'s.
+    pub(super) fn changed(&self, was: &Interface) -> Vec<&'static str> {
+        if self.0.len() != was.0.len() {
+            return vec!["its terms"];
+        }
+        self.0.iter().zip(&was.0).enumerate().filter(|(_, (a, b))| a != b).map(|(t, _)| TERMS.get(t).copied().unwrap_or("a term")).collect()
+    }
+
+    fn hex(&self) -> String {
+        self.0.iter().map(|d| hex(d)).collect::<Vec<_>>().join(":")
+    }
+
+    fn unhex(text: &str) -> Option<Interface> {
+        text.split(':').map(unhex).collect::<Option<Vec<_>>>().map(Interface)
+    }
 }
 
 /// What a kept link holds besides its image.
@@ -35,6 +60,9 @@ pub(super) struct Record {
     pub requests: BTreeMap<[u8; 32], (usize, usize)>,
     /// Each kind set by its kinds: its shared name.
     pub sets: BTreeMap<Vec<String>, String>,
+    /// The library part's name for each of its kind sets: its shared name. A program reading a set the library holds
+    /// names it so (the merge's `set_of` starts from these), in a spliced program as in a linked one.
+    pub library_sets: BTreeMap<String, String>,
     /// The bound every program is read under (`hiding::bound`).
     pub bound: u32,
     /// The tail's: the bound the combined program is hidden to, and the policies.
@@ -46,7 +74,7 @@ pub(super) struct Record {
 pub(super) fn family(programs: usize, extra: &Added, library: &[HashKey]) -> [u8; 32] {
     use sha2::Digest as _;
     let mut h = sha2::Sha256::new();
-    h.update(b"rerail/combine-link/v1\0");
+    h.update(b"rerail/combine-link/v3\0");
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.update((programs as u64).to_le_bytes());
     extra.hash(&mut h);
@@ -60,16 +88,12 @@ pub(super) fn family(programs: usize, extra: &Added, library: &[HashKey]) -> [u8
     h.finalize().into()
 }
 
-/// A program's interface: everything the merge reads of it besides its rules' bodies, in the merge's order. Two
-/// programs of one interface in one slot merge alike: the same header, requests, kind sets, policy and core rules.
-pub(super) fn interface(parts: &[&dyn std::fmt::Debug]) -> [u8; 32] {
+/// A program's interface: everything the merge reads of it besides its rules' bodies, in the merge's order (`TERMS`),
+/// each term's digest. Two programs of one interface in one slot merge alike: the same header, requests, kind sets,
+/// policy and core rules.
+pub(super) fn interface(parts: &[&dyn std::fmt::Debug; 12]) -> Interface {
     use sha2::Digest as _;
-    let mut h = sha2::Sha256::new();
-    for p in parts {
-        h.update(format!("{p:?}").as_bytes());
-        h.update(b"\0");
-    }
-    h.finalize().into()
+    Interface(parts.iter().map(|p| sha2::Sha256::digest(format!("{p:?}").as_bytes()).into()).collect())
 }
 
 fn join(set: &BTreeSet<String>) -> String {
@@ -88,9 +112,10 @@ fn facts_of(r: &Record, digest: &[u8; 32]) -> Facts {
     };
     put("part_program", vec![vec![hex(digest)]]);
     put("combine_count", r.counts.iter().enumerate().map(|(i, n)| vec![i.to_string(), n.to_string()]).collect());
-    put("combine_slot", r.slots.iter().enumerate().map(|(i, s)| vec![i.to_string(), hex(&s.key), hex(&s.interface)]).collect());
+    put("combine_slot", r.slots.iter().enumerate().map(|(i, s)| vec![i.to_string(), hex(&s.key), s.interface.hex()]).collect());
     put("combine_request", r.requests.iter().map(|(key, (k, first))| vec![k.to_string(), hex(key), first.to_string()]).collect());
     put("combine_set", r.sets.iter().map(|(kinds, name)| vec![name.clone(), kinds.join("\u{1f}")]).collect());
+    put("combine_library_set", r.library_sets.iter().map(|(name, shared)| vec![name.clone(), shared.clone()]).collect());
     put("combine_bound", vec![vec![r.bound.to_string(), r.hide.map_or("-".to_owned(), |b| b.to_string())]]);
     put(
         "combine_policy",
@@ -105,9 +130,10 @@ fn facts_of(r: &Record, digest: &[u8; 32]) -> Facts {
 
 fn record_of(facts: &Facts) -> Option<Record> {
     let counts = ordered(facts, "combine_count").into_iter().map(|r| r.get(1)?.parse().ok()).collect::<Option<Vec<usize>>>()?;
-    let slots = ordered(facts, "combine_slot").into_iter().map(|r| Some(Slot { key: unhex(r.get(1)?)?, interface: unhex(r.get(2)?)? })).collect::<Option<Vec<_>>>()?;
+    let slots = ordered(facts, "combine_slot").into_iter().map(|r| Some(Slot { key: unhex(r.get(1)?)?, interface: Interface::unhex(r.get(2)?)? })).collect::<Option<Vec<_>>>()?;
     let requests = rows_of(facts, "combine_request").map(|r| Some((unhex(r.get(1)?)?, (r.first()?.parse().ok()?, r.get(2)?.parse().ok()?)))).collect::<Option<BTreeMap<_, _>>>()?;
     let sets = rows_of(facts, "combine_set").map(|r| Some((r.get(1).map(|k| if k.is_empty() { Vec::new() } else { k.split('\u{1f}').map(str::to_owned).collect() })?, r.first()?.clone()))).collect::<Option<BTreeMap<_, _>>>()?;
+    let library_sets = rows_of(facts, "combine_library_set").map(|r| Some((r.first()?.clone(), r.get(1)?.clone()))).collect::<Option<BTreeMap<_, _>>>()?;
     let b = rows_of(facts, "combine_bound").next()?;
     let bound = b.first()?.parse().ok()?;
     let hide = match b.get(1)?.as_str() {
@@ -118,7 +144,7 @@ fn record_of(facts: &Facts) -> Option<Record> {
         .into_iter()
         .map(|r| Some(Policy { prefix: r.get(1)?.clone(), own: split(r.get(2)?), named: split(r.get(3)?), library: split(r.get(4)?), scope: serde_json::from_str(r.get(5)?).ok()? }))
         .collect::<Option<Vec<_>>>()?;
-    Some(Record { counts, slots, requests, sets, bound, hide, policies })
+    Some(Record { counts, slots, requests, sets, library_sets, bound, hide, policies })
 }
 
 /// The link kept under `family`, its record, and the sources it was read from.

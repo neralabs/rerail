@@ -2016,7 +2016,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     // The library, when held once, is the first part: its names are the run's (decision 0089 §2).
     let units = library.into_iter().map(|l| (None, l)).chain(parsed.into_iter().enumerate().map(|(i, p)| (Some(i), p)));
     let mut rules: Vec<P::Rules> = Vec::new();
-    let mut interfaces: Vec<[u8; 32]> = Vec::new();
+    let mut interfaces: Vec<kept_link::Interface> = Vec::new();
     for (unit, part) in units {
         let i = unit.unwrap_or(usize::MAX);
         let prog = part.head();
@@ -2073,8 +2073,8 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     // The link kept for the next run's splice (decision 0373), where the libraries are held once.
     let mut kept = None;
     if let (Some((keys, family)), Some(store), Some(counts), Some(v), true) = (&keeping, images.as_deref(), counts, P::linked_version(&all), shared && interfaces.len() == programs.len()) {
-        let slots = keys.iter().zip(&interfaces).map(|(k, f)| kept_link::Slot { key: *k, interface: *f }).collect();
-        kept_link::record(store, family, v, &kept_link::Record { counts, slots, requests: first_askers, sets, bound: bounds[0], hide, policies: policies.clone() });
+        let slots = keys.iter().zip(&interfaces).map(|(k, f)| kept_link::Slot { key: *k, interface: f.clone() }).collect();
+        kept_link::record(store, family, v, &kept_link::Record { counts, slots, requests: first_askers, sets, library_sets, bound: bounds[0], hide, policies: policies.clone() });
         kept = Some(TailKept(*family));
     }
     Ok((all, Tail::Many { hide, policies, kept }))
@@ -2141,7 +2141,8 @@ fn combine_spliced<P: link::Part>(
         let (named, library_names) = front::globals(&prog.settings());
         let globs = prog.text_globs();
         let kinds_of = prog.kindsets();
-        let mut set_of: BTreeMap<String, String> = BTreeMap::new();
+        // From the library's sets, as the link names them (`combine_linked_as`).
+        let mut set_of: BTreeMap<String, String> = rec.library_sets.clone();
         for (name, kinds) in &kinds_of {
             let Some(shared) = rec.sets.get(kinds) else { return Ok(None) };
             set_of.insert(name.clone(), shared.clone());
@@ -2153,7 +2154,7 @@ fn combine_spliced<P: link::Part>(
         let (header, renamed) = part.into_parts(&names);
         let interface = kept_link::interface(&[&i, &bound, &guests, &asked, &Some(&policy), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &crate::code_rule_dsl::logic::program_image::fields::Shown(P::header_fields(&header)), &core_rules]);
         if interface != rec.slots[i].interface {
-            crate::code_rule_dsl::logic::profile::decision("the combine's last link (decision 0373)", || format!("linked again: program #{i}'s interface changed"));
+            crate::code_rule_dsl::logic::profile::decision("the combine's last link (decision 0373)", || format!("linked again: program #{i}'s interface changed ({})", interface.changed(&rec.slots[i].interface).join(", ")));
             return Ok(None);
         }
         rec.slots[i].key = keys[i];
