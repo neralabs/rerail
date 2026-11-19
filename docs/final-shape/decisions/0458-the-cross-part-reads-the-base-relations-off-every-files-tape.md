@@ -104,8 +104,16 @@ Each has its test before the code that meets it.
   documents' old rows are counted out and their new ones in, read where they lie (`RelStats::documents_read`); else
   they are counted off the corpus batch. A session's input delta of a base relation no longer reads entries: it is
   the changed documents' versions, else the session's kept rows by document.
-- **Not yet:** a session (0077) still digests a base relation by its rows (`retain::kept_source`), holds no corpus
-  batch from run to run, and keeps no base statistics (it counts them off the batch each run).
+- **Step 5, R6** (2026-11-19, the 50 data-layer files, against 0439's runs): 589 outputs equal across the edit,
+  the warm run after it and the edited tree's cold run; the chain's values 17.9 MB to 10.6 MB, no base relation's
+  granule left; instructions cold 198.9 G to 212.3 G, the edit 37.3 G to 35.2 G; peak memory cold 888 MB to 724 MB.
+  Two costs it found are fixed: the old version (`Before`) answered no lookup, so every stratum hashed all its rows,
+  and the corpus batch made what the cross part does not read (tree digests). Kept after an edit is still the cross
+  part's `kind`, a view of `node` the maintain mode derives (work queue Q287, as before this decision).
+- **Not yet:** a document is not yet made when first read: the corpus batch makes every document (on the 50 files'
+  edit 0.45 s, most of what the batch adds over the memo's base rows). A session (0077) still digests a base relation
+  by its rows (`retain::kept_source`), holds no corpus batch from run to run, and keeps no base statistics (it counts
+  them off the batch each run).
 
 ## Open
 

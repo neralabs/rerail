@@ -4456,6 +4456,20 @@ after the phases went on the run path (0083).
     rules run in 60 s (profiled) instead of past 180 s. All 57 rules run over the 50 files.
   - `RERAIL_KEEPS_TRACE=<text>` prints the pricing's estimates for relations whose names hold the text.
 
+### Q287. An edit keeps the rows of the cross part's `kind`, a view of `node` (open)
+
+Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one-file edit).
+- **What.** The data-layer prelude's `kind(n, k) :- node(_, n, k, _, _)` is a view of an input's columns (Q37). The
+  split derives it in the cross part (`on_version::crossing`'s `projected`), and a cold run holds it as a view
+  (`input_view`: held in place, or read into flat rows, `viewed`), which the writer skips. Yet the chain keeps it as
+  rows: 2 entries, 255,598 rows, 0.55 MB, as before 0458 (255,610 then): a view's rows made into a relation (0353).
+- **Likely why.** The edit's maintain mode derives `kind` from `node`'s versions as a maintained relation, not as a
+  view, and `retain::after` keeps a derived relation that is neither `view` nor `viewed`. `Retained::views` and the
+  `maintain::held_views` its comment names are gone: nothing records the views any more.
+- **Next.** Confirm on the 50 files which run writes the entries (`RERAIL_PROFILE`'s "the kept part" decisions);
+  then hold a view of a base relation as a view in the maintain mode too (its `Old`, `Minus` and `Plus` its input's
+  versions read through its columns), and a guard in `retain::after` that refuses to keep an input view's rows.
+
 ### Q286. A warm run on a Linux host writes the observer's journal cursor (`the_run_after_a_cold_one_writes_nothing`) (open)
 
 Found 2026-11-19, running the corpus tests on a Linux farm host while building 0458 steps 1–3.
@@ -4519,6 +4533,15 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
   old and new rows, read where they lie (`RelStats::documents_read`). Tests: `cross_views_tests` R1–R5 and the
   statistics' (counted cold, kept warm, patched by an edit), the warm-run, maintain and keeper tests; all 140 corpus
   tests on the M3. Next: step 5, R6 measured over the 50 files.
+- **0458 step 5, measured** (2026-11-19, M5 at load 40–70, profiling build; against the 0439 runs, `tmp/r50-q285`):
+  589 outputs equal across the edit, the warm run after it and the edited tree's cold run. Chain values 17.9 MB to
+  10.6 MB (granules 13.9 to 6.3 MB): no base relation's granule is left. Instructions: cold 198.9 G to 212.3 G (the
+  edited tree's cold 197.2 G to 195.2 G), the edit 37.3 G to 35.2 G, warm 0.8 G both; peak memory cold 888 to 724
+  MB, the edit 525 to 472 MB. On the way, two costs found and fixed: the base relations' old version answered no
+  lookup (every stratum hashed all its rows: the edit's cross part 46.1 G, now 8.8 G), and the corpus batch made
+  what the cross part does not read (tree digests). Left: the edit still makes every document of the corpus batch
+  (0.45 s, most of `stats`' 9.6 G against 1.6 G before): 0458's "a document is made when first read" is not built.
+  Next: that; Q287 (`kind`'s rows kept after an edit).
 
 ### Q284. (Q243 here before the hub merge 535cc2c8b) A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 
