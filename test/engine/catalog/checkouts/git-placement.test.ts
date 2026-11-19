@@ -628,10 +628,15 @@ async function gitFolderLinked(path: string, store: string): Promise<string> {
   return main;
 }
 
+/** Git's list of the worktrees of `checkout`; undefined where Git refuses the folder. */
+function listedByGit(checkout: string): string[] | undefined {
+  return gitsAnswer(checkout).git ? gitsRegistry(checkout) : undefined;
+}
+
 /** Asks the registry of `checkout` three times, each against Git's list; returns how many Git processes placed it. */
 function registryPlacements(checkout: string): number {
   const before = locateCalls(checkout);
-  for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(checkout)?.worktrees, checkout).toEqual(gitsRegistry(checkout));
+  for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(checkout)?.worktrees, checkout).toEqual(listedByGit(checkout));
   return locateCalls(checkout) - before;
 }
 
@@ -656,14 +661,17 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     const link = join(root, "w.git");
     linkFolder(join(main, ".git", "worktrees", "w"), link);
     await rewriteInPlace(join(worktree, ".git"), `gitdir: ${link}\n`);
-    expect(registryPlacements(worktree)).toBe(1);
+    // Git for Windows refuses a .git file that names a junction to a worktree's Git folder: there each list asks Git, as
+    // the registry did before, since a refusal is never kept.
+    const placements = gitsAnswer(worktree).git ? 1 : 3;
+    expect(registryPlacements(worktree)).toBe(placements);
 
     // Git refuses the folder once the link names another worktree's Git folder.
     await relink(link, join(other, ".git", "worktrees", "w"));
     expect(gitsAnswer(worktree).git).toBe(false);
     expect(worktreeRegistry(worktree)).toBeUndefined();
     await relink(link, join(main, ".git", "worktrees", "w"));
-    expect(registryPlacements(worktree)).toBe(1);
+    expect(registryPlacements(worktree)).toBe(placements);
   });
 
   it("lists as Git does once a checkout's .git link names another Git folder, and none once that Git folder moves", async () => {
@@ -739,7 +747,9 @@ describe("an entry Git reads through a link is read through it", () => {
     const answer = gitsAnswer(main);
 
     await rename(join(root, "objects"), join(root, "objects-gone"));
-    expect(gitsAnswer(main)).not.toEqual(answer);
+    // Git on Linux reads objects through the link and now refuses the checkout; Git for Windows reads the junction's
+    // own entry, as Node's access does there, and still takes it.
+    if (process.platform !== "win32") expect(gitsAnswer(main)).not.toEqual(answer);
     expectGitsAnswers(main);
   });
 
