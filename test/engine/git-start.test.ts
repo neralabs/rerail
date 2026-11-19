@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { closeSync, constants as fsConstants, existsSync, openSync, readdirSync, readFileSync } from "node:fs";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,7 +10,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../src/engine/child-process.js", { spy: true });
 
 import { spawn, spawnSync } from "../../src/engine/child-process.js";
-import { gitCrlfPaths, gitHead, gitModifiedOrUntrackedPaths, readGitBlobIds, readGitBlobs, runGit, runGitAsync } from "../../src/engine/git.js";
+import { findGit, gitCrlfPaths, gitHead, gitModifiedOrUntrackedPaths, readGitBlobIds, readGitBlobs, runGit, runGitAsync } from "../../src/engine/git.js";
 import {
   runGitSync,
   startGit,
@@ -509,6 +509,68 @@ async function reads() {
   }
 }
 
+/** What {@link daemonReadsAfterMoves} read: each read's head and the Git the daemon kept after it. */
+interface MovedReads {
+  before: { head: string; kept: string };
+  blocking: { head: string; kept: string };
+  streamed: { head: string; kept: string };
+  /** The program of each Git start Node made from the first move on, in order. */
+  nodeStarts: string[];
+}
+
+/**
+ * Has the daemon, started from its built entry with the two folders of `copies` first on `PATH`, each holding a copy of
+ * this machine's Git, read HEAD once; then move the first folder away and read HEAD with a blocking call, then move the
+ * second away and read it with a call that does not block. Each move takes away the Git the daemon kept, so each call
+ * starts a program that is no longer there before Git is looked for again.
+ */
+async function daemonReadsAfterMoves(root: string, copies: readonly string[]): Promise<MovedReads> {
+  const home = await folder("home");
+  const out = join(home, "moved.json");
+  const preload = join(home, "moved.cjs");
+  const gitModule = pathToFileURL(join(packageRoot, "dist", "engine", "git.js")).href;
+  await writeFile(preload, `const cp = require("node:child_process");
+const fs = require("node:fs");
+const nodeStarts = [];
+const noteGit = file => { if (String(file).split("/").pop() === "git") nodeStarts.push(String(file)); };
+const spawnOf = cp.ChildProcess.prototype.spawn;
+cp.ChildProcess.prototype.spawn = function (options) { noteGit(options.file); return spawnOf.call(this, options); };
+const spawnSyncOf = cp.spawnSync;
+cp.spawnSync = function (file, ...rest) { noteGit(file); return spawnSyncOf.call(this, file, ...rest); };
+require("node:module").syncBuiltinESMExports();
+const listen = require("node:net").Server.prototype.listen;
+let reading = false;
+require("node:net").Server.prototype.listen = function (...args) {
+  if (!reading) this.once("listening", reads);
+  reading = true;
+  return listen.apply(this, args);
+};
+async function reads() {
+  const git = await import(${JSON.stringify(gitModule)});
+  const root = ${JSON.stringify(root)};
+  const [first, second] = ${JSON.stringify(copies)};
+  const before = { head: await git.gitHead(root), kept: git.gitExecutable() };
+  nodeStarts.length = 0;
+  fs.renameSync(first, first + "-gone");
+  const blocking = { head: git.runGit(root, ["rev-parse", "HEAD"]).stdout.trim(), kept: git.gitExecutable() };
+  fs.renameSync(second, second + "-gone");
+  const streamed = { head: await git.gitHead(root), kept: git.gitExecutable() };
+  fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify({ before, blocking, streamed, nodeStarts }));
+}
+`);
+  const env = watchedEnvironment(home);
+  env.PATH = [...copies, ...(env.PATH === undefined ? [] : [env.PATH])].join(":");
+  env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ""} --require ${JSON.stringify(preload)}`;
+  const daemon = daemonProcess(home, env);
+  try {
+    await until(() => existsSync(out), 60_000, "the daemon's reads");
+    return JSON.parse(await readFile(out, "utf8")) as MovedReads;
+  } finally {
+    daemon.kill("SIGKILL");
+    await once(daemon, "close");
+  }
+}
+
 describe.runIf(LINUX)("the daemon's process entry", () => {
   it("starts the daemon's Git through the engine: Node starts no Git, and the head read is Git's", async () => {
     const root = await repository();
@@ -516,5 +578,25 @@ describe.runIf(LINUX)("the daemon's process entry", () => {
     const head = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
     // The main thread's system time per read is a figure for the message, which decides nothing: it varies with the host.
     expect({ head: reads.head, nodeStarts: reads.nodeStarts }, JSON.stringify(reads)).toEqual({ head, nodeStarts: 0 });
+  }, 90_000);
+
+  it("finds Git again once the Git it kept is gone and starts that one through the engine too: Node starts only each start that found no program", async () => {
+    const root = await repository();
+    const parent = await folder("git-copies");
+    const machineGit = findGit().path!;
+    const copies = ["first", "second"].map(name => join(parent, name));
+    for (const copy of copies) {
+      await mkdir(copy);
+      await copyFile(machineGit, join(copy, "git"));
+    }
+    const reads = await daemonReadsAfterMoves(root, copies);
+    const head = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const [first, second] = copies.map(copy => join(copy, "git"));
+    expect(reads, JSON.stringify(reads)).toEqual({
+      before: { head, kept: first },
+      blocking: { head, kept: second },
+      streamed: { head, kept: machineGit },
+      nodeStarts: [first, second],
+    });
   }, 90_000);
 });
