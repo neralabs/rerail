@@ -233,7 +233,7 @@ added.
 ## O8. Tape format
 
 **Two different "v8"s.** P's tape spike (2026-10-25, `research/tape-v8-measurements.md`,
-`experiments/tape-v8/`) measured a "v8" proposal (SoA columns, absolute u16/u32 positions) and
+`experiments/tape-v8/`, removed; at 7efcac9c67) measured a "v8" proposal (SoA columns, absolute u16/u32 positions) and
 rejected it: 11.1–13.5 B/node, 1.24–1.59× v7 (1.47–1.90× after zstd). W's `TMPTAPE8` is something
 else: v7 plus N's supertype table (`c3dd82e4`, `3cf93edb`). No other tape format past v7 exists in
 any worktree, branch or repo under `~/orca` (searched 2026-10-27).
@@ -279,7 +279,7 @@ crates.io grammars, not Rerail's vendored and patched ones, so each must be reru
 kept (resolved 2026-11-02, 0025 amended: no; parents are rebuilt at decode).
 
 **Closure.** Run the five measurements on Rerail's grammars; record an accepted decision (cite
-0003 and the spike indexes); then copy P `experiments/tape-v8/src/{main.rs, sql.rs}` into
+0003 and the spike indexes); then copy P `experiments/tape-v8/src/{main.rs, sql.rs}` (removed; at 7efcac9c67) into
 `cr/tape/v9np.rs` and adapt (05 Phase 2). Until then everything reads tapes only through
 `TapeDoc`'s `transducer_*` accessors, so the switch stays local to `tape.rs`.
 
@@ -3317,12 +3317,12 @@ a phase output (t24, "not built").
 
 ## O-test-collect-rules. `test-budget` counts tests with rules, not pytest's artifact
 
-Decision 0142 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
+Decision 0142 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/` (removed; at 7efcac9c67).
 
 **Built (2026-11-08).** The `product` aggregate (`de8b50a9f`); `python/pytest-collect.rr` (`8c68e8d82`), the
 model's levels 0–6 as rules, with lengths evaluated on demand (`pc_want`) and bounded by a number domain, not by the
 tree; `test-budget` counting with it, the artifact optional, `collect_disabled` reported as `collection_disabled`.
-**Measured (2026-11-08, pinned corpus, against `notes/t13/truth-full.json`).**
+**Measured (2026-11-08, pinned corpus, against `notes/t13/truth-full.json` (removed; at 7efcac9c67)).**
 
 | Scope | Files exact | Total (pytest 14,449; model 13,610) | CPU |
 |---|---:|---:|---:|
