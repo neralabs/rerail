@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { gitModifiedOrUntrackedPaths, runGit } from "../../src/engine/git.js";
+import { gitModifiedOrUntrackedPaths, runGit, runGitWithoutBlocking } from "../../src/engine/git.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const roots: string[] = [];
@@ -91,8 +91,8 @@ describe("Rerail's Git calls start no filter program only a repository's own con
     await writeFile(join(work, "notes.txt"), "two\n");
     await writeFile(join(work, "read.md"), "bb\n");
 
-    const audit = runGit(work, AUDIT_DIFF);
-    const scan = runGit(work, SCAN_DIFF);
+    const audit = await runGitWithoutBlocking(work, AUDIT_DIFF);
+    const scan = await runGitWithoutBlocking(work, SCAN_DIFF);
 
     expect(runs(marker)).toBe(0);
     expect([audit.status, scan.status]).toEqual([0, 0]);
@@ -119,7 +119,7 @@ describe("Rerail's Git calls start no filter program only a repository's own con
     await appendFile(join(work, ".git", "config"), `[filter ""]\n\tclean = ${configValue(recording(marker))}\n`);
     await writeFile(join(work, "notes.txt"), "two\n");
 
-    const answers = [runGit(work, AUDIT_DIFF), runGit(work, SCAN_DIFF)];
+    const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
     const walk = await gitModifiedOrUntrackedPaths(work);
 
     expect(runs(marker)).toBe(0);
@@ -150,7 +150,7 @@ describe("Rerail's Git calls start no filter program only a repository's own con
     await touch(join(work, "notes.txt"));
     const ownBefore = runs(own);
 
-    const audit = runGit(work, AUDIT_DIFF);
+    const audit = await runGitWithoutBlocking(work, AUDIT_DIFF);
 
     expect(runs(repositorys)).toBe(0);
     expect(runs(own)).toBeGreaterThan(ownBefore);
@@ -167,10 +167,10 @@ describe("Rerail's Git calls start no filter program only a repository's own con
     await writeFile(other, "[core]\n\tquotepath = false\n");
 
     vi.stubEnv("GIT_CONFIG", other);
-    const audit = runGit(work, AUDIT_DIFF);
+    const audit = await runGitWithoutBlocking(work, AUDIT_DIFF);
     const firstSeen = await gitModifiedOrUntrackedPaths(work);
     vi.stubEnv("GIT_CONFIG", join(root, "missing.gitconfig"));
-    const scan = runGit(work, SCAN_DIFF);
+    const scan = await runGitWithoutBlocking(work, SCAN_DIFF);
 
     expect(runs(marker)).toBe(0);
     expect([audit.status, scan.status]).toEqual([0, 0]);
@@ -211,7 +211,7 @@ describe("Rerail's Git calls start no filter program only a repository's own con
     vi.resetModules();
     const fresh = await import("../../src/engine/git.js");
 
-    const audit = fresh.runGit(work, AUDIT_DIFF);
+    const audit = await fresh.runGitWithoutBlocking(work, AUDIT_DIFF);
     const walk = await fresh.gitModifiedOrUntrackedPaths(work);
 
     expect([audit.status, audit.stdout]).toEqual([128, ""]);
@@ -269,7 +269,7 @@ async function settle(work: string): Promise<void> {
 
 /** What Rerail's three listings answer in `cwd`: the audit's diff, the scan's, and the session walk's changed files. */
 async function rerailListings(cwd: string): Promise<string[][]> {
-  return [listed(runGit(cwd, AUDIT_DIFF).stdout), listed(runGit(cwd, SCAN_DIFF).stdout), sorted(await gitModifiedOrUntrackedPaths(cwd) ?? [])];
+  return [listed((await runGitWithoutBlocking(cwd, AUDIT_DIFF)).stdout), listed((await runGitWithoutBlocking(cwd, SCAN_DIFF)).stdout), sorted(await gitModifiedOrUntrackedPaths(cwd) ?? [])];
 }
 
 /** What Git's own three listings answer in `cwd`, running every driver the config names. */
@@ -321,7 +321,7 @@ describe("Rerail's listings of changed files answer as the person's Git does", (
     expect(below).toEqual(gitListings(join(work, "sub")));
     expect(below[0]).toEqual(["inner.txt"]);
     expect(inLinked).toEqual(gitListings(linked));
-    expect(listed(runGit(unborn, AUDIT_DIFF).stdout)).toEqual(listed(git(unborn, ...AUDIT_DIFF)));
+    expect(listed((await runGitWithoutBlocking(unborn, AUDIT_DIFF)).stdout)).toEqual(listed(git(unborn, ...AUDIT_DIFF)));
     expect(sorted(await gitModifiedOrUntrackedPaths(unborn) ?? [])).toEqual(listed(git(unborn, ...WALK_LISTING)));
   }, 60_000);
 
@@ -406,7 +406,7 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     const said = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const git = (...args: string[]) => execFileSync("git", ["-c", "core.fsmonitor=false", ...args], { cwd: work, encoding: "utf8" });
 
-    const answers = [runGit(work, AUDIT_DIFF), runGit(work, SCAN_DIFF)];
+    const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
     const walk = await gitModifiedOrUntrackedPaths(work);
 
     expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, git(...AUDIT_DIFF)], [0, git(...SCAN_DIFF)]]);
@@ -423,7 +423,7 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     const { work, marker } = await checkoutWithDriver(root);
     const said = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    expect(runGit(work, AUDIT_DIFF).stdout).toBe("notes.txt\0");
+    expect((await runGitWithoutBlocking(work, AUDIT_DIFF)).stdout).toBe("notes.txt\0");
     expect(existsSync(marker)).toBe(false);
     expect(said.mock.calls.map(([text]) => String(text)).filter(text => text.startsWith("rerail:"))).toEqual([]);
   }, 60_000);

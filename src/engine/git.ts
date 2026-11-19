@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { homedir, userInfo } from "node:os";
+import { availableParallelism, homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
 import { getSystemErrorMap, promisify } from "node:util";
 import { MessageChannel, type MessagePort, receiveMessageOnPort, Worker } from "node:worker_threads";
@@ -11,7 +11,7 @@ import {
   CONFIG_LISTING, configEntryVariables, driverOverrides, listedEntries, oldGitNotice, readDriverConfig, worktreeRead, type ListedEntry,
 } from "./git-filter-drivers.js";
 import {
-  askableWithoutConfig, nameDiff, outsideSubmodules, UNASKED, withChangedSubmodules, type DiffRepository, type GitFailure, type GuardedRepository,
+  nameDiff, outsideSubmodules, repositoryConfig, UNASKED, withChangedSubmodules, type DiffRepository, type GitFailure, type GuardedRepository,
   type Places, type SubmoduleOpener,
 } from "./git-submodule-state.js";
 
@@ -1014,24 +1014,90 @@ function timeLeft(limitMs: number): () => number {
 }
 
 /**
+ * {@link timeLeft} of a limit that starts when it is first asked, as the first Git of a call that does not block
+ * starts: the time the call waited for the event loop before it is not Git's, as one Git's limit started with it.
+ */
+function timeLeftFromFirstStart(limitMs: number): () => number {
+  let left: (() => number) | undefined;
+  return () => (left ??= timeLeft(limitMs))();
+}
+
+/**
  * `git -C <cwd> <args>` with fsmonitor, hooks and signature checks disabled ({@link SAFE_CONFIG}), in
  * {@link gitEnvironment} (no optional locks, no lazy fetch of a partial clone's missing objects), and a 10 s default
  * timeout; throws {@link GitUnavailableError} when Git is missing, never on a non-zero exit. A call that reads worktree
  * files ({@link worktreeRead}) runs with each filter driver the repository's config defines set as the person's own
- * config sets it, or to no program ({@link guardedSync}); a `git diff --name-only -z` that would look into submodules
- * runs with Git kept out of them, and Rerail asks each through the same guard (`git-submodule-state.ts`). A call
- * whose config Git cannot list is not made: its result carries the listing's status and error, and none of its output.
- * Every Git a guarded call starts shares the call's one time limit ({@link withinCallLimit}). On a Git older than 2.31
- * every call runs as it did before the guard, and the process says why once ({@link guardWorks}).
+ * config sets it, or to no program ({@link guardedSync}). A call that would look into submodules runs as it is, Git
+ * looking into each with that submodule's drivers as they are: the audit's and the scan's `git diff --name-only -z`,
+ * which list submodules, run through {@link runGitWithoutBlocking}, which keeps Git out of them. A call whose config
+ * Git cannot list is not made: its result carries the listing's status and error, and none of its output. Every Git a
+ * guarded call starts shares the call's one time limit ({@link withinCallLimit}). On a Git older than 2.31 every call
+ * runs as it did before the guard, and the process says why once ({@link guardWorks}).
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
-  const read = worktreeRead(args);
-  if (read === "none") return startGitSync(cwd, args, options);
+  if (worktreeRead(args) === "none") return startGitSync(cwd, args, options);
   const git = withinCallLimit(options.timeout ?? DEFAULT_TIMEOUT_MS);
   if (!guardWorks(git, cwd)) return git(cwd, args, options);
   const guarded = guardedSync(git, cwd, options.env);
-  if (!("entries" in guarded)) return guarded;
-  return read === "files" ? git(cwd, args, { ...options, env: guarded.env }) : diffOutsideSubmodules({ git, cwd, args, options }, guarded);
+  return "entries" in guarded ? git(cwd, args, { ...options, env: guarded.env }) : guarded;
+}
+
+/**
+ * {@link runGit} without blocking the thread, for a call a person may wait on while the process serves others: the
+ * same guard, and a `git diff --name-only -z` that would look into submodules runs with Git kept out of them, Rerail
+ * asking each through the same guard (`git-submodule-state.ts`), all of them at once. Every Git it starts shares the
+ * call's one time limit and runs among at most {@link STARTS_AT_ONCE} of the call's Gits ({@link laterWithinCallLimit}),
+ * so the call ends within its limit (10 s by default), as one Git did before the guard; past it, it fails with the
+ * error `spawnSync` gives a Git that ran past its limit, as {@link runGit} does.
+ */
+export async function runGitWithoutBlocking(cwd: string, args: readonly string[], options: RunGitOptions = {}): Promise<GitResult> {
+  const git = laterWithinCallLimit(options.timeout ?? DEFAULT_TIMEOUT_MS);
+  if (worktreeRead(args) === "none" || !(await guardWorksLater(async () => await gitVersionLater(git, cwd)))) return await git(cwd, args, options);
+  const guarded = await guardedLater(git, cwd, options.env);
+  return "entries" in guarded ? await diffOutsideSubmodules({ git, cwd, args, options }, guarded) : guarded;
+}
+
+/** Starts one Git of a {@link runGitWithoutBlocking} call, within what is left of the call's time limit. */
+type LaterGit = (cwd: string, args: readonly string[], options?: RunGitOptions) => Promise<GitResult>;
+
+/**
+ * The most Git processes one {@link runGitWithoutBlocking} call runs at once: one per processor, as Git's own parallel
+ * work defaults to. A checkout's submodules are asked at once, and a thousand of them start no thousand Gits.
+ */
+const STARTS_AT_ONCE = Math.max(1, availableParallelism());
+
+/**
+ * The {@link LaterGit} of a call whose time limit is `limitMs`: each Git waits for one of {@link STARTS_AT_ONCE} places,
+ * then gets what is left of the limit; one asked once it is spent is not started, and one the limit ended fails, each
+ * as a Git that ran out of it under {@link runGit} ({@link spentLimit}).
+ */
+function laterWithinCallLimit(limitMs: number): LaterGit {
+  const left = timeLeftFromFirstStart(limitMs);
+  const place = inTurn(STARTS_AT_ONCE);
+  return async (cwd, args, options = {}) => await place(async () => {
+    const rest = left();
+    if (rest === 0) return spentLimit(cwd, args);
+    const result = await runGitAsync(cwd, args, { ...options, timeout: rest });
+    return result.status === null && left() === 0 ? spentLimit(cwd, args) : result;
+  });
+}
+
+/** Runs each `work` given it while fewer than `count` run, the others in the order they came as each one ends. */
+function inTurn(count: number): <T>(work: () => Promise<T>) => Promise<T> {
+  let running = 0;
+  const waiting: Array<() => void> = [];
+  return async work => {
+    if (running < count) running += 1;
+    else await new Promise<void>(resolve => waiting.push(resolve));
+    try {
+      return await work();
+    } finally {
+      // The place passes to the next waiting work, or is given back.
+      const next = waiting.shift();
+      if (next === undefined) running -= 1;
+      else next();
+    }
+  };
 }
 
 /** Starts one Git of a {@link runGit} call, as {@link startGitSync} does, within what is left of the call's time limit. */
@@ -1083,7 +1149,21 @@ interface Guarded {
  * processes: a writer that changes the config between them can have its driver started (docs/threat-model.md, T11).
  */
 function guardedSync(git: CallGit, cwd: string, env: GitVariables = {}): Guarded | GitResult {
-  const listing = git(cwd, CONFIG_LISTING, { env: { ...env, GIT_CONFIG: undefined }, maxBuffer: MAX_LISTING_BYTES });
+  return guardedFrom(git(cwd, CONFIG_LISTING, listingOptions(env)), env);
+}
+
+/** {@link guardedSync} without blocking. */
+async function guardedLater(git: LaterGit, cwd: string, env: GitVariables = {}): Promise<Guarded | GitResult> {
+  return guardedFrom(await git(cwd, CONFIG_LISTING, listingOptions(env)), env);
+}
+
+/** How the guard lists the config of a repository whose calls run with `env` set. */
+function listingOptions(env: GitVariables): RunGitOptions {
+  return { env: { ...env, GIT_CONFIG: undefined }, maxBuffer: MAX_LISTING_BYTES };
+}
+
+/** {@link Guarded} from the guard's config `listing`, or how it failed. */
+function guardedFrom(listing: GitResult, env: GitVariables): Guarded | GitResult {
   return listing.status === 0 && listing.error === undefined ? guardedBy(listing.stdout, env) : unanswered(listing);
 }
 
@@ -1100,45 +1180,46 @@ function unanswered(failure: GitFailure): GitResult {
 }
 
 /**
- * A call that would look into submodules, under `guarded`. A `git diff --name-only -z` is answered as Git answers it
- * with Git looking into none: run with `--ignore-submodules=dirty`, then each submodule it would have looked into asked
- * through the guard, opened as Git opens a submodule (`git-submodule-state.ts`). Any other such call (Rerail makes
- * none) runs as it is, so Git looks into each submodule with that submodule's drivers as they are.
+ * A call that reads worktree files, under `guarded`. A `git diff --name-only -z` that would look into submodules is
+ * answered as Git answers it with Git looking into none: run with `--ignore-submodules=dirty`, then each submodule it
+ * would have looked into asked through the guard, opened as Git opens a submodule (`git-submodule-state.ts`). Any
+ * other call runs as it is, so one that would look into submodules (Rerail makes none) has Git look into each with
+ * that submodule's drivers as they are.
  */
-function diffOutsideSubmodules({ git, cwd, args, options }: GuardedCall, guarded: Guarded): GitResult {
+async function diffOutsideSubmodules({ git, cwd, args, options }: GuardedCall, guarded: Guarded): Promise<GitResult> {
   const diff = nameDiff(args);
-  if (diff === undefined) return git(cwd, args, { ...options, env: guarded.env });
-  const outside = git(cwd, outsideSubmodules(args), { ...options, env: guarded.env });
+  if (diff === undefined) return await git(cwd, args, { ...options, env: guarded.env });
+  const outside = await git(cwd, outsideSubmodules(args), { ...options, env: guarded.env });
   if (outside.status !== 0 || outside.error !== undefined) return outside;
-  const answer = withChangedSubmodules(outside.stdout, diff, diffRepository(git, cwd, guarded), submoduleOpener(git, options.env));
+  const answer = await withChangedSubmodules(outside.stdout, diff, diffRepository(git, cwd, guarded), submoduleOpener(git, options.env));
   return typeof answer === "string" ? { ...outside, stdout: answer } : unanswered(answer);
 }
 
-/** A {@link runGit} call the guard answers: its Git starter, folder, arguments and options. */
+/** A {@link runGitWithoutBlocking} call the guard answers: its Git starter, folder, arguments and options. */
 interface GuardedCall {
-  readonly git: CallGit;
+  readonly git: LaterGit;
   readonly cwd: string;
   readonly args: readonly string[];
   readonly options: RunGitOptions;
 }
 
 /** Stdout of each question `git -C <cwd> <args>` with `env` set, or how it failed. */
-function asker(git: CallGit, cwd: string, env: GitVariables): (args: readonly string[]) => string | GitFailure {
-  return args => {
-    const answer = git(cwd, args, { env, maxBuffer: MAX_LISTING_BYTES });
+function asker(git: LaterGit, cwd: string, env: GitVariables): (args: readonly string[]) => Promise<string | GitFailure> {
+  return async args => {
+    const answer = await git(cwd, args, { env, maxBuffer: MAX_LISTING_BYTES });
     return answer.status === 0 && answer.error === undefined ? answer.stdout : answer;
   };
 }
 
 /** The repository a guarded diff runs in, as `git-submodule-state.ts` asks it. */
-function diffRepository(git: CallGit, cwd: string, guarded: Guarded): DiffRepository {
+function diffRepository(git: LaterGit, cwd: string, guarded: Guarded): DiffRepository {
   const ask = asker(git, cwd, guarded.env);
-  return { entries: guarded.entries, ask, place: () => places(ask) };
+  return { entries: guarded.entries, ask, place: async () => await places(ask) };
 }
 
 /** The top of the worktree a question runs in, and its folder below that top; how asking failed instead. */
-function places(ask: (args: readonly string[]) => string | GitFailure): Places | GitFailure {
-  const answer = ask(["rev-parse", "--show-toplevel", "--show-prefix"]);
+async function places(ask: (args: readonly string[]) => Promise<string | GitFailure>): Promise<Places | GitFailure> {
+  const answer = await ask(["rev-parse", "--show-toplevel", "--show-prefix"]);
   if (typeof answer !== "string") return answer;
   const [top = "", prefix = ""] = answer.split("\n");
   return { top, prefix };
@@ -1160,18 +1241,30 @@ const SUBMODULE_CLEARED = [
  * file named when it looked, so the guard's listing and the status open the same one. `env` is the variables the diff
  * was asked with.
  */
-function submoduleOpener(git: CallGit, env: GitVariables = {}): SubmoduleOpener {
+function submoduleOpener(git: LaterGit, env: GitVariables = {}): SubmoduleOpener {
   const cleared: GitVariables = { ...env, ...Object.fromEntries(SUBMODULE_CLEARED.map(name => [name, undefined])) };
-  return (folder, gitFolder) => {
-    const guarded = guardedSync(git, folder, { ...cleared, GIT_DIR: gitFolder });
+  return async (folder, gitFolder) => {
+    const opened = { ...cleared, GIT_DIR: gitFolder };
+    const guarded = await guardedLater(git, folder, opened);
     if (!("entries" in guarded)) return guarded;
-    // A listing shows no config of the repository's own both for a repository whose config holds none and for a Git
-    // folder taken away while Git read it: only the first, read again in process, is asked, so a status never opens a
-    // Git folder put back after the listing.
-    if (!guarded.entries.some(entry => entry.scope === "local") && !askableWithoutConfig(gitFolder)) return UNASKED;
+    if (!guarded.entries.some(entry => entry.scope === "local") && !(await holdsNoEntry(git, folder, gitFolder, opened))) return UNASKED;
     const repository: GuardedRepository = { entries: guarded.entries, ask: asker(git, folder, guarded.env), places: { top: folder, prefix: "" } };
     return repository;
   };
+}
+
+/**
+ * Whether the repository at `gitFolder`, whose listing showed no config of its own, is one whose config file Git reads
+ * as holding no entry, so it defines no driver: absent, or empty to Git's own listing of that one file. A listing shows
+ * no config of the repository's own also for a Git folder a writer took away while Git read it: one put back since,
+ * which holds an entry, or one still away is not asked, so a status never opens a config no listing read as empty.
+ */
+async function holdsNoEntry(git: LaterGit, folder: string, gitFolder: string, env: GitVariables): Promise<boolean> {
+  const config = repositoryConfig(gitFolder);
+  if (config === undefined) return false;
+  if (!existsSync(config)) return true;
+  const listed = await git(folder, ["config", "-z", "--list", "--file", config], { env, maxBuffer: MAX_LISTING_BYTES });
+  return listed.status === 0 && listed.error === undefined && listed.stdout === "";
 }
 
 /** What this process's Git means for the guard: what Rerail says when it is too old ({@link oldGitNotice}), and whether it said it. */
@@ -1184,7 +1277,11 @@ let guardGit: GuardGit | undefined;
 
 /** {@link GuardGit} from `git version` asked in `cwd`; undefined when Git did not answer, so a later call asks again. */
 function askedGuardGitSync(git: CallGit, cwd: string): GuardGit | undefined {
-  const answer = git(cwd, ["version"]);
+  return guardGitOf(git(cwd, ["version"]));
+}
+
+/** {@link GuardGit} from what `git version` answered; undefined when it did not answer. */
+function guardGitOf(answer: GitResult): GuardGit | undefined {
   return answer.status === 0 ? { notice: oldGitNotice(answer.stdout), told: false } : undefined;
 }
 
@@ -1198,16 +1295,21 @@ function guardWorks(git: CallGit, cwd: string): boolean {
   return guardCovers(guardGit);
 }
 
-/** {@link guardWorks} for a read that does not block. */
-async function guardWorksLater(cwd: string, signal: AbortSignal | undefined): Promise<boolean> {
-  const asked = guardGit ?? await askedGuardGit(cwd, signal);
+/** {@link guardWorks} for a call that does not block, asking Git's version with `version` when no call has yet. */
+async function guardWorksLater(version: () => Promise<GuardGit | undefined>): Promise<boolean> {
+  const asked = guardGit ?? await version();
   guardGit ??= asked;
   return guardCovers(asked);
 }
 
-/** {@link askedGuardGitSync} without blocking. */
-async function askedGuardGit(cwd: string, signal: AbortSignal | undefined): Promise<GuardGit | undefined> {
-  const answer = await readGitWith(cwd, ["version"], { signal, maxBuffer: GIT_OUTPUT_MAX_BYTES, env: {} });
+/** {@link GuardGit} from `git version` asked in `cwd` within a {@link runGitWithoutBlocking} call. */
+async function gitVersionLater(git: LaterGit, cwd: string): Promise<GuardGit | undefined> {
+  return guardGitOf(await git(cwd, ["version"]));
+}
+
+/** {@link GuardGit} from `git version` asked in `cwd` by a read that does not block, within what is left of its limit. */
+async function askedGuardGit(cwd: string, start: Omit<ReadStart, "env" | "maxBuffer">): Promise<GuardGit | undefined> {
+  const answer = await readGitWith(cwd, ["version"], { ...start, maxBuffer: GIT_OUTPUT_MAX_BYTES, env: {} });
   return answer.ended === "printed" ? { notice: oldGitNotice(answer.stdout), told: false } : undefined;
 }
 
@@ -1273,7 +1375,7 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
   const { maxBuffer = 1024 * 1024, timeout = DEFAULT_TIMEOUT_MS, signal } = options;
   if (signal?.aborted === true) return { status: null, stdout: "", stderr: "", error: new Error("Git was not started: the read was stopped") };
   const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
-  const child = startGit(() => spawn(executable, args, { env: gitEnvironment(executable), stdio: ["pipe", "pipe", "pipe"] }));
+  const child = startGit(() => spawn(executable, args, { env: gitEnvironment(executable, options.env), stdio: ["pipe", "pipe", "pipe"] }));
   if (child instanceof Error) return { status: null, stdout: "", stderr: "", error: child };
   const printed = { stdout: [] as string[], stderr: [] as string[] };
   let failure: Error | undefined;
@@ -1473,8 +1575,16 @@ type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readon
  * worktree files runs under the guard {@link runGit} puts on such a call ({@link readerGuard}).
  */
 async function readGit(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer: number): Promise<GitRead> {
-  const guard = await readerGuard(cwd, args, signal);
-  return "ended" in guard ? guard : await readGitWith(cwd, args, { signal, maxBuffer, env: guard.env });
+  // Git's version, the guard's config listing and the read share the read's one time limit, as a guarded runGit call's do.
+  const left = timeLeftFromFirstStart(DEFAULT_TIMEOUT_MS);
+  const guard = await readerGuard(cwd, args, { signal, left });
+  return "ended" in guard ? guard : await readGitWith(cwd, args, { signal, maxBuffer, env: guard.env, timeoutMs: left() });
+}
+
+/** How long the Gits of one read may still run, and its stop. */
+interface ReadLimit {
+  readonly signal: AbortSignal | undefined;
+  readonly left: () => number;
 }
 
 /**
@@ -1482,26 +1592,29 @@ async function readGit(cwd: string, args: readonly string[], signal: AbortSignal
  * repository's config defines set as {@link guardedSync} sets it, from a listing that does not block; how that listing
  * ended instead. No such read looks into submodules: one that would runs with Git looking into them as it does.
  */
-async function readerGuard(cwd: string, args: readonly string[], signal: AbortSignal | undefined): Promise<{ readonly env: GitVariables } | GitReadEnd> {
+async function readerGuard(cwd: string, args: readonly string[], { signal, left }: ReadLimit): Promise<{ readonly env: GitVariables } | GitReadEnd> {
   const read = worktreeRead(args);
-  if (read === "none" || !(await guardWorksLater(cwd, signal))) return { env: {} };
-  const listing = await readGitWith(cwd, CONFIG_LISTING, { signal, maxBuffer: MAX_LISTING_BYTES, env: { GIT_CONFIG: undefined } });
+  if (read === "none" || !(await guardWorksLater(async () => await askedGuardGit(cwd, { signal, timeoutMs: left() })))) return { env: {} };
+  const listing = await readGitWith(cwd, CONFIG_LISTING, { signal, maxBuffer: MAX_LISTING_BYTES, env: { GIT_CONFIG: undefined }, timeoutMs: left() });
   return listing.ended === "printed" ? guardedBy(listing.stdout, {}) : listing;
 }
 
 /** How a Git read ended without an answer ({@link GitRead}). */
 type GitReadEnd = Exclude<GitRead, { readonly ended: "printed" }>;
 
-/** What one start of a Git read takes: its stop, the most it prints, and the variables it sets. */
+/** What one start of a Git read takes: its stop, the most it prints, the variables it sets, and its time limit. */
 interface ReadStart {
   readonly signal: AbortSignal | undefined;
   readonly maxBuffer: number;
   readonly env: GitVariables;
+  /** What is left of the read's time limit: with none left, it starts no Git and ends as past its limit. */
+  readonly timeoutMs: number;
 }
 
 /** One Git read as {@link readGit} makes it, with `start.env` set and no guard of its own. */
-async function readGitWith(cwd: string, args: readonly string[], { signal, maxBuffer, env }: ReadStart): Promise<GitRead> {
-  const read = await readWithGit<GitRead>({ timeoutMs: DEFAULT_TIMEOUT_MS, signal }, async (executable, limits) => {
+async function readGitWith(cwd: string, args: readonly string[], { signal, maxBuffer, env, timeoutMs }: ReadStart): Promise<GitRead> {
+  if (timeoutMs === 0) return { ended: "timed-out" };
+  const read = await readWithGit<GitRead>({ timeoutMs, signal }, async (executable, limits) => {
     const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
     const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
       env: { ...gitEnvironment(executable, env), GIT_TERMINAL_PROMPT: "0" },

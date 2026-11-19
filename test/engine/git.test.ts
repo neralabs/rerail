@@ -525,7 +525,10 @@ describe("Git reads and their time limit", () => {
     const head = git(root, "rev-parse", "HEAD").trim();
     vi.mocked(endProcessTree).mockClear();
     fakeReadTimers({ limitTimer: true });
+    const before = vi.mocked(spawn).mock.calls.length;
     const reads = Promise.all([gitModifiedOrUntrackedPaths(root), gitHead(root)]);
+    // The listing of changed files starts its Git once the guard has listed the config.
+    while (!vi.mocked(spawn).mock.calls.slice(before).some(([, args]) => args.includes("--modified"))) await new Promise(settle => setImmediate(settle));
     // Both Gits finish during the stall, and the event loop handles their exits only once it ends, past the 10 s limit.
     stallUntilExited(lastGits(2), 10_500);
     await expect(reads).resolves.toEqual([["a.py"], head]);

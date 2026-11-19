@@ -233,22 +233,25 @@ without hooks or network.
     going first, but not every route (T11).
   - Every call sets `core.fsmonitor=false`, `core.hooksPath=/dev/null` and `log.showSignature=false` (a `git reflog`
     or `git log` then starts no `gpg.program`), `GIT_TERMINAL_PROMPT=0` and `GIT_NO_LAZY_FETCH=1` where relevant, and
-    a 10 s time limit, which every Git process a guarded `runGit` call starts shares: one asked once it is spent is
-    not started, and the call fails as a Git that ran out of time.
+    a 10 s time limit, which every Git process a guarded call or a read that does not block starts shares: one asked
+    once it is spent is not started, and the call fails as a Git that ran out of time.
   - A call through `runGit`, or a read that does not block, that reads worktree files (the audit's and the scan's
     `git diff`, the session walk's `git ls-files --modified`) first lists the config with its scopes, and sets each
     filter driver a repository's own config defines (its `config`, `config.worktree` and the files they include) as
     the person's own config (system, global, command line) defines it, or to no program
     (`src/engine/git-filter-drivers.ts`). A driver the person installed, such as Git LFS, still runs. A file under a
     driver only a repository defines is compared as it is on disk: its stat changing alone lists it as changed where
-    that program would have mapped it to the index's bytes. A `git diff --name-only` that would look into submodules
-    runs with `--ignore-submodules=dirty`, so Git opens no submodule's Git folder for it, and Rerail asks each
-    checked-out submodule through the same guard, in the Git folder its `.git` named when Rerail read it. Rerail
+    that program would have mapped it to the index's bytes. The audit's and the scan's `git diff --name-only` run
+    through `runGitWithoutBlocking`, with `--ignore-submodules=dirty`, so Git opens no submodule's Git folder for it,
+    and Rerail asks each checked-out submodule through the same guard, all of them at once (at most one Git per
+    processor), in the Git folder its `.git` named when Rerail read it. Another `runGit` call that would look into
+    submodules runs as it is, Git looking into them with their own drivers; Rerail makes none. Rerail
     first reads that folder in process as Git does before it starts a status there (a `HEAD` Git takes, `objects`
     and `refs` in its common directory): a `.git` that names no repository fails the diff, as Git's own diff fails.
-    A listing that shows no config of the repository's own is read again in process: a repository whose config file
-    holds no entry is asked, and any other submodule is listed as changed with no Git started in it: a Git folder
-    that held no config at the listing and holds some by then is never opened (`src/engine/git-submodule-state.ts`).
+    When the listing shows no config of the repository's own, Rerail reads the folder again in process and lists that
+    one config file with Git (`git config --list --file`): a repository whose config file is absent or holds no entry
+    to Git is asked, and any other submodule is listed as changed with no Git started in it, so a Git folder that held
+    no config at the listing and holds some by then is never opened (`src/engine/git-submodule-state.ts`).
     A call whose config Git cannot list is not made. With a Git older than 2.31 every call runs as it would without
     these overrides, and the process says so once. `runGitAsync` and `streamGit` set no filter drivers: of their calls,
     only Merge Assist's diff of its base against the working files ([internal testing](internal-testing.md)) reads

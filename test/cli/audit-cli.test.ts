@@ -249,7 +249,7 @@ describe("rerail scan and settings CLI", () => {
     const { root, database, runtime, daemon } = await fixture();
     const controls = new SqliteAuditControlStore(database);
     await rm(join(root, "api/clean.py"));
-    const request = controls.requestAudit("s1", { scope: "repository" });
+    const request = (await controls.requestAudit("s1", { scope: "repository" }));
     await runtime.closeSession("s1");
     expect(controls.listAuditRequests("s1").find(item => item.id === request.id)).toMatchObject({ status: "interrupted" });
     expect(await (await fetch(new URL("/api/sessions", daemon.url))).json()).toMatchObject({
@@ -408,7 +408,7 @@ describe("rerail scan and settings CLI", () => {
         kind: "call", eventId: "write-start", sessionId: "s1",
         toolCallId: "write", toolName: "write", input: { path: "api/clean.py" },
       });
-      const request = controls.requestAudit("s1", { scope: "repository" });
+      const request = (await controls.requestAudit("s1", { scope: "repository" }));
       await expect.poll(() => controls.listAuditRequests("s1").find(item => item.id === request.id)?.status).toBe("running");
       controls.updateSettings("s1", { mode: "log" });
       await writeFile(join(root, "api/clean.py"), "print('new edit')\n");

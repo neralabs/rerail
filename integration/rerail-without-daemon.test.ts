@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -213,6 +213,37 @@ async function checkoutWithSubmodule(root: string, config: "whole" | "empty"): P
   return work;
 }
 
+/**
+ * A checkout with `top.txt` changed and `count` checked-out submodules, each a copy of one repository of ten files, the
+ * first with a changed file.
+ */
+async function checkoutWithSubmodules(root: string, count: number): Promise<string> {
+  const git = async (cwd: string, ...args: string[]): Promise<string> =>
+    (await run("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd })).stdout;
+  const source = join(root, "source");
+  const work = join(root, "work");
+  for (const [repository, files] of [[source, 10], [work, 1]] as const) {
+    await mkdir(repository);
+    await git(repository, "init", "-q");
+    for (let file = 0; file < files; file += 1) await writeFile(join(repository, `f${file}.txt`), "one\n");
+    await git(repository, "add", ".");
+    await git(repository, "commit", "-q", "-m", "seed");
+  }
+  const commit = (await git(source, "rev-parse", "HEAD")).trim();
+  const names = Array.from({ length: count }, (_, at) => `sub${String(at).padStart(3, "0")}`);
+  for (const name of names) {
+    await cp(source, join(work, name), { recursive: true });
+    await git(join(work, name), "update-index", "-q", "--refresh");
+    await appendFile(join(work, ".gitmodules"), `[submodule "${name}"]\n\tpath = ${name}\n\turl = ../source\n`);
+  }
+  await git(work, "update-index", "--add", ...names.flatMap(name => ["--cacheinfo", `160000,${commit},${name}`]));
+  await git(work, "add", ".gitmodules");
+  await git(work, "commit", "-q", "-m", "submodules");
+  await writeFile(join(work, "f0.txt"), "two\n");
+  await writeFile(join(work, "sub000", "f0.txt"), "two\n");
+  return work;
+}
+
 /** `rerail scan --scope git-diff --json` in `cwd` with no daemon: its exit code, and the paths its report lists. */
 async function scannedPaths(cwd: string, env: NodeJS.ProcessEnv): Promise<[number, unknown]> {
   const ended = await run(process.execPath, [cli, "scan", "--scope", "git-diff", "--json"], { cwd, env }).then(
@@ -240,4 +271,14 @@ describe("rerail scan with no daemon", () => {
     expect(scans[1]).toEqual(scans[0]);
     expect(scans[1]?.[1]).toEqual(["sub", "top.txt"]);
   }, 60_000);
+
+  test("answers in a checkout with 150 checked-out submodules, as Git's own diff does there within Git's time limit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-no-daemon-"));
+    roots.push(root);
+    const env = { ...process.env, RERAIL_HOME: join(root, ".rerail-home"), RERAIL_AUTOSTART: "0", RERAIL_EXPERIMENTAL_HEADLESS_SCAN: "1" };
+
+    const scanned = await scannedPaths(await checkoutWithSubmodules(root, 150), env);
+
+    expect(scanned).toEqual([0, ["f0.txt", "sub000"]]);
+  }, 240_000);
 });

@@ -6,10 +6,12 @@
  * runs the submodule's filter drivers, and where a submodule is registered but not checked out, a writer of the
  * worktree alone can put a Git folder there for Git to look into. So Rerail runs such a diff with
  * `--ignore-submodules=dirty`, which still lists a submodule whose commit moved, and asks each checked-out submodule the
- * same question itself, through the guard: its config listed, its drivers set, then its status. This module holds Git's
- * rules (2.31 to 2.53) for which submodules a diff looks into (`set_diffopt_flags_from_submodule_config` and
- * `repo_diff_setup`; for the submodules inside a submodule, `wt_status_collect_changes_worktree`) and for what makes a
- * submodule changed (`is_submodule_modified`): any entry its status lists.
+ * same question itself, through the guard: its config listed, its drivers set, then its status. Git asks its
+ * submodules one after another; Rerail asks them all at once, each one's questions in turn, so a checkout with many
+ * submodules answers within the one time limit Git's own diff had. This module holds Git's rules (2.31 to 2.53) for
+ * which submodules a diff looks into (`set_diffopt_flags_from_submodule_config` and `repo_diff_setup`; for the
+ * submodules inside a submodule, `wt_status_collect_changes_worktree`) and for what makes a submodule changed
+ * (`is_submodule_modified`): any entry its status lists.
  */
 import { accessSync, closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, statSync, type Stats } from "node:fs";
 import { join, resolve } from "node:path";
@@ -38,7 +40,7 @@ export interface Places {
 /** A repository asked through the guard on Rerail's Git calls: each question runs with the drivers its config defines set. */
 export interface GuardedRepository {
   /** Stdout of `git <args>` run in the repository, or how it failed. */
-  readonly ask: (args: readonly string[]) => string | GitFailure;
+  readonly ask: (args: readonly string[]) => Promise<string | GitFailure>;
   /** The repository's config, every scope, as the guard listed it. */
   readonly entries: readonly ListedEntry[];
   readonly places: Places;
@@ -46,7 +48,7 @@ export interface GuardedRepository {
 
 /** The repository a diff runs in: its places are asked only once its index is seen to record a submodule. */
 export interface DiffRepository extends Omit<GuardedRepository, "places"> {
-  readonly place: () => Places | GitFailure;
+  readonly place: () => Promise<Places | GitFailure>;
 }
 
 /**
@@ -59,7 +61,7 @@ export const UNASKED = "unasked";
  * Opens the submodule checked out at `folder`, whose Git folder is `gitFolder` ({@link submoduleGitFolder}), through the
  * guard, as Git opens one for its status; how that failed instead, or {@link UNASKED}.
  */
-export type SubmoduleOpener = (folder: string, gitFolder: string) => GuardedRepository | GitFailure | typeof UNASKED;
+export type SubmoduleOpener = (folder: string, gitFolder: string) => Promise<GuardedRepository | GitFailure | typeof UNASKED>;
 
 /** A `git diff --name-only -z` this module answers for submodules. */
 export interface NameDiff {
@@ -261,22 +263,23 @@ function shownSubmodules(paths: readonly string[], prefix: string, relative: boo
 }
 
 /** `.gitmodules` as Git reads it for submodule config: the worktree's file, else the index's, else `HEAD`'s. */
-function gitmodulesOf(repository: GuardedRepository): Gitmodules | GitFailure {
+async function gitmodulesOf(repository: GuardedRepository): Promise<Gitmodules | GitFailure> {
   const file = join(repository.places.top, ".gitmodules");
   if (existsSync(file)) {
-    const listed = repository.ask(["config", "-z", "--list", "--file", file]);
+    const listed = await repository.ask(["config", "-z", "--list", "--file", file]);
     return typeof listed === "string" ? readGitmodules(listed) : listed;
   }
-  const blob = [":.gitmodules", "HEAD:.gitmodules"].map(source => repository.ask(["config", "-z", "--list", "--blob", source])).find(listed => typeof listed === "string");
+  const staged = await repository.ask(["config", "-z", "--list", "--blob", ":.gitmodules"]);
+  const blob = typeof staged === "string" ? staged : await repository.ask(["config", "-z", "--list", "--blob", "HEAD:.gitmodules"]);
   return readGitmodules(typeof blob === "string" ? blob : "");
 }
 
 const NO_GITMODULES: Gitmodules = { names: new Map(), ignores: new Map() };
 
 /** How a diff in `repository` treats each submodule, given its base; how it fails for a base Git refuses. */
-function ignoreRules(repository: GuardedRepository, gitlinks: Gitlinks, base: SubmoduleIgnore | undefined): IgnoreRules | GitFailure {
+async function ignoreRules(repository: GuardedRepository, gitlinks: Gitlinks, base: SubmoduleIgnore | undefined): Promise<IgnoreRules | GitFailure> {
   if (base === undefined) return refused("diff.ignoreSubmodules");
-  const gitmodules = gitlinks.paths.length === 0 ? NO_GITMODULES : gitmodulesOf(repository);
+  const gitmodules = gitlinks.paths.length === 0 ? NO_GITMODULES : await gitmodulesOf(repository);
   return "names" in gitmodules ? { entries: repository.entries, gitmodules, unmerged: gitlinks.gitmodulesUnmerged, base } : gitmodules;
 }
 
@@ -299,13 +302,13 @@ function failed(error: Error): GitFailure {
  * ignore whole left out. The names keep Git's order (byte order of the paths). How it failed instead when a submodule
  * cannot be asked, as Git's diff fails then. An index that records no submodule leaves `stdout` as it is.
  */
-export function withChangedSubmodules(stdout: string, diff: NameDiff, top: DiffRepository, open: SubmoduleOpener): string | GitFailure {
-  const listing = top.ask(GITLINK_LISTING);
+export async function withChangedSubmodules(stdout: string, diff: NameDiff, top: DiffRepository, open: SubmoduleOpener): Promise<string | GitFailure> {
+  const listing = await top.ask(GITLINK_LISTING);
   if (typeof listing !== "string") return listing;
   const gitlinks = readGitlinks(listing);
   if (gitlinks.paths.length === 0) return stdout;
-  const places = top.place();
-  return "top" in places ? changedSubmodules(stdout, { diff, gitlinks, top: { ...top, places }, open }) : places;
+  const places = await top.place();
+  return "top" in places ? await changedSubmodules(stdout, { diff, gitlinks, top: { ...top, places }, open }) : places;
 }
 
 /** What {@link changedSubmodules} decides from: the diff, the submodules its index records, its repository and the opener. */
@@ -316,21 +319,21 @@ interface DiffSubmodules {
   readonly open: SubmoduleOpener;
 }
 
-/** {@link withChangedSubmodules} once the index is seen to record submodules. */
-function changedSubmodules(stdout: string, { diff, gitlinks, top, open }: DiffSubmodules): string | GitFailure {
-  const rules = topRules(top, gitlinks, diff);
+/**
+ * {@link withChangedSubmodules} once the index is seen to record submodules. Every submodule is asked at once; the
+ * answer is the one Git's diff, which asks them in index order, gives: the first failure in that order, else the names.
+ */
+async function changedSubmodules(stdout: string, { diff, gitlinks, top, open }: DiffSubmodules): Promise<string | GitFailure> {
+  const rules = await topRules(top, gitlinks, diff);
   if (!("base" in rules)) return rules;
   const state: DiffState = { named: new Set(stdout.split("\0").filter(name => name !== "")), changed: false, rules, diff, top, open };
-  for (const shown of shownSubmodules(gitlinks.paths, top.places.prefix, diff.relative)) {
-    const failure = submoduleChange(shown, state);
-    if (failure !== undefined) return failure;
-  }
-  return state.changed ? namesText(state.named) : stdout;
+  const failures = await Promise.all(shownSubmodules(gitlinks.paths, top.places.prefix, diff.relative).map(async shown => await submoduleChange(shown, state)));
+  return failures.find(failure => failure !== undefined) ?? (state.changed ? namesText(state.named) : stdout);
 }
 
 /** How the diff treats each submodule: as its option says, else as the config and `.gitmodules` of `top` say. */
-function topRules(top: GuardedRepository, gitlinks: Gitlinks, diff: NameDiff): IgnoreRules | GitFailure {
-  return diff.ignore === undefined ? ignoreRules(top, gitlinks, diffBase(top.entries)) : overriding(top, diff.ignore);
+async function topRules(top: GuardedRepository, gitlinks: Gitlinks, diff: NameDiff): Promise<IgnoreRules | GitFailure> {
+  return diff.ignore === undefined ? await ignoreRules(top, gitlinks, diffBase(top.entries)) : overriding(top, diff.ignore);
 }
 
 /** `names` as `git diff --name-only -z` prints them: in byte order, each ended by NUL. */
@@ -350,12 +353,12 @@ interface DiffState {
 }
 
 /** Names or leaves out `shown` in `state.named` as Git's diff would; how it failed instead, else undefined. */
-function submoduleChange(shown: Shown, state: DiffState): GitFailure | undefined {
+async function submoduleChange(shown: Shown, state: DiffState): Promise<GitFailure | undefined> {
   const ignore = submoduleIgnore(state.rules, shown.path);
   if (ignore === undefined) return refused(`submodule.${shown.path}.ignore`);
   if (ignore === "all") leaveOut(state, shown.name);
   if (!askedOf(state, shown.name, ignore)) return undefined;
-  const changed = submoduleChanged(join(state.top.places.top, shown.path), ignore === "untracked", state.open, MAX_DEPTH);
+  const changed = await submoduleChanged(join(state.top.places.top, shown.path), ignore === "untracked", state.open, MAX_DEPTH);
   if (typeof changed !== "boolean") return changed;
   if (changed) addName(state, shown.name);
   return undefined;
@@ -390,13 +393,13 @@ function byteOrder(left: string, right: string): number {
  * failed when its `.git` names no repository, as Git's diff fails then; true, with no Git started in it, when the guard
  * cannot ask it ({@link UNASKED}).
  */
-export function submoduleChanged(folder: string, untrackedLeftOut: boolean, open: SubmoduleOpener, depth: number): boolean | GitFailure {
+export async function submoduleChanged(folder: string, untrackedLeftOut: boolean, open: SubmoduleOpener, depth: number): Promise<boolean | GitFailure> {
   const gitFolder = submoduleGitFolder(folder);
   if (typeof gitFolder !== "string") return gitFolder ?? false;
   if (depth === 0) return failed(new Error(`Rerail follows submodules ${MAX_DEPTH} levels deep, and ${folder} is deeper`));
-  const repository = open(folder, gitFolder);
+  const repository = await open(folder, gitFolder);
   if (repository === UNASKED) return true;
-  return "ask" in repository ? changedThroughGuard(repository, untrackedLeftOut, { open, depth }) : repository;
+  return "ask" in repository ? await changedThroughGuard(repository, untrackedLeftOut, { open, depth }) : repository;
 }
 
 /** The most bytes of a `.git` file Rerail reads for the Git folder it names. */
@@ -428,14 +431,12 @@ function holdsRepository(gitFolder: string): boolean {
 }
 
 /**
- * Whether Rerail asks the submodule whose Git folder is `gitFolder`, once the guard's listing of its config showed none
- * of the repository's own: read again in process, the folder holds a repository whose config file holds no entry, so
- * it defines no driver. A listing shows the same for a Git folder a writer took away while Git read it; one put back
- * by now, or a config that gained an entry, is not asked, so a status never opens a config the listing did not read.
+ * The config file a Git started in the repository at `gitFolder` reads as the repository's own: `config` in its common
+ * directory. Undefined when `gitFolder`, read again now, holds no repository ({@link holdsRepository}).
  */
-export function askableWithoutConfig(gitFolder: string): boolean {
+export function repositoryConfig(gitFolder: string): string | undefined {
   const common = holdsRepository(gitFolder) ? commonDirectory(gitFolder) : undefined;
-  return common !== undefined && holdsNoEntry(join(common, "config"));
+  return common === undefined ? undefined : join(common, "config");
 }
 
 /**
@@ -470,13 +471,6 @@ function headText(path: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-/** Whether the config file at `path` is absent or holds only blank lines, comments and section headers. */
-function holdsNoEntry(path: string): boolean {
-  if (!existsSync(path)) return true;
-  const lines = textOf(path)?.split("\n");
-  return lines !== undefined && lines.every(line => /^\s*(?:[#;].*|\[[^\]]*\]\s*(?:[#;].*)?)?$/u.test(line));
 }
 
 /** Whether Git could enter `path` (`access(path, X_OK)`); on Windows, whether it is there. */
@@ -541,37 +535,39 @@ export function notARepository(gitFolder: string): GitFailure {
  * status finds no renames: a partial clone fails rename detection on a blob it does not hold, as Rerail fetches none,
  * and a rename makes the submodule changed as surely as the deletion and addition it is listed as instead.
  */
-function changedThroughGuard(repository: GuardedRepository, untrackedLeftOut: boolean, deeper: { open: SubmoduleOpener; depth: number }): boolean | GitFailure {
-  const status = repository.ask(["status", "--porcelain=2", "-z", "--no-renames", "--ignore-submodules=dirty", ...(untrackedLeftOut ? ["-uno"] : [])]);
+async function changedThroughGuard(
+  repository: GuardedRepository, untrackedLeftOut: boolean, deeper: { open: SubmoduleOpener; depth: number },
+): Promise<boolean | GitFailure> {
+  const status = await repository.ask(["status", "--porcelain=2", "-z", "--no-renames", "--ignore-submodules=dirty", ...(untrackedLeftOut ? ["-uno"] : [])]);
   if (typeof status !== "string") return status;
   const read = readStatus(status);
   // A submodule inside whose index differs from HEAD is listed whatever its rules: Git compares the index with HEAD so.
-  return read.own || [...read.submodules.values()].some(entry => entry.staged) || nestedChanged(repository, read, untrackedLeftOut, deeper);
+  return read.own || [...read.submodules.values()].some(entry => entry.staged) || await nestedChanged(repository, read, untrackedLeftOut, deeper);
 }
 
 /**
  * Whether a submodule inside `repository` makes it changed, as the `git status` Git runs in `repository` finds them: by
  * its own `ignore` rules, its base set by `diff.ignoreSubmodules` and whether that status lists untracked files.
  */
-function nestedChanged(
+async function nestedChanged(
   repository: GuardedRepository, read: StatusRead, untrackedLeftOut: boolean, deeper: { open: SubmoduleOpener; depth: number },
-): boolean | GitFailure {
-  const listing = repository.ask(GITLINK_LISTING);
+): Promise<boolean | GitFailure> {
+  const listing = await repository.ask(GITLINK_LISTING);
   if (typeof listing !== "string") return listing;
   const gitlinks = readGitlinks(listing);
   if (gitlinks.paths.length === 0) return false;
-  const rules = ignoreRules(repository, gitlinks, statusBase(repository.entries, !untrackedLeftOut && showsUntracked(repository.entries)));
+  const rules = await ignoreRules(repository, gitlinks, statusBase(repository.entries, !untrackedLeftOut && showsUntracked(repository.entries)));
   if (!("base" in rules)) return rules;
-  return firstChanged(gitlinks.paths, { repository, read, rules, ...deeper });
+  return await firstChanged(gitlinks.paths, { repository, read, rules, ...deeper });
 }
 
-/** Whether any submodule at `paths` inside `nested.repository` makes it changed, asked in order; how asking one failed instead. */
-function firstChanged(paths: readonly string[], nested: Nested): boolean | GitFailure {
-  for (const path of paths) {
-    const changed = nestedSubmoduleChanged(path, nested);
-    if (changed !== false) return changed;
-  }
-  return false;
+/**
+ * Whether any submodule at `paths` inside `nested.repository` makes it changed; how asking one failed instead. All are
+ * asked at once, and the answer is the first in order that is not false, as Git's status, which asks them in turn, finds.
+ */
+async function firstChanged(paths: readonly string[], nested: Nested): Promise<boolean | GitFailure> {
+  const answers = await Promise.all(paths.map(async path => await nestedSubmoduleChanged(path, nested)));
+  return answers.find(changed => changed !== false) ?? false;
 }
 
 /** One submodule inside another, and what decides whether it changed. */
@@ -584,11 +580,11 @@ interface Nested {
 }
 
 /** Whether the submodule at `path` in `nested.repository` makes it changed; how asking it failed instead. */
-function nestedSubmoduleChanged(path: string, nested: Nested): boolean | GitFailure {
+async function nestedSubmoduleChanged(path: string, nested: Nested): Promise<boolean | GitFailure> {
   const ignore = submoduleIgnore(nested.rules, path);
   if (ignore === undefined) return refused(`submodule.${path}.ignore`);
   if (ignore === "all") return false;
   if (nested.read.submodules.get(path)?.moved === true) return true;
   if (!lookedInto(ignore)) return false;
-  return submoduleChanged(join(nested.repository.places.top, path), ignore === "untracked", nested.open, nested.depth - 1);
+  return await submoduleChanged(join(nested.repository.places.top, path), ignore === "untracked", nested.open, nested.depth - 1);
 }
