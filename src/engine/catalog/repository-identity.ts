@@ -121,7 +121,7 @@ interface Located {
   readonly byGit: boolean;
 }
 
-function locatedByGit(requested: string): { location: RepositoryIdentityLocation; byGit: boolean } {
+function locatedByGit(requested: string): Located {
   const result = locateInGit(requested);
   const location = result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
   return { location, byGit: true };
