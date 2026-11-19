@@ -1173,6 +1173,21 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
   });
 
+  it("lists as Git does once a folder between such a checkout and the repository above gets a .git link to another repository's Git folder", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const other = repository(join(root, "other"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+
+    linkFolder(join(other, ".git"), join(middle, ".git"));
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toHaveLength(1);
+  });
+
   it("lists as Git does once the .git file of the folder Git places such a checkout in is rewritten in place to name another repository", async () => {
     const root = await temporaryRoot();
     const x = repository(join(root, "x"));
