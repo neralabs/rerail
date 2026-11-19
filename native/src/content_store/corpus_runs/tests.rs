@@ -221,11 +221,21 @@ fn completed_analysis_runs_survive_restart_and_scope_deletion_preserves_shared_s
         store.own_analysis_snapshot(&run.owner, "workspace", snapshot).unwrap();
         run
     };
-    for scope in ["named:a", "named:a", "named:b"] { begin(scope).finish(true).unwrap(); }
+    for scope in ["named:a", "named:a", "named:b"] {
+        let mut run = begin(scope);
+        let worker = run.owner.clone();
+        run.finish(true).unwrap();
+        assert!(!worker.warn("late warning".into()));
+        run.finish(false).unwrap();
+        assert_eq!(run.publication_warning(), None);
+        assert_eq!(run.publication.unwrap().as_str(), "published");
+    }
     begin("named:aborted").finish(false).unwrap();
     let mut warned = begin("named:warned");
     warned.owner.warn("could not retain".into());
     warned.finish(true).unwrap();
+    assert!(!warned.owner.warn("later warning".into()));
+    assert_eq!(warned.publication_warning().as_deref(), Some("could not retain"));
     let mut stale = begin("named:stale");
     store.delete_analysis_scope("named:stale").unwrap();
     stale.finish(true).unwrap();

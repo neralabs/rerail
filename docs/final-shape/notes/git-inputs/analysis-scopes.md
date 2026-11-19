@@ -89,6 +89,7 @@ reviewed(id, repo, tree) :-
 | `analysis_run_commit(run, repo, commit)` | The selected commit, when the caller selected a commit |
 
 The store publishes a run record in the transaction that publishes its cache ownership.
+Finishing a run fixes its publication outcome and warning. Repeated finishes return that result, including after a worker reports a late warning.
 Two runs using the same stored snapshot have the same snapshot key. A metadata-only run can have no workspace snapshot.
 Run history does not extend a snapshot's lifetime. Collection removes the link when it removes the snapshot.
 A failed run and a run that loses its publication permit produce zero rows. A metadata-only scan can publish a run.

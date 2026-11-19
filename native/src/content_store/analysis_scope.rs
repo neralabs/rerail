@@ -18,7 +18,13 @@ pub struct AnalysisOwner {
     #[serde(default)]
     pub(super) acquisition: i64,
     #[serde(skip)]
-    warning: Option<std::sync::Arc<std::sync::Mutex<Option<String>>>>,
+    warning: Option<std::sync::Arc<std::sync::Mutex<RunWarning>>>,
+}
+
+#[derive(Debug, Default)]
+struct RunWarning {
+    message: Option<String>,
+    finished: bool,
 }
 
 impl AnalysisOwner {
@@ -32,12 +38,14 @@ impl AnalysisOwner {
 
     pub fn warn(&self, message: String) -> bool {
         let Some(warning) = &self.warning else { return false };
-        warning.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert(message);
+        let mut warning = warning.lock().unwrap_or_else(|e| e.into_inner());
+        if warning.finished { return false; }
+        warning.message.get_or_insert(message);
         true
     }
 
     pub fn cache_warning(&self) -> Option<String> {
-        self.warning.as_ref()?.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.warning.as_ref()?.lock().unwrap_or_else(|e| e.into_inner()).message.clone()
     }
 
     pub(super) fn current(&self, tx: &rusqlite::Connection) -> rusqlite::Result<bool> {
@@ -161,9 +169,11 @@ impl AnalysisRun {
         }
         let owner = &self.owner;
         let pending = owner.membership();
-        let publication = self.store.immediate_transaction(|tx| {
+        let (publication, mut warning) = self.store.immediate_transaction(|tx| {
             self.store.check_scope_store(tx)?;
-            let outcome = if owner.cache_warning().is_some() { Publication::Unavailable }
+            // Keep the same warning from the outcome decision through commit. A rollback leaves it open for retry.
+            let warning = owner.warning.as_ref().map(|warning| warning.lock().unwrap_or_else(|e| e.into_inner()));
+            let outcome = if warning.as_ref().is_some_and(|warning| warning.message.is_some()) { Publication::Unavailable }
                 else if !succeeded { Publication::Aborted }
                 else if !owner.current(tx)? { Publication::Released }
                 else { Publication::Published };
@@ -197,8 +207,10 @@ impl AnalysisRun {
             }
             release_memberships(tx, "scope=?1", [pending])?;
             tx.execute_cached("DELETE FROM analysis_scope_pending WHERE id=?1", [pending])?;
-            Ok(outcome)
+            Ok((outcome, warning))
         })?;
+        if let Some(warning) = warning.as_mut() { warning.finished = true; }
+        drop(warning);
         self.publication = Some(publication);
         self.lease.take();
         Ok(())
