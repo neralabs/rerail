@@ -84,12 +84,12 @@ pub(super) fn answer(store: &ContentStore, root: &Path, path: &str, digest: &str
 
 pub fn run(root: &Path, sources: &[Source], preparation: &Preparation<'_>) -> Result<HashMap<String, String>> {
     if sources.is_empty() { return Ok(HashMap::new()); }
-    let program = crate::code_rule_dsl::logic::rr::parse(concat!(
+    let program = super::embedded_program!(concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../typing/programs/reference-summaries.rr"),
-    )).map_err(|err| Error::Plan(err.to_string()))?;
+    )).map_err(Error::Plan)?;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
-    let image = super::run_fact_image_with_references(&program, root, &options, Input::Sources(sources, preparation))?;
+    let image = super::run_fact_image_with_references(program, root, &options, Input::Sources(sources, preparation))?;
     let rows = Outputs::of(&image).map_err(Error::Plan)?;
     rows.rows("reference_prepared_source").into_iter().map(|row| {
         let (Value::Text(path), Value::Text(bytes)) = (row.get(0), row.get(1))
@@ -103,11 +103,11 @@ pub fn link<'a>(root: &Path, names: impl Iterator<Item = &'a str>, provider: &Li
     let keys: Vec<_> = names.map(|name| vec![Str(name.into())]).collect();
     if keys.is_empty() { return Ok(HashMap::new()); }
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
-    let program = crate::code_rule_dsl::logic::rr::parse(concat!(
+    let program = super::embedded_program!(concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../typing/programs/reference-links.rr"),
-    )).map_err(|err| Error::Plan(err.to_string()))?;
-    let image = super::run_fact_image_with_references(&program, root, &options, Input::Links(&keys, provider))?;
+    )).map_err(Error::Plan)?;
+    let image = super::run_fact_image_with_references(program, root, &options, Input::Links(&keys, provider))?;
     let rows = Outputs::of(&image).map_err(Error::Plan)?;
     rows.rows("reference_name_result").into_iter().map(|row| {
         let (Value::Text(name), Value::Text(result)) = (row.get(0), row.get(1))

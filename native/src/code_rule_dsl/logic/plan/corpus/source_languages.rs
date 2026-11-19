@@ -56,11 +56,11 @@ pub fn classify(
         return Ok(HashMap::new());
     }
     let _store = ThreadStore::select(store, owner.map(|owner| (root.to_owned(), owner)));
-    let program = crate::code_rule_dsl::logic::rr::parse(concat!(
+    let program = super::embedded_program!(concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/source-language.rr"), "\n",
         include_str!("../../../typing/programs/workspace-source-languages.rr"),
-    )).map_err(|error| Error::Plan(error.to_string()))?;
+    )).map_err(Error::Plan)?;
     let basename = |path: &str| path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
     let names: std::collections::BTreeSet<_> = paths.iter().map(|path| basename(path)).collect();
     let options = serde_json::json!({
@@ -69,7 +69,7 @@ pub fn classify(
         "workspaceLanguagePaths": names,
         "workspaceLanguageRegistry": registry,
     });
-    let image = run_fact_image(&program, root, &options)?;
+    let image = run_fact_image(program, root, &options)?;
     let outputs = Outputs::of(&image).map_err(Error::Plan)?;
     let labels = outputs.rows("source_language").iter().map(|row| {
         let (Value::Text(path), Value::Text(language)) = (row.get(0), row.get(1)) else {

@@ -2551,6 +2551,18 @@ pub(super) fn run_read_handing(
     run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, None, Default::default())
 }
 
+/// A parser result belongs to the engine binary and the library bytes embedded at this call site.
+macro_rules! embedded_program {
+    ($source:expr) => {{
+        static PROGRAM: std::sync::OnceLock<std::result::Result<
+            crate::code_rule_dsl::logic::front::Program, String,
+        >> = std::sync::OnceLock::new();
+        PROGRAM.get_or_init(|| crate::code_rule_dsl::logic::rr::parse($source).map_err(|error| error.to_string()))
+            .as_ref().map_err(Clone::clone)
+    }};
+}
+use embedded_program;
+
 /// Evaluate a fact-only phase against the retained store and return its output image.
 fn run_fact_image(read: &front::Program, root: &Path, options: &serde_json::Value) -> Result<Vec<u8>> {
     run_fact_image_with_references(read, root, options, Default::default())

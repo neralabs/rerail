@@ -341,13 +341,13 @@ fn source_checks(root: &Path, paths: &[String]) -> super::Result<SourceChecks> {
     if paths.is_empty() {
         return Ok(Default::default());
     }
-    let program = crate::code_rule_dsl::logic::rr::parse(concat!(
+    let program = super::embedded_program!(concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/git.rr"), "\n",
         include_str!("../../../typing/programs/git-source-objects.rr"),
-    )).map_err(|err| super::Error::Plan(err.to_string()))?;
+    )).map_err(super::Error::Plan)?;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [], "gitSourcePaths": paths });
-    let image = super::run_fact_image(&program, root, &options)?;
+    let image = super::run_fact_image(program, root, &options)?;
     let outputs = Outputs::of(&image).map_err(super::Error::Plan)?;
     let invalid = || super::Error::Plan("invalid Git source observation".into());
     let checked: std::collections::HashMap<_, _> = outputs.rows("git_selected_source_readable").into_iter().map(|row| {
@@ -447,13 +447,13 @@ pub(super) fn prime_root(root: &Path) -> super::Result<()> {
     if !snapshot::contains(root) || snapshot::root_observed(root) {
         return Ok(());
     }
-    let program = crate::code_rule_dsl::logic::rr::parse(concat!(
+    let program = super::embedded_program!(concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/git.rr"), "\n",
         include_str!("../../../typing/programs/git-root-tree.rr"),
-    )).map_err(|err| super::Error::Plan(err.to_string()))?;
+    )).map_err(super::Error::Plan)?;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
-    let image = super::run_fact_image(&program, root, &options)?;
+    let image = super::run_fact_image(program, root, &options)?;
     let outputs = Outputs::of(&image).map_err(super::Error::Plan)?;
     if let Some(row) = outputs.rows("git_root_tree_error").first() {
         return Err(super::Error::Plan(format!("cannot inventory Git tree {}: {}", row.get(0).text().unwrap_or(""), row.get(1).text().unwrap_or("unknown error"))));
@@ -489,15 +489,14 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>, own
         other => InventoryError::Source(other.to_string()),
     })?;
     // Installed addons have no source checkout. Embed the same library used by .rr policies.
-    let program = crate::code_rule_dsl::logic::rr::parse(concat!(
+    let program = super::embedded_program!(concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/git.rr"), "\n",
         include_str!("../../../../../../docs/rule-syntax/lib/source-language.rr"), "\n",
         include_str!("../../../typing/programs/git-inventory.rr"),
-    ))
-        .map_err(|err| err.to_string())?;
+    ))?;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
-    let image = super::run_fact_image(&program, root, &options).map_err(|error| match error {
+    let image = super::run_fact_image(program, root, &options).map_err(|error| match error {
         super::Error::Cache(error) => InventoryError::Cache(error),
         other => InventoryError::Source(other.to_string()),
     })?;
