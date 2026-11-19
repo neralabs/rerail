@@ -248,9 +248,6 @@ pub struct Words {
     /// Block programs, the side programs over source bytes (`block`), as value programs are
     /// the side programs over a node's text.
     pub block_programs: Vec<BlockProgram>,
-    /// Array programs, the side programs over integer columns (`array`): a translation unit's
-    /// preprocessing passes (decision 0421).
-    pub array_programs: Vec<crate::array::ArrayProgram>,
     /// Tier 2's switch tables (`SWITCH`, decision 0087).
     pub switches: Vec<ByteSwitch>,
     /// Tier 2's readings (`RETAG m=3`) and provisional fields.

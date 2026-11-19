@@ -167,15 +167,13 @@ impl Lang {
     }
 }
 
-/// A language's profile, its probed answers kept across files, and the stubs' directory: one
-/// directory a settled file, so that files settled together (a batch) each keep their own.
+/// A language's profile, its probed answers kept across files, and the stubs' directory.
 pub struct Profile {
     pub lang: Lang,
     defs: Vec<(String, Option<String>)>,
     dirs: Vec<(String, DirKind)>,
     features: HashMap<(String, String), i64>,
     stubs: std::path::PathBuf,
-    settled: usize,
 }
 
 /// A file's settled reading: the configuration and search path every reading of it uses (the
@@ -192,16 +190,14 @@ impl Profile {
     pub fn new(lang: Lang) -> Profile {
         let (defs, dirs) = profile(&lang);
         let stubs = std::env::temp_dir().join(format!("rerail-pp-oracle-{}", std::process::id()));
-        Profile { lang, defs, dirs, features: HashMap::new(), stubs, settled: 0 }
+        Profile { lang, defs, dirs, features: HashMap::new(), stubs }
     }
 
     /// `path` read by the serial pass until no header is missing and no test unanswered.
     pub fn settle(&mut self, path: &str) -> Settled {
-        self.settled += 1;
-        let stubs = self.stubs.join(self.settled.to_string());
-        let _ = std::fs::remove_dir_all(&stubs);
+        let _ = std::fs::remove_dir_all(&self.stubs);
         // Stubs for `../x.h` too: the directory is nested, so that they stay inside.
-        let nest = stubs.join("a/b/c/d");
+        let nest = self.stubs.join("a/b/c/d");
         std::fs::create_dir_all(&nest).unwrap();
         let stub_dir = nest.to_string_lossy().into_owned();
         // At most four readings, as the oracle has always read.
@@ -234,7 +230,7 @@ impl Profile {
                 if n.starts_with('/') {
                     continue;
                 }
-                let Some(s) = under(&stubs, &nest, &n) else { continue };
+                let Some(s) = under(&self.stubs, &nest, &n) else { continue };
                 if !s.exists() {
                     std::fs::create_dir_all(s.parent().unwrap()).unwrap();
                     std::fs::write(&s, b"").unwrap();

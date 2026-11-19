@@ -539,22 +539,6 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             index(line, parts.longs.len(), "long")?;
             parts.longs.push(line.number("")?);
         }
-        "array" => {
-            // `array N …`: program N's rows in order (`array::ArrayProgram::row`), a new
-            // program at the next index.
-            let at: usize = line.number("")?;
-            if at == parts.array_programs.len() {
-                parts.array_programs.push(crate::array::ArrayProgram::default());
-            } else if at + 1 != parts.array_programs.len() {
-                return Err(format!("array {at} out of order (expected {})", parts.array_programs.len()));
-            }
-            let mut words = Vec::new();
-            while line.peek_word().is_some() {
-                words.push(line.word()?);
-            }
-            let words: Vec<&str> = words.iter().map(String::as_str).collect();
-            parts.array_programs.last_mut().expect("pushed").row(&words).map_err(|e| format!("array {at}: {e}"))?;
-        }
         "block" => {
             // `block N %i = op …`, `block N output %v` or `block N extract %v`: program N's rows
             // in order (tables, operations, outputs, extracts), a new
@@ -862,9 +846,6 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     for block in &program.block_programs {
         block.verify()?;
     }
-    for array in &program.array_programs {
-        array.verify()?;
-    }
     if program.labels.iter().any(|&label| program.strings.get(usize::from(label)).is_none_or(|s| std::str::from_utf8(s).is_err())) {
         return Err(Error::InvalidOperand(0));
     }
@@ -923,9 +904,6 @@ pub fn head_rows(out: &mut String, program: &Words) {
 pub fn block_programs_rows(out: &mut String, program: &Words) {
     for (at, block) in program.block_programs.iter().enumerate() {
         crate::block::block_rows(out, at, block);
-    }
-    for (at, array) in program.array_programs.iter().enumerate() {
-        crate::array::array_rows(out, at, array);
     }
 }
 

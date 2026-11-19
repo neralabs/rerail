@@ -29,11 +29,11 @@ use std::collections::HashSet;
 const NONE: u32 = u32::MAX;
 
 /// A stretch of active text: its position, instance, and tokens' range in its file's text.
-pub(super) struct Stretch {
-    pub pos: u64,
-    pub inst: u32,
-    pub start: u32,
-    pub end: u32,
+struct Stretch {
+    pos: u64,
+    inst: u32,
+    start: u32,
+    end: u32,
 }
 
 impl Stretch {
@@ -85,7 +85,7 @@ pub(super) fn pragma_events(pp: &mut Pp, tu: &Tu, groups: &[Vec<bool>], lay: &La
 
 /// A piece of the output: text copied (a range of a stretch's tokens), or an invocation's
 /// expansion with its count of `__COUNTER__`s.
-pub(super) enum Piece {
+enum Piece {
     Copy(u32, u32),
     Expanded { at: u32, end: u32, toks: Vec<Tk>, counted: u64, events: Vec<(Ev, u32)> },
 }
@@ -167,7 +167,7 @@ pub(super) fn output(pp: &mut Pp, tu: &Tu, state: &State, lay: &Layout, stats: &
 
 /// A stretch's pieces: its candidates, its outermost invocations, each expanded; with `only`,
 /// those that hold one of its names alone, the rest left out.
-pub(super) fn stretch(pp: &mut Pp, tu: &Tu, tab: &Tab, s: &Stretch, only: Option<&HashSet<u32>>, stats: &mut Stats, distinct: &mut HashSet<Vec<u8>>) -> Result<Vec<Piece>, &'static str> {
+fn stretch(pp: &mut Pp, tu: &Tu, tab: &Tab, s: &Stretch, only: Option<&HashSet<u32>>, stats: &mut Stats, distinct: &mut HashSet<Vec<u8>>) -> Result<Vec<Piece>, &'static str> {
     let toks = &tab.text[s.start as usize..s.end as usize];
     let n = toks.len();
     let chain = &tu.insts[s.inst as usize].chain;
@@ -276,16 +276,16 @@ pub(super) fn stretch(pp: &mut Pp, tu: &Tu, tab: &Tab, s: &Stretch, only: Option
 }
 
 /// An isolated reading's result.
-pub(super) struct Read {
-    pub out: Vec<Tk>,
-    pub peeked: bool,
-    pub cut: bool,
-    pub events: Vec<(Ev, u32)>,
-    pub counted: u64,
+struct Read {
+    out: Vec<Tk>,
+    peeked: bool,
+    cut: bool,
+    events: Vec<(Ev, u32)>,
+    counted: u64,
 }
 
 /// `list` read alone and expanded, `__COUNTER__` from `counter`.
-pub(super) fn isolated(pp: &mut Pp, list: Vec<Tk>, counter: u64) -> Read {
+fn isolated(pp: &mut Pp, list: Vec<Tk>, counter: u64) -> Read {
     let outer = pp.stack.len();
     pp.stack.push(Src::Toks { toks: list, pos: 0, def: None, stop: true });
     pp.par = Some(Isolated { outer, peeked: false, cut: false, events: Vec::new() });

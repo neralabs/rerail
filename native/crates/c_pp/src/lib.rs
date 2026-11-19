@@ -15,13 +15,11 @@ pub mod sink;
 pub mod stream;
 pub mod tokens;
 
-// The oracle's profile (clang's predefines, search path and answers for a corpus file) reads
-// the crate by its name, as the example that includes it does. The `oracle` feature lends it to
-// other crates' tests (`rerail-c-directives`' corpus test of the array programs).
-#[cfg(any(test, feature = "oracle"))]
+// The oracle's profile reads the crate by its name, as the example that includes it does.
+#[cfg(test)]
 extern crate self as rerail_c_pp;
-#[cfg(any(test, feature = "oracle"))]
-pub mod oracle_profile;
+#[cfg(test)]
+mod oracle_profile;
 
 pub use rerail_c_lean::pp::Options;
 pub use stream::{Config, Pp};

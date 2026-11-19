@@ -136,21 +136,12 @@ pub struct Env<'a> {
     pub time: &'a [u8],
     pub timestamp: &'a [u8],
     pub features: &'a [(&'a [u8], &'a [u8], i64)],
-    /// `__COUNTER__`'s first value: a reading of one element (decision 0430) starts from the
-    /// count of the uses before it.
-    pub counter: u32,
-    /// Record each name a lookup does not find (`Expanded::missed`): an element read alone is
-    /// given the definitions it reaches, and asks for a name it was not given (one a paste made).
-    pub asks: bool,
 }
 
 impl Env<'static> {
     /// The lean pass's defaults (`rerail_c_pp::Config::new`).
-    pub const DEFAULT: Env<'static> = Env { cpp: false, date: b"Jan  1 1970", time: b"00:00:00", timestamp: b"Thu Jan  1 00:00:00 1970", features: &[], counter: 0, asks: false };
+    pub const DEFAULT: Env<'static> = Env { cpp: false, date: b"Jan  1 1970", time: b"00:00:00", timestamp: b"Thu Jan  1 00:00:00 1970", features: &[] };
 }
-
-/// The built-in index of an `Asked` row that is a name a lookup missed (`Env::asks`).
-pub(crate) const MISS: u32 = BUILTINS.len() as u32;
 
 /// A file of the TU: its bytes, its token tape (`buf` its index + 1), its conditionals' chains
 /// (each conditional's `#`, a token's index, and its chain's next directive's, rising), and
@@ -343,38 +334,16 @@ impl Bounds {
     /// batch of TUs on Metal, where every room is pages taken. A run refused past a room's bound
     /// (`is_room`) below the last rung is run again at the next. The last is `of`, so a TU's
     /// answer, and its refusal at a real bound, are the CPU's. Each rung's tokens a token of the
-    /// TU, and its depths; an embedded file (data, no tokens, a file reaches it) still makes two
-    /// tokens a byte.
+    /// TU, and its depths; an embedded file (data, no tokens) still makes two tokens a byte.
     pub fn rung(files: &[File], r: usize) -> Bounds {
         const RUNG: [(usize, usize); RUNGS - 1] = [(2, 32), (4, 64), (8, 64), (16, 128)];
         let of = Bounds::of(files);
         let Some(&(per, depth)) = RUNG.get(r) else { return of };
         let toks: usize = files.iter().map(|f| f.toks.len()).sum();
         let bytes: usize = files.iter().map(|f| f.bytes.len()).sum();
-        // An embedded file is one a file includes or names, tokenless; a file no file reaches
-        // is text only (an element's headers, 0430: its tokens' spellings), no room.
-        let reached: std::collections::HashSet<u32> = files.iter().flat_map(|f| f.includes.iter().map(|i| i.1).chain(f.named.iter().map(|n| n.to))).collect();
-        let data: usize = files.iter().enumerate().filter(|(k, f)| f.toks.is_empty() && reached.contains(&(*k as u32))).map(|(_, f)| f.bytes.len()).sum();
+        let data: usize = files.iter().filter(|f| f.toks.is_empty()).map(|f| f.bytes.len()).sum();
         let tokens = per * toks + 2 * data + 256;
         Bounds { arena: tokens, scratch: per * bytes + 256, depth, macros: of.macros, output: tokens, steps: of.steps, calls: tokens / 8 + 256, lists: tokens / 16 + 64, list_bytes: per * 256 }
-    }
-
-    /// This rung held within `last` (the job's own bounds, its last rung), bound by bound: a
-    /// rung past the last is room no run needs. A tokenless file counts as embedded data, so a
-    /// job whose files carry text only for spellings (the passes' elements, 0430) would get
-    /// rooms by its files' bytes.
-    pub fn within(self, last: &Bounds) -> Bounds {
-        Bounds {
-            arena: self.arena.min(last.arena),
-            scratch: self.scratch.min(last.scratch),
-            depth: self.depth.min(last.depth),
-            macros: self.macros.min(last.macros),
-            output: self.output.min(last.output),
-            steps: self.steps.min(last.steps),
-            calls: self.calls.min(last.calls),
-            lists: self.lists.min(last.lists),
-            list_bytes: self.list_bytes.min(last.list_bytes),
-        }
     }
 
     /// Whether a refusal is a room's: past a store's bound, which a larger rung may hold. The
@@ -395,10 +364,6 @@ pub struct Expanded {
     pub exps: Vec<(Tok, Tok)>,
     /// The `__has_feature` family's tests `Env` does not answer: built-in and operand.
     pub unanswered: Vec<(Vec<u8>, Vec<u8>)>,
-    /// The names lookups did not find, in order, where the run asks (`Env::asks`).
-    pub missed: Vec<Vec<u8>>,
-    /// `__COUNTER__`'s next value.
-    pub counter: u32,
 }
 
 impl Expanded {
@@ -967,7 +932,7 @@ impl<'a> Machine<'a> {
         exps: Vec::new(),
         asked: Vec::new(),
         asked_bytes: Vec::new(),
-        counter: env.counter,
+        counter: 0,
         bi: Bi { b: 0, name: eof(0), depth: 0 },
         marker: eof(0),
         has_marker: false,
@@ -987,10 +952,8 @@ impl<'a> Machine<'a> {
         let bytes = &self.wanted_bytes;
         let wanted = self.wanted.iter().map(|w| (w.file, Named { name: bytes[w.lo as usize..w.hi as usize].to_vec(), angle: w.angle, next: w.next, embed: w.embed, pragma: w.pragma, to: NONE })).collect();
         let bytes = &self.asked_bytes;
-        let (miss, asked): (Vec<&Asked>, Vec<&Asked>) = self.asked.iter().partition(|a| a.b == MISS);
-        let unanswered = asked.iter().map(|a| (BUILTINS[a.b as usize].0.as_bytes().to_vec(), bytes[a.lo as usize..a.hi as usize].to_vec())).collect();
-        let missed = miss.iter().map(|a| bytes[a.lo as usize..a.hi as usize].to_vec()).collect();
-        Expanded { toks: self.out, scratch: self.scratch, wanted, exps: self.exps, unanswered, missed, counter: self.counter }
+        let unanswered = self.asked.iter().map(|a| (BUILTINS[a.b as usize].0.as_bytes().to_vec(), bytes[a.lo as usize..a.hi as usize].to_vec())).collect();
+        Expanded { toks: self.out, scratch: self.scratch, wanted, exps: self.exps, unanswered }
     }
 }
 
@@ -1119,8 +1082,6 @@ pub(crate) struct Ctx {
     pub ntimestamp: u64,
     pub features: *const FeatureC,
     pub nfeatures: u64,
-    /// `Env::asks`: 1, record the names lookups miss.
-    pub asks: u64,
     /// `#pragma`'s first three tokens (the compiled words' own).
     pub pragma_toks: [Tok; 3],
     /// `push_macro`'s stack: `(u32, u32)`s (`PAIR`), a slot and its definition.
@@ -1386,7 +1347,6 @@ pub fn prepare<'a>(program: &'a Words, files: &'a [File<'a>], env: &'a Env<'a>, 
         ntimestamp: env.timestamp.len() as u64,
         features: ro(place, &features) as *const FeatureC,
         nfeatures: features.len() as u64,
-        asks: u64::from(env.asks),
         room_pushed: rooms[23],
         pushed: rw(place, &mut m.pushed, rooms[23], 0) as *mut u8,
         npushed: m.pushed.len() as u64,
@@ -1672,32 +1632,8 @@ impl<'a> Machine<'a> {
                 self.d = self.table[i].def;
                 true
             }
-            _ => {
-                self.missed(self.t)?;
-                false
-            }
+            _ => false,
         })
-    }
-
-    /// Name `n` not found: recorded where the run asks (`Env::asks`), as a row of `MISS`.
-    fn missed(&mut self, n: Tok) -> R<()> {
-        if !self.env.asks {
-            return Ok(());
-        }
-        let len = (n.end - n.start) as usize;
-        if self.asked.len() >= self.bounds.output || self.asked_bytes.len() + len > self.bounds.scratch {
-            return Err("past the unanswered features' bound");
-        }
-        let lo = self.asked_bytes.len() as u32;
-        let (a, b) = (n.start as usize, n.end as usize);
-        if n.buf == 0 {
-            self.asked_bytes.extend_from_slice(&self.scratch[a..b]);
-        } else {
-            let files = self.files;
-            self.asked_bytes.extend_from_slice(&files[n.buf as usize - 1].bytes[a..b]);
-        }
-        self.asked.push(Asked { b: MISS, lo, hi: self.asked_bytes.len() as u32 });
-        Ok(())
     }
 
     fn frame(&mut self) -> R<()> {
@@ -2608,9 +2544,6 @@ impl<'a> Machine<'a> {
         let v = n.kind == IDENT && {
             matches!(self.find(self.text(&n))?, Ok(i) if self.table[i].def != NONE)
         };
-        if n.kind == IDENT && !v {
-            self.missed(n)?;
-        }
         if paren {
             self.read();
         }

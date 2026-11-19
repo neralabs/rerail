@@ -22,9 +22,5 @@ rerail-c-pp = { path = "../c_pp" }
 rerail-c-lean = { path = "../c_lean" }
 rerail-simd8 = { path = "../simd8" }
 
-[dev-dependencies]
-# The corpus test reads each file under clang's profile (`rerail_c_pp::oracle_profile`).
-rerail-c-pp = { path = "../c_pp", features = ["oracle"] }
-
 [target.'cfg(target_os = "macos")'.dependencies]
 rerail-metal = { path = "../metal" }

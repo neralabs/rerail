@@ -36,12 +36,12 @@ pub(super) struct Inst {
 pub(super) struct Tu {
     pub insts: Vec<Inst>,
     /// By (instance, directive, file): the instance its include enters.
-    pub key: HashMap<(u32, u32, u32), u32>,
+    key: HashMap<(u32, u32, u32), u32>,
     /// By file: its tables, made when it is first entered.
     pub tabs: Vec<Option<Tab>>,
     /// By (file, directive): the file an include with a literal name finds (none: `NONE`), the
     /// same from every instance.
-    pub found: HashMap<(u32, u32), u32>,
+    found: HashMap<(u32, u32), u32>,
     /// The predefines' instance, then the main file's: the unit's order.
     pub roots: [u32; 2],
 }
@@ -61,7 +61,7 @@ impl Tu {
         self.tabs[self.insts[inst as usize].file as usize].as_ref().expect("an entered file's tables")
     }
 
-    pub fn tab(&mut self, pp: &mut Pp, file: u32) {
+    fn tab(&mut self, pp: &mut Pp, file: u32) {
         if self.tabs.len() <= file as usize {
             self.tabs.resize_with(file as usize + 1, || None);
         }
@@ -415,7 +415,7 @@ fn resolve_rows(mut raw: Vec<(u32, u64, Row)>) -> Vec<(u32, u64, u32)> {
 
 /// The names whose invocations can reach `_Pragma`: `_Pragma`, and any whose definition (any
 /// of them) names one.
-pub(super) fn reaching(pp: &Pp, pragma: u32) -> HashSet<u32> {
+fn reaching(pp: &Pp, pragma: u32) -> HashSet<u32> {
     let mut r = HashSet::from([pragma]);
     loop {
         let n = r.len();
@@ -447,7 +447,7 @@ fn checked<R>(pp: &mut Pp, f: impl FnOnce(&mut Pp) -> R) -> Result<R, &'static s
 }
 
 /// Arm `d`'s test (`Pp::directive`'s and `Pp::skip_group`'s reading).
-pub(super) fn test(pp: &mut Pp, tab: &Tab, d: usize) -> Result<bool, &'static str> {
+fn test(pp: &mut Pp, tab: &Tab, d: usize) -> Result<bool, &'static str> {
     let dir = &tab.dirs[d];
     let file = dir.hash.buf - 1;
     checked(pp, |pp| match dir.kind {
@@ -464,7 +464,7 @@ pub(super) fn test(pp: &mut Pp, tab: &Tab, d: usize) -> Result<bool, &'static st
 }
 
 /// Include `d`'s file (`Pp::include`'s search), `None` where it enters none.
-pub(super) fn resolve(pp: &mut Pp, tab: &Tab, d: usize) -> Result<Option<u32>, &'static str> {
+fn resolve(pp: &mut Pp, tab: &Tab, d: usize) -> Result<Option<u32>, &'static str> {
     let dir = &tab.dirs[d];
     checked(pp, |pp| {
         let (name, angle) = pp.header_of(dir.line.clone())?;

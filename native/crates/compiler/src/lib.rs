@@ -15,9 +15,6 @@ pub mod bitlex_masks;
 pub mod bitlex_prove;
 pub mod bitlex_sat;
 pub mod bitlex_tier2;
-pub mod array;
-#[cfg(test)]
-mod array_tests;
 pub mod block;
 pub mod class_pack;
 pub mod block_native;
@@ -28,9 +25,6 @@ pub mod grammar;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod ladder;
 mod error;
-pub mod native_cpu_array;
-#[cfg(test)]
-mod native_cpu_array_tests;
 pub mod native_cpu_block;
 pub mod native_cpu_walk;
 pub mod native_cpu_codegen;
