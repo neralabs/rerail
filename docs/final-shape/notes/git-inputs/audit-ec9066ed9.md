@@ -2,6 +2,78 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Status at `8a328d0a0`
+
+Of the twenty cases open at `8a490c35e`, seven now have repairs.
+
+| Cases | Commit | Verification |
+| --- | --- | --- |
+| 4, 16 | `9488e0fe2`, `95f74b5b6` | Stop delivery waits for the registered database identity. Tests replace the database at its address and register a newer owner during delivery. A directory with 4,096 unrelated registrations releases only the matching routes. Collection can still visit the released store. |
+| 12 | `8a328d0a0` | Twelve 257-object packs required 149–152 warm index probes, down from 780. Findings and tree decodes stayed identical. A separate benchmark measured construction and lookup over 252,499 index entries. [Timings and memory](analysis-scopes.md) |
+| 24, 25 | `46e310793` | Malformed releases preserve both owner and receipt rows. Both native generation entry points reject fractions, nonfinite values, and integers outside the supported range. |
+| 26, 27 | `bf45851a5` | A selector that follows a malformed edge rejects the target kind. Both scan providers skip a regular file selected with a trailing slash or slash-dot. Direct commit selection and native reads have separate gaps in cases 31 and 37. |
+
+Commit `e2b3f68a9` also lets Git message searches continue past a malformed loose ref. This extends case 11 of the *original* audit.
+At `8a328d0a0`, 135 headless and Git helper tests passed. The store suite passed 254 tests and skipped four.
+The selector comparisons used Apple Git 2.50.1. The earlier intermittent `ENOTEMPTY` teardown failure did not recur in this run. Its cause remains unverified.
+
+Thirteen earlier cases remain open. Their fixtures and acceptance checks appear below.
+
+| Cases | Remaining work |
+| --- | --- |
+| 11, 18, 19 | Match binary detection across providers. Bound decoded trees retained by a view. Canonicalize the native path-set cache key. |
+| 13–15, 17, 23 | Expose run and scope membership to rules. Locate a named scope for deletion. Retire old generations. Record failed probes and back off. Recover committed stops after restoring the control database. |
+| 28–30 | Distinguish native read failures from absence. Report the retention scope. Identify collection failures correctly in text output. |
+| 21–22 | Check object invalidation on NTFS and run the message-selector comparisons against Git for Windows. Both lack a Windows result. |
+
+The additional cases below bring the open count to 25. Case 42 follows from the implementation. Cases 31–41 have macOS fixtures.
+The two Windows items above are verification gaps. The audit has no observed stale NTFS result or Git for Windows mismatch.
+
+### Additional results at `8a328d0a0`
+
+| # | What happened | Repair and acceptance check |
+| --- | --- | --- |
+| 31 | A commit recorded another commit as its root tree. A metadata policy completed with one finding. The report's `source.tree` was a commit ID. Peeling the same input with `^{tree}` reported the wrong kind. | Check the kind of a locally available root when selecting a commit directly or through a tag. Keep metadata-only scans working when the root object is absent. Test both cases. |
+| 32 | A rule requested a tree walk on the selected **commit**. It received `git_tree_directory(repo, commit, "", commit)`. The library seeds directory placement from the request before establishing the object's kind. | Keep a separate traversal frontier for error reporting. Emit public directory placements for verified trees. Test a commit, a missing child, and two placements of one valid tree. |
+| 33 | `--path src/a.py` found a Python call on both providers. With `src/../src/a.py`, the filesystem report listed the path as selected and found zero calls. The revision report skipped it. An absolute spelling also appeared as selected in the filesystem report. | Normalize repository-relative inputs once before lookup and filtering. Reject an absolute path or an escape. Keep original spellings in the report. Assert the call finding through both providers. |
+| 34 | Git resolved `@{-1}@{0}` and `@{-1}@{1}` after a branch switch. Rerail rejected the second suffix as unconsumed input. | Carry the previous checkout's reference into the reflog lookup. Compare IDs from the rule relation and source selector with Git on attached and detached checkouts. |
+| 35 | With a parent commit, Git rejected `HEAD:./src/..` as a single revision. Rerail selected the root tree. Git accepted `HEAD:./src/../`, and both returned the root tree. | Check Git's expression interpretation before path normalization. Compare accepted and rejected spellings with `git rev-parse --verify` from the root and a subdirectory. |
+| 36 | The native `readFile("src/a.py", -1)` returned all five bytes. A limit of 4,294,967,296 returned null on that file. JavaScript values reach an unsigned 32-bit conversion before validation. | Validate the public byte limit before conversion. Test zero, the maximum, fractions, both out-of-range directions, and nonfinite values. |
+| 37 | `containsPath("src/a.py/.")` returned false. On the same view, `readFile("src/a.py/.", 10)` returned the file. | Preserve the final directory requirement in the common source lookup. Test membership, reading and listing through all native entry points. |
+| 38 | A commit had an extra header whose name contained byte `ff`. In an isolated repository, `git fsck --strict` succeeded and `git show -s --format=%s` returned its subject. Rerail rejected the entire commit as malformed. | Preserve header name bytes in the object decoder. Expose a byte relation alongside text headers. Test reading the subject, tree, and raw header independently. |
+| 39 | With byte `fc` in the author's name, Git still returned author time 123 and offset +0230. The rule received the raw signature and the committer, but lost the typed author time. | Emit timestamp and offset facts independently of name and email decoding. Compare both author and committer cases with Git. Keep the raw signature. |
+| 40 | After scope deletion and reuse, the same Git view published three manifests for a Python rule. A fresh view published five. The same difference occurred across independent stores. All runs returned one finding and published successfully. | Attach the cached inventory's dependencies to each run and store. After deletion, compare retained plan identities and fresh-process reuse with a fresh view. Exercise an abort as well. |
+| 41 | A named revision scan used a custom store. It completed without creating a maintenance registration. After removing the override, `collectAnalysisCaches` never visited that store. | Register stores used by named runs for maintenance. Test discovery after restart with the override removed, including collection after the last scope is deleted. |
+| 42 | The maintenance registry retains one path per directory store. Maintenance visits every recorded path. The code has no retirement operation for a permanently removed store. Directory release routing now prunes its own rows. | Add an explicit way to retire a store after resolving its owners and pending releases. Test permanent retirement, temporarily offline stores, and repeated rotation of store paths. |
+
+The [source view](../../../../native/src/git_snapshot.rs), [revision resolver](../../../../native/src/git_snapshot_revision.rs), and [native read interface](../../../../native/src/code_rule_dsl/workspace/api.rs) supply cases 31 and 34–37.
+Cases 32 and 38–40 use the [Git rule library](../../../rule-syntax/lib/git.rr) and the [Git fact provider](../../../../native/src/code_rule_dsl/logic/plan/corpus/git.rs).
+The [scan target](../../../../src/cli/headless-scan.ts) and [store registry](../../../../src/engine/native/analysis-scope.ts) supply cases 33, 41, and 42.
+
+For case 32, run this policy with `--revision HEAD --analysis-scope walk-check` in a repository with a commit.
+It reports the commit ID as the root directory.
+
+```rr
+#include "git.rr"
+.policy "walk-check" revision 1
+git_tree_walk_request(r, c) :- git_source_commit(r, c).
+.violation Directory(at: span, id: symbol) "Directory {id}"
+Directory(@place("git", 1), c) :- git_source_commit(r, c), git_tree_directory(r, c, "", c).
+```
+
+For case 40, the fixture contained one Python identifier. Each run used a new native `AnalysisScopeRun` and the same named scope.
+After each successful `finish(true)`, a separate read-only SQLite process counted the retained plans.
+
+```sql
+SELECT hex(m.policy), count(*)
+FROM analysis_scope_manifest a JOIN corpus_manifests m USING(manifest_id)
+WHERE a.scope = 'named:repeat'
+GROUP BY m.policy ORDER BY m.policy;
+```
+
+Two policy digests disappeared only on the reused view. The experiment established missing ownership. It did not measure reparsing after collection.
+The first repair priorities are cases 23, 31–33, 38, and 40. They affect release delivery, selected source, rule facts, findings, and cache ownership.
+
 ## Status at `8a490c35e`
 
 Ten cases from this follow-up audit have regression coverage.
@@ -91,4 +163,4 @@ rerail scan --revision HEAD --analysis-scope audit --rr ./audit.rr --json --no-s
 
 Change `"first"` to `"second"` before the second run. Compare its violation message with a third run using a fresh `RERAIL_CONTENT_STORE_PATH`. The same comparison works for a filesystem scan when you omit the revision and named scope.
 
-The outstanding correctness work starts with cases 4 and 23–26. Each can change the owner set or the selected source.
+At `8a490c35e`, the first correctness priorities were cases 4 and 23–26. The status above records their subsequent results.
