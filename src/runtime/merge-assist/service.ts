@@ -661,7 +661,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     } finally {
       clearTimeout(timeout);
     }
-    await this.#endPasses(true);
+    await this.#endPasses();
   }
 
   /**
@@ -672,7 +672,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
    * ends by itself later: it stores nothing, starts no Git, and gives up its scan mark only while the database is open
    * (`#releaseMark`).
    */
-  #endPasses(waitForLock: boolean): Promise<void> {
+  #endPasses(waitForLock = true): Promise<void> {
     const ended = this.#reads.stop();
     for (const [path, { mark }] of this.#scans) {
       try {

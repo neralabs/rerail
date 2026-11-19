@@ -627,6 +627,31 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     expect(await stored(ws)).toEqual({ lastScan: null, scanning: true, conflicts: [] });
   });
 
+  it("gives up the mark of a scan still running when a stop's wait is over once another process's write lock frees, as before", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    addPeers(ws);
+    await ws.service().setEnabled(ws.repo, true);
+    const github = new HeldGithub();
+    const { service, close } = ownConnection(ws, github);
+    const asked = Promise.withResolvers<void>();
+    github.onHeld = () => asked.resolve();
+    const scan = service.openSession(ws.repo, "claude-code", "session-1");
+    await asked.promise;
+    const holder = await holdWriteLock(ws.databasePath);
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    // The scan still waits for `gh` when the stop's wait is over, and the other process gives the lock back by itself.
+    await service.stop(10);
+    const written = stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("Merge Assist"));
+    stderr.mockRestore();
+    close();
+    await holder.release();
+    github.release();
+    await scan;
+
+    expect(written).toEqual([]);
+    expect(await stored(ws)).toEqual({ lastScan: null, scanning: false, conflicts: [] });
+  });
+
   it("returns once the Git it ended has exited while a scan waits for a file call that never answers, and the scan then writes nothing to the closed database and starts no Git", async () => {
     const ws = await workspace();
     addPeers(ws);
