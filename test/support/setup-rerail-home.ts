@@ -1,5 +1,7 @@
 import { afterAll } from "vitest";
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -20,13 +22,17 @@ process.env.RERAIL_CONTENT_STORE_PATH = join(contentStoreDirectory, "content.sql
  * parent until the worker exits, after which nothing would ever stop it. Windows launches through the native binding
  * and has no `ps`; it is not checked.
  */
-function strandedDaemons(): Array<{ pid: number; home: string }> {
+async function strandedDaemons(): Promise<Array<{ pid: number; home: string }>> {
   if (process.platform === "win32") return [];
   const stranded: Array<{ pid: number; home: string }> = [];
-  for (const line of execFileSync("ps", ["-A", "-o", "pid=,ppid=,command="], { encoding: "utf8" }).split("\n")) {
+  const ps = spawn("ps", ["-A", "-o", "pid=,ppid=,command="], { stdio: ["ignore", "pipe", "inherit"] });
+  const exited = once(ps, "close");
+  for await (const line of createInterface({ input: ps.stdout })) {
     const match = /^\s*(\d+)\s+(\d+)\s+.*[\\/]dist[\\/]daemon\.js --state-file (.+?)(?: --|$)/u.exec(line);
     if (match !== null && Number(match[2]) === process.pid) stranded.push({ pid: Number(match[1]), home: dirname(match[3]!) });
   }
+  const [code] = await exited;
+  if (code !== 0) throw new Error(`ps exited with code ${code}`);
   return stranded;
 }
 
@@ -54,7 +60,7 @@ async function stopProcess(pid: number): Promise<void> {
 
 afterAll(async () => {
   try {
-    const stranded = strandedDaemons();
+    const stranded = await strandedDaemons();
     if (stranded.length > 0) {
       for (const daemon of stranded) await stopProcess(daemon.pid);
       throw new Error(`Test file left ${stranded.length} Rerail daemon(s) running (stopped now): ${stranded.map(daemon => `pid ${daemon.pid} in ${daemon.home}`).join(", ")}`);
