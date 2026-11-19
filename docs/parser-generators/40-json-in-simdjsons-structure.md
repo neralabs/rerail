@@ -593,6 +593,68 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 28, done: format 16 for every program the Rust backend takes, in the generated Rust
+
+Steps 25 to 27 wrote format 16 only where each node's key is known at its word (`coded`): no edits,
+one function. No ladder step was such a program, so `rust_source_16` refused every step, and every
+`.rr` program. Where a word edits nodes it made (a wrap, a fold, a retag, a drop, a reread), the
+format 16 Rust now runs as the JIT's (R17):
+- the rows are the run's window;
+- a node goes to the writer's ops at a commit point, one commit point behind (`pass16`, as
+  `native_cpu_tape::pass`): the ops' open nodes whose subtrees end before it closed at their ends,
+  then the node opened by its number and committed;
+- each kind change goes through `retag_at`: a node the ops already have (the root, held open) is
+  retagged there (`retag16`, `w_retag`); before the commit point, the commit point moves back
+  (`uncode`); an edit of a node already passed is the run's failure (`fail::PASSED`);
+- `ACCEPT` passes the rest with the root closed, and the host finishes the writer.
+
+A failure is the writer's own (`State::bad`, set as `w_fail` sets it), so the host reads it as it
+reads the JIT's, and a full stack of open nodes is retried deeper. The `coded` path of steps 25
+to 27 is unchanged.
+
+On the way: a token's check calls `window`, `nib` and `bits16`, which were written only with a
+fetched token step, so a step with a token check and no fetch (`json` 11 to 13) gave Rust that did
+not compile. They are their own block now (`VECTORS`), written for either.
+
+**The check** (`aot_tests::ladder_steps_rust_tapes_are_the_jits`): every step of JSON's ladder
+and `.rr`'s, in formats 15 and 16, built by rustc, one library a ladder, run on the JIT's harness:
+- format 15's image is the JIT's, on each step's documents;
+- format 16's home (16 and 16z, the tape and its presence) is the JIT's, or both refuse. The language
+  holds every key the step's tapes hold, as the engine's holds its grammar's. Each of a file's own
+  tables lacks the kinds an edit replaced, so the root's first kind had no number, and both runs
+  failed alike.
+
+The documents are the ladder's sentences and their mutations, the compiler's format 16
+documents for JSON's ladder, and the accepted ones joined past 3,000 nodes. A probe grammar
+(`RETAGGED_ROOT`) retags the root after lists were passed: neither ladder edits a node the ops
+already have.
+
+| | steps | format 16 homes, the JIT's | of 3,000 nodes or more |
+|---|---:|---:|---:|
+| JSON's ladder | 13 of 15 | 2,798 | 28 |
+| `.rr`'s ladder | 22 of 22 | 5,540 | 44 |
+| the probe | 1 | 206 | 2 |
+
+JSON's steps 14 and 15 are refused in both formats: a token check that reads back (0428) has no
+Rust yet. Kotlin's ladder is refused at its first step: more than one kind of extra.
+
+Mutations, each failing the check:
+- the ops taking nodes up to the commit point, not one behind (the probe: `NUMBER` at the root);
+- no `retag16` (the probe);
+- the root closed at a commit point.
+
+Not covered: the commit point moved back by an edit before it (`uncode`). The ops read each row as
+they pass it, so a tape differs only if a second edit reaches a node between the first edit and
+the old commit point. None of the grammars has that.
+
+**The `.rr` parser built ahead of time** (`rerail_rr_aot`) now has its format 16 tier 2:
+- `build.rs` writes `tier2_16_aot.rs` from `rust_source_16`;
+- `aot` checks its fingerprint and sets it on the format 16 run (`Parser::sixteen_mut`, no longer
+  a test hook).
+
+`aot_format_16_tapes_are_the_jits`: 2,008 of the corpus's 2,018 files taken, 4,016 homes, each the
+JIT's.
+
 ## Step 27, done: no working rows in the format 16 run, only a stack of open nodes, in the generated Rust
 
 After step 26, each node still wrote a working row of 12 bytes (its kind and field, start, end):
@@ -872,6 +934,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 | the closing quote ends the string | the closer's arm goes on at once | yes, since step 16 |
 | the tape: a word a value, written once, in place | format 16 (decision 0434): each node passed to the writer's ops at its word, as it is made (`open16`, `leaf16`, `w_close`), each cell at its final place; the ops' `finish` moves the last block down and lays the tail | since step 25 |
 | the stack: open containers only (`is_array[depth]`) | format 16 run: a slot an open node, its call number; no row a node | since step 27 |
+| | where a word edits a node it made (`.rr`, the ladders): the rows as the run's window, each node to the ops at a commit point, one behind | since step 28 |
 
 What follows, in order, each change made in `rust_stream` or in the compiler, and judged on
 the Rust it writes:

@@ -8294,9 +8294,8 @@ impl Parser {
         w.sixteen.get_or_init(|| compile_with(&w.native, &w.cut, widths, w.native.tag, true).ok()).as_ref()
     }
 
-    /// The format 16 tier 2 (`sixteen`), to set its entry (`CompiledStream::set_entry`): a test runs another
-    /// backend's code of the same program on its harness.
-    #[cfg(any(test, feature = "test-hooks"))]
+    /// The format 16 tier 2 (`sixteen`), to set its entry (`CompiledStream::set_entry`): another backend's code of
+    /// the same program on its harness (`rerail_rr_aot`'s, a test's).
     pub fn sixteen_mut(&mut self) -> Option<&mut CompiledStream> {
         self.sixteen()?;
         self.wide.as_mut()?.sixteen.get_mut()?.as_mut()
