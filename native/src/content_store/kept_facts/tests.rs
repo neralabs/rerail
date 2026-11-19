@@ -451,3 +451,35 @@ fn a_continuation_is_kept_with_every_row_it_reads() {
     assert_eq!(read(&path, &c), [("p".to_owned(), 0, 1, vec![vec![1, 10], vec![2, 20], vec![3, 30], vec![4, 40]])], "every row down the chain, not the base's past its start");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+/// Over a real store (`RERAIL_KEPT_STORE`): what the chain keeps, by relation, an input's granules (part > 0) apart
+/// from a relation's rows (part 0) and the parts beside them (part < 0: documents, statistics): entries, rows and
+/// bytes, largest first. Run with `--ignored --nocapture`; prints its report.
+#[test]
+#[ignore = "reads the store RERAIL_KEPT_STORE names"]
+fn chain_bytes_by_relation() {
+    let path = PathBuf::from(std::env::var("RERAIL_KEPT_STORE").expect("RERAIL_KEPT_STORE: a store's file"));
+    let c = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let spaces: Vec<Vec<u8>> = c.prepare("SELECT DISTINCT space FROM facts_chain").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+    // (relation, what) -> (entries, rows, bytes)
+    let mut by: std::collections::HashMap<(String, &str), (usize, usize, usize)> = Default::default();
+    let mut total = 0usize;
+    for s in &spaces {
+        let space: [u8; 32] = s.as_slice().try_into().unwrap();
+        let kept = KeptSpace::open(&path, &space, &chain_rows(&c, &space).unwrap()).unwrap();
+        for k in kept.view().all() {
+            let bytes = (0..k.rows.arity as usize).map(|col| k.rows.col(col).bytes()).sum::<usize>() + k.rows.levels().map_or(0, |l| l.bytes());
+            let what = match k.key.part { 0 => "rows", p if p > 0 => "granule", _ => "beside" };
+            let e = by.entry((k.key.rel.to_owned(), what)).or_default();
+            (e.0, e.1, e.2) = (e.0 + 1, e.1 + k.rows.len(), e.2 + bytes);
+            total += bytes;
+        }
+    }
+    let mut rows: Vec<_> = by.into_iter().collect();
+    rows.sort_by_key(|(_, (_, _, b))| std::cmp::Reverse(*b));
+    let by_what = |w: &str| rows.iter().filter(|((_, x), _)| *x == w).map(|(_, (_, _, b))| b).sum::<usize>();
+    eprintln!("{} spaces, {total} bytes of values: rows {}, granules {}, beside {}", spaces.len(), by_what("rows"), by_what("granule"), by_what("beside"));
+    for ((rel, what), (n, r, b)) in rows.iter().take(40) {
+        eprintln!("{b:>11} {:5.1}%  {what:7} {n:6} entries {r:10} rows  {rel}", *b as f64 * 100.0 / total.max(1) as f64);
+    }
+}
