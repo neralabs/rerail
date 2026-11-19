@@ -331,11 +331,12 @@ describe("the transcript boundary for coding agents", () => {
         .toEqual({ toolName: "Bash", input: WITHHELD_INPUT });
     }
     // A `/net` path in such a list is looked up as well, as on `main`: only a URL's host and path under `/net` is not.
-    // `~ftp` is the home folder of the user `ftp`, `.https` a hidden folder, `libhttp` a folder whose name ends in one.
+    // `~ftp` is the home folder of the user `ftp`, `.https` a hidden folder, `libhttp` a folder whose name ends in one,
+    // and a `/net` path with one slash after a scheme's name is no URL's host and path, which starts with `//`.
     const netLists = [
       "PATH=/usr/bin://net/192.0.2.1/bin", "PATH=bin://net/192.0.2.1/bin", "PATH=//opt/https://net/192.0.2.1/bin",
       "PATH=~ftp://net/192.0.2.1/bin", "PATH=~http://net/192.0.2.1/bin", "PATH=.https://net/192.0.2.1/bin",
-      "PATH=libhttp://net/192.0.2.1/bin",
+      "PATH=libhttp://net/192.0.2.1/bin", "PATH=https:/net/192.0.2.1/bin",
     ];
     for (const command of netLists) expect(callNamesSecretPath({ command }, repo), command).toBe(false);
     expect(lookups.filter(reachesAnotherMachine)).toEqual(netLists.map(() => "/net/192.0.2.1/bin"));
