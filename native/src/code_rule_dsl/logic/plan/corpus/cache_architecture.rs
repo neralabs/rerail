@@ -38,6 +38,10 @@ const NOT_CACHES: &[&str] = &[
     "source_objects", "source_aliases", "strings", "atom_blocks", "hashes", "paths", "store_state", "store_identity", "object_pins",
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
+    // Names: each guest's key by its identity (decisions 0323, 0391).
+    "guest_keys",
+    // The observer's own journal of what its listings named (decision 0400): a record of changes, not an answer.
+    "observed_changes",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",

@@ -646,9 +646,16 @@ impl Placed {
         if !self.whole || self.ids.is_some() {
             return Err(Error::Plan("the program has no image: its run reads it from its version".into()));
         }
-        let (v, sentinels) = passes::normalize(&self.v).map_err(Error::Plan)?;
-        let sentinels = sentinels.iter().map(|&r| v.rel_name(r).to_owned()).collect();
-        let (v, stated) = if apart { passes::stated_apart(&v).map_err(Error::Plan)? } else { (v, Vec::new()) };
+        // Each held by the version it is of: made once however many runs (a corpus run's chunks) read it.
+        use super::super::program_image::manager::analysis;
+        let normal = analysis::<passes::NormalForm>(&self.v).map_err(Error::Plan)?;
+        let sentinels = normal.sentinels.iter().map(|&r| normal.v.rel_name(r).to_owned()).collect();
+        let (v, stated) = if apart {
+            let a = analysis::<passes::ApartForm>(&normal.v).map_err(Error::Plan)?;
+            (a.v.clone(), a.stated.clone())
+        } else {
+            (normal.v.clone(), Vec::new())
+        };
         let stated = stated.iter().map(|&(r, s)| (v.rel_name(r).to_owned(), v.rel_name(s).to_owned())).collect();
         Ok(Normalized { placed: Placed { v, ids: None, whole: true, fields: Default::default(), positions: Default::default() }, sentinels, stated })
     }

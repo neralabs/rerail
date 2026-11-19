@@ -5240,7 +5240,17 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   placer serves every input's job now (its writer under its lock; the encoding outside it), its frames queued once
   in the inputs' order, none when none was placed: 48 files; 261.5 → 248.3 G instructions, 5.7 → 2.2 s system,
   findings the same (53).
-- **Fixed on the way** (Linux, the farm's hosts): a listed root's cursor (decision 0400) is kept under no volume
+- **The program normalized on every chunk** (`body::Placed::normalized`): `passes::normalize` (and `stated_apart`)
+  ran in a pipeline of no store, once a chunk: 84 times on 901 files, 2.5 s of `leg-083-typed`'s CPU. Both are now
+  analyses held by the version they are of (`NormalForm`, `ApartForm`; decision 0281 §2): made once. The policy on
+  901 files: 580 → 541 G instructions, 52.3 → 48.0 s user, its findings the same.
+- **What a chunk of 901 files costs, `leg-083-typed` alone** (84 chunks of about 23,000 nodes; 48 s user against
+  4.2 s on 91 files): joins 9.9 s; per chunk, the statistics (`make_plan`, 58 ms) and `views and tables` (45 ms);
+  the memo's base rows 3.4 s; the inputs' frames 2.8 s. The typing program measured up to 30,622 bytes a node (a
+  10,000-node chunk added 257 MB) over a run already at 740 MB: the chunks stay at the floor, and every per-chunk
+  cost is paid 84 times.
+- **Fixed on the way** (`cache_architecture`, failing since 0399 step 1 and decision 0323 added their tables):
+  `guest_keys` (names) and `observed_changes` (the observer's journal) are on `NOT_CACHES`. And (Linux, the farm's hosts): a listed root's cursor (decision 0400) is kept under no volume
   where the system names none, but was read by the volume alone, so every warm run wrote it again; and a root under a
   stored one was folded into it only by the volumes' ids, which Linux has none of (with the journal off, a Mac
   neither): by the device now. `the_run_after_a_cold_one_writes_nothing` passes on Linux. The journal test
@@ -5253,6 +5263,8 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   - `an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing` fails 4 of 5 on the M3
     at load 35-107 (`0 trusted by the journal`: the run's own question timed out, and the answer was checked by
     `stat`), as Q223's test does: the journal's timing at load.
+  - The typing program's bytes a node (30 KB at most), and the 740 MB before the first chunk: they set the chunks'
+    count, and so every per-chunk cost's.
 
 ### Q243. At 2,410 files the mode is priced above a derive for deltas of 0.1% of the rows read
 
