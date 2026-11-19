@@ -147,13 +147,15 @@ function editableCodeRules(initial: readonly CodeRule[]) {
   };
 }
 
-async function fixture({ codeRules = [needleCodeRule(1)], ...options }: {
+async function fixture({ codeRules = [needleCodeRule(1)], undelivered, ...options }: {
   scope?: "repository" | "touched-files" | "ai-output";
   mode?: "steer" | "log";
   audits?: AuditRecorder;
   codeRules?: readonly CodeRule[];
   timingLog?: (line: string) => void;
   steerShell?: "posix" | "git-bash" | "powershell";
+  /** The runtime's answer to whether a path's steer was dropped before delivery (`RuleSteerDelivery.undelivered`). */
+  undelivered?: (sessionId: string, path: string) => boolean;
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "rerail-enforcer-"));
   roots.push(root);
@@ -165,7 +167,7 @@ async function fixture({ codeRules = [needleCodeRule(1)], ...options }: {
   const requestSteer = vi.fn(async (_sessionId: string, _delivery: "steer", _content: string, _metadata?: SteerMetadata) => undefined);
   const enforcer = new NativeCodeRuleEnforcer(catalog, {
     workspaceRoot: root,
-    steerDelivery: { requestSteer },
+    steerDelivery: { requestSteer, ...(undelivered === undefined ? {} : { undelivered }) },
     ...options,
   });
   return { root, catalog, enforcer, requestSteer, rules };
@@ -1120,6 +1122,31 @@ describe("mechanical code rule regressions", () => {
       const status = await settled(enforcer);
       expect(status.failures.map(failure => failure.path)).toContain("api/a_own.py");
       expect(status.violations.map(violation => violation.path).toSorted()).toEqual(logged.toSorted());
+    } finally { await enforcer.close(); }
+  });
+
+  // The same check of several, failing partway: each edit it had not finished is recorded failed, and the revision goes
+  // out with the findings of those it finished once the last is recorded, not at some later check.
+  it("answers a log revision with the edits it finished when a check of several fails partway through them", async () => {
+    const undelivered = (_sessionId: string, path: string): boolean => {
+      if (path === "api/l2.py") throw new Error("the runtime could not answer");
+      return false;
+    };
+    const { root, enforcer } = await fixture({ codeRules: [needleBudgetRule(), modeCodeRule("test:gamma", "GAMMA", "log")], undelivered });
+    const logged = [...LOGGED, "api/z_other.py"];
+    try {
+      for (const path of logged) await writeFile(join(root, path), "GAMMA\n");
+      await enforcer.openWorkspace("fails-partway");
+      await enforcer.auditGeneratedEdits("fails-partway", {
+        revision: 1, checkpoints: ["edit"], mode: "log", edits: logged.map(path => ({ path, language: "python" as const, generatedText: "GAMMA\n" })),
+      });
+      await enforcer.auditGeneratedEdits("fails-partway", {
+        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/a_own.py", language: "python", readError: "EACCES: permission denied" }],
+      });
+      const status = await settled(enforcer);
+      // The last log edit is finished first in the unreadable edit's place, then the others in the order they came.
+      expect(status.failures.map(failure => failure.path)).toEqual(expect.arrayContaining(["api/l2.py", "api/l3.py", "api/l4.py"]));
+      expect(status.violations.map(violation => violation.path).toSorted()).toEqual(["api/l0.py", "api/l1.py", "api/z_other.py"]);
     } finally { await enforcer.close(); }
   });
 

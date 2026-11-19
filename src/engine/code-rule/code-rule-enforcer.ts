@@ -1332,7 +1332,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     try {
       await this.#evaluateTogether(taken);
     } catch (error) {
-      for (const [path, stored] of this.#notFinished(taken)) await this.#recordPendingEvaluationError(path, stored, error);
+      for (const [path, stored] of this.#notFinished(taken)) {
+        // Out of the unfinished before its failure is recorded: the publish after the last record then sends the revision
+        // the edits finished before the error made ready, rather than leaving it for some later check.
+        this.#unfinished = this.#unfinished.filter(other => other !== stored);
+        await this.#recordPendingEvaluationError(path, stored, error);
+      }
     } finally {
       this.#busy = false;
       this.#checking = undefined;
