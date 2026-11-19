@@ -63,7 +63,9 @@ pub struct DeviceView<'a> {
 }
 
 /// A view a stage reads in place (decision 0353 step 4d): its batch's directory's GPU address, the view's number in
-/// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address, and what keeps them.
+/// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address (the device layer's, as
+/// the stages bind them), and what keeps them. Made where the process's device is Metal: the directory is of Metal's
+/// addresses (`device_chunk::views_in_place`).
 /// A 16z batch's views read their blocks through its cache (`cache`, decision 0353 step 4b), which its reads write:
 /// a stage that reads the view is refused when the cache's failures rise past `failed` (no room found).
 #[cfg(target_os = "macos")]
@@ -71,8 +73,8 @@ pub struct DeviceView<'a> {
 pub struct ViewInPlace {
     pub dir: u64,
     pub kind: u32,
-    pub buffers: Vec<metal::Buffer>,
-    pub cache: Option<metal::Buffer>,
+    pub buffers: Vec<rerail_device::device::Buffer>,
+    pub cache: Option<rerail_device::device::Buffer>,
     pub failed: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }

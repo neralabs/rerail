@@ -47,6 +47,13 @@ impl<T: MslField> MslField for Ptr<T> {
             out.push(s);
         }
     }
+    fn c_deps(out: &mut Vec<String>) {
+        T::c_deps(out);
+        let s = "typedef struct Ptr {\n    int64_t off;\n} Ptr;\nUKL_STATIC_ASSERT(sizeof(Ptr) == 8, \"Ptr: size\");\n".to_string();
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    }
 }
 
 /// `len` items of `T`, starting `off` bytes from the span's own address.
@@ -115,6 +122,13 @@ impl<T: MslField> MslField for Span<T> {
     fn deps(out: &mut Vec<String>) {
         T::deps(out);
         let s = "struct Span {\n    long off;\n    ulong len;\n};\nstatic_assert(sizeof(Span) == 16, \"Span: size\");\n".to_string();
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    }
+    fn c_deps(out: &mut Vec<String>) {
+        T::c_deps(out);
+        let s = "typedef struct Span {\n    int64_t off;\n    uint64_t len;\n} Span;\nUKL_STATIC_ASSERT(sizeof(Span) == 16, \"Span: size\");\n".to_string();
         if !out.contains(&s) {
             out.push(s);
         }

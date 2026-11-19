@@ -1041,7 +1041,7 @@
                 if d.in_place.is_none() {
                     let out = mj::DevRel::empty(cols.len(), n).unwrap();
                     let mut batch = mj::Batch::new().expect("the device");
-                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, &cols, &out).unwrap();
+                    batch.expand_view(&d.block.device_buffer(device).unwrap(), d.root, d.view, &cols, &out).unwrap();
                     batch.finish().unwrap();
                     for (j, &c) in cols.iter().enumerate() {
                         let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
@@ -1068,7 +1068,10 @@
             }
         }
         assert_eq!(seen, 10);
-        assert_eq!(in_place, 10, "node, child, field, core_node and line read in place");
+        // Read in place where the views' directory's addresses are the device's (Metal's); made elsewhere (decision
+        // 0440 step C: OpenCL 1.2's buffers have no addresses), which the made branch above checked.
+        let read_in_place = if device.metal().is_some() { 10 } else { 0 };
+        assert_eq!(in_place, read_in_place, "node, child, field, core_node and line read in place");
         // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
@@ -1093,20 +1096,27 @@
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
             // directory, its tapes and core.rr's lines in the batch's block; a guest's (a copied stretch) through its
-            // host's lines and its placement. With the guest and without.
+            // host's lines and its placement. With the guest and without. Made where the device is not Metal (the
+            // directory's addresses are Metal's, decision 0440 step C).
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();
             for views in [&core_views, &own_views] {
                 for name in ["line", "end_line", "col", "docof"] {
                     let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
-                    let v = src.device_view().and_then(|d| d.in_place.clone()).unwrap_or_else(|| panic!("{name}: read in place"));
+                    let d = src.device_view().unwrap_or_else(|| panic!("{name}: on the device"));
+                    assert_eq!(d.in_place.is_some(), device.metal().is_some(), "{name}: read in place on Metal alone");
                     let n = src.len();
                     assert!(n > 0, "{name}: rows");
                     for cols in [vec![0, 1], vec![1]] {
-                        let view = mj::DevRel::view(2, n, v.clone()).unwrap();
                         let out = mj::DevRel::empty(cols.len(), n).unwrap();
                         let mut batch = mj::Batch::new().expect("the device");
-                        let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
-                        batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                        match &d.in_place {
+                            Some(v) => {
+                                let view = mj::DevRel::view(2, n, v.clone()).unwrap();
+                                let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                                batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                            }
+                            None => batch.expand_view(&d.block.device_buffer(device).unwrap(), d.root, d.view, &cols, &out).unwrap(),
+                        }
                         batch.finish().unwrap();
                         for (j, &c) in cols.iter().enumerate() {
                             let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();

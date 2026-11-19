@@ -96,6 +96,8 @@ rerail-store = { path = "../store" }
 rerail-transducer = { path = "../transducer", default-features = false }
 rerail-w = { path = "../w", default-features = false }
 rerail-accel = { path = "../../../accel" }
+# The device layer's buffers and host-memory wraps, which the joins' and row programs' kernels bind (decision 0440).
+rerail-device = { path = "../../../gpu/device" }
 rerail-compiler = { path = "../compiler" }
 rerail-rr-parser = { path = "../rr_parser" }
 

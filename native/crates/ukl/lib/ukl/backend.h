@@ -46,6 +46,8 @@ UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return popcount(x); }
 UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return (uint32_t)popcount(x); }
 UKL_INLINE uint32_t ukl_clz32(uint32_t x) { return clz(x); }
 UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return (uint32_t)clz(x); }
+// The high 64 bits of the signed 128-bit product (an overflow test of `*`).
+UKL_INLINE int64_t ukl_mulhi64(int64_t a, int64_t b) { return mulhi(a, b); }
 UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return ctz(x); }
 UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return (uint32_t)ctz(x); }
 
@@ -118,6 +120,7 @@ UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return __popc(x); }
 UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return __popcll(x); }
 UKL_INLINE uint32_t ukl_clz32(uint32_t x) { return __clz(x); }
 UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return __clzll(x); }
+UKL_INLINE int64_t ukl_mulhi64(int64_t a, int64_t b) { return __mul64hi(a, b); }
 UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return x == 0u ? 32u : (uint32_t)(__ffs(x) - 1); }
 UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)(__ffsll(x) - 1); }
 
@@ -176,6 +179,7 @@ UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return (uint32_t)__builtin_popc
 UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return (uint32_t)__builtin_popcountll(x); }
 UKL_INLINE uint32_t ukl_clz32(uint32_t x) { return x == 0u ? 32u : (uint32_t)__builtin_clz(x); }
 UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)__builtin_clzll(x); }
+UKL_INLINE int64_t ukl_mulhi64(int64_t a, int64_t b) { return (int64_t)(((__int128)a * (__int128)b) >> 64); }
 UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return x == 0u ? 32u : (uint32_t)__builtin_ctz(x); }
 UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)__builtin_ctzll(x); }
 
@@ -250,6 +254,7 @@ UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return popcount(x); }
 UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return (uint32_t)popcount(x); }
 UKL_INLINE uint32_t ukl_clz32(uint32_t x) { return clz(x); }
 UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return (uint32_t)clz(x); }
+UKL_INLINE int64_t ukl_mulhi64(int64_t a, int64_t b) { return mul_hi(a, b); }
 // OpenCL C 1.2 has no `ctz`: the lowest set bit's position from the count of zeros above it.
 UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return x == 0u ? 32u : 31u - clz(x & (0u - x)); }
 UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0ul ? 64u : 63u - (uint32_t)clz(x & (0ul - x)); }

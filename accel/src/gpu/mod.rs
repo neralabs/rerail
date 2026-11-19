@@ -155,15 +155,12 @@ impl Backend for GpuBackend {
                 let (n, words) = (*n as u64, (*n as u64).div_ceil(64).max(1));
                 off.len() as u64 == n + 1 && u32ok(n * words * 2) && fits(n * words * 8)
             }
-            // Programs and joins run kernels still Metal's (decision 0440 step C): on Metal alone until they are UKL.
+            // Programs run kernels still Metal's (decision 0440 step C): on Metal alone until they are UKL.
             Kernel::Program(p) => shared::get().is_some() && p.0.per_unit(crate::lanes::Lane::Gpu).is_some(),
             Kernel::Join { left, right, by, .. } => {
                 let Ok((nl, nr)) = Kernel::join_shape(left, right) else {
                     return false;
                 };
-                if shared::get().is_none() {
-                    return false;
-                }
                 // The pairs' space (two a left row to start) and the columns at 64 bits.
                 let shape = fits(nl as u64 * 16) && fits(nr as u64 * 8) && (nl as u64) < (u32::MAX as u64) / 2;
                 shape && (*by == JoinBy::Probe || left.len() <= 3)

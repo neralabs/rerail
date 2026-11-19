@@ -542,12 +542,12 @@ pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
     })))
 }
 
-/// The MSL of the chunk's structures, as the kernels read them.
-pub fn msl() -> String {
+/// The UKL of the chunk's structures, as the kernels read them (decision 0440 step C).
+pub fn ukl() -> String {
     use super::granules::{INDEX_BITS, SLOT_BITS, SPAN_SLOTS};
     // A span's id past the nodes and tokens (`granules::span_low`): the top slots, down from the last.
-    format!("{}constant uint GR_SLOTS = {}u;\nconstant uint GR_INDEX_BITS = {INDEX_BITS}u;\nconstant uint GR_SPAN_SLOTS = {SPAN_SLOTS}u;\n",
-            rerail_blocks::msl_of::<ChunkRoot>(), 1u32 << SLOT_BITS)
+    format!("{}#define GR_SLOTS {}u\n#define GR_INDEX_BITS {INDEX_BITS}u\n#define GR_SPAN_SLOTS {SPAN_SLOTS}u\n",
+            rerail_blocks::ukl_of::<ChunkRoot>(), 1u32 << SLOT_BITS)
 }
 
 /// NONE, as the kernels test a parent with it.

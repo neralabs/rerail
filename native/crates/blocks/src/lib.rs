@@ -58,26 +58,34 @@ pub use refs::{Ptr, Span};
 /// Implementors are `#[repr(C)]` with every byte a named field, and hold no address.
 pub unsafe trait Pod: 'static {}
 
-/// How a type is declared in MSL, and the declarations it needs first.
+/// How a type is declared in MSL, and the declarations it needs first; and the same in UKL (`c_*`: C's fixed-width
+/// types, a structure a `typedef`, its assertions `UKL_STATIC_ASSERT`s), for a kernel on every backend (decision 0440).
 pub trait MslField {
     fn ty() -> String;
     fn decl(name: &str) -> String {
         format!("{} {}", Self::ty(), name)
     }
     fn deps(_out: &mut Vec<String>) {}
+    fn c_ty() -> String {
+        Self::ty()
+    }
+    fn c_decl(name: &str) -> String {
+        format!("{} {}", Self::c_ty(), name)
+    }
+    fn c_deps(_out: &mut Vec<String>) {}
 }
 
 macro_rules! scalar {
-    ($($t:ty => $m:literal),*) => {$(
+    ($($t:ty => $m:literal, $c:literal),*) => {$(
         unsafe impl Pod for $t {}
-        impl MslField for $t { fn ty() -> String { $m.into() } }
+        impl MslField for $t { fn ty() -> String { $m.into() } fn c_ty() -> String { $c.into() } }
     )*};
 }
-scalar!(u8 => "uchar", u16 => "ushort", u32 => "uint", u64 => "ulong", i32 => "int", i64 => "long");
+scalar!(u8 => "uchar", "uint8_t", u16 => "ushort", "uint16_t", u32 => "uint", "uint32_t", u64 => "ulong", "uint64_t", i32 => "int", "int32_t", i64 => "long", "int64_t");
 // A field that changes while its block is open (a counter, a chunk's offset, a span set at freeze) is an atomic:
 // written through a shared reference, which Rust allows only by interior mutability. On ARM a relaxed load is a
 // plain load. MSL declares it as the plain type; a kernel that claims casts it to `atomic_uint`.
-scalar!(std::sync::atomic::AtomicU32 => "uint", std::sync::atomic::AtomicU64 => "ulong", std::sync::atomic::AtomicI64 => "long");
+scalar!(std::sync::atomic::AtomicU32 => "uint", "uint32_t", std::sync::atomic::AtomicU64 => "ulong", "uint64_t", std::sync::atomic::AtomicI64 => "long", "int64_t");
 
 unsafe impl<T: Pod, const N: usize> Pod for [T; N] {}
 impl<T: MslField, const N: usize> MslField for [T; N] {
@@ -90,6 +98,22 @@ impl<T: MslField, const N: usize> MslField for [T; N] {
     fn deps(out: &mut Vec<String>) {
         T::deps(out)
     }
+    fn c_ty() -> String {
+        T::c_ty()
+    }
+    fn c_decl(name: &str) -> String {
+        format!("{} {}[{}]", T::c_ty(), name, N)
+    }
+    fn c_deps(out: &mut Vec<String>) {
+        T::c_deps(out)
+    }
+}
+
+/// The UKL declarations of `T` and of everything it nests (`msl_of`'s, for a kernel on every backend).
+pub fn ukl_of<T: MslField>() -> String {
+    let mut out = Vec::new();
+    T::c_deps(&mut out);
+    out.concat()
 }
 
 /// The MSL declarations of `T` and of everything it nests: structs in dependency order, each followed by its
@@ -122,6 +146,16 @@ macro_rules! structure {
                 s += "};\n";
                 s += &format!("static_assert(sizeof({0}) == {1}, \"{0}: size\");\n", stringify!($name), core::mem::size_of::<$name>());
                 $(s += &format!("static_assert(__builtin_offsetof({0}, {1}) == {2}, \"{0}.{1}\");\n",
+                    stringify!($name), stringify!($f), core::mem::offset_of!($name, $f));)*
+                if !out.contains(&s) { out.push(s); }
+            }
+            fn c_deps(out: &mut Vec<String>) {
+                $(<$t as $crate::MslField>::c_deps(out);)*
+                let mut s = format!("typedef struct {} {{\n", stringify!($name));
+                $(s += &format!("    {};\n", <$t as $crate::MslField>::c_decl(stringify!($f)));)*
+                s += &format!("}} {};\n", stringify!($name));
+                s += &format!("UKL_STATIC_ASSERT(sizeof({0}) == {1}, \"{0}: size\");\n", stringify!($name), core::mem::size_of::<$name>());
+                $(s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof({0}, {1}) == {2}, \"{0}.{1}\");\n",
                     stringify!($name), stringify!($f), core::mem::offset_of!($name, $f));)*
                 if !out.contains(&s) { out.push(s); }
             }

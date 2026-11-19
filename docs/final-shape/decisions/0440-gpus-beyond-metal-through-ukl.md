@@ -1156,6 +1156,38 @@ stands on:
 - Its 23 tests pass on Metal; on the CPU and OpenCL all but accel's two column-statistics tests, which run
   `join.rs`'s kernels.
 
+**C: the joins and the row programs on every backend (2026-11-19).**
+- **The joins' stages are UKL** (`packed/join_stages.uglykl`): the nested loops' count and scatter, the witnesses,
+  the texts made per row and their tests, the replacements, the text functions, the copies, the head's distinct
+  rows, the device index and the lattices. The views' expansion and the kind-set axes are `chunk_views.uglykl`, a
+  batch's root layout written as C by `blocks`' `structure!` (`typedef struct`, checked by static asserts of its
+  size and offsets), as its MSL was. The row programs' kernels (`metal_rows.rs`) and accel's join kernels
+  (`join.uglykl`, `join_sort.uglykl`) are UKL too; the MSL is gone.
+- **A stage's constants are a buffer**, not arguments: a `Stage` is 2,320 bytes, with arrays and an address, and
+  OpenCL takes arguments by value up to 1 KB, of scalars alone. So every stage, copy, dedup and index kernel reads
+  its parameter block as its last buffer (`Batch::block`); the small scalar ones (`LatP`, the text kernels') stay
+  arguments.
+- **One pass on the device layer** (`join::Pass`): the batch's launches go on one queue of the process's device and
+  are committed once, as Metal's command buffer was. A SIMD-group kernel (a row's text, a term's verdict) runs
+  threadgroups of one SIMD group (`Pass::run_bytes_simd`), OpenCL 1.2's rule for kernels whose lanes loop by the
+  data, and its scratch is sized by the device's width.
+- **The views read in place are Metal's alone**: their directory holds GPU addresses, which OpenCL 1.2's kernels
+  cannot follow. Elsewhere a view is made by `view_expand` (the listed copy, 0353 step 4), as a refused batch's is;
+  `views_made_on_the_device_are_the_hosts_rows` checks both ways.
+- **Widths below 32 found two overruns**, both from before the port: a threadgroup's prefix kept a word per SIMD
+  group in 32 words (`join_tg_prefix`, and `relational.uglykl`'s maximum), 256 at a width of 1; and the radix sort
+  kept its counts per SIMD group, 8 × 256 words, which needs 32 × 256 at a width of 8 and 256 × 256 at 1. The
+  prefix's words are now `JOIN_SGS`. The sort ranks a row among a group of at least 32 threads: a SIMD group of 32
+  lanes or more, through shuffles, as before; else 32 threads, through their digits in threadgroup memory. So its
+  counts stay 8 × 256 words at every width. At a width of 1 the head's distinct rows had kept one text of each name
+  (`parity_row_texts_past_the_arena`), and the set fixpoint's run died of a bus error.
+- `ukl_mulhi64` (UKL's `backend.h`): a 64-bit product's high half on each backend, for the stages' arithmetic.
+- On Metal, the CPU and OpenCL: the joins', row programs' and set fixpoint's device tests (37: the parity suites,
+  text functions and tests, witnesses, waves, lattices, views) and accel's 23 lane tests pass, its two column
+  statistics tests among them. At SIMD widths of 1 (OpenCL) and 8 (the CPU) the text tests and accel's pass too.
+- Left in C: the block programs (`block_program.rs` and its three `.metal` files, `block_serial.rs`), `launch.rs`'s
+  kernels and the tests with Metal kernels of their own. accel's `can` still keeps programs on Metal.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
