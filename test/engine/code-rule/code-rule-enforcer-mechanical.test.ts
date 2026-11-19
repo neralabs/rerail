@@ -822,6 +822,26 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   });
 
+  // A check of several whose tool-call edit cannot be read: the last log edit is read first in its place, and the
+  // log revision's other edits after it. The session is answered with that revision once all of it is checked.
+  it("answers a log revision whole when the tool call's edit checked with it in one engine call cannot be read", async () => {
+    const { root, enforcer } = await fixture({ codeRules: [needleBudgetRule(), modeCodeRule("test:gamma", "GAMMA", "log")] });
+    const logged = [...LOGGED, "api/z_other.py"];
+    try {
+      for (const path of logged) await writeFile(join(root, path), "GAMMA\n");
+      await enforcer.openWorkspace("unreadable-own");
+      await enforcer.auditGeneratedEdits("unreadable-own", {
+        revision: 1, checkpoints: ["edit"], mode: "log", edits: logged.map(path => ({ path, language: "python" as const, generatedText: "GAMMA\n" })),
+      });
+      await enforcer.auditGeneratedEdits("unreadable-own", {
+        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/a_own.py", language: "python", readError: "EACCES: permission denied" }],
+      });
+      const status = await settled(enforcer);
+      expect(status.failures.map(failure => failure.path)).toContain("api/a_own.py");
+      expect(status.violations.map(violation => violation.path).toSorted()).toEqual(logged.toSorted());
+    } finally { await enforcer.close(); }
+  });
+
   it("limits AI-output reporting to disjoint changed ranges with UTF-8 byte offsets", async () => {
     const { enforcer, requestSteer } = await fixture({ scope: "ai-output" });
     try {
