@@ -98,6 +98,9 @@ pub struct VerifiedFiles<'a> {
     worktree: String,
     known: Option<HashMap<String, VerifiedWorktreeFile>>,
     learned: Vec<VerifiedWorktreeFile>,
+    /// Whether each volume, by its serial number, keeps a change time to trust: asked once per
+    /// volume, since every file on it gives the same answer.
+    volumes: HashMap<u64, bool>,
 }
 
 impl<'a> VerifiedFiles<'a> {
@@ -108,6 +111,7 @@ impl<'a> VerifiedFiles<'a> {
             worktree: worktree.to_string_lossy().into_owned(),
             known: None,
             learned: Vec::new(),
+            volumes: HashMap::new(),
         }
     }
 
@@ -116,13 +120,29 @@ impl<'a> VerifiedFiles<'a> {
     /// the handle), the stat decides, as it does for Git.
     pub(super) fn proof(&mut self, path: &str, blob: HashKey, current: &WorktreeStat) -> Proof {
         let change = &current.change;
-        if change.unchanged_since_written() || !change.volume_keeps_change_times() {
+        if change.unchanged_since_written() {
             return Proof::Held;
         }
-        match change.stamp() {
-            Some(stamp) if self.remembers(path, &stamp, blob) => Proof::Held,
-            stamp => Proof::Read(stamp),
+        let Some(stamp) = change.stamp() else {
+            // No identity to remember the file by: where change times count, a read decides.
+            return if change.volume_keeps_change_times() {
+                Proof::Read(None)
+            } else {
+                Proof::Held
+            };
+        };
+        if !self.trusts(stamp.volume, change) || self.remembers(path, &stamp, blob) {
+            return Proof::Held;
         }
+        Proof::Read(Some(stamp))
+    }
+
+    /// Whether the volume whose serial number is `volume` keeps a change time to trust.
+    fn trusts(&mut self, volume: u64, change: &platform::Change) -> bool {
+        *self
+            .volumes
+            .entry(volume)
+            .or_insert_with(|| change.volume_keeps_change_times())
     }
 
     /// Remembers that the file at `path` held `blob`'s bytes under `stamp`, read from `read_from`
