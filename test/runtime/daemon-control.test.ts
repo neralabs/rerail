@@ -1326,9 +1326,10 @@ describe("a record whose live pid is not the home's daemon", () => {
    * and when, what it sends, what it answers and what daemon.json holds after. The stop proved the daemon by its answer to
    * the health probe while it held the home's lock (`answer`), or, while it did not answer, by that lock recorded as its
    * own (`lock`) or by a start no later than its record (`start`). The world then changes before the stop decides its
-   * SIGTERM (`before`), as it asks the home's lock (`ask`), at the SIGTERM or, for a daemon that answers on Windows, the
-   * shutdown request (`signal`), or during the wait that follows (`wait`). `sent` names the SIGTERM, which a daemon that
-   * answers gets on Windows as the shutdown request. `rule` is the line of the rule the row checks:
+   * SIGTERM (`before`), as it asks the home's lock (`ask`), as it asks that lock again (`again`: before its SIGTERM on
+   * Linux, before its SIGKILL where a shutdown request was its SIGTERM), at the SIGTERM or, for a daemon that answers on
+   * Windows, the shutdown request (`signal`), or during the wait that follows (`wait`). `sent` names the SIGTERM, which a
+   * daemon that answers gets on Windows as the shutdown request. `rule` is the line of the rule the row checks:
    * 1. Before each signal the stop proves the process again from what the OS shows, never from daemon.json: the home's
    *    lock held as the pid recorded beside it, a start no later than daemon.json's `startedAt`, or, for a daemon that
    *    answered as itself while it held no lock, that it still runs.
@@ -1343,6 +1344,7 @@ describe("a record whose live pid is not the home's daemon", () => {
     proof: "answer" | "lock" | "start";
     before?: WorldChange[];
     ask?: WorldChange[];
+    again?: WorldChange[];
     signal?: WorldChange[];
     wait?: WorldChange[];
     sent: Array<"SIGTERM" | "SIGKILL">;
@@ -1389,6 +1391,12 @@ describe("a record whose live pid is not the home's daemon", () => {
       wait: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "none" },
     { cell: "the daemon exits at its SIGTERM and a start's daemon records itself before the stop's cleanup", rule: 3, proof: "lock",
       signal: ["lets-go", "exits", "another-holds", "record-other"], sent: ["SIGTERM"], answer: "stopped", record: "another live process's" },
+    { cell: "the daemon lets go of the lock at its SIGTERM, its start cannot be read, and its exit runs on past the wait",
+      rule: 2, proof: "answer", before: ["start-unread"], signal: ["lets-go"], sent: ["SIGTERM", "SIGKILL"], answer: "stopped",
+      record: "none" },
+    { cell: "the daemon lets go of the lock after the stop proved it, its start cannot be read, and its exit runs on, as a second stop meets it",
+      rule: 2, proof: "answer", before: ["start-unread"], again: ["lets-go"], sent: ["SIGTERM", "SIGKILL"], answer: "stopped",
+      record: "none" },
   ];
 
   /** The process daemon.json named, its start, and who holds the home's lock, as a {@link StopCell} changes them. */
@@ -1442,12 +1450,13 @@ describe("a record whose live pid is not the home's daemon", () => {
    */
   function stopCellMachine(platform: NodeJS.Platform, row: StopCell, world: StopWorld, sent: string[]): DaemonMachine {
     const fired = new Set<string>();
-    const at = (moment: "ask" | "signal" | "wait"): void => {
+    const at = (moment: "ask" | "again" | "signal" | "wait"): void => {
       if (fired.has(moment)) return;
       fired.add(moment);
       for (const change of row[moment] ?? []) changeWorld(world, change, platform);
     };
     let looksSinceSignal = 0;
+    let asks = 0;
     const look = (): true => {
       vi.setSystemTime(Date.now() + 1_000);
       if (fired.has("signal") && ++looksSinceSignal === 3) at("wait");
@@ -1470,7 +1479,7 @@ describe("a record whose live pid is not the home's daemon", () => {
       pipes: () => [pipeNameOf(PIPE)],
       capabilityProof: async () => (row.proof === "answer" ? "proved" : "silent"),
       homeDaemonLockHeld: () => {
-        at("ask");
+        at((asks += 1) === 1 ? "ask" : "again");
         return world.holder !== undefined;
       },
       processStartedAt: pid => (pid === LIVE_PID && world.running ? world.started : undefined),

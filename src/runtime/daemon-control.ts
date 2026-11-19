@@ -1606,9 +1606,9 @@ export type FoundDaemon = Exclude<DaemonLookup, { status: "absent" }>;
 
 /**
  * What a stop may do to the pid daemon.json named, asked just before each signal ({@link provenNow}): signal it as the
- * home's daemon (`ours`); let it alone as another process's (`not-ours`), or as a daemon that has exited, or that let go
- * of the home while nothing else proves it (`ending`); or let it alone and say so, since it runs and no fact proves
- * whose it is (`unknown`).
+ * home's daemon (`ours`); let it alone as another process's (`not-ours`), or as a daemon that has exited, or whose pid a
+ * process started since has taken (`ending`); or let it alone and say so, since it runs and no fact proves whose it is
+ * (`unknown`).
  */
 type SignalVerdict = RecordedProcess | "ending";
 
@@ -1631,13 +1631,17 @@ function signalCheck(home: string, found: FoundDaemon, machine: DaemonMachine): 
  * process it proved by `proof`, as the facts the OS keeps show it now ({@link provenBy}), never on what daemon.json says.
  * A process still proven is `ours`, to be ended as main does. One no longer proven gets nothing: `ending` once it has
  * exited; `not-ours` when the home's lock belongs to another live process and daemon.json names it no longer
- * ({@link lockOfAnother}), as when a start beside the stop launched a daemon; otherwise what {@link provenBy} said.
+ * ({@link lockOfAnother}), as when a start beside the stop launched a daemon; otherwise what {@link provenBy} said. A
+ * daemon that answered while it held the lock, and that neither the lock nor its start decides by now, is `ours` while
+ * it runs: its exit can run on after it let go of the lock, and on macOS, or on Windows when PowerShell does not answer,
+ * no start is read.
  */
 function provenNow(home: string, state: DaemonState, proof: StopProof, machine: DaemonMachine): SignalVerdict {
   const verdict = provenBy(home, state, proof, machine);
   if (verdict === "ours") return "ours";
   if (!processAlive(state.pid, machine.kill)) return "ending";
-  return lockOfAnother(home, state.pid, machine) ? "not-ours" : verdict;
+  if (lockOfAnother(home, state.pid, machine)) return "not-ours";
+  return proof === "lock" && verdict === "unknown" ? "ours" : verdict;
 }
 
 /**
@@ -1645,12 +1649,15 @@ function provenNow(home: string, state: DaemonState, proof: StopProof, machine: 
  * answer is as {@link recordedProcess} shows it: the home's lock held as its recorded holder, or a start no later than
  * its record. One that answered as itself while it held no lock stays proven while it runs; one that answered while it
  * held the lock stays proven while it holds it or its start shows it the process that wrote its record, as when its
- * exit runs on after it let go of the lock, and is `ending` once neither does.
+ * exit runs on after it let go of the lock. It is `ending` once its start reads later than its record by more than the
+ * clock's slack ({@link startVerdict}), as a process that took its pid since does, and `unknown` while neither the lock
+ * nor its start decides.
  */
 function provenBy(home: string, state: DaemonState, proof: StopProof, machine: DaemonMachine): SignalVerdict {
   if (proof === "record") return recordedProcess(home, state, machine, Date.now() + STOP_TIMEOUT_MS);
   if (proof === "answer" || lockVerdict(home, state.pid, machine) === "ours") return "ours";
-  return startVerdict(state, machine, Date.now() + STOP_TIMEOUT_MS) === "ours" ? "ours" : "ending";
+  const byStart = startVerdict(state, machine, Date.now() + STOP_TIMEOUT_MS);
+  return byStart === "not-ours" ? "ending" : byStart;
 }
 
 /**
