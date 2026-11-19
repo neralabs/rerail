@@ -254,7 +254,7 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 
 /// The kept outputs written into `out`, when every read of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
+pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
     if crate::git_workspace::snapshot::contains(root) || super::ThreadStore::owner(root).is_some_and(|owner| owner.is_staged()) {
         // A scoped run must publish its ownership after the run, including after
         // a scope deletion. Its relation and document caches are independent.
@@ -313,13 +313,17 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         return Ok(None);
     }
     crate::code_rule_dsl::logic::profile::decision("whole-run cutoff (t23 §4)", || "every read as it was: the kept outputs written, nothing evaluated".into());
-    std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?;
+    if captured.is_none() { std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?; }
     let mut report = Report { plans, ..Report::default() };
     for (name, bytes) in &outputs {
         if name != crate::code_rule_dsl::logic::plan::output::FILE {
             return Err(Error::Plan(format!("{name}: no output file of this run's")));
         }
-        crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        if let Some(target) = captured.as_deref_mut() {
+            target.extend_from_slice(bytes);
+        } else {
+            crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        }
         let image = crate::code_rule_dsl::logic::plan::output::Image::one(bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
         for rel in image.names() {
             report.rows.insert(rel.to_owned(), image.rel(rel).expect("named").rows);
@@ -353,7 +357,7 @@ fn miss(why: &str) {
     }
 }
 
-pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
+pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report, captured: Option<&[u8]>) -> Result<()> {
     if crate::git_workspace::snapshot::contains(root) {
         return Ok(());
     }
@@ -380,7 +384,11 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     if let Some(summary) = super::Summary::of(programs, &given.graphs, given.read, root, options)?.encode().and_then(|b| String::from_utf8(b).ok()) {
         consulted.push((SUMMARY.to_owned(), String::new(), summary));
     }
-    let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));
+    let files = match captured {
+        Some(bytes) => vec![(crate::code_rule_dsl::logic::plan::output::FILE.to_owned(), bytes.to_vec())],
+        None => outputs_of(out, report.rows.keys().map(String::as_str)),
+    };
+    let outputs = encode_outputs(&files);
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
         eprintln!("rerail: whole-run cutoff: recorded under {} ({} consulted)", &key[..CUTOFF.len() + 12], consulted.len());
     }

@@ -119,6 +119,31 @@ describe("headless rerail scan", () => {
     }
   });
 
+  it("returns JSON and RR findings without writing a scan or phase directory", () => {
+    const root = checkout(), home = root + "-home";
+    const tmp = join(home, "temp");
+    mkdirSync(tmp, { recursive: true });
+    writeFileSync(join(root, ".rerail/rules/policy.rr"), '#include "core.rr"\n.policy "calls" revision 1\n.language python\n.violation C(at: node) "call"\nC(n) :- kind(n, "call").\n');
+    writeFileSync(join(root, "a.py"), "NEEDLE()\n");
+    git(root, "add", "a.py");
+    git(root, "commit", "-qm", "two kinds of findings");
+    const script = `
+      import {watch} from "node:fs";
+      import {runHeadlessScan} from "./src/cli/headless-scan.ts";
+      const [repo, databasePath, temp] = process.argv.slice(2);
+      const created = new Set();
+      const watcher = watch(temp, (_, name) => { if (name?.startsWith("rerail-scan-") || name?.startsWith("rerail-phase-")) created.add(name); });
+      try {
+        const report = await runHeadlessScan({ repo, databasePath, packs: [], scope: "repository", revision: "HEAD", analysisScope: "memory", version: "test" });
+        await new Promise(done => setTimeout(done, 50));
+        console.log(JSON.stringify({ created: [...created], status: report.status, rules: report.violations.map(v => v.ruleId).sort(), failures: report.failures }));
+      } finally { watcher.close(); }`;
+    const result = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, join(home, "home.sqlite"), tmp], {
+      input: script, encoding: "utf8", env: { ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp, RERAIL_CONTENT_STORE_PATH: join(home, "content.sqlite") },
+    });
+    expect(JSON.parse(result)).toEqual({ created: [], status: "completed", rules: ["calls", "needle"], failures: [] });
+  }, 45_000);
+
   it("scans a historical commit and tree with today's policy and historical paths", async () => {
     const root = checkout();
     const commit = git(root, "rev-parse", "HEAD");

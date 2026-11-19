@@ -33,7 +33,7 @@ export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = proce
  * it read-only, and the writer would then change its mode before failing.
  */
 function connectSqlite(path: string, readonly: boolean): RerailDatabase {
-  if (!readonly) {
+  if (!readonly && path !== ":memory:") {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     // The folder too: SQLite writes its journal and WAL beside the file.
     for (const target of existsSync(path) ? [path, dirname(path)] : []) accessSync(target, constants.W_OK);
@@ -56,8 +56,10 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
  * does not linger in free space; it costs writes only on deletes.
  */
 function prepareWriter(database: RerailDatabase, path: string): void {
-  keepFilesPrivate(dirname(path), [basename(path)]);
-  enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
+  if (path !== ":memory:") {
+    keepFilesPrivate(dirname(path), [basename(path)]);
+    enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
+  }
   database.run(sql`PRAGMA foreign_keys = ON`);
   database.run(sql`PRAGMA synchronous = FULL`);
   database.run(sql`PRAGMA secure_delete = ON`);

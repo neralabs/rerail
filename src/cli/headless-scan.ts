@@ -13,8 +13,7 @@
  *   session's: content no one approved in the Rerail home (`rerail rules approve`) runs in Log.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from "../engine/audit/audit.js";
@@ -318,39 +317,34 @@ function copyTables(home: RerailDatabase, scratch: RerailDatabase, tables: reado
  * so a rule read from a ref, a worktree's rule or a pack from a folder steers here exactly when a person approved that
  * content in the Rerail home, as it would in a session. Returns the ids of the rules read from the ref.
  */
-function prepareScratchDatabase(
-  databasePath: string, root: string, home: RerailDatabase | undefined, useHome: boolean,
+function prepareScanConfiguration(
+  database: RerailDatabase, root: string, home: RerailDatabase | undefined, useHome: boolean,
   packs: readonly string[], refRules: RefRules | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
 ): Set<string> {
   const refRuleIds = new Set<string>();
-  const database = openRerailDatabase(databasePath);
-  try {
-    if (useHome && home !== undefined) {
-      copyTables(home, database, CONFIGURATION_TABLES);
-      return refRuleIds;
-    }
-    const { repositoryKey } = recordCheckout(database, root);
-    const libraryRules: Array<{ sourceKind: "library_rule"; sourceId: string; folder: string }> = [];
-    if (refRules !== undefined) {
-      const catalog = loadRuleCatalog();
-      for (const document of refRules.documents) {
-        const stored = upsertLibraryRule(database, catalog, document.rule, "code");
-        const ruleId = stored.document.rule.id;
-        refRuleIds.add(ruleId);
-        ruleDocuments?.set(stored.payloadHash, stored.document);
-        libraryRules.push({ sourceKind: "library_rule", sourceId: ruleId, folder: "" });
-      }
-    }
-    setUpRepository(database, repositoryKey, { packs: packs.map(packId => ({ packId, folder: "" })), rules: libraryRules });
-    if (refRules !== undefined) {
-      // The working tree's own rules are what the change under review may have edited: they do not run.
-      setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "", targetKind: "pack", targetId: WORKTREE_PACK_ID, on: false, mode: null });
-    }
-    setRepositoryStarted(database, repositoryKey, true);
-    if (home !== undefined) copyTables(home, database, ["rule_approvals"]);
-  } finally {
-    database.$client.close();
+  if (useHome && home !== undefined) {
+    copyTables(home, database, CONFIGURATION_TABLES);
+    return refRuleIds;
   }
+  const { repositoryKey } = recordCheckout(database, root);
+  const libraryRules: Array<{ sourceKind: "library_rule"; sourceId: string; folder: string }> = [];
+  if (refRules !== undefined) {
+    const catalog = loadRuleCatalog();
+    for (const document of refRules.documents) {
+      const stored = upsertLibraryRule(database, catalog, document.rule, "code");
+      const ruleId = stored.document.rule.id;
+      refRuleIds.add(ruleId);
+      ruleDocuments?.set(stored.payloadHash, stored.document);
+      libraryRules.push({ sourceKind: "library_rule", sourceId: ruleId, folder: "" });
+    }
+  }
+  setUpRepository(database, repositoryKey, { packs: packs.map(packId => ({ packId, folder: "" })), rules: libraryRules });
+  if (refRules !== undefined) {
+    // The working tree's own rules are what the change under review may have edited: they do not run.
+    setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "", targetKind: "pack", targetId: WORKTREE_PACK_ID, on: false, mode: null });
+  }
+  setRepositoryStarted(database, repositoryKey, true);
+  if (home !== undefined) copyTables(home, database, ["rule_approvals"]);
   return refRuleIds;
 }
 
@@ -417,17 +411,6 @@ function homeIsScanConfiguration(options: HeadlessScanOptions, home: RerailDatab
   }
 }
 
-/** Run with a scratch folder for the audit configuration and remove it afterward. */
-async function withScanScratch<T>(home: RerailDatabase | undefined, run: (scratch: string) => Promise<T>): Promise<T> {
-  const scratch = mkdtempSync(join(tmpdir(), "rerail-scan-"));
-  try {
-    return await run(scratch);
-  } finally {
-    if (home?.$client.open === true) home.$client.close();
-    rmSync(scratch, { recursive: true, force: true });
-  }
-}
-
 /** What the scan covers: the paths asked for, what differs from the base or HEAD, or null for the whole repository. */
 function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): Pick<ScanReport, "base" | "paths" | "requestedPaths" | "skippedPaths"> & { failures?: ScanFailure[] } {
   if (options.paths !== undefined) {
@@ -462,7 +445,7 @@ type ScanAudit = AuditInput & { result?: AuditResult };
 
 /** Runs the audits of one session over `paths` (or the whole repository), recording them rather than storing them. */
 async function runScanAudits(
-  databasePath: string, root: string, sessionId: string, paths: readonly string[] | null,
+  database: RerailDatabase, databasePath: string, root: string, sessionId: string, paths: readonly string[] | null,
   revisionSource: NativeGitRevisionSource | undefined, analysisStore: string, analysisRun: NativeAnalysisScopeRun | undefined,
   checkoutRules: (root: string) => RuleCatalog,
 ): Promise<ScanAudit[]> {
@@ -474,7 +457,7 @@ async function runScanAudits(
     progress(auditId, result) { audits[Number(auditId)]!.result = { status: "interrupted", ...result }; },
     interrupt() {},
   };
-  const catalogs = new CheckoutCatalogs(databasePath, { checkoutRules });
+  const catalogs = new CheckoutCatalogs(databasePath, { checkoutRules, database });
   const owners = new CheckoutOwners();
   const router = new CheckoutCodeRuleRouter({
     sessionRoot: root,
@@ -595,9 +578,9 @@ async function scanRrRules(
   return { rules, violations: distinctFingerprints(violations), failures };
 }
 
-/** Runs the scan in its scratch folder and reports it: the scan's own database, always, with the home's only read and closed before the scan runs. */
+/** Run with a private in-memory copy of the configuration and the selected content store. */
 async function scanReport(
-  scratch: string, options: HeadlessScanOptions,
+  database: RerailDatabase, options: HeadlessScanOptions,
   { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun }: {
     root: string; home: RerailDatabase | undefined; useHome: boolean; packs: readonly string[];
     scanId: string; startedAt: number; source: NativeGitRevisionSource | undefined;
@@ -605,7 +588,7 @@ async function scanReport(
     analysisRun: NativeAnalysisScopeRun | undefined;
   },
 ): Promise<ScanReport> {
-  const databasePath = join(scratch, "rerail.sqlite");
+  const databasePath = options.databasePath ?? defaultRerailDatabasePath();
   const explicitRr = (options.rr?.length ?? 0) > 0;
   const loadedRr = new (loadNativeBinding().LoadedRrPolicies)();
   const refRules = options.rulesRef === undefined ? undefined : rulesAtRef(root, options.rulesRef, loadedRr, resolve(options.repo));
@@ -625,23 +608,21 @@ async function scanReport(
   let refRuleIds: Set<string>;
   let repository: ScanReport["repository"];
   try {
-    refRuleIds = explicitRr ? new Set() : prepareScratchDatabase(databasePath, root, home, useHome, packs, refRules, options.ruleDocuments);
-    const scanDatabase = explicitRr ? undefined : openRerailDatabase(databasePath, { readonly: true });
-    try { repository = repositoryOf(scanDatabase ?? home, root); }
-    finally { scanDatabase?.$client.close(); }
+    refRuleIds = explicitRr ? new Set() : prepareScanConfiguration(database, root, home, useHome, packs, refRules, options.ruleDocuments);
+    repository = repositoryOf(explicitRr ? home : database, root);
   } finally {
     home?.$client.close();
   }
   const { failures: pathFailures = [], ...target } = scanTarget(options, root, source);
   const { paths } = target;
   if (source !== undefined && paths !== null) source.restrictPaths(paths);
-  let audits = explicitRr ? [] : await runScanAudits(databasePath, root, `scan-${scanId}`, paths, source, analysisStore, analysisRun, checkoutRules);
+  let audits = explicitRr ? [] : await runScanAudits(database, databasePath, root, `scan-${scanId}`, paths, source, analysisStore, analysisRun, checkoutRules);
   const cacheFailure = audits.flatMap(audit => audit.result?.failures ?? []).find(failure => failure.code === "cache-unavailable");
   if (source !== undefined && analysisRun !== undefined && cacheFailure !== undefined) {
     analysisRun.warn(cacheFailure.message);
     analysisStore = ":memory:";
     analysisRun = undefined;
-    audits = await runScanAudits(databasePath, root, `scan-${scanId}-retry`, paths, source, analysisStore, analysisRun, checkoutRules);
+    audits = await runScanAudits(database, databasePath, root, `scan-${scanId}-retry`, paths, source, analysisStore, analysisRun, checkoutRules);
   }
   const rules = scanRules(audits, refRuleIds, refRules?.provenance);
   const violations = scanViolations(audits, rules);
@@ -663,16 +644,11 @@ async function scanReport(
     try {
       let configured: Parameters<typeof scanRrRules>[7];
       if (catalog !== undefined && configuredPolicies.length > 0) {
-        const database = openRerailDatabase(databasePath, { readonly: true });
-        try {
-          const checkout = lookupCheckout(database, root)!;
-          configured = {
-            policies: new Map(configuredPolicies.map(policy => [policy.id, policy])),
-            mode: resolveRrModes(database, catalog, checkout, parentCheckouts(database, checkout).map(parent => parent.checkoutPath), refRules !== undefined),
-          };
-        } finally {
-          database.$client.close();
-        }
+        const checkout = lookupCheckout(database, root)!;
+        configured = {
+          policies: new Map(configuredPolicies.map(policy => [policy.id, policy])),
+          mode: resolveRrModes(database, catalog, checkout, parentCheckouts(database, checkout).map(parent => parent.checkoutPath), refRules !== undefined),
+        };
       }
       let selected = configured === undefined ? rr : configuredPolicies.filter(configured.mode.enabled).map(policy => policy.path);
       if (explicitRr) selected = selected.filter(path => {
@@ -683,7 +659,7 @@ async function scanReport(
           return false;
         }
       });
-      const evaluated = await scanRrRules(selected, root, analysisStore, join(scratch, "rr"), analysisRun, paths, source, configured, refRules, loadedRr);
+      const evaluated = await scanRrRules(selected, root, analysisStore, "", analysisRun, paths, source, configured, refRules, loadedRr);
       failures.push(...evaluated.failures);
       if (evaluated.failures.length > 0) completed = false;
       for (const rule of evaluated.rules) {
@@ -755,7 +731,15 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
       source.setSourceLanguages(JSON.stringify({ suffixes: Object.fromEntries(SOURCE_LANGUAGES), names: Object.fromEntries(SOURCE_NAMES) }));
     const home = openHomeDatabase(homeDatabase);
     const useHome = homeIsScanConfiguration(options, home, root, packs);
-    const report = await withScanScratch(home, scratch => scanReport(scratch, options, { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun }));
+    let configuration: RerailDatabase | undefined;
+    let report: ScanReport;
+    try {
+      configuration = openRerailDatabase(":memory:");
+      report = await scanReport(configuration, options, { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun });
+    } finally {
+      configuration?.$client.close();
+      if (home?.$client.open) home.$client.close();
+    }
     if (cacheWarning !== undefined) report.cacheWarnings = [cacheWarning];
     try {
       const warning = analysisRun?.finish(report.status === "completed");

@@ -321,6 +321,7 @@ interface CheckoutEntry {
 export class CheckoutCatalogs {
   readonly databasePath: string;
   readonly database: RerailDatabase;
+  readonly #ownsDatabase: boolean;
   readonly #ruleCatalog: RuleCatalog | undefined;
   readonly #checkoutRules: ((root: string) => RuleCatalog) | undefined;
   readonly #capabilities: CodeRuleCapabilities;
@@ -331,12 +332,14 @@ export class CheckoutCatalogs {
    * checkout's own rules are added to its catalog.
    */
   constructor(databasePath: string = defaultRerailDatabasePath(), options: {
+    database?: RerailDatabase;
     capabilities?: CodeRuleCapabilities;
     ruleCatalog?: RuleCatalog;
     checkoutRules?: (root: string) => RuleCatalog;
   } = {}) {
     this.databasePath = resolve(databasePath);
-    this.database = openRerailDatabase(this.databasePath);
+    this.#ownsDatabase = options.database === undefined;
+    this.database = options.database ?? openRerailDatabase(this.databasePath);
     this.#ruleCatalog = options.ruleCatalog;
     this.#checkoutRules = options.checkoutRules;
     this.#capabilities = options.capabilities ?? loadCodeRuleCapabilities();
@@ -417,7 +420,7 @@ export class CheckoutCatalogs {
 
   close(): void {
     this.#entries.clear();
-    this.database.$client.close();
+    if (this.#ownsDatabase) this.database.$client.close();
   }
 
   #entry(root: string, read = true): CheckoutEntry {

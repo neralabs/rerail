@@ -410,7 +410,7 @@ impl napi::Task for ScanRrPolicies {
                     reports.push(serde_json::json!({"error": format!("duplicate .rr policy ID {id:?}"), "ruleId": id}));
                     continue;
                 }
-                let out = Path::new(&self.output).join(i.to_string());
+                let out = if self.output.is_empty() { std::path::PathBuf::new() } else { Path::new(&self.output).join(i.to_string()) };
                 let report = if ephemeral {
                     None
                 } else {

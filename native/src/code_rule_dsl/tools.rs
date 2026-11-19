@@ -368,6 +368,10 @@ impl RevisionRun {
 /// (`rr::lower::findings`), each as its JSON object.
 pub fn diagnostics(dir: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(dir).map_err(|e| e.to_string())?;
+    diagnostic_rows(&outputs)
+}
+
+fn diagnostic_rows(outputs: &crate::code_rule_dsl::logic::plan::output::Outputs) -> Result<Vec<serde_json::Value>, String> {
     let spans: std::collections::HashMap<_, _> = outputs.rows("rr_scan_span").iter().filter_map(|row| {
         Some(((row.get(0).text()?, row.raw(1)), serde_json::json!({
             "start": { "line": row.get(2).int()?, "column": row.get(3).int()? },
@@ -514,8 +518,16 @@ pub fn run_program_checked(
         if let Some(dialect) = dialect {
             options["dialect"] = serde_json::json!(dialect);
         }
-        let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options)?;
-        rows.extend(diagnostics(dir)?);
+        let report = if out.as_os_str().is_empty() {
+            let (report, bytes) = corpus::run_policy_image(&program, root, binding, &options)?;
+            let outputs = super::logic::plan::output::Outputs::of(&bytes)?;
+            rows.extend(diagnostic_rows(&outputs)?);
+            report
+        } else {
+            let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options)?;
+            rows.extend(diagnostics(dir)?);
+            report
+        };
         files_read += report.files;
         nodes += report.nodes;
         phases.extend(report.phases);

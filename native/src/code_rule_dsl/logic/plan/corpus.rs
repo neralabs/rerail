@@ -2531,7 +2531,15 @@ pub fn run_read(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    run_read_handing(read, None, root, out, modes, binding, chunk_nodes, typing, options)
+    run_read_handing(read, None, root, out, modes, binding, chunk_nodes, typing, options, None)
+}
+
+/// Run a policy with in-memory evaluation tables and return its complete output image.
+pub fn run_policy_image(program: &front::Program, root: &Path, binding: Binding, options: &serde_json::Value) -> Result<(Report, Vec<u8>)> {
+    let mut image = Vec::new();
+    let report = run_read_handing(program, None, root, Path::new(""), "program", binding, 1 << 18,
+        &Typing::default(), options, Some(&mut image))?;
+    Ok((report, image))
 }
 
 /// `run_read` inside another run that hands it the source texts it read (`sources`, decision 0300): phase 1's.
@@ -2546,9 +2554,10 @@ pub(super) fn run_read_handing(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
+    image: Option<&mut Vec<u8>>,
 ) -> Result<Report> {
     let key = read_key(read)?;
-    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, None, Default::default())
+    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, image, Default::default())
 }
 
 /// A parser result belongs to the engine binary and the library bytes embedded at this call site.
@@ -2596,7 +2605,7 @@ fn run_handed(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
-    image: Option<&mut Vec<u8>>,
+    mut image: Option<&mut Vec<u8>>,
     reference_inputs: reference_facts::Input<'_>,
 ) -> Result<Report> {
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
@@ -2682,8 +2691,8 @@ fn run_handed(
     drop(seeding);
     let lifecycle_seeded = usage();
     // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
-    let reuse = image.is_none() && reuse::wanted(options, typing, t_facts);
-    let kept = if reuse { reuse::reused(&texts, root, out, modes, typing, options) } else { Ok(None) };
+    let reuse = reuse::wanted(options, typing, t_facts);
+    let kept = if reuse { reuse::reused(&texts, root, out, modes, typing, options, image.as_deref_mut()) } else { Ok(None) };
     let report = match kept {
         // A profiled run that the cutoff answered writes its profile too: the lifecycle below appends to it.
         Ok(Some(report)) if crate::code_rule_dsl::logic::profile::on() && !phase0::active() && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 => {
@@ -2696,9 +2705,9 @@ fn run_handed(
         }
         Ok(Some(report)) => Ok(report),
         Err(e) => Err(e),
-        Ok(None) => run_observed(&texts, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image).and_then(|report| {
+        Ok(None) => run_observed(&texts, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image.as_deref_mut()).and_then(|report| {
             if reuse {
-                reuse::record(&texts, root, out, modes, typing, options, &report)?;
+                reuse::record(&texts, root, out, modes, typing, options, &report, image.as_deref().map(Vec::as_slice))?;
             }
             Ok(report)
         }),
@@ -3099,7 +3108,7 @@ fn run_observed(
                 None
             } else {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1: the source files".into());
-                let (one, run) = phases::sources(&stated, &own_sources, label, root, out, modes, binding, chunk_nodes, typing, options)?;
+                let (one, run) = phases::sources(&stated, &own_sources, label, root, modes, binding, chunk_nodes, typing, options)?;
                 let (made, libraries) = (one.documents.len(), one.libraries.len());
                 crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rr)", || {
                     format!("{made} of {} source files are its documents; {libraries} library documents the imports reached", stated.len())
@@ -3116,7 +3125,7 @@ fn run_observed(
     let (mut phased, mut phase_runs) = if options.get(constants::OWN).is_some() {
         (Default::default(), Vec::new())
     } else {
-        phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?
+        phases::facts(&prog, root, modes, binding, chunk_nodes, typing, options)?
     };
     phased.extend(git::inputs(&prog, root, options));
     phased.extend(source_languages::inputs(&prog, root, options));
@@ -11483,7 +11492,7 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
     let mut parts = crate::code_rule_dsl::logic::answers::split(&whole).expect("the program has answers");
     // Git answers start empty and are produced by the fixpoint. Unlike a
     // document load's exports, they have no caller-supplied seed rows.
-    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | "git_inventory_trail_of" | reference_facts::ANSWER | reference_facts::SIBLINGS_ANSWER | reference_facts::FILE_ANSWER | reference_facts::LINK_ANSWER));
+    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | reference_facts::ANSWER | reference_facts::SIBLINGS_ANSWER | reference_facts::FILE_ANSWER | reference_facts::LINK_ANSWER));
     // The rest reads the answers as inputs: the runner binds what it gave.
     for rel in answers.values().flatten().filter(|r| !exports.contains(r)) {
         if !parts.rest_inputs.contains(rel) {

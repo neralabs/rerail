@@ -359,7 +359,7 @@ pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
 /// The facts `prog` reads from earlier phases (`<phase>__<export>`), each phase run first in its own space, and the
 /// phases' runs, in the order they ran.
-pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
+pub(crate) fn facts(prog: &Program, root: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
     // A phase's own run: its upstream facts were worked out by the run that started it.
     if let Some(me) = declared(prog)
         && let Some(f) = HANDED_DOWN.with(|h| h.borrow().last().filter(|(n, _)| *n == me.name).map(|(_, f)| Facts::clone(f)))
@@ -417,12 +417,12 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         }
         // The phase's run: its own program, its own scratch, its exports written as its outputs. The earlier phases it
         // reads run first (struct, then types), and are listed with the reader's, in the order they ran, each once.
-        let out = scratch.join(format!("phase-{name}"));
+        let mut image = Vec::new();
         // Its exports are its outputs: the program read, given them (decision 0249), not its text with an `.output`
         // after it read again.
         let mut handed = program.clone();
         handed.outputs.extend(declared.exports.iter().cloned());
-        let (upstream, upstream_runs) = self::facts(&program, root, scratch, modes, binding, chunk_nodes, typing, options)?;
+        let (upstream, upstream_runs) = self::facts(&program, root, modes, binding, chunk_nodes, typing, options)?;
         for r in upstream_runs {
             if !runs.iter().any(|x: &PhaseRun| x.name == r.name) {
                 runs.push(r);
@@ -432,9 +432,9 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let report = {
             // The phase's own run, its jobs' spans under it (`profile::span_at`).
             let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: run"));
-            super::run_read(&handed, root, &out, modes, binding, chunk_nodes, typing, options)?
+            super::run_read_handing(&handed, None, root, Path::new(""), modes, binding, chunk_nodes, typing, options, Some(&mut image))?
         };
-        let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &program, &declared, &out)? };
+        let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &program, &declared, &image)? };
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&name, &program, &reads, &rows, &mut facts)?; }
         let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
         runs.push(PhaseRun { name, report, exports });
@@ -487,7 +487,6 @@ pub(super) fn sources(
     texts: &super::texts::Sources,
     label: &str,
     root: &Path,
-    scratch: &Path,
     modes: &str,
     binding: Binding,
     chunk_nodes: usize,
@@ -547,12 +546,12 @@ pub(super) fn sources(
         ("observer__source_file".to_owned(), stated),
         ("observer__source_path".to_owned(), paths),
     ]));
-    let out = scratch.join(format!("phase-{NAME}"));
+    let mut image = Vec::new();
     let report = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));
-        super::run_read_handing(&handed, Some(texts), root, &out, modes, binding, chunk_nodes, typing, &options)?
+        super::run_read_handing(&handed, Some(texts), root, Path::new(""), modes, binding, chunk_nodes, typing, &options, Some(&mut image))?
     };
-    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &out)? };
+    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &image)? };
     let text = |v: &Value| match v {
         Value::Str(s) => Some(s.to_string()),
         // A path is text: an atom (decision 0270) is none.
@@ -604,12 +603,12 @@ fn loads_documents(program: &Program, dir: Option<&Path>, seen: &mut BTreeSet<St
 
 /// A phase's exports, as its run wrote them in `out` (which goes): each row's values as the export's columns are
 /// declared, read from the outputs' image (`output::Outputs`), nothing parsed.
-fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
+fn read_exports(name: &str, program: &Program, declared: &Declared, bytes: &[u8]) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
     use crate::code_rule_dsl::logic::plan::output;
-    let outputs = output::Outputs::open(out).map_err(|e| Error::Plan(format!("phase {name}: {}: {e}", out.display())))?;
+    let outputs = output::Outputs::of(bytes).map_err(|e| Error::Plan(format!("phase {name}: {e}")))?;
     let mut rows: BTreeMap<String, Vec<Vec<Value>>> = BTreeMap::new();
     for export in &declared.exports {
-        let rel = outputs.get(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not in its outputs (in {}, which holds {:?})", out.display(), outputs.names())))?;
+        let rel = outputs.get(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not in its outputs ({:?})", outputs.names())))?;
         let types: Vec<&str> = program.decls[export.as_str()].iter().map(|(_, t)| t.as_str()).collect();
         if rel.width() != types.len() {
             return Err(Error::Plan(format!("phase {name}: {export}: {} columns, not {}", rel.width(), types.len())));
@@ -629,8 +628,7 @@ fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) 
         }
         rows.insert(export.clone(), read);
     }
-    drop(outputs);
-    let _ = std::fs::remove_dir_all(out);
+
     Ok(rows)
 }
 

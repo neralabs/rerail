@@ -12,9 +12,9 @@
 <details>
 <summary>What it does not need or touch</summary>
 
-No daemon, no session and nothing set up first. It adds nothing to the Rerail database's session history. Outside its temporary folder, a checkout new to Rerail gets a clone id in Git's metadata folder
-(`<git common dir>/rerail-repository-id`), as `rerail start` would.
-Revision scans can also write to a versioned content cache beside the Rerail home database.
+The scan runs without a daemon or session. It builds its scan configuration and reads rule output in memory.
+A checkout new to Rerail gets a clone ID in `<git common dir>/rerail-repository-id`, as it does with `rerail start`.
+The scan can retain analysis results in the content cache beside the Rerail home database.
 
 </details>
 

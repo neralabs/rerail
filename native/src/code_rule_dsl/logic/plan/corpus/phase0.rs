@@ -570,26 +570,18 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     for dir in dirs {
         text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&dir.to_string_lossy())));
     }
-    // No corpus: an empty root, and the library a root the loader may read (`env`).
-    // Canonical (`/private/var/...`, not `/var/...` on macOS), as the run's world names its roots: one journal root.
-    // Both are rerail's own (decision 0284), as the family `rerail-phase-0-…`: answered, never kept, and nothing above
-    // them watched for them. Canonicalizing the root had watched the whole temporary directory, whose news (other
-    // programs' files, the last process's outputs) the run after a cold one stored.
-    crate::content_store::observe::own(&std::env::temp_dir().join("rerail-phase-0"));
-    let root = std::env::temp_dir().join("rerail-phase-0-root");
-    std::fs::create_dir_all(&root).map_err(|e| PlanError::Plan(format!("{}: {e}", root.display())))?;
-    let root = std::fs::canonicalize(&root).unwrap_or(root);
-    static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let out = std::env::temp_dir().join(format!("rerail-phase-0-{}-{}", std::process::id(), RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-    let options = serde_json::json!({ "reuse": true });
+    // The library is already a permitted input root. Phase zero only loads the files its seeds request.
+    let options = serde_json::json!({ "reuse": true, "inputFiles": [] });
+    let mut image = Vec::new();
     IN_PHASE_0.with(|c| c.set(true));
-    let run = super::run_with_options(&[&text], &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options);
+    let run = super::run_handed(&[&text], None, None, &lib, None, std::path::Path::new(""), "program",
+        crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options, Some(&mut image), Default::default());
     IN_PHASE_0.with(|c| c.set(false));
-    let result = run.map(|report| {
+    let result = run.and_then(|report| {
         use crate::code_rule_dsl::logic::plan::output::Value as V;
         let mut g = Graph { plans: report.plans, ..Graph::default() };
         // The outputs' image, read where it is: each value typed, nothing parsed.
-        let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap_or_else(|_| crate::code_rule_dsl::logic::plan::output::Outputs::of(&[]).expect("no image"));
+        let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::of(&image).map_err(PlanError::Plan)?;
         for r in outputs.rows("p0_include") {
             if let (V::Text(from), Some(at), V::Text(name), V::Text(path)) = (r.get(0), r.get(1).int(), r.get(2), r.get(3)) {
                 g.includes.entry(from.to_owned()).or_default().push((at, name.to_owned(), PathBuf::from(path)));
@@ -631,9 +623,8 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
                 g.digests.insert(p, d);
             }
         }
-        g
+        Ok(g)
     });
-    let _ = std::fs::remove_dir_all(&out);
     result
 }
 
