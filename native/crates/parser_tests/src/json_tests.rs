@@ -232,6 +232,14 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     let native = rerail_compiler::native_ir::lower(&aot.program, 0, 0).expect("lowers");
     let (widths, tag) = aot.parser.tier2.widths_tag();
     let src = rerail_compiler::rust_stream::rust_source_at(&native, widths, tag).expect("tier 2 as Rust");
+    // A number is read once, as `parse_number` reads it: each arm of a number's first bytes makes
+    // its end and its check from one read of its bytes (`run_R_check_C`).
+    let arms: Vec<&str> = src.split("0x2d | 0x30..=0x39 => {\n").skip(1).collect();
+    assert!(!arms.is_empty(), "the numbers' arms");
+    for arm in &arms {
+        let first = arm.lines().nth(1).unwrap_or("");
+        assert!(first.starts_with("match s.run_") && first.contains("_check_"), "a number's arm reads its bytes once: {first}");
+    }
     let entry = aot_entry(&src);
     // SAFETY: the source is this program's tier 2 (from its own native IR), reading and writing
     // `Ctx` as the JIT's does; it counts its calls open itself.

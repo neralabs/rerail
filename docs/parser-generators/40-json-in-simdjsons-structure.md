@@ -532,6 +532,24 @@ in place of the JIT's tier 2, and gives the JIT's trees on every file of the tre
 with the corpus (81 parsed, 27 refused). A mutation fails it: the content's next part one byte
 late.
 
+## Step 14, done: a number read once, in the generated Rust
+
+The number's arm read its bytes twice: `run_0` found the end, then `check_0` loaded them again,
+64 bytes a window. Now the arm calls `run_0_check_0` (`run_check`):
+- one load of 16 bytes at the number's start, the bytes past the file zeroed;
+- the check's byte sets and the run's end set (the bytes not of its class) from one set of
+  classes;
+- the end: the first lane past the start in the end set, or past the file;
+- the check's ops over those 16 lanes, then on past the check's word.
+
+A token whose end is past the 16 bytes takes the path as before.
+
+An atom's check is decided as tier 2 compiles (`token_value` over the word's bytes), so `true`
+goes straight to its leaf.
+
+The trees test with the Rust asserts each number's arm makes its end and check from one read.
+Two mutations fail it: the fused check never refusing, and the atoms' decision inverted.
+
 ## The generated Rust next to simdjson's stage 2
 
 The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` writes it as
@@ -547,7 +565,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 | one switch a value | the arms meet at a word they share, `open(10)` (the value's node), then `match d` takes them apart again; and an `else` path switches on the kind, for a token switched on again | no |
 | `case ','`, `case ']'` in the continue states | each punctuation byte straight to its place, every other byte refused | yes |
 | atoms: `str4ncmp(src, "true")`, then the byte after not structural or white space | the same test, a word load | yes |
-| `parse_number`: the digits read once, validated as they are read | `run_0` finds the end, then `check_0` reads the bytes again in 64-byte windows and classifies them by the check's sets | no: read twice |
+| `parse_number`: the digits read once, validated as they are read | `run_0_check_0`: one read of 16 bytes, the end and the check from it, then on past the check | yes, since step 14 (a number past 15 bytes: as before) |
 | `parse_string`: `copy_and_find`, then one branch: quote, backslash or neither | `part_stop`, then one branch: closer, escape or content | yes |
 | an escape: `escape_map[c]`, the `\u` work only after a `u` | `CODES2[c]`, then a `match` of nine words that all go to one place, then both `\u` checks at every escape | no |
 | the closing quote ends the string | the closer's arm tests its span's length again | no |
@@ -555,7 +573,7 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 
 What follows, in order, each change made in `rust_stream` or in the compiler, and judged on
 the Rust it writes:
-1. A number read once: the check made in the pass that finds its end, as `parse_number`.
+1. Done in step 14.
 2. One dispatch a value: no shared word between the switch and the value's place, and no
    switch on the kind where a token is switched on once.
 3. The `\u` checks only after a `u`; one test for the escape's words.

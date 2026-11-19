@@ -1862,6 +1862,15 @@ fn fetched_helpers(out: &mut String, x: &Facts<'_>, fx: &Fetched) -> Result<(), 
         unsafe { vget_lane_u64::<0>(vreinterpret_u64_u8(vshrn_n_u16::<4>(vreinterpretq_u16_u8(v)))) }
     }
 
+    /// The lanes of a vector that are all ones, a bit each (16 bits).
+    #[inline(always)]
+    fn bits16(v: uint8x16_t) -> u64 {
+        unsafe {
+            let m = vandq_u8(v, vld1q_u8([1u8, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128].as_ptr()));
+            u64::from(vaddv_u8(vget_low_u8(m))) | u64::from(vaddv_u8(vget_high_u8(m))) << 8
+        }
+    }
+
     /// The 8 bytes from `at`, a word (the file has 64 readable bytes after it).
     #[inline(always)]
     fn word8(&self, at: u32) -> u64 {
@@ -1936,6 +1945,20 @@ fn fetched_helpers(out: &mut String, x: &Facts<'_>, fx: &Fetched) -> Result<(), 
 "
         )
         .unwrap();
+    }
+    // Each run's token and the check at its place, from one read (`run_check`).
+    let mut pairs: BTreeSet<(u8, usize)> = BTreeSet::new();
+    for sw in x.native.switches.iter().filter(|sw| on_kinds(x, sw)) {
+        for b in 0..256usize {
+            if let Some(crate::records::EndRule::Run(_)) = ft.rules.get(usize::from(ft.ends[b]))
+                && let Some((_, ci, _)) = check_at(x, kind_target(x, fx, sw, u32::from(ft.kinds[b])))
+            {
+                pairs.insert((ft.ends[b], ci));
+            }
+        }
+    }
+    for (r, ci) in pairs {
+        run_check(out, r, ft.run_class[usize::from(r)].as_ref().expect("checked in `fetched`"), ci, &x.native.local_checks[ci])?;
     }
     if let Some((q, _)) = &fx.seq {
         let test = set_test(q.stops, "v", "STOPS", &mut consts)?;
@@ -2037,7 +2060,18 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
                     let n = w.len();
                     let mask = if n == 8 { u64::MAX } else { (1u64 << (8 * n)) - 1 };
                     let want = w.iter().rev().fold(0u64, |acc, &y| acc << 8 | u64::from(y));
-                    let to = p.to(kind_target(x, fx, sw, *code));
+                    let to = match check_at(x, kind_target(x, fx, sw, *code)) {
+                        // A check of no delay at the word's place reads the word's bytes alone:
+                        // decided here, as simdjson tests an atom by its bytes and nothing else.
+                        Some((q, _, c)) if c.delay == 0 => {
+                            if crate::program::token_value(c, w, 0, w.len(), &|_| false) {
+                                "return Err(false);".to_string()
+                            } else {
+                                p.to(q as u16 + 1)
+                            }
+                        }
+                        _ => p.to(kind_target(x, fx, sw, *code)),
+                    };
                     writeln!(
                         words,
                         "if st + {n} <= s.len && s.word8(st) & {mask:#x} == {want:#x} && (st + {n} == s.len || S::CLASS_{r}[usize::from(s.byte(st + {n}))] == 0) {{\n// {:?}\ns.rec_end = st + {n};\ns.code = {code:#x};\n{to}\n}}",
@@ -2045,7 +2079,15 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
                     )
                     .unwrap();
                 }
-                format!("let st = s.start;\n{words}s.rec_end = s.run_{r}(st) + 1;\ns.code = {kind};\n{}", p.to(t))
+                match check_at(x, t).filter(|_| t != REFUSE) {
+                    // The check at its place made in the pass that finds its end, then on past it.
+                    Some((q, ci, _)) => {
+                        let past = p.to(q as u16 + 1);
+                        let long = p.to(t);
+                        format!("let st = s.start;\n{words}match s.run_{r}_check_{ci}(st)? {{\nSome(l) => {{\ns.rec_end = l + 1;\ns.code = {kind};\n{past}\n}}\nNone => {{\ns.rec_end = s.run_{r}(st) + 1;\ns.code = {kind};\n{long}\n}}\n}}")
+                    }
+                    None => format!("let st = s.start;\n{words}s.rec_end = s.run_{r}(st) + 1;\ns.code = {kind};\n{}", p.to(t)),
+                }
             }
         };
         writeln!(s, "{} => {{\n{body}\n}}", pats.join(" | ")).unwrap();
@@ -2167,12 +2209,62 @@ s.part_at = i + 2;
     p
 }
 
+/// A token's check that this backend writes (`program::token_value`): none back, no `ended`.
+fn token_check_ok(c: &LocalCheck) -> bool {
+    c.token && c.back == 0 && !c.ops.iter().any(|o| matches!(o, LocalOp::Ended)) && c.delay < 64
+}
+
+/// A token's check's ops as Rust, a `let v{k}` each, over one window of places (64 of them,
+/// `wide`, else 16): the byte sets by the classes `c{t}` (four vectors, or one), a `prev`
+/// carrying its operand's last window (`pv{a}`) and a `fill` its carry (`cin{k}`) where `wide`.
+/// What carries to the next window goes to `after`.
+fn check_ops(c: &LocalCheck, w: &WordForm, wide: bool, step: &mut String, after: &mut String) {
+    let carried: BTreeSet<usize> = c.ops.iter().filter_map(|o| if let LocalOp::Prev(a, _) = *o { Some(usize::from(a)) } else { None }).collect();
+    for (k, op) in c.ops.iter().enumerate() {
+        let v = |a: u16| format!("v{a}");
+        let e = match *op {
+            LocalOp::Bytes(_) => match w.class_of[&k] {
+                (_, 0) => "0".into(),
+                (ti, bits) if wide => format!("bits(c{ti}.map(|v| vtstq_u8(v, vdupq_n_u8({bits}))))"),
+                (ti, bits) => format!("Self::bits16(vtstq_u8(c{ti}, vdupq_n_u8({bits})))"),
+            },
+            LocalOp::Const(pat) => format!("{pat:#x}u64"),
+            LocalOp::Within(d) => format!("S::within(q as i64, {d}, left + {d})"),
+            LocalOp::Start => "if q == 0 { 1 } else { 0 }".into(),
+            LocalOp::Last => "S::within(q as i64, n as i64 - 1, n as i64)".into(),
+            LocalOp::Not(a) => format!("!{}", v(a)),
+            LocalOp::And(a, b) => format!("{} & {}", v(a), v(b)),
+            LocalOp::Or(a, b) => format!("{} | {}", v(a), v(b)),
+            LocalOp::Xor(a, b) => format!("{} ^ {}", v(a), v(b)),
+            LocalOp::AndNot(a, b) => format!("{} & !{}", v(a), v(b)),
+            LocalOp::Prev(a, sh) if wide => format!("({} << {sh}) | (pv{a} >> {})", v(a), 64 - u32::from(sh)),
+            LocalOp::Prev(a, sh) => format!("{} << {sh}", v(a)),
+            LocalOp::Fill(a, b) => {
+                // `block::carry::fill`: one add with the carry in.
+                let cin = if wide { format!("cin{k}") } else { "0".into() };
+                writeln!(step, "            let ne{k} = !{};\n            let bb{k} = ne{k} | {};\n            let (sum{k}, o1_{k}) = {}.overflowing_add(bb{k});\n            let (sum{k}, o2_{k}) = sum{k}.overflowing_add({cin});", v(b), v(a), v(a)).unwrap();
+                if wide {
+                    writeln!(after, "            cin{k} = u64::from(o1_{k} | o2_{k});").unwrap();
+                }
+                format!("{} | (ne{k} & (sum{k} ^ {} ^ bb{k}))", v(a), v(a))
+            }
+            LocalOp::Ended => unreachable!("refused by `token_check_ok`"),
+        };
+        writeln!(step, "            let v{k}: u64 = {e};").unwrap();
+    }
+    if wide {
+        for &a in &carried {
+            writeln!(after, "            pv{a} = v{a};").unwrap();
+        }
+    }
+}
+
 /// A token's check (decision 0398, `program::token_value`): over the token's bytes and `delay`
 /// after them, a 64-byte window a step, word-parallel: tier 1's classes for the byte sets, the
 /// other ops word operations, a `prev` carrying its operand's last word, a `fill` its carry.
 /// It refuses where its last op holds at a place from `delay` to the token's end and `delay`.
 fn token_check(out: &mut String, i: usize, c: &LocalCheck) -> Result<(), String> {
-    if c.back != 0 || c.ops.iter().any(|o| matches!(o, LocalOp::Ended)) || c.delay >= 64 {
+    if !token_check_ok(c) {
         return Err(format!("check {i}: a token's check that reads back, or of a delay of 64 or more: not yet ahead of time"));
     }
     let w = word_form(&c.ops).map_err(|e| format!("check {i}: {e}"))?;
@@ -2195,36 +2287,7 @@ fn token_check(out: &mut String, i: usize, c: &LocalCheck) -> Result<(), String>
         writeln!(step, "            let c{ti} = [0, 1, 2, 3].map(|v| vandq_u8(vqtbl1q_u8(lo{ti}, vandq_u8(b[v], vdupq_n_u8(15))), vqtbl1q_u8(hi{ti}, vshrq_n_u8::<4>(b[v]))));").unwrap();
     }
     let mut after = String::new();
-    for (k, op) in c.ops.iter().enumerate() {
-        let v = |a: u16| format!("v{a}");
-        let e = match *op {
-            LocalOp::Bytes(_) => match w.class_of[&k] {
-                (_, 0) => "0".into(),
-                (ti, bits) => format!("bits(c{ti}.map(|v| vtstq_u8(v, vdupq_n_u8({bits}))))"),
-            },
-            LocalOp::Const(pat) => format!("{pat:#x}u64"),
-            LocalOp::Within(d) => format!("S::within(q as i64, {d}, left + {d})"),
-            LocalOp::Start => "if q == 0 { 1 } else { 0 }".into(),
-            LocalOp::Last => "S::within(q as i64, n as i64 - 1, n as i64)".into(),
-            LocalOp::Not(a) => format!("!{}", v(a)),
-            LocalOp::And(a, b) => format!("{} & {}", v(a), v(b)),
-            LocalOp::Or(a, b) => format!("{} | {}", v(a), v(b)),
-            LocalOp::Xor(a, b) => format!("{} ^ {}", v(a), v(b)),
-            LocalOp::AndNot(a, b) => format!("{} & !{}", v(a), v(b)),
-            LocalOp::Prev(a, sh) => format!("({} << {sh}) | (pv{a} >> {})", v(a), 64 - u32::from(sh)),
-            LocalOp::Fill(a, b) => {
-                // `block::carry::fill`: one add with the carry in.
-                writeln!(step, "            let ne{k} = !{};\n            let bb{k} = ne{k} | {};\n            let (sum{k}, o1_{k}) = {}.overflowing_add(bb{k});\n            let (sum{k}, o2_{k}) = sum{k}.overflowing_add(cin{k});", v(b), v(a), v(a)).unwrap();
-                writeln!(after, "            cin{k} = u64::from(o1_{k} | o2_{k});").unwrap();
-                format!("{} | (ne{k} & (sum{k} ^ {} ^ bb{k}))", v(a), v(a))
-            }
-            LocalOp::Ended => unreachable!("refused above"),
-        };
-        writeln!(step, "            let v{k}: u64 = {e};").unwrap();
-    }
-    for &a in &carried {
-        writeln!(after, "            pv{a} = v{a};").unwrap();
-    }
+    check_ops(c, &w, true, &mut step, &mut after);
     let last = c.ops.len() - 1;
     let d = c.delay;
     writeln!(
@@ -2245,6 +2308,80 @@ fn token_check(out: &mut String, i: usize, c: &LocalCheck) -> Result<(), String>
         }}
         }}
         Ok(())
+    }}
+"
+    )
+    .unwrap();
+    Ok(())
+}
+
+/// The check at place `t`, where its words are a token's `SPAN`s then a `CHECK` over its bytes
+/// alone (`token_check_ok`) of a delay under 15: the check's place, its index, the check.
+fn check_at<'a>(x: &'a Facts<'a>, t: u16) -> Option<(usize, usize, &'a LocalCheck)> {
+    let words = &x.native.structural;
+    let mut q = usize::from(t);
+    while matches!(words.get(q).map(|w| w.operation), Some(Op::Span { last: true, .. })) {
+        q += 1;
+    }
+    let Some(Op::Check { check }) = words.get(q).map(|w| w.operation) else { return None };
+    let c = &x.native.local_checks[usize::from(check)];
+    (token_check_ok(c) && c.delay < 15 && q + 1 < words.len()).then_some((q, usize::from(check), c))
+}
+
+/// A run's token and the check at its place made from one read of its 16 bytes, as
+/// `parse_number` validates the digits as it reads them (`run_R_check_C`): the check's sets and
+/// the run's end (the bytes not of its class) classified together. Where the end is in them,
+/// the token's last byte (the check passed), else none (the token is longer: the run's end and
+/// the check as apart); the check failing refuses the file.
+fn run_check(out: &mut String, r: u8, class: &[u8; 256], ci: usize, c: &LocalCheck) -> Result<(), String> {
+    let mut not_c = [0u64; 4];
+    for b in 0..256usize {
+        if class[b] == 0 {
+            not_c[b / 64] |= 1 << (b % 64);
+        }
+    }
+    let mut both = c.clone();
+    both.ops.push(LocalOp::Bytes(not_c));
+    let w = word_form(&both.ops).map_err(|e| format!("check {ci} with rule {r}'s end: {e}"))?;
+    let mut body = String::new();
+    let used: BTreeSet<usize> = w.class_of.values().filter(|&&(_, b)| b != 0).map(|&(t, _)| t).collect();
+    for &ti in &used {
+        let (lo, hi) = w.tables[ti];
+        writeln!(body, "            let c{ti} = vandq_u8(vqtbl1q_u8(vld1q_u8({lo:?}.as_ptr()), vandq_u8(b, vdupq_n_u8(15))), vqtbl1q_u8(vld1q_u8({hi:?}.as_ptr()), vshrq_n_u8::<4>(b)));").unwrap();
+    }
+    let end = match w.class_of[&c.ops.len()] {
+        (_, 0) => "0".to_string(),
+        (ti, bits) => format!("Self::bits16(vtstq_u8(c{ti}, vdupq_n_u8({bits})))"),
+    };
+    let mut step = String::new();
+    let mut after = String::new();
+    check_ops(c, &w, false, &mut step, &mut after);
+    let (last, d) = (c.ops.len() - 1, u32::from(c.delay));
+    // The end's lanes: 1 to 15 less the delay, the check's places all in the 16.
+    let lanes = ((1u64 << (16 - d)) - 1) & !1;
+    writeln!(
+        out,
+        "    /// Rule {r}'s token from `st` and `CHECK {ci}` over it, from one read of its 16 bytes (as
+    /// `parse_number`): its last byte, the check passed; none where its end is past them.
+    #[inline(always)]
+    fn run_{r}_check_{ci}(&self, st: u32) -> Result<Option<u32>, bool> {{
+        let left = self.len as i64 - st as i64;
+        unsafe {{
+            let b = vld1q_u8(self.bytes.add(st as usize));
+            // Past the file, zeros (as the check reads it); the file's end ends the run.
+            let inside = if left < 16 {{ vcltq_u8(vld1q_u8([0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].as_ptr()), vdupq_n_u8(left as u8)) }} else {{ vdupq_n_u8(0xff) }};
+            let b = vandq_u8(b, inside);
+{body}            let ends = ({end} | !Self::bits16(inside)) & {lanes:#x};
+            if ends == 0 {{
+                return Ok(None);
+            }}
+            let n = ends.trailing_zeros();
+            let q = 0u32;
+{step}            if v{last} & (((1u64 << n) - 1) << {d}) != 0 {{
+                return Err(false);
+            }}
+            Ok(Some(st + n - 1))
+        }}
     }}
 "
     )
