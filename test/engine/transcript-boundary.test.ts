@@ -41,7 +41,7 @@ const URL_INPUTS = [
   { url: "http://localhost:8080/https://192.0.2.1/api/v3" },
   // A scheme after any other character that is no letter or digit: a comment with no space, curly quotes, guillemets,
   // full-width brackets, text in another script, a package spec, a URL in another's query or fragment, an HTML
-  // comment, a percent sign; and backslashes after the scheme, which URL parsers read as slashes.
+  // comment, a percent sign.
   { content: "#https://192.0.2.1/s/1" },
   { content: "See “https://192.0.2.1/s/2”, «https://192.0.2.1/s/3» or （https://192.0.2.1/s/4）." },
   { content: "詳細はhttps://192.0.2.1/s/5を参照" },
@@ -50,7 +50,6 @@ const URL_INPUTS = [
   { url: "https://a.example/#https://192.0.2.1/s/8" },
   { content: "<!--https://192.0.2.1/s/9-->" },
   { content: "%https://192.0.2.1/s/10" },
-  { content: "https:\\\\192.0.2.1\\s\\11" },
   // A scheme after a digit or a percent-encoded character: a share link's text, a mail link's body, a URL glued to a
   // step's number or to a timestamp.
   { url: "https://share.example/intent?text=Read%20https://192.0.2.1/p/1" },
@@ -68,10 +67,21 @@ const URL_INPUTS = [
   // Hand-written device paths whose `.` and `..` names, or a name's trailing period, hide the network redirector: the
   // lookup drops them (`path.resolve` the names, Windows the period after `\\.\`) and opens `\\.\UNC\192.0.2.1\d\1`.
   { content: "https://./../UNC/192.0.2.1/d/1" },
-  { content: "https:\\\\.\\.\\UNC\\192.0.2.1\\d\\2" },
+  { content: "https://././UNC/192.0.2.1/d/2" },
   { content: "https://./x/../../UNC/192.0.2.1/d/3" },
-  { content: "https:\\\\?\\GLOBALROOT\\Device\\x\\..\\Mup\\192.0.2.1\\d\\4" },
+  { content: "https://?/GLOBALROOT/Device/x/../Mup/192.0.2.1/d/4" },
   { content: "https://./UNC./192.0.2.1/d/5" },
+];
+
+/**
+ * Calls that name another machine's share right after a `:` where it is no URL's host and path, written with
+ * backslashes, or in an `smb:` URL, which names a share outright as a `file:` URL does; each with the share as the
+ * lookup opens it.
+ */
+const SHARES_AFTER_A_COLON = [
+  { form: "robocopy's log switch", command: "robocopy src dst /LOG:\\\\192.0.2.1\\logs\\run.txt", share: "\\\\192.0.2.1\\logs\\run.txt" },
+  { form: "a PowerShell parameter", command: "Get-ChildItem -Path:\\\\192.0.2.1\\data\\cfg", share: "\\\\192.0.2.1\\data\\cfg" },
+  { form: "an smb: URL", command: "curl -s smb://192.0.2.1/share/cfg", share: "\\\\192.0.2.1\\share\\cfg" },
 ];
 
 /**
@@ -129,15 +139,18 @@ function linksToSecretFolder(): { base: string; repo: string; app: string } {
 const urlPath = (path: string): string => `${path.startsWith("/") ? "" : "/"}${path.split(sep).join("/")}`;
 
 /**
- * Records each path `realpathSync.native` is asked for. A path that would reach another machine, or the loopback host,
- * is refused, not looked up: on Windows a `\\` path other than a device path names a share, and the lookup waits about
- * 21 s for a host that does not answer; under `/net` an automounter may mount the named host's exports.
+ * Records each path `realpathSync.native` is asked for. A path in `links` is answered as a link to its target. Any other
+ * path that would reach another machine, or the loopback host, is refused, not looked up: on Windows a `\\` path other
+ * than a device path names a share, and the lookup waits about 21 s for a host that does not answer; under `/net` an
+ * automounter may mount the named host's exports.
  */
-function recordLookups(): string[] {
+function recordLookups(links: ReadonlyMap<string, string> = new Map()): string[] {
   const lookUp = realpathSync.native;
   const lookups: string[] = [];
   vi.spyOn(realpathSync, "native").mockImplementation((path: PathLike, options?: EncodingOption) => {
     lookups.push(String(path));
+    const target = links.get(String(path));
+    if (target !== undefined) return target;
     if (reachesAnotherMachine(String(path)) || loopback(String(path))) {
       throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${String(path)}'`), { code: "ENOENT" });
     }
@@ -437,19 +450,38 @@ describe("the transcript boundary for coding agents", () => {
     const texts = here.flatMap(word => ["https:", "path:", "C:", "x "].map(before => [`${before}${word}`, word] as const));
     expect(Object.fromEntries(texts.map(([text]) => [text, lookedUp(text)])))
       .toEqual(Object.fromEntries(texts.map(([text, word]) => [text, [repo, resolve(repo, word)]])));
-    // A word that names another machine is skipped right after a `:`, and looked up as on `main` after a space: a share,
-    // one on a name that only starts like the loopback host's, the long-path prefix before a share, and a device path
-    // that goes on to the network redirector, also where its `.` and `..` names or a name's trailing period hide it.
+    // A word that names another machine with a URL's `//` is skipped right after a `:`, and looked up as on `main` after
+    // a space: a share, one on a name that only starts like the loopback host's, the long-path prefix before a share,
+    // and a device path that goes on to the network redirector, also where its `.` and `..` names or a name's trailing
+    // period hide it.
     const remote = [
-      "\\\\192.0.2.1\\s\\x", "//localhost.example/s/x", "\\\\127.0.0.256\\s\\x", "//127.0.0.1./s/x",
-      "\\\\?\\UNC\\192.0.2.1\\s\\x", "//./UNC/192.0.2.1/s/x", "\\\\?\\GLOBALROOT\\Device\\Mup\\192.0.2.1\\s\\x", "//?/GLOBALROOT/Global??/UNC/192.0.2.1/s/x",
-      "//./../UNC/192.0.2.1/s/x", "\\\\.\\.\\UNC\\192.0.2.1\\s\\x", "//./x/../../UNC/192.0.2.1/s/x",
-      "\\\\?\\GLOBALROOT\\Device\\x\\..\\Mup\\192.0.2.1\\s\\x", "//./UNC./192.0.2.1/s/x",
+      "//192.0.2.1/s/x", "//localhost.example/s/x", "//127.0.0.256/s/x", "//127.0.0.1./s/x",
+      "//?/UNC/192.0.2.1/s/x", "//./UNC/192.0.2.1/s/x", "//?/GLOBALROOT/Device/Mup/192.0.2.1/s/x", "//?/GLOBALROOT/Global??/UNC/192.0.2.1/s/x",
+      "//./../UNC/192.0.2.1/s/x", "//././UNC/192.0.2.1/s/x", "//./x/../../UNC/192.0.2.1/s/x",
+      "//?/GLOBALROOT/Device/x/../Mup/192.0.2.1/s/x", "//./UNC./192.0.2.1/s/x",
     ];
     expect(Object.fromEntries(remote.map(word => [word, lookedUp(`https:${word}`)])))
       .toEqual(Object.fromEntries(remote.map(word => [word, []])));
-    expect(Object.fromEntries(remote.map(word => [word, lookedUp(`x ${word}`)])))
-      .toEqual(Object.fromEntries(remote.map(word => [word, [repo, resolve(repo, word)]])));
+    // The same word written with backslashes is no URL's host and path, so it is looked up as on `main` right after a
+    // `:` too, a scheme's or a word's.
+    const backslashed = remote.map(word => word.replaceAll("/", "\\"));
+    const elsewhere = [
+      ...remote.map(word => [`x ${word}`, word] as const),
+      ...backslashed.flatMap(word => ["https:", "path:", "x "].map(before => [`${before}${word}`, word] as const)),
+    ];
+    expect(Object.fromEntries(elsewhere.map(([text]) => [text, lookedUp(text)])))
+      .toEqual(Object.fromEntries(elsewhere.map(([text, word]) => [text, [repo, resolve(repo, word)]])));
+  });
+
+  it.runIf(process.platform === "win32").each(SHARES_AFTER_A_COLON)("looks up another machine's share after a `:` in $form as `main` does, and follows a link there to a secret", ({ command, share }) => {
+    const root = checkout("rerail-transcript-share-after-colon-");
+    // A stand-in answers the share as a link to a secret folder on that host; no lookup reaches a host.
+    const lookups = recordLookups(new Map([[share, "\\\\192.0.2.1\\home\\.aws"]]));
+    expect(callNamesSecretPath({ command }, root), command).toBe(true);
+    expect(agentTranscriptPayload("call", { toolName: "Bash", input: { command } }, root), command)
+      .toEqual({ toolName: "Bash", input: WITHHELD_INPUT });
+    // One lookup of the share for each of the two judgments, as on `main`, and none of another machine's path.
+    expect(lookups.filter(reachesAnotherMachine)).toEqual([share, share]);
   });
 
   it.runIf(process.platform === "win32")("looks up a share on the loopback host right after a `:` however its address is written, as `main` does", () => {
