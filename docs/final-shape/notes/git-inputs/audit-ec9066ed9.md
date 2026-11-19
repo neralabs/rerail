@@ -20,6 +20,8 @@ The headless scan produced four distinct fingerprints for the file and three com
 The parent message kept its fingerprint when scanned as the selected commit. The text report displayed the full parent ID, repository and field.
 A separate `rerail scan --json --fail-on-violations` process returned the same fingerprints and exit code 3.
 All 17 standalone revision tests passed on macOS. The single-policy and batch location regression also passed on Linux.
+On Windows 11 ARM64 with NTFS, all 17 standalone tests passed at `23b9280f49` in 56.31 seconds.
+The rebuilt addon passed all four headless checks. The location check also ran the public JSON command in a separate process.
 [Rule example](../../../rule-syntax/git.md#report-a-finding-on-a-commit) · [Report format](../../../headless-scan.md#locations-for-commit-findings) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Bound commit metadata
