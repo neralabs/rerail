@@ -922,6 +922,34 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
   });
 
+  it("keeps the repository above's list once a folder between it and such a checkout becomes a repository and the repository above adds a worktree", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+    expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
+
+    // The checkout's own .git is unchanged, so its acceptance holds until Git lists another repository's registry there.
+    repository(middle);
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    expect(worktreeRegistry(inner)?.worktrees).toEqual(gitsRegistry(inner));
+    expect(gitsRegistry(inner)).toHaveLength(1);
+    for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
+  });
+
+  it("lists as Git does a bare repository's worktree, a work tree whose Git folder is kept apart, a submodule, a folder in a checkout and a checkout whose .git is a link", async () => {
+    const root = await temporaryRoot();
+    const seed = repository(join(root, "seed"));
+    git(root, "clone", "--quiet", "--bare", seed, join(root, "bare.git"));
+    git(join(root, "bare.git"), "worktree", "add", "--quiet", join(root, "one"));
+    git(root, "init", "--quiet", `--separate-git-dir=${join(root, "kept-apart.git")}`, join(root, "work"));
+    git(join(root, "work"), "commit", "--quiet", "--allow-empty", "-m", "seed");
+    git(seed, "submodule", "add", "--quiet", await gitFolderLinked(join(root, "source"), join(root, "source.git")), "sub");
+
+    expectGitsRegistries(join(root, "one"), join(root, "work"), join(seed, "sub"), join(seed, "src"), join(root, "source"));
+  });
 });
 
 describe("an entry Git reads through a link is read through it", () => {

@@ -297,6 +297,19 @@ function registryContents(commonDirectory: string): string {
  * have yet.
  */
 export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined {
+  const registry = registryAsPlaced(checkout);
+  if (registry !== ANOTHER_REGISTRY) return registry;
+  // Git listed another repository's registry than the kept acceptance named: the checkout is placed again, by Git.
+  gitAcceptances.delete(resolve(checkout));
+  const again = registryAsPlaced(checkout);
+  return again === ANOTHER_REGISTRY ? undefined : again;
+}
+
+/** What {@link registryAsPlaced} gives when Git listed the registry of another common Git folder than the one placed. */
+const ANOTHER_REGISTRY = Symbol("another registry");
+
+/** {@link worktreeRegistry} of `checkout` as it is placed now, the kept acceptance included. */
+function registryAsPlaced(checkout: string): WorktreeRegistry | undefined | typeof ANOTHER_REGISTRY {
   const commonDirectory = registryCommonDirectory(checkout);
   if (commonDirectory === undefined) return undefined;
   // Read before Git runs: a worktree added meanwhile changes it, and Git is asked again next time.
@@ -306,8 +319,25 @@ export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined
   const registry = listWorktrees(checkout, commonDirectory, contents);
   // A checkout where Git cannot answer keeps nothing: what is kept is bounded by what answers.
   if (registry === undefined) forget(checkout, commonDirectory);
+  // Every checkout of the repository reads what is stored here, so only a list of this registry is.
+  else if (!listsRegistryOf(registry)) return ANOTHER_REGISTRY;
   else worktreeRegistries.set(commonDirectory, registry);
   return registry;
+}
+
+/**
+ * Whether Git listed the registry of `registry.commonDirectory`, read from Git's own list: Git names a registry's main
+ * worktree after its common Git folder, as that folder itself (a bare repository, a Git folder kept apart, a `.git`
+ * link) or as the folder holding it as `.git`, whatever `core.worktree` says. A list Git gave of another repository's
+ * registry, where an acceptance outlived Git's answer, names another main worktree.
+ */
+function listsRegistryOf(registry: WorktreeRegistry): boolean {
+  const [main] = registry.worktrees;
+  try {
+    return main !== undefined && [main, join(main, ".git")].some(path => physicalPath(path) === registry.commonDirectory);
+  } catch {
+    return false;
+  }
 }
 
 /** Drops the registry of `commonDirectory`, and the acceptance of `checkout` kept for it, once Git cannot list there. */
