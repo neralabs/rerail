@@ -1,11 +1,12 @@
-.policy "rerail-fixtures-root" revision 2
+.policy "rerail-fixtures-root" revision 3
 .description "Use the fixtures_dir and oracle macros to reach the fixtures directory from Rust code in native, not relative paths or the oracles variable; only they follow its override."
 .language rust
 .mode steer
 .scope include "native/**/*.rs"
-.scope exclude "native/build.rs", "native/src/code_rule_dsl/mod.rs", "native/target/**"
-// The fixtures directory is reached through `fixtures_dir!()` and `oracle!(…)` (native/src/code_rule_dsl/mod.rs), the
-// only paths that follow its override (RERAIL_ORACLES_DIR, resolved once by native/build.rs).
+.scope exclude "native/build.rs", "native/src/code_rule_dsl/fixtures.rs", "native/target/**"
+// The fixtures directory is reached through `fixtures_dir!()` and `oracle!(…)`, the only paths that follow its override
+// (RERAIL_ORACLES_DIR, resolved once by native/build.rs); native/src/code_rule_dsl/fixtures.rs defines them and is left
+// out.
 //   include_str!("../../fixtures/rust/a.rs")                              RELATIVE_FIXTURES_PATH (climbs to fixtures/)
 //   Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("fixtures")  RELATIVE_FIXTURES_PATH
 //   std::env::var("RERAIL_ORACLES_DIR")                                   ORACLES_VARIABLE_READ
@@ -81,5 +82,12 @@ reads_variable(m) :- (kind(m, "macro_invocation") ; kind(m, "macro_definition"))
         ```
     .fixture "native/build.rs" ```
         fn main() { let _ = std::env::var("RERAIL_ORACLES_DIR"); }
+        ```
+    .fixture "native/src/code_rule_dsl/fixtures.rs" ```
+        macro_rules! __rerail_fixtures_dir {
+            () => {
+                env!("RERAIL_FIXTURES_DIR", "Rerail fixtures not found")
+            };
+        }
         ```
 .end

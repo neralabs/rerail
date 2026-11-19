@@ -33,7 +33,7 @@ policies, `.rerail` for `<rule-id>.rerail` and the language part for `<rule-id>.
 | `rerail-conformance-boundary` | `.rerail`, `text` | 6 | same (1) | same (0) | [b](NOTES-rerail-b.md) |
 | `rerail-conformance-pinned-data` | `.rerail` | 3 | same (1) | same (0) | [b](NOTES-rerail-b.md) |
 | `rerail-fixed-value-lists` | `.rerail` | 4 | same (1) | same (0) | [a](NOTES-rerail-a.md) |
-| `rerail-fixtures-root` | `.rerail` | 3 | same (1) | same (21) | below |
+| `rerail-fixtures-root` | `.rerail` | 3 | same (1) | same (20) | below |
 | `rerail-generator-placement` | `php`, `python`, `.rerail`, `shell` | 10 | same (1) | same (0) | [e](NOTES-rerail-e.md) |
 | `rerail-git-no-lazy-fetch` | `.rerail` | 6 | same (1) | same (0) | [c](NOTES-rerail-c.md) |
 | `rerail-grammar-node-kinds` | `.rerail` | 4 | same (1) | same (89) | [d](NOTES-rerail-d.md) |
@@ -73,7 +73,7 @@ libraries: `lib/tsx/rerail-module-loads.rerail` (b), `lib/rust/rerail-native.rer
 
 | Rule | Differs from the JSON |
 |---|---|
-| `rerail-fixtures-root` | No. The JSON's `inside` without `stopBy` is the direct parent (`child`), with `stopBy: end` any ancestor (`inside`). |
+| `rerail-fixtures-root` | No. The JSON's `inside` without `stopBy` is the direct parent (`child`), with `stopBy: end` any ancestor (`inside`). Its scope follows the JSON's revision 2 (#872), which leaves out `native/src/code_rule_dsl/fixtures.rs`, where the two macros read the variable: the suite reported the macros' file as translation-only until the translation followed. |
 | `rerail-start-state` | No: three regex clauses. |
 | `rerail-store-reads-in-documents` | No: one regex clause. |
 | `rerail-walk-limits` | No: two regex clauses. |
