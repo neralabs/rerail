@@ -52,7 +52,6 @@ fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()
 /// `buf`: scratch for `cat`, so joining two symbols allocates only when the result is new.
 #[derive(Default)]
 pub struct Interner { ids: HashMap<String, i64>, names: Vec<String>, buf: String }
-pub static SYMS: LazyLock<RwLock<Interner>> = LazyLock::new(Default::default);
 impl Interner {
     fn id(&mut self, s: &str) -> i64 {
         if let Some(&i) = self.ids.get(s) { return i; }
@@ -202,9 +201,23 @@ struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
 struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
 
-static COMPONENTS: Mutex<Vec<(String, Arc<Mutex<Component>>)>> = Mutex::new(Vec::new());
-fn component(name: &str) -> Result<Arc<Mutex<Component>>> {
-    COMPONENTS.lock().unwrap().iter().find(|(n, _)| n == name).map(|c| c.1.clone()).ok_or_else(|| err(format!("no set fixpoint named {name:?}")))
+/// The set engine's state of one connection (decision 0442): `extension::init` makes it, and the functions and
+/// the `set_rel` module it registers hold it.
+#[derive(Default)]
+pub struct State {
+    /// The tree `tape_load` read (`extension`).
+    pub(super) tape: RwLock<Option<Arc<super::Tape>>>,
+    /// Symbols as integers (`Interner`).
+    syms: RwLock<Interner>,
+    /// The open components, by name.
+    components: Mutex<Vec<(String, Arc<Mutex<Component>>)>>,
+    /// The relations of components run with `nowrite`, by table, until they are materialized.
+    derived: Mutex<HashMap<String, Arc<InRel>>>,
+    /// The input relations read, by their spec: each once, with a hash index per key-column set built on first use.
+    inputs: Mutex<HashMap<String, Arc<InRel>>>,
+}
+fn component(st: &State, name: &str) -> Result<Arc<Mutex<Component>>> {
+    st.components.lock().unwrap().iter().find(|(n, _)| n == name).map(|c| c.1.clone()).ok_or_else(|| err(format!("no set fixpoint named {name:?}")))
 }
 
 fn unhex(s: &str) -> Result<String> {
@@ -237,8 +250,8 @@ fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) 
 fn slot(t: &str) -> Result<usize> { t.strip_prefix('v').and_then(|s| s.parse().ok()).ok_or_else(|| err(format!("bad slot {t}"))) }
 fn num<T: std::str::FromStr>(t: &str) -> Result<T> { t.parse().map_err(|_| err(format!("bad number {t}"))) }
 
-pub fn open(conn: &Connection, spec: &str) -> Result<String> {
-    let mut syms = SYMS.write().unwrap();
+pub fn open(st: &State, conn: &Connection, spec: &str) -> Result<String> {
+    let mut syms = st.syms.write().unwrap();
     let (mut name, mut rels, mut edges, mut probes, mut gates) = (String::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut write = true;
     for line in spec.lines().map(str::trim).filter(|l| !l.is_empty()) {
@@ -252,7 +265,7 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                 rels.push(rel);
             }
             "probe" => probes.push(ProbeRule { head: num(toks[1])?, delta: num(toks[2])?, body: Body::Sql(unhex(toks[3])?), whole: None }),
-            "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join(parse_join(conn, &unhex(toks[2])?, &mut syms)?), whole: None }),
+            "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join(parse_join(st, conn, &unhex(toks[2])?, &mut syms)?), whole: None }),
             "nowrite" => write = false,
             "gate" => {
                 let list = |t: &str| -> Result<Vec<usize>> { if t == "-" { Ok(Vec::new()) } else { t.split(',').map(num).collect() } };
@@ -261,8 +274,8 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
             }
             "join" => {
                 let (head, delta) = (num(toks[1])?, num(toks[2])?);
-                let whole = match toks.get(4) { Some(w) => Some(parse_join(conn, &unhex(w)?, &mut syms)?), None => None };
-                probes.push(ProbeRule { head, delta, body: Body::Join(parse_join(conn, &unhex(toks[3])?, &mut syms)?), whole });
+                let whole = match toks.get(4) { Some(w) => Some(parse_join(st, conn, &unhex(w)?, &mut syms)?), None => None };
+                probes.push(ProbeRule { head, delta, body: Body::Join(parse_join(st, conn, &unhex(toks[3])?, &mut syms)?), whole });
             }
             "rule" => {
                 let (head, src) = (num(toks[1])?, num(toks[2])?);
@@ -308,23 +321,23 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     }
     drop(syms);
     let store = Arc::new(RwLock::new(Store { rels }));
-    let mut reg = COMPONENTS.lock().unwrap();
+    let mut reg = st.components.lock().unwrap();
     reg.retain(|(n, _)| *n != name);
     reg.push((name.clone(), Arc::new(Mutex::new(Component { store, edges, probes, gates, seeded: false, write }))));
     Ok(name)
 }
 
-pub fn close(name: &str) -> Result<()> {
-    COMPONENTS.lock().unwrap().retain(|(n, _)| n != name);
+pub fn close(st: &State, name: &str) -> Result<()> {
+    st.components.lock().unwrap().retain(|(n, _)| n != name);
     Ok(())
 }
 
 /// Runs waves until the fixpoint, or until `max_waves` more have run (0: no bound). Rows are written to the
 /// relations' tables only at the fixpoint, so a bounded run can be resumed after the caller replans probes from
 /// `stats`.
-pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
+pub fn run(st: &State, conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let t0 = Instant::now();
-    let comp = component(name)?;
+    let comp = component(st, name)?;
     let mut comp = comp.lock().unwrap();
     let nrels = comp.store.read().unwrap().rels.len();
     let mut stmts = Vec::new();
@@ -358,7 +371,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         }
         let mut guard = comp.store.write().unwrap();
         let store = &mut *guard;
-        let mut syms = SYMS.write().unwrap();
+        let mut syms = st.syms.write().unwrap();
         for (head, got) in raw {
             let types = store.rels[head].types.clone();
             for vals in got {
@@ -382,7 +395,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
                 eprintln!("      wave {waves} probe {pi} starts, delta {d}");
             }
-            let n = run_join(j, p.head, store, &mut syms, &mut fresh);
+            let n = run_join(st, j, p.head, store, &mut syms, &mut fresh);
             visits += n;
             per[pi].0 += tp.elapsed().as_secs_f64();
             per[pi].1 += n;
@@ -471,11 +484,11 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 0", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }
     let store = comp.store.read().unwrap();
-    let syms = SYMS.read().unwrap();
+    let syms = st.syms.read().unwrap();
     let mut new_rows = 0usize;
     // Every relation of the component, whole, is an input of later strata (`r:` sources).
     for rel in &store.rels {
-        DERIVED.lock().unwrap().insert(rel.table.clone(), Arc::new(InRel { k: rel.k, n: rel.n, rows: rel.data.clone(), base: false, types: rel.types.clone(),
+        st.derived.lock().unwrap().insert(rel.table.clone(), Arc::new(InRel { k: rel.k, n: rel.n, rows: rel.data.clone(), base: false, types: rel.types.clone(),
                                                                          stored: rel.stored, idx: Mutex::new(HashMap::default()) }));
     }
     for rel in store.rels.iter().filter(|_| comp.write) {
@@ -495,11 +508,11 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
 /// Live statistics of a component's relations, one line per relation in spec order: its row count, then each
 /// column's distinct count (its hash index's key count), then each column's sum of squared posting lengths (the
 /// skew: sum/rows is the expected postings of a row's value, the planner's `fan`). What the planner lacks for a relation still being derived.
-pub fn stats(name: &str) -> Result<String> {
-    let comp = component(name)?;
+pub fn stats(st: &State, name: &str) -> Result<String> {
+    let comp = component(st, name)?;
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
-    let syms = SYMS.read().unwrap();
+    let syms = st.syms.read().unwrap();
     Ok(store.rels.iter().map(|r| {
         let cols = &r.idx[..r.k];
         let mut line = std::iter::once(r.n).chain(cols.iter().map(|ix| ix.table.len()))
@@ -522,8 +535,8 @@ pub fn stats(name: &str) -> Result<String> {
 
 /// `set_fixpoint_steps(name)`: per probe line (spec order), its join steps' "in:out" counts since the last call,
 /// comma-separated (empty for a SQL probe); the counts restart.
-pub fn steps(name: &str) -> Result<String> {
-    let comp = component(name)?;
+pub fn steps(st: &State, name: &str) -> Result<String> {
+    let comp = component(st, name)?;
     let comp = comp.lock().unwrap();
     Ok(comp.probes.iter().map(|p| match &p.body {
         Body::Join(j) => j.counts.iter().map(|[a, b]| format!("{}:{}", a.replace(0), b.replace(0))).collect::<Vec<_>>().join(","),
@@ -533,14 +546,14 @@ pub fn steps(name: &str) -> Result<String> {
 
 /// Replaces probe `i`'s body, replanned from `stats`: `kind` is `sql` (hex SQL, prepared by the next `run`) or `join`
 /// (a hex join spec).
-pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) -> Result<()> {
-    let comp = component(name)?;
+pub fn reprobe(st: &State, conn: &Connection, name: &str, i: usize, kind: &str, body: &str) -> Result<()> {
+    let comp = component(st, name)?;
     let mut comp = comp.lock().unwrap();
     let n = comp.probes.len();
     let body = match kind {
         "sql" => Body::Sql(unhex(body)?),
         "join" => {
-            let j = parse_join(conn, &unhex(body)?, &mut SYMS.write().unwrap())?;
+            let j = parse_join(st, conn, &unhex(body)?, &mut st.syms.write().unwrap())?;
             let mut store = comp.store.write().unwrap();
             for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
             Body::Join(j)
@@ -548,7 +561,7 @@ pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) 
         // The probe's whole plan (`ProbeRule::whole`), planned again from live statistics (as `native::setfix`; here
         // each probe runs it, not once a wave per rule).
         "whole" => {
-            let j = parse_join(conn, &unhex(body)?, &mut SYMS.write().unwrap())?;
+            let j = parse_join(st, conn, &unhex(body)?, &mut st.syms.write().unwrap())?;
             let mut store = comp.store.write().unwrap();
             for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
             drop(store);
@@ -564,20 +577,21 @@ pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) 
 // ---- set_rel(component, rel, full|delta): a relation's tuples while its component runs -------------------------
 
 #[repr(C)]
-pub struct RelTab { base: ffi::sqlite3_vtab, store: Arc<RwLock<Store>>, rel: usize, delta: bool }
+pub struct RelTab { base: ffi::sqlite3_vtab, st: Arc<State>, store: Arc<RwLock<Store>>, rel: usize, delta: bool }
 
 unsafe impl<'vtab> VTab<'vtab> for RelTab {
-    type Aux = ();
+    type Aux = Arc<State>;
     type Cursor = RelCursor;
-    fn connect(_: &mut VTabConnection, _: Option<&()>, _: &[u8], _: &[u8], _: &[u8], args: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
+    fn connect(_: &mut VTabConnection, st: Option<&Arc<State>>, _: &[u8], _: &[u8], _: &[u8], args: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
         let arg = |i: usize| std::str::from_utf8(args.get(i).copied().unwrap_or(b"")).unwrap_or("").trim().trim_matches('\'').to_string();
-        let comp = component(&arg(0)).map_err(|e| Error::ModuleError(e.to_string()))?;
+        let st = Arc::clone(st.ok_or_else(|| Error::ModuleError("set_rel: no set engine state".into()))?);
+        let comp = component(&st, &arg(0)).map_err(|e| Error::ModuleError(e.to_string()))?;
         let store = comp.lock().unwrap().store.clone();
         let rel: usize = arg(1).parse().map_err(|_| Error::ModuleError("bad rel".into()))?;
         let types = store.read().unwrap().rels[rel].types.clone();
         let cols: Vec<String> = types.iter().enumerate().map(|(i, &t)| format!("c{i} {}", if t == b's' { "TEXT" } else { "INTEGER" })).collect();
         let schema = CString::new(format!("CREATE TABLE x({})", cols.join(", "))).map_err(|e| Error::ModuleError(e.to_string()))?;
-        Ok((Cow::Owned(schema), RelTab { base: ffi::sqlite3_vtab::default(), store, rel, delta: arg(2) == "delta" }))
+        Ok((Cow::Owned(schema), RelTab { base: ffi::sqlite3_vtab::default(), st, store, rel, delta: arg(2) == "delta" }))
     }
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         // Every usable equality, one per column: the cursor picks the column whose posting list for the actual values
@@ -609,13 +623,13 @@ unsafe impl<'vtab> VTab<'vtab> for RelTab {
         Ok(true)
     }
     fn open(&mut self) -> Result<RelCursor> {
-        Ok(RelCursor { base: ffi::sqlite3_vtab_cursor::default(), store: self.store.clone(), rel: self.rel, delta: self.delta, ids: Vec::new(), pos: 0 })
+        Ok(RelCursor { base: ffi::sqlite3_vtab_cursor::default(), st: self.st.clone(), store: self.store.clone(), rel: self.rel, delta: self.delta, ids: Vec::new(), pos: 0 })
     }
 }
 impl CreateVTab<'_> for RelTab { const KIND: VTabKind = VTabKind::Default; }
 
 #[repr(C)]
-pub struct RelCursor { base: ffi::sqlite3_vtab_cursor, store: Arc<RwLock<Store>>, rel: usize, delta: bool, ids: Vec<u32>, pos: usize }
+pub struct RelCursor { base: ffi::sqlite3_vtab_cursor, st: Arc<State>, store: Arc<RwLock<Store>>, rel: usize, delta: bool, ids: Vec<u32>, pos: usize }
 unsafe impl VTabCursor for RelCursor {
     fn filter(&mut self, idx_num: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
         let s = self.store.read().unwrap();
@@ -634,8 +648,8 @@ unsafe impl VTabCursor for RelCursor {
             let key = match (args.get::<Value>(arg)?, r.types[col]) {
                 (Value::Integer(i), b'i') => Some(i),
                 (Value::Text(t), b'i') => t.parse().ok(),
-                (Value::Text(t), b's') => SYMS.read().unwrap().ids.get(&t).copied(),
-                (Value::Integer(i), b's') => SYMS.read().unwrap().ids.get(&i.to_string()).copied(),
+                (Value::Text(t), b's') => self.st.syms.read().unwrap().ids.get(&t).copied(),
+                (Value::Integer(i), b's') => self.st.syms.read().unwrap().ids.get(&i.to_string()).copied(),
                 _ => None,
             };
             arg += 1;
@@ -652,7 +666,7 @@ unsafe impl VTabCursor for RelCursor {
         let s = self.store.read().unwrap();
         let r = &s.rels[self.rel];
         let v = r.row(self.ids[self.pos] as usize)[i as usize];
-        if r.types[i as usize] == b's' { ctx.set_result(SYMS.read().unwrap().names[v as usize].as_str()) } else { ctx.set_result(v) }
+        if r.types[i as usize] == b's' { ctx.set_result(self.st.syms.read().unwrap().names[v as usize].as_str()) } else { ctx.set_result(v) }
     }
     fn rowid(&self) -> Result<i64> { Ok(self.ids[self.pos] as i64) }
 }
@@ -753,17 +767,15 @@ impl Csr {
             .map_or(&[], |&(_, start, len)| &self.ids[start as usize..][..len as usize])
     }
 }
-/// The relations of components run with `nowrite`, by table, until they are materialized.
-static DERIVED: LazyLock<Mutex<HashMap<String, Arc<InRel>>>> = LazyLock::new(Default::default);
 const SEED: usize = usize::MAX;
 /// Columns with at most this many values report each value's postings (`stats`).
 const FREQ_NDV: usize = 64;
 
 /// `set_fixpoint_materialize(table)`: inserts a native relation's rows (those not already in its table) into the
 /// table, for SQL that reads it. Returns the rows written.
-pub fn materialize(conn: &Connection, table: &str) -> Result<i64> {
-    let Some(rel) = DERIVED.lock().unwrap().get(table).cloned() else { return Err(err(format!("no native relation {table}"))) };
-    let syms = SYMS.read().unwrap();
+pub fn materialize(st: &State, conn: &Connection, table: &str) -> Result<i64> {
+    let Some(rel) = st.derived.lock().unwrap().get(table).cloned() else { return Err(err(format!("no native relation {table}"))) };
+    let syms = st.syms.read().unwrap();
     let marks: Vec<String> = (1..=rel.k).map(|i| format!("?{i}")).collect();
     let mut ins = conn.prepare(&format!("INSERT INTO {} VALUES ({})", crate::code_rule_dsl::logic::sql::table(table), marks.join(", ")))?;
     for id in rel.stored..rel.len() {
@@ -792,10 +804,9 @@ impl InRel {
         }).clone()
     }
 }
-static INPUTS: LazyLock<Mutex<HashMap<String, Arc<InRel>>>> = LazyLock::new(Default::default);
 
-fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel>> {
-    if let Some(r) = INPUTS.lock().unwrap().get(spec) { return Ok(r.clone()); }
+fn input(es: &State, conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel>> {
+    if let Some(r) = es.inputs.lock().unwrap().get(spec) { return Ok(r.clone()); }
     let parts: Vec<&str> = spec.splitn(4, ':').collect();
     let [which, table, cols, types] = parts[..] else { return Err(err(format!("bad input {spec}"))) };
     let base = which == "b";
@@ -813,7 +824,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     if std::env::var_os("RDL_PROFILE").is_some() {
         eprintln!("      input {} rows in {:.1} ms: SELECT {cols} FROM {table}", rel.len(), t0.elapsed().as_secs_f64() * 1e3);
     }
-    INPUTS.lock().unwrap().insert(spec.to_string(), rel.clone());
+    es.inputs.lock().unwrap().insert(spec.to_string(), rel.clone());
     Ok(rel)
 }
 
@@ -842,12 +853,12 @@ enum Step {
 /// observed fanout of each step, which replanning uses in place of the estimate.
 pub struct JoinRule { steps: Vec<Step>, out: Vec<Term>, nslots: usize, multi: Vec<(usize, Vec<usize>)>, counts: Vec<[std::cell::Cell<u64>; 2]> }
 
-fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
+fn parse_join(st: &State, conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
     let mut bound: Vec<bool> = Vec::new();
     let mut steps = Vec::new();
     let mut out = Vec::new();
     let mut multi = Vec::new();
-    let tape = super::TAPE.read().unwrap().clone();
+    let tape = st.tape.read().unwrap().clone();
     fn tok(t: &str, syms: &mut Interner) -> Result<Option<Key>> {
         Ok(if t == "_" { None } else if let Some(i) = t.strip_prefix("i:") { Some(Key::Const(num(i)?)) }
            else if let Some(x) = t.strip_prefix("x:") { Some(Key::Const(syms.id(&unhex(x)?))) } else { Some(Key::Slot(slot(t)?)) })
@@ -883,13 +894,13 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                     t if t.starts_with("c") => Src::Full(num(&t[1..])?),
                     t if t.starts_with("r:") => {
                         let table = unhex(&t[2..])?;
-                        let rel = DERIVED.lock().unwrap().get(&table).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
+                        let rel = st.derived.lock().unwrap().get(&table).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
                         let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
                         let ix = rel.index(&cols);
                         Src::In(rel, ix)
                     }
                     t if t.starts_with("t:") => {
-                        let rel = input(conn, &t[2..], syms)?;
+                        let rel = input(st, conn, &t[2..], syms)?;
                         let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
                         let ix = rel.index(&cols);
                         Src::In(rel, ix)
@@ -974,7 +985,7 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
-fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh]) -> u64 {
+fn run_join(st: &State, j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh]) -> u64 {
     struct Ctx<'a> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
                      tape: Option<&'a super::Tape>, key: Vec<i64>, row: Vec<i64> }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
@@ -1099,7 +1110,7 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             Step::Let { a, b } => { slots[*a] = val(slots, *b); go(cx, i + 1, slots) }
         }
     }
-    let tape = super::TAPE.read().unwrap().clone();
+    let tape = st.tape.read().unwrap().clone();
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, tape: tape.as_deref(), key: Vec::new(), row: Vec::new() };
     let mut slots = vec![0i64; j.nslots];
     go(&mut cx, 0, &mut slots);

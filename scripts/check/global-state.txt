@@ -166,14 +166,6 @@ native/src/code_rule_dsl/logic/lanes.rs::FORMS	shared	shared by design: an execu
 native/src/code_rule_dsl/logic/lanes.rs::MADE	review	
 native/src/code_rule_dsl/logic/lanes.rs::NEXT	review	
 native/src/code_rule_dsl/logic/lanes.rs::SQL	shared	shared by design: an executor or its queues
-native/src/code_rule_dsl/logic/native.rs::LATTICES	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/native.rs::RESULTS	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/native/extension.rs::RESULTS	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/native/extension.rs::TAPE	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/native/extension/setfix.rs::COMPONENTS	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/native/extension/setfix.rs::DERIVED	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/native/extension/setfix.rs::INPUTS	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/native/extension/setfix.rs::SYMS	run	a run's own results or batch: two runs at once collide
 native/src/code_rule_dsl/logic/native/setfix.rs::ADOPTED	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::CHANGING	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::COMPONENTS	connection	a connection's own state, keyed by connection in a process map
