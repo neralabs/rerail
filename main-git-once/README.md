@@ -1,6 +1,6 @@
 # A repository start places each worktree without one Git process per worktree
 
-For [pull request #813](https://github.com/neralabs/rerail/pull/813), head 96f4a1171. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #813](https://github.com/neralabs/rerail/pull/813), head 0ddbb04fb. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #813](https://github.com/neralabs/rerail/pull/813), head 96f4a
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 2,716 lines in 11 files: 1,186 ship, 9 run in every test run, 1,521 are tests and text | Careful. A code owner approves: it edits `ci.yml`. | Nothing. CI runs the whole set; no pull request needs it. | 3 |
+| 3,272 lines in 12 files: 1,373 ship, 9 run in every test run, 1,890 are tests and text | Careful. A code owner approves: it edits `ci.yml`. | Nothing. CI runs the whole set; no pull request needs it. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -32,12 +32,13 @@ Found on 15 November 2026 in a load of 16 sessions on a busy Windows 11 machine;
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Windows owners read by engine, high risk, 260 lines; B, Placements read and kept, medium risk, 935 lines. Read first: git-placement.ts, repository-identity.ts, path_owner.rs. To skim: 1,520 lines of tests and 1 line of one release note.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Windows owners read by engine, high risk, 260 lines; B, Placements read and kept, medium risk, 1,122 lines. Read first: git-placement.ts, repository-identity.ts, path_owner.rs. To skim: 1,889 lines of tests and 1 line of one release note.">
 
 1. **Read first**, 10 min: `git-placement.ts`: `placementInputs`, `linkedWorktreeFromFiles`, `configOf`. Can Git place a folder otherwise while every fact here reads the same?
 2. **Read first**, 6 min: `repository-identity.ts`: `placed`, `answersInputs`, `worktreeRegistry`. Is every kept answer dropped once its stamp moves?
 3. **Read first**, 5 min: `path_owner.rs`: the owner read. Does it take an owner exactly when Git for Windows does?
-4. 3 min: `checkout-owner.ts`, `native.ts`, `lib.rs` and `ci.yml`: the callers, the binding and the test filter.
+4. 3 min: `git-search.ts`: where the read before Git stops.
+5. 3 min: `checkout-owner.ts`, `native.ts`, `lib.rs` and `ci.yml`: the callers, the binding and the test filter.
 
 **Then skim**, 8 min: `git-placement.test.ts` compares each answer with `git rev-parse`. `git-placement-same-size.test.ts` rewrites files at the same size with their `lstat` left as it was.
 
@@ -118,7 +119,7 @@ This pull request is based on main at cf5d520e4 and needs no other change. In tr
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 3 not verified, 5 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 3 not verified, 7 limits that stay</summary>
 
 1. **CI** runs the whole set on the pull request; the runs here are the changed modules' test files.
 2. **The start on a Windows 11 machine with every core busy** ran at `main` only: 96.6 s without an answer and 685 failed hooks, one daemon.
@@ -130,7 +131,9 @@ This pull request is based on main at cf5d520e4 and needs no other change. In tr
 - `CheckoutOwners`' own answers are as on `main`: after `core.bare` is set in `config.worktree`, a file's owner stays until the recorded checkouts change.
 - A worktree registered by a relative path (Git 2.48) under a link retargeted at a renamed folder keeps its old list until a worktree is added or removed.
 - Under a lookup variable the list's kept acceptance follows the checkout's own files and the variables' values, not the folders they name, as `main` keeps its first answer.
-- A folder between a checkout and the repository above it, made a repository, leaves the checkout's list as the repository above's until that registry changes, as on `main`; Git's list of it is never stored for the repository above.
+- A folder between a checkout and the repository above that already holds a `HEAD` file and later gains `objects` and `refs` keeps the old list until a worktree is added there, as on `main`.
+- Where a repository's `core.worktree` names a folder inside it, its `.git` moving away keeps the old list in a checkout below until that registry changes, as on `main`.
+- A checkout whose own facts cannot be read (its real path refused, or on Windows an engine that cannot read owners) has Git list its registry at each ask: one Git process a list, where `main` reuses its first answer.
 
 </details>
 
