@@ -319,6 +319,47 @@ fn collection_keeps_the_database_it_verified_after_its_path_changes() {
 }
 
 #[test]
+fn stopping_a_directory_uses_its_indexed_history_after_upgrade() {
+    let (path, original) = store("indexed-stop-history");
+    drop(original);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    // Set up the previous schema, including a trigger with the old name.
+    db.execute_batch("DROP TRIGGER analysis_history_index_scope; DROP TRIGGER analysis_runs_stop_directory;
+        DROP TABLE analysis_history_ancestor;
+        CREATE TRIGGER analysis_runs_stop_directory AFTER INSERT ON analysis_scope_release BEGIN SELECT 1; END;").unwrap();
+    let insert = |scope: &str, value: &str, ancestors: &[&str]| {
+        db.execute("INSERT INTO analysis_history_scope VALUES (?,?,?)", (scope, value, serde_json::to_string(ancestors).unwrap())).unwrap();
+        db.execute("INSERT INTO analysis_scope_run(scope,acquisition,acquired_at,scan_id) VALUES (?,1,1,'past')", [scope]).unwrap();
+    };
+    insert("cwd:h:/pkg/src", "/pkg/src", &["cwd:h:/pkg", "cwd:h:/pkg/src"]);
+    insert("cwd:/pkg/src", "/pkg/src", &["cwd:/pkg", "cwd:/pkg/src"]);
+    insert("cwd:other:/pkg", "/pkg", &["cwd:other:/pkg"]);
+    insert("cwd:h:/pkg2", "/pkg2", &["cwd:h:/pkg2"]);
+    db.execute("INSERT INTO analysis_scope_run(scope,acquisition,acquired_at,scan_id) VALUES ('cwd:h:/pkg/src',2,11,'new')", []).unwrap();
+    drop(db);
+    let upgraded = ContentStore::open(&path).unwrap();
+    let db = upgraded.connection.lock().unwrap();
+    let stop = || {
+        db.execute_batch("SAVEPOINT history_delivery").unwrap();
+        let mut statement = db.prepare("INSERT INTO analysis_scope_release(id,scope,before) VALUES ('10:test:h','cwd:h:/pkg',10)").unwrap();
+        statement.execute([]).unwrap();
+        let steps = statement.get_status(rusqlite::StatementStatus::VmStep);
+        let survivors: Vec<String> = db.prepare("SELECT scope FROM analysis_scope_run WHERE scope GLOB 'cwd:*' ORDER BY scope").unwrap()
+            .query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(survivors, ["cwd:h:/pkg/src", "cwd:h:/pkg2", "cwd:other:/pkg"]);
+        db.execute_batch("ROLLBACK TO history_delivery; RELEASE history_delivery").unwrap();
+        steps
+    };
+    let baseline = stop();
+    db.execute_batch("WITH RECURSIVE names(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM names WHERE n<1000)
+        INSERT INTO analysis_history_scope SELECT 'named:'||n,CAST(n AS TEXT),'[]' FROM names;
+        INSERT INTO analysis_scope_run(scope,acquisition,acquired_at,scan_id)
+        SELECT scope,1,1,'other' FROM analysis_history_scope WHERE scope GLOB 'named:*';").unwrap();
+    let populated = stop();
+    assert!(populated <= baseline + 20, "stop grew from {baseline} to {populated} SQLite instructions");
+}
+
+#[test]
 fn numbered_directory_stops_keep_one_cutoff_per_directory() {
     use crate::content_store::analysis_scope;
     let (_path, store) = store("scope-high-water");

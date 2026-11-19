@@ -94,6 +94,8 @@ Two runs using the same stored snapshot have the same snapshot key. A metadata-o
 Run history does not extend a snapshot's lifetime. Collection removes the link when it removes the snapshot.
 A failed run and a run that loses its publication permit produce zero rows. A metadata-only scan can publish a run.
 Deleting a scope removes its run records. An older store keeps its existing cache owners when it gains this table.
+The store indexes each directory scope under the ancestors that can stop it. Delivery uses this index to find the affected history.
+On upgrade, the store builds the index from the recorded ancestors. Older writers also update it when they publish a new directory.
 Run history starts with scans that publish a record. Historical working-tree paths identify the directory as it was named at publication.
 The history query observes the committed records it reads. A later publication or deletion invalidates results that used those records.
 

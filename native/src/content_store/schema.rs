@@ -208,6 +208,17 @@ CREATE TABLE IF NOT EXISTS analysis_history_scope (
     value TEXT NOT NULL,
     stop_scopes TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS analysis_history_ancestor (
+    ancestor TEXT NOT NULL,
+    scope TEXT NOT NULL REFERENCES analysis_history_scope(scope) ON DELETE CASCADE,
+    PRIMARY KEY(ancestor,scope)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_history_ancestor_by_scope ON analysis_history_ancestor(scope);
+INSERT OR IGNORE INTO analysis_history_ancestor(ancestor,scope)
+    SELECT a.value,h.scope FROM analysis_history_scope h, json_each(h.stop_scopes) a;
+CREATE TRIGGER IF NOT EXISTS analysis_history_index_scope AFTER INSERT ON analysis_history_scope BEGIN
+    INSERT OR IGNORE INTO analysis_history_ancestor(ancestor,scope) SELECT value,NEW.scope FROM json_each(NEW.stop_scopes);
+END;
 CREATE TABLE IF NOT EXISTS analysis_scope_run (
     scope TEXT NOT NULL REFERENCES analysis_history_scope(scope),
     acquisition INTEGER NOT NULL,
@@ -232,15 +243,16 @@ CREATE TRIGGER IF NOT EXISTS analysis_runs_end_generation AFTER UPDATE OF genera
 WHEN NEW.generation != OLD.generation BEGIN
     DELETE FROM analysis_scope_run WHERE scope=NEW.scope;
 END;
+-- Reinstall this trigger on upgrade. Earlier stores enumerated all scopes for each delivery.
+DROP TRIGGER IF EXISTS analysis_runs_stop_directory;
 CREATE TRIGGER IF NOT EXISTS analysis_runs_stop_directory AFTER INSERT ON analysis_scope_release
 WHEN NEW.scope != '' BEGIN
     DELETE FROM analysis_scope_run WHERE acquired_at<=NEW.before AND scope IN (
-        SELECT h.scope FROM analysis_history_scope h, json_each(h.stop_scopes) a
-        WHERE a.value=NEW.scope OR (
-            -- A home-qualified delivery also releases the older unqualified directory.
-            instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0 AND h.scope='cwd:'||h.value
-            AND a.value='cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':'))
-        )
+        SELECT scope FROM analysis_history_ancestor WHERE ancestor=NEW.scope
+        UNION ALL
+        SELECT a.scope FROM analysis_history_ancestor a JOIN analysis_history_scope h USING(scope)
+        WHERE a.ancestor='cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':'))
+            AND instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0 AND h.scope='cwd:'||h.value
     );
 END;
 CREATE TRIGGER IF NOT EXISTS analysis_history_forget_empty AFTER DELETE ON analysis_scope_run BEGIN
