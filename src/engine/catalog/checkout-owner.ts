@@ -3,7 +3,7 @@
  * confirms as a checkout's top level, found the same way from the file's lexical and real paths. Whether that
  * checkout judges the file with its own rules, or leaves it to the checkout around it, is the router's decision.
  */
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import { runGit } from "../git.js";
@@ -26,6 +26,15 @@ function holdsGitEntry(directory: string): boolean {
     return lstatSync(join(directory, ".git"), { throwIfNoEntry: false }) !== undefined;
   } catch {
     return false;
+  }
+}
+
+/** Whether `directory` may hold an entry called `name`: true when it does, or when the lstat cannot tell. */
+function holdsEntry(directory: string, name: string): boolean {
+  try {
+    return lstatSync(join(directory, name), { throwIfNoEntry: false }) !== undefined;
+  } catch {
+    return true;
   }
 }
 
@@ -195,12 +204,11 @@ export class CheckoutOwners {
 
   /**
    * The submodules the checkout at `root` declares that are checked out: each `.gitmodules` path that its index holds
-   * as a gitlink and that Git confirms as a checkout top level. Physical roots.
+   * as a gitlink and that Git confirms as a checkout top level. Physical roots. A checkout with no `.gitmodules` entry
+   * declares none, which Git would answer by reading nothing, so Git is not started to say so.
    */
   declaredSubmodules(root: string): string[] {
-    // Git reads the file from the checkout's folder; without it there is nothing to ask, and a Git process on every tool
-    // call (the session's ignore rules ask this of its checkout at each one) costs tens of milliseconds on Windows.
-    if (!existsSync(join(root, ".gitmodules"))) return [];
+    if (!holdsEntry(root, ".gitmodules")) return [];
     const configured = runGit(root, ["config", "--file", ".gitmodules", "--null", "--get-regexp", String.raw`^submodule\..*\.path$`]);
     if (configured.status !== 0) return [];
     const paths = configured.stdout.split("\0").filter(Boolean).map(entry => entry.slice(entry.indexOf("\n") + 1));

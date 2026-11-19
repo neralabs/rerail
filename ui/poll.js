@@ -513,32 +513,52 @@ function dropSession(id) {
 export async function loadSession(id) {
   let detail = data.sessionDetail.get(id);
   if (detail === undefined) {
-    detail = { head: null, gaps: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
+    detail = { head: null, gaps: null, declined: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
     data.sessionDetail.set(id, detail);
   }
-  return sessionLoad(detail, async () => {
-    let body;
-    try {
-      ({ body } = await get(`/api/sessions/${encodeURIComponent(id)}`));
-    } catch (error) {
-      if (!detail.loaded || !/answered 404$/u.test(error.message)) throw error;
-      dropSession(id);
-      return true;
-    }
-    const was = detail.head, wasGaps = detail.gaps;
-    detail.head = body.session;
-    detail.gaps = body.gaps;
-    patchSessionRow(body.session);
-    const changed = was?.eventCount !== body.session.eventCount || was?.endedAt !== body.session.endedAt
-      || JSON.stringify(wasGaps) !== JSON.stringify(body.gaps);
-    const page = await eventsPage(id, detail.loaded ? `after=${detail.nextAfter}` : `before=${Number.MAX_SAFE_INTEGER}`);
-    if (!detail.loaded) detail.earlier = page.events.length === EVENTS_PAGE;
-    detail.loaded = true;
-    detail.nextAfter = page.nextAfter;
-    if (page.events.length === 0) return changed;
-    detail.events = detail.events.concat(page.events);
-    return true;
-  });
+  return sessionLoad(detail, () => refreshSession(id, detail));
+}
+
+/** One load of a session: its head, then its newer events. Whether anything shown changed. */
+async function refreshSession(id, detail) {
+  const body = await sessionHead(id, detail);
+  // A session the daemon no longer has is dropped, which changes what the page shows.
+  if (body === null) return true;
+  const changed = applySessionHead(detail, body);
+  const added = await loadNewerEvents(id, detail);
+  return added || changed;
+}
+
+/** The session's head from the daemon; null when a session already loaded is gone (it is dropped). */
+async function sessionHead(id, detail) {
+  try {
+    return (await get(`/api/sessions/${encodeURIComponent(id)}`)).body;
+  } catch (error) {
+    if (!detail.loaded || !/answered 404$/u.test(error.message)) throw error;
+    dropSession(id);
+    return null;
+  }
+}
+
+/** Stores the head, its gaps and its declined steers, patches its list row, and says whether any of them changed. */
+function applySessionHead(detail, body) {
+  const before = [detail.head?.eventCount, detail.head?.endedAt, detail.gaps, detail.declined];
+  detail.head = body.session;
+  detail.gaps = body.gaps;
+  detail.declined = body.declined;
+  patchSessionRow({ ...body.session, declinedViolations: body.declined.violations });
+  return JSON.stringify(before) !== JSON.stringify([body.session.eventCount, body.session.endedAt, body.gaps, body.declined]);
+}
+
+/** The newest transcript page on a first load, else the events after the last loaded one; whether any arrived. */
+async function loadNewerEvents(id, detail) {
+  const page = await eventsPage(id, detail.loaded ? `after=${detail.nextAfter}` : `before=${Number.MAX_SAFE_INTEGER}`);
+  if (!detail.loaded) detail.earlier = page.events.length === EVENTS_PAGE;
+  detail.loaded = true;
+  detail.nextAfter = page.nextAfter;
+  if (page.events.length === 0) return false;
+  detail.events = detail.events.concat(page.events);
+  return true;
 }
 
 /**

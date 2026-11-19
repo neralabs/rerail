@@ -1,2 +1,0 @@
-^(?:contextlib)$
-^suppress$

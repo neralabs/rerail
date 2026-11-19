@@ -19,6 +19,7 @@ import {
   checkouts,
   libraryRules,
   repositories,
+  steerFeedback,
   PACKAGE_ROOT,
   defaultRerailHome,
 } from "../../src/engine/index.js";
@@ -290,6 +291,45 @@ describe("Rerail API over HTTP", () => {
     const row = (sessionId: string) => sessions.find(session => session.sessionId === sessionId);
     expect(row("session-mixed")).toMatchObject({ violationCount: 4, steeredViolations: 3, lastEventAt: 2_020 });
     expect(row("session-quiet")).toMatchObject({ violationCount: 0, steeredViolations: 0, lastEventAt: null });
+  });
+
+  it("places each declined steer's note on the latest audit that steered its rule before it, and counts that audit's steered violations once", async () => {
+    sessionStore.openSession({ ...SESSION, sessionId: "session-declined" }, 2_000);
+    sessionStore.openSession({ ...SESSION, sessionId: "session-other" }, 1_000);
+    const steered = { ...flagged, id: "violation-steered", path: "web/src/z.ts", mode: "steer" as const };
+    const logged = { ...flagged, id: "violation-logged", path: "web/src/y.ts", mode: "log" as const };
+    const declinedAudit = seedAudit({ sessionId: "session-declined", at: 2_100, violations: [steered, logged] });
+    // Reported steered again after the agent declined: a later steer the notes say nothing about.
+    seedAudit({ sessionId: "session-declined", at: 2_200, violations: [steered] });
+    seedAudit({ sessionId: "session-other", at: 1_100, violations: [steered] });
+    const note = (id: string, ruleId: string, sessionId: string | null, recordedAt: number) => ({
+      id, ruleId, sessionId, repositoryId: "repo", reason: `reason ${id}`, rerailVersion: "0", recordedAt,
+    });
+    database.insert(steerFeedback).values([
+      // Before any steer of the rule: no audit to place it on.
+      note("early", flagged.ruleId, "session-declined", 1_000),
+      note("declined", flagged.ruleId, "session-declined", 2_150),
+      // A second note on the same steer marks nothing more.
+      note("again", flagged.ruleId, "session-declined", 2_160),
+      note("unsteered-rule", "never-steered", "session-declined", 2_170),
+      note("no-session", flagged.ruleId, null, 2_180),
+    ]).run();
+
+    const { declined } = await getJson<{ declined: unknown }>("/api/sessions/session-declined");
+    expect(declined).toEqual({
+      violations: 1,
+      notes: [
+        { ruleId: flagged.ruleId, reason: "reason early", recordedAt: 1_000, auditId: null },
+        { ruleId: flagged.ruleId, reason: "reason declined", recordedAt: 2_150, auditId: declinedAudit },
+        { ruleId: flagged.ruleId, reason: "reason again", recordedAt: 2_160, auditId: declinedAudit },
+        { ruleId: "never-steered", reason: "reason unsteered-rule", recordedAt: 2_170, auditId: null },
+      ],
+    });
+    const { sessions } = await getJson<{ sessions: Array<{ sessionId: string; steeredViolations: number; declinedViolations: number }> }>("/api/sessions");
+    const row = (sessionId: string) => sessions.find(session => session.sessionId === sessionId);
+    expect(row("session-declined")).toMatchObject({ steeredViolations: 2, declinedViolations: 1 });
+    expect(row("session-other")).toMatchObject({ steeredViolations: 1, declinedViolations: 0 });
+    expect((await getJson<{ declined: unknown }>("/api/sessions/session-other")).declined).toEqual({ violations: 0, notes: [] });
   });
 
   it("counts nothing an audit in Log mode recorded as steered, and marks its violations logged, whatever their rules' modes", async () => {

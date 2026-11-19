@@ -1,6 +1,6 @@
 # Execution profiles of the heaviest data-layer rules
 
-Tools and raw outputs are in `../experiments/rule-profiles/`. The database files (`facts.sqlite`, `flow.sqlite`) and the corpus copy are not checked in. Figures are tagged **M** (measured on the gate corpus), **D** (from DLRE or the research docs) or **A** (assumed). All runs were single shots on a busy machine, ±20–40%.
+Tools and raw outputs are in `../experiments/rule-profiles/` (removed; at 7efcac9c67). The database files (`facts.sqlite`, `flow.sqlite`) and the corpus copy are not checked in. Figures are tagged **M** (measured on the gate corpus), **D** (from DLRE or the research docs) or **A** (assumed). All runs were single shots on a busy machine, ±20–40%.
 
 > **Superseded statements.** §3.6(f) and the fusion "utilities" note say recursive utilities run only on CPU/JIT. That was written before `metal-enqueue.md`. Under spec §8 there is no CPU fallback: monotone recursive utilities run on Metal as GPU-scheduled waves, and anything else that cannot be stratified is rejected by the verifier or reported `Unknown(resource)`.
 >
