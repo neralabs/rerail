@@ -10,7 +10,8 @@
  * the system's language. This is the Windows half of `private-files.ts`, which callers use.
  */
 import { win32 } from "node:path";
-import { execFileSync } from "../child-process.js";
+import { promisify } from "node:util";
+import { execFile, execFileSync } from "../child-process.js";
 import { windowsPowerShell, windowsSystemProgram } from "../system-programs.js";
 
 const SYSTEM_SID = "S-1-5-18";
@@ -29,9 +30,15 @@ export interface WindowsAcl {
   otherReaders(path: string): string[];
   /**
    * Whether `path`'s ACL takes entries from its parent's, as the ACL of a folder Git or `mkdir` made does until it is
-   * given one of its own.
+   * given one of its own. It holds no thread while `icacls` reads it.
    */
-  inherits(path: string): boolean;
+  inherits(path: string): Promise<boolean>;
+  /**
+   * Gives folder `path` the ACL {@link restrictToOwner} gives, holding no thread while Windows passes it to everything
+   * already in the folder, which takes time in step with what is there: about 0.2 ms an entry. It is never cut short,
+   * since a folder whose own ACL is set before everything in it is reached reads as kept private from then on.
+   */
+  restrictFolderToOwner(path: string): Promise<void>;
 }
 
 let userSid: string | undefined;
@@ -110,15 +117,26 @@ export function icaclsInherits(output: string): boolean {
   return output.split(/\r?\n/u).some(line => line.slice(line.lastIndexOf(":") + 1).includes("(I)"));
 }
 
+/** The `icacls` arguments that give `path` an ACL of its own granting this user, SYSTEM and Administrators alone. */
+function ownerOnlyArguments(path: string, folder: boolean): string[] {
+  const inherit = folder ? "(OI)(CI)" : "";
+  return [
+    path, "/inheritance:r", "/grant:r",
+    `*${currentUserSid()}:${inherit}F`, `*${SYSTEM_SID}:${inherit}F`, `*${ADMINISTRATORS_SID}:${inherit}F`, "/q",
+  ];
+}
+
+const icaclsLater = promisify(execFile);
+
 /** Windows' own access control, through `icacls` and `Get-Acl`. */
 export const WINDOWS_ACL: WindowsAcl = {
   restrictToOwner(path, folder) {
-    const inherit = folder ? "(OI)(CI)" : "";
     // `icacls` says why it failed ("Access is denied.") on stderr, which the thrown error's message then carries.
-    execFileSync(windowsSystemProgram("icacls.exe"), [
-      path, "/inheritance:r", "/grant:r",
-      `*${currentUserSid()}:${inherit}F`, `*${SYSTEM_SID}:${inherit}F`, `*${ADMINISTRATORS_SID}:${inherit}F`, "/q",
-    ], { stdio: ["ignore", "ignore", "pipe"], timeout: 30_000 });
+    execFileSync(windowsSystemProgram("icacls.exe"), ownerOnlyArguments(path, folder), { stdio: ["ignore", "ignore", "pipe"], timeout: 30_000 });
+  },
+  async restrictFolderToOwner(path) {
+    // The rejected error's message carries `icacls`'s stderr, as `restrictToOwner`'s does.
+    await icaclsLater(windowsSystemProgram("icacls.exe"), ownerOnlyArguments(path, true), { encoding: "utf8" });
   },
   otherReaders(path) {
     // The path goes in the environment, so no quoting of it reaches PowerShell's parser.
@@ -127,11 +145,10 @@ export const WINDOWS_ACL: WindowsAcl = {
     ], { encoding: "utf8", env: { ...process.env, RERAIL_ACL_PATH: path }, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 });
     return sddlOtherReaders(sddl.trim(), currentUserSid());
   },
-  inherits(path) {
+  async inherits(path) {
     // `icacls` starts in milliseconds where Windows PowerShell's `Get-Acl` takes up to seconds.
-    return icaclsInherits(execFileSync(windowsSystemProgram("icacls.exe"), [path], {
-      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000,
-    }));
+    const { stdout } = await icaclsLater(windowsSystemProgram("icacls.exe"), [path], { encoding: "utf8", timeout: 30_000 });
+    return icaclsInherits(stdout);
   },
 };
 

@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rename } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,10 +23,14 @@ function recordingAcl(inherited = true): WindowsAcl & { restricted: Array<[strin
     restricted,
     read,
     restrictToOwner: (path, folder) => restricted.push([path, folder]),
+    restrictFolderToOwner: path => {
+      restricted.push([path, true]);
+      return Promise.resolve();
+    },
     otherReaders: () => [],
     inherits: path => {
       read.push(path);
-      return inherited;
+      return Promise.resolve(inherited);
     },
   };
 }
@@ -98,7 +103,7 @@ describe("an owner-only ACL on Windows", () => {
     const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const acl: WindowsAcl = { restrictToOwner: () => {
       throw new Error("icacls failed");
-    }, otherReaders: () => [], inherits: () => false };
+    }, restrictFolderToOwner: () => Promise.resolve(), otherReaders: () => [], inherits: () => Promise.resolve(false) };
     expect(() => keepFolderPrivate(String.raw`D:\rerail`, { acl, platform: "win32", profile: ELSEWHERE, made: true })).not.toThrow();
     expect(written).toHaveBeenCalledWith(expect.stringContaining("icacls failed"));
   });
@@ -198,11 +203,35 @@ describe("an owner-only ACL on Windows", () => {
     const sessions = join(checkout, ".rerail", "sessions");
     await mkdir(sessions, { recursive: true });
     const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const acl: WindowsAcl = { ...recordingAcl(), restrictToOwner: () => {
-      throw new Error("Access is denied.");
-    } };
+    const acl: WindowsAcl = { ...recordingAcl(), restrictFolderToOwner: () => Promise.reject(new Error("Access is denied.")) };
     await makeLedgerFolder(join(sessions, "a".repeat(64)), { acl, platform: "win32", profile: ELSEWHERE, repair: true });
     expect(written).toHaveBeenCalledWith(`rerail: could not keep ${sessions} to this user alone, so other accounts may read what Rerail writes there: Access is denied.\n`);
+  });
+
+  it("has a session that opens while its records folder is repaired wait for that one repair, and start no second", async () => {
+    const checkout = await temporaryRoot();
+    const sessions = join(checkout, ".rerail", "sessions");
+    await mkdir(sessions, { recursive: true });
+    const repairs: string[] = [];
+    const { promise: passedOn, resolve: passOn } = Promise.withResolvers<undefined>();
+    const acl: WindowsAcl = { ...recordingAcl(), restrictFolderToOwner: path => {
+      repairs.push(path);
+      return passedOn;
+    } };
+    const windows = { acl, platform: "win32" as const, profile: ELSEWHERE, repair: true };
+    const opened: string[] = [];
+    const sessionsOpening = ["a", "b"].map(async id => {
+      await makeLedgerFolder(join(sessions, id.repeat(64)), windows);
+      opened.push(id);
+    });
+    await vi.waitFor(() => expect(repairs).toEqual([sessions]));
+    // Neither session goes on to write while Windows passes the folder's new ACL on.
+    await new Promise(resolve => setImmediate(resolve));
+    expect(opened).toEqual([]);
+    passOn(undefined);
+    await Promise.all(sessionsOpening);
+    expect(opened.toSorted()).toEqual(["a", "b"]);
+    expect(repairs).toEqual([sessions]);
   });
 
   it("tells an inherited entry from what icacls prints, in any language and whatever the path", () => {
@@ -243,13 +272,39 @@ describe("an owner-only ACL on Windows", () => {
     }
     // The first line names the command; icacls's own reason follows it, starting with the path it refused.
     expect(message.split(/\r?\n/u).slice(1).join("\n")).toContain(`${missing}:`);
+    const later = await WINDOWS_ACL.restrictFolderToOwner(missing).then(() => "", (error: unknown) => (error instanceof Error ? error.message : String(error)));
+    expect(later.split(/\r?\n/u).slice(1).join("\n")).toContain(`${missing}:`);
   });
+
+  it.runIf(process.platform === "win32")("leaves the daemon's thread free while Windows passes a records folder's new ACL to the records in it", async () => {
+    const root = await temporaryRoot();
+    // Users may read the root, as under `C:\`, so each entry below inherits that and the repair has every one to rewrite.
+    execFileSync("icacls.exe", [root, "/grant", "*S-1-5-32-545:(OI)(CI)RX", "/q"]);
+    const sessions = join(root, ".rerail", "sessions");
+    for (let i = 0; i < 1_500; i += 1) {
+      await mkdir(join(sessions, String(i)), { recursive: true });
+      await writeFile(join(sessions, String(i), "events.jsonl"), "{}\n");
+    }
+    let longest = 0;
+    let last = performance.now();
+    const ticks = setInterval(() => {
+      longest = Math.max(longest, performance.now() - last);
+      last = performance.now();
+    }, 5);
+    const started = performance.now();
+    await makeLedgerFolder(join(sessions, "a".repeat(64)), { platform: "win32", profile: ELSEWHERE, repair: true });
+    const took = performance.now() - started;
+    clearInterval(ticks);
+    expect(await WINDOWS_ACL.inherits(sessions)).toBe(false);
+    // Windows passes the ACL to 3,000 entries here, at about 0.2 ms each; the thread never waits for most of it.
+    expect(longest).toBeLessThan(took / 2);
+  }, 120_000);
 
   it.runIf(process.platform === "win32")("leaves only this user, SYSTEM and Administrators able to read a folder", async () => {
     const folder = await temporaryRoot();
-    expect(WINDOWS_ACL.inherits(folder)).toBe(true);
+    expect(await WINDOWS_ACL.inherits(folder)).toBe(true);
     WINDOWS_ACL.restrictToOwner(folder, true);
-    expect(WINDOWS_ACL.inherits(folder)).toBe(false);
+    expect(await WINDOWS_ACL.inherits(folder)).toBe(false);
     expect(WINDOWS_ACL.otherReaders(folder)).toEqual([]);
     // Windows PowerShell can take seconds to start on a cold machine.
   }, 60_000);

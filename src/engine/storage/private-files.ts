@@ -65,10 +65,11 @@ export function keepFolderPrivate(folder: string, options: KeepFolderPrivate = {
  * when the folder still takes entries from its parent's, as one Git, `mkdir` or an earlier release made does, gives it
  * the owner-only ACL, which everything already in it then inherits. An entry set on the folder itself for another
  * account is someone's choice and stays, and a folder with an ACL of its own is left as it is.
+ * Both `icacls` runs hold no thread, so a daemon answers other sessions while Windows passes the new ACL on.
  * A folder it cannot read or change (another account's, or one on a file system with no ACLs) is named on stderr,
  * which a daemon writes to its log, and never fails the caller.
  */
-export function keepFoundFolderPrivate(folder: string, machine: PrivateMachine = {}): void {
+export async function keepFoundFolderPrivate(folder: string, machine: PrivateMachine = {}): Promise<void> {
   const { acl = WINDOWS_ACL, platform = process.platform, profile = homedir() } = machine;
   if (platform !== "win32") {
     keepPrivate(folder);
@@ -76,7 +77,7 @@ export function keepFoundFolderPrivate(folder: string, machine: PrivateMachine =
   }
   if (insideProfile(folder, profile)) return;
   try {
-    if (acl.inherits(folder)) acl.restrictToOwner(folder, true);
+    if (await acl.inherits(folder)) await acl.restrictFolderToOwner(folder);
   } catch (error) {
     process.stderr.write(`rerail: could not keep ${folder} to this user alone, so other accounts may read what Rerail writes there: ${
       error instanceof Error ? error.message : String(error)}\n`);

@@ -79,14 +79,15 @@ export interface LedgerFolderOptions extends PrivateMachine {
   readonly repair?: boolean;
 }
 
-/** The session records folders this process kept private, each with the file id it had then. */
-const keptRecordsFolders = new Map<string, bigint>();
+/** The session records folders this process keeps private: each one's file id then, and its repair, ended or under way. */
+const keptRecordsFolders = new Map<string, { readonly ino: bigint; readonly kept: Promise<void> }>();
 
 /**
  * Keeps the session records folder on `directory`, the one just below the innermost `.rerail`, its owner's alone
  * whoever made it ({@link keepFoundFolderPrivate}), once per folder in this process: again only when a folder with
- * another file id has taken its place. Git makes that folder for a repository that commits a file in it, and a person
- * or a release before 0.1.5 may have made it, each with its parent's ACL on Windows, which every record in it took.
+ * another file id has taken its place. A session that opens there while the repair runs waits for that one repair.
+ * Git makes that folder for a repository that commits a file in it, and a person or a release before 0.1.5 may have
+ * made it, each with its parent's ACL on Windows, which every record in it took.
  */
 async function keepRecordsFolderPrivate(directory: string, machine: PrivateMachine): Promise<void> {
   const segments = resolve(directory).split(sep);
@@ -94,9 +95,12 @@ async function keepRecordsFolderPrivate(directory: string, machine: PrivateMachi
   if (start <= 0 || segments.length < start + 2) return;
   const folder = segments.slice(0, start + 2).join(sep);
   const { ino } = await lstat(folder, { bigint: true });
-  if (keptRecordsFolders.get(folder) === ino) return;
-  keepFoundFolderPrivate(folder, machine);
-  keptRecordsFolders.set(folder, ino);
+  let repair = keptRecordsFolders.get(folder);
+  if (repair?.ino !== ino) {
+    repair = { ino, kept: keepFoundFolderPrivate(folder, machine) };
+    keptRecordsFolders.set(folder, repair);
+  }
+  await repair.kept;
 }
 
 /**
