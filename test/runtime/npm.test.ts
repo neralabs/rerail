@@ -10,6 +10,7 @@ vi.mock("node:child_process", { spy: true });
 
 import { cleanCommandError, CommandTimeoutError, environmentForNode, runCommand, runNpm } from "../../src/runtime/npm.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { fullyQualified } from "../support/platform/windows-paths.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -44,8 +45,7 @@ describe("runNpm on Windows", () => {
   });
 
   it("puts the requested node first on PATH, so the install scripts npm runs build for it", async () => {
-    const bin = await binDirectory("node.exe");
-    const node = join(bin, "node.exe");
+    const node = fullyQualified(join(await binDirectory("node.exe"), "node.exe"));
     vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
       const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
       process.nextTick(() => child.emit("exit", 0, null));
@@ -55,10 +55,12 @@ describe("runNpm on Windows", () => {
     await runNpm(["rebuild", "better-sqlite3"], { node, env: { PATH: "/usr/bin" } });
     const [command, , options] = vi.mocked(childProcess.spawn).mock.calls.at(-1)!;
     expect(command).toBe(node);
-    expect((options as childProcess.SpawnOptions).env?.PATH).toBe(`${bin}${delimiter}/usr/bin`);
+    expect((options as childProcess.SpawnOptions).env?.PATH).toBe(`${dirname(node)}${delimiter}/usr/bin`);
   });
 
-  it("runs npm under the node.exe PATH finds, never a node.cmd shim before it, which no spawn without a shell starts", async () => {
+  // On Windows only: elsewhere the PATH search finds a Linux or macOS path, which a program start on Windows refuses as a
+  // path from the root of the current drive.
+  it.runIf(process.platform === "win32")("runs npm under the node.exe PATH finds, never a node.cmd shim before it, which no spawn without a shell starts", async () => {
     const shims = await binDirectory("node.cmd");
     const binaries = await binDirectory("node.exe");
     vi.mocked(childProcess.spawn).mockImplementationOnce(() => {

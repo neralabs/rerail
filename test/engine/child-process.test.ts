@@ -18,6 +18,19 @@ import { removeFolder } from "../support/platform/remove-folder.js";
 const hidesWindow = (call: readonly unknown[]): boolean =>
   call.some(argument => typeof argument === "object" && argument !== null && (argument as { windowsHide?: unknown }).windowsHide === true);
 
+/** Starts `command` through every starter of the helper, each of which must refuse it before Node starts anything. */
+async function expectEveryStarterRefuses(command: string): Promise<void> {
+  const starters = [
+    () => spawn(command, []), () => spawnSync(command, []), () => execFile(command, []), () => execFileSync(command, []),
+    () => spawnShown(command, [], { stdio: "ignore" }),
+  ];
+  for (const start of starters) expect(start).toThrow(/absolute path/u);
+  await expect(promisify(execFile)(command, [])).rejects.toThrow(/absolute path/u);
+  for (const start of [childProcess.spawn, childProcess.spawnSync, childProcess.execFile, childProcess.execFileSync]) {
+    expect(vi.mocked(start)).not.toHaveBeenCalled();
+  }
+}
+
 const roots: string[] = [];
 afterEach(async () => {
   vi.clearAllMocks();
@@ -61,6 +74,18 @@ describe("assertProgramPath", () => {
     // macOS and Linux look a bare name up on PATH alone.
     expect(() => assertProgramPath(["xdg-open", ["https://example.test"]], "linux")).not.toThrow();
   });
+
+  it("refuses on Windows a path from the root of the current drive, which names a file on whichever drive the current folder is on", () => {
+    for (const command of [String.raw`\tools\git.exe`, String.raw`\git.exe`, "/git.exe", "/tools/git.exe", String.raw`/tools\git.exe`]) {
+      expect(() => assertProgramPath([command, []], "win32"), command).toThrow(/absolute path from a drive or a server/u);
+    }
+    // A drive, a server and share, or a device path names one file from any folder.
+    for (const command of ["C:/tools/git.exe", "//server/share/git.exe", String.raw`\\?\C:\tools\git.exe`]) {
+      expect(() => assertProgramPath([command, []], "win32"), command).not.toThrow();
+    }
+    // A command that is not a string is Node's to refuse, with Node's own error.
+    expect(() => assertProgramPath([42, []], "win32")).not.toThrow();
+  });
 });
 
 describe("the child-process helper", () => {
@@ -81,16 +106,12 @@ describe("the child-process helper", () => {
 
   it.runIf(process.platform === "win32")("refuses on Windows, through every starter, a program named without its folder, and starts nothing", async () => {
     // A name no folder holds, so a starter that let it through would start nothing either, and open no window.
-    const bare = "rerail-test-no-such-program";
-    const starters = [
-      () => spawn(bare, []), () => spawnSync(bare, []), () => execFile(bare, []), () => execFileSync(bare, []),
-      () => spawnShown(bare, [], { stdio: "ignore" }),
-    ];
-    for (const start of starters) expect(start).toThrow(/absolute path/u);
-    await expect(promisify(execFile)(bare, [])).rejects.toThrow(/absolute path/u);
-    for (const start of [childProcess.spawn, childProcess.spawnSync, childProcess.execFile, childProcess.execFileSync]) {
-      expect(vi.mocked(start)).not.toHaveBeenCalled();
-    }
+    await expectEveryStarterRefuses("rerail-test-no-such-program");
+  });
+
+  it.runIf(process.platform === "win32")("refuses on Windows, through every starter, a program named from the root of the current drive, and starts nothing", async () => {
+    // A folder no drive holds, so a starter that let it through would start nothing either, and open no window.
+    await expectEveryStarterRefuses(String.raw`\rerail-test-no-such-folder\git.exe`);
   });
 });
 

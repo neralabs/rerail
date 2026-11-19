@@ -3,6 +3,7 @@ import { basename, dirname } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_HOOK_STATUS, runHookCommand, stopCommand, type HookAnswer, type HookPayload } from "../../../src/runtime/merge-assist/hook-command.js";
 import { sampleConflict } from "../../support/merge-assist/status.js";
+import { fromDriveRoot } from "../../support/platform/windows-paths.js";
 
 const payload: HookPayload = {
   version: 1, event: "detected", conflict: sampleConflict(), checkout: { path: tmpdir(), branch: "mine", base: "main" }, session: null,
@@ -43,6 +44,13 @@ describe("starting the conflict hook command", () => {
   it("starts a program by a path from the checkout's root", async () => {
     const answer = await runHookCommand({ command: [`./${basename(process.execPath)}`, "-e", "process.stdout.write('{}')"], timeoutSeconds: 10 }, payload, { cwd: dirname(process.execPath), env: process.env });
     expect(answer).toEqual({ ok: true, error: null, note: null, status: null });
+  });
+
+  it.runIf(process.platform === "win32")("starts a program named from the root of the checkout's drive by its full path on that drive", async () => {
+    // Node itself, named without its drive (`\Program Files\nodejs\node.exe`), answering with the name it was started by.
+    const command = [fromDriveRoot(process.execPath), "-e", "process.stdout.write(JSON.stringify({ note: process.argv0 }))"];
+    const answer = await runHookCommand({ command, timeoutSeconds: 10 }, payload, { cwd: dirname(process.execPath), env: process.env });
+    expect(answer).toEqual({ ok: true, error: null, note: process.execPath, status: null });
   });
 });
 

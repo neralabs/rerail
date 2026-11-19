@@ -1,11 +1,12 @@
 import type { ChildProcessByStdio } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { isAbsolute, join, resolve, win32 } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { endProcessTree, spawn } from "../../engine/child-process.js";
 import { gitBash } from "../../engine/git.js";
+import { isFullyQualifiedWindowsPath } from "../../engine/system-programs.js";
 import { processState } from "../../engine/process-liveness.js";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
 import { fallbackPresentation, formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
@@ -91,12 +92,13 @@ export function previousStatusSpawn(command: string, platform: NodeJS.Platform =
 
 /**
  * Git Bash's bash.exe: `CLAUDE_CODE_GIT_BASH_PATH`, which Claude Code itself honours, else the one beside Rerail's Git.
- * A name that is not an absolute path, such as `bash.exe`, is passed over for the one beside Git: Rerail starts a program
- * on Windows only by its absolute path (`assertProgramPath`), and starting that name threw before anything was drawn.
+ * A name that is not a path from a drive or a server, such as `bash.exe` or `\Git\bin\bash.exe`, is passed over for
+ * the one beside Git: Rerail starts a program on Windows only by such a path (`assertProgramPath`), and starting that
+ * name threw before anything was drawn.
  */
 function claudeGitBash(env: NodeJS.ProcessEnv): string | undefined {
   const named = env.CLAUDE_CODE_GIT_BASH_PATH;
-  return named !== undefined && win32.isAbsolute(named) ? named : gitBash();
+  return named !== undefined && isFullyQualifiedWindowsPath(named) ? named : gitBash();
 }
 
 /** Preserve the user's status as a byte stream, including output before errors or timeouts. */
