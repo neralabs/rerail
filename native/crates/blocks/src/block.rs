@@ -399,6 +399,10 @@ impl Block {
             return b.clone();
         }
         let len = kept.as_ref().map_or(1 << 20, |k| k.1 * 2).max(used.div_ceil(1 << 20) << 20).min(self.reserved);
+        // A measurement aid: `RERAIL_DEVICE_TRACE` prints where a block of 4 MB or more is wrapped for the device.
+        if len >= 4 << 20 && std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+            eprintln!("RERAIL_DEVICE_TRACE a block wrapped, {} MB (driver {} MB):\n{}", len >> 20, device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
+        }
         let b = device.new_buffer_with_bytes_no_copy(
             self.base as *const std::ffi::c_void,
             len as u64,

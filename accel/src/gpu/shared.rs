@@ -96,6 +96,11 @@ pub struct Shared {
     pub max_buffer: u64,
 }
 
+/// The process's device, once something opened it, without opening it (`rerail_forest::gpu::shared::opened`).
+pub fn opened_device() -> Option<&'static metal::DeviceRef> {
+    rerail_forest::gpu::shared::opened().map(|s| &*s.device)
+}
+
 /// The process's device and queue: `None` without a Metal device.
 pub fn get() -> Option<&'static Shared> {
     static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
@@ -429,6 +434,13 @@ impl Drop for Pooled {
     }
 }
 
+/// A measurement aid: `RERAIL_DEVICE_TRACE` prints where each new buffer of 4 MB or more is made.
+fn traced_new(bytes: usize) {
+    if bytes >= 4 << 20 && std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+        eprintln!("RERAIL_DEVICE_TRACE a new buffer of {} MB:\n{}", bytes >> 20, std::backtrace::Backtrace::force_capture());
+    }
+}
+
 /// A buffer of at least `bytes`. Its contents are a previous lease's: every reader writes it first.
 pub fn lease(bytes: usize) -> Result<Pooled, String> {
     let shared = get().ok_or("no Metal device")?;
@@ -437,6 +449,7 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
         if bytes as u64 > shared.max_buffer {
             return Err(format!("a buffer of {bytes} bytes is past the device's largest ({})", shared.max_buffer));
         }
+        traced_new(bytes);
         let b = objc::rc::autoreleasepool(|| shared.device.new_buffer(bytes as u64, MTLResourceOptions::StorageModeShared));
         leased(&b);
         return Ok(Pooled { buffer: Some(b), keep: false, fresh: true });
@@ -451,6 +464,7 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
     // A new buffer: idle ones give way to it first, so the budget holds both.
     p.trim(class);
     drop(p);
+    traced_new(class);
     let b = crate::score::phase("new buffer", || objc::rc::autoreleasepool(|| shared.device.new_buffer(class as u64, MTLResourceOptions::StorageModeShared)));
     leased(&b);
     Ok(Pooled { buffer: Some(b), keep: true, fresh: true })

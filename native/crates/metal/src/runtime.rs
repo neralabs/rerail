@@ -87,9 +87,10 @@ pub fn peak_mb() -> usize {
     pool_peak().load(Ordering::Acquire) >> 20
 }
 
-/// What the Metal driver says it has allocated for the device, in MB.
+/// What the Metal driver says it has allocated for the device, in MB: none where nothing opened the device (it is
+/// not opened to read it).
 pub fn driver_mb() -> usize {
-    crate::METAL_DEVICE.as_ref().map_or(0, |device| (device.current_allocated_size() >> 20) as usize)
+    rerail_accel::gpu::shared::opened_device().map_or(0, |device| (device.current_allocated_size() >> 20) as usize)
 }
 static METAL_PRIVATE_BYTES: AtomicUsize = AtomicUsize::new(0);
 static METAL_ALLOCATION_LOCK: Mutex<()> = Mutex::new(());

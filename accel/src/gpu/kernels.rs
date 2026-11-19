@@ -468,6 +468,10 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Library {
         return l.clone();
     }
     let device = &super::shared::get().expect("a Metal device").device;
+    // A measurement aid: `RERAIL_DEVICE_TRACE` prints where each library is loaded.
+    if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+        eprintln!("RERAIL_DEVICE_TRACE a library loaded, kernel {name} (driver {} MB):\n{}", device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
+    }
     let shipped = places().shipped.as_ref().map(|d| d.join(format!("{}.metallib", hex(&library)))).filter(|f| f.is_file());
     let started = std::time::Instant::now();
     let l = match shipped {
