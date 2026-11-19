@@ -12,7 +12,8 @@ On a case-sensitive APFS volume, the CLI reported separate findings for `src/A.p
 Revision scans required the exact Git tree spelling on both volumes. The Windows CLI also passed the spelling check on NTFS at `209ce53ce`.
 That first repair skipped working-tree symlinks. Running the earlier CLI showed that it accepted both a file link and a path below a directory link.
 The corrected regression preserves both selected link names and the single finding at their shared target. It passed on both APFS volumes and on NTFS.
-The Windows guest also passed the selector, object invalidation, and checked source-read tests in the same run. All four tests completed in 20.86 seconds.
+At `b66ec0203`, the Windows guest ran the four selected tests together in 20.28 seconds. All four passed.
+They covered path spelling, Git message selection, tree invalidation on NTFS, and checked source reads.
 [Headless CLI regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Declared outputs with constant rows
