@@ -69,7 +69,7 @@
 //!   reach, is printed with `rr::print`.
 
 #[cfg(test)]
-use super::front::{self, Literal, Term};
+use super::front;
 #[cfg(test)]
 use super::program_image::{RuleRef, Version};
 #[cfg(test)]
