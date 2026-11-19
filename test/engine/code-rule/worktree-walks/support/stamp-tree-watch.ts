@@ -53,6 +53,9 @@ export class StampTreeWatch implements TreeWatch {
   unwatch(root: string): void {
     this.#entries.delete(root);
     this.folders.delete(root);
+    // As the engine does, the notices queued for a root it lets go of go with it.
+    this.#lost.delete(root);
+    this.#ended.delete(root);
     this.unwatched.push(root);
   }
 
