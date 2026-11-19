@@ -11,7 +11,7 @@
  * `repo_diff_setup`; for the submodules inside a submodule, `wt_status_collect_changes_worktree`) and for what makes a
  * submodule changed (`is_submodule_modified`): any entry its status lists.
  */
-import { existsSync, readFileSync, statSync, type Stats } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, statSync, type Stats } from "node:fs";
 import { join, resolve } from "node:path";
 import { lastValue, type ListedEntry } from "./git-filter-drivers.js";
 
@@ -50,10 +50,16 @@ export interface DiffRepository extends Omit<GuardedRepository, "places"> {
 }
 
 /**
- * Opens the submodule checked out at `folder`, whose Git folder is `gitFolder` ({@link submoduleGitFolder}), through the
- * guard, as Git opens one for its status; how that failed instead.
+ * What an opener answers for a submodule the guard cannot ask ({@link askableWithoutConfig}): a diff lists it as
+ * changed, and no Git starts in it.
  */
-export type SubmoduleOpener = (folder: string, gitFolder: string) => GuardedRepository | GitFailure;
+export const UNASKED = "unasked";
+
+/**
+ * Opens the submodule checked out at `folder`, whose Git folder is `gitFolder` ({@link submoduleGitFolder}), through the
+ * guard, as Git opens one for its status; how that failed instead, or {@link UNASKED}.
+ */
+export type SubmoduleOpener = (folder: string, gitFolder: string) => GuardedRepository | GitFailure | typeof UNASKED;
 
 /** A `git diff --name-only -z` this module answers for submodules. */
 export interface NameDiff {
@@ -381,13 +387,15 @@ function byteOrder(left: string, right: string): number {
 /**
  * Whether the submodule at `folder` has a changed worktree as `is_submodule_modified` finds it: its `git status` lists
  * any entry, without untracked files when `untrackedLeftOut`. False when it is not checked out (no `.git`); how it
- * failed when it cannot be asked, as Git's diff fails then.
+ * failed when its `.git` names no repository, as Git's diff fails then; true, with no Git started in it, when the guard
+ * cannot ask it ({@link UNASKED}).
  */
 export function submoduleChanged(folder: string, untrackedLeftOut: boolean, open: SubmoduleOpener, depth: number): boolean | GitFailure {
   const gitFolder = submoduleGitFolder(folder);
   if (typeof gitFolder !== "string") return gitFolder ?? false;
   if (depth === 0) return failed(new Error(`Rerail follows submodules ${MAX_DEPTH} levels deep, and ${folder} is deeper`));
   const repository = open(folder, gitFolder);
+  if (repository === UNASKED) return true;
   return "ask" in repository ? changedThroughGuard(repository, untrackedLeftOut, { open, depth }) : repository;
 }
 
@@ -398,14 +406,103 @@ const MAX_GITFILE_BYTES = 64 * 1024;
  * The Git folder of the submodule checked out at `folder`, as `is_submodule_modified` finds it: `.git` when it is a
  * folder, else the folder a `.git` file's `gitdir: <path>` names, relative to `folder`. Undefined when there is no
  * `.git`, or it went before it could be read: the submodule is not checked out. How it failed for a `.git` file Git
- * cannot read as one, which fails Git's diff. Read once for each question and never handed to Git as a file, so the
- * guard's listing and the status after it open this one folder whatever `.git` names by then.
+ * cannot read as one, or a Git folder that holds no repository ({@link holdsRepository}), each of which fails Git's
+ * diff. Read once for each question and never handed to Git as a file, so the guard's listing and the status after it
+ * open this one folder whatever `.git` names by then.
  */
 export function submoduleGitFolder(folder: string): string | GitFailure | undefined {
   const dotGit = join(folder, ".git");
   const stats = statOf(dotGit);
   if (stats === undefined) return undefined;
-  return stats.isDirectory() ? dotGit : namedGitFolder(folder, dotGit, stats);
+  const gitFolder = stats.isDirectory() ? dotGit : namedGitFolder(folder, dotGit, stats);
+  return typeof gitFolder === "string" && !holdsRepository(gitFolder) ? notARepository(gitFolder) : gitFolder;
+}
+
+/**
+ * Whether `gitFolder` holds a repository as Git's `is_git_directory` decides it, read in process: a `HEAD` Git takes
+ * ({@link validHead}), and an `objects` and a `refs` it can enter in the repository's common directory.
+ */
+function holdsRepository(gitFolder: string): boolean {
+  const common = validHead(join(gitFolder, "HEAD")) ? commonDirectory(gitFolder) : undefined;
+  return common !== undefined && enterable(join(common, "objects")) && enterable(join(common, "refs"));
+}
+
+/**
+ * Whether Rerail asks the submodule whose Git folder is `gitFolder`, once the guard's listing of its config showed none
+ * of the repository's own: read again in process, the folder holds a repository whose config file holds no entry, so
+ * it defines no driver. A listing shows the same for a Git folder a writer took away while Git read it; one put back
+ * by now, or a config that gained an entry, is not asked, so a status never opens a config the listing did not read.
+ */
+export function askableWithoutConfig(gitFolder: string): boolean {
+  const common = holdsRepository(gitFolder) ? commonDirectory(gitFolder) : undefined;
+  return common !== undefined && holdsNoEntry(join(common, "config"));
+}
+
+/**
+ * The common directory of the repository in `gitFolder`, as Git's `get_common_dir` finds it: the folder its `commondir`
+ * file names, relative to it, else `gitFolder`; undefined when that file cannot be read as one.
+ */
+function commonDirectory(gitFolder: string): string | undefined {
+  const file = join(gitFolder, "commondir");
+  if (!existsSync(file)) return gitFolder;
+  const named = textOf(file)?.replace(/[\r\n]+$/u, "");
+  return named === undefined || named === "" ? undefined : resolve(gitFolder, named);
+}
+
+/** Whether Git takes the `HEAD` at `path` (`validate_headref`): a link into `refs/`, `ref: refs/…`, or an object id first. */
+function validHead(path: string): boolean {
+  const stats = lstatOf(path);
+  if (stats?.isSymbolicLink() === true) return linkOf(path)?.startsWith("refs/") === true;
+  const text = stats === undefined ? undefined : headText(path);
+  return text !== undefined && (/^ref:[ \t\n\r]*refs\//u.test(text) || /^[0-9a-fA-F]{40}/u.test(text));
+}
+
+/** The first bytes of `path`, as many as Git reads of a `HEAD` (255); undefined when it cannot be read. */
+function headText(path: string): string | undefined {
+  try {
+    const file = openSync(path, "r");
+    try {
+      const head = Buffer.alloc(255);
+      return head.toString("latin1", 0, readSync(file, head));
+    } finally {
+      closeSync(file);
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether the config file at `path` is absent or holds only blank lines, comments and section headers. */
+function holdsNoEntry(path: string): boolean {
+  if (!existsSync(path)) return true;
+  const lines = textOf(path)?.split("\n");
+  return lines !== undefined && lines.every(line => /^\s*(?:[#;].*|\[[^\]]*\]\s*(?:[#;].*)?)?$/u.test(line));
+}
+
+/** Whether Git could enter `path` (`access(path, X_OK)`); on Windows, whether it is there. */
+function enterable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function lstatOf(path: string): Stats | undefined {
+  try {
+    return lstatSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function linkOf(path: string): string | undefined {
+  try {
+    return readlinkSync(path);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

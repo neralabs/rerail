@@ -11,8 +11,8 @@ import {
   CONFIG_LISTING, configEntryVariables, driverOverrides, listedEntries, oldGitNotice, readDriverConfig, worktreeRead, type ListedEntry,
 } from "./git-filter-drivers.js";
 import {
-  nameDiff, notARepository, outsideSubmodules, withChangedSubmodules, type DiffRepository, type GitFailure, type GuardedRepository, type Places,
-  type SubmoduleOpener,
+  askableWithoutConfig, nameDiff, outsideSubmodules, UNASKED, withChangedSubmodules, type DiffRepository, type GitFailure, type GuardedRepository,
+  type Places, type SubmoduleOpener,
 } from "./git-submodule-state.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
@@ -1124,9 +1124,10 @@ function submoduleOpener(env: GitVariables = {}): SubmoduleOpener {
   return (folder, gitFolder) => {
     const guarded = guardedSync(folder, { ...cleared, GIT_DIR: gitFolder });
     if (!("entries" in guarded)) return guarded;
-    // Git lists no config of the repository's own outside one: a Git folder that holds none when listed is refused,
-    // so one placed there between the listing and the status is never opened.
-    if (!guarded.entries.some(entry => entry.scope === "local")) return notARepository(gitFolder);
+    // A listing shows no config of the repository's own both for a repository whose config holds none and for a Git
+    // folder taken away while Git read it: only the first, read again in process, is asked, so a status never opens a
+    // Git folder put back after the listing.
+    if (!guarded.entries.some(entry => entry.scope === "local") && !askableWithoutConfig(gitFolder)) return UNASKED;
     const repository: GuardedRepository = { entries: guarded.entries, ask: asker(folder, guarded.env), places: { top: folder, prefix: "" } };
     return repository;
   };

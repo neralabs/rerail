@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, cpSync, existsSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -177,20 +177,19 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect([audit.status, listed(audit.stdout)]).toEqual([0, ["sub"]]);
   }, 60_000);
 
-  it.skipIf(process.platform === "win32")("in a Git folder placed where a submodule's `.git` names one only after Rerail listed its config", async () => {
+  it.skipIf(process.platform === "win32")("in a Git folder taken away while Rerail listed its config and put back after, and list that submodule as changed", async () => {
     const root = await folder();
     const marker = join(root, "filter-ran");
     const { work, placed } = await submoduleWithPlacedCopy(root, marker);
     const kept = join(root, "kept");
-    renameSync(placed, kept);
     unlinkSync(join(work, "sub", ".git"));
     await writeFile(join(work, "sub", ".git"), "gitdir: ../placed\n");
 
-    const audit = await afterSubmoduleListing(root, work, `cp -R '${kept}' '${placed}'`);
+    const audit = await afterSubmoduleListing(root, work, `mv '${kept}' '${placed}'`, `mv '${placed}' '${kept}'`);
 
     expect(existsSync(placed)).toBe(true);
     expect(runs(marker)).toBe(0);
-    expect([audit.status === 0, audit.stdout]).toEqual([false, ""]);
+    expect([audit.status, listed(audit.stdout)]).toEqual([0, ["sub"]]);
   }, 60_000);
 
   it("in a checked-out submodule or one inside it, and list them as Git does", async () => {
@@ -265,14 +264,16 @@ async function submoduleWithPlacedCopy(root: string, marker: string): Promise<{ 
 
 /**
  * The audit's diff in `work`, run by a Rerail loaded with a Git that runs `command` right after the guard has listed
- * the config of the submodule `sub`: what a writer of the worktree alone could do between that listing and the status.
+ * the config of the submodule `sub`, and `before` right before: what a writer of the worktree alone could do around
+ * that listing.
  */
-async function afterSubmoduleListing(root: string, work: string, command: string): Promise<{ status: number | null; stdout: string }> {
+async function afterSubmoduleListing(root: string, work: string, command: string, before = ":"): Promise<{ status: number | null; stdout: string }> {
   const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
   const bin = join(root, "bin");
   await mkdir(bin);
   const listing = `-C ${realpathSync.native(join(work, "sub"))} config -z --show-scope --list`;
-  await writeFile(join(bin, "git"), ["#!/bin/sh", `'${real}' "$@"; code=$?`, `case " $* " in *" ${listing} "*) ${command};; esac`, "exit $code", ""].join("\n"));
+  const around = (what: string): string => `case " $* " in *" ${listing} "*) ${what};; esac`;
+  await writeFile(join(bin, "git"), ["#!/bin/sh", around(before), `'${real}' "$@"; code=$?`, around(command), "exit $code", ""].join("\n"));
   chmodSync(join(bin, "git"), 0o755);
   vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
   vi.resetModules();
@@ -391,4 +392,110 @@ describe("Rerail's diffs list the submodules Git's own diff lists", () => {
     ]);
     expect(listed(runGit(work, SCAN_DIFF).stdout)).toEqual(["deep/moved", "deleted", "modified", "moved", "nested-modified", "staged"]);
   }, 120_000);
+});
+
+/** A checkout `work` with a checked-out submodule `sub`: `top.txt` changed in the checkout, `inner.txt` in the submodule. */
+async function changedSubmodule(root: string): Promise<string> {
+  const source = await repository(root, "source", { "inner.txt": "one\n" });
+  const work = await repository(root, "work", { "top.txt": "top\n" });
+  git(work, "submodule", "add", "--quiet", source, "sub");
+  git(work, "commit", "--quiet", "-m", "submodule");
+  await writeFile(join(work, "top.txt"), "changed\n");
+  await writeFile(join(work, "sub", "inner.txt"), "two\n");
+  return work;
+}
+
+/** Whether Git's own `args` in `cwd` answered, and its stdout: the one Git call Rerail made before its guard. */
+function own(cwd: string, args: readonly string[]): [boolean, string] {
+  try {
+    return [true, git(cwd, ...args)];
+  } catch {
+    return [false, ""];
+  }
+}
+
+/** Whether Rerail's call `args` in `cwd` answered, and its stdout. */
+function rerail(cwd: string, args: readonly string[]): [boolean, string] {
+  const answer = runGit(cwd, args);
+  return [answer.status === 0 && answer.error === undefined, answer.stdout];
+}
+
+/** The submodule `sub` of a `changedSubmodule` checkout with its Git folder made otherwise; the checkout to diff in. */
+const GIT_FOLDERS: ReadonlyArray<readonly [string, (work: string, root: string) => Promise<string>]> = [
+  ["whose config file is empty", async work => {
+    writeFileSync(join(work, ".git", "modules", "sub", "config"), "");
+    return work;
+  }],
+  ["with no config file", async work => {
+    unlinkSync(join(work, ".git", "modules", "sub", "config"));
+    return work;
+  }],
+  ["that holds no repository: an empty `.git` folder in a submodule not checked out", async work => {
+    git(work, "submodule", "deinit", "--quiet", "--force", "sub");
+    mkdirSync(join(work, "sub", ".git"));
+    return work;
+  }],
+  ["in a linked worktree of a bare repository, its common directory", async (work, root) => {
+    const commit = git(join(work, "sub"), "rev-parse", "HEAD").trim();
+    git(work, "submodule", "deinit", "--quiet", "--force", "sub");
+    await removeFolder(join(work, "sub"));
+    git(root, "clone", "--quiet", "--bare", join(root, "source"), "bare.git");
+    git(join(root, "bare.git"), "worktree", "add", "--quiet", "--detach", join(work, "sub"), commit);
+    await writeFile(join(work, "sub", "inner.txt"), "two\n");
+    return work;
+  }],
+  ["in a linked worktree of the submodule's own repository", async work => {
+    const commit = git(join(work, "sub"), "rev-parse", "HEAD").trim();
+    const gitFolder = join(work, ".git", "modules", "sub");
+    await removeFolder(join(work, "sub"));
+    git(work, "config", "--file", join(gitFolder, "config"), "--unset", "core.worktree");
+    git(work, "--git-dir", gitFolder, "worktree", "add", "--quiet", "--detach", join(work, "sub"), commit);
+    await writeFile(join(work, "sub", "inner.txt"), "two\n");
+    return work;
+  }],
+  ["in a linked worktree of the checkout", async (work, root) => {
+    const linked = join(root, "linked");
+    git(work, "worktree", "add", "--quiet", "--detach", linked);
+    git(linked, "submodule", "update", "--quiet", "--init");
+    await writeFile(join(linked, "top.txt"), "changed\n");
+    await writeFile(join(linked, "sub", "inner.txt"), "two\n");
+    return linked;
+  }],
+];
+
+describe("Rerail's diffs answer as Git's own for each Git folder a submodule's `.git` names", () => {
+  it.each(GIT_FOLDERS)("one %s", async (_name, made) => {
+    const root = await folder();
+    const work = await made(await changedSubmodule(root), root);
+
+    expect([rerail(work, AUDIT_DIFF), rerail(work, SCAN_DIFF)]).toEqual([own(work, AUDIT_DIFF), own(work, SCAN_DIFF)]);
+  }, 60_000);
+
+  it.each(GIT_FOLDERS.slice(0, 2))("and list the submodule and the checkout's files for one %s, which defines no driver", async (_name, made) => {
+    const root = await folder();
+    const work = await made(await changedSubmodule(root), root);
+
+    const answers = [runGit(work, AUDIT_DIFF), runGit(work, SCAN_DIFF)];
+
+    expect(answers.map(answer => [answer.status, listed(answer.stdout)])).toEqual([[0, ["sub", "top.txt"]], [0, ["sub", "top.txt"]]]);
+  }, 60_000);
+
+  it("one of a submodule inside a submodule, whose config file is empty", async () => {
+    const root = await folder();
+    const leaf = await repository(root, "leaf", { "leaf.txt": "one\n" });
+    const middle = await repository(root, "middle", { "middle.txt": "one\n" });
+    git(middle, "submodule", "add", "--quiet", leaf, "leaf");
+    git(middle, "commit", "--quiet", "-m", "leaf");
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", middle, "sub");
+    git(work, "submodule", "update", "--quiet", "--init", "--recursive");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    writeFileSync(join(work, ".git", "modules", "sub", "modules", "leaf", "config"), "");
+    await writeFile(join(work, "sub", "leaf", "leaf.txt"), "two\n");
+
+    const answers = [rerail(work, AUDIT_DIFF), rerail(work, SCAN_DIFF)];
+
+    expect(answers).toEqual([own(work, AUDIT_DIFF), own(work, SCAN_DIFF)]);
+    expect(answers).toEqual([[true, "sub\0"], [true, "sub\0"]]);
+  }, 60_000);
 });

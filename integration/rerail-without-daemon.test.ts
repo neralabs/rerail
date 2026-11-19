@@ -191,3 +191,53 @@ describe("Rerail's frequent readers", () => {
     expect((await stat(databasePath)).size).toBe(0);
   }, 30_000);
 });
+
+/** A checkout with `top.txt` changed and a checked-out submodule `sub` with a changed file, its Git folder's config whole or empty. */
+async function checkoutWithSubmodule(root: string, config: "whole" | "empty"): Promise<string> {
+  const git = (cwd: string, ...args: string[]): Promise<unknown> =>
+    run("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "-c", "protocol.file.allow=always", ...args], { cwd });
+  const source = join(root, `source-${config}`);
+  const work = join(root, `work-${config}`);
+  for (const [repository, file] of [[source, "inner.txt"], [work, "top.txt"]] as const) {
+    await mkdir(repository);
+    await git(repository, "init", "-q");
+    await writeFile(join(repository, file), "one\n");
+    await git(repository, "add", ".");
+    await git(repository, "commit", "-q", "-m", "seed");
+  }
+  await git(work, "submodule", "add", "-q", source, "sub");
+  await git(work, "commit", "-q", "-m", "submodule");
+  if (config === "empty") await writeFile(join(work, ".git", "modules", "sub", "config"), "");
+  await writeFile(join(work, "top.txt"), "two\n");
+  await writeFile(join(work, "sub", "inner.txt"), "two\n");
+  return work;
+}
+
+/** `rerail scan --scope git-diff --json` in `cwd` with no daemon: its exit code, and the paths its report lists. */
+async function scannedPaths(cwd: string, env: NodeJS.ProcessEnv): Promise<[number, unknown]> {
+  const ended = await run(process.execPath, [cli, "scan", "--scope", "git-diff", "--json"], { cwd, env }).then(
+    ({ stdout }) => ({ code: 0, stdout }),
+    (error: { code?: number; stdout?: string }) => ({ code: error.code ?? -1, stdout: error.stdout ?? "" }),
+  );
+  const report = ((): { paths?: unknown } => {
+    try {
+      return JSON.parse(ended.stdout) as { paths?: unknown };
+    } catch {
+      return {};
+    }
+  })();
+  return [ended.code, report.paths];
+}
+
+describe("rerail scan with no daemon", () => {
+  test("lists a changed submodule whose Git folder's config holds no entry as it lists one whose config is whole", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-no-daemon-"));
+    roots.push(root);
+    const env = { ...process.env, RERAIL_HOME: join(root, ".rerail-home"), RERAIL_AUTOSTART: "0", RERAIL_EXPERIMENTAL_HEADLESS_SCAN: "1" };
+
+    const scans = [await scannedPaths(await checkoutWithSubmodule(root, "whole"), env), await scannedPaths(await checkoutWithSubmodule(root, "empty"), env)];
+
+    expect(scans[1]).toEqual(scans[0]);
+    expect(scans[1]?.[1]).toEqual(["sub", "top.txt"]);
+  }, 60_000);
+});
