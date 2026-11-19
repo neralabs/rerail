@@ -1932,33 +1932,10 @@ calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(
     assert_eq!(calls, [["f(1)"], ["g(2)"]].map(|r| r.map(str::to_owned).to_vec()).to_vec(), "both scripts' calls");
 }
 
-/// Decision 0431 R5: a string a rule parses is a tape value; the chunk's batch is built once and grows by the values
-/// (§6), the second round's (`'Foo'`, inside an annotation) too, and the rows are a rebuilt batch's.
-#[test]
-fn tape_values_build_no_second_batch() {
-    // `'Foo'` is a string inside the second annotation's value, reached through it (`ann`, as decision 0058 shows a
-    // value's strings), and parsed in the second round.
-    let (report, names) = batch_run("r5-values", &[("a.py", "x: \"List[int]\" = []\ndef f(a: \"Optional['Foo']\"): pass\n")], r#"
-.language python
-.decl ann(n: node)
-ann(r) :- string_annotation(s), parsed(s, "annotation", r).
-ann(r) :- ann(s), kind(s, "string"), parsed(s, "annotation", r).
-ann(c) :- ann(p), child(p, c, _).
-.decl names(x: symbol)
-names(x) :- ann(m), kind(m, "identifier"), text(m, x).
-.output names
-"#, "names");
-    // Three values: the two annotations', then `'Foo'`'s, in the batch built with a.py.
-    assert_eq!(report.batch_grown, 3, "the batch grew by the values");
-    let names: std::collections::BTreeSet<String> = names.into_iter().map(|r| r.join("\t")).collect();
-    assert_eq!(names, ["Foo", "List", "Optional", "int"].map(str::to_owned).into(), "both rounds' values are read");
-}
-
 /// Decision 0431 R10: a string a rule parses is parsed in the program's fixpoint (§8). No slice round runs and the
 /// batch never grows: each value is admitted once at its first lookup, `'Foo'` (a string inside an annotation's value)
 /// in the same run, and parsed once. A scan lists no value's nodes (`flat`: a.py's identifiers alone).
 #[test]
-#[ignore = "0431 step 4c"]
 fn tape_values_are_read_in_the_fixpoint() {
     let program = r#"
 .language python

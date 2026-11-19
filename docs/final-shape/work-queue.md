@@ -5506,4 +5506,22 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Not 0431's, by its place**: the planner refuses the typing program (`typing/programs/calls.rr`'s `base`, which
   reads no guest relation) before any batch is built. To find the commit that brought it in, on the planner's node
   product bound.
-- **Done when**: both pass.
+- **Also** (2026-11-19, m3, with 0431 step 4c in the tree): `a_call_is_typed_by_the_overloads_its_positional_arguments_fit`
+  and `imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order` fail with the same error.
+- **Done when**: all four pass.
+
+### Q264. `a_request_record_over_an_edit_is_a_run_from_scratchs` fails: "edit 2: a record to carry"
+
+- **Seen** (2026-11-19, m3, with 0431 step 4c in the tree): `program_image::tests` asserts that a run from scratch of
+  edit 2 (`reads_e("q")`, which adds a request's rule) states a request record, and it states none.
+- **Not 0431's, by its place**: the test builds versions and runs `Pipeline`'s rename pass. It reads no batch, run or
+  lowering that 4c changed. To check at 4c's parent, then on decision 0393's carried record (`set_asked`, `rebase`).
+- **Done when**: it passes.
+
+### Q265. The Linux hosts' builds of `rerail-accel` miss `rerail_blocks`
+
+- **Seen** (2026-11-19): a `test-remote` run sent to a Linux host fails to compile `rerail-accel` (`cannot find module
+  or crate rerail_blocks`, 8 errors). A Mac's build of the same checkout compiles.
+- **Do**: make `rerail-accel`'s use of `rerail_blocks` match the dependency's target (a `cfg` on one and not the
+  other), so CI's Linux build compiles it.
+- **Done when**: the engine's tests build on a Linux host.

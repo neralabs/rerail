@@ -3762,8 +3762,18 @@ impl Lowerer {
             let Some(lits) = members.remove(&g) else { continue };
             let cols = projected.iter().find(|(p, _)| *p == g).map(|(_, c)| c.clone()).expect("a projected group");
             let rel = self.fresh("cover");
+            // A request's cover of one variable leads with the whole groups' literals that bind it from a relation a
+            // producer makes off a tape (`syntax::taped`: `string_annotation`): answered in the fixpoint (decision 0431
+            // §8), such a relation grows as values are admitted (a string nested in one), and a cover read before the
+            // request could hold none of a value's nodes. Led by it, the cover is the request's component's, its other
+            // literals read by the bound variable, a value's rows among them.
+            let taped = |l: &Lit| matches!(l, Lit::Atom { rel, neg: false, .. } if crate::code_rule_dsl::facts::vtab::syntax::taped(rel)) && body_vars(std::slice::from_ref(l)).iter().any(|v| cols.contains(v));
             let lits = if cols.len() > 1 {
                 let mut narrowed: Vec<Lit> = whole_binding.iter().filter(|(b, _)| cols.iter().any(|c| b.contains(c))).flat_map(|(_, l)| l.iter().cloned()).collect();
+                narrowed.extend(lits);
+                narrowed
+            } else if self.request_context {
+                let mut narrowed: Vec<Lit> = whole_binding.iter().flat_map(|(_, l)| l.iter().filter(|l| taped(l)).cloned()).collect();
                 narrowed.extend(lits);
                 narrowed
             } else {

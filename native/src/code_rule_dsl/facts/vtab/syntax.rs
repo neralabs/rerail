@@ -38,6 +38,7 @@ use std::sync::{Arc, OnceLock};
 use cells::{Block, Cells};
 
 pub mod within;
+pub mod values;
 
 /// The language's `within(n, a)`, `n` strictly below `a` (`within::Within`, tree mode).
 pub const WITHIN: &str = "within";
@@ -512,6 +513,10 @@ impl LongTexts {
     /// Node `n`'s text or value as function `name` reads it (`NODE_READS`) through `source`, a binding of
     /// `rr_long_text_node`; none for another source or function.
     pub fn of(source: &dyn Source, name: &str, n: i64) -> Option<String> {
+        // A chunk's layered binding (decision 0431 §8): a tape value's node is read through its own batch.
+        if let Some(layered) = source.as_any()?.downcast_ref::<values::Layered>() {
+            return Self::of(&*layered.source_of(n), name, n);
+        }
         let texts = source.as_any()?.downcast_ref::<Self>()?;
         match name {
             "rr_node_text" => texts.long_text(n),
@@ -3324,7 +3329,7 @@ impl Batch {
         metal: bool,
     ) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, Vec<(String, Relation)>, (Vec<String>, Vec<u32>))> {
         let mut grown = Growth::default();
-        let (batch, relations, matched, _) = Self::add(&mut grown, store, documents, projection, matches, markers, metal)?;
+        let (batch, relations, matched, _) = Self::add(&mut grown, store, documents, projection, matches, markers, metal, false)?;
         Ok((batch, relations, matched, (grown.strings, grown.atoms)))
     }
 
@@ -3339,6 +3344,7 @@ impl Batch {
         matches: &[Arc<regex::Regex>],
         markers: &[String],
         metal: bool,
+        alone: bool,
     ) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, Vec<(String, Relation)>, usize)> {
         let shape = projection.shape;
         let core = shape == Shape::Core;
@@ -3696,9 +3702,13 @@ impl Batch {
             }
             grown.keys = grown.docs.iter().map(|p| p.key).collect();
         }
-        let docs = &grown.docs;
+        // A value admitted inside the fixpoint (decision 0431 §8) is a batch of its own: its views and relations are a
+        // part of the chunk's (`values::Layered`), its hosts found among every document the growth holds.
+        let held_all = grown.docs.clone();
+        let (docs, all): (Vec<Arc<Projected>>, &[Arc<Projected>]) = if alone { (added.clone(), &held_all) } else { (grown.docs.clone(), &held_all) };
+        let docs = &docs;
         for ((p, d), &withheld) in added.iter().zip(&documents).zip(&withheld_at) {
-            g.document(p, d, d.guest.as_deref(), withheld, docs, [projection.wants("host_node"), projection.wants("unparse_of"), projection.wants("guest_of"), projection.wants("guest_place")], &mut string);
+            g.document(p, d, d.guest.as_deref(), withheld, all, [projection.wants("host_node"), projection.wants("unparse_of"), projection.wants("guest_of"), projection.wants("guest_place")], &mut string);
             if let Some(Made::Tape { places }) = d.guest.as_deref().map(|g| &g.made) {
                 grown.places.insert(d.key, (places.len(), withheld));
             }
@@ -3709,7 +3719,7 @@ impl Batch {
                 return Err(StoreError::Invalid(format!("{}: a document the batch holds, given again, is not a tape value", d.path)));
             };
             if places.len() > *had {
-                g.places_added(&docs[at], d, &guest.grammar, &places[*had..], *withheld, docs, [projection.wants("host_node"), projection.wants("guest_of"), projection.wants("guest_place")], &mut string);
+                g.places_added(&all[at], d, &guest.grammar, &places[*had..], *withheld, all, [projection.wants("host_node"), projection.wants("guest_of"), projection.wants("guest_place")], &mut string);
                 *had = places.len();
             }
         }
@@ -3805,8 +3815,8 @@ impl Batch {
         grown.made.extend(made.iter().copied());
         let batch = Arc::new(Batch {
             docs: docs.clone(),
-            keys: grown.keys.clone(),
-            valued: grown.valued.clone(),
+            keys: if alone { docs.iter().map(|p| p.key).collect() } else { grown.keys.clone() },
+            valued: if alone { added_valued.clone() } else { grown.valued.clone() },
             dialects: dialects.clone(),
             nodes,
             children,
@@ -4811,6 +4821,22 @@ impl Grower {
         self.sources(store, documents, sets, None, tests, binding, projection, true)
     }
 
+    /// The sources of tape value `document` alone, admitted inside the chunk's fixpoint (decision 0431 §8): projected
+    /// into the chunk's block, its hosts' lines and its strings the growth's, its rows its own, a part of each of the
+    /// chunk's sources (`values::Layered`). A document the batch holds (a value given a place more) has the rows of
+    /// those places alone.
+    pub fn admit(
+        &mut self,
+        store: &ContentStore,
+        document: Document,
+        sets: &[(String, Vec<i64>)],
+        tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
+        binding: crate::code_rule_dsl::facts::nearest::Binding,
+        projection: &Projection,
+    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+        self.sources_of(store, vec![document], sets, None, tests, binding, projection, true, true)
+    }
+
     /// The relation `name` with `rows` after its own (the first rows of a name are its own), as one that grows.
     fn merge(&mut self, name: String, rows: Relation, growing: bool) {
         match self.rels.iter_mut().find(|(n, _)| *n == name).filter(|_| self.built > 0) {
@@ -4831,22 +4857,40 @@ impl Grower {
         projection: &Projection,
         growing: bool,
     ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+        self.sources_of(store, documents, sets, matchers, tests, binding, projection, growing, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn sources_of(
+        &mut self,
+        store: &ContentStore,
+        documents: Vec<Document>,
+        sets: &[(String, Vec<i64>)],
+        matchers: Option<&Matchers>,
+        tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
+        binding: crate::code_rule_dsl::facts::nearest::Binding,
+        projection: &Projection,
+        growing: bool,
+        alone: bool,
+    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
     let metal = matches!(binding, crate::code_rule_dsl::facts::nearest::Binding::Metal);
     let tapes: Vec<(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)> = match matchers {
         Some(m) if !m.is_empty() => documents.iter().filter(|d| d.guest.is_none()).filter_map(|d| Some((Arc::clone(&d.facts), d.tape.as_ref()?.0.clone(), d.path.clone()))).collect(),
         _ => Vec::new(),
     };
-    let (batch, relations, match_all, from) = Batch::add(&mut self.growth, store, documents, projection, &tests.matches, &tests.markers, metal)?;
+    let (batch, relations, match_all, from) = Batch::add(&mut self.growth, store, documents, projection, &tests.matches, &tests.markers, metal, alone)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
     drop(built);
     // The batch's relations, but none the program derives (`Projection::derived`); the `match_all` relations
     // (`logic::strings::as_relations`): each regex's matches in the batch's spans.
+    // An admitted value's relations are its own (a part of the chunk's), never merged into them.
+    let mut own: Vec<(String, Arc<Relation>)> = Vec::new();
     for (name, r) in relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)) {
-        self.merge(name.to_owned(), r, growing);
+        if alone { own.push((name.to_owned(), Arc::new(r))) } else { self.merge(name.to_owned(), r, growing) }
     }
     for (name, r) in match_all {
-        self.merge(name, r, growing);
+        if alone { own.push((name, Arc::new(r))) } else { self.merge(name, r, growing) }
     }
     if let Some(Matchers(Some(wave))) = matchers {
         self.matched = wave.matched(&batch, &tapes, binding, &store.atoms_handle())?;
@@ -4867,12 +4911,17 @@ impl Grower {
         })
         .collect();
     for (name, r) in tested {
-        self.merge(name, r, growing);
+        if alone { own.push((name, Arc::new(r))) } else { self.merge(name, r, growing) }
     }
     drop(text);
-    self.built += 1;
-    let mut out: Vec<(String, Arc<dyn Source>)> = self.rels.iter().map(|(name, r)| (name.clone(), as_source(name, Arc::clone(r), &batch))).collect();
-    out.extend(self.matched.iter().map(|(n, s)| (n.clone(), Arc::clone(s))));
+    let mut out: Vec<(String, Arc<dyn Source>)> = if alone {
+        own.iter().map(|(name, r)| (name.clone(), as_source(name, Arc::clone(r), &batch))).collect()
+    } else {
+        self.built += 1;
+        let mut out: Vec<(String, Arc<dyn Source>)> = self.rels.iter().map(|(name, r)| (name.clone(), as_source(name, Arc::clone(r), &batch))).collect();
+        out.extend(self.matched.iter().map(|(n, s)| (n.clone(), Arc::clone(s))));
+        out
+    };
     let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, source)| (name.to_owned(), source)));

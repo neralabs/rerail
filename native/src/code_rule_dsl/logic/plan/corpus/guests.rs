@@ -32,13 +32,53 @@ use crate::content_store::guest_keys::GuestKeys;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use crate::code_rule_dsl::logic::program_image::Version;
 
 /// Rounds of the embed slice per chunk: embeds of embeds, to this depth. A guard, not a limit anyone should reach.
 pub(super) const DEPTH: usize = 4;
 
 /// The relations requests are read from.
 pub(super) const LIBRARY: [&str; 2] = ["embed", "embed_value"];
-pub(super) const DEMAND: &str = "rr_embed_req";
+/// The guest relations the request `DEMAND` answers in the fixpoint (decision 0431 §8): a value's nodes are reached
+/// only through them, so a reader of any is ordered after the strings are asked.
+pub(super) const ANSWERED: [&str; 5] = ["parsed", "sub_tape", "guest_of", "guest_place", "host_node"];
+/// Of those, the ones the answer gives as rows, not only as the value's part.
+const GIVEN: [&str; 2] = ["parsed", "sub_tape"];
+
+/// What `DEMAND` answers in program `v`'s fixpoint (decision 0431 §8), and of that what its answer gives as rows. It
+/// produces each guest relation `v` reads (`ANSWERED`), and each relation `DEMAND`'s own rules read that a producer
+/// makes off a value's tape, directly or through the relations they derive (`syntax::taped`: a string nested in a value is a string annotation once its outer one is
+/// parsed, and is asked in a later wave). It gives as rows `GIVEN`'s and the producers'; the others are read on the
+/// values' parts, and a view's (`kind`, `node`) is never given.
+pub(super) fn answered(v: &Version) -> (Vec<String>, Vec<String>) {
+    let read = |r: &str| v.inputs().any(|a| v.text(a) == r);
+    let demand = v.rel(DEMAND);
+    let mut produced: Vec<String> = ANSWERED.into_iter().filter(|r| read(r)).map(str::to_owned).collect();
+    let mut given: Vec<String> = GIVEN.into_iter().filter(|r| read(r)).map(str::to_owned).collect();
+    // The relations the request reads, through the rules that derive them (a context relation's, `rr_ctx`).
+    let mut seen: BTreeSet<crate::code_rule_dsl::logic::program_image::RelId> = demand.into_iter().collect();
+    let mut todo: Vec<_> = seen.iter().copied().collect();
+    while let Some(rel) = todo.pop() {
+        for r in v.rules().filter(|r| r.head().rel() == rel) {
+            for a in r.body().filter_map(|l| l.atom()) {
+                let id = a.rel();
+                if !seen.insert(id) {
+                    continue;
+                }
+                let name = v.rel_name(id);
+                if read(name) {
+                    if syntax::taped(name) && !produced.iter().any(|p| p == name) {
+                        produced.push(name.to_owned());
+                        given.push(name.to_owned());
+                    }
+                } else {
+                    todo.push(id);
+                }
+            }
+        }
+    }
+    (produced, given)
+}pub(super) const DEMAND: &str = "rr_embed_req";
 /// `@parse(g, x)`'s and `@splice(t, n, t2)`'s demands (decision 0058 §4, `rr::lower`).
 pub(super) const PARSE: &str = "rr_parse_req";
 pub(super) const SPLICE: &str = "rr_splice_req";
@@ -54,7 +94,7 @@ pub(in crate::code_rule_dsl) const REQUESTS: [&str; 5] = ["embed", "embed_value"
 pub(super) const SHARED: [&str; 6] = ["embed", "embed_value", DEMAND, PARSE, SPLICE, crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY];
 
 /// What a guest request gave (`Guests::guest`).
-enum Got {
+pub(super) enum Got {
     /// A document made.
     New(Document),
     /// A place more of tape value `key`, made before.
@@ -433,6 +473,31 @@ impl Guests {
         changed.sort_unstable();
         changed.dedup();
         Ok(changed)
+    }
+
+    /// A string a rule parses, asked inside the chunk's fixpoint (decision 0431 §8: `rr_embed_req(at, grammar)`'s
+    /// answer): its tape value made (`Got::New`, added to `docs`), or a place more of one made before (`Got::Placed`,
+    /// its document in `docs` given the place); `Got::Not` for a place asked before, or one with no tape.
+    pub(super) fn admit(&mut self, docs: &mut Vec<Document>, at: i64, grammar: &str, parses: &Parses<'_>) -> Result<Got, String> {
+        if !self.made.insert((at, grammar.to_owned())) {
+            return Ok(Got::Not);
+        }
+        let got = {
+            let by_key: HashMap<u32, &Document> = docs.iter().map(|d| (d.key, d)).collect();
+            self.guest(&by_key, true, at, grammar, "fragment", None, parses)?
+        };
+        match &got {
+            Got::New(d) => docs.push(d.clone()),
+            Got::Placed(key, place) => {
+                if let Some(Made::Tape { places }) = docs.iter_mut().find(|d| d.key == *key).and_then(|d| d.guest.as_mut()).map(|g| &mut Arc::make_mut(g).made)
+                    && !places.contains(place)
+                {
+                    places.push(place.clone());
+                }
+            }
+            Got::Not => self.refused += 1,
+        }
+        Ok(got)
     }
 
     /// The documents `requests` ask for that are not made yet; a tape value's further places, in `places`.
