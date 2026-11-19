@@ -1016,7 +1016,7 @@ stands on:
   until the commit, since an OpenCL or CPU queue starts a launch when it is enqueued). Its times are the device's
   and, on Metal, the command buffer's host-clock times. The launch guard's source check counts it with
   `launch.rs` as a checked layer.
-- **Nearest ancestors** (`nearest.ukl`, was `metal_nearest.metal`) is the first family on it: the kernel in UKL, its
+- **Nearest ancestors** (`nearest.uglykl`, was `metal_nearest.metal`) is the first family on it: the kernel in UKL, its
   host on the lane, in fresh device-layer buffers or the pool's blocks. A new conformance test
   (`the_device_finds_each_cells_nearest_ancestor_in_its_set`: 5,000 nodes, two sets, both kinds of buffer, against
   one pass in preorder) passes on Metal, the CPU and OpenCL (`RERAIL_GPU=cpu`, `=opencl`); its only test before was

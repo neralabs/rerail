@@ -1,17 +1,17 @@
 //! Nearest ancestors in a set on the device, in one dispatch (decisions 0038, 0040): the answer is a pure function
 //! of the tree, so it needs no shared queue or fences. A cell is (set, node). Its state starts at its node's parent,
 //! final where the parent is the answer, and each thread takes its target's current state until its own is final
-//! (`nearest.ukl`). States other threads have already moved up let a thread skip ahead. One command, one dispatch
+//! (`nearest.uglykl`). States other threads have already moved up let a thread skip ahead. One command, one dispatch
 //! and one wait per call, whatever the depth, on the process's device (decision 0440 step C). The CPU's one pass in
 //! preorder (`typing::file_local`) is the reference.
 use super::*;
 pub use crate::code_rule_dsl::logic::device::nearest::{Buffers, Solved};
 use rerail_metal::lane::{self, Buffer};
 
-const SOURCE: &str = include_str!("nearest.ukl");
+const SOURCE: &str = include_str!("nearest.uglykl");
 /// No ancestor.
 pub(in crate::code_rule_dsl) const NONE: u32 = u32::MAX;
-/// A state's bit for a final target (`nearest.ukl`).
+/// A state's bit for a final target (`nearest.uglykl`).
 const FINAL: u32 = 1 << 31;
 
 #[repr(C)]

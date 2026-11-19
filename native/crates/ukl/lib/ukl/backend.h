@@ -62,6 +62,7 @@ UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { atomic_st
 UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_fetch_add_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
 UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_fetch_sub_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
 UKL_INLINE uint32_t ukl_atomic_or(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_fetch_or_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
+UKL_INLINE uint32_t ukl_atomic_and(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_fetch_and_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
 UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_exchange_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
 UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_fetch_min_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
 UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_fetch_max_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
@@ -126,6 +127,7 @@ UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { *(volatil
 UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicAdd(p, v); }
 UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicSub(p, v); }
 UKL_INLINE uint32_t ukl_atomic_or(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicOr(p, v); }
+UKL_INLINE uint32_t ukl_atomic_and(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicAnd(p, v); }
 UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicExch(p, v); }
 UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicMin(p, v); }
 UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicMax(p, v); }
@@ -189,6 +191,7 @@ UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { __atomic_
 UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_fetch_add(p, v, __ATOMIC_RELAXED); }
 UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_fetch_sub(p, v, __ATOMIC_RELAXED); }
 UKL_INLINE uint32_t ukl_atomic_or(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_fetch_or(p, v, __ATOMIC_RELAXED); }
+UKL_INLINE uint32_t ukl_atomic_and(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_fetch_and(p, v, __ATOMIC_RELAXED); }
 UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_exchange_n(p, v, __ATOMIC_RELAXED); }
 UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v)
 {
@@ -319,6 +322,7 @@ UKL_INLINE void __ukl_cl_coherent_store_bits64(volatile __global uint64_t* p, ui
 UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_add((volatile __global uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_sub((volatile __global uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_or(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_or((volatile __global uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_and(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_and((volatile __global uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_xchg((volatile __global uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_min((volatile __global uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_max((volatile __global uint32_t*)p, v); }
