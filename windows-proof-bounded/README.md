@@ -1,6 +1,6 @@
 # A busy Windows daemon is kept; a stop ends only its daemon
 
-For [pull request #677](https://github.com/neralabs/rerail/pull/677), head 63ada20d8. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #677](https://github.com/neralabs/rerail/pull/677), head a5379a0a7. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
