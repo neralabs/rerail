@@ -271,7 +271,9 @@ export class WorktreeNotices {
   #open(root: string): Watched | undefined {
     if (this.#watch === undefined || this.#failedLately(root)) return undefined;
     const folder = this.#folderAt(root);
-    if (this.#endedAt(root, folder)) return undefined;
+    // No folder there (it went after the walk listed it) is no failed watch: the walk Git's registry asks for once the
+    // worktree is made again watches it, where a refused watch would wait `WATCH_RETRY_MS`.
+    if (folder === "" || this.#endedAt(root, folder)) return undefined;
     this.#failed.delete(root);
     this.#ended.delete(root);
     // Up before the read: a change made while it runs is a notice.
@@ -291,12 +293,12 @@ export class WorktreeNotices {
   }
 
   /**
-   * Whether the watch of `root` ended within `REWATCH_MS` and `folder`, the folder at its path now, is the one it watched,
-   * or none: another folder there is a worktree made again, watched at once.
+   * Whether the watch of `root` ended within `REWATCH_MS` and `folder`, the folder at its path now, is the one it
+   * watched: another folder there is a worktree made again, watched at once.
    */
   #endedAt(root: string, folder: string): boolean {
     const ended = this.#ended.get(root);
-    return ended !== undefined && this.#now() - ended.at < REWATCH_MS && (folder === "" || folder === ended.folder);
+    return ended !== undefined && this.#now() - ended.at < REWATCH_MS && folder === ended.folder;
   }
 
   /** Watches the registry `folder` with the folders it follows now (`registryFolders` on Linux); one the watch refuses is let go. */

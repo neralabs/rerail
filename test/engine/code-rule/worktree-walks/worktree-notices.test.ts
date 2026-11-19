@@ -69,10 +69,10 @@ class ScriptedWatch implements TreeWatch {
   }
 }
 
-/** `WorktreeNotices` on `platform` over `watch`, at a clock the test moves. */
+/** `WorktreeNotices` on `platform` over `watch`, at a clock the test moves, where every worktree has the same folder. */
 function notices(watch: TreeWatch | undefined, platform: NodeJS.Platform = "darwin"): { notices: WorktreeNotices; clock: { now: number } } {
   const clock = { now: 0 };
-  return { notices: new WorktreeNotices({ treeWatch: watch, platform, now: () => clock.now }), clock };
+  return { notices: new WorktreeNotices({ treeWatch: watch, platform, now: () => clock.now, folderAt: () => "folder" }), clock };
 }
 
 /** Reads `root` as a walk does: it was changed, the read begins and ends having seen `read`. */
@@ -232,6 +232,19 @@ describe("WorktreeNotices", () => {
     clock.now = REWATCH_MS;
     folders.set("/gone", "c2");
     expect(["/same", "/gone"].map(root => [subject.changed(root), subject.watching(root)])).toEqual([[true, true], [true, true]]);
+  });
+
+  it("tries to watch at the next walk a worktree whose folder was gone as its watch would begin, not after the retry", () => {
+    const watch = new ScriptedWatch();
+    const folders = new Map<string, string>();
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "darwin", now: () => 0, folderAt: root => folders.get(root) ?? "" });
+    // A walk listed it, and its folder went before the walk came to it: the engine refuses a path with no folder.
+    watch.refused.add("/w");
+    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
+    // Made again: the next walk watches it, though `WATCH_RETRY_MS` has not passed.
+    folders.set("/w", "a");
+    watch.refused.delete("/w");
+    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, true]);
   });
 
   it("hands on the folder where Git registers the worktrees once an entry there came or went, or its gitdir or locked file did, and not for Git's work in an entry", () => {
