@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { claimName, detached, mergeTrees, type PackInput, planFanout, planUnits, remoteShell, UNIT_BUDGET_S } from "../../../scripts/ship/fanout.js";
+import { claimName, detached, mergeTrees, oneRuleTag, type PackInput, planFanout, planUnits, remoteShell, UNIT_BUDGET_S } from "../../../scripts/ship/fanout.js";
 import type { Candidate } from "../../../scripts/ship/shipbar.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
@@ -33,6 +33,18 @@ describe("planning units", () => {
     expect(Math.max(...b.map((u) => u.est))).toBeLessThanOrEqual(UNIT_BUDGET_S);
     expect(b.flatMap((u) => u.rules!)).toEqual(python.rules);
     expect(b[0]!.rules![0]).toBe("(none)");
+  });
+
+  it("tags each B chunk's own run of rr's empty rule set apart, so chunks of one cell running at once never write the same files", () => {
+    const b = planUnits([python], withRr).filter((u) => u.slice === "B" && u.corpus === "real");
+    expect(b.length).toBeGreaterThan(2);
+    // The chunk holding the empty rule set times it under its plain tag; every other chunk times rr's under its own.
+    const tag = (rules: readonly string[], rep: number): string => (rules.includes("(none)") ? oneRuleTag("rr", "(none)", rep) : oneRuleTag("rr", "(none)", rep, { chunk: rules[0] }));
+    const tags = b.flatMap((u) => [1, 2].map((rep) => tag(u.rules!, rep)));
+    expect(new Set(tags).size).toBe(tags.length);
+    expect(tags.slice(0, 2)).toEqual(["one.rr.(none).1", "one.rr.(none).2"]);
+    expect(oneRuleTag("ships", "r001", 1)).toBe("one.ships.r001.1");
+    expect(oneRuleTag("main", "r001", 2, { confirming: true })).toBe("one-confirm.main.r001.2");
   });
 
   it("makes one unit per slice C file, on real code", () => {

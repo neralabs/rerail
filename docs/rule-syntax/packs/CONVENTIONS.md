@@ -85,13 +85,16 @@ Each pack declares what it expects in `equivalence.json` here:
 
 `equivalent: true` says every translated rule reports what its original does, except the rules in `different`; the
 benchmark's `.rerail` verdict gates on it, and so does the suite: it fails when a translated rule differs and is not
-listed, when a listed rule's counts changed on a corpus the run compared or the rule is the same now, when a rule
-without a translation is not in `untranslated` (or one there is translated now), when an entry has no reason or no
-side, when a corpus could not be compared, and when any rule failed. Fix the translation, or explain the difference;
-never widen a count to make the gate pass. `--write-differences` rewrites `different` and `untranslated` from the run,
-keeping the reasons already there and leaving new entries for you to explain. A pack declaring `equivalent: false` is
-reported, not gated: its file records what the suite found ("recorded by the suite, not yet explained", right
-`unknown`), and `incomplete` names a corpus that run could not compare.
+listed, when a listed rule's counts changed on a corpus the run compared or the rule is the same now, when a listed
+rule has counts on a corpus the run did not compare, when a rule without a translation is not in `untranslated` (or
+one there is translated now, or is still in `different`), when an entry has no reason or no side, when a corpus could
+not be compared or the run compared none, when any rule failed, when a rule's original failed on files of a corpus for
+another reason than their syntax errors (a file the original cannot parse is a note), and when the original's run had
+failures of no rule. Fix the translation, or explain the difference; never widen a count to make the gate pass.
+`--write-differences` rewrites `different` and `untranslated` from the run, keeping the reasons already there and
+leaving new entries for you to explain. A pack declaring `equivalent: false` is reported, not gated: its file records
+what the suite found ("recorded by the suite, not yet explained", right `unknown`), and `incomplete` names a corpus
+that run could not compare. A malformed `equivalence.json` stops the run (exit 2).
 
 ## NOTES
 

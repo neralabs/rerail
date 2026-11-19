@@ -138,9 +138,25 @@ export function planFanout(packs: readonly PackInput[], hosts: readonly string[]
     for (const u of group) planned.push({ ...u, host });
   }
   planned.sort((a, b) => b.est - a.est || (a.id < b.id ? -1 : 1));
-  const cells = new Map<string, { id: string; pack: string; corpus: Corpus; host: string }>();
+  return { format: 1, candidates: [...o.candidates], hosts: [...hosts], workers: [...workers], units: planned, confirm: confirmations(planned), load: Object.fromEntries(hosts.map((h) => [h, Math.round(finish(h))])) };
+}
+
+/** Slice A's confirmation of each cell, on the host its repetitions went to, by id. */
+function confirmations(planned: readonly PlannedUnit[]): Plan["confirm"] {
+  const cells = new Map<string, Plan["confirm"][number]>();
   for (const u of planned) if (u.slice === "A") cells.set(u.group, { id: `A-confirm|${u.pack}|${u.corpus}`, pack: u.pack, corpus: u.corpus, host: u.host });
-  return { format: 1, candidates: [...o.candidates], hosts: [...hosts], workers: [...workers], units: planned, confirm: [...cells.values()].sort((a, b) => (a.id < b.id ? -1 : 1)), load: Object.fromEntries(hosts.map((h) => [h, Math.round(finish(h))])) };
+  return [...cells.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
+}
+
+/**
+ * Slice B's tag of one run, which names its files in the cell (result, output, stderr, scratch): `one.<side>.<rule>.<rep>`,
+ * `one-confirm.` for a confirmation run. A B unit without the empty rule set times rr's itself (its rules' net walls
+ * need it), and the units of one cell may run at once on one host: that run's tag names its unit (`chunk`, the unit's
+ * first rule), so no two units write the same files.
+ */
+export function oneRuleTag(side: string, rule: string, rep: number, o: { confirming?: boolean; chunk?: string | undefined } = {}): string {
+  const named = o.chunk === undefined ? rule : `${rule}@${o.chunk}`;
+  return `${o.confirming === true ? "one-confirm" : "one"}.${side}.${named}.${rep}`;
 }
 
 /** A unit's claim: a directory name, made atomically by the worker that takes the unit. */

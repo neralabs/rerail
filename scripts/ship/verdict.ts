@@ -340,11 +340,31 @@ export const EQUIVALENCE_FORMAT = "rerail.translation-equivalence/v1";
 export function translationGate(pack: string, declaration: unknown): { counted: boolean; reason: string } {
   const file = `docs/rule-syntax/packs/${pack}/equivalence.json`;
   if (declaration === undefined) return { counted: false, reason: `reported only: no ${file}` };
-  const d = declaration as { format?: unknown; pack?: unknown; equivalent?: unknown; different?: unknown };
-  if (typeof d !== "object" || d === null || d.format !== EQUIVALENCE_FORMAT || d.pack !== pack || typeof d.equivalent !== "boolean") return { counted: false, reason: `reported only: ${file} is not a ${EQUIVALENCE_FORMAT} declaration of ${pack}` };
-  if (!d.equivalent) return { counted: false, reason: `reported only: ${file} says the translations are not equivalent` };
-  const different = typeof d.different === "object" && d.different !== null ? Object.keys(d.different).length : 0;
-  return { counted: true, reason: `counted: ${file} says equivalent${different > 0 ? ` (${different} rule${different === 1 ? "" : "s"} declared different)` : ""}` };
+  if (!declaresPack(declaration, pack)) return { counted: false, reason: `reported only: ${file} is not a ${EQUIVALENCE_FORMAT} declaration of ${pack}` };
+  if (!declaration.equivalent) return { counted: false, reason: `reported only: ${file} says the translations are not equivalent` };
+  return { counted: true, reason: countedReason(file, declaration.different) };
+}
+
+/** equivalence.json's fields translationGate reads. */
+interface EquivalenceDeclaration {
+  format: typeof EQUIVALENCE_FORMAT;
+  pack: string;
+  equivalent: boolean;
+  different?: unknown;
+}
+
+/** Whether `declaration` is an EQUIVALENCE_FORMAT declaration of `pack` saying whether it is equivalent. */
+function declaresPack(declaration: unknown, pack: string): declaration is EquivalenceDeclaration {
+  if (typeof declaration !== "object" || declaration === null) return false;
+  const d = declaration as { format?: unknown; pack?: unknown; equivalent?: unknown };
+  return d.format === EQUIVALENCE_FORMAT && d.pack === pack && typeof d.equivalent === "boolean";
+}
+
+/** A counted pack's reason: its declaration, and how many rules `different` (rule ids to why) lists where it lists any. */
+function countedReason(file: string, different: unknown): string {
+  const count = typeof different === "object" && different !== null ? Object.keys(different).length : 0;
+  if (count === 0) return `counted: ${file} says equivalent`;
+  return `counted: ${file} says equivalent (${count} rule${count === 1 ? "" : "s"} declared different)`;
 }
 
 /** The nearest-rank percentile `p` (0–100) of `values`. */

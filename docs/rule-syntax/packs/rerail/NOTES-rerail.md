@@ -38,7 +38,7 @@ for the tool-call rule); no rule has a finding on one side only. Files: the rule
 | `rerail-conformance-boundary` | `.rerail`, `text` | 6 | same (1) | same (0) | [b](NOTES-rerail-b.md) |
 | `rerail-conformance-pinned-data` | `.rerail` | 3 | same (1) | same (0) | [b](NOTES-rerail-b.md) |
 | `rerail-fixed-value-lists` | `.rerail` | 4 | same (1) | same (0) | [a](NOTES-rerail-a.md) |
-| `rerail-fixtures-root` | `.rerail` | 3 | same (1) | same (21) | below |
+| `rerail-fixtures-root` | `.rerail` | 3 | same (1) | same (20) | below |
 | `rerail-generator-placement` | `php`, `python`, `.rerail`, `shell` | 10 | same (1) | same (4) | [e](NOTES-rerail-e.md) |
 | `rerail-git-no-lazy-fetch` | `.rerail` | 6 | same (1) | same (0) | [c](NOTES-rerail-c.md) |
 | `rerail-grammar-node-kinds` | `.rerail` | 4 | same (1) | same (89) | [d](NOTES-rerail-d.md) |
@@ -82,14 +82,16 @@ below. New libraries: `lib/tsx/rerail-module-loads.rerail` (b), `lib/rust/rerail
 
 | Rule | Differs from the JSON |
 |---|---|
-| `rerail-fixtures-root` | No. The JSON's `inside` without `stopBy` is the direct parent (`child`), with `stopBy: end` any ancestor (`inside`). |
+| `rerail-fixtures-root` | No. The JSON's `inside` without `stopBy` is the direct parent (`child`), with `stopBy: end` any ancestor (`inside`). Its scope follows the JSON's revision 2 (#872), which leaves out `native/src/code_rule_dsl/fixtures.rs`, where the two macros read the variable: the suite reported the macros' file as translation-only until the translation followed. |
 | `rerail-start-state` | No: three regex clauses. |
 | `rerail-store-reads-in-documents` | No: one regex clause. |
 | `rerail-walk-limits` | No: two regex clauses. |
 | `rerail-walk-limits-native` | No: two regex clauses. |
 
-`site/check_rr.py` learned that `match_all` binds its match (`match_all("re", sp, m)` binds `m`; over a symbol, the
-ordinal and offsets): it reported every regex rule here as ungrounded, and three earlier files too.
+`site/souffle.py`, the grounding check `site/check_rr.py` runs, learned that `match_all` binds its match
+(`match_all("re", sp, m)` binds `m`; over a symbol, `match_all("re", s, ordinal, start, end)` the ordinal and
+offsets; no other arity, as the engine's `rr/check.rs`): it reported every regex rule here as ungrounded, and three
+earlier files too.
 
 ### The last three
 
@@ -103,6 +105,9 @@ directories), and a policy reads a coding agent's tool calls (`.scope tool_calls
 | `rerail-pack-data-through-publish` | No: the JSON's five alternatives and two exemptions, its dry-run exemption said once over the two script forms it guards. Both sides agree on its two examples as calls (the suite), and on the tests' 33 calls, each alternative and exemption, run once through the runtime's matcher. Not checked: a command with a non-ASCII letter beside a `\b` (`match` reads `\b` as ASCII, `lib/core.rerail`; the product's regex as Unicode). |
 
 ### Engine faults met on the way (fixed in the engine, no workaround left)
+
+Both fixes are their own pull requests, #861 and #863, merged into this branch to drop the workarounds; once they
+are on main, this pull request's diff no longer holds them.
 
 - A run of two or more policies lost the declaration of `within`, which `core.rerail` declares, and panicked with
   `no declaration of within`. Fixed in the lowering (`logic/rr/lower.rs`, `link_seeded`); `rerail-ui-pure-modules`
