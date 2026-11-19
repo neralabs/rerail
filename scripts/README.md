@@ -110,10 +110,11 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   start-up (its empty rule set on the same corpus, `fixed.jsonl`), net time and net ratio, the product path's load /
   compile / evaluate phases (compile per rule, evaluate per rule per syntax node), the corpus's files, bytes, lines,
   tokens and engine node counts (`<out>/workload/`), and in slice B each rule's multiple of the pack's median rule.
-  `fanout` (`fanout.ts`) runs the whole bar from the Mac over nera-cloud hosts (`--hosts nera-port-1,nera-port-4`):
-  prepare, plan (slice A by repetition, B by chunks of rules, C by file, no unit longer than about four minutes,
-  longest first onto the least loaded host), sync through `nera-cloud ssh`, build both sides once on the first host and
-  copy the engines to the others, then on each host one detached `host` process with a `work` process per 4-core set
+  `fanout` (`fanout.ts`) runs the whole bar from the Mac over Linux hosts (`--hosts build-1,build-2`): prepare, plan
+  (slice A by repetition, B by chunks of rules, C by file, no unit longer than about four minutes, longest first onto
+  the least loaded host), sync with rsync over the remote shell (`ssh`, or another command taking `<host> <command>`
+  through `--ssh` or `SHIPBAR_SSH`), build both sides once on the first host and copy the engines to the others, then
+  on each host one `host` process started with `setsid nohup`, with a `work` process per 4-core set
   (`--workers 0-3/4-7/8-11/12-15`, each claiming units by an atomic mkdir, stores in `/dev/shm`), confirmation on the
   same host, and the hosts' runs pulled and merged into one report. The Mac only starts and polls (`--poll`); each
   phase's time is in `<out>/fanout/state.json`, and the command resumes where it stopped.

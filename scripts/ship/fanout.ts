@@ -1,4 +1,4 @@
-// The shippability bar spread over several nera-cloud hosts (`shipbar.ts fanout`, docs in shipbar.ts's header). This
+// The shippability bar spread over several Linux hosts (`shipbar.ts fanout`, docs in shipbar.ts's header). This
 // module holds what the fan-out decides and moves, apart from the measuring itself (shipbar.ts's `host` and `work`):
 //
 //   plan     every unit of the three slices, sized so no unit outlasts about UNIT_BUDGET_S on one worker (slice A by
@@ -7,8 +7,9 @@
 //            share a host, so its confirmation runs there with all of its runs at hand.
 //   merge    each host's out/ pulled home, merged into one runs/ (logs concatenated, other files copied once), from
 //            which `verdict` reports.
-//   remote   ssh and rsync through `nera-cloud ssh`, each call with a timeout: everything long runs detached on the
-//            hosts, and the Mac only starts it and polls.
+//   remote   ssh and rsync through one remote shell (`ssh` unless --ssh or SHIPBAR_SSH names another command, a
+//            wrapper that reaches the hosts its own way, say), each call with a timeout: everything long runs
+//            detached on the hosts (setsid nohup), and the Mac only starts it and polls.
 
 import { spawn } from "node:child_process";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
@@ -215,14 +216,31 @@ export function exec(command: string, args: readonly string[], timeoutS: number)
   return promise;
 }
 
-/** One command on a host (a login shell through SSM), with a short deadline. */
-export function ssh(host: string, command: string, timeoutS = 90): Promise<Done> {
-  return exec("nera-cloud", ["ssh", host, command], timeoutS);
+/** The remote shell every call goes through: `--ssh`, else $SHIPBAR_SSH, else plain `ssh`, as words. */
+export function remoteShell(option: string | undefined, env: NodeJS.ProcessEnv = process.env): string[] {
+  const words = (option ?? env.SHIPBAR_SSH ?? "ssh").trim().split(/\s+/).filter((w) => w !== "");
+  if (words.length === 0) throw new Error("the remote shell command is empty (--ssh or SHIPBAR_SSH)");
+  return words;
 }
 
-/** rsync through `nera-cloud ssh`; `from` and `to` as rsync takes them (`<host>:<path relative to ~>` remote). */
-export function rsync(from: string, to: string, extra: readonly string[], timeoutS: number): Promise<Done> {
-  return exec("rsync", ["-az", "-e", "nera-cloud ssh", ...extra, from, to], timeoutS);
+/** One command on a host through the remote shell, run from the remote home directory, with a short deadline. */
+export function ssh(shell: readonly string[], host: string, command: string, timeoutS = 90): Promise<Done> {
+  return exec(shell[0]!, [...shell.slice(1), host, command], timeoutS);
+}
+
+/** rsync over the remote shell; `from` and `to` as rsync takes them (`<host>:<path relative to ~>` remote). */
+export function rsync(shell: readonly string[], from: string, to: string, extra: readonly string[], timeoutS: number): Promise<Done> {
+  return exec("rsync", ["-az", "-e", shell.join(" "), ...extra, from, to], timeoutS);
+}
+
+/**
+ * The remote command that starts `script` (a host script under <dir>/fanout/) detached from the remote shell: in its own
+ * session, immune to hangups, its output in fanout/<script>.out, so the shell returns at once and a dropped connection
+ * leaves it running. A login shell, so the host's toolchains are on its PATH.
+ */
+export function detached(dir: string, script: string, args: readonly string[]): string {
+  const quote = (arg: string): string => `'${arg.replaceAll("'", "'\\''")}'`;
+  return `cd ${dir} && (setsid nohup bash -l fanout/${script} ${args.map(quote).join(" ")} > fanout/${script}.out 2>&1 < /dev/null &)`;
 }
 
 /** `attempt` until it succeeds or `tries` run out (a stalled call is killed by its own deadline, then tried again). */

@@ -35,14 +35,16 @@
 //       report.json and report.md from the runs under <out>/runs (several runs' directories merged, say: one per box,
 //       each box given some packs). Narrowed by --packs or --corpus, the verdict is PARTIAL; a pack whose runs lack a
 //       slice is INCOMPLETE.
-//   node --import tsx scripts/ship/shipbar.ts fanout --hosts nera-port-1,nera-port-4 --baseline <release:version | ref | dir>
+//   node --import tsx scripts/ship/shipbar.ts fanout --hosts build-1,build-2 --baseline <release:version | ref | dir>
 //       --out <dir> [--candidate <dir>] [--corpora <dir>] [--packs a,b] [--name <work dir on the hosts>]
 //       [--workers 0-3/4-7/8-11/12-15] [--stores /dev/shm/shipbar-<name>] [--runs 3] [--rule-runs 2] [--file-runs 3]
 //       [--confirm 3] [--mem-cap 24G] [--time-cap 2700] [--pack-cap <pack>=<memory>,<seconds>]... [--poll 180] [--from <phase>]
-//       From the Mac, the whole bar over nera-cloud hosts (fanout.ts): prepare (as `prepare`); plan every unit (A by
+//       [--ssh "<remote shell command>"]
+//       From the Mac, the whole bar over Linux hosts (fanout.ts): prepare (as `prepare`); plan every unit (A by
 //       repetition, B by chunks of rules, C by file, none longer than about fanout.ts UNIT_BUDGET_S) and assign them to
 //       the hosts longest first; sync the baseline, the candidate, the corpora and this harness to ~/work/<name>/ on
-//       each host (rsync through `nera-cloud ssh`); build both sides on the first host (`npm ci --ignore-scripts && npm
+//       each host (rsync over the remote shell: `ssh`, or --ssh / SHIPBAR_SSH, a wrapper taking `<host> <command>` as
+//       ssh does); build both sides on the first host (`npm ci --ignore-scripts && npm
 //       run build:native`); copy the two engines to the others (sha256 checked) and `npm ci` there; on each host one
 //       detached `host` process measures (then confirms) with a worker per CPU set; pull every host's out/ and merge it
 //       into <out>/runs; report. Each phase's start and end are in <out>/fanout/state.json, and a finished phase is not
@@ -120,7 +122,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { engineJson } from "./engine-json.js";
-import { claimName, exec, mergeTrees, type PackInput, type Plan, planFanout, type PlannedUnit, retry, rsync, ssh } from "./fanout.js";
+import { claimName, detached, type Done, mergeTrees, type PackInput, type Plan, planFanout, type PlannedUnit, remoteShell, retry, rsync as rsyncOver, ssh as sshOver } from "./fanout.js";
 import { cachedWorkload, type CellCost, cellCost, engineBinary, type Phases, readPhases, readWorkload, ruleSet } from "./metric.js";
 import { busiest, cpuList, LINUX_METHOD, type MachineInfo, methodCounts, openPlatform, parseProcStat, type Platform, type RunMethod } from "./platform.js";
 import { buildReport, type RunMeta } from "./report-model.js";
@@ -1753,6 +1755,8 @@ interface FanoutOptions {
   pollS: number;
   /** Make this phase and every later one again (`--from sync` after a checkout changed, say). */
   from: string | undefined;
+  /** The remote shell, as words: `ssh`, or --ssh / SHIPBAR_SSH (fanout.ts remoteShell). */
+  shell: string[];
   command: string;
 }
 
@@ -1807,21 +1811,25 @@ async function fanoutRun(o: FanoutOptions): Promise<number> {
   };
   const remote = `work/${o.name}`;
   const at = (host: string, path: string): string => `${host}:${remote}/${path}`;
+  const ssh = (host: string, command: string, timeoutS?: number): Promise<Done> => sshOver(o.shell, host, command, timeoutS);
+  const rsync = (from: string, to: string, extra: readonly string[], timeoutS: number): Promise<Done> => rsyncOver(o.shell, from, to, extra, timeoutS);
   const onHosts = async (hosts: readonly string[], label: string, each: (host: string) => Promise<boolean>): Promise<void> => {
     const ok = await Promise.all(hosts.map(each));
     const bad = hosts.filter((_, i) => !ok[i]);
     if (bad.length > 0) fail(`fanout ${label} failed on ${bad.join(", ")}; run the same command again to resume`);
   };
-  const step = async (label: string, attempt: () => Promise<{ status: number; stdout: string; stderr: string }>, tries = 3): Promise<boolean> => (await retry(label, tries, attempt, log)).status === 0;
-  /** A host script started detached; started once: a retried start finds its start mark. */
+  const step = async (label: string, attempt: () => Promise<Done>, tries = 3): Promise<boolean> => (await retry(label, tries, attempt, log)).status === 0;
+  /** A host script started detached (setsid nohup); started once: a retried start finds its start mark. */
   const start = async (host: string, script: string, args: readonly string[] = []): Promise<boolean> => {
     const marker = script.replace(/\.sh$/, "");
     await ssh(host, `rm -f ${remote}/fanout/${marker}.exit ${remote}/fanout/${marker}.started`);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
-      const started = await exec("nera-cloud", ["run", host, o.name, "--no-slot", "--detach", "--", "bash", `fanout/${script}`, ...args], 120);
-      if (started.status === 0) return true;
-      await sleep(20_000);
-      if ((await ssh(host, `test -e ${remote}/fanout/${marker}.started`)).status === 0) return true;
+      const started = await ssh(host, detached(remote, script, args), 120);
+      // The script marks its start first thing; a slow host gets a minute before the start is tried again.
+      for (let check = 0; check < 6; check += 1) {
+        await sleep(10_000);
+        if ((await ssh(host, `test -e ${remote}/fanout/${marker}.started`)).status === 0) return true;
+      }
       log(`${host}: starting ${script} failed (${started.status}): ${started.stderr.trim().split("\n").at(-1) ?? ""}`);
     }
     return false;
@@ -2000,6 +2008,7 @@ function main(): void {
       stores: { type: "string" },
       poll: { type: "string", default: "180" },
       from: { type: "string" },
+      ssh: { type: "string" },
       plan: { type: "string" },
       host: { type: "string" },
       worker: { type: "string" },
@@ -2053,7 +2062,7 @@ function main(): void {
       hosts, name, workers, baselineSpec: values.baseline!, packDataCache: values["pack-data-cache"], candidate: { dir: candidateDir, sha: checkoutSha(candidateDir) }, out,
       corpora: resolve(values.corpora ?? join(out, "corpora")), requested: values.packs?.split(",").map((p) => p.trim()), runs, confirm, ruleRuns, fileRuns,
       memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]), packCaps: values["pack-cap"], stores: values.stores ?? `/dev/shm/shipbar-${name}`,
-      pollS: count("poll", values.poll, 10), from: values.from, command: ["npm run bench:ship --", ...process.argv.slice(2)].join(" "),
+      pollS: count("poll", values.poll, 10), from: values.from, shell: remoteShell(values.ssh), command: ["npm run bench:ship --", ...process.argv.slice(2)].join(" "),
     }).then((code) => {
       process.exitCode = code;
     });
