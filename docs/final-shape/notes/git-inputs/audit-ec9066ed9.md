@@ -2,6 +2,12 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Repairs after `8a328d0a0`
+
+Case 40 now has a regression that compares each retained policy and plan in the same store.
+The old addon lost the root and inventory program memberships after scope deletion. The corrected addon passes with a reused view and a fresh view.
+The test covers abort, reuse in a second store, and collection. A separate process found the Python identifiers with zero source-tape parses and zero tree decodes.
+
 ## Status at `8a328d0a0`
 
 Of the twenty cases open at `8a490c35e`, seven now have repairs.

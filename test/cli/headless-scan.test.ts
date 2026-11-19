@@ -1547,6 +1547,59 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     }
   }, 30_000);
 
+  it("retains the inventory plans of a reused view after scope deletion and across stores", async () => {
+    const root = checkout(), home = root + "-home";
+    mkdirSync(home);
+    const engine = loadNativeBinding(), policy = join(home, "files.rr");
+    writeFileSync(policy, `#include "core.rr"
+.policy "files" revision 1
+.language python
+.violation Seen(at: node) "identifier"
+Seen(n) :- kind(n, "identifier").
+`);
+    const open = () => new engine.GitRevisionSource(root, "HEAD", "repeat");
+    const view = open(), first = join(home, "first.sqlite"), other = join(home, "other.sqlite");
+    const retained = (store: string) => queryContentStore<{ policy: string; plan: string }>(store,
+      `SELECT DISTINCT hex(m.policy) AS policy, hex(p.plan_digest) AS plan FROM analysis_scope_manifest a
+       JOIN corpus_manifests m USING(manifest_id) JOIN corpus_manifest_plans p USING(manifest_id)
+       WHERE a.scope='named:repeat' ORDER BY policy,plan`);
+    const evaluate = async (source: typeof view, store: string, publish: boolean) => {
+      const run = new engine.AnalysisScopeRun(store, "repeat", false, "test", 0);
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, "", run, undefined, source));
+      expect(report.diagnostics.length).toBeGreaterThan(0);
+      expect(run.finish(publish)).toBeNull();
+    };
+    await evaluate(view, first, true);
+    const baseline = retained(first);
+    expect(new Set(baseline.map(row => row.policy)).size).toBeGreaterThan(2);
+    engine.deleteAnalysisScope(first, "repeat", false);
+    await evaluate(view, first, false);
+    expect(retained(first)).toEqual([]);
+    await evaluate(view, first, true);
+    expect(retained(first)).toEqual(baseline);
+    await evaluate(view, other, true);
+    const otherPlans = retained(other);
+    expect(new Set(otherPlans.map(row => row.policy))).toEqual(new Set(baseline.map(row => row.policy)));
+    engine.deleteAnalysisScope(other, "repeat", false);
+    await evaluate(open(), other, true);
+    expect(retained(other)).toEqual(otherPlans);
+    await engine.collectAnalysisCacheAsync(first);
+    expect(retained(first)).toEqual(baseline);
+    const profile = join(home, "reopened");
+    const count = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, policy, first], {
+      encoding: "utf8", env: { ...process.env, RERAIL_PROFILE: profile },
+      input: `import { loadNativeBinding } from "./src/engine/native/native.ts";
+        const [repo, policy, store] = process.argv.slice(2), engine = loadNativeBinding();
+        const view = new engine.GitRevisionSource(repo, "HEAD", "repeat");
+        const run = new engine.AnalysisScopeRun(store, "repeat", false, "reopened", 0);
+        const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], repo, store, "", run, undefined, view));
+        if (run.finish(true) != null) throw Error("cache publication failed");
+        console.log(report.diagnostics.length);`,
+    });
+    expect(Number(count)).toBeGreaterThan(0);
+    expect(readFileSync(join(profile, "profile.txt"), "utf8")).not.toMatch(/^\s*count\s+[1-9]\d*\s+(git\.tree_decodes|source_tape\.parses)$/mu);
+  }, 60_000);
+
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("retries an unreadable store with real directory ownership", async () => {
     const root = checkout(), home = root + "-home";
     const databasePath = join(home, "rerail.sqlite"), store = join(home, "legacy.sqlite");

@@ -443,7 +443,8 @@ pub(super) fn metadata_only(program: &Program) -> bool {
 /// Restore the root entries before the host looks up Git-backed control files.
 pub(super) fn prime_root(root: &Path) -> super::Result<()> {
     use crate::code_rule_dsl::logic::plan::output::{Outputs, Value as Cell};
-    if !snapshot::contains(root) || snapshot::root_observed(root) {
+    let reads = super::ThreadStore::git_reads();
+    if !snapshot::contains(root) || reads.as_deref().is_some_and(|reads| snapshot::root_observed(root, reads)) {
         return Ok(());
     }
     let program = super::embedded_program!(concat!(
@@ -470,7 +471,7 @@ pub(super) fn prime_root(root: &Path) -> super::Result<()> {
             entries.push(RawTreeEntry { name, mode: mode as u16, target });
         }
     }
-    snapshot::remember_root(root, stamp.to_owned(), entries);
+    snapshot::remember_root(root, stamp.to_owned(), entries, reads.as_deref());
     Ok(())
 }
 

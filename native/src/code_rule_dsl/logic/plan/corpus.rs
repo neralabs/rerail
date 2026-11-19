@@ -2328,6 +2328,7 @@ thread_local! {
 struct StoreSelection {
     path: Option<PathBuf>,
     ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>,
+    git_reads: Arc<crate::git_workspace::snapshot::InventoryReads>,
 }
 
 struct ThreadStore(Option<StoreSelection>);
@@ -2335,7 +2336,7 @@ struct ThreadStore(Option<StoreSelection>);
 impl ThreadStore {
     fn select(path: &Path, ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>) -> Self {
         let path = (path != Path::new(":memory:")).then(|| path.to_owned());
-        Self(THREAD_STORE.with(|store| store.replace(Some(StoreSelection { path, ownership }))))
+        Self(THREAD_STORE.with(|store| store.replace(Some(StoreSelection { path, ownership, git_reads: Arc::default() }))))
     }
 
     fn owner(root: &Path) -> Option<crate::content_store::analysis_scope::AnalysisOwner> {
@@ -2348,6 +2349,10 @@ impl ThreadStore {
 
     fn ephemeral() -> bool {
         THREAD_STORE.with(|store| store.borrow().as_ref().is_some_and(|store| store.path.is_none()))
+    }
+
+    fn git_reads() -> Option<Arc<crate::git_workspace::snapshot::InventoryReads>> {
+        THREAD_STORE.with(|store| store.borrow().as_ref().map(|selected| Arc::clone(&selected.git_reads)))
     }
 }
 
@@ -10727,7 +10732,7 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     // does not ignore), with no walk; the same directories skipped. Outside one, or where Git cannot read it, the walk.
     // A root Git sees no file under (one it ignores, such as fetched fixtures) is not described by Git: walked.
     install_git_inventory();
-    if let Some(files) = crate::git_workspace::snapshot::scan_files(root) {
+    if let Some(files) = crate::git_workspace::snapshot::scan_files(root, ThreadStore::git_reads().as_deref()) {
         use crate::git_workspace::snapshot::InventoryError;
         for (relative, grammar) in files.map_err(|error| match error {
             InventoryError::Source(reason) => Error::Plan(reason),

@@ -82,6 +82,10 @@ the report keeps its findings and reports a cache warning. Collection releases
 abandoned staged rows after their process drops the lease. A scope deletion
 advances the scope's generation. Each run has its own staging key in the store where it started.
 Finishing the run closes that key. Its workers can no longer add memberships.
+Each evaluation that uses a Git inventory records the root and inventory programs in its selected store.
+A reused source view can supply their verified tree entries. The programs publish their manifests under the current acquisition.
+Repeated inventory requests within that evaluation can use the same materialized result.
+After scope deletion, a new acquisition must retain the same plans as a fresh view of that source.
 Within one generation, the directory keeps the snapshot from the most recently acquired successful run.
 A run in that generation can finish its report. Only the current generation can
 publish ownership.

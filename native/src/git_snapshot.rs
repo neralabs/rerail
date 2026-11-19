@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use super::HashKey;
 use crate::content_store::analysis_scope::AnalysisOwner;
@@ -42,6 +42,14 @@ struct InventoryState {
     saved: Option<(u64, Arc<Inventory>)>,
     paths: Option<Vec<PathBuf>>,
     host_languages: Option<SourceLanguages>,
+}
+
+/// The embedded programs that have already run with this evaluation's store and owner.
+/// Workers share these markers only while that store selection is active.
+#[derive(Debug, Default)]
+pub struct InventoryReads {
+    root: Mutex<Option<(u64, String)>>,
+    inventory: Mutex<Weak<Inventory>>,
 }
 
 #[derive(Debug)]
@@ -311,11 +319,13 @@ impl View {
         self.inventory.lock().unwrap_or_else(|e| e.into_inner()).saved.clone()
     }
 
-    fn inventory(&self, store: Option<&Path>, owner: Option<&AnalysisOwner>) -> Result<Arc<Inventory>, InventoryError> {
+    fn inventory(&self, store: Option<&Path>, owner: Option<&AnalysisOwner>, reads: Option<&InventoryReads>) -> Result<Arc<Inventory>, InventoryError> {
         let generation = self.inventory.lock().unwrap_or_else(|e| e.into_inner()).generation;
+        let previous = reads.and_then(|reads| reads.inventory.lock().unwrap_or_else(|e| e.into_inner()).upgrade());
         let (epoch, observed, saved) = self.with_repo(|_, storage, epoch| {
             let saved = self.saved_inventory().filter(|(saved_epoch, inventory)| {
-                *saved_epoch == epoch && inventory.tree_failures.is_empty() && storage.is_some_and(|storage| {
+                previous.as_ref().is_some_and(|last| Arc::ptr_eq(last, inventory))
+                    && *saved_epoch == epoch && inventory.tree_failures.is_empty() && storage.is_some_and(|storage| {
                     inventory.tree_observations.iter().all(|(id, stamp)| {
                         storage.object(*id).as_ref() == Some(stamp)
                     })
@@ -325,6 +335,7 @@ impl View {
         }).map_err(|error| error.to_string())?;
         if let Some((_, value)) = saved
             && inventory_selection(&self.root).as_ref() == Some(&value.selection)
+            && self.inventory.lock().unwrap_or_else(|e| e.into_inner()).generation == generation
         {
             return Ok(value);
         }
@@ -339,6 +350,9 @@ impl View {
             return Err("Git source configuration changed during inventory".into());
         }
         inventory.saved = Some((epoch, Arc::clone(&value)));
+        if let Some(reads) = reads {
+            *reads.inventory.lock().unwrap_or_else(|e| e.into_inner()) = Arc::downgrade(&value);
+        }
         Ok(value)
     }
 
@@ -493,7 +507,7 @@ impl Snapshot {
     }
 
     pub fn workspace(self: &Arc<Self>, store: &Path, owner: Option<&AnalysisOwner>) -> Result<super::GitWorkspace, InventoryError> {
-        let inventory = self.view.inventory(Some(store), owner)?;
+        let inventory = self.view.inventory(Some(store), owner, None)?;
         self.view.with_repo(|repo, _, _| {
             Ok(super::GitWorkspace {
                 snapshot: Some(Arc::clone(self)),
@@ -701,10 +715,10 @@ pub fn analysis_scope(path: &Path) -> Option<String> {
     view(path)?.scope.clone()
 }
 
-pub fn scan_files(root: &Path) -> Option<Result<Vec<(String, Option<String>)>, InventoryError>> {
+pub fn scan_files(root: &Path, reads: Option<&InventoryReads>) -> Option<Result<Vec<(String, Option<String>)>, InventoryError>> {
     let v = view(root)?;
     let prefix = v.prefix.join(root.strip_prefix(&v.root).ok()?);
-    Some(v.inventory(None, None).map(|inventory|
+    Some(v.inventory(None, None, reads).map(|inventory|
         inventory.files
             .iter()
             .filter_map(|file| {
@@ -730,16 +744,20 @@ pub fn observed_tree(root: &Path, id: gix::ObjectId, stamp: &str) -> Option<Arc<
     view(root)?.observed_tree(id, stamp)
 }
 
-/// Whether this view already holds verified entries for its root.
-pub fn root_observed(root: &Path) -> bool {
-    view(root).is_some_and(|v| v.with_repo(|repo, storage, _| {
-        storage.and_then(|storage| storage.object(v.tree))
-            .is_some_and(|stamp| v.observed_tree(v.tree, &stamp).is_some() && repo.has_object(v.tree))
-    }).unwrap_or(false))
+/// Reuse a root program only after this evaluation has recorded its manifest.
+pub fn root_observed(root: &Path, reads: &InventoryReads) -> bool {
+    let Some(v) = view(root) else { return false };
+    let Some((id, stamp)) = reads.root.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return false };
+    id == v.id && v.with_repo(|repo, storage, _| {
+        storage.and_then(|storage| storage.object(v.tree)).as_ref() == Some(&stamp) && repo.has_object(v.tree)
+    }).unwrap_or(false)
 }
 
-pub fn remember_root(root: &Path, stamp: String, entries: Vec<RawTreeEntry>) {
+pub fn remember_root(root: &Path, stamp: String, entries: Vec<RawTreeEntry>, reads: Option<&InventoryReads>) {
     if let Some(v) = view(root) {
+        if let Some(reads) = reads {
+            *reads.root.lock().unwrap_or_else(|e| e.into_inner()) = Some((v.id, stamp.clone()));
+        }
         v.observed_trees.lock().unwrap_or_else(|err| err.into_inner())
             .insert(v.tree, ObservedTree { stamp, entries: sorted_entries(entries) });
     }
