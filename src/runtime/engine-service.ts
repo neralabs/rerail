@@ -366,21 +366,32 @@ function resolveRuntimeRoute(
   return { runtimeKey, runtimeOptions };
 }
 
+/**
+ * Writes an event's answer and resolves with whether it reached a client that still waited for it (`answered`). The
+ * service writes it in the session's lane, so what the answer did not deliver is the session's again before its next
+ * event runs.
+ */
+type EngineAnswer = (deliveries: readonly AdapterDelivery[]) => Promise<boolean>;
+
 async function routeEngineEvent(
   event: AdapterEvent,
   configuration: EngineRuntimeConfiguration | undefined,
   options: EngineServiceOptions,
   state: EngineRoutingState,
+  answer?: EngineAnswer,
 ): Promise<readonly AdapterDelivery[]> {
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
   const lane = laneOf(runtimeKey, sessionId);
   keepRuntime(state, runtimeKey);
-  const execution = state.lanes.run(lane, () => {
+  const execution = state.lanes.run(lane, async () => {
     const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
     if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
-    return runtime.ingest(event);
+    const deliveries = await runtime.ingest(event);
+    // A hook past its own limit has closed its connection: the steers its answer took go to the session's next answer.
+    if (answer !== undefined && !(await answer(deliveries))) await runtime.returnUndelivered(sessionId, deliveries);
+    return deliveries;
   });
   track(state, execution);
   try {
@@ -1032,8 +1043,8 @@ export async function startEngineService(options: EngineServiceOptions): Promise
         chunks.push(bytes);
       }
       const { event, configuration } = parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      const deliveries = await engineService.ingest(event, configuration);
-      response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
+      await routeEngineEvent(event, configuration, options, routing, async deliveries =>
+        await answered(response, encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] })));
     } catch (error) {
       response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
@@ -1129,6 +1140,30 @@ function endAbandonedSessions(databasePath: string, idleMs: number, now: () => n
   } finally {
     store?.close();
   }
+}
+
+/**
+ * Writes `body` as the answer and resolves with whether it reached a client that still waited for it: false when the
+ * connection had already closed or ended (a hook past its own limit closes it), or when the write failed or the
+ * connection closed before the answer was all handed to it; true once it was, with no error on the connection. Decided
+ * by what the connection did, never by a time limit, and it resolves once the answer's close comes, which follows its
+ * finish or the connection's close.
+ */
+async function answered(response: ServerResponse, body: string): Promise<boolean> {
+  const connection = response.socket;
+  // Its close already came: the client went before the event ended.
+  if (connection === null || response.destroyed) {
+    response.end(body);
+    return false;
+  }
+  const live = connection.writable;
+  let finished = false;
+  const closed = new Promise<void>(done => response.once("close", () => done()));
+  response.once("finish", () => (finished = true));
+  response.end(body);
+  await closed;
+  // A failed write still finishes the answer; the error it left on the connection says the client never got it.
+  return live && finished && connection.errored === null;
 }
 
 export async function ingestEngineEvent(
