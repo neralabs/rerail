@@ -11,6 +11,8 @@ import {
   daemonEngineEndpoint,
   daemonNotRunningMessage,
   engineEndpointAt,
+  OtherDaemonKeptError,
+  otherDaemonKeptMessage,
   runningDaemonEngineEndpoint,
   type HookDaemon,
 } from "../runtime/daemon-control.js";
@@ -118,17 +120,28 @@ function autostartTurnedOff(error: unknown): boolean {
 }
 
 /**
- * The session-start hook's answer when `RERAIL_AUTOSTART` kept it from starting a daemon and none runs: `answer` given
- * the line `rerail status` prints (`daemonNotRunningMessage`), so the person learns as the session starts that nothing
- * is recorded or checked until the daemon runs, and how to start it. The answer rests on one lookup, and a daemon can
- * come up later in the same session (a start in flight, a restart at the heap ceiling, the person following the line)
- * and record its later events, so it says nothing of the rest of the session. A later hook can meet the same error,
- * when the daemon of another package it went to replace is gone before the replacement looks again; that hook
+ * The session-start hook's answer when `RERAIL_AUTOSTART` kept it from reaching a daemon it may use: `answer` given the
+ * line that says why (`autostartLine`), so the person learns as the session starts that nothing is recorded or checked
+ * until such a daemon runs, and what to run. The answer rests on one lookup, and a daemon can come up later in the same
+ * session (a start in flight, a restart at the heap ceiling, the person following the line) and record its later
+ * events, so it says nothing of the rest of the session. A later hook can meet the same errors; that hook
  * (`startsSession` false), and any other failure, is rethrown, so it answers as any failed hook does.
  */
 export function answerAutostartOff<Output>(error: unknown, startsSession: boolean, answer: (line: string) => Output): Output {
-  if (!startsSession || !autostartTurnedOff(error)) throw error;
-  return answer(daemonNotRunningMessage());
+  const line = startsSession ? autostartLine(error) : undefined;
+  if (line === undefined) throw error;
+  return answer(line);
+}
+
+/**
+ * What a session's start tells the person when `RERAIL_AUTOSTART` kept its hook from reaching a daemon it may use: none
+ * runs (`daemonNotRunningMessage`, the line `rerail status` prints), or one runs that the hook may neither use nor
+ * replace (`otherDaemonKeptMessage`); undefined for any other failure.
+ */
+function autostartLine(error: unknown): string | undefined {
+  const cause = error instanceof DaemonUnreachableError ? error.cause : undefined;
+  if (cause instanceof AutostartOffError) return daemonNotRunningMessage();
+  return cause instanceof OtherDaemonKeptError ? otherDaemonKeptMessage() : undefined;
 }
 
 /**
@@ -139,7 +152,8 @@ export function answerAutostartOff<Output>(error: unknown, startsSession: boolea
  * `DaemonUnreachableError`, so a coding agent without a footer can say so. Every failure, `event` named as the coding
  * agent names it, goes to the hook failure log (`hook-failures.ts`), which `rerail status` reads. Under
  * `RERAIL_AUTOSTART=0` a hook that finds no daemon logs nothing and starts none, since the person runs it themselves;
- * the session-start hook then throws, and its host answers with the line that says so (`answerAutostartOff`).
+ * the session-start hook then throws, and its host answers with the line that says so (`answerAutostartOff`). A hook
+ * that finds a daemon it may neither use nor replace logs the event it lost, and a session's start says so too.
  */
 export async function runHostHook(
   host: HookHost,

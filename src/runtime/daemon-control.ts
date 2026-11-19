@@ -1071,6 +1071,16 @@ export class AutostartOffError extends Error {
   override readonly name = "AutostartOffError";
 }
 
+/**
+ * A daemon runs that the caller may not send events to (another package's, or a release before the engine's proof:
+ * {@link daemonServesPackage}), and `RERAIL_AUTOSTART` (`0` or `false`) kept the caller from replacing it. Unlike a
+ * daemon that is not running, this is no choice of the person's: hooks log each event it costs, and a session's start
+ * says so (`answerAutostartOff`).
+ */
+export class OtherDaemonKeptError extends Error {
+  override readonly name = "OtherDaemonKeptError";
+}
+
 /** What `rerail status` and `rerail daemon stop` say when daemon.json named a live process that is not the home's daemon. */
 export const NOT_HOME_DAEMON_NOTE = "The process daemon.json named is not a Rerail daemon of this home, so Rerail ended nothing and removed that record.";
 
@@ -1087,13 +1097,22 @@ export function daemonNotRunningMessage(env: NodeJS.ProcessEnv = process.env): s
 }
 
 /**
+ * What a session's start says (`answerAutostartOff`) when `RERAIL_AUTOSTART` kept its hook from replacing a daemon the
+ * hook may not use ({@link OtherDaemonKeptError}): nothing is recorded until a daemon of the active package runs, and
+ * the stop comes before the start, since a start beside a running daemon answers that one already runs.
+ */
+export function otherDaemonKeptMessage(env: NodeJS.ProcessEnv = process.env): string {
+  return `The running Rerail daemon is from another Rerail package or an earlier release, and RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} keeps hooks from replacing it, so nothing is recorded until a daemon from the active package runs. Run rerail daemon stop, then rerail daemon start.`;
+}
+
+/**
  * The engine endpoint main host clients send events to; only the daemon evaluates them, since it alone opens
  * the machine-wide content store. `replaceOtherPackage` brings up this package's daemon in place of one from
  * another package or of a release before the engine's proof ({@link daemonServesPackage}), which is how a hook keeps
  * an older daemon from receiving fields it predates, and sends such a daemon nothing where it may not replace it; a
  * client that outlives an update passes false after its first event so it keeps using the newer daemon instead of
  * displacing it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon, and throws `AutostartOffError`
- * without one. A daemon that is alive but busy is waited for (`patientLookup`), until `deadline` (epoch ms) when the
+ * without one and `OtherDaemonKeptError` beside one it may not use. A daemon that is alive but busy is waited for (`patientLookup`), until `deadline` (epoch ms) when the
  * caller names one, as a hook does.
  */
 export async function daemonEngineEndpoint(
@@ -1110,22 +1129,22 @@ export async function daemonEngineEndpoint(
     throw new AutostartOffError(`RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
   }
   if (replaceOtherPackage && !(await daemonServesPackage(daemon, control.packageRoot))) {
-    throw new Error(otherPackageDaemon(machine.env));
+    throw otherPackageDaemon(machine.env);
   }
   return engineEndpointOf(daemon.state);
 }
 
 /**
  * Why the caller sends no event to the daemon it found of another package or of a release before the engine's proof
- * ({@link daemonServesPackage}). An off autostart may not replace that daemon, so the error names the setting as the
- * person set it, and the stop before the start: a start beside a running daemon answers that one already runs. With
- * autostart on, a start replaces it unless it was busy when the start looked and answered only later, so the error
- * names no setting.
+ * ({@link daemonServesPackage}). An off autostart may not replace that daemon, so the error is an
+ * {@link OtherDaemonKeptError}, which a session's start answers, and names the setting as the person set it, and the
+ * stop before the start: a start beside a running daemon answers that one already runs. With autostart on, a start
+ * replaces it unless it was busy when the start looked and answered only later, so the error names no setting.
  */
-function otherPackageDaemon(env: NodeJS.ProcessEnv): string {
+function otherPackageDaemon(env: NodeJS.ProcessEnv): Error {
   return autostartOff(env)
-    ? `RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} requires a daemon from the active Rerail package; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET`
-    : "the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start";
+    ? new OtherDaemonKeptError(`RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} requires a daemon from the active Rerail package; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET`)
+    : new Error("the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start");
 }
 
 /**

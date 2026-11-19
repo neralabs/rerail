@@ -39,6 +39,7 @@ import {
   MACHINE_WITHOUT_ENGINE,
   openDashboard,
   openInBrowser,
+  OtherDaemonKeptError,
   processAlive,
   readDaemonState,
   recordedDaemonAlive,
@@ -518,7 +519,9 @@ describe("Rerail daemon control", () => {
       process.env.RERAIL_HOME = home;
       process.env.RERAIL_AUTOSTART = "false";
 
-      await expect(daemonEngineEndpoint(true)).rejects.toThrow("RERAIL_AUTOSTART=false requires a daemon from the active Rerail package");
+      const refused = daemonEngineEndpoint(true);
+      await expect(refused).rejects.toThrow("RERAIL_AUTOSTART=false requires a daemon from the active Rerail package");
+      await expect(refused).rejects.toBeInstanceOf(OtherDaemonKeptError);
     } finally {
       if (autostart === undefined) delete process.env.RERAIL_AUTOSTART;
       else process.env.RERAIL_AUTOSTART = autostart;
@@ -1008,9 +1011,12 @@ describe("a state file Windows left behind", () => {
     const events: string[] = [];
     const older = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, events);
     const machine: DaemonMachine = { ...older, env: { RERAIL_HOME: home, RERAIL_AUTOSTART: "0" } };
-    await expect(runningDaemonEngineEndpoint(undefined, machine)).rejects.toThrow(new Error(
+    const refused = runningDaemonEngineEndpoint(undefined, machine);
+    await expect(refused).rejects.toThrow(new Error(
       "RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET",
     ));
+    // The error a session's start answers with the line that tells the person (`answerAutostartOff`).
+    await expect(refused).rejects.toBeInstanceOf(OtherDaemonKeptError);
     expect(events.filter(event => event !== "/healthz")).toEqual([]);
     expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(true);
   });
@@ -1027,9 +1033,11 @@ describe("a state file Windows left behind", () => {
       if (path === "/healthz" && ++probes === 1) throw new Error("connect ECONNREFUSED");
       return path === "/healthz" ? Response.json({ status: "ok", pid: DEAD_PID }) : new Response(null, { status: 404 });
     }));
-    await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toThrow(
+    const refused = daemonEngineEndpoint(true, undefined, machine);
+    await expect(refused).rejects.toThrow(
       new Error("the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start"),
     );
+    await expect(refused).rejects.not.toBeInstanceOf(OtherDaemonKeptError);
     expect(events).toEqual(["/healthz", "/healthz"]);
   });
 
