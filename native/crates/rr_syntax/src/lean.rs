@@ -1724,7 +1724,7 @@ impl<L: Layout> Parser<'_, L> {
 mod tests {
     /// The `.rerail` files of the repository.
     fn corpus() -> Vec<(String, String)> {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -1837,7 +1837,7 @@ mod tests {
     #[test]
     #[ignore = "a calibration: run by hand"]
     fn widths_guess_calibration() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -1870,7 +1870,7 @@ mod tests {
 
     #[test]
     fn lean_tape_is_the_engines() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -1916,7 +1916,7 @@ mod tests {
     /// character deleted, two swapped), gives the engine's tape. Seeded, so a failure names its text again.
     #[test]
     fn lean_tape_is_the_engines_on_edited_files() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };

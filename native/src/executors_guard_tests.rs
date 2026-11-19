@@ -10,7 +10,7 @@
 //! Anything else that makes a device, a queue, a thread or a pool fails here, by file and line, unless it is one of
 //! `EXCEPTIONS`, each with its reason. Test code (a `#[cfg(test)]` module, a `*tests.rs` file) is not read.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// What may not be made outside its owner, and the owner.
 const MADE: [(&str, &str); 7] = [
@@ -39,7 +39,7 @@ const EXCEPTIONS: [(&str, &str, usize, &str); 8] = [
 const TEST_FILES: [&str; 1] = ["parity.rs"];
 
 pub(crate) fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("..")
 }
 
 pub(crate) fn sources() -> Vec<PathBuf> {

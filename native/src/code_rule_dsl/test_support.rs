@@ -5,16 +5,18 @@ use super::model::{ClauseKind, Query};
 use super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use napi::Result;
 use serde_json::{Map, Value, json};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 
 /// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which is not in
 /// git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch and derive it.
 pub(super) fn pack_test_data(relative: &str) -> PathBuf {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(relative);
+    let path = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..")
+    .join(relative);
     assert!(
         path.exists(),
         "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each \

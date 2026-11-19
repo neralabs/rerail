@@ -413,7 +413,7 @@ pub mod tests {
     /// made (`native_cpu_shape`: each loop steps a block, a token or a record, never a byte).
     #[test]
     fn the_parse_path_is_compiled_code() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let dir = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src");
         let read = |f: &str| std::fs::read_to_string(dir.join(f)).expect("the source");
         // The body of the function whose signature starts with `head`.
         let body = |src: &str, head: &str| -> String {
@@ -2828,7 +2828,7 @@ pub mod tests {
     #[ignore = "a benchmark: run by hand"]
     fn rr_parser_speed() {
         const REPEAT: usize = 5;
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -2875,7 +2875,7 @@ pub mod tests {
 
     /// The repository's `.rerail` files.
     pub fn corpus() -> Vec<String> {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
