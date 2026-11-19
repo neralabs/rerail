@@ -7,7 +7,7 @@
 //! The index is re-read whenever it changes on disk, so `git add` of an ignored file brings it back;
 //! a `.gitignore` is read when the walk first enters its folder. A matcher says whether one opened
 //! now would read the rules it read (`sources_unchanged`), so hosts can share one per checkout;
-//! when it would, its next question reads the index from disk, as one opened now would.
+//! one handed on as a matcher opened now reads the index from disk at its next question.
 
 use gix::bstr::{BStr, ByteSlice};
 use gix::index::entry::Mode;
@@ -61,9 +61,9 @@ impl GitIgnore {
     /// and their conditions among them), chooses the same excludes file and pattern case, and the
     /// root `.gitignore`, `info/exclude` and that excludes file are as this matcher read them.
     /// When it would, the stack leaves every folder it entered, so the next path below a folder
-    /// reads that folder's `.gitignore` again, and the next question reads the index from disk, as
-    /// a matcher opened now would.
-    pub fn sources_unchanged(&mut self) -> bool {
+    /// reads that folder's `.gitignore` again; with `read_index_again`, for a host that hands the
+    /// matcher on as one opened now, the next question also reads the index from disk.
+    pub fn sources_unchanged(&mut self, read_index_again: bool) -> bool {
         let Ok(Some((repository, worktree))) = discover_worktree(&self.root) else {
             return false;
         };
@@ -71,9 +71,12 @@ impl GitIgnore {
         if now.is_none() || now != self.sources {
             return false;
         }
-        // The repository just found holds no index yet, and the one read before is dropped with the
-        // old repository: an index rewritten at the time it was read is not taken for it.
-        self.repository = repository;
+        if read_index_again {
+            // The repository just found holds no index yet, and the one read before is dropped
+            // with the old repository: an index rewritten at the time it was read is not taken
+            // for it.
+            self.repository = repository;
+        }
         self.leave_folders();
         true
     }
@@ -347,15 +350,15 @@ impl GitIgnoreMatcher {
 
     /// Whether a matcher opened now would follow the rules this one follows (the configuration
     /// Git reads, read again, and the files read whole as they were read); when it would, each
-    /// folder's `.gitignore` is read again as the next path enters the folder, and the index at the
-    /// next question.
+    /// folder's `.gitignore` is read again as the next path enters the folder, and, unless
+    /// `read_index_again` is false (for a holder that asks again), the index at the next question.
     #[napi(catch_unwind)]
-    pub fn sources_unchanged(&self) -> Result<bool> {
+    pub fn sources_unchanged(&self, read_index_again: Option<bool>) -> Result<bool> {
         let mut inner = self
             .inner
             .lock()
             .map_err(|_| Error::new(Status::GenericFailure, "Git ignore matcher is poisoned"))?;
-        Ok(inner.sources_unchanged())
+        Ok(inner.sources_unchanged(read_index_again.unwrap_or(true)))
     }
 }
 
@@ -570,10 +573,10 @@ mod tests {
         git(&root, &["init", "--initial-branch=main"]);
         let root = root.canonicalize().unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
-        assert!(ignore.sources_unchanged(), "nothing changed");
+        assert!(ignore.sources_unchanged(true), "nothing changed");
         git(&root, &["config", "branch.main.remote", "origin"]);
         assert!(
-            ignore.sources_unchanged(),
+            ignore.sources_unchanged(true),
             "a configuration write that leaves the rules alone"
         );
 
@@ -586,29 +589,29 @@ mod tests {
         .unwrap();
         git(&root, &["config", "include.path", "ignore.inc"]);
         assert!(
-            !ignore.sources_unchanged(),
+            !ignore.sources_unchanged(true),
             "an included file that names an excludes file"
         );
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
         assert!(ignore.ignored("a.py", false).unwrap());
-        assert!(ignore.sources_unchanged());
+        assert!(ignore.sources_unchanged(true));
         std::fs::write(root.join("named-a"), "b.py\nc.py\n").unwrap();
-        assert!(!ignore.sources_unchanged(), "the named file changed");
+        assert!(!ignore.sources_unchanged(true), "the named file changed");
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
         rewrite_keeping_size_and_time(&root.join("named-a"), "d.py\ne.py\n");
         assert!(
-            !ignore.sources_unchanged(),
+            !ignore.sources_unchanged(true),
             "the named file rewritten at its size and write time"
         );
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
         turn_ignore_case(&root);
-        assert!(!ignore.sources_unchanged(), "the pattern case changed");
+        assert!(!ignore.sources_unchanged(true), "the pattern case changed");
 
         // Each folder's .gitignore is read again once the sources hold.
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
         assert!(!ignore.ignored("pkg/x.py", false).unwrap());
         std::fs::write(root.join("pkg/.gitignore"), "x.py\n").unwrap();
-        assert!(ignore.sources_unchanged());
+        assert!(ignore.sources_unchanged(true));
         assert!(ignore.ignored("pkg/x.py", false).unwrap());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -625,25 +628,26 @@ mod tests {
         let root = root.canonicalize().unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(!ignore.ignored("a.py", false).unwrap());
-        assert!(ignore.sources_unchanged(), "nothing changed");
+        assert!(ignore.sources_unchanged(true), "nothing changed");
         std::fs::write(root.join(".gitignore"), "gen/\na.py\n").unwrap();
-        assert!(!ignore.sources_unchanged(), "the root .gitignore changed");
+        assert!(!ignore.sources_unchanged(true), "the root .gitignore changed");
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
         assert!(ignore.ignored("a.py", false).unwrap());
-        assert!(ignore.sources_unchanged());
+        assert!(ignore.sources_unchanged(true));
         std::fs::write(root.join(".git/info/exclude"), "b.py\n").unwrap();
-        assert!(!ignore.sources_unchanged(), "info/exclude changed");
+        assert!(!ignore.sources_unchanged(true), "info/exclude changed");
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
         assert!(ignore.ignored("b.py", false).unwrap());
-        assert!(ignore.sources_unchanged());
+        assert!(ignore.sources_unchanged(true));
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A matcher whose sources hold is handed on with the index read again at its next question, as
-    /// a matcher opened then reads it: an index rewritten at the very time this one read, as two
-    /// writes within one tick of the file system's clock leave it, is not taken for the old one.
+    /// A matcher whose sources hold is handed on as one opened then, with the index read again at
+    /// its next question: an index rewritten at the very time this one read, as two writes within
+    /// one tick of the file system's clock leave it, is not taken for the old one. A holder that
+    /// asks again keeps the index it read, as a matcher of its own would.
     #[test]
-    fn reads_the_index_again_once_it_says_its_sources_hold() {
+    fn reads_the_index_again_when_handed_on_as_one_opened_now() {
         let root = fixture("index-again", &[(".gitignore", "gen/\n"), ("gen/x.py", "")]);
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["add", ".gitignore"]);
@@ -656,7 +660,12 @@ mod tests {
         let file = std::fs::File::options().write(true).open(&index).unwrap();
         file.set_modified(read).unwrap();
         drop(file);
-        assert!(ignore.sources_unchanged(), "the rules' sources are as read");
+        assert!(ignore.sources_unchanged(false), "the rules' sources are as read");
+        assert!(
+            ignore.ignored("gen/x.py", false).unwrap(),
+            "a holder that asks again keeps the index it read"
+        );
+        assert!(ignore.sources_unchanged(true));
         assert!(
             !ignore.ignored("gen/x.py", false).unwrap(),
             "a force-added file is tracked, as a matcher opened now reads it"
@@ -697,10 +706,10 @@ mod tests {
         let linked = linked.canonicalize().unwrap();
         let mut ignore = GitIgnore::open(&linked).unwrap().expect("a Git worktree");
         assert!(!ignore.ignored("c.py", false).unwrap());
-        assert!(ignore.sources_unchanged(), "nothing changed");
+        assert!(ignore.sources_unchanged(true), "nothing changed");
         std::fs::write(root.join(".git/info/exclude"), "c.py\n").unwrap();
         assert!(
-            !ignore.sources_unchanged(),
+            !ignore.sources_unchanged(true),
             "the common info/exclude changed"
         );
         let mut fresh = GitIgnore::open(&linked).unwrap().unwrap();
@@ -724,10 +733,10 @@ mod tests {
         let root = root.canonicalize().unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(!ignore.ignored("local.py", false).unwrap());
-        assert!(ignore.sources_unchanged(), "nothing changed");
+        assert!(ignore.sources_unchanged(true), "nothing changed");
         git(&root, &["config", "gitoxide.parsePrecious", "true"]);
         assert!(
-            !ignore.sources_unchanged(),
+            !ignore.sources_unchanged(true),
             "precious patterns are parsed now"
         );
         let mut fresh = GitIgnore::open(&root).unwrap().unwrap();
@@ -755,11 +764,11 @@ mod tests {
         let sub = root.join("sub");
         let mut ignore = GitIgnore::open(&sub).unwrap().expect("a Git worktree");
         assert!(ignore.ignored("local.py", false).unwrap());
-        assert!(ignore.sources_unchanged(), "nothing changed");
+        assert!(ignore.sources_unchanged(true), "nothing changed");
         let other = config_path(&root.join("other"));
         git(&root, &["config", "core.worktree", &other]);
         assert!(
-            !ignore.sources_unchanged(),
+            !ignore.sources_unchanged(true),
             "the repository's worktree is another folder"
         );
         assert!(

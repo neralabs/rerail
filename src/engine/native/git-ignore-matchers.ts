@@ -4,8 +4,9 @@
  * audited held one index per worktree per session. A router that asks gets the shared matcher while the matcher says a
  * matcher opened now would read the rules it read (`sourcesUnchanged`: the engine reads the configuration again as
  * Git does, includes and conditions among it, and stamps the files it read whole), and a fresh one otherwise, which the
- * routers that ask after it share. A router keeps the matcher it was given until it asks again, as a lane of its opens
- * where a lane of its own opened its own matcher.
+ * routers that ask after it share. A router that did not hold the shared matcher gets it with the Git index read again
+ * at its next question, as a matcher it opened would read it. A router keeps the matcher it was given until it asks
+ * again, as a lane of its opens where a lane of its own opened its own matcher.
  */
 import { loadNativeBinding, type NativeGitIgnoreMatcher } from "./native.js";
 
@@ -34,26 +35,30 @@ export class GitIgnoreMatchers {
    * a router's own open did. A user that asks again uses only the answer: it lets go of the matcher it held for `root`.
    */
   matcher(root: string, user: object): NativeGitIgnoreMatcher | null {
-    const shared = this.#unchangedCurrent(root) ?? this.#opened(root);
+    const shared = this.#unchangedCurrent(root, user) ?? this.#opened(root);
     this.#letGo(user, held => held.root === root && held !== shared);
     if (shared === undefined) return null;
     shared.users.add(user);
     return shared.matcher;
   }
 
-  /** `root`'s current matcher while it reads the rules a matcher opened now would. */
-  #unchangedCurrent(root: string): Shared | undefined {
+  /**
+   * `root`'s current matcher while it reads the rules a matcher opened now would. Handed to a user that does not hold it
+   * yet, it reads the Git index again at its next question, as a matcher that user opened would read it; a user
+   * that asks again keeps the index it reads by, as it kept its own matcher's.
+   */
+  #unchangedCurrent(root: string, user: object): Shared | undefined {
     const current = this.#current.get(root);
-    return current !== undefined && this.#unchanged(current) ? current : undefined;
+    return current !== undefined && this.#unchanged(current, !current.users.has(user)) ? current : undefined;
   }
 
   /**
    * Whether `shared` reads the rules a matcher opened now would. A check that fails reads as a change, and is said once
    * per checkout, as a failed open is: one that keeps failing gives each router a matcher of its own.
    */
-  #unchanged(shared: Shared): boolean {
+  #unchanged(shared: Shared, readIndexAgain: boolean): boolean {
     try {
-      return shared.matcher.sourcesUnchanged();
+      return shared.matcher.sourcesUnchanged(readIndexAgain);
     } catch (error) {
       if (!this.#checkFailed.has(shared.root)) {
         this.#checkFailed.add(shared.root);
