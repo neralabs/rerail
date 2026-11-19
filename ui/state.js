@@ -126,7 +126,7 @@ export const ui = {
   askIntent: "ask",
   /** History: the rule chosen (a `?rule=` link or a click); null shows the top-ranked one. */
   actRule: null,
-  /** History by rule's chip ("all", "steered", "logged"): which violations its list counts (`?outcome=`). */
+  /** History by rule's chip ("all", "logged" read Log only, "steered", "declined"): what it counts (`?outcome=`). */
   histOutcome: "all",
   /** Rule packs page: list or cards, and the pack whose Remove waits for its second click. */
   catView: "list",
@@ -174,8 +174,11 @@ export function sinceFor(range = ui.range) {
 
 const RANGE_LABEL = { 0: "today", 7: "in the last 7 days", 30: "in the last 30 days" };
 export const rangeLabel = () => RANGE_LABEL[ui.range] ?? "since install";
+/** The range on its own, as a count's caption reads it: "last 7 days" under "6 logged". */
+const RANGE_CAPTION = { 0: "today", 7: "last 7 days", 30: "last 30 days" };
+export const rangeCaption = () => RANGE_CAPTION[ui.range] ?? "since install";
 
-const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 };
+const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, declinedViolations: 0, declinedLoggedViolations: 0, rerails: 0 };
 export const activityOf = id => data.activity[id] ?? NONE;
 export const activityAllOf = id => data.activityAll[id] ?? NONE;
 export const isMeasured = id => activityOf(id).measured !== false;
@@ -235,8 +238,8 @@ export const packGroups = pack => [...new Set(pack.rules.map(r => r.group))];
 /** The folder set-up adds a pack in: its folder in `recommendations` (fetched for the write's scope), else the whole repository. */
 export const packFolder = (recommendations, id) => recommendations.find(r => r.packId === id)?.folder ?? "";
 
-/** The row title: the pack's plain title when the rule comes from one, else the rule's own. */
-export const titleOf = stored => packRuleOf(stored.rule.id)?.rule.title ?? ruleTitle(stored);
+/** The row title: the rule's own title; else the pack's plain title when the rule comes from one; else the rule's fallback. */
+export const titleOf = stored => (stored.rule.title?.trim() ? ruleTitle(stored) : packRuleOf(stored.rule.id)?.rule.title ?? ruleTitle(stored));
 
 const haystacks = new WeakMap();
 /** Text the search box runs over: title, id, description, scope, pack and group. */

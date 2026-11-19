@@ -85,7 +85,7 @@ describe("rule approvals", () => {
   it("approves a person's own write of a rule created by you, and leaves a coding agent's new rule waiting", async () => {
     const rule = (id: string, message: string) => ({
       kind: "code", attach: true, repository: repositoryKey,
-      rule: { format: "rerail.policy/v1", id, revision: 1, mode: "steer", clauses: [{ id: "c", violation: { anchor: "witness.span", code: "X", message }, forbid: { regex: { pattern: "x", source: "file.content" } } }] },
+      rule: { format: "rerail.policy/v1", id, revision: 1, mode: "steer", title: "No x", clauses: [{ id: "c", violation: { anchor: "witness.span", code: "X", message }, forbid: { regex: { pattern: "x", source: "file.content" } } }] },
     });
     expect(await send("PUT", "/api/library-rules/mine", rule("mine", "Remove x."))).toMatchObject({ status: 200 });
     await asAgent("library_rules_upsert", { id: "agents", ...rule("agents", "Remove x.") });

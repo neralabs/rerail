@@ -111,7 +111,7 @@ describe("rule settings: suppressions and config", () => {
     expect(attached).toMatchObject({ status: 200, body: { note: BLOCK_STEERS_NOTE } });
 
     const rule = {
-      format: "rerail.policy/v1", id: "acme:no-eval", revision: 1, mode: "block", description: "No eval.",
+      format: "rerail.policy/v1", id: "acme:no-eval", revision: 1, mode: "block", title: "No eval", description: "No eval.",
       scope: { include: ["**/*.ts"], exclude: [] },
       clauses: [{ id: "no-eval", forbid: { regex: { pattern: String.raw`\beval\(`, source: "file.content" } }, violation: { anchor: "witness.span", code: "NO_EVAL", message: "No eval." } }],
     };
@@ -121,7 +121,7 @@ describe("rule settings: suppressions and config", () => {
 
   it("refuses every write that puts a rule on Block while Block mode is off, and keeps a rule already on Block through edits", async () => {
     const rule = (id: string, message: string) => ({
-      format: "rerail.policy/v1", id, revision: 1, mode: "block", description: "No eval.",
+      format: "rerail.policy/v1", id, revision: 1, mode: "block", title: "No eval", description: "No eval.",
       scope: { include: ["**/*.ts"], exclude: [] },
       clauses: [{ id: "no-eval", forbid: { regex: { pattern: String.raw`\beval\(`, source: "file.content" } }, violation: { anchor: "witness.span", code: "NO_EVAL", message } }],
     });

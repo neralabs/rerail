@@ -115,3 +115,30 @@ fn json_rules_any_catch_all_holds_only_where_earlier_fails() {
     let guarded = "unset(MV), count : { !kind(c1, \"type_identifier\"),node(_, c1, _, _, _), MV_E0 = c1 } = 0";
     assert!(rr.contains(guarded), "the catch-all alternative is guarded:\n{rr}");
 }
+
+/// A JSON tool-call rule (a conversation rule on a coding agent's tool calls) translates to a `.scope tool_calls`
+/// policy (`docs/rule-syntax/tool-calls.md`) that finds what the JSON rule finds on its pack's examples, sampled as pack
+/// validation samples a `tool:*` rule's (`conformance/pack-validation.ts`: a Bash call, its `command` the text): the
+/// caught command of `rerail-pack-data-through-publish` is a finding at its call, its passes command none. The
+/// translation had no `.violation` before tool calls were an input of the language, and `run-policies` refused it.
+#[test]
+fn json_tool_call_rule_finds_its_examples() {
+    let id = "rerail-pack-data-through-publish";
+    let pack: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(repo().join("packs/rerail/pack.json")).unwrap()).unwrap();
+    let examples = &pack["rules"].as_array().unwrap().iter().find(|r| r["id"] == id).expect("the rule in its pack")["examples"];
+    let dir = tempfile::tempdir().unwrap();
+    let policy = dir.path().join(format!("{id}.rerail"));
+    let text = super::Translator::new().translate_file(&repo().join(format!("packs/rerail/rules/{id}.json"))).unwrap();
+    std::fs::write(&policy, &text).unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    let calls = ["caught", "passes"].map(|side| serde_json::json!({"id": side, "tool": "Bash", "input": {"command": examples[side]["text"]}}));
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &dir.path().join("out"), &serde_json::json!({ "toolCalls": calls })).unwrap();
+    let found: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["code"].clone(), d["path"].clone(), d["line"].clone(), d["at"].clone())).collect();
+    assert_eq!(found, [(serde_json::json!(id), serde_json::json!(""), serde_json::json!(0), serde_json::json!("caught"))], "{text}");
+    assert!(text.contains(".scope tool_calls") && text.contains(&format!(".violation rerail_pack_data_through_publish(at: symbol) code \"{id}\"")), "{text}");
+    // A form no shipped tool-call rule uses is named, not dropped.
+    let eq = r#"{"id": "x", "mode": "steer", "match": {"field": "input.command", "eq": "ls"}, "sample": {"source": "tool:*", "boundary": "tool-call"}, "action": {"content": "no"}}"#;
+    let refused = super::Translator::new().translate_text(eq, "x").unwrap_err();
+    assert!(refused.contains("not translated"), "{refused}");
+}

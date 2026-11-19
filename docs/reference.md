@@ -212,6 +212,8 @@ Rerail sends notes nowhere. To share them with Nera, attach `rerail feedback lis
 
 The dashboard's History by session shows each note on the steer it answers: the card reads Declined beside Steered, with the agent's reason, and the session's row and header count declined steers. A note keeps no audit, so the steer is the latest audit in the note's session that steered the rule and started before the note. A steer with no note is not shown as followed: an agent can decline without recording why.
 
+History by rule counts each of a rule's violations once, in one of three outcomes: Log only (recorded on Log, so the agent was not told), Steered (sent to the agent), or Declined (a steer a note answered). Every violation is logged; a declined one counts as declined only, even when another audit recorded it on Log. Its All · Log only · Steered · Declined chips rank the rules by one outcome, each rule's row says in red how many it had declined, and each violation shows its outcome, a declined one with the agent's reasons. The counts are per violation, but each row in the list is one sighting and shows that sighting's outcome: a violation whose steer was declined and that a later audit recorded on Log shows a Declined row and a Log only row, and counts once, as declined.
+
 <details>
 <summary>What is recorded and printed</summary>
 
@@ -809,8 +811,8 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `rerail rules test --help` prints the format; [Writing rules](writing-rules.md#testing-a-draft) explains each field.
 
 - `rerail rules show <rule id> [--repo <dir>]` prints a rule as a draft: one of yours, or a By Rerail rule as this repository runs it (the option values and mode the repository's settings give it, not a checkout's). A note on stderr, so stdout saves as a draft file, says where saving changes it: your rule here and in which other repositories, or that it is not added here; for a By Rerail rule, your copy, the copy this repository already has, or that the rule is not added or is off here (a copy would run on).
-- `rerail rules test` validates a draft, runs its cases and a repository pass over the folders `rules add` would add the rule at, and writes nothing. It says where `rules add` would refuse the draft.
-- `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
+- `rerail rules test` validates a draft, runs its cases and a repository pass over the folders `rules add` would add the rule at, and writes nothing. It says where `rules add` would refuse the draft, a draft without a `title` included; a worktree's rule file on its own is checked as it loads, with no title needed.
+- `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). It refuses a rule without a `title`, the rule in your own words that the dashboard lists it by. A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
 - The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)).
 
 <details>
