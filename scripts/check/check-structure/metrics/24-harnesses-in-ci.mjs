@@ -21,6 +21,9 @@
 // Exemption `workbench-samples` (the `.rerail` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they
 // are"): a scenario of the workbench's explorer (`docs/rule-syntax/site/explorer/scenarios/`) holds the sample source
 // a rule is shown on, named as the code it stands for (`test_parse.py` for a pytest rule); nothing runs it.
+// Exemption `rule-cases` (the same workbench): a pack rule's cases (`docs/rule-syntax/packs/<pack>/cases/<rule>/`) are
+// the small repository its `.test` blocks read (`.fixture … from`), named as the code they stand for
+// (`shop/tests/test_views.py`, a Django test module a rule leaves alone); the engine reads them, nothing runs them.
 // Rust tests run through `cargo test`, which is outside this metric.
 
 import { posix } from "node:path";
@@ -34,6 +37,8 @@ export const WORKFLOW = ".github/workflows/ci.yml";
 
 /** Exemption `workbench-samples`. */
 const WORKBENCH_SAMPLES = "docs/rule-syntax/site/explorer/scenarios/";
+/** Exemption `rule-cases`. */
+const RULE_CASES = /^docs\/rule-syntax\/packs\/[^/]+\/cases\//;
 
 /** The interpreters a command may name by an absolute path. */
 const INTERPRETERS = new Set(["node", "tsx", "python", "python3", "bash", "sh"]);
@@ -217,7 +222,7 @@ export function filesRun(repo, record, testFiles) {
 }
 
 export function check(repo) {
-  const testFiles = repo.files.filter((path) => isTestFile(path) && !isDataPath(path) && !path.startsWith(WORKBENCH_SAMPLES));
+  const testFiles = repo.files.filter((path) => isTestFile(path) && !isDataPath(path) && !path.startsWith(WORKBENCH_SAMPLES) && !RULE_CASES.test(path));
   const { reached, harnessScripts } = analyse(repo);
   const ranTests = new Set(reached.flatMap((record) => filesRun(repo, record, testFiles)));
   const ranEntries = new Set(reached.filter((record) => record.kind === "file").map((record) => record.path));
