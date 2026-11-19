@@ -599,6 +599,11 @@ Progress (2026-11-18):
     surface a pass picks between. `Pipeline` is the `pass` wrapper: it takes each step's span, writer form, delta and
     trace. Of 139 `Placed::whole` calls, 4 wrap a builder just finished, so `freeze -> Placed` would change only
     those; not made.
+  - *Measured (dl1, after).* At a26e71b5d, profiling build, the 44-policy batch, images required, CPU, strict, an
+    M3 farm host at load 40-50: 48 findings, as every earlier dl1 run recorded; cold 81.7 G instructions (13.9 s), warm
+    5.7 G then 3.3 G. The last number recorded before stage 6 (t36, 2026-11-15: 171-179 G cold, 4.5-5 G warm) spans
+    many other commits and another host, so the difference is not stage 6's alone. The outputs are no longer `.csv`,
+    so t36's digest of them does not carry over; the findings count is the comparison.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 
