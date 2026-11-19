@@ -386,7 +386,13 @@ The plan, in three parts:
    `final-rerail-shape-rr-align` and not yet here. Then the warm path reads it in place of the FTS index's kinds
    for format 16 tapes, and fields too.
 
-Next: step 6, part 1.
+**Done (2026-11-18): part 1, and part 2's clauses.** Every producer's writer is asked for each block's presence, and
+`TapeImage::presence` keeps it (the lean parsers, `.rr`, the walk, simdjson, and the conversion from format 15 by
+`f16::write_from_with_presence`). `evaluate_document` rules out a clause none of whose root kinds the document's
+presence holds (`TapeDoc::may_have_kind`; an error root is always possible) before its anchor index is built:
+`a_clause_whose_root_kinds_the_presence_lacks_does_not_run`.
+
+Next: step 6, part 2's blocks (a walk for a clause's roots passes over the blocks that hold none of them).
 
 ## Requirements, each with its test
 

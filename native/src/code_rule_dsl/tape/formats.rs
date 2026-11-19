@@ -191,7 +191,7 @@ impl Code {
 /// its code (`number`): `None` where the run stores format 15, or the language has no format 16 table (said once).
 fn sixteen(language: GrammarDialect, number: impl Fn(&'static Lang, u32) -> Option<u32> + Send + Sync + 'static) -> Option<rerail_tape_format::Sixteen> {
     let (lang, tag, z) = run_16(language)?;
-    Some(rerail_tape_format::Sixteen { lang, tag, z, blocks: false, number: Arc::new(move |key| number(lang, key)) })
+    Some(rerail_tape_format::Sixteen { lang, tag, z, blocks: true, number: Arc::new(move |key| number(lang, key)) })
 }
 
 /// The language's format 16 table, its tag and whether the run stores 16z: `None` where the run stores format 15, or
@@ -231,7 +231,7 @@ impl TreeOps {
     /// run stores format 15 (`run_16`).
     pub(super) fn of_run(language: GrammarDialect, source: &[u8], nodes: usize) -> Option<Self> {
         let (lang, tag, z) = run_16(language)?;
-        let w = f16::Writer::new(lang, source, tag, z, false, nodes);
+        let w = f16::Writer::new(lang, source, tag, z, true, nodes);
         Some(TreeOps { language, lang, tag, w, ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
     }
 
@@ -270,11 +270,11 @@ impl TreeOps {
     }
 
     /// The tape, or `None` where the nodes are not a format 16 tape (said once a language).
-    pub(super) fn finish(self) -> Option<f16::Written> {
+    pub(super) fn finish(self) -> Option<f16::Finished> {
         let why = match self.bad {
             Some(why) => why,
             None => match self.w.finish() {
-                Ok(f) => return Some(f.tape),
+                Ok(f) => return Some(f),
                 Err(e) => e,
             },
         };
@@ -344,7 +344,7 @@ impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
         let language = self.grammar.lang;
         if let Some(t) = &self.target {
             match w.finish_16()? {
-                Ok(f) => return Ok(TapeImage::written_16(f.tape, language, self.source, None, self.budget)),
+                Ok(f) => return Ok(TapeImage::written_16(f, language, self.source, None, self.budget)),
                 Err(e) => keeps_15(language, t.tag, &e),
             }
             // The window gave back the nodes passed on: the parse runs again for format 15 (`again`).
@@ -388,29 +388,32 @@ impl TapeImage {
         // One pass over format 15's columns, to format 16 or straight to 16z's blocks.
         #[cfg(any(test, feature = "test-hooks"))]
         CONVERTED.set(CONVERTED.get() + 1);
-        let held = match f16::write_from(lang, &F15::over(c.laid_out().0, c.view(self.source_len), table), &number, source, tag, format == Format::F16Z) {
-            Ok(f16::Written::F16(t)) => Held::F16(Arc::new(t)),
-            Ok(f16::Written::F16Z(t)) => Held::F16Z(Arc::new(t)),
+        let f = match f16::write_from_with_presence(lang, &F15::over(c.laid_out().0, c.view(self.source_len), table), &number, source, tag, format == Format::F16Z) {
+            Ok(f) => f,
             Err(e) => {
                 keeps_15(self.language, tag, &e);
                 return self;
             }
         };
-        Self { held, ..self }
+        let held = match f.tape {
+            f16::Written::F16(t) => Held::F16(Arc::new(t)),
+            f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
+        };
+        Self { held, presence: Some(Arc::new(f.presence)), ..self }
     }
 
-    /// A lean parser's tape written in format 16 or 16z (`lean`), with its source's digest: `digest`, where the parse
-    /// computed it (simdjson's kernels), else computed here.
-    pub fn written_16(written: f16::Written, language: GrammarDialect, source: &str, digest: Option<[u8; 32]>, budget: &dyn Fn() -> bool) -> Result<Self, String> {
+    /// A lean parser's tape written in format 16 or 16z (`lean`), with its presence and its source's digest: `digest`,
+    /// where the parse computed it (simdjson's kernels), else computed here.
+    pub fn written_16(written: f16::Finished, language: GrammarDialect, source: &str, digest: Option<[u8; 32]>, budget: &dyn Fn() -> bool) -> Result<Self, String> {
         let digest = match digest {
             Some(d) => d,
             None => super::source_digest(source, &budget)?,
         };
-        let held = match written {
+        let held = match written.tape {
             f16::Written::F16(t) => Held::F16(Arc::new(t)),
             f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
         };
-        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest) })
+        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest), presence: Some(Arc::new(written.presence)) })
     }
 
     /// The language's table, where the image is held in format 16.
@@ -427,7 +430,7 @@ impl TapeImage {
 /// writer, as `lean` writes the other languages', else format 15's image.
 pub(super) enum RrTape {
     Image(Vec<u8>),
-    Written(f16::Written),
+    Written(f16::Finished),
 }
 
 /// The finish the `.rr` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
@@ -455,7 +458,7 @@ impl rerail_tape_format::Finish for Rr<'_> {
     fn finish<L: rerail_tape_format::Layout>(&mut self, mut w: Writer<L>) -> Result<RrTape, Redo> {
         if w.writes_16() {
             match w.finish_16()? {
-                Ok(f) => return Ok(RrTape::Written(f.tape)),
+                Ok(f) => return Ok(RrTape::Written(f)),
                 Err(e) => keeps_15(GrammarDialect::Rr, rerail_tape_format::RR_TAG, &e),
             }
             // As `Lean`'s: the parse runs again for format 15.

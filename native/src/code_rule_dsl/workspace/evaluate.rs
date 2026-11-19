@@ -1022,6 +1022,28 @@ fn clause_matchers(code_rule: &CompiledCodeRule, clause: usize) -> &[GrammarMatc
 /// which clauses run around them; its anchor index selects the roots; its scope tables join the
 /// file's, which hold every document's. Marks in `settled` the slots that ran to an answer.
 #[allow(clippy::too_many_arguments)]
+/// Whether the document may hold a root of `grammar`'s clause, by its presence (decision 0399 §4): a clause none of
+/// whose root kinds the document has matches nothing in it, and no anchor index is built for it.
+fn admits_presence(doc: &tape::TapeDoc, grammar: &GrammarMatcher) -> bool {
+    let admits = grammar.anchors.root_kinds().is_none_or(|kinds| kinds.iter().any(|&kind| doc.may_have_kind(kind)));
+    #[cfg(any(test, feature = "test-hooks"))]
+    if !admits {
+        PRESENCE_RULED_OUT.set(PRESENCE_RULED_OUT.get() + 1);
+    }
+    admits
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static PRESENCE_RULED_OUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The (clause, document) pairs this thread's presence tests ruled out, and the count restarted.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn take_presence_ruled_out() -> usize {
+    PRESENCE_RULED_OUT.replace(0)
+}
+
 fn evaluate_document(
     file: &mut FileState,
     code_rules: &[Arc<CompiledCodeRule>],
@@ -1063,6 +1085,7 @@ fn evaluate_document(
                 &errors
             };
             !file.failures.contains_key(&file.candidates.ast[slot])
+                && admits_presence(&doc, grammar)
                 && grammar.admits_source(text, read, &mut searched)
                 && gates.admit(grammar)
         })

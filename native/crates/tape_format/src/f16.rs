@@ -676,11 +676,11 @@ writer_ops!(reference::Writer<'_>);
 writer_ops!(ops::device::DeviceOps);
 
 pub fn write(lang: &Lang, n: usize, source: &[u8], tag: u8, z: bool, node: impl FnMut(usize) -> Node) -> Result<Written, String> {
-    write_with(Writer::new(lang, source, tag, z, false, n), n, node)
+    write_with(Writer::new(lang, source, tag, z, false, n), n, node).map(|f| f.tape)
 }
 
 /// `write` by `w`'s ops.
-pub(crate) fn write_with(mut w: impl WriterOps, n: usize, mut node: impl FnMut(usize) -> Node) -> Result<Written, String> {
+pub(crate) fn write_with(mut w: impl WriterOps, n: usize, mut node: impl FnMut(usize) -> Node) -> Result<Finished, String> {
     // The open nodes' subtree ends and ends.
     let mut ends: Vec<(usize, u64)> = Vec::with_capacity(64);
     for i in 0..n {
@@ -698,7 +698,7 @@ pub(crate) fn write_with(mut w: impl WriterOps, n: usize, mut node: impl FnMut(u
     while let Some((_, end)) = ends.pop() {
         w.close(end);
     }
-    w.finish().map(|f| f.tape)
+    w.finish()
 }
 
 const NONE: u32 = u32::MAX;
@@ -707,6 +707,11 @@ const NONE: u32 = u32::MAX;
 /// (`number`, by `t`'s code), in one pass (`write`): a tape a parser did not write in format 16 (decision 0293).
 pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Written, String> {
     write(lang, t.len(), source, tag, z, nodes_of(t, number))
+}
+
+/// `write_from`, with the tape's presence, the document's and each block's (§4).
+pub fn write_from_with_presence<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Finished, String> {
+    write_with(Writer::new(lang, source, tag, z, true, t.len()), t.len(), nodes_of(t, number))
 }
 
 /// `t`'s nodes in preorder, as `write` takes them.

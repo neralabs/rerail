@@ -111,7 +111,7 @@ fn encode_16(kernel: rerail_simdjson::Kernel, kinds: &rerail_simdjson::Kinds, va
     let src = source.as_bytes();
     let walk = |jsonc: bool| -> Result<(f16::Writer, [u8; 32], Option<String>), Refusal> {
         // About a node for every 8 bytes: the writer grows past it.
-        let mut w = f16::Writer::new(lang, src, tag, z, false, src.len() / 8 + 16);
+        let mut w = f16::Writer::new(lang, src, tag, z, true, src.len() / 8 + 16);
         let mut numbers: Vec<u32> = Vec::new();
         let mut bad: Option<String> = None;
         let digest = rerail_simdjson::events_with(kernel, src, kinds, jsonc, |codes, words| {
@@ -156,7 +156,7 @@ fn encode_16(kernel: rerail_simdjson::Kernel, kinds: &rerail_simdjson::Kinds, va
     let why = match bad {
         Some(why) => why,
         None => match w.finish() {
-            Ok(f) => return Ok(Some(TapeImage::written_16(f.tape, GrammarDialect::Json, source, Some(digest), budget))),
+            Ok(f) => return Ok(Some(TapeImage::written_16(f, GrammarDialect::Json, source, Some(digest), budget))),
             Err(why) => why,
         },
     };

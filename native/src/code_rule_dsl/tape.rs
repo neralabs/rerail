@@ -384,6 +384,10 @@ pub struct TapeImage {
     /// The source's SHA-256 where the image was encoded from it; not stored (v12), so `None` for
     /// an image read from bytes, whose store pairs it with its source.
     pub source_digest: Option<[u8; 32]>,
+    /// The kinds and fields the tape's nodes have, the document's and each block's, where a format 16 writer made the
+    /// image (decision 0399 §4): what a planner reads to leave out a clause the document cannot hold a root of. `None`
+    /// for format 15, or an image read from the store (the store does not keep it yet: 0399 step 6, part 3).
+    pub presence: Option<Arc<rerail_tape_format::f16::Presence>>,
 }
 
 /// A tape as held, in one format.
@@ -1302,7 +1306,7 @@ impl TapeImage {
             Held::F16Z(t) => t.source_len(),
             Held::F15(_) => unreachable!(),
         };
-        let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None };
+        let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None, presence: None };
         if image.node_count() == 0 {
             return Err("an empty tape".into());
         }
@@ -1312,7 +1316,7 @@ impl TapeImage {
     /// An image of format 15's columns (code, size, base, off, tail), laid out in one buffer.
     fn of15(columns: [&[u8]; 5], widths: [u8; 3], codes: Vec<Code>, kind_aliases: Vec<(String, bool)>, language: GrammarDialect, source_len: usize, source_digest: Option<[u8; 32]>) -> Self {
         let (bytes, at) = Columns15::laid(columns);
-        Self { held: Held::F15(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
+        Self { held: Held::F15(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest, presence: None }
     }
 
     /// The tape as held.
@@ -1479,7 +1483,7 @@ impl TapeImage {
                 start = padded(start + column.len());
             }
             let c = Columns15 { bytes: home.clone(), base: columns_at, at, widths, codes, kind_aliases, table: Default::default() };
-            return Ok(Self { held: Held::F15(c), language, source_len, source_digest: None });
+            return Ok(Self { held: Held::F15(c), language, source_len, source_digest: None, presence: None });
         }
         Ok(Self::of15(columns, widths, codes, kind_aliases, language, source_len, None))
     }
@@ -2781,6 +2785,13 @@ impl TapeDoc {
     pub fn transducer_kind(&self, node: u32) -> u16 {
         read!("kind");
         kind_of(self.entry(node))
+    }
+
+    /// Whether a node of the document may have kind `kind` (`transducer_kind`'s), by its image's presence (decision
+    /// 0399 §4), read before any node is: `false` only where the writer saw no node of that kind. An error node's
+    /// kind is `ERROR_SYMBOL`, which no presence holds, so it is always possible.
+    pub fn may_have_kind(&self, kind: u16) -> bool {
+        kind == ERROR_SYMBOL || self.image.presence.as_ref().is_none_or(|p| p.has_kind(kind))
     }
 
     fn node_is_named(&self, node: u32) -> bool {

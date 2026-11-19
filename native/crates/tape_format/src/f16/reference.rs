@@ -601,7 +601,7 @@ fn part_into(out: &mut Vec<u8>, e: &[(u16, u64)], nb: usize, vw: usize) {
 
 /// `f16::write_from` by the reference writer.
 pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Written, String> {
-    write_with(Writer::new(lang, source, tag, z, false, t.len()), t.len(), nodes_of(t, number))
+    write_with(Writer::new(lang, source, tag, z, false, t.len()), t.len(), nodes_of(t, number)).map(|f| f.tape)
 }
 
 impl Tape16 {

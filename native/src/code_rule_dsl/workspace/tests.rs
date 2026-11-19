@@ -2641,6 +2641,45 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
     }
 }
 
+/// Decision 0399 §4, step 6: a clause none of whose root kinds the document's presence holds is ruled out before any
+/// node is read; a clause whose root kinds it holds runs as before.
+#[test]
+fn a_clause_whose_root_kinds_the_presence_lacks_does_not_run() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let capabilities = json!({
+        "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
+            "languages": { "python": "tree-sitter-python@0.23" } },
+        "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
+            "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
+            "maxVisitedNodes": 100000, "maxWitnesses": 10000 }
+    });
+    let clause = |id: &str, kind: &str| json!({
+        "id": id, "violation": { "anchor": "witness.span", "code": id.to_uppercase(), "message": id },
+        "forbid": { "ast": { "language": "python", "rule": { "kind": kind } } }
+    });
+    let code_rule = json!({
+        "format": "rerail.policy/v1", "id": "presence", "revision": 1, "mode": "steer",
+        "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [clause("classes", "class_definition"), clause("calls", "call")]
+    });
+    let compiled = CodeRuleDslRuntime::compile(code_rule.to_string(), "json".into(), capabilities.to_string()).unwrap();
+    let file = json!({ "path": "sample.py", "language": "python", "source": "x = f(1)\n" });
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&compiled, None).unwrap();
+    super::evaluate::take_presence_ruled_out();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    let out: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+    assert_eq!(super::evaluate::take_presence_ruled_out(), 1, "the class clause is ruled out, the call clause is not");
+    let codes = out["evaluation"]["violations"].as_array().unwrap().iter().map(|v| v["code"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+    assert_eq!(codes, ["CALLS"], "{out}");
+}
+
 #[test]
 fn workspace_visits_grow_with_the_file_by_max_visits_per_node() {
     // The file of `roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace`, whose
