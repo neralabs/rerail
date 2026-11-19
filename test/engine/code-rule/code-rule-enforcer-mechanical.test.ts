@@ -772,6 +772,65 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   });
 
+  it("checks a tool call's edit in one engine call with a walk's batch that holds an ignore file, where a rule counts matches across files", async () => {
+    const { recorder, audits, finished } = recordingAudits();
+    const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [needleBudgetRule()] });
+    const loggedDoneAtSteer: number[] = [];
+    requestSteer.mockImplementation(async () => { loggedDoneAtSteer.push(finished.filter(path => path !== "api/a_own.py").length); });
+    // An ignore file makes the engine read its folder's sources again. Queued last, a check of one edit at a time up to
+    // it would hold the tool call's edit behind every log edit.
+    const logged = [...LOGGED, "api/z_other.py", "api/.gitignore"];
+    const text = (path: string) => (path === "api/z_other.py" ? "NEEDLE\n" : path === "api/.gitignore" ? "*.log\n" : "safe()\n");
+    const language = (path: string) => (path === "api/.gitignore" ? "text" as const : "python" as const);
+    try {
+      for (const path of logged) await writeFile(join(root, path), text(path));
+      await writeFile(join(root, "api/a_own.py"), "NEEDLE\n");
+      await enforcer.openWorkspace("ignore-file");
+      await enforcer.auditGeneratedEdits("ignore-file", {
+        revision: 1, checkpoints: ["edit"], mode: "log", edits: logged.map(path => ({ path, language: language(path), generatedText: text(path) })),
+      });
+      await enforcer.auditGeneratedEdits("ignore-file", {
+        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/a_own.py", language: "python", generatedText: "NEEDLE\n" }],
+      });
+      await settled(enforcer);
+      const steered = requestSteer.mock.calls.flatMap(([, , , metadata]) => metadata?.generatedEdit?.violations ?? []);
+      expect(steered.map(violation => `${violation.code}@${violation.path}`)).toContain("BUDGET@api/a_own.py");
+      expect(loggedDoneAtSteer).toHaveLength(1);
+      expect(loggedDoneAtSteer[0]).toBeLessThan(2);
+      expect([...audits.values()].every(audit => audit.result?.status === "completed")).toBe(true);
+    } finally { await enforcer.close(); }
+  });
+
+  // The one state where a steer can still come later than on main: another session's checks hold the engine past the
+  // result's one-second wait. What may not get worse: the tool call's own finding is in the Log as soon as it is checked,
+  // before its steer goes out and while the log edits queued ahead of it are still being checked.
+  it("records a tool call's finding before its steer goes out, while the log edits queued ahead of it are still being checked", async () => {
+    const { recorder, audits, finished } = recordingAudits();
+    const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [needleBudgetRule()] });
+    const atSteer: Array<{ own: string[]; loggedDone: number }> = [];
+    requestSteer.mockImplementation(async () => {
+      const own = auditForPath(audits, "api/a_own.py")?.result?.violations ?? [];
+      atSteer.push({ own: own.map(violation => `${violation.code}@${violation.path}`), loggedDone: finished.filter(path => path !== "api/a_own.py").length });
+    });
+    const logged = [...LOGGED, "api/z_other.py"];
+    const text = (path: string) => (path === "api/z_other.py" ? "NEEDLE\n" : "safe()\n");
+    try {
+      for (const path of logged) await writeFile(join(root, path), text(path));
+      await writeFile(join(root, "api/a_own.py"), "NEEDLE\n");
+      await enforcer.openWorkspace("recorded-first");
+      await enforcer.auditGeneratedEdits("recorded-first", {
+        revision: 1, checkpoints: ["edit"], mode: "log", edits: logged.map(path => ({ path, language: "python" as const, generatedText: text(path) })),
+      });
+      await enforcer.auditGeneratedEdits("recorded-first", {
+        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/a_own.py", language: "python", generatedText: "NEEDLE\n" }],
+      });
+      await settled(enforcer);
+      expect(atSteer).toHaveLength(1);
+      expect(atSteer[0]!.own).toContain("BUDGET@api/a_own.py");
+      expect(atSteer[0]!.loggedDone).toBeLessThan(logged.length);
+    } finally { await enforcer.close(); }
+  });
+
   it("limits AI-output reporting to disjoint changed ranges with UTF-8 byte offsets", async () => {
     const { enforcer, requestSteer } = await fixture({ scope: "ai-output" });
     try {

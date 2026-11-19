@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AdapterDelivery,
+  type CodeRuleAuditor,
   type CodeRuleViolation,
   type RuleSteerDelivery,
   CodeRuleBridge,
@@ -460,6 +461,10 @@ describe("Rerail tool results waiting for their edit's check", () => {
     const checking = Promise.withResolvers<void>();
     const steered = Promise.withResolvers<void>();
     const checks: Promise<void>[] = [];
+    // A walk of the other worktrees queues `log` batches, which steer no one: their checks end once the test opens `walk`.
+    const walk = Promise.withResolvers<void>();
+    const walkChecks: Promise<void>[] = [];
+    let auditor: CodeRuleAuditor | undefined;
     const runtime = new RerailRuntime({
       autostart: false,
       workspaceRoot: root,
@@ -469,11 +474,15 @@ describe("Rerail tool results waiting for their edit's check", () => {
         fingerprint: () => ({ modelId: "test", revision: "1", dimensions: 2, weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1 }),
         embed: async texts => texts.map(() => new Float32Array([1, 0])),
       },
-      createAuditor: ({ steerDelivery }) => ({
+      createAuditor: ({ steerDelivery }) => (auditor = {
         openWorkspace: async () => undefined,
         // As rules without a text clause: the session's own files under `sessions/` are no sources.
         acceptsPath: path => languageFor(path) !== undefined,
         auditGeneratedEdits: async (sessionId, batch) => {
+          if (batch.mode === "log") {
+            walkChecks.push(walk.promise);
+            return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+          }
           const violations = batch.edits.filter(edit => edit.generatedText?.includes("bad")).map(edit => finding(edit.path));
           checks.push((async () => {
             await check.promise;
@@ -488,9 +497,10 @@ describe("Rerail tool results waiting for their edit's check", () => {
           })());
           return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
         },
-        settleGeneratedEdits: async () => {
+        // With `steering`, the edits that may steer only: a walk's `log` checks are not waited for.
+        settleGeneratedEdits: async only => {
           checking.resolve();
-          await Promise.all(checks);
+          await Promise.all(only === "steering" ? checks : [...checks, ...walkChecks]);
         },
         close: async () => undefined,
       }),
@@ -515,7 +525,13 @@ describe("Rerail tool results waiting for their edit's check", () => {
       return { answering: runtime.ingest({ kind: "result", eventId: `result-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: tool, output: output(path) }) };
     };
     const turnEnd = (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, session, text: "" });
-    return { runtime, root, session, check, checking, steered, edit, lateEdit, turnEnd };
+    /** A walk's `log` batch of `b.ts`, queued ahead of whatever the session edits next. */
+    const walkQueued = async () => {
+      await auditor!.auditGeneratedEdits(session.sessionId, {
+        revision: 0, checkpoints: ["edit"], mode: "log", edits: [{ path: "b.ts", language: "typescript", generatedText: "export const b = 1;\n" }],
+      });
+    };
+    return { runtime, root, session, check, checking, steered, edit, lateEdit, turnEnd, walk, walkQueued };
   }
 
   /** `a.ts`'s finding as a steer renders it, and the digest that lists it at the end of the agent's run. */
@@ -529,6 +545,47 @@ describe("Rerail tool results waiting for their edit's check", () => {
       check.resolve();
       expect((await answering).map(delivery => delivery.content)).toEqual([STEER]);
     } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("answers a tool call's result with its edit's steer while a walk's log edits queued ahead of it are still being checked", async () => {
+    const { runtime, check, edit, walk, walkQueued } = await hookSession();
+    try {
+      await walkQueued();
+      const { answering } = await edit("t1", BAD);
+      check.resolve();
+      expect((await answering).map(delivery => delivery.content)).toEqual([STEER]);
+    } finally {
+      walk.resolve();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
+  // The one state where a steer can still come later than on main: the edit's check outlasts the result's one-second
+  // wait while a walk's log edits are checked. What may not get worse: the steer rides the agent's next tool call.
+  it("steers an edit whose check outlasts the result's wait at the agent's next tool call, a walk's log edits still being checked", async () => {
+    const { runtime, root, session, check, checking, steered, edit, walk, walkQueued } = await hookSession();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await walkQueued();
+      const { answering } = await edit("t1", BAD);
+      await checking.promise;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await answering).toEqual([]);
+      vi.useRealTimers();
+
+      check.resolve();
+      await steered.promise;
+      const next = await runtime.ingest({
+        kind: "call", eventId: "call-t2", sessionId: session.sessionId, session, toolCallId: "t2", toolName: "Read", input: { file_path: join(root, "a.ts") },
+      });
+      expect(next.map(delivery => delivery.content)).toEqual([STEER]);
+    } finally {
+      vi.useRealTimers();
+      walk.resolve();
+      check.resolve();
       await runtime.dispose();
     }
   });

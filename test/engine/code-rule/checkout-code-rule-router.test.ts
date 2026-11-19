@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { SqliteAuditReader } from "../../../src/engine/audit/audit-store.js";
@@ -665,6 +666,23 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await auditor.auditGeneratedEdits("log-batch", { revision: 2, checkpoints: ["edit"], edits });
     await auditor.settleGeneratedEdits();
     expect(requestSteer).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes a tool call's wait for the edits that may steer on to each lane's evaluator", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    await auditor.openWorkspace("steering-wait");
+    const edits = [join(session, "api", "x.py"), join(worktree, "api", "y.py")].map(path => ({ path, language: "python" as const, generatedText: "NEEDLE\n" }));
+    await auditor.auditGeneratedEdits("steering-wait", { revision: 1, checkpoints: ["edit"], edits });
+    const settle = vi.spyOn(NativeCodeRuleEnforcer.prototype, "settleGeneratedEdits");
+    try {
+      await auditor.settleGeneratedEdits("steering");
+      // A walk's log edits in a lane steer no one: a lane told to wait for every edit would hold the result for them.
+      expect(settle.mock.calls).toEqual([["steering"], ["steering"]]);
+    } finally {
+      settle.mockRestore();
+    }
   });
 
   it("keeps the stopped value a worktree outside the checkout has of its own", async () => {
