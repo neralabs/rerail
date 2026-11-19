@@ -2825,7 +2825,15 @@ submitted" now hold device memory at once.
     `profile::carried` names such pieces only on a thread with no span open, the case that misses a steal. The
     fix: `carried` opens its span when the thread's top span is not the caller's, and the heavy par_iters
     (`Searchers::evaluate`, `runs::sort_unstable_par`'s callers) run through it, by pieces, not items.
-  - (accounting) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
+  - (3, accounting fixed, 7562bf8a94; ab74: M3, t67, profiled, chunks forced to 52,000 and 28,600 nodes) 659.2 G /
+    11 chunks against 695.4 G / 16: ~7 G a chunk. Own CPU 60.6 -> 66.3 s (+5.7 s; the text tests' pieces now
+    0.01-0.03 s, charged apart). The growth by kind: per-stratum setup +2.68 s (the stratum wrappers +1.40, spec
+    +0.27, statistics and plan +0.15, open +0.08, ...: ~0.05 ms a stratum run, calls +40% with the chunks), joins
+    +2.07 s (+16,120 runs, 0.11 ms a run; native.tsv's big runs 15% slower at the same count, the host's load 73 ->
+    85: part load), per-chunk other +0.68, outside chunks +0.27. So (ii), the per-chunk per-stratum work made once a
+    run, is about half a chunk's cost, not the 5% ab68's misattributed profiles gave; the joins' own per-run setup
+    is the next part.
+  - (accounting, before 7562bf8a94) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
     only `help_once`.
