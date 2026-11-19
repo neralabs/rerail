@@ -24,7 +24,7 @@ use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::plan::KeptStrata;
 use super::retain::kept_read::Bound;
 use crate::content_store::kept_facts::{KeptPut, KeptWhat};
-use crate::content_store::{ContentStore, FrameRel, FrameStored};
+use crate::content_store::{ContentStore, KeptRel, KeptStored};
 use sha2::{Digest as _, Sha256};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -61,13 +61,13 @@ pub(in crate::code_rule_dsl) fn cross_space(root: &Path) -> [u8; 32] {
 }
 
 /// What a space keeps of `rels` at partition `part`: each entry's digest and reads.
-fn stored_of(bound: Option<&Arc<Bound>>, rels: &[FrameRel], part: i64) -> HashMap<FrameRel, FrameStored> {
+fn stored_of(bound: Option<&Arc<Bound>>, rels: &[KeptRel], part: i64) -> HashMap<KeptRel, KeptStored> {
     let Some(b) = bound else { return HashMap::new() };
-    rels.iter().filter_map(|r| b.entry(&r.name, &r.ident, part).map(|e| (r.clone(), FrameStored { digest: e.digest(), reads: e.reads() }))).collect()
+    rels.iter().filter_map(|r| b.entry(&r.name, &r.ident, part).map(|e| (r.clone(), KeptStored { digest: e.digest(), reads: e.reads() }))).collect()
 }
 
 /// An entry of `n` rows, flat, of `types`' columns.
-fn flat_put(rel: &FrameRel, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>, n: usize) -> KeptPut {
+fn flat_put(rel: &KeptRel, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>, n: usize) -> KeptPut {
     KeptPut { rel: rel.name.clone(), ident: rel.ident, part: 0, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n }, types }
 }
 
@@ -75,9 +75,9 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     store: &'s ContentStore,
     space: [u8; 32],
     /// Each relation of the program, as its frame names it (`program`).
-    rels: HashMap<String, FrameRel>,
+    rels: HashMap<String, KeptRel>,
     /// What is stored of those relations.
-    was: HashMap<String, FrameStored>,
+    was: HashMap<String, KeptStored>,
     /// The space's kept blocks as the run read them (decision 0401 F3): a kept relation is bound from them.
     bound: Option<Arc<Bound>>,
     /// The inputs bound before the run, and those bound as their first reader runs (`loaded`, by the caller).
@@ -149,9 +149,9 @@ impl<'s> Kept<'s> {
 
 impl KeptStrata for Kept<'_> {
     fn program(&mut self, identities: &HashMap<String, [u8; 32]>) {
-        self.rels = identities.iter().map(|(name, ident)| (name.clone(), FrameRel { name: name.clone(), ident: *ident })).collect();
+        self.rels = identities.iter().map(|(name, ident)| (name.clone(), KeptRel { name: name.clone(), ident: *ident })).collect();
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the strata kept, from the store".into());
-        let rels: Vec<FrameRel> = self.rels.values().cloned().collect();
+        let rels: Vec<KeptRel> = self.rels.values().cloned().collect();
         // One commit of the space's blocks, read before the first wave: what the cut reads and the rows bound agree.
         self.bound = Bound::of(self.store, &self.space).ok().flatten();
         self.was = stored_of(self.bound.as_ref(), &rels, 0).into_iter().map(|(r, s)| (r.name, s)).collect();
@@ -235,7 +235,7 @@ pub(in crate::code_rule_dsl) struct Part {
     /// The program it is of (`retain::key`): the next run's `Retained` is of it.
     key: [u8; 32],
     /// Each relation and input of the program, as its frame names it, and what the store holds of it.
-    frames: HashMap<String, (FrameRel, Option<FrameStored>)>,
+    frames: HashMap<String, (KeptRel, Option<KeptStored>)>,
     /// The space's kept blocks as the run read them (decision 0401 F3).
     bound: Option<Arc<Bound>>,
     /// Each derived relation's inputs (`cone`).
@@ -296,10 +296,10 @@ pub(in crate::code_rule_dsl) fn load(
     let cones = cones(prog, sccs, &input_names)?;
     // The program's version, for its identities and its inputs' leaves.
     let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
-    let mut frames: HashMap<String, (FrameRel, Option<FrameStored>)> = leaves.identities_by_heads(sccs)?
+    let mut frames: HashMap<String, (KeptRel, Option<KeptStored>)> = leaves.identities_by_heads(sccs)?
         .into_iter()
         .filter(|(name, _)| name != "finding" && !input_names.contains(name.as_str()))
-        .map(|(name, ident)| (name.clone(), (FrameRel { name, ident }, None)))
+        .map(|(name, ident)| (name.clone(), (KeptRel { name, ident }, None)))
         .collect();
     // An input's rows are its program's: programs over the same root bind inputs of the same name to other rows
     // (P3's cross part and its loading cone, a phase), so its frame is under the program's key too: the key of
@@ -310,9 +310,9 @@ pub(in crate::code_rule_dsl) fn load(
         h.update(b"rerail.kept-input/v1\0");
         h.update(binds);
         h.update(leaf);
-        frames.insert(rel.clone(), (FrameRel { name: rel.clone(), ident: h.finalize().into() }, None));
+        frames.insert(rel.clone(), (KeptRel { name: rel.clone(), ident: h.finalize().into() }, None));
     }
-    let asked: Vec<FrameRel> = frames.values().map(|(f, _)| f.clone()).collect();
+    let asked: Vec<KeptRel> = frames.values().map(|(f, _)| f.clone()).collect();
     let bound = Bound::of(store, &space).map_err(|e| super::Error::Plan(e.to_string()))?;
     for (f, s) in stored_of(bound.as_ref(), &asked, 0) {
         if let Some(e) = frames.get_mut(&f.name) {

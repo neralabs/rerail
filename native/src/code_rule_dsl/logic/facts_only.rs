@@ -46,21 +46,13 @@ const FACT_STORE: &[&str] = &[
     "node",
     "tape",
     "node_type",
-    "frames",
     // A space's kept facts as blocks (decision 0401): which base and delta files it has.
     "facts_blocks",
-    "frame_spaces",
-    // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
-    "frame_confirmed",
-    "frame_part_used",
-    "frame_program_used",
-    "frame_used",
     // The per-file memo's entries (decision 0240 §4): where each one's bytes are in the pack beside the store, and the
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
     "memo_entries",
     "memo_packs",
-    // The segments frames and objects (sources, tapes) are in (decision 0295): files of their bytes, mapped.
-    "frame_segments",
+    // The segments objects (sources, tapes) are in (decision 0295): files of their bytes, mapped.
     "object_segments",
     // Each guest's key (decision 0391): an identity interned to its number, as `strings` and `hashes` are.
     "guest_keys",
@@ -359,11 +351,9 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
-    // The run each frame space last counted in this process, so a run's programs count it once.
-    ("content_store/frames.rs", "COUNTED"),
-    // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
-    // once before a run's first wave, not a cache of anything else.
-    ("content_store/frames.rs", "SNAPSHOTS"),
+    // The store's state as this process holds it, ahead of SQLite (decision 0104): the kept blocks' rows and the
+    // memo's admitted entries, read once before a run's first wave, not a cache of anything else.
+    ("content_store/held.rs", "SNAPSHOTS"),
     // The device's automata and test tables for regex and text stages, held while the thread runs (a command buffer
     // may read them).
     ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
@@ -409,7 +399,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "LISTED"),
     // The kept facts as this process holds them (decision 0401 F3, 0438): each space's blocks mapped, by store, space
     // and the row naming the files, read in place and mapped again when a commit changes the row. The facts
-    // themselves, as `SNAPSHOTS` holds the frames, not a cache of anything else.
+    // themselves, as `SNAPSHOTS` holds their rows, not a cache of anything else.
     ("code_rule_dsl/logic/plan/corpus/retain/kept_read.rs", "BOUND"),
     // Profiling: `RERAIL_HEAP_AT`'s text, and the trees a thread decoded from versions (a count).
     ("code_rule_dsl/logic/profile/memory.rs", "AT"),

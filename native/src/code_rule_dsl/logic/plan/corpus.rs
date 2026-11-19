@@ -2510,7 +2510,7 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     // The frames a keep decision leaves unreachable are a utility upkeep job's (decision 0227): one a process for the
     // store, finished at the outermost run's end (`upkeep::finish_soon`) if the scheduler has not run it.
     if collect {
-        crate::content_store::upkeep::Frames::register_once(store.database_path());
+        crate::content_store::upkeep::MemoSweep::register_once(store.database_path());
     }
     // `also`: the outer run's names its nested runs' plans too (`Report::plans`).
     let mut policy = crate::content_store::CorpusPolicy::default();
@@ -3831,7 +3831,7 @@ fn run_observed(
     let mut program_plans: Vec<[u8; 32]> = if durable.is_some() { prepared::plans(&prepared_key) } else { Vec::new() };
     // And the keys its maintained parts keep their frames under (the strata's and the cone's, `prepared_key`; the
     // cross part's and the rounds', `part_keys`, as they are made): a part's frames are kept while a kept manifest
-    // names its key (decision 0227, `collect_unreachable_frames`), not by the runs that used them.
+    // names its key (decision 0227, `collect_unreachable_memo`), not by the runs that used them.
     if durable.is_some() {
         program_plans.push(prepared_key);
     }
@@ -4789,7 +4789,7 @@ fn run_observed(
     let mut input_digests: HashMap<String, u64> = HashMap::new();
     // A semi-join's base relations' statistics (`semijoin`): no keeper counts them (it counts every row, the relation
     // holds those its exports name), so each run measured them, sorting every column (8 sorts of 430k-460k rows on
-    // an edit of ep2). Measured once at their rows, they are kept beside the input's frame (`write_input_frames`)
+    // an edit of ep2). Measured once at their rows, they are kept beside the input's frame (`write_input_kept`)
     // and read with it on the kept route (`kept_inputs`): by relation, the rows' digest and the statistics.
     let mut kept_input_stats: HashMap<String, (u64, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     let mut semijoin_stats: HashMap<String, Vec<(String, i64, i64, i64, i64)>> = HashMap::new();
@@ -5338,7 +5338,7 @@ fn run_observed(
     let run_docs_held: std::sync::Mutex<input_delta::Docs> = std::sync::Mutex::new(HashMap::new());
     let run_docs = &run_docs_held;
     // The cross program's strata identities, read with the cross part's frames (kept as a stored fact, before the
-    // first wave): what `Retained::from_frames` names its frames by.
+    // first wave): what `Retained::bind_kept` names its frames by.
     let mut cross_idents: Vec<(u64, retain::StrataIdents)> = Vec::new();
     // The run's waves: from its first chunk to the cross-file part's last stratum. SQL a wave's thread runs or waits on
     // meanwhile is a hazard in the profile (decision 0104); before is the run's beginning, after its end.
@@ -5350,7 +5350,7 @@ fn run_observed(
         // (`preload_kept_state`). The memo's entries are admitted below (decision 0240 §4).
         let preload_at = std::time::Instant::now();
         // The cross program's strata identities and the maintained one's the kept route made, which the part's
-        // entries are named by (`Retained::from_frames_named`), read as stored facts.
+        // entries are named by (`Retained::bind_kept_named`), read as stored facts.
         if let Some(maintained) = early_maintained.as_ref() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the cross part's strata identities".into());
             let progs = [cross.placed()?, maintained.placed()?];
@@ -7550,7 +7550,7 @@ fn run_observed(
             let mut from_rounds = None;
             if let (Some(r), Some(store), Some(key)) = (&round, &cone_handle, rounds_key) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the cone's rounds, from the frames".into());
-                let k = retain::Retained::from_frames(store, rounds_space, key, key, &r.placed, r.components(), &rounds_in.constant_digests(&store.atoms_handle(), &r.placed, &r.domains))?;
+                let k = retain::Retained::bind_kept(store, rounds_space, key, key, &r.placed, r.components(), &rounds_in.constant_digests(&store.atoms_handle(), &r.placed, &r.domains))?;
                 let missing = r.missing(&k);
                 if missing.is_empty() {
                     from_rounds = Some(k);
@@ -8824,8 +8824,8 @@ fn run_observed(
                 kept_part_on.then(Default::default);
             // A run with no session keeps its part in the frames (K4): held here for the run, read from them and
             // written back to them. (`kept_part` is t32 4.1's form of it, taken only with `RERAIL_CROSS_K4=off`.)
-            let from_frames: Option<std::sync::Mutex<HashMap<[u8; 32], retain::Retained>>> = (session.is_none() && k4).then(Default::default);
-            match session.as_ref().map(|s| &s.cross).or(kept_part.as_ref()).or(from_frames.as_ref()) {
+            let kept_cells: Option<std::sync::Mutex<HashMap<[u8; 32], retain::Retained>>> = (session.is_none() && k4).then(Default::default);
+            match session.as_ref().map(|s| &s.cross).or(kept_part.as_ref()).or(kept_cells.as_ref()) {
                 // A session's run evaluates the strata whose inputs changed, the others' rows kept (decision 0077).
                 Some(cell) => {
                     // A session maintains its cross-file part from the rows the last run kept: each relation is
@@ -8874,10 +8874,10 @@ fn run_observed(
                     // The phase's space (`kept_strata::space`): a relation two programs of one phase derive alike (its
                     // rules' identity) is one frame, kept once; phase 1's inputs and the pack's are in spaces apart.
                     let frames_space = kept_strata::space(root);
-                    if cell.is_none() && from_frames.is_some() {
+                    if cell.is_none() && kept_cells.is_some() {
                         let _s = span("the kept part, from the frames");
                         let strata = cross_idents.iter().find(|(d, _)| *d == cross_placed.digest()).map(|(_, s)| s);
-                        cell = Some(retain::Retained::from_frames_named(store, frames_space, ckey, binds, &cross_placed, &cross_sccs, &digests, strata)?);
+                        cell = Some(retain::Retained::bind_kept_named(store, frames_space, ckey, binds, &cross_placed, &cross_sccs, &digests, strata)?);
                         if let (Some(c), Some(k)) = (cell.as_mut(), kept_loaded.as_ref()) {
                             c.adopt_inputs(k);
                         }
@@ -8888,14 +8888,14 @@ fn run_observed(
                     }
                     // Decision 0117 step 4: a maintained run reads the kept rows where a stratum it reaches reads them.
                     let drive = cross_f.gates().is_empty() && std::env::var_os("RERAIL_MAINTAIN_WHOLE").is_none();
-                    if let Some(kept) = cell.as_mut().filter(|_| from_frames.is_some()) {
+                    if let Some(kept) = cell.as_mut().filter(|_| kept_cells.is_some()) {
                         if let Some((rels, rows)) = kept.load(store, &cut, &cross_placed, drive)? {
                             crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames (t33 K4)", || format!("{rels} relations' rows read ({rows} rows) for the strata that run"));
                         } else {
                             cut = retain::cut(None, ckey, &cross_placed, &cross_sccs, &digests)?;
                         }
                     }
-                    let was_frames = cell.as_ref().filter(|_| from_frames.is_some()).and_then(|k| k.frames().cloned());
+                    let was_kept = cell.as_ref().filter(|_| kept_cells.is_some()).and_then(|k| k.in_kept().cloned());
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
                     let s = span("bind unchanged inputs");
                     let same = cell.as_ref().map(|kept| kept.same_inputs(ckey, &digests)).unwrap_or_default();
@@ -9176,7 +9176,7 @@ fn run_observed(
                     // its inputs; a run that keeps some (a session's edit) keeps its inputs for the next (0094 §4).
                     // Never with the kept strata (`kept_strata::keep`, which writes each input as held): those need
                     // one fixpoint, the frames need K4.
-                    let hand_off = was_frames.is_some()
+                    let hand_off = was_kept.is_some()
                         && !spike
                         && std::env::var_os("RERAIL_CROSS_VERIFY").is_none()
                         && std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_none()
@@ -9187,8 +9187,8 @@ fn run_observed(
                     // The relations the driver derives again (`Maintain::no_delta`), as it reaches them.
                     let derived_again: std::cell::RefCell<BTreeSet<String>> = std::cell::RefCell::new(BTreeSet::new());
                     // The inputs' frames, before the run: they depend on the inputs alone.
-                    let inputs_done = match (&was_frames, let_go_inputs) {
-                        (Some(was), true) => Some(retain::write_input_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &|rel: &str| input_docs.get(rel).cloned(), &semijoin_stats)),
+                    let inputs_done = match (&was_kept, let_go_inputs) {
+                        (Some(was), true) => Some(retain::write_input_kept(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &|rel: &str| input_docs.get(rel).cloned(), &semijoin_stats)),
                         _ => None,
                     };
                     // `false`: not taken, so the run holds it to its end as before.
@@ -9197,7 +9197,7 @@ fn run_observed(
                             return Ok(false);
                         }
                         let Some(held) = crate::code_rule_dsl::logic::native::component::held(&db, rel) else { return Ok(false) };
-                        let Some(h) = retain::Handed::of(store, &cross_placed, &cross.domains, rel, &held, was_frames.as_ref()) else { return Ok(false) };
+                        let Some(h) = retain::Handed::of(store, &cross_placed, &cross.domains, rel, &held, was_kept.as_ref()) else { return Ok(false) };
                         handed.borrow_mut().insert(rel.to_owned(), h);
                         Ok(true)
                     };
@@ -9495,8 +9495,8 @@ fn run_observed(
                     drop(s);
                     let s = span("retain");
                     let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), patched, retain::budget(), false);
-                    if let Some(was) = &was_frames {
-                        let written = next.write_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed, inputs_done, &semijoin_stats)?;
+                    if let Some(was) = &was_kept {
+                        let written = next.write_kept(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed, inputs_done, &semijoin_stats)?;
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
                     }
                     drop(s);
@@ -9530,7 +9530,7 @@ fn run_observed(
                     }
                     // A session's run reports its strata here; a new process's, as `cross_kept` (above, or here when kept
                     // in the frames).
-                    if from_frames.is_some() {
+                    if kept_cells.is_some() {
                         cross_kept = Some(cut.strata);
                     } else if kept_part.is_none() {
                         cross_strata = Some(cut.strata);
@@ -12011,7 +12011,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     // a document evaluated.
     let text = matches!(memo::owner(rel), memo::Owner::Text(_));
     if width == 0 {
-        // A relation of no columns is its rows' count (`write_frames`): none of its rows names an owner.
+        // A relation of no columns is its rows' count (`write_kept`): none of its rows names an owner.
         return if old.iter().all(Vec::is_empty) && new.is_empty() { Ok(OwnerPatch { changed: Vec::new(), plus: Vec::new(), minus: Vec::new(), docs: None, digest: kept.digest, read: (0, 0, 0) }) } else { Err(format!("{rel}: a relation of no columns changed")) };
     }
     let mut by_old: BTreeMap<i64, Vec<Vec<Vec<i64>>>> = BTreeMap::new();

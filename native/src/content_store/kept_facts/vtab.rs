@@ -21,7 +21,6 @@ use rusqlite::{
 use std::borrow::Cow;
 use std::ffi::{CStr, c_int};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 /// The widest entry `kept_rows` reads: its columns `c0` to `c31`.
 const COLUMNS: usize = 32;
@@ -41,7 +40,7 @@ fn error(e: impl std::fmt::Display) -> rusqlite::Error {
 /// The store's spaces and their rows: as this process holds them, else read from the store's last commit (a
 /// connection of its own: a virtual table's callbacks have none to ask).
 fn rows_of(path: &Path, space: Option<[u8; 32]>) -> Result<Vec<([u8; 32], SpaceRow)>> {
-    let held = crate::content_store::frames::snapshot_kept(path, |kept| {
+    let held = crate::content_store::held::snapshot_kept(path, |kept| {
         kept.as_ref().map(|rows| match space {
             Some(s) => rows.get(&s).map(|r| vec![(s, r.clone())]).unwrap_or_default(),
             None => rows.iter().map(|(s, r)| (*s, r.clone())).collect(),

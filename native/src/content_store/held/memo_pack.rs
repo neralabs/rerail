@@ -13,7 +13,7 @@
 //! transaction numbers it, renames it into place and inserts its rows, so writers of other processes take turns as
 //! they do at the store. A batch whose transaction fails leaves its file under its writer's name, removed. A segment
 //! whose header does not check (not frozen, cut short) is a miss for every row naming it. Collection forgets rows
-//! (`collect_unreachable_frames`, a dead plan's space); compaction (`compact_memo_pack`) copies the rows' entries to
+//! (`collect_unreachable_memo`, a dead plan's space); compaction (`compact_memo_pack`) copies the rows' entries to
 //! a new segment and removes the old, once the bytes no row names are most of them. A segment is never given back to
 //! the pool for reuse: another process may hold it mapped.
 //!

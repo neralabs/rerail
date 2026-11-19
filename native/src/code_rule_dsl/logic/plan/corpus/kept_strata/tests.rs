@@ -5,8 +5,8 @@
     fn pl(p: &crate::code_rule_dsl::logic::front::Program) -> crate::code_rule_dsl::logic::plan::body::Placed { crate::code_rule_dsl::logic::plan::body::Placed::of_program(p).unwrap() }
     fn st(p: &crate::code_rule_dsl::logic::front::Program) -> Vec<std::collections::BTreeSet<String>> { crate::code_rule_dsl::logic::front::strata(p).unwrap().0 }
     /// An entry of one integer row.
-    fn one(rel: &FrameRel, digest: u64, reads: Vec<(String, u64)>, v: i64) -> KeptPut { flat_put(rel, digest, reads, vec![b'i'], vec![v], 1) }
-    fn gone(rel: &FrameRel) -> KeptPut { KeptPut { rel: rel.name.clone(), ident: rel.ident, part: 0, digest: 0, reads: vec![], types: vec![], what: KeptWhat::Gone } }
+    fn one(rel: &KeptRel, digest: u64, reads: Vec<(String, u64)>, v: i64) -> KeptPut { flat_put(rel, digest, reads, vec![b'i'], vec![v], 1) }
+    fn gone(rel: &KeptRel) -> KeptPut { KeptPut { rel: rel.name.clone(), ident: rel.ident, part: 0, digest: 0, reads: vec![], types: vec![], what: KeptWhat::Gone } }
 
     #[test]
     fn cross_process_admission_batches_inputs_and_eligible_derived_frames() {
@@ -128,7 +128,7 @@
     fn an_entry_put_after_the_run_bound_its_space_is_not_read_by_it() {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
-        let rel = FrameRel { name: "r".into(), ident: [1; 32] };
+        let rel = KeptRel { name: "r".into(), ident: [1; 32] };
         store.queue_kept([42; 32], vec![one(&rel, 1, vec![], 1)]);
         let mut kept = Kept::new(&store, [42; 32], &[], HashMap::new());
         kept.program(&HashMap::from([("r".into(), [1; 32])]));

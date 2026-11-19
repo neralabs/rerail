@@ -4432,7 +4432,7 @@ after the phases went on the run path (0083).
     rules run in 60 s (profiled) instead of past 180 s. All 57 rules run over the 50 files.
   - `RERAIL_KEEPS_TRACE=<text>` prints the pricing's estimates for relations whose names hold the text.
 
-### Q244. A one-file edit of the data-layer pack costs 1.4–1.5 s: the cross part's fixed costs and the frames (open)
+### Q244. A one-file edit of the data-layer pack costs 1.4–1.5 s: the cross part's fixed costs and the frames (open; the frames retired, 0439)
 
 Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the profiling build (6dd9b1466), load
 13–22 on the M5. Cold 8.6 s (a fresh store; 9.7 s on a new binary's first run), warm 0.05 s, a comment edit of an
@@ -4454,8 +4454,15 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
 - **Step 7 built** (2026-11-18, 0438): the reads bind the kept blocks where they lie. On the way, six faults that
   made the next run derive again or lose rows, and the alias root's warm-run cursor. The edit adding a function 2.0 s
   at load 31 (2.2 s before), 589 outputs equal.
-- **Next:** step 9 retires the frames: the decode, the two transposes and the second write go. Then the
-  tape views as reads of the tape, not framed inputs (0353), and the per-chunk fixed cost of a one-file chunk.
+- **Step 9 built** (2026-11-19, 0439): the frames retired, so the decode, the two transposes and the second write
+  go. The kept facts read through SQL (`kept_entries`, `kept_rows`). The edit adding a function 1.7 s and 32.8 G at
+  load 36 (34.6 G with the frames), cold 212.4 G (231.0 G), 589 outputs equal. On the way: two strings tests that
+  still expected rule-order test numbers, three thread-locals listed but gone, and a write-back test that removed its
+  directory while a handle's checkpoint was still writing.
+- **Open:** the kept blocks take 211 MB against the frames' 39 MB (0401's condition for step 9, 0439 "Open"). Met by
+  merging the packed kept format from its sibling branch.
+- **Next:** the tape views as reads of the tape, not framed inputs (0353), and the per-chunk fixed cost of a
+  one-file chunk.
 
 ### Q243. A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 

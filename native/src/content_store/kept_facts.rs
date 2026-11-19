@@ -282,7 +282,7 @@ impl KeptWrite {
             Ok(written)
         })?;
         // Committed: the rows this process holds are the new ones (where it holds the store's rows at all).
-        super::frames::snapshot_kept(&path, |kept| {
+        super::held::snapshot_kept(&path, |kept| {
             if let Some(rows) = kept {
                 rows.extend(written);
             }
@@ -395,7 +395,7 @@ impl super::ContentStore {
     /// a run reads before its first wave (decision 0104), its own earlier runs' writes included.
     pub fn kept_row(&self, space: &[u8; 32]) -> StoreResult<Option<SpaceRow>> {
         self.settle(&space_key(space));
-        if let Some(Some(row)) = super::frames::snapshot_kept(&self.database_path, |kept| kept.as_ref().map(|rows| rows.get(space).cloned())) {
+        if let Some(Some(row)) = super::held::snapshot_kept(&self.database_path, |kept| kept.as_ref().map(|rows| rows.get(space).cloned())) {
             return Ok(row);
         }
         let connection = self.connection.lock().expect("content store mutex poisoned");
@@ -408,7 +408,7 @@ impl super::ContentStore {
     pub fn preload_kept(&self) -> StoreResult<usize> {
         // Held under the snapshot's lock while read: this process's writer, committing meanwhile, replaces its row
         // after this read, not before it.
-        super::frames::snapshot_kept(&self.database_path, |kept| self.read_kept_rows(kept)).unwrap_or(Ok(0))
+        super::held::snapshot_kept(&self.database_path, |kept| self.read_kept_rows(kept)).unwrap_or(Ok(0))
     }
 
     fn read_kept_rows(&self, kept: &mut Option<HashMap<[u8; 32], SpaceRow>>) -> StoreResult<usize> {

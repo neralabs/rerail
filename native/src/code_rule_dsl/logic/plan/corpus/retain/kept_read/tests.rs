@@ -1,6 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::facts::rows::{Rows, Shared};
-use crate::content_store::FrameRel;
+use crate::content_store::KeptRel;
 
 const SPACE: [u8; 32] = [5; 32];
 
@@ -13,7 +13,7 @@ fn a_kept_relation_is_read_where_it_lies() {
     // Two relations: one of three rows with their levels; one of three rows, the second dead, with their levels.
     let whole = InRel::held_shared(Rows::frozen(2, vec![1, 10, 2, 20, 3, 30], 3), 3, vec![b'i', b'i'], Shared::default(), vec![1u32, 2, 3].into());
     let some_dead = InRel::held_shared(Rows::frozen(2, vec![1, 10, 2, 20, 3, 30], 3), 3, vec![b'i', b'i'], vec![0b010u64].into(), vec![1u32, 2, 3].into());
-    let name = |r: &str| FrameRel { name: r.into(), ident: [3; 32] };
+    let name = |r: &str| KeptRel { name: r.into(), ident: [3; 32] };
     let puts = [("whole", &whole), ("some_dead", &some_dead)].map(|(r, held)| super::super::kept_rows(&name(r), 77, vec![("q".into(), 9)], vec![b'i', b'i'], held).expect("a relation in a block"));
     store.queue_kept(SPACE, puts.into_iter().collect());
     let bound = Bound::of(&store, &SPACE).unwrap().expect("the space keeps blocks");
@@ -57,7 +57,7 @@ fn rows_started_from_a_bound_relation_read_the_rows_pushed_after_it() {
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let held = InRel::held_shared(Rows::frozen(2, vec![1, 10, 2, 20, 3, 30], 3), 3, vec![b'i', b'i'], Shared::default(), Shared::default());
-    let name = FrameRel { name: "r".into(), ident: [3; 32] };
+    let name = KeptRel { name: "r".into(), ident: [3; 32] };
     store.queue_kept(SPACE, vec![super::super::kept_rows(&name, 1, vec![], vec![b'i', b'i'], &held).expect("a relation in a block")]);
     let bound = Bound::of(&store, &SPACE).unwrap().unwrap();
     let view = bound.view();

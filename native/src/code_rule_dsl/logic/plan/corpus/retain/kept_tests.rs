@@ -10,21 +10,21 @@ fn pl(p: &front::Program) -> crate::code_rule_dsl::logic::plan::body::Placed { c
 fn st(p: &front::Program) -> Vec<BTreeSet<String>> { front::strata(p).unwrap().0 }
 
 /// An entry of `rows`, flat, of `types`' columns, at partition `part`.
-fn put(rel: &FrameRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>) -> KeptPut {
+fn put(rel: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>) -> KeptPut {
     let n = if types.is_empty() { 0 } else { rows.len() / types.len() };
     KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest, reads, what: crate::content_store::kept_facts::KeptWhat::Flat { widths: vec![8; types.len()], rows, n }, types }
 }
-fn gone(rel: &FrameRel, part: i64) -> KeptPut {
+fn gone(rel: &KeptRel, part: i64) -> KeptPut {
     KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest: 0, reads: vec![], types: vec![], what: crate::content_store::kept_facts::KeptWhat::Gone }
 }
 
-fn fixture(store: &ContentStore, count: usize) -> (front::Program, HashMap<String, u64>, InFrames) {
+fn fixture(store: &ContentStore, count: usize) -> (front::Program, HashMap<String, u64>, InKept) {
     let mut text = String::new();
     for i in 0..count {
         text += &format!(".decl input{i}(x:number)\n.input input{i}\n.decl result{i}(x:number)\nresult{i}(x) :- input{i}(x).\n");
     }
     let prog = rr::parse(&text).unwrap();
-    let empty = Retained::from_frames(store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
+    let empty = Retained::bind_kept(store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     let frames = empty.frames.unwrap();
     let mut puts = Vec::new();
     let mut now = HashMap::new();
@@ -60,7 +60,7 @@ fn k4_admission_batches_input_digests_derived_rows_and_mixed_granules() {
     profile::reset(); profile::set(true);
     let wave = profile::waves();
     let span = profile::span(|| "bulk K4 admission".into());
-    let mut kept = Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
+    let mut kept = Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     let cut = cut(Some(&kept),KEY,&pl(&prog),&st(&prog), &changed).unwrap();
     kept.load(&store,&cut,&pl(&prog),false).unwrap();
     assert_eq!(kept.input_srcs.len(), 131);
@@ -88,7 +88,7 @@ fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
     profile::reset(); profile::set(true);
     let wave=profile::waves();
     let span=profile::span(||"bulk output admission".into());
-    let mut kept=Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
+    let mut kept=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     assert!(prog.outputs.iter().all(|r|kept.holds(r,&pl(&prog))),"raw output facts are sufficient to keep a derivation");
     let cut=Cut{clean:prog.outputs.iter().cloned().collect(),strata:(0,130),changed:vec![]};
     assert_eq!(kept.load(&store,&cut,&pl(&prog),false).unwrap(),Some((130,390)));
@@ -110,21 +110,21 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let text=".decl literal(x:number)\nliteral(1).\n.decl result(x:number)\nresult(x) :- literal(x), x > 0.\n.output result\n";
     let prog=rr::parse(text).unwrap();
-    let empty=Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
+    let empty=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     let initial=cut(Some(&empty),KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     let computed=Retained{key:KEY,rels:HashMap::from([("result".into(),Kept{
         rel:InRel::flat(&[vec![1]],vec![b'i']),width:1,output:None,
     })]),..Default::default()};
-    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&pl(&prog),&Default::default(),&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None,&HashMap::new()).unwrap(),1);
-    let restored=Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
+    assert_eq!(computed.write_kept(&store,empty.in_kept().unwrap(),&pl(&prog),&Default::default(),&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None,&HashMap::new()).unwrap(),1);
+    let restored=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     assert_eq!(cut(Some(&restored),KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap().strata,(0,1));
     let changed=rr::parse(&text.replace("literal(1).","literal(2).")).unwrap();
-    let restored=Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&changed),&st(&changed),&HashMap::new()).unwrap();
+    let restored=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&changed),&st(&changed),&HashMap::new()).unwrap();
     assert_eq!(cut(Some(&restored),KEY,&pl(&changed),&st(&changed),&HashMap::new()).unwrap().strata,(1,1),"literal rows participate in the relation's identity");
     let external=rr::parse(&format!("{text}\n.input literal\n")).unwrap();
-    let empty=Retained::from_frames(&store,[52;32],KEY,KEY,&pl(&external),&st(&external),&HashMap::new()).unwrap();
+    let empty=Retained::bind_kept(&store,[52;32],KEY,KEY,&pl(&external),&st(&external),&HashMap::new()).unwrap();
     let initial=cut(Some(&empty),KEY,&pl(&external),&st(&external),&HashMap::new()).unwrap();
-    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&pl(&external),&Default::default(),&Locations::new(),&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None,&HashMap::new()).unwrap(),0,
+    assert_eq!(computed.write_kept(&store,empty.in_kept().unwrap(),&pl(&external),&Default::default(),&Locations::new(),&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None,&HashMap::new()).unwrap(),0,
         "a relation with literal rows AND external inputs still needs a runtime dependency digest");
 }
 
@@ -135,15 +135,15 @@ fn a_derived_entry_replaced_after_the_run_bound_its_space_is_not_seen() {
     let dir=tempfile::tempdir().unwrap();
     let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let (prog,now,frames)=fixture(&store,1);
-    let mut kept=Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
+    let mut kept=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     let changed=now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut=cut(Some(&kept),KEY,&pl(&prog),&st(&prog),&changed).unwrap();
     store.queue_kept(SPACE, vec![put(&frames.names["result0"], DOCS_PART, 99, vec![], vec![b'i'], vec![999])]);
     assert!(kept.load(&store,&cut,&pl(&prog),false).unwrap().is_some());
     assert_eq!(kept.rels["result0"].rel.live_rows().unwrap(), (1..=3).map(|d| d << 32).collect::<Vec<i64>>(), "the bound commit's rows");
     // The next run reads the new commit.
-    let next=Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
-    assert_eq!(next.frames().unwrap().derived["result0"].digest, 99);
+    let next=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
+    assert_eq!(next.in_kept().unwrap().derived["result0"].digest, 99);
 }
 
 /// An input granule replaced after the run bound the space is not seen by it: the old side of maintenance is the
@@ -153,7 +153,7 @@ fn an_input_granule_replaced_after_the_run_bound_its_space_is_not_seen() {
     let dir=tempfile::tempdir().unwrap();
     let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let (prog,now,frames)=fixture(&store,1);
-    let mut kept=Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
+    let mut kept=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     let changed=now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut=cut(Some(&kept),KEY,&pl(&prog),&st(&prog),&changed).unwrap();
     store.queue_kept(SPACE, vec![put(&frames.names["input0"], granule(1, None), 0, vec![], vec![b'i'], vec![(1<<32)|999])]);
@@ -169,12 +169,12 @@ fn an_input_whose_documents_entry_is_gone_runs_its_readers_again() {
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let (prog, now, frames) = fixture(&store, 1);
-    let before = Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
+    let before = Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     store.queue_kept(SPACE, vec![gone(&frames.names["input0"], DOCS_PART)]);
-    assert!(!before.frames().unwrap().inputs.is_empty(), "bound before: its commit's entry");
-    let kept = Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
+    assert!(!before.in_kept().unwrap().inputs.is_empty(), "bound before: its commit's entry");
+    let kept = Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     assert!(kept.inputs.is_empty());
-    assert!(kept.frames().unwrap().derived.is_empty());
+    assert!(kept.in_kept().unwrap().derived.is_empty());
     let cold = cut(Some(&kept),KEY,&pl(&prog),&st(&prog), &now).unwrap();
     assert_eq!(cold.strata, (1, 1));
     assert!(cold.clean.is_empty());
@@ -188,7 +188,7 @@ fn failed_k4_admission_makes_a_clean_consumer_run_again() {
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let (prog, now, frames) = fixture(&store, 1);
     store.queue_kept(SPACE, vec![gone(&frames.names["input0"], granule(2, None))]);
-    let mut kept = Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
+    let mut kept = Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     let changed = now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut = cut(Some(&kept),KEY,&pl(&prog),&st(&prog),&changed).unwrap();
     assert!(kept.load(&store, &cut, &pl(&prog), false).unwrap().is_none());
@@ -196,7 +196,7 @@ fn failed_k4_admission_makes_a_clean_consumer_run_again() {
     let rerun = cut_again(&kept, &prog, &now);
     assert!(rerun.clean.is_empty());
     assert_eq!(rerun.strata.0, rerun.strata.1);
-    assert!(kept.frames().unwrap().derived.is_empty(), "new results must be republished");
+    assert!(kept.in_kept().unwrap().derived.is_empty(), "new results must be republished");
 }
 
 fn cut_again(kept: &Retained, prog: &front::Program, now: &HashMap<String, u64>) -> Cut {
@@ -236,7 +236,7 @@ fn the_kept_inputs_are_found_past_an_earlier_runs_snapshot() {
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let early = rr::parse(".decl input0(x:number)\n.input input0\n").unwrap();
-    store.queue_kept(SPACE, vec![put(&FrameRel { name: "other".into(), ident: [9; 32] }, 0, 1, vec![], vec![b'i'], vec![1])]);
+    store.queue_kept(SPACE, vec![put(&KeptRel { name: "other".into(), ident: [9; 32] }, 0, 1, vec![], vec![b'i'], vec![1])]);
     let earlier = kept_read::Bound::of(&store, &SPACE).unwrap().unwrap();
     assert!(earlier.entry("input0", &input_ident("input0", &pl(&early), &KEY), DOCS_PART).is_none(), "the earlier binding holds no entry of the input");
     let (prog, _, _) = fixture(&store, 1);
@@ -274,14 +274,14 @@ fn a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go() {
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let (prog, now, _) = fixture(&store, 2);
-    let was = Retained::from_frames(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap().frames.unwrap();
+    let was = Retained::bind_kept(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap().frames.unwrap();
     let cut = cut(None, KEY, &pl(&prog), &st(&prog), &now).unwrap();
     let rows = |base: i64| component::InRel::flat(&(0..4).map(|i| vec![base + i]).collect::<Vec<_>>(), vec![b'i']);
     let derived = vec![("result0".to_owned(), 1, rows(100)), ("result1".to_owned(), 1, rows(200))];
     let mut next = after(None, KEY, now.clone(), &cut, derived, &BTreeMap::new(), &[], HashMap::new(), HashMap::new(), HashMap::new(), Default::default(), HashMap::new(), 0, false);
     assert_eq!(next.bytes(), 0, "nothing past the budget is held for the next run");
     assert_eq!(next.parts().1.len(), 2, "both are this run's to write");
-    let written = next.write_frames(&store, &was, &pl(&prog),&Default::default(), &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new(),HashMap::new(),None,&HashMap::new()).unwrap();
+    let written = next.write_kept(&store, &was, &pl(&prog),&Default::default(), &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new(),HashMap::new(),None,&HashMap::new()).unwrap();
     assert_eq!(written, 8, "the rows past the budget are written to the frames");
     next.let_go_past();
     assert!(next.parts().1.is_empty(), "and then let go");
@@ -296,13 +296,13 @@ fn rows_read_where_reached_come_with_their_kept_statistics() {
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let (prog, _, frames) = fixture(&store, 1);
-    let stored = Retained::from_frames(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap();
+    let stored = Retained::bind_kept(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap();
     let digest = stored.frames.as_ref().unwrap().derived["result0"].digest;
     let mut all = kept_stats::ByDigest::new();
     all.insert(("result0".to_owned(), digest), kept_stats::KeptStat::Measured((vec![("result0_c0".to_owned(), 3, 3, 3, 3)], vec![], BTreeSet::new())));
     let words = kept_stats::to_words(&kept_stats::encode(&all));
     store.queue_kept(SPACE, vec![put(&frames.names["result0"], kept_stats::PART, digest, vec![], vec![b'i'], words)]);
-    let kept = Retained::from_frames(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap();
+    let kept = Retained::bind_kept(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap();
     assert!(kept.admit(&store, &pl(&prog), &["result0".to_owned()]).unwrap(), "its rows are read where reached");
     let at = Arc::as_ptr(&kept.late.borrow()["result0"].rel) as *const u8 as usize;
     let held = Arc::clone(&kept.late.borrow()["result0"].rel);
@@ -318,11 +318,11 @@ fn an_inputs_missing_granule_is_a_miss_not_a_failure() {
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let (prog, _, frames) = fixture(&store, 1);
-    let kept = Retained::from_frames(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap();
+    let kept = Retained::bind_kept(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap();
     let all = kept.read_input(&store, &pl(&prog), &Locations::new(), "input0", None).unwrap();
     assert_eq!(all.unwrap().unwrap().len(), 3);
     store.queue_kept(SPACE, vec![gone(&frames.names["input0"], granule(2, None))]);
-    let kept = Retained::from_frames(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap();
+    let kept = Retained::bind_kept(&store, SPACE, KEY,KEY, &pl(&prog), &st(&prog), &HashMap::new()).unwrap();
     let why = kept.read_input(&store, &pl(&prog), &Locations::new(), "input0", None).unwrap().unwrap_err();
     assert!(why.contains(&format!("granule {} of its rows is not kept", granule(2, None))), "{why}");
 }
