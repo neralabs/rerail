@@ -1,3 +1,4 @@
+import { hostname } from "node:os";
 import { posix, win32 } from "node:path";
 import { checkoutPathBoundary, deniedByPathBoundary, sensitiveByName, type CheckoutPathBoundary } from "./path-boundary.js";
 
@@ -60,8 +61,18 @@ const ADDRESS_SPELLING = /^[a-z\d]+(?:\.[a-z\d]+)*$/iu;
 const isLoopback = (host: string): boolean =>
   ADDRESS_SPELLING.test(host) && LOOPBACK.test(URL.parse(`http://${host}/`)?.hostname ?? "");
 
-/** Whether a lookup that reaches `host` leaves this machine: it reaches a host, and not the loopback host. */
-const onAnotherMachine = (host: string | undefined): boolean => host !== undefined && !isLoopback(host);
+/**
+ * This machine's own name as the system gives it (`os.hostname()`), read once. Windows resolves its own name to its
+ * own addresses before it asks any name server, so a share there stays on this machine; host names ignore letter case.
+ */
+const THIS_MACHINE = hostname().toLowerCase();
+
+/**
+ * Whether a lookup that reaches `host` leaves this machine: it reaches a host, and neither the loopback host nor this
+ * machine by its own name. Any other name of this machine (a full DNS name, an alias) is read as another machine's.
+ */
+const onAnotherMachine = (host: string | undefined): boolean =>
+  host !== undefined && !isLoopback(host) && host.toLowerCase() !== THIS_MACHINE;
 
 /** The Windows device namespace's own folders, each followed by its separators: `GLOBALROOT\`, `Device\`, `Global\`. */
 const NAMESPACE_FOLDER = String.raw`(?:GLOBALROOT|Global|GLOBAL\?\?|\?\?|DosDevices|Device)[\\/]+`;
@@ -106,8 +117,8 @@ function openedOnWindows(path: string): string {
 /**
  * On Windows, whether `path` names another machine's share, read from the path its lookup opens: looking one up makes
  * Windows resolve the host's name and open a connection to it, and the lookup waits about 21 s for a host that does
- * not answer. A device path that stays in this machine's namespace, and a share on the loopback host however its
- * address is written (`\\127.1\c$`, `\\?\UNC\localhost\c$`), stay on this machine.
+ * not answer. A device path that stays in this machine's namespace, a share on the loopback host however its address
+ * is written (`\\127.1\c$`, `\\?\UNC\localhost\c$`), and one on this machine's own name stay on this machine.
  */
 const namesAnotherMachine = (path: string): boolean =>
   SHARE.test(path) && onAnotherMachine(hostReached(openedOnWindows(path)));
@@ -148,9 +159,9 @@ function windowsLookup(delimiters: string, before: string, path: string): string
 
 /**
  * On Linux and macOS, the host under the automount root `/net`: macOS's default `/net -hosts` map, and autofs on Linux,
- * mount `<host>`'s exports when a path there is looked up, and `/net/localhost` and `/net/127.1` stay on this machine.
- * macOS's default file system ignores letter case, so `/NET` is the automount root there too; on Linux `/NET` is a
- * folder of its own.
+ * mount `<host>`'s exports when a path there is looked up, and `/net/localhost`, `/net/127.1` and `/net/<this machine's
+ * name>` stay on this machine. macOS's default file system ignores letter case, so `/NET` is the automount root there
+ * too; on Linux `/NET` is a folder of its own.
  */
 const AUTOMOUNTED_HOST = new RegExp(String.raw`^/net/([^/]+)`, process.platform === "darwin" ? "iu" : "u");
 
@@ -166,7 +177,7 @@ const AUTOMOUNTED_HOST = new RegExp(String.raw`^/net/([^/]+)`, process.platform 
 const CERTAIN_SCHEME = /^(?:\d+\.)?(?![~.])[^a-z\d\\/]*(?:https?|wss?|ftps?)$/iu;
 
 /**
- * Whether an absolute `path` lands under the automount root on a host other than the loopback host once
+ * Whether an absolute `path` lands under the automount root on another machine ({@link onAnotherMachine}) once
  * `path.resolve` normalizes it, as the lookup does: `//net/<host>/x`, and `//a.example/../net/<host>/x`,
  * `//./net/<host>/x` and `///net/<host>/x` too. Only a path that holds `net` is normalized.
  */
@@ -182,9 +193,9 @@ const posixLookup = (delimiters: string, before: string, path: string): string |
 
 /**
  * Each platform reads a token after a `:` as its paths resolve. On Windows a `//` token is a share, which reaches
- * another machine unless its host is this machine by its spelling ({@link hostReached}), so a share on another
- * machine right after a `:` is skipped, unless a `file:` URL or a drive letter comes before. On Linux and macOS it is a
- * local path, so a token in doubt is looked up, as are the entries of a list such as `PATH=bin://home/me/bin`.
+ * another machine unless its host is this machine by its spelling or its own name ({@link hostReached}), so a share on
+ * another machine right after a `:` is skipped, unless a `file:` URL or a drive letter comes before. On Linux and macOS
+ * it is a local path, so a token in doubt is looked up, as are the entries of a list such as `PATH=bin://home/me/bin`.
  */
 const lookupAfter = process.platform === "win32" ? windowsLookup : posixLookup;
 
@@ -270,10 +281,10 @@ const callNames = (input: unknown, judge: (path: string) => boolean, root: strin
  * `notes.txt`) is resolved, the first `INPUT_RESOLUTIONS` distinct ones, and a bare word by its name alone, as is a
  * URL's host and path where a lookup would reach another machine: on Windows a share on another machine right after a
  * `:`, where `//host/api` in `https://host/api` or `${SCHEME}://host/api` names a network share, and on Linux and
- * macOS a web URL under the automount root `/net` (`https://net/host/api`) on a host other than the loopback one. Every
- * other path-shaped token is resolved: a `file:` URL's host and path, a URL's path with no host
- * (`unix:///run/app.sock`), on Windows a device path (`\\?\...`) and a share on the loopback host wherever they stand,
- * and a drive path written with doubled separators (`"C:\\Users\\me"` in JSON) as `C:\Users\me` is. On Linux and macOS
+ * macOS a web URL under the automount root `/net` (`https://net/host/api`) on another machine. Every other path-shaped
+ * token is resolved: a `file:` URL's host and path, a URL's path with no host (`unix:///run/app.sock`), a share or
+ * `/net` path on the loopback host or on this machine's own name, on Windows a device path (`\\?\...`) wherever it
+ * stands, and a drive path written with doubled separators (`"C:\\Users\\me"` in JSON) as `C:\Users\me` is. On Linux and macOS
  * a `//` path is a local one. On Windows a share on another machine that does not follow a `:`, and a `file:` URL with
  * a host, are resolved too, so they still reach that machine, and wait about 21 s for one that does not answer. It
  * reads names, not a shell: a path built at run time (`cat $(echo .e)nv`) is not seen. An input deeper or larger than
