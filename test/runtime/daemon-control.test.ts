@@ -1011,11 +1011,11 @@ describe("a state file Windows left behind", () => {
     const events: string[] = [];
     const older = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, events);
     const machine: DaemonMachine = { ...older, env: { RERAIL_HOME: home, RERAIL_AUTOSTART: "0" } };
+    // The error a session's start answers with the line that tells the person (`answerAutostartOff`).
     const refused = runningDaemonEngineEndpoint(undefined, machine);
-    await expect(refused).rejects.toThrow(new Error(
+    await expect(refused).rejects.toThrow(new OtherDaemonKeptError(
       "RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET",
     ));
-    // The error a session's start answers with the line that tells the person (`answerAutostartOff`).
     await expect(refused).rejects.toBeInstanceOf(OtherDaemonKeptError);
     expect(events.filter(event => event !== "/healthz")).toEqual([]);
     expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(true);
