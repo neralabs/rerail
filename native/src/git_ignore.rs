@@ -1505,10 +1505,16 @@ mod tests {
                     u32::try_from(nanos).unwrap(),
                 );
             let within = !past_step(changed, file_clock());
-            assert!(!(within && tells), "a stamp read within its change time's step is kept");
+            assert!(
+                !(within && tells),
+                "a stamp read within its change time's step is kept"
+            );
             within
         });
-        assert!(checked, "the file clock left every change time's step before its check");
+        assert!(
+            checked,
+            "the file clock left every change time's step before its check"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
