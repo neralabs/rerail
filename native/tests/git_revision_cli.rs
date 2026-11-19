@@ -68,7 +68,7 @@ impl Checkout {
         command.output().unwrap()
     }
 
-    fn owners(&self, scope: &str) -> i64 {
+    fn settled_store(&self) -> rusqlite::Connection {
         let db = rusqlite::Connection::open_with_flags(
             self.area.path().join("store.sqlite"),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -80,12 +80,30 @@ impl Checkout {
             })
             .unwrap();
         assert_eq!(pending, 0);
-        db.query_row(
-            "SELECT count(*) FROM analysis_scope_manifest WHERE scope=?1",
-            [format!("named:{scope}")],
-            |row| row.get(0),
-        )
-        .unwrap()
+        db
+    }
+
+    fn owners(&self, scope: &str) -> i64 {
+        self.settled_store()
+            .query_row(
+                "SELECT count(*) FROM analysis_scope_manifest WHERE scope=?1",
+                [format!("named:{scope}")],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    fn directory_memberships(&self) -> Vec<(i64, i64, i64, i64)> {
+        let db = self.settled_store();
+        let mut members = db.prepare(
+            "SELECT manifest_id, acquired_at, acquisition, recorded_run FROM analysis_scope_manifest
+             WHERE scope GLOB 'cwd:*' ORDER BY manifest_id",
+        ).unwrap();
+        members
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
     }
 }
 
@@ -146,6 +164,7 @@ fn failed_batch_reports_each_policy_in_argument_order() {
         }
     }
     assert_eq!(f.owners("batch"), 0);
+    assert!(f.directory_memberships().is_empty());
     let complete = json(
         f.run("run-policies", &[&f.repo, &out, &f.policy], Some("batch")),
         0,
@@ -153,6 +172,35 @@ fn failed_batch_reports_each_policy_in_argument_order() {
     assert_eq!(complete["status"], "completed");
     assert_eq!(complete["diagnostics"].as_array().unwrap().len(), 2);
     assert!(f.owners("batch") > 0);
+}
+
+#[test]
+fn a_failed_working_tree_batch_preserves_the_previous_directory_memberships() {
+    let f = Checkout::new();
+    let out = f.area.path().join("batch");
+    let other = f.area.path().join("other.rr");
+    fs::write(&other, ".policy \"other\" revision 1\n.language python\n.violation AlsoSeen(at: node) \"second identifier\"\nAlsoSeen(n) :- kind(n, \"identifier\").\n").unwrap();
+    let bad = f.area.path().join("bad.rr");
+    fs::write(&bad, ".policy \"invalid\" revision 1\n").unwrap();
+    let good = || f.run("run-policies", &[&f.repo, &out, &f.policy, &other], None);
+    let initial = json(good(), 0);
+    assert_eq!(initial["diagnostics"].as_array().unwrap().len(), 4);
+    assert_eq!(initial["runs"][0]["together"], 2, "{initial}");
+    let before = f.directory_memberships();
+    assert!(!before.is_empty());
+    fs::write(f.repo.join("a.py"), "x = y\n").unwrap();
+    for policies in [[&bad, &f.policy, &other], [&f.policy, &other, &bad]] {
+        let [first, second, third] = policies;
+        let failed = json(
+            f.run("run-policies", &[&f.repo, &out, first, second, third], None),
+            1,
+        );
+        assert_eq!(failed["diagnostics"].as_array().unwrap().len(), 6);
+        assert_eq!(f.directory_memberships(), before);
+    }
+    let recovered = json(good(), 0);
+    assert_eq!(recovered["diagnostics"].as_array().unwrap().len(), 6);
+    assert_ne!(f.directory_memberships(), before);
 }
 
 #[test]

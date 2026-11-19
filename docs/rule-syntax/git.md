@@ -24,7 +24,9 @@ For a tree snapshot, `git_source_commit` has zero rows.
 
 `rerail-engine run-policies` writes one JSON report to stdout. Its `runs` array follows the policy argument order.
 A policy that fails has a run entry with its `path` and `error`. The other policies still contribute their findings to `diagnostics`.
-A failed batch exits with status 1. A revision batch publishes its scope ownership only if all policies and required source reads succeed.
+A failed batch exits with status 1. A working-tree batch stages all its policies under one directory scope.
+A revision batch stages them under its named scope. Both publish cache ownership after every policy and required source read succeeds.
+A failed batch keeps the scope memberships from earlier successful runs.
 
 If a required Git subtree or file is unreadable, `run-rr` and `run-policies` keep the available findings and list the affected paths in `sourceFailures`.
 The report has `status: "failed"` and the command exits with status 1.

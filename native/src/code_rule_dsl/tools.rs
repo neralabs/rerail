@@ -262,23 +262,12 @@ pub fn run_rr(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    if let Some(revision) = options.get("revision") {
-        let revision = revision.as_str().ok_or("revision must be a commit or tree string")?;
-        let scope = options.get("analysisScope").and_then(|s| s.as_str()).ok_or("--revision requires --analysis-scope <name>")?;
-        let mut run = RevisionRun::begin(root, revision, scope)?;
-        let mut options = options.clone();
-        options.as_object_mut().unwrap().remove("revision");
-        options.as_object_mut().unwrap().remove("analysisScope");
-        let (program, files) = read_policy(path)?;
-        let mut report = run.evaluate(|root| run_program_checked(program.clone(), &files, root, out, &options))?;
-        run.report(revision, &mut report, true);
-        return Ok(report);
-    }
-    if options.get("analysisScope").is_some() {
-        return Err("--analysis-scope requires --revision".into());
-    }
+    let mut options = options.clone();
+    let mut run = PolicyInvocation::from_options(root, &mut options)?;
     let (program, files) = read_policy(path)?;
-    run_program(program, &files, root, out, options)
+    let mut report = run.evaluate(|root| run_program_checked(program.clone(), &files, root, out, &options))?;
+    run.report(&mut report, true);
+    Ok(report)
 }
 
 pub fn read_policy(path: &Path) -> Result<(super::logic::front::Program, Vec<super::logic::rr::LibraryFile>), String> {
@@ -296,24 +285,54 @@ pub fn policy_inputs(files: &[super::logic::rr::LibraryFile]) -> serde_json::Val
     })).collect::<Vec<_>>())
 }
 
-struct RevisionRun {
-    snapshot: super::logic::strings::git::Snapshot,
+enum PolicySource {
+    Directory(std::path::PathBuf),
+    Revision { expression: String, snapshot: super::logic::strings::git::Snapshot },
+}
+
+struct PolicyInvocation {
+    source: PolicySource,
     analysis: Option<crate::content_store::analysis_scope::AnalysisRun>,
     warning: Option<String>,
 }
 
-impl RevisionRun {
-    fn begin(root: &Path, revision: &str, scope: &str) -> Result<Self, String> {
+impl PolicyInvocation {
+    fn from_options(root: &Path, options: &mut serde_json::Value) -> Result<Self, String> {
+        let revision = options.get("revision").map(|v| v.as_str().ok_or("revision must be a commit or tree string")).transpose()?;
+        if revision.is_none() && options.get("analysisScope").is_some() {
+            return Err("--analysis-scope requires --revision".into());
+        }
+        let invocation = Self::begin(root, revision, options["analysisScope"].as_str())?;
+        if let Some(fields) = options.as_object_mut() {
+            fields.remove("revision");
+            fields.remove("analysisScope");
+        }
+        Ok(invocation)
+    }
+
+    fn begin(root: &Path, revision: Option<&str>, scope: Option<&str>) -> Result<Self, String> {
         use crate::content_store::{ContentStore, analysis_scope::{self, AnalysisRun}};
-        let snapshot = super::logic::strings::git::Snapshot::scoped(root, revision, scope)?;
-        let mut invocation = Self { snapshot, analysis: None, warning: None };
+        let (source, scope) = match revision {
+            Some(expression) => {
+                let scope = scope.ok_or("--revision requires --analysis-scope <name>")?;
+                let snapshot = super::logic::strings::git::Snapshot::scoped(root, expression, scope)?;
+                (PolicySource::Revision { expression: expression.to_owned(), snapshot },
+                 analysis_scope::named(scope).expect("snapshot validated its scope"))
+            }
+            None => {
+                let scope = crate::git_workspace::snapshot::analysis_scope(root)
+                    .unwrap_or_else(|| analysis_scope::directory(root));
+                (PolicySource::Directory(root.to_owned()), scope)
+            }
+        };
+        let mut invocation = Self { source, analysis: None, warning: None };
+        if revision.is_none() && super::logic::plan::corpus::has_analysis_owner(root) {
+            return Ok(invocation);
+        }
         if let Some(path) = super::logic::plan::corpus::tape_cache_path() {
             let id = format!("{}-{}", std::process::id(), analysis_scope::acquisition_time());
-            let scope = analysis_scope::named(scope).expect("validated when opening snapshot");
             match ContentStore::open(&path).and_then(|store| AnalysisRun::begin(store, &scope, &id)) {
-                Ok(run) => {
-                    invocation.analysis = Some(run);
-                }
+                Ok(run) => invocation.analysis = Some(run),
                 Err(error) => invocation.warning = Some(error.to_string()),
             }
         }
@@ -321,7 +340,10 @@ impl RevisionRun {
     }
 
     fn evaluate<T>(&mut self, run: impl Fn(&Path) -> Result<T, ProgramRunError>) -> Result<T, String> {
-        let root = self.snapshot.root();
+        let root = match &self.source {
+            PolicySource::Directory(root) => root.as_path(),
+            PolicySource::Revision { snapshot, .. } => snapshot.root(),
+        };
         if self.warning.is_none() {
             let result = match self.analysis.as_ref() {
                 Some(analysis) => super::logic::plan::corpus::with_tape_cache_path(
@@ -352,9 +374,18 @@ impl RevisionRun {
         self.warning.take()
     }
 
-    fn report(&mut self, revision: &str, report: &mut serde_json::Value, policies_succeeded: bool) {
-        report["source"] = serde_json::json!({"revision": revision, "tree": self.snapshot.tree(), "commit": self.snapshot.commit()});
-        let failures = self.snapshot.source_failures();
+    fn source_failures(&self) -> Vec<crate::git_workspace::snapshot::SourceFailure> {
+        match &self.source {
+            PolicySource::Directory(_) => Vec::new(),
+            PolicySource::Revision { snapshot, .. } => snapshot.source_failures(),
+        }
+    }
+
+    fn report(&mut self, report: &mut serde_json::Value, policies_succeeded: bool) {
+        if let PolicySource::Revision { expression, snapshot } = &self.source {
+            report["source"] = serde_json::json!({"revision": expression, "tree": snapshot.tree(), "commit": snapshot.commit()});
+        }
+        let failures = self.source_failures();
         let complete = policies_succeeded && failures.is_empty();
         report["status"] = if complete { "completed" } else { "failed" }.into();
         if !failures.is_empty() {
@@ -556,24 +587,12 @@ pub fn run_policies(
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let mut options = options.clone();
-    let mut revision = match options.get("revision") {
-        Some(value) => {
-            let revision = value.as_str().ok_or("revision must be a commit or tree string")?.to_owned();
-            let scope = options["analysisScope"].as_str().ok_or("--revision requires --analysis-scope <name>")?;
-            let run = RevisionRun::begin(root, &revision, scope)?;
-            let fields = options.as_object_mut().expect("revision came from an options object");
-            fields.remove("revision");
-            fields.remove("analysisScope");
-            Some((revision, run))
-        }
-        None if options.get("analysisScope").is_some() => return Err("--analysis-scope requires --revision".into()),
-        None => None,
-    };
+    let mut invocation = PolicyInvocation::from_options(root, &mut options)?;
     let options = &options;
     let (mut diagnostics, mut runs) = (Vec::new(), Vec::new());
     // One run for the file observer: each root asked of the journal once for the batch.
     let _observed = super::logic::plan::corpus::ObservedBatch::begin();
-    prepare_policy_graphs(paths);
+    invocation.evaluate(|_| { prepare_policy_graphs(paths); Ok(()) })?;
     // What the batch's runs share is kept while it runs (phase 1's runs, by their inputs), and nothing past it.
     let _batch = super::logic::plan::corpus::phases::Batch::enter();
     // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
@@ -581,14 +600,22 @@ pub fn run_policies(
     // `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
     // Grouping by default grammar inventories the source before the rules are
     // available. Git policy runs determine their source demand individually.
-    let packed = revision.is_none() && paths.len() > 1 && !crate::git_workspace::snapshot::contains(root)
+    let packed = matches!(invocation.source, PolicySource::Directory(_)) && paths.len() > 1 && !crate::git_workspace::snapshot::contains(root)
         && std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
-    let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
-    let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
+    let (texts, groups) = if packed {
+        invocation.evaluate(|root| {
+            let paths: Vec<_> = paths.iter().map(|p| p.as_path()).collect();
+            let texts = program_texts(&paths).unwrap_or_default();
+            let groups = policy_groups(&texts, root, options);
+            Ok((texts, groups))
+        })?
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let mut done: Vec<Option<(Vec<serde_json::Value>, serde_json::Value)>> = paths.iter().map(|_| None).collect();
     for group in groups.iter().filter(|g| g.members.len() > 1) {
         // A failed pack can still contain policies that succeed on their own.
-        if let Ok(Some(each)) = run_pack(paths, texts.as_deref().unwrap_or_default(), group, root, out, options) {
+        if let Ok(Some(each)) = invocation.evaluate(|root| run_pack(paths, &texts, group, root, out, options)) {
             for (&k, found) in group.members.iter().zip(each) {
                 done[k] = Some(found);
             }
@@ -600,12 +627,9 @@ pub fn run_policies(
             Some(run) => Ok(run),
             None => {
                 let dir = out.join(k.to_string());
-                let evaluated = match &mut revision {
-                    Some((_, run)) => read_policy(path).and_then(|(program, files)| {
-                        run.evaluate(|root| run_program_checked(program.clone(), &files, root, &dir, options))
-                    }),
-                    None => run_rr(path, root, &dir, options),
-                };
+                let evaluated = read_policy(path).and_then(|(program, files)| {
+                    invocation.evaluate(|root| run_program_checked(program.clone(), &files, root, &dir, options))
+                });
                 evaluated.map(|report| single_policy_report(path, &report))
             }
         };
@@ -621,11 +645,7 @@ pub fn run_policies(
         }
     }
     let mut report = serde_json::json!({"diagnostics": diagnostics, "runs": runs});
-    if let Some((revision, mut run)) = revision {
-        run.report(&revision, &mut report, succeeded);
-    } else {
-        report["status"] = if succeeded { "completed" } else { "failed" }.into();
-    }
+    invocation.report(&mut report, succeeded);
     Ok(report)
 }
 
@@ -703,7 +723,7 @@ fn run_pack(
     root: &std::path::Path,
     out: &std::path::Path,
     options: &serde_json::Value,
-) -> Result<Option<Vec<(Vec<serde_json::Value>, serde_json::Value)>>, String> {
+) -> Result<Option<Vec<(Vec<serde_json::Value>, serde_json::Value)>>, ProgramRunError> {
     use super::{logic::plan::corpus, typing::file_local::Binding};
     let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
@@ -711,9 +731,7 @@ fn run_pack(
     crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0168)", || {
         format!("{} policies: {}", texts.len(), group.ids.join(", "))
     });
-    let Ok(report) = corpus::run_with_options(&texts, root, None, &dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options)) else {
-        return Ok(None);
-    };
+    let report = corpus::run_with_options(&texts, root, None, &dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options))?;
     let mut each: Vec<Vec<serde_json::Value>> = group.members.iter().map(|_| Vec::new()).collect();
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&dir).map_err(|e| e.to_string())?;
     // Each member's rows of each finding relation, by the policy each row names (its first column).
@@ -1443,9 +1461,9 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     };
     let Some(revision) = revision.as_deref() else { return eval(Path::new(root)).map_err(|error| error.to_string()) };
     let scope = analysis_scope.as_deref().ok_or("--revision requires --analysis-scope <name>")?;
-    let mut invocation = RevisionRun::begin(Path::new(root), revision, scope)?;
+    let mut invocation = PolicyInvocation::begin(Path::new(root), Some(revision), Some(scope))?;
     let report = invocation.evaluate(eval)?;
-    let failures = invocation.snapshot.source_failures();
+    let failures = invocation.source_failures();
     for failure in &failures {
         eprintln!("rerail: {}: {}", failure.path, failure.message);
     }
@@ -1798,6 +1816,30 @@ mod git_revision_tests {
     use super::*;
 
     #[test]
+    fn a_nested_working_tree_batch_leaves_publication_to_its_caller() {
+        use super::super::logic::plan::corpus;
+        use crate::content_store::{ContentStore, analysis_scope::AnalysisRun};
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("work");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("a.py"), "x = 1\n").unwrap();
+        let rule = fixture.path().join("policy.rr");
+        std::fs::write(&rule, ".language python\n.violation Seen(at: node) \"identifier\"\nSeen(n) :- kind(n, \"identifier\").\n").unwrap();
+        let path = fixture.path().join("store.sqlite");
+        let mut caller = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:outer", "outer").unwrap();
+        corpus::with_tape_cache_path(&path, Some((root.clone(), caller.owner.clone())), || {
+            let report = run_policies(&[rule], &root, &fixture.path().join("out"), &serde_json::Value::Null).unwrap();
+            assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
+        });
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let count = |pattern: &str| db.query_row("SELECT count(*) FROM analysis_scope_manifest WHERE scope GLOB ?1", [pattern], |r| r.get::<_, i64>(0)).unwrap();
+        assert!(count("pending:*") > 0);
+        assert_eq!(count("cwd:*"), 0);
+        caller.finish(false).unwrap();
+        assert_eq!(count("*"), 0);
+    }
+
+    #[test]
     fn revision_cli_reports_results_when_the_store_cannot_open() {
         use super::super::logic::plan::corpus;
         let fixture = tempfile::tempdir().unwrap();
@@ -1846,7 +1888,7 @@ Seen(@place("commit", 1), subject) :- git_source_commit(r, c), git_subject(r, c,
 
         let durable = fixture.path().join("durable.sqlite");
         corpus::with_tape_cache_path(&durable, None, || {
-            let mut invocation = RevisionRun::begin(&root, "HEAD", "review").unwrap();
+            let mut invocation = PolicyInvocation::begin(&root, Some("HEAD"), Some("review")).unwrap();
             let (program, files) = read_policy(&policy).unwrap();
             let attempts = std::cell::Cell::new(0);
             let mut report = invocation.evaluate(|source| {
@@ -1861,7 +1903,7 @@ Seen(@place("commit", 1), subject) :- git_source_commit(r, c), git_subject(r, c,
                     run()
                 }
             }).unwrap();
-            invocation.report("HEAD", &mut report, true);
+            invocation.report(&mut report, true);
             assert_eq!(attempts.get(), 2);
             assert_eq!(report["source"]["commit"], commit);
             assert_eq!(report["diagnostics"][0]["message"], "selected commit");

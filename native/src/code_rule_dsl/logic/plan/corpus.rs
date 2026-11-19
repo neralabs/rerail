@@ -2368,6 +2368,11 @@ pub fn with_tape_cache_path<T>(path: &Path, ownership: Option<(PathBuf, crate::c
     run()
 }
 
+/// An enclosing evaluation owns the publication decision for this root.
+pub fn has_analysis_owner(root: &Path) -> bool {
+    ThreadStore::owner(root).is_some()
+}
+
 /// While the guard lives, every run of the process (without `RERAIL_TAPE_CACHE`) uses the store at `path`.
 pub fn use_store(path: std::path::PathBuf) -> UsedStore {
     let was = STORE.write().expect("the process's store").replace(path);
