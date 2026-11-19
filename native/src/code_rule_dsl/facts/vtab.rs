@@ -232,8 +232,8 @@ pub trait Source: Send + Sync {
         None
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
-    /// device reads where they lie (decision 0325 step 3). `None`: the device copies them (`device_view`, `row_at`).
-    #[cfg(target_os = "macos")]
+    /// device reads where they lie (decision 0325 step 3) and a probe reads through the relation's own index (on every
+    /// target). `None`: the device copies them (`device_view`, `row_at`).
     fn in_block(&self) -> Option<super::rows::InBlock> {
         None
     }
@@ -1506,7 +1506,6 @@ impl Source for Relation {
     fn len(&self) -> usize {
         self.rows
     }
-    #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<super::rows::InBlock> {
         self.cells().in_block()
     }
