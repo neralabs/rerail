@@ -183,6 +183,10 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
 
 ## The report: `rerail.scan/1`
 
+`checkout.ref` gives the full name of the current symbolic reference when its name is valid UTF-8.
+For a ref with other bytes, `checkout.ref` is null and `checkout.refHex` contains the original bytes in hexadecimal.
+A detached HEAD has a null ref and no `refHex`.
+
 `--json` prints one document in this shape; fields may be added, but removing or changing one makes a new schema.
 
 ```jsonc

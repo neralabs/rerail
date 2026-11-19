@@ -94,7 +94,7 @@ export interface ScanReport {
   startedAt: number;
   finishedAt: number;
   repository: { key: string; displayName: string };
-  checkout: { path: string; head: string | null; ref: string | null };
+  checkout: { path: string; head: string | null; ref: string | null; refHex?: string };
   source?: { revision: string; tree: string; commit: string | null };
   scope: "repository" | "git-diff";
   base: { ref: string; mergeBase: string } | null;
@@ -144,6 +144,13 @@ function gitBytes(cwd: string, args: readonly string[]): Buffer {
 function gitMaybe(cwd: string, args: readonly string[]): string | null {
   const result = runGit(cwd, args);
   return result.status === 0 ? result.stdout.replace(/\n$/u, "") : null;
+}
+
+function checkoutRef(root: string): Pick<ScanReport["checkout"], "ref" | "refHex"> {
+  const result = runGitBytes(root, ["symbolic-ref", "--quiet", "HEAD"]);
+  if (result.status !== 0) return { ref: null };
+  const bytes = result.stdout.at(-1) === 10 ? result.stdout.subarray(0, -1) : result.stdout;
+  return isUtf8(bytes) ? { ref: bytes.toString("utf8") } : { ref: null, refHex: bytes.toString("hex") };
 }
 
 /**
@@ -710,7 +717,7 @@ async function scanReport(
     checkout: {
       path: root,
       head: gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]),
-      ref: gitMaybe(root, ["symbolic-ref", "--quiet", "HEAD"]),
+      ...checkoutRef(root),
     },
     ...(source === undefined || options.revision === undefined ? {} : { source: { revision: options.revision, tree: source.tree, commit: source.commit ?? null } }),
     scope: options.scope,

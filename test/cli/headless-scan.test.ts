@@ -155,6 +155,25 @@ Seen(@place("git",1), oid) :- git_revision(r, "HEAD", oid), git_revision(r, ":a.
     }
   });
 
+  it("reports the original ref bytes when a packed branch has a replacement-character sibling", async () => {
+    const root = checkout(), head = git(root, "rev-parse", "HEAD");
+    git(root, "commit", "--allow-empty", "-qm", "other tip");
+    const sibling = git(root, "rev-parse", "HEAD");
+    const textName = "refs/heads/raw-�", rawName = Buffer.concat([Buffer.from("refs/heads/raw-"), Buffer.from([255])]);
+    writeFileSync(join(root, ".git", "packed-refs"), Buffer.concat([Buffer.from(`${sibling} ${textName}\n${head} `), rawName, Buffer.from("\n")]));
+    writeFileSync(join(root, ".git", "HEAD"), Buffer.concat([Buffer.from("ref: "), rawName, Buffer.from("\n")]));
+    const report = await scan(root, { revision: "HEAD", analysisScope: "ref-bytes" });
+    expect(report).toMatchObject({ status: "completed", checkout: { head, ref: null, refHex: rawName.toString("hex") }, source: { commit: head } });
+    const reported = Buffer.from(report.checkout.refHex!, "hex");
+    expect(execFileSync("git", ["cat-file", "--batch-check=%(objectname)"], {
+      cwd: root, encoding: "utf8", input: Buffer.concat([reported, Buffer.from("\n")]),
+    }).trim()).toBe(head);
+    expect(git(root, "rev-parse", textName)).toBe(sibling);
+    writeFileSync(join(root, ".git", "HEAD"), head + "\n");
+    const detached = await scan(root, { revision: "HEAD", analysisScope: "ref-bytes" });
+    expect(detached.checkout).toEqual({ path: root, head, ref: null });
+  }, 30_000);
+
   it("rejects an invalid UTF-8 path list before it can select a replacement-character name", async () => {
     const root = checkout();
     writeFileSync(join(root, "f�.py"), "NEEDLE");
