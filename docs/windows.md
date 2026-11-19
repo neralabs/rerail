@@ -583,12 +583,21 @@ capability, refused every start as "alive but not answering", and `rerail daemon
 - `stopDaemon` sends `POST /native/shutdown` on Windows, with the capability and the native token only `daemon.json`
   holds, and waits up to 10 s for the daemon to close: requests other sessions have in flight finish, and the daemon
   removes its state file and main-instance record. It kills only a daemon still running after that. macOS and Linux
-  keep `SIGTERM`. A daemon that does not answer is signalled only while it is proven the one that wrote `daemon.json`
-  (it holds the home's lock as its recorded holder, or started no later than the recorded `startedAt`). The stop asks
-  that after the shutdown request and just before the signal, so after its lookup the stop reads a busy daemon's start
-  once more, and asks again before a kill; where neither proves it while the process runs, the stop ends nothing
-  more, keeps every record and says how to check the process. [threat-model.md](threat-model.md) covers the route's
-  access rules.
+  keep `SIGTERM`. Before each signal the stop proves the process again from what the system shows, never from what
+  `daemon.json` says by then: it holds the home's lock as its recorded holder, or started no later than the recorded
+  `startedAt`; one that answered as itself while it held no lock stays proven while it runs. The stop asks that after
+  the shutdown request and just before the signal, so after its lookup it reads a busy daemon's start once more, and
+  asks again before a kill. A daemon that held the home's lock when the stop began, whether it answered or was too busy
+  to, stays proven while it runs, as when its exit runs on after it let go of the lock, unless its start reads more
+  than 10 s later than `startedAt`, or, where its start does not prove it, the lock belongs by then to another live
+  process and `daemon.json` no longer names it. A process the stop does not prove gets nothing: once it has exited the
+  stop says it stopped; when the lock belongs to another live process and `daemon.json` no longer names it, the stop
+  leaves that record as it is and says it changed, or says stopped once it has sent its `SIGTERM`; one a fact shows is
+  another program is left alone and the record naming it removed, as at the lookup; otherwise the stop keeps every
+  record and says how to check the process, but leaves a daemon recorded beside a lock file that is there and held by
+  no one to exit at the kill, and says it stopped. After a stop that says stopped, `daemon.json` is removed unless it
+  cannot be read or names the live process that holds the home's lock as its recorded holder.
+  [threat-model.md](threat-model.md) covers the route's access rules.
 
 </details>
 
