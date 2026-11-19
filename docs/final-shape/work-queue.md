@@ -2833,6 +2833,21 @@ submitted" now hold device memory at once.
     85: part load), per-chunk other +0.68, outside chunks +0.27. So (ii), the per-chunk per-stratum work made once a
     run, is about half a chunk's cost, not the 5% ab68's misattributed profiles gave; the joins' own per-run setup
     is the next part.
+  - (ii, step 1, b5b6ab869) A corpus run's chunks read one normalized program (`lower::Lowered::normalized`, a
+    slot of the run's program, handed to each run by `Hooks::normalized`), not one each: each chunk's own
+    version held every analysis again. Test: corpus::tests::a_runs_chunks_normalize_the_program_once (2 and 8
+    chunks normalize the same number of times; with the hand-over off, 20 against 8). Under Relax, then cargo on a
+    Linux host (4c281bc2d made the engine build there again). Its profiled pair (ab75) is not run yet: the M3 ran
+    out of disk in its build twice (the host's own use), the M1 Max is unreachable, and Linux has no Metal.
+  - (ii, what is left, from ab71's samples at 16 chunks) The stratum's program-only setup (its cycles, gates,
+    levels, the rules it leaves out, types) is under 1% of `native_stratum_`'s own samples: made once a run, it
+    would save almost nothing. Its samples outside the drive go to planning (`plan_rule_reused_in` 2,969, of
+    which `plan_search` 1,976: searches, not a kept plan taken), opening (`Fx::open` 2,396: binding the joins to
+    the chunk's relations, `join_rule_bound` 1,973, `view` and `InRel::index` in it) and, inside opening,
+    `Interner::for_loading` waiting on the shared symbols' lock (2,004 samples parked behind `sym_atom` and
+    `sym_cat`'s writes) to clone an arena handle that never changes. Next: whether a plan another chunk searched
+    is taken by the chunks after it (the plan cache's counts at 9 and 17 chunks), then the joins' binding; the
+    lock is wall time, not instructions, and is fixed apart (the handle kept outside the lock).
   - (accounting, before 7562bf8a94) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
