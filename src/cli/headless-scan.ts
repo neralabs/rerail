@@ -415,12 +415,12 @@ function scanRoot(options: HeadlessScanOptions): { root: string; requested: stri
   if (options.revision === undefined && options.analysisScope !== undefined) {
     throw new Error("--analysis-scope requires --revision");
   }
-  const requested = realpathSync(resolve(options.repo));
+  const requested = realpathSync.native(resolve(options.repo));
   const top = gitMaybe(requested, ["rev-parse", "--show-toplevel"]);
   if (options.revision !== undefined && options.scope !== "repository") throw new Error("--revision applies only to --scope repository");
   const bare = options.revision !== undefined && top === null && gitMaybe(requested, ["rev-parse", "--is-bare-repository"]) === "true";
   if (top === null && !bare) throw new Error(`${requested} is not inside a Git checkout`);
-  const root = top === null ? requested : realpathSync(top);
+  const root = top === null ? requested : realpathSync.native(top);
   if (options.base !== undefined && options.scope !== "git-diff") throw new Error("--base applies only to --scope git-diff");
   if (options.paths !== undefined && options.scope !== "repository") throw new Error("--path and --paths-from apply only to --scope repository");
   return { root, requested };

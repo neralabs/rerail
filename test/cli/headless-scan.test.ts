@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, toNamespacedPath } from "node:path";
+import { basename, dirname, join, toNamespacedPath } from "node:path";
 import { deflateSync } from "node:zlib";
 import Database from "better-sqlite3";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -1312,6 +1312,16 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
     } finally {
       failure.mockRestore();
     }
+  });
+
+  it("reports the directory owner using the spelling stored in the checkout", async () => {
+    const root = checkout(), actual = join(root, "Package");
+    mkdirSync(actual);
+    const alias = join(dirname(root), basename(root).toUpperCase(), "PACKAGE");
+    if (!existsSync(alias)) await expect(scan(root, { repo: alias })).rejects.toThrow();
+    const report = await scan(root, { repo: existsSync(alias) ? alias : actual });
+    expect(report.analysisScope).toEqual({ kind: "directory", path: "Package" });
+    expect(report.cache.publication).toBe("published");
   });
 
   it("reports unavailable run history while returning findings from independent policies", async () => {
