@@ -1927,6 +1927,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         if r.read != 0 {
             let _ = writeln!(out, "  block {at} recread {}", r.read);
         }
+        // `block N recblank K O`: gap mark `K` read from the blanks, by class output `O` (0430).
+        for &(k, o) in &r.blanks {
+            let _ = writeln!(out, "  block {at} recblank {k} {o}");
+        }
         // `block N recunplaced U`: the gap marks whose bit past the last grammar token refuses.
         if r.unplaced != 0 {
             let _ = writeln!(out, "  block {at} recunplaced {}", r.unplaced);

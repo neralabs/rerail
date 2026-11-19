@@ -70,6 +70,7 @@ class sign      = '+' '-'
 class underscore = '_'
 class decd      = '0'..'9' '_'
 class hexd      = '0'..'9' 'a'..'f' 'A'..'F' '_'
+class hex_digit = '0'..'9' 'a'..'f' 'A'..'F'
 class bind      = '0' '1' '_'
 class backslash = '\\'
 class dollar    = '$'
@@ -164,6 +165,8 @@ mask c_body     = f_chr & ~o_chr
 # An escape: a `\` no backslash escapes; `\u` and four hex digits, else two bytes.
 mask c_esc      = c_body & backslash & ~escaped(backslash)
 mask c_uesc     = c_esc & next(u_letter)
+# `\u` and four hex digits, as the lean lexer's `char_escape_end`: else refused.
+escape "a `\\u` without four hex digits" when prev(c_uesc, 2) & ~(hex_digit & next(hex_digit) & next(hex_digit, 2) & next(hex_digit, 3))
 escape "a byte above 0x7f outside a comment" when code & high
 escape "a nested block comment" when f_block & ~o_block & block_open
 # The scanner's semicolon is the line break; a `;` that starts a line, or ends the file, comes
@@ -362,12 +365,15 @@ mask word_start = word_run & ~prev(word_run) | sfx
 # A name's token ends at its word's last byte, or at the `@` of `return@` (and the others) or the
 # `?` of `as?`: one token, a keyword of its own.
 mask name_tok   = fill(word_start, ~w)
-mask name_last  = name_tok & ~next(name_tok) & ~next(jat_last) & ~next(prev(asq, 2)) | jat_last | prev(asq, 2)
-token simple_identifier = start word_start last name_last
-token integer_literal = start int_at last n_last
-token real_literal = start dot_at last n_last
-token hex_literal = start hex_at last h_last
-token bin_literal = start bin_at last b_last
+# A name runs over its word's bytes after its first, as the lean lexer's word reader, and over
+# the `@` of `return@` (`this@`, …) and the `?` of `as?`. A number runs over its bytes: a
+# decimal's, or a `0x`'s or `0b`'s letter and digits.
+mask name_more  = name_tok & ~word_start | jat_last | prev(asq, 2)
+token simple_identifier = start word_start run name_more
+token integer_literal = start int_at run nb
+token real_literal = start dot_at run nb
+token hex_literal = start hex_at run prev(hex_at) | hx
+token bin_literal = start bin_at run prev(bin_at) | bx
 # A raw string's content runs through a run of quotes (the lean lexer's scanner ends its token
 # after the run it read, looking for `"""`), or to a template: each run is a part of its own, to
 # the first of a run of quotes' last quote and its own last byte (`r_end`).

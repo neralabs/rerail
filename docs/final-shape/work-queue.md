@@ -1946,3 +1946,20 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   `primary_constructor` reads over the line break.
 - **Done when**: the reference ends a nested level at an `ends` mark as the compiled side does
   (0430 step 1b's rule included), and Kotlin's refused texts are refused by the reference too.
+
+### Q230. Gap marks set in the token loop while the extra's mark is set after it
+
+- **What**: the token loop's merge (`record_tokens`) tells an extra by its mark's bit in the
+  code. A gap mark the loop sets itself (`loop_marks`' lifted marks, from bytewise masks) is
+  given to the token unless that bit is set. Where the extra's mark is set after the tokens
+  (`late_marks`: not a reader's and not bytewise at its first byte), the loop takes an extra
+  for a grammar token and puts the gap mark's bit on the comment. 0430 step 2 found this for
+  the blank marks: `blank_marks` now asks for the extra's mark to be the loop's. `loop_marks`
+  does not ask it yet.
+- **Done when**: `loop_marks` applies the same condition, or the loop tells an extra by its
+  kind, with a ladder test of a bytewise gap mark and an extra whose mark is late.
+- **Done** (2026-11-18): `loop_marks` lifts a gap mark only where the extra's mark is the
+  loop's (`extra_known`, shared with `blank_marks`); else the mark is set after the tokens.
+  Only a lifted mark the loop keeps in the code shows the fault (tier 2 tests the lazy ones
+  itself): `ladder_tests::a_loop_gap_mark_waits_for_a_late_extra` has one a `without` reads,
+  and fails without the condition (`"// a, [1] é\r\n/*\n\n*/"`, the comment took the bit).

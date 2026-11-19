@@ -75,3 +75,50 @@ refused, 0 differ. `aot_tapes_are_the_jits` passes on the 447 files.
 Bitlex's reference does not implement `, ends` (Q229). It accepts the refused texts above,
 because its `past_marks` skips the hidden `semi` inside `class_rest`, and its
 `primary_constructor` reads `private⏎constructor`.
+
+## Step 2: the token loop notes the line break while it skips the blanks (2026-11-18)
+
+On the CPU, `semi` and `head_ctor` are now the token loop's, as `Tok::nl` is the lean lexer's.
+At each token the loop tests the line break class over the blank run before it: from the end
+of the token before to the token's first byte. That is one word's range in the block in
+registers, and a word at a time from the bytes when the run started in an earlier block. An
+extra's bits go on to the grammar token after it, as `skip` ORs `nl` over the comments it
+passes. The body makes no mask for the two marks, and the pass after the tokens (`late_marks`)
+no longer sets them. Metal and the interpreter keep the mask lifted to the next token.
+
+The compiler finds such a mark by its mask's shape, never by its name, and proves it
+(`bitlex_masks`, `Records::blanks`, text `recblank`). A gap mark qualifies when its mask `M`
+holds only at bytes of one class `C` (its first bytes), and two things are proved, up to a
+refusal:
+
+1. No token's byte holds `M`. A token's bytes are known from its end rule, as the lean
+   lexer's readers know them. A `run`'s are its first byte and its run mask's. A `pair`'s are
+   its first and the next. A reader's are its regions' fills. A token inside a region (a
+   string's part) is its first and last bytes and the region between. A token of fixed length
+   is its bytes. For a lexer's token the class must miss them; for a region's, the mark.
+2. Each byte of `C` that `M` leaves out is a region's, that is, a token's.
+
+Then `M` between tokens is `C`, and the loop's test is the mask's value. A `last L` token's
+bytes are a fill from its first byte to its last, which the prover cannot show. So Kotlin's
+names and numbers are now `run` tokens, the lean lexer's readers' shape:
+`simple_identifier = start word_start run name_more`, where `name_more` is the word's bytes
+after the first, plus the `@` of `return@` and the `?` of `as?`. The numbers run over `nb`, or
+over a `0x`/`0b` letter and digits.
+
+The proof found one real difference from the lean lexer. A character's `\u` took any four
+bytes after it, so `'\u1'` and a line break after it made one token. The lean lexer's
+`char_escape_end` refuses a `\u` without four hex digits, and now the grammar does too.
+
+The loop tells an extra by its mark in the code, so a blank mark is read so only where the
+extra's mark is the loop's: its reader's, or its first byte's. A mark set after the tokens is
+too late (`blank_marks`). The lifted gap marks the loop sets from the bytes (`loop_marks`) rest
+on the same condition; they now check it too (`extra_known`, Q230).
+
+Test: `ladder_tests::a_gap_mark_read_from_the_blanks`. Its grammar has line breaks in block
+comments and strings, between extras and after `;`. The test checks the reference, the
+interpreter and Cranelift on its sentences, mutations and fixed texts, and that the CPU loop
+reads the mark from the blanks. Kotlin: its tests pass, and the corpus is unchanged (447 the
+same, 44 refused, 0 differ). `aot_tapes_are_the_jits` passes on the 447 files.
+
+The other gap marks (`semi_close` and the escapes' marks) are still lifted after the tokens.
+Step 3 (tier 2 tests `semi` where a rule takes a semicolon) is next.

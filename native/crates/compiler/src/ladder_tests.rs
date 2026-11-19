@@ -206,6 +206,112 @@ tree t {
     }
 }
 
+/// A gap mark read from the blanks (0430, step 2): `semi`'s mask is a line break in code, so
+/// the compiler proves it holds at every line break between tokens and at none inside a token
+/// (a comment's or a string's line breaks are their regions'), and the CPU's token loop tests
+/// the line break class in the blank run before each token, as the lean lexer's `skip` notes
+/// `nl`, with an extra's run carried to the grammar token after it. The reference's nodes equal
+/// the interpreter's and Cranelift's, line breaks in comments and strings and between extras
+/// included.
+#[test]
+fn a_gap_mark_read_from_the_blanks() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class dq        = '"'
+class word      = 'a'..'z'
+class punct     = '(' ')' ';'
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+regions hidden {
+  line  = line_open .. lf outside
+  block = block_open .. block_end
+  str   = dq .. dq
+}
+mask code       = ~hidden & ~o_line & ~o_block & ~o_str
+mask last_byte  = ~next(~empty)
+error "a comment or a string open at the end of the file" by tokens when (f_block | f_str) & last_byte
+mask w          = code & word
+mask name       = fill(w, ~w)
+error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
+token line_comment = start slash & o_line read line
+token multiline_comment = start slash & o_block read block
+token string    = start o_str read str
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start code & punct
+keywords simple_identifier { "k" }
+keywords punct { "(" ")" ";" } required
+skip ws
+mark semi       = lf & code unless after ";", end, ends
+tree t {
+  node source_file whole = (statement (semi | ';'))*
+  choice statement nested = call | simple_identifier | string
+  node call             = 'k' '(' [simple_identifier | string] ')'
+  hidden semi
+  extra line_comment multiline_comment
+}
+"#;
+    let c = compile_step("blanks", source);
+    let r = c.program.block_programs[0].records.as_ref().expect("records");
+    assert_eq!(r.blanks.iter().map(|b| b.0).collect::<Vec<_>>(), vec![0], "semi is read from the blanks");
+    let fixed = ["a\nb\n", "k(b)\nc", "a /* x\ny */ b\n", "a // x\nb\n", "k(\"x\ny\")\nb", "a;\nb\n", "a /* x */\n/* y */ b\n", "a\n\n// x\n\nb", "a b\n", "k /* \n */ (b)\n", "k(\nb)\n"];
+    // The CPU's loop reads it so: an extra's mark is the loop's (its reader's), not a late one.
+    let native = crate::block_native::BlockNative::lower(&c.program.block_programs[0]);
+    let bw = crate::native_cpu_bytes::Bytewise::of(&native);
+    assert_eq!(crate::native_cpu_block::blank_bits(r, &|o| bw.can(o)), 1);
+    let samples: [(&str, &[&str]); 2] = [("line_comment", &["// x", "//", "// \"y", "// /* z"]), ("multiline_comment", &["/* x */", "/*\n*/", "/* \" \n */", "/**/"])];
+    assert_eq!(check_documents("blanks", &c, b"abk(); \n/*\"x", &samples, &fixed, &|_, _, _, _| None), None);
+}
+
+/// A gap mark the token loop sets from the bytes, where the extra's mark is set after the
+/// tokens (Q230): the loop cannot tell a comment from a grammar token, so the mark is set after
+/// the tokens too, and a comment never takes its bit. One comment kind read by one reader of
+/// two regions.
+#[test]
+fn a_loop_gap_mark_waits_for_a_late_extra() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class word      = 'a'..'z'
+class punct     = '(' ')'
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+regions hidden {
+  line  = line_open .. lf outside
+  block = block_open .. block_end
+}
+mask code       = ~hidden & ~o_line & ~o_block
+mask last_byte  = ~next(~empty)
+error "a comment open at the end of the file" by tokens when f_block & last_byte
+mask w          = code & word
+mask name       = fill(w, ~w)
+error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
+token comment   = start slash & (o_line | o_block) read line | block
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start code & punct
+keywords punct { "(" ")" } required
+skip ws
+mark brk        = lf
+mark call       = tokens simple_identifier "(" without brk
+tree t {
+  node source_file whole = (item)*
+  choice item           = called | simple_identifier | '(' | ')'
+  node called           = call simple_identifier
+  hidden brk
+  extra comment
+}
+"#;
+    let c = compile_step("late extra", source);
+    let fixed = ["f /* x */\n(x)", "f\n/* x */ (x)", "f /**/ (x)", "a // b\n(c)", "// c\n/**///\n(a)", "f(x) /* \n */ g (y)"];
+    assert_eq!(check_documents("late extra", &c, b"ab() \n/*", &[], &fixed, &|_, _, _, _| None), None);
+}
+
 /// `without M` (0430): an element holds only at a token whose record has no bit of mark `M`, as
 /// the lean parser asks `!peek_at(j).nl`. A name and a `(` with a line break between are no
 /// call; with blanks, one. Bitlex's reference and every executor.

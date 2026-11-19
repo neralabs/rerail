@@ -141,6 +141,13 @@ pub struct Records {
     /// the code on every target, as the patterns read them there (no gap mark tier 2 makes
     /// itself, `native_cpu_block::lazy_marks`).
     pub read: u32,
+    /// The gap marks the CPU's token loop reads from the blanks (decision 0430): each `(mark,
+    /// class)`, the class an output, a byte class. Proved: the mark's mask holds at no byte of a
+    /// token and at every byte of the class between tokens, so its bit at a grammar token is
+    /// whether the class holds in the blank runs before it and before the extras between, as
+    /// the lean lexer's `skip` sets `nl`. Metal and the interpreter read the mask, as other gap
+    /// marks'.
+    pub blanks: Vec<(u8, u16)>,
     /// The masks tier 2's local checks read (`program::LocalCheck::mask`, indexes into the block
     /// program's masks), and nothing else does: on the CPU, tier 2 reads each from the bytes
     /// where they make it (`native_cpu_bytes`), so the CPU's body makes none of them.

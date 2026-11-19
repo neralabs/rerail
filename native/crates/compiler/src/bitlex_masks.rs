@@ -326,6 +326,9 @@ pub struct Lowering {
     pub token_parts: HashMap<String, Vec<(Val, u8, Option<Val>)>>,
     /// A region read in parts: its fill (`f_R`), by the reader's kind (`Reader::quiet`).
     pub token_fills: HashMap<String, Val>,
+    /// Each token read whole by a region's reader (`read R`, `read R | S`): its regions' fills,
+    /// its bytes (the blank marks' proof, decision 0430).
+    pub read_fills: HashMap<String, Val>,
     /// Each token row's (`tokens`, in order): read inside a region by its reader (`Inside`),
     /// so no first byte ends it by a rule.
     pub inside: Vec<bool>,
@@ -476,6 +479,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_closer_last: HashMap::default(),
         token_parts: HashMap::default(),
         token_fills: HashMap::default(),
+        read_fills: HashMap::default(),
         inside: Vec::new(),
         keywords: Vec::new(),
         skip: None,
@@ -660,6 +664,10 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
             for c in r.checks.iter_mut() {
                 let v = low.program.masks[usize::from(c.o)];
                 c.o = low.program.outputs.iter().position(|&o| o == v).ok_or("a token test's mask not an output")? as u16;
+            }
+            for b in r.blanks.iter_mut() {
+                let v = low.program.masks[usize::from(b.1)];
+                b.1 = low.program.outputs.iter().position(|&o| o == v).ok_or("a blank mark's class not an output")? as u16;
             }
         }
         // The fallback's outputs, one per delay, are the totals: one flag, which `EMPTY 0` reads.
@@ -889,6 +897,9 @@ impl Lowering {
                                 arms.push((opener, closer, off, none));
                             }
                             self.token_reads.insert(kind.clone(), arms);
+                            let fill = regions.iter().map(|r| Expr::Name(format!("f_{}", r.kind))).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a region");
+                            let fill = self.expr(&fill)?;
+                            self.read_fills.insert(kind.clone(), fill);
                         }
                         Some(r) => {
                             let (pair, e) = match r {
@@ -4175,7 +4186,127 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         Some(v) => Some(mask_of_val(v, &mut mark_masks)),
         None => None,
     };
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), alone: token_alone & ((1u32 << crate::records::MARKS) - 1), read: token_read, check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
+    // The gap marks the CPU's token loop reads from the blanks (decision 0430), as the lean
+    // lexer's `skip` sets `nl` while it passes them: a mark whose mask `M` holds at the bytes of
+    // one class `C` alone (its first bytes), at no byte of a token, and at every byte of `C`
+    // outside the regions (a region is its token's bytes, its reader walks it). Its bit at a
+    // grammar token is then `C` in the blank runs before it and before the extras since the
+    // grammar token before. A token's bytes, by its end rule, as the lean lexer's readers: a
+    // run's, its first and its run mask's; a pair's, its first and the next; a reader's, its
+    // regions' fills; a token inside a region, the region's; else (`last`) from its first to its
+    // last, which the prover seldom shows. As `gap_ends`, the claims need hold only up to a
+    // refusal.
+    let mut blanks: Vec<(u8, u16)> = Vec::new();
+    if skip.is_some() && !token_rows.is_empty() {
+        let mut regions: Option<Val> = None;
+        let mut fills: Vec<(String, Val)> = low.token_fills.iter().chain(&low.read_fills).map(|(k, v)| (k.clone(), *v)).collect();
+        fills.sort_by(|a, b| a.0.cmp(&b.0));
+        for (_, f) in fills {
+            regions = Some(match regions {
+                Some(r) => low.or(r, f)?,
+                None => f,
+            });
+        }
+        // Each token's bytes, as a few values whose union holds them; each with whether the
+        // mark's class must miss it (a lexer's token: no byte of the class) or the mark itself
+        // (a region's, where the class's bytes are no mark's).
+        let mut bytes_of: Vec<(Val, bool)> = Vec::new();
+        for (i, t) in token_rows.iter().enumerate() {
+            if let Some(&f) = low.read_fills.get(&t.0).or(low.token_fills.get(&t.0)) {
+                bytes_of.push((f, false));
+            } else if low.inside.get(i).copied().unwrap_or(false) {
+                // Inside a region: its first and last bytes, and the region's between.
+                bytes_of.push((regions.ok_or("a token inside a region with no region")?, false));
+                bytes_of.push((t.1, true));
+                bytes_of.push((t.2, true));
+            } else if let Some(&(pair, v)) = low.token_rules.get(&t.0) {
+                bytes_of.push((t.1, true));
+                if pair {
+                    let second = low.and(t.1, v)?;
+                    bytes_of.push((low.prev(second, 1)?, true));
+                } else {
+                    bytes_of.push((v, true));
+                }
+            } else if low.token_pairs.contains_key(&t.0) {
+                bytes_of.push((t.1, true));
+                bytes_of.push((low.prev(t.1, 1)?, true));
+            } else {
+                // A last a fixed distance from the first (none: a token of one byte): the bytes
+                // between.
+                let mut fixed = (t.1.v == t.2.v && t.1.d == t.2.d).then_some(0);
+                for k in (1..8u64).filter(|_| fixed.is_none()) {
+                    let at = low.prev(t.1, k)?;
+                    let differ = low.xor(at, t.2)?;
+                    if bitlex_prove::never(&low.proof_ops(), &low.program.tables, differ.v, differ.d) {
+                        fixed = Some(k);
+                        break;
+                    }
+                }
+                match fixed {
+                    Some(k) => {
+                        for j in 0..=k {
+                            bytes_of.push((low.prev(t.1, j)?, true));
+                        }
+                    }
+                    None => {
+                        let past = low.prev(t.2, 1)?;
+                        bytes_of.push((low.fill(t.1, past)?, true));
+                    }
+                }
+            }
+        }
+        let mut refused = low.leaf(BlockOp::Const(0), false);
+        for fb in low.fallbacks.clone() {
+            refused = low.or(refused, fb)?;
+        }
+        let refused_next = low.next(refused, 1)?;
+        let none = low.leaf(BlockOp::Const(0), false);
+        let refused = low.fill(refused_next, none)?;
+        let tested: u32 = checks.iter().fold(0, |a, c| match c.then {
+            crate::records::CheckThen::At(k) | crate::records::CheckThen::After(k) => a | 1 << k,
+            crate::records::CheckThen::Escape => a,
+        });
+        let unplaced: u32 = low.unplaced.iter().fold(0, |a, &k| a | 1 << k);
+        let tested_only: u32 = low.tested_only.iter().fold(0, |a, &k| a | 1 << k);
+        for k in 0..in_code.len() {
+            let bit = 1u32 << k;
+            if gaps & bit == 0 || in_code[k].0 == crate::records::WORD_ALONE || (tested | unplaced | tested_only) & bit != 0 || extra_mark == Some(k as u8) {
+                continue;
+            }
+            let m = mark_masks[usize::from(in_code[k].0)];
+            let class_bytes = low.settled_first_bytes(&mut settled, m);
+            if class_bytes == [0; 4] || class_bytes == [u64::MAX; 4] {
+                continue;
+            }
+            let class = low.class_set(class_bytes);
+            // Each claim: the class misses the bytes, or else the mark does.
+            let mut held = true;
+            for &(b, lexed) in &bytes_of {
+                let by_class = low.and(class, b)?;
+                let by_class = low.andnot(by_class, refused)?;
+                if lexed && low.either_never(&mut settled, by_class) {
+                    continue;
+                }
+                let by_mark = low.and(m, b)?;
+                let by_mark = low.andnot(by_mark, refused)?;
+                if !low.either_never(&mut settled, by_mark) {
+                    held = false;
+                    break;
+                }
+            }
+            let x = low.andnot(class, m)?;
+            let x = match regions {
+                Some(r) => low.andnot(x, r)?,
+                None => x,
+            };
+            let x = low.andnot(x, refused)?;
+            held = held && low.either_never(&mut settled, x);
+            if held {
+                blanks.push((k as u8, mask_of_val(class, &mut mark_masks)));
+            }
+        }
+    }
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), alone: token_alone & ((1u32 << crate::records::MARKS) - 1), read: token_read, blanks, check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
     crate::records::WordTable::new(&records.words)?;
     // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
     // loop knows it only where the reader gives it (`Reader::retag`).

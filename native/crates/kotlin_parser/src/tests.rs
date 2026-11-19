@@ -1313,4 +1313,7 @@ fn lazy_probe() {
     for ch in &r.checks {
         eprintln!("check: {ch:?}");
     }
+    eprintln!("blanks: {:?} gap {:?} skip {:?} gaps {:b}", r.blanks, r.gap, r.skip, r.gaps);
+    let blank_bits = rerail_compiler::native_cpu_block::blank_bits(r, &|o| bw.can(o));
+    eprintln!("blank marks read by the CPU loop: {blank_bits:b}; records_made {:?}", native.records_made());
 }
