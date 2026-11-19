@@ -220,9 +220,10 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   /**
-   * The Git checkout at `checkoutPath`, located with one Git process off the thread, so the daemon answers hooks while
-   * it runs. A change records it, as a session start does, so its settings and conflicts have a recorded owner; a read
-   * only looks it up.
+   * The Git checkout at `checkoutPath`. A read locates it with one Git process off the thread, so the daemon answers
+   * hooks while it runs, and looks up the checkout recorded at that location. A change records it with
+   * `recordCheckout`, as a session start does, so its settings and conflicts have a recorded owner: that record locates
+   * the checkout again with a Git process on the thread.
    */
   async #checkout(checkoutPath: string, write: boolean): Promise<CheckoutContext> {
     // A folder that is gone is no checkout.
