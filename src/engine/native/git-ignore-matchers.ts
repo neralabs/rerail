@@ -4,12 +4,10 @@
  * audited held one index per worktree per session. A router that asks gets the shared matcher while the matcher says a
  * matcher opened now would read the rules it read (`sourcesUnchanged`: the engine reads the configuration again as
  * Git does, includes and conditions among it, and stamps the files it read whole), and a fresh one otherwise, which the
- * routers that ask after it share. Every holder reads the Git index again once its file changes, as a matcher opened
- * then would read it; a router that did not hold the shared matcher gets it with its exclude stack made again, as a
- * matcher it opened would make it. A router keeps the matcher it was given until it asks
- * again, as a lane of its opens where a lane of its own opened its own matcher. A router that asks under another owner
- * of Git reads than the one that opened the shared matcher (Git answered at last) gets one that owner opens, as a
- * router's own open did.
+ * routers that ask after it share. Every holder reads the Git index again once its file changes, and the rules with
+ * it, as a matcher opened then would read them. A router keeps the matcher it was given until it asks again, as a lane
+ * of its opens where a lane of its own opened its own matcher. A router that asks under another owner of Git reads than
+ * the one that opened the shared matcher (Git answered at last) gets one that owner opens, as a router's own open did.
  */
 import { nativeGitAccess } from "./git-access.js";
 import type { NativeGitAccess, NativeGitIgnoreMatcher } from "./native.js";
@@ -45,7 +43,7 @@ export class GitIgnoreMatchers {
    */
   matcher(root: string, user: object): NativeGitIgnoreMatcher | null {
     const opener = this.#opener();
-    const shared = this.#unchangedCurrent(root, user, opener) ?? this.#opened(root, opener);
+    const shared = this.#unchangedCurrent(root, opener) ?? this.#opened(root, opener);
     this.#letGo(user, held => held.root === root && held !== shared);
     if (shared === undefined) return null;
     shared.users.add(user);
@@ -53,23 +51,21 @@ export class GitIgnoreMatchers {
   }
 
   /**
-   * `root`'s current matcher while `opener` opened it and it reads the rules a matcher opened now would. Handed to a user
-   * that does not hold it yet, it makes its exclude stack again, as a matcher that user opened would make it; a user
-   * that asks again keeps the stack it reads by, as it kept its own matcher's.
+   * `root`'s current matcher while `opener` opened it and it reads the rules a matcher opened now would.
    */
-  #unchangedCurrent(root: string, user: object, opener: GitIgnoreOpener): Shared | undefined {
+  #unchangedCurrent(root: string, opener: GitIgnoreOpener): Shared | undefined {
     const current = this.#current.get(root);
     if (current === undefined || current.opener !== opener) return undefined;
-    return this.#unchanged(current, !current.users.has(user)) ? current : undefined;
+    return this.#unchanged(current) ? current : undefined;
   }
 
   /**
    * Whether `shared` reads the rules a matcher opened now would. A check that fails reads as a change, and is said once
    * per checkout, as a failed open is: one that keeps failing gives each router a matcher of its own.
    */
-  #unchanged(shared: Shared, readIndexAgain: boolean): boolean {
+  #unchanged(shared: Shared): boolean {
     try {
-      return shared.matcher.sourcesUnchanged(readIndexAgain);
+      return shared.matcher.sourcesUnchanged();
     } catch (error) {
       if (!this.#checkFailed.has(shared.root)) {
         this.#checkFailed.add(shared.root);

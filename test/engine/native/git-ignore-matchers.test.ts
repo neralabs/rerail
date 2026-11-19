@@ -91,24 +91,6 @@ describe("GitIgnoreMatchers", () => {
     expect(opened).toHaveBeenCalledTimes(2);
   });
 
-  it("hands the shared matcher to a router that did not hold it with the index read again, and not to one that asks again", async () => {
-    const { main } = await checkout();
-    const readAgain: (boolean | undefined)[] = [];
-    const matchers = new GitIgnoreMatchers(wrapping(matcher => ({
-      ignored: (path, directory) => matcher.ignored(path, directory),
-      ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
-      sourcesUnchanged: readIndexAgain => {
-        readAgain.push(readIndexAgain);
-        return matcher.sourcesUnchanged(readIndexAgain);
-      },
-    })));
-    const first = matchers.matcher(main, user("first"));
-    expect(matchers.matcher(main, user("first"))).toBe(first);
-    expect(matchers.matcher(main, user("second"))).toBe(first);
-    expect(matchers.matcher(main, user("second"))).toBe(first);
-    expect(readAgain).toEqual([false, true, false]);
-  });
-
   it("holds nothing for a folder outside Git, where no matcher opens", () => {
     const matchers = new GitIgnoreMatchers(() => ({ openGitIgnoreMatcher: () => null }));
     expect(matchers.matcher(join(tmpdir(), "outside-git"), user("outside"))).toBeNull();

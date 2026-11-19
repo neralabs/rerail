@@ -391,9 +391,9 @@ fn a_matchers_sources_check_meets_the_refusal_of_another_owners_repository() {
     if in_child(NAME) {
         let work = fixture().join("work");
         let mut ignore = GitIgnore::open(&work).unwrap().expect("a Git worktree");
-        assert!(ignore.sources_unchanged(true), "nothing changed");
+        assert!(ignore.sources_unchanged(), "nothing changed");
         opener::ASSUME_ANOTHER_OWNER.store(true, std::sync::atomic::Ordering::Relaxed);
-        assert!(!ignore.sources_unchanged(true), "another user's");
+        assert!(!ignore.sources_unchanged(), "another user's");
         assert!(GitIgnore::open(&work).is_err(), "an open now is refused");
         return;
     }
