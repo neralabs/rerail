@@ -15,7 +15,7 @@ import { z } from "zod";
 import { isSourceGap, type AuditRecorder, type AuditInput, type AuditResult } from "../../../src/engine/audit/audit.js";
 import { defaultRerailDatabasePath } from "../../../src/engine/storage/database.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
-import type { SteerMetadata } from "../../../src/engine/code-rule/code-rule.js";
+import type { CodeRuleEdit, SteerMetadata } from "../../../src/engine/code-rule/code-rule.js";
 import { AUDIT_MAX_SOURCE_BYTES, MAX_SOURCE_BYTES, modulePath, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { SOURCE_LANGUAGES } from "../../../src/engine/code-rule/code-rule-languages.js";
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
@@ -349,6 +349,30 @@ function holdStoreWriterForCompletion(holder: StoreWriterHolder, onCompletion: (
 
 const repositoryIndexDone = z.object({ done: z.boolean() });
 
+/** Real native workspaces whose inline apply of a request naming `path` throws, as an engine error would. */
+function failingApply(path: string) {
+  const binding = native.loadNativeBinding();
+  class Workspace {
+    constructor() {
+      const inner = new binding.CodeRuleDslWorkspace();
+      return new Proxy(inner, {
+        get(target, key) {
+          const value: unknown = Reflect.get(target, key, target);
+          if (typeof value !== "function") return value;
+          if (key !== "tryApply") return value.bind(target);
+          return (request: string): unknown => {
+            if (request.includes(JSON.stringify(path))) throw new Error(`injected evaluation failure for ${path}`);
+            return Reflect.apply(value, target, [request]);
+          };
+        },
+      });
+    }
+  }
+  return vi
+    .spyOn(native, "loadNativeBinding")
+    .mockReturnValue(Object.assign(Object.create(binding) as NativeBinding, { CodeRuleDslWorkspace: Workspace }));
+}
+
 describe("Python module paths", () => {
   it("walks package __init__.py files the way Ruff does", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-modules-"));
@@ -613,6 +637,46 @@ describe("mechanical code rule regressions", () => {
 
         expect(order).toEqual(["recorded api/a.py", "steered api/a.py", "recorded api/b.py", "steered api/b.py"]);
       } finally { await enforcer.close(); }
+    });
+
+    /** A tool call of a.py and b.py, then another call's c.py, all queued before the evaluator takes a.py on the host's next turn. */
+    async function twoCalls(enforcer: NativeCodeRuleEnforcer, sessionId: string, b: CodeRuleEdit) {
+      await enforcer.openWorkspace(sessionId);
+      await enforcer.auditGeneratedEdits(sessionId, {
+        revision: 1,
+        checkpoints: ["edit"],
+        edits: [{ path: "api/a.py", language: "python", generatedText: "NEEDLE\n" }, b],
+      });
+      await enforcer.auditGeneratedEdits(sessionId, {
+        revision: 2,
+        checkpoints: ["edit"],
+        edits: [{ path: "api/c.py", language: "python", generatedText: "NEEDLE\n" }],
+      });
+      await settled(enforcer);
+    }
+
+    it("when the tool call's other edit ends in a read failure, before another call's queued edit is recorded", async () => {
+      const { root, enforcer, order } = await ordered();
+      try {
+        for (const name of ["a", "b", "c"]) await writeFile(join(root, "api", `${name}.py`), "NEEDLE\n");
+        await twoCalls(enforcer, "read-failure-then-steered", { path: "api/b.py", language: "python", readError: "unreadable" });
+
+        expect(order).toEqual(["recorded api/a.py", "recorded api/b.py", "steered api/a.py", "recorded api/c.py", "steered api/c.py"]);
+      } finally { await enforcer.close(); }
+    });
+
+    it("when the tool call's other edit's evaluation fails, before another call's queued edit is recorded", async () => {
+      const { root, enforcer, order } = await ordered();
+      const binding = failingApply("api/b.py");
+      try {
+        for (const name of ["a", "b", "c"]) await writeFile(join(root, "api", `${name}.py`), "NEEDLE\n");
+        await twoCalls(enforcer, "evaluation-error-then-steered", { path: "api/b.py", language: "python", generatedText: "NEEDLE\n" });
+
+        expect(order).toEqual(["recorded api/a.py", "steered api/a.py", "recorded api/b.py", "recorded api/c.py", "steered api/c.py"]);
+      } finally {
+        binding.mockRestore();
+        await enforcer.close();
+      }
     });
 
     it("once for a tool call's edits, after the last of them is recorded", async () => {
