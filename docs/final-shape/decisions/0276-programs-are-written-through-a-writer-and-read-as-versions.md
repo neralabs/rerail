@@ -461,6 +461,12 @@ Progress (2026-11-18):
       the walks holds a body, only names in order. What reads written rules (the demand dedup, `helper_once`'s
       template key, `.shape`'s check) reads them in the version (`RuleRef`), by the hash the encoder computes
       (`end_rule`); a duplicate is abandoned before it ends (`RuleBuilder`'s drop).
+    - *Done (A3.1, A3.2).* The builder writes an open rule literal by literal (`Builder::open_rule`, `put_*`,
+      `close_rule`, `close_rule_once`), each write its own borrow, byte for byte what `RuleBuilder` writes. The
+      lowering writes every rule through it (no `Builder::add`): a demand once by the encoder's hash, and `.shape`'s
+      check reads the finished version's rules. The holders of written trees go (`Out::Before`, `Written::kept`).
+      Left: the lowering still builds each rule as a `front::Rule` and puts it (`put_rule`); each literal's lowering
+      moves to its own `put_*` writes, then `put_rule` goes.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,
