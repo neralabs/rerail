@@ -8,7 +8,8 @@ import { windowsPowerShell } from "./system-programs.js";
  * - `running`: it runs, and this process may signal it.
  * - `running-not-signalable`: it runs, and `kill` answers `EPERM`: another user's process or a system service. On Windows
  *   this user's own elevated process answers the same way, so there `EPERM` alone never says whose process it is.
- * - `gone`: no process holds the pid (`ESRCH`), or on Linux one that exited and was never reaped (a zombie).
+ * - `gone`: no process holds the pid (`ESRCH`), or on Linux one that exited, every thread of it, and was never reaped (a
+ *   zombie).
  */
 export type ProcessState = "running" | "running-not-signalable" | "gone";
 
@@ -42,19 +43,20 @@ function signalState(pid: number, kill: ProcessSignal): ProcessState {
 /**
  * A process that has exited but was never reaped still answers signal 0. In a container without an init process
  * nothing reaps a detached daemon, so it stays a zombie for as long as the container runs: it holds no port, no socket
- * and no lock, and counts as gone. Undefined on Linux when `/proc` has no entry to read for `pid`: it was reaped since
- * it answered, or `/proc` hides it or is not mounted.
+ * and no lock, and counts as gone. Its main thread alone is no such zombie: when it exits first, `/proc/<pid>/stat`
+ * reads `Z` while the process's other threads still exit, holding its files, sockets and locks until the last one has.
+ * The process is a zombie once `Threads` reads 1, the main thread that exited. Undefined on Linux when `/proc` has no
+ * entry to read for `pid`: it was reaped since it answered, or `/proc` hides it or is not mounted.
  */
 function isZombie(pid: number): boolean | undefined {
   if (process.platform !== "linux") return false;
-  let stat: string;
+  let status: string;
   try {
-    stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    status = readFileSync(`/proc/${pid}/status`, "utf8");
   } catch {
     return undefined;
   }
-  // `pid (comm) state …`: the command name may itself hold spaces and parentheses, so the state follows the last `)`.
-  return /^\s*[ZX]/u.test(stat.slice(stat.lastIndexOf(")") + 1));
+  return /^State:\s*[ZX]/mu.test(status) && Number(/^Threads:\s*(\d+)/mu.exec(status)?.[1] ?? 1) <= 1;
 }
 
 /**

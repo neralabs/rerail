@@ -1,4 +1,5 @@
 import * as childProcess from "node:child_process";
+import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
@@ -40,6 +41,32 @@ describe("processState", () => {
       throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
     };
     expect(processState(DEAD_PID, reapedAfterFirst)).toBe("gone");
+  });
+
+  it.runIf(process.platform === "linux")("reads a process whose main thread exited as running while another thread runs on, and gone once that one has", async () => {
+    // Python's main thread ends itself and leaves a thread that sleeps: /proc reads the process `Z`, while the thread that
+    // runs on still holds every file, socket and lock the process opened.
+    const script = "import ctypes, threading, time\nthreading.Thread(target=time.sleep, args=(60,)).start()\nctypes.CDLL(None).pthread_exit(None)";
+    const child = spawn("python3", ["-c", script], { stdio: "ignore" });
+    const exited = once(child, "exit");
+    const pid = child.pid!;
+    const status = (): string => readFileSync(`/proc/${pid}/status`, "utf8");
+    try {
+      await vi.waitFor(() => expect(status()).toMatch(/^State:\s*Z/mu), { timeout: 10_000, interval: 10 });
+      expect(status()).toMatch(/^Threads:\s*2$/mu);
+      expect(processState(pid)).toBe("running");
+      child.kill("SIGKILL");
+      // Node reaps the child only on a later turn of the event loop, so this loop sees the zombie it became once the
+      // thread that ran on has exited too.
+      const deadline = Date.now() + 10_000;
+      while (/^Threads:\s*2$/mu.test(status()) && Date.now() < deadline) {
+        // The killed thread exits on the system's schedule.
+      }
+      expect(processState(pid)).toBe("gone");
+    } finally {
+      child.kill("SIGKILL");
+      await exited;
+    }
   });
 });
 

@@ -10,7 +10,7 @@
  * test process left open, fails the removal once the retries run out, naming the file it holds.
  */
 import { ChildProcess } from "node:child_process";
-import { realpathSync, rmSync } from "node:fs";
+import { readFileSync, realpathSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -104,14 +104,42 @@ function spellings(folder: string): string[] {
 
 /**
  * The processes this test process started that still run in `folder` or name it, or a path in it, among their arguments
- * (`git -C <folder>`, `--state-file <folder>/daemon.json`), each as its pid and command line.
+ * (`git -C <folder>`, `--state-file <folder>/daemon.json`), each as its pid and command line. A process the system shows
+ * exited is not among them, though this process has not reaped it yet ({@link exitedUnreaped}).
  */
 export function runningIn(folder: string): string[] {
   const forms = spellings(folder);
   return [...startedProcesses()]
-    .filter(({ child, cwd }) => child.exitCode === null && child.signalCode === null
+    .filter(({ child, cwd }) => child.exitCode === null && child.signalCode === null && !exitedUnreaped(child)
       && forms.some(form => names(cwd, form) || child.spawnargs.some(arg => names(arg, form))))
     .map(({ child }) => `pid ${child.pid}: ${child.spawnargs.join(" ")}`);
+}
+
+/**
+ * Whether the system shows `child` exited while Node still counts it running. Node counts a child running until its exit
+ * event, which comes on a later turn of the event loop than its exit, and a stop that waited for the process to end, as
+ * `rerail daemon stop` does (`processState` in `src/engine/process-liveness.ts`), can answer before that turn. On Linux
+ * the child is then a zombie with every thread exited; on Windows signal 0 finds it gone. Until Node reaps it, no other
+ * process can hold its pid.
+ */
+function exitedUnreaped(child: ChildProcess): boolean {
+  const pid = child.pid;
+  if (pid === undefined) return false;
+  if (process.platform === "win32") {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (error) {
+      return error instanceof Error && "code" in error && error.code === "ESRCH";
+    }
+  }
+  if (process.platform !== "linux") return false;
+  try {
+    const status = readFileSync(`/proc/${pid}/status`, "utf8");
+    return /^State:\s*[ZX]/mu.test(status) && Number(/^Threads:\s*(\d+)/mu.exec(status)?.[1] ?? 1) <= 1;
+  } catch {
+    return false;
+  }
 }
 
 /** The codes of a removal Windows refused because something holds the folder, the ones `rm` retries. */
