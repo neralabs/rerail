@@ -7,9 +7,10 @@
 //     pushes.
 // A pull request runs the workflow its base and head merge into, so a pull request whose head branch is named `main`
 // (a fork's, or this repository's against a base whose workflow uploads what it likes) reports `main` as its head
-// branch, but its artifacts are never main's: its event is `pull_request`. A push of a tag named `main` reports `main`
-// too, with event `push`, and runs the tagged commit's workflow: its commit is not in the branch's history. A run whose
-// head repository is not this one (a fork) is never read.
+// branch, but its artifacts are never main's: its event is `pull_request`. A run on a tag named `main` reports `main`
+// too, with event `push` or `workflow_dispatch`, and runs the tagged commit's workflow: it qualifies only when that
+// commit is in the branch's history, and ci.yml saves nothing from a run on a tag. A run whose head repository is not
+// this one (a fork) is never read.
 //
 //   node scripts/check/ci/trusted-artifact.mjs <name> <ref> [<own>]
 //     `<artifact id> <run id>` on stdout, or nothing when no artifact qualifies or the lookup fails (a cold build).
@@ -43,12 +44,33 @@ function candidate(artifact, { ref, own }) {
   return run != null && !artifact.expired && run.head_repository_id === run.repository_id && [ref, own].includes(run.head_branch);
 }
 
-/** Whether a commit is in `ref`'s history: the branch's tip, or an ancestor of it. The tip is read once. */
+/** `ref`'s tip, or null when it can't be read (a dispatch naming a ref that is no branch): then no run on it qualifies. */
+function tipOf(api, ref) {
+  try {
+    return api(`branches/${encodeURIComponent(ref)}`).commit.sha;
+  } catch (error) {
+    console.error(`trusted-artifact: ${ref}'s tip: ${error.message}`);
+    return null;
+  }
+}
+
+/**
+ * Whether a commit is in `ref`'s history: the branch's tip, or an ancestor of it. The tip is read once. A comparison
+ * that fails (GitHub answers 404 for a commit with no history in common, such as a tag named main on an orphan commit)
+ * counts that commit out and leaves the older artifacts and the pull request's own to be read.
+ */
 function history(api, ref) {
   let tip;
   return (sha) => {
-    tip ??= api(`branches/${encodeURIComponent(ref)}`).commit.sha;
-    return sha === tip || api(`compare/${sha}...${tip}?per_page=1`).behind_by === 0;
+    if (tip === undefined) tip = tipOf(api, ref);
+    if (tip === null) return false;
+    if (sha === tip) return true;
+    try {
+      return api(`compare/${sha}...${tip}?per_page=1`).behind_by === 0;
+    } catch (error) {
+      console.error(`trusted-artifact: ${sha} against ${ref}: ${error.message}`);
+      return false;
+    }
   };
 }
 
@@ -57,18 +79,34 @@ function qualifies(run, branches, inHistory) {
   return trusted(run, branches) && (onOwn(run, branches) || inHistory(run.head_sha));
 }
 
+/** The first of `artifacts` (one listing page, newest first) that a trusted run uploaded, or undefined. */
+function firstQualifying(api, artifacts, branches, inHistory) {
+  for (const artifact of artifacts) {
+    if (!candidate(artifact, branches)) continue;
+    const run = api(`actions/runs/${artifact.workflow_run.id}`);
+    if (qualifies(run, branches, inHistory)) return { artifact: artifact.id, run: run.id };
+  }
+  return undefined;
+}
+
+/**
+ * The listing's page size and how many pages are read: pull requests upload under the same names, so main's newest
+ * can sit behind a page of theirs, and past 1,000 artifacts the build starts cold rather than read on.
+ */
+export const PER_PAGE = 100;
+const MAX_PAGES = 10;
+
 /**
  * The newest artifact named `name` that a trusted run uploaded: `{ artifact, run }` ids, or undefined. `api(path)`
  * returns the parsed JSON of a GET of the repository's REST path (`actions/artifacts?…`, `actions/runs/<id>`,
  * `branches/<ref>`, `compare/<sha>...<sha>`).
  */
 export function findArtifact(api, name, branches) {
-  const { artifacts = [] } = api(`actions/artifacts?name=${encodeURIComponent(name)}&per_page=50`);
   const inHistory = history(api, branches.ref);
-  for (const artifact of artifacts) {
-    if (!candidate(artifact, branches)) continue;
-    const run = api(`actions/runs/${artifact.workflow_run.id}`);
-    if (qualifies(run, branches, inHistory)) return { artifact: artifact.id, run: run.id };
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const { artifacts = [] } = api(`actions/artifacts?name=${encodeURIComponent(name)}&per_page=${PER_PAGE}&page=${page}`);
+    const found = firstQualifying(api, artifacts, branches, inHistory);
+    if (found !== undefined || artifacts.length < PER_PAGE) return found;
   }
   return undefined;
 }

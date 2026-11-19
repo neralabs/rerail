@@ -26,16 +26,18 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const NAMED = ["CARGO_MANIFEST_DIR", "CARGO_MANIFEST_PATH", "RERAIL_ORACLES_DIR"];
 const FIXTURES_MACROS = "native/src/code_rule_dsl/fixtures.rs";
 
+// A target directory's own trees; never a crate's OUT_DIR contents or incremental state.
+const SKIPPED_DIRS = new Set(["incremental", ".fingerprint", "out", "doc", "native-tests"]);
+const DEP_INFO_DIR = /\/(deps|build\/[^/]+)$/u;
+
 /** The `.d` files under `dir`: every `deps/` and `build/<package>/` directory of every profile and target. */
 function depInfoFiles(dir, out = []) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      // A target directory's own trees; never a crate's OUT_DIR contents or incremental state.
-      if (!["incremental", ".fingerprint", "out", "doc", "native-tests"].includes(entry.name)) depInfoFiles(path, out);
-    } else if (entry.name.endsWith(".d") && /\/(deps|build\/[^/]+)$/u.test(dir)) {
-      out.push(path);
-    }
+  const entries = readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries.filter((e) => e.isDirectory() && !SKIPPED_DIRS.has(e.name))) {
+    depInfoFiles(join(dir, entry.name), out);
+  }
+  if (DEP_INFO_DIR.test(dir)) {
+    out.push(...entries.filter((e) => !e.isDirectory() && e.name.endsWith(".d")).map((e) => join(dir, e.name)));
   }
   return out;
 }
