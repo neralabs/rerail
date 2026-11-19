@@ -424,7 +424,7 @@ again when a row it may read goes. This is sound in any order:
 - a stay is checked again whenever a support goes, and with no cycle that ends with every stay over rows that stay.
 
 The key buys "once each". Without it, a row is checked once per support that goes, still with no levels.
-Bringing the key to the cross part (its documents' depths, as an input of the part) is open.
+Bringing the key to the cross part (its documents' depths, as an input of the part) was open; step 10 does it.
 
 `r6_a_component_that_cannot_cycle_keeps_no_levels` passes and is no longer ignored. With the proof forced off it
 fails (by levels: 1). Its first edit only adds rows, so it pushed no candidate and passed with a key no run could
@@ -535,4 +535,41 @@ now ends with an edit at θ 0 that derives the ring again, and asserts no row is
 
 188 strata are maintained and 22 derived again past θ, as before the merge. Nothing is copied or held under a
 maintenance name, every changed read leads its line, and every measure reads its key.
+
+## Step 12: the goal, measured again
+
+O125's replay, steps 00–08 (`calls.rr`, 77 files), on the M3 farm host, the harness of step 1 ("Measurements").
+Kept and session findings equal cold at all 9 steps (R10).
+
+Instructions per kept edit, as a fraction of the same step's cold run, against the forms' figures from step 1:
+
+| Step | qd (forms, DRed) | kd (counting) | step 1 | now |
+|---|---|---|---|---|
+| 01 | 0.64 | 0.64 | 0.73 | 0.51 |
+| 02 | 0.58 | 0.58 | 0.75 | 0.47 |
+| 03 | 0.74 | 0.74 | 1.33 | 0.64 |
+| 04 | 0.55 | 0.54 | 0.63 | 0.45 |
+| 05 | 0.59 | 0.82 | 2.02 | 0.89 |
+| 06 | 0.63 | 0.64 | 0.70 | 0.51 |
+| 07 | 0.61 | 0.61 | 0.61 | 0.55 |
+| 08 | 0.71 | 0.71 | 1.44 | 0.72 |
+
+Cold runs take 361–380 G instructions. Kept edits beat both forms at 6 of 8 steps, and step 08 is level. Step 05
+is short: 0.89 against 0.59.
+
+What is kept, against step 1:
+
+| | Step 1 | Now |
+|---|---|---|
+| Rows | 1.0 M | 649,000–689,000 |
+| Values | 19.4–20.7 MB | 13.0–14.5 MB |
+| Levels | 4.7–5.4 MB | 3.5–4.8 MB |
+| Sets and indexes | 6.4–7.3 MB | 4.8–5.9 MB |
+| Maintenance relations held per edit | 800–1,400 | 0 |
+| Rows copied per edit | 15,000–110,000 | 0 |
+| Unpriced recheck lines | 430–500 | 0 |
+
+A kept edit, a new process, still reads 2,500–5,100 frame parts back, its kept part from the store. A session's
+edit reads none (R8). In the session, the first run takes 28.6 s CPU and the edits 8.9–22.8 s, 0.31–0.80 of it.
+Step 05's edit is the costliest in both kept and session.
 
