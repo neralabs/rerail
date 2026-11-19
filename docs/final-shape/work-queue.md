@@ -5201,3 +5201,15 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   edit to an included file; which one failed was not printed.
 - **To do:** run it cold beside the 0275 tests until it fails with its message; suspects are the observer's view of
   the edited include (decision 0105's flush) and the store's queued entry being found before its write settles.
+
+### Q262. The settle-window test's first leg can no longer miss an edit
+
+- **Found** (2026-11-18, running the store's journal tests after restoring Q221's caller bound): failed before that
+  change as after it. `an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing`
+  hides an edit by moving the root's cursor past its event and expects a run with no settle window to miss it.
+  Since 0400 a replay answers by arrival, not by id (718434dca), so the in-process stream still names the edit
+  ("2 forgotten as changed") and the miss doesn't happen. The engine's answer is the safer one; the test's premise
+  went stale.
+- **Done when**: the test hides an edit from the journal in a way 0400 keeps (an edit before the stream's last
+  sync, or a new process's stream), so the window's leg is what decides the check again; un-ignored.
+- **Record**: ignored with this reason.

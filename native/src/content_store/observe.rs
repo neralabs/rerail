@@ -2351,7 +2351,8 @@ mod tests {
     /// is made here by moving the root's stored cursor past the edit's event, which is what the replay amounts to.
     #[cfg(target_os = "macos")]
     #[test]
-    fn an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing() {
+    #[ignore = "Q262: since 0400 a replay answers by arrival, so moving the cursor past the edit no longer hides it (the stream names it); the first leg's miss cannot happen"]
+        fn an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing() {
         let base = std::env::temp_dir().join(format!("rerail-settle-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("root");
