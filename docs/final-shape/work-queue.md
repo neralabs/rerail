@@ -772,6 +772,11 @@ pass.
     the background (e127, "Waits": `the store's collection`). It is in "from main to report" (2.16 s) but in no
     phase (1.83 s).
   - stats 0.08 s, cross 0.08 s, the rest 0.09 s.
+- **Closed** (2026-11-19, rr-align with phased-facts merged, b40e2fa76 and on; ep2 on m3, load 42-86): B101's
+  body edited each run. a0 cold 1,173.1 G; warm a1 21.8 G and 238 MB, a2 19.2 G and 199 MB, two more 18.8 G and
+  196-197 MB (before the hub merge, 20.7 G and 230 MB; at 80 G when found). Each warm run splices 1 of 317
+  programs into the kept link (0373, fb5de313d); the Metal driver holds 0 MB (the cost
+  model trains only on an idle machine, 0190 §10); rows 0 differing from h1 on every run.
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
