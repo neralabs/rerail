@@ -77,6 +77,10 @@ For cases 19 and 20, each fresh process wrote a separate `RERAIL_PROFILE` direct
 
 ## Other implementation and interface gaps
 
+Subsequent measurements used two branches and HEAD at the same tip.
+A search for the root commit took four verified object reads in a four-commit history.
+It took 64 reads in a 64-commit history. Both searches returned the same root ID as Git.
+
 - The legacy tracking predicate opens the index and hashes its pathname in a separate read. An atomic index replacement between these reads can pair old answers with a new digest. Derive the observation from the index that supplied the answers. This race follows from the code. The concurrency counts above concern case 6. [Index reader](../../../../native/src/code_rule_dsl/logic/strings/git.rs)
 - The message search reads and checks each visited commit to enqueue it. It reads and checks it again to match the message. Reuse the verified commit metadata for both operations. Count object reads in a search that reaches the root of a long history. [Commit search](../../../../native/src/git_snapshot_revision.rs)
 - Unix and Windows compile Git message patterns with different regular expression engines. The Windows implementation accepts Rust regex syntax. Use a common Git-compatible pattern contract and run the same comparison with Git on both platforms. The audit ran on macOS. [Message patterns](../../../../native/src/git_snapshot_message_pattern.rs)

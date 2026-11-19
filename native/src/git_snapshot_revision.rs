@@ -88,6 +88,7 @@ impl<'repo> Revision<'repo> {
     }
 
     fn read(&self, id: ObjectId) -> Result<Object<'repo>> {
+        rerail_prof::count("git.revision_object_reads", 1);
         verified_object(self.repo, id).map_err(|error| {
             let reason = match error.kind() {
                 std::io::ErrorKind::NotFound => "missing-object",
@@ -445,12 +446,17 @@ impl delegate::Navigate for Revision<'_> {
         let references = self.repo.references()?;
         let mut tips = Vec::new();
         let mut first_error = None;
+        let mut tip_ids = HashSet::new();
         for reference in references.all()? {
             let mut reference = reference?;
             let name = reference.name().to_owned();
-            let result = reference.follow_to_object().and_then(|id| self.peel(id.detach(), None));
+            let result = reference.follow_to_object().and_then(|id| {
+                let id = id.detach();
+                if tip_ids.insert(id) { self.peel(id, None).map(Some) } else { Ok(None) }
+            });
             let object = match result {
-                Ok(object) => object,
+                Ok(Some(object)) => object,
+                Ok(None) => continue,
                 Err(error) => {
                     let error = self.read_failure.borrow_mut().take().unwrap_or(error);
                     eprintln!("Git message search skipped {name}: {}", failure_detail(&error));
@@ -462,7 +468,8 @@ impl delegate::Navigate for Revision<'_> {
                 tips.push(object.into_commit());
             }
         }
-        match self.repo.head().and_then(|head| head.id().map(|id| self.peel(id.detach(), None)).transpose()) {
+        match self.repo.head().and_then(|head| head.id().map(gix::Id::detach)
+            .filter(|id| tip_ids.insert(*id)).map(|id| self.peel(id, None)).transpose()) {
             Ok(Some(object)) if object.kind == Kind::Commit => tips.push(object.into_commit()),
             Ok(_) => {}
             Err(error) => {

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -658,6 +658,25 @@ Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
     restoreCommit();
     expect(await evaluate()).toEqual(resolved);
   }, 30_000);
+
+  it("compares Git message selectors with the installed Git", () => {
+    const root = checkout();
+    git(root, "commit", "--allow-empty", "-qm", "code 12 echo echo", "-m", "second paragraph");
+    git(root, "commit", "--allow-empty", "-qm", "code dd café");
+    const Source = loadNativeBinding().GitRevisionSource;
+    const patterns = ["^(seed|code)", "[[:digit:]]{2}", "echo.*paragraph", "^second paragraph",
+      "missing", "café", "(?i)SEED", String.raw`\d+`, String.raw`(echo) \1`, "["];
+    for (const pattern of patterns) {
+      for (const selector of [`:/${pattern}`, `HEAD^{/${pattern}}`]) {
+        const expected = spawnSync("git", ["rev-parse", "--verify", "--quiet", selector], { cwd: root, encoding: "utf8" });
+        expect(expected.error).toBeUndefined();
+        expect([0, 1, 128]).toContain(expected.status);
+        const select = () => new Source(root, selector, "message-patterns").commit;
+        if (expected.status === 0) expect(select(), selector).toBe(expected.stdout.trim());
+        else expect(select, selector).toThrow();
+      }
+    }
+  });
 
   it("resolves refs, IDs, reflogs and index entries through the same rule relation", async () => {
     const root = checkout();

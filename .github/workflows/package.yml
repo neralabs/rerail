@@ -164,6 +164,10 @@ jobs:
         if: matrix.target != 'aarch64-pc-windows-msvc'
         run: ./node_modules/.bin/vitest run test/engine/native/native-health.test.ts
 
+      - name: Compare native message selectors with Git
+        if: matrix.target != 'aarch64-pc-windows-msvc'
+        run: ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "compares Git message selectors"
+
       - name: Smoke Windows junction lifecycle
         if: matrix.windows_runtime_smoke
         run: ./node_modules/.bin/vitest run test/setup/updater.test.ts test/setup/harness-registration.test.ts -t "Windows.*junction"
