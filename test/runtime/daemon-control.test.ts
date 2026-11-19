@@ -371,17 +371,20 @@ describe("Rerail daemon control", () => {
       + `Run rerail daemon start again to wait for it. See ${join(home, DAEMON_LOG_FILE)}`;
     const toEnd = (named: string): string => `A Rerail daemon${named} holds ${home} but has not written daemon.json within 15s; end that `
       + "process, then run rerail daemon start. This start leaves that process running.";
-    // How long before the end of the start's wait the holder recorded itself, on the file system's clock: 14 s, as one
-    // that came up 2 s into a 16 s wait; 16 s, as the wait began; 32 s, one whole start's wait before it, as the start
-    // that launched it waited; 44 s ahead, on a clock that moved back since; or a record gone as the wait ran out. Then
-    // with this machine's clock 30 s behind the file system's, and 30 s ahead of it: 30 s and 2 s, 5 s.
+    // How long before the end of the start's wait the holder recorded itself, on the file system's clock: 16 s, as the
+    // wait began; 32 s, one whole start's wait before it, as the start that launched it waited; 44 s ahead, on a clock
+    // that moved back since; a record gone as the wait ran out; with this machine's clock 30 s behind the file
+    // system's, 30 s; then 12 s, as one that came up 4 s into a 16 s wait, and with this machine's clock 30 s behind
+    // and 30 s ahead, 2 s and 5 s. The real clock runs on while a start comes to its check, which the first start in
+    // this file, loading the engine, can take seconds to do on a busy machine: the holders it makes older come first,
+    // and the ones it must find young stand 3 s or more inside the wait.
     const holders = [
-      { heldFor: 14_000, machineAhead: 0, says: stillStarting },
       { heldFor: 16_000, machineAhead: 0, says: toEnd(` (pid ${process.pid})`) },
       { heldFor: 32_000, machineAhead: 0, says: toEnd(` (pid ${process.pid})`) },
       { heldFor: -44_000, machineAhead: 0, says: toEnd(` (pid ${process.pid})`) },
       { heldFor: undefined, machineAhead: 0, says: toEnd("") },
       { heldFor: 30_000, machineAhead: -30_000, says: toEnd(` (pid ${process.pid})`) },
+      { heldFor: 12_000, machineAhead: 0, says: stillStarting },
       { heldFor: 2_000, machineAhead: -30_000, says: stillStarting },
       { heldFor: 5_000, machineAhead: 30_000, says: stillStarting },
     ];
@@ -397,7 +400,8 @@ describe("Rerail daemon control", () => {
           const fileSystemNow = performance.timeOrigin + performance.now();
           await utimes(record, new Date(), new Date(fileSystemNow - (heldFor ?? 0)));
           vi.setSystemTime(fileSystemNow + machineAhead - 16_000);
-          await expect(start({ home, packageRoot, ensureSqlite: async () => { throw launching; } }, { dev: true, port: 0 }, machine)).rejects.toThrow(says);
+          const named = `held ${heldFor ?? "with no record"} ms, this machine ${machineAhead} ms ahead`;
+          await expect(start({ home, packageRoot, ensureSqlite: async () => { throw launching; } }, { dev: true, port: 0 }, machine), named).rejects.toThrow(says);
           expect(readdirSync(join(home, LOCKS_DIR)).filter(name => name.startsWith("daemon-clock"))).toEqual([]);
         }
       }
