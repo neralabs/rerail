@@ -368,6 +368,7 @@ pub fn copy_facts(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+pub mod presence;
 pub mod vtab;
 
 #[cfg(test)]

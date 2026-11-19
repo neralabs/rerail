@@ -491,6 +491,38 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0434 step 6, part 3: a run's parses are written with their presences, which the store keeps beside the
+/// tapes (gathered in the run's waves, one kept file for them): each file's presence is found by its tape's key.
+#[test]
+fn a_runs_tapes_are_kept_with_their_presences() {
+    use sha2::Digest as _;
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("kept-presences");
+    std::fs::create_dir_all(&dir).unwrap();
+    let bodies = [("a.py", "def f():\n    pass\n"), ("b.py", "class B:\n    x = 1\n"), ("c.py", "print(1)\n")];
+    for (file, body) in bodies {
+        std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    }
+    let rule = ".decl f(n: node)\nf(n) :- kind(n, \"function_definition\").\n.output f\n";
+    let out = dir.join("out");
+    let store = dir.join("kept.sqlite");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.clone()));
+    super::run(rule, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let cache = crate::content_store::ContentStore::open(&store).unwrap();
+    let space = cache.kept_space(&crate::content_store::kept_facts::presence::presence_space()).unwrap().expect("the run's presences, kept");
+    let tag = i64::from(crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::dialect_by_label("python").unwrap()).unwrap());
+    let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
+    let (kinds, fields) = rerail_tape_format::f16::lang(tag as u8).unwrap().presence_words();
+    for (file, body) in bodies {
+        let digest: [u8; 32] = sha2::Sha256::digest(format!("{marker}{body}").as_bytes()).into();
+        let rows = crate::content_store::kept_facts::presence::find(&space, &crate::code_rule_dsl::facts::core::tape_key(&digest, tag, gv, fv));
+        let rows = rows.unwrap_or_else(|| panic!("{file}'s presence, kept"));
+        assert!(rows.len() >= kinds + fields && (0..kinds).any(|w| rows.get(w, 0) != 0), "{file}: its document's words");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The cone of requests is kept like any relation (t33 K1, K3): its stratum that asks for directories, files and
 /// loads and answers them inside its fixpoint is clean while what it reads and its answers are as they were. An
 /// edit that changes neither evaluates none of the cone; a new import, or a library file whose own imports

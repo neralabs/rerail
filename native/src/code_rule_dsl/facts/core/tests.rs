@@ -137,3 +137,35 @@ fn every_format_reads_the_same_facts_off_the_tape() {
         }
     }
 }
+
+/// Decision 0434 step 6, part 3: a parsed tape's presence is kept by the store with the tape, and a tape read from the
+/// store is given it, read in place in the store's kept file: its answers are the writer's for every kind.
+#[test]
+fn a_stored_tape_is_given_the_presence_its_writer_made() {
+    use crate::code_rule_dsl::build_ids::grammar_version;
+    use crate::code_rule_dsl::tape::{self, KeptPresence, TapePresence};
+    use sha2::Digest as _;
+    let dir = tempfile::tempdir().unwrap();
+    let cache = crate::content_store::ContentStore::open(&dir.path().join("p.sqlite")).unwrap();
+    let file = Text("python".into(), Arc::new("class A:\n    def f(self):\n        return g(1)\n".into()));
+    let (_, _, doc) = build_cached_with_tape(&file, &cache, None, true).unwrap();
+    let Some(TapePresence::Made(made)) = doc.expect("the tape").image.presence.clone() else { panic!("a format 16 parse has its writer's presence") };
+    cache.written().unwrap();
+    let tag = i64::from(tape_tag(dialect_by_label("python").unwrap()).unwrap());
+    let (gv, fv) = (grammar_version(), i64::from(tape::formats::stored_version()));
+    let digest: [u8; 32] = sha2::Sha256::digest(file.source().as_bytes()).into();
+    let key = tape_key(&digest, tag, gv, fv);
+    let lang = rerail_tape_format::f16::lang(tag as u8).unwrap();
+    let space = Arc::new(cache.kept_space(&crate::content_store::kept_facts::presence::presence_space()).unwrap().expect("the store keeps the presences"));
+    let kept = TapePresence::Kept(KeptPresence::find(&space, &key, lang).expect("the tape's presence, kept"));
+    let kinds = lang.presence_words().0 * 64;
+    assert!(made.doc.iter().any(|w| *w != 0), "a document has kinds");
+    for kind in 0..kinds as u16 {
+        assert_eq!(kept.has_kind(kind), made.has_kind(kind), "kind {kind}");
+    }
+    // A build of the tape the store holds: its image is given the kept presence.
+    let source = cache.source_by_hash(crate::content_store::HashKey::sha256(file.source().as_bytes())).unwrap().expect("the source, stored");
+    let frame = cache.tape_frames_for(&[source], tag, gv, fv).unwrap().remove(0).expect("the tape, stored");
+    let (_, doc) = build_in_wave_with_tape(&file, &cache, Some(digest), Some(&frame), Some(&space), false, true).unwrap();
+    assert!(matches!(doc.expect("the tape").image.presence, Some(TapePresence::Kept(_))), "a stored tape's presence is the store's");
+}

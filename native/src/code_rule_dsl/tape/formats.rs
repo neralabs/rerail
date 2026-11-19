@@ -399,7 +399,7 @@ impl TapeImage {
             f16::Written::F16(t) => Held::F16(Arc::new(t)),
             f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
         };
-        Self { held, presence: Some(Arc::new(f.presence)), ..self }
+        Self { held, presence: Some(super::TapePresence::Made(Arc::new(f.presence))), ..self }
     }
 
     /// A lean parser's tape written in format 16 or 16z (`lean`), with its presence and its source's digest: `digest`,
@@ -413,7 +413,7 @@ impl TapeImage {
             f16::Written::F16(t) => Held::F16(Arc::new(t)),
             f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
         };
-        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest), presence: Some(Arc::new(written.presence)) })
+        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest), presence: Some(super::TapePresence::Made(Arc::new(written.presence))) })
     }
 
     /// The language's table, where the image is held in format 16.

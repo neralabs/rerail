@@ -384,10 +384,71 @@ pub struct TapeImage {
     /// The source's SHA-256 where the image was encoded from it; not stored (v12), so `None` for
     /// an image read from bytes, whose store pairs it with its source.
     pub source_digest: Option<[u8; 32]>,
-    /// The kinds and fields the tape's nodes have, the document's and each block's, where a format 16 writer made the
-    /// image (decision 0434 §4): what a planner reads to leave out a clause the document cannot hold a root of. `None`
-    /// for format 15, or an image read from the store (the store does not keep it yet: 0434 step 6, part 3).
-    pub presence: Option<Arc<rerail_tape_format::f16::Presence>>,
+    /// The kinds and fields the tape's nodes have, the document's and each block's (decision 0434 §4): what a planner
+    /// reads to leave out a clause the document cannot hold a root of. The writer's where a format 16 writer made the
+    /// image, the store's kept one where it was read from the store (0434 step 6, part 3); `None` for format 15, or a
+    /// stored tape the store keeps none for.
+    pub presence: Option<TapePresence>,
+}
+
+/// A format 16 tape's presence (decision 0434 §4): as the writer made it, or as the store keeps it, read in place.
+#[derive(Clone)]
+pub enum TapePresence {
+    Made(Arc<rerail_tape_format::f16::Presence>),
+    Kept(KeptPresence),
+}
+
+impl TapePresence {
+    /// Whether the document has a node of kind `kind`.
+    pub fn has_kind(&self, kind: u16) -> bool {
+        match self {
+            TapePresence::Made(p) => p.has_kind(kind),
+            TapePresence::Kept(k) => k.word(usize::from(kind) / 64, k.kind_words).is_some_and(|w| w >> (kind % 64) & 1 != 0),
+        }
+    }
+}
+
+/// A tape's presence in the store's kept file (`content_store::kept_facts::presence`): its words, the document's and
+/// then each block's, are the rows of one column of its entry, read where they lie by position. It holds the space's
+/// mapped files, so the rows stay where they are while it lives.
+#[derive(Clone)]
+pub struct KeptPresence {
+    _space: Arc<crate::content_store::kept_facts::KeptSpace>,
+    rows: std::ptr::NonNull<crate::content_store::kept_facts::presence::Packed>,
+    kind_words: usize,
+    field_words: usize,
+}
+
+// SAFETY: `rows` points into one of `space`'s files, mapped read-only and frozen; `space` keeps them mapped while this
+// lives, and nothing writes them.
+unsafe impl Send for KeptPresence {}
+unsafe impl Sync for KeptPresence {}
+
+impl KeptPresence {
+    /// The presence the store keeps for the tape queued under `tape` (its write-back key), of language `lang`, in the
+    /// presence space `space` (`kept_facts::presence`); `None` when it keeps none, or one of another shape.
+    pub fn find(space: &Arc<crate::content_store::kept_facts::KeptSpace>, tape: &crate::content_store::write_back::Key, lang: &rerail_tape_format::f16::Lang) -> Option<KeptPresence> {
+        let rows = crate::content_store::kept_facts::presence::find(space, tape)?;
+        let (kind_words, field_words) = lang.presence_words();
+        let words = kind_words + field_words;
+        // The document's words, then whole blocks' (`f16::Presence`): another shape is another layout's, not this.
+        if rows.arity != 1 || rows.len() < words || (words > 0 && rows.len() % words != 0) {
+            return None;
+        }
+        Some(KeptPresence { _space: Arc::clone(space), rows: std::ptr::NonNull::from(rows), kind_words, field_words })
+    }
+
+    /// Word `i` of the document's kinds (`below` = `kind_words`) or fields, read in place.
+    fn word(&self, i: usize, below: usize) -> Option<u64> {
+        // SAFETY: see the type's `Send`: the rows lie in `space`'s mapped files.
+        let rows = unsafe { self.rows.as_ref() };
+        (i < below).then(|| rows.get(i, 0) as u64)
+    }
+
+    /// The words a document's presence, and each block's, has.
+    pub fn words(&self) -> (usize, usize) {
+        (self.kind_words, self.field_words)
+    }
 }
 
 /// A tape as held, in one format.
