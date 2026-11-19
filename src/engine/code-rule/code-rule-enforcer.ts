@@ -217,10 +217,10 @@ type StoredEdit = {
   auditId: string | undefined;
 };
 /**
- * The edits an evaluator has yet to check, one per path, in the order they came. `next` may give first the oldest that
- * may steer the session (a mode other than `log`): a walk of the other worktrees queues what it found in `log` mode,
- * which steers no session (`CodeRuleBridge`), and behind a batch of those a tool call's own edit came to its result's
- * wait late.
+ * The edits an evaluator has yet to check, one per path, in the order they came. `next` gives first the oldest that may
+ * steer the session (a mode other than `log`): a walk of the other worktrees queues what it found in `log` mode, which
+ * steers no session (`CodeRuleBridge`), and behind a batch of those a tool call's own edit came to its result's wait
+ * late.
  */
 class PendingEdits extends Map<string, StoredEdit> {
   /** The paths whose queued edit may steer, in the order they came. */
@@ -243,9 +243,9 @@ class PendingEdits extends Map<string, StoredEdit> {
     super.clear();
   }
 
-  /** The edit to check next: where `reorder`, the oldest that may steer the session; else, and failing one, the oldest. */
-  next(reorder: boolean): [string, StoredEdit] | undefined {
-    const steering = reorder ? this.#steering.values().next().value : undefined;
+  /** The oldest edit that may steer the session, and failing one the oldest. */
+  next(): [string, StoredEdit] | undefined {
+    const steering = this.#steering.values().next().value;
     if (steering !== undefined) return [steering, this.get(steering)!];
     return this.entries().next().value;
   }
@@ -491,6 +491,11 @@ function isModuleConfig(path: string): boolean {
   return /^(?:ts|js)config[^/]*\.json$/.test(posix.basename(path));
 }
 
+/** Whether an edit of `path` makes the engine read other applied sources again by its name alone (`#recheckedFolder`). */
+function rechecksByName(path: string): boolean {
+  return manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path);
+}
+
 /** Whether `path` lies in a folder named `app`, which a Next package's server module graph reads the presence of. */
 function inAppFolder(path: string): boolean {
   return /(?:^|\/)app\//.test(path);
@@ -712,6 +717,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #busy = false;
   /** The edit being checked, while one is. */
   #checking: StoredEdit | undefined;
+  /** The edits a check of several (`#checkTogether`) has yet to finish: their revisions are not published before them. */
+  #unfinished: StoredEdit[] = [];
   /** Told as the pump ends a check, or ends: what a wait for the edits that may steer wakes on (`settleGeneratedEdits`). */
   readonly #checkEnds = new Set<() => void>();
   #closing = false;
@@ -1245,25 +1252,116 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     await yieldToHost();
     while (!this.#closing) {
       while (this.#replacement !== undefined && !this.#closing) await this.#replaceWorkspace(this.#replacement);
-      const entry = this.#take();
-      if (entry === undefined) return;
-      await this.#check(...entry);
+      const taken = this.#take();
+      if (taken.length === 0) return;
+      if (taken.length === 1) await this.#check(...taken[0]!);
+      else await this.#checkTogether(taken);
     }
   }
 
   /**
-   * The next queued edit, out of the queue with its audit begun. One that may steer goes before the `log` edits queued
-   * ahead of it, unless a rule of the lane reads other files, whose findings then depend on the order (`crossFile`); the
-   * audits of the edits it passes begin first, so the Log lists them in the order they came.
+   * The edits checked next, out of the queue: the oldest that may steer, with the `log` edits queued ahead of it as
+   * `#takenWith` says, else the oldest. The audits of every edit up to it begin now, in the order the edits came, as
+   * the Log lists audits by when they began.
    */
-  #take(): [string, StoredEdit] | undefined {
-    const entry = this.#pending.next(this.#workspace?.crossFile === false);
-    if (entry === undefined) return undefined;
+  #take(): [string, StoredEdit][] {
+    const entry = this.#pending.next();
+    if (entry === undefined) return [];
+    const ahead = this.#pending.ahead(entry[0]);
     const provenance = this.#workspace?.provenance ?? [];
-    for (const [path, stored] of this.#pending.ahead(entry[0])) this.#ensureStoredAudit(stored, path, provenance);
-    this.#pending.delete(entry[0]);
-    this.#ensureStoredAudit(entry[1], entry[0], provenance);
-    return entry;
+    for (const [path, stored] of [...ahead, entry]) this.#ensureStoredAudit(stored, path, provenance);
+    const taken = this.#takenWith(entry, ahead);
+    for (const [path] of taken) this.#pending.delete(path);
+    return taken;
+  }
+
+  /**
+   * What of `entry` and the `log` edits `ahead` of it is checked next. Where no rule of the lane reads other files,
+   * `entry` alone, before them: its findings do not depend on theirs. Where one does (`crossFile`), all of them in one
+   * engine call (`#checkTogether`): `entry` is checked with their texts held, as in the order they came, and waits for
+   * one apply, not one per edit. While one of them makes the engine read other sources again (`#rechecksOthers`), the
+   * oldest alone, as each is checked in that order.
+   */
+  #takenWith(entry: [string, StoredEdit], ahead: [string, StoredEdit][]): [string, StoredEdit][] {
+    if (this.#workspace?.crossFile === false) return [entry];
+    const together = [...ahead, entry];
+    return together.some(([path, stored]) => this.#rechecksOthers(path, stored.language)) ? [together[0]!] : together;
+  }
+
+  /** Whether an edit of `path` may make the engine read other applied sources again (`#recheckedFolder`). */
+  #rechecksOthers(path: string, language: CodeRuleEdit["language"]): boolean {
+    if (rechecksByName(path)) return true;
+    if (this.#workspace?.workspace.readsServerGraph() !== true) return false;
+    return loadNativeBinding().readsPackageManifests(language) || inAppFolder(path);
+  }
+
+  /** Checks `taken`, an edit that may steer and the `log` edits queued ahead of it, in one engine call. */
+  async #checkTogether(taken: readonly [string, StoredEdit][]): Promise<void> {
+    this.#busy = true;
+    this.#checking = taken.at(-1)![1];
+    try {
+      await this.#evaluateTogether(taken);
+    } catch (error) {
+      for (const [path, stored] of this.#notFinished(taken)) await this.#recordPendingEvaluationError(path, stored, error);
+    } finally {
+      this.#busy = false;
+      this.#checking = undefined;
+      this.#unfinished = [];
+      for (const [, stored] of taken) this.#release(stored);
+      this.#endCheck();
+    }
+  }
+
+  /** The edits of `taken` whose audit has not ended. */
+  #notFinished(taken: readonly [string, StoredEdit][]): [string, StoredEdit][] {
+    return taken.filter(([, stored]) => stored.auditId === undefined || this.#runningAudits.has(stored.auditId));
+  }
+
+  /**
+   * Checks `taken` in one apply of all their texts, then reads each edit's findings from its evaluation: the last
+   * edit's first, the one that may steer, whose result's wait then ends (`#endCheck`); then the others in the order
+   * they came. An edit whose text could not be read fails alone, as in `#evaluatePendingEdit`.
+   */
+  async #evaluateTogether(taken: readonly [string, StoredEdit][]): Promise<void> {
+    if (this.#closing) return;
+    const prepared = this.#workspace;
+    const loaded = await this.#loadReadable(taken);
+    if (this.#closing) return;
+    if (loaded.length === 0) return await this.#publishReady();
+    if (prepared === undefined) throw new Error("Policy workspace could not be initialized");
+    for (const [path] of loaded) this.#readFailures.delete(path);
+    this.#readFailures.delete("worker");
+    const evaluation = await this.#applyTogether(prepared.workspace, loaded.map(([, , edit]) => edit));
+    for (const [path, stored, edit] of loaded) this.#replaceAppliedEdit(path, stored, edit);
+    this.#unfinished = loaded.map(([, stored]) => stored);
+    const [steering, ...others] = [loaded.at(-1)!, ...loaded.slice(0, -1)];
+    await this.#finishTogether(steering!, evaluation);
+    // The edit that may steer is checked: a result's wait for such edits (`settleGeneratedEdits`) ends here.
+    this.#checking = undefined;
+    this.#endCheck();
+    for (const checked of others) await this.#finishTogether(checked, evaluation);
+  }
+
+  /** One edit of a check of several: its findings read from the evaluation of all of them. */
+  async #finishTogether([path, stored, edit]: [string, StoredEdit, CodeRuleEdit], evaluation: Evaluation): Promise<void> {
+    this.#unfinished = this.#unfinished.filter(other => other !== stored);
+    await this.#finishPendingEvaluation(path, stored, edit, evaluation, [], () => undefined);
+  }
+
+  /** The edits of `taken` with their text; each whose text could not be read fails as `#evaluatePendingEdit` fails it. */
+  async #loadReadable(taken: readonly [string, StoredEdit][]): Promise<[string, StoredEdit, CodeRuleEdit][]> {
+    const loaded: [string, StoredEdit, CodeRuleEdit][] = [];
+    for (const [path, stored] of taken) {
+      const edit = await this.#load(stored);
+      const readFailure = this.#readFailureForEdit(path, edit);
+      if (readFailure === undefined) {
+        loaded.push([path, stored, edit]);
+        continue;
+      }
+      this.#readFailures.set(path, readFailure);
+      this.#finishAudit(stored.auditId, "failed", [], [readFailure]);
+    }
+    return loaded;
   }
 
   async #check(path: string, stored: StoredEdit): Promise<void> {
@@ -2012,6 +2110,26 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return { evaluation, repackaged, unreported };
   }
 
+  /**
+   * One apply of every text of `edits`, the deletions among them removed: what `#apply` sends for each, in one engine
+   * call. None of them makes the engine read other applied sources again (`#takenWith`), so none sends another file.
+   */
+  async #applyTogether(workspace: NativeCodeRuleDslWorkspace, edits: readonly CodeRuleEdit[]): Promise<Evaluation> {
+    const packages = this.#workspacePackages.get(workspace);
+    if (packages === undefined) throw new Error("Policy workspace was disposed");
+    const serverGraph = workspace.readsServerGraph();
+    const cache = sourceFactsCache();
+    const files: WorkspaceFile[] = [];
+    for (const edit of edits.filter(hasGeneratedText)) {
+      const facts = await sourceFileFacts(this.#workspaceRoot, edit.path, edit.language, cache, serverGraph, overlayOf(edit));
+      files.push({ path: edit.path, language: edit.language, source: edit.generatedText, ...facts });
+    }
+    const evaluation = await this.#applyRequest(workspace, { files, removed: edits.filter(edit => edit.deleted).map(edit => edit.path) });
+    for (const edit of edits) recordSentPackages(packages, edit, files.filter(file => file.path === edit.path));
+    workspace.evictInactive();
+    return evaluation;
+  }
+
   async #sendFiles(workspace: NativeCodeRuleDslWorkspace, edit: CodeRuleEdit, files: WorkspaceFile[], pass: SourceFactsCache | undefined): Promise<Evaluation> {
     return await this.#applyRequest(workspace, {
       files,
@@ -2164,9 +2282,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
   }
 
-  /** The ready revisions with no edit still queued, taken out of `#readyViolations`. */
+  /** The ready revisions with no edit still queued or unfinished in a check of several, taken out of `#readyViolations`. */
   #takeReady(): [number, Map<string, CodeRuleViolation[]>][] {
     const queued = this.#pending.revisions();
+    for (const stored of this.#unfinished) queued.add(stored.revision);
     const ready = [...this.#readyViolations].filter(([revision]) => !queued.has(revision));
     for (const [revision] of ready) this.#readyViolations.delete(revision);
     return ready;

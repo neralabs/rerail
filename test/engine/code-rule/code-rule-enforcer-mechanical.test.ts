@@ -740,16 +740,34 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   });
 
-  it("checks a tool call's edit after the log edits ahead of it where a rule counts matches across files", async () => {
-    const { recorder, finished } = recordingAudits();
+  it("checks a tool call's edit with the log edits ahead of it, before their findings, where a rule counts matches across files", async () => {
+    const { recorder, audits, finished } = recordingAudits();
     const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [needleBudgetRule()] });
+    const loggedDoneAtSteer: number[] = [];
+    requestSteer.mockImplementation(async () => { loggedDoneAtSteer.push(finished.filter(path => path !== "api/a_own.py").length); });
+    const logged = [...LOGGED, "api/z_other.py"];
+    const text = (path: string) => (path === "api/z_other.py" ? "NEEDLE\n" : "safe()\n");
     try {
-      // Another writer's NEEDLE, then the session's own: the count passes one only once both are held.
-      await logThenOwn(enforcer, root, { session: "cross-file", logged: ["api/z_other.py"], own: ["api/a_own.py"], loggedText: "NEEDLE\n" });
+      for (const path of logged) await writeFile(join(root, path), text(path));
+      await writeFile(join(root, "api/a_own.py"), "NEEDLE\n");
+      await enforcer.openWorkspace("cross-file");
+      // A walk's log edits, the last another writer's NEEDLE, then the session's own: the count passes one only once both are held.
+      await enforcer.auditGeneratedEdits("cross-file", {
+        revision: 1, checkpoints: ["edit"], mode: "log", edits: logged.map(path => ({ path, language: "python" as const, generatedText: text(path) })),
+      });
+      await enforcer.auditGeneratedEdits("cross-file", {
+        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/a_own.py", language: "python", generatedText: "NEEDLE\n" }],
+      });
       await settled(enforcer);
-      expect(finished).toEqual(["api/z_other.py", "api/a_own.py"]);
+      // Checked with every log edit's text held, as in the order they came: the count's finding is its own.
       const steered = requestSteer.mock.calls.flatMap(([, , , metadata]) => metadata?.generatedEdit?.violations ?? []);
       expect(steered.map(violation => `${violation.code}@${violation.path}`)).toContain("BUDGET@api/a_own.py");
+      // Its steer goes out before the log edits' checks end, but for the one under way as it came.
+      expect(loggedDoneAtSteer).toHaveLength(1);
+      expect(loggedDoneAtSteer[0]).toBeLessThan(2);
+      // Every edit is checked, and the Log lists them in the order they came.
+      expect([...audits.values()].map(audit => audit.paths[0])).toEqual([...logged, "api/a_own.py"]);
+      expect([...audits.values()].map(audit => audit.result?.status)).toEqual([...logged, "own"].map(() => "completed"));
     } finally { await enforcer.close(); }
   });
 
