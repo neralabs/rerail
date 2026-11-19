@@ -1553,6 +1553,24 @@ async function forgetRecordOf(home: string, pid: number): Promise<boolean> {
 }
 
 /**
+ * Removes daemon.json in `home` once a stop of `pid` is done, as main does, unless it cannot be read or names the live
+ * process that holds the home's lock as its recorded holder ({@link namesLockHolder}): a daemon a start beside the stop
+ * launched, which took the lock and recorded itself. A record naming any other process belongs to no daemon of the home,
+ * and a later stop would act on the process it names.
+ */
+async function forgetAfterStop(home: string, pid: number, machine: DaemonMachine): Promise<void> {
+  const record = recordNow(home, pid);
+  if (record === undefined || record === "gone" || (record === "other" && namesLockHolder(home, machine))) return;
+  await rm(join(home, DAEMON_STATE_FILE), { force: true });
+}
+
+/** Whether daemon.json in `home` names the live process that holds the home's lock as its recorded holder ({@link lockVerdict}). */
+function namesLockHolder(home: string, machine: DaemonMachine): boolean {
+  const holder = homeDaemonHolder(home);
+  return holder !== undefined && recordNow(home, holder) === "named" && lockVerdict(home, holder, machine) === "ours";
+}
+
+/**
  * What asking a daemon to stop came to ({@link askDaemonToStop}): it was asked, or let alone as already ending (`asked`);
  * its pid was proven not the home's daemon and the record naming it is removed (`not-daemon`); or it was proven not the
  * home's daemon once daemon.json named it no longer, and that record is left as it is (`record-changed`).
@@ -1730,7 +1748,7 @@ export async function stopFoundDaemon(home: string, found: FoundDaemon, machine:
   // The daemon removes its own state file, main-instance record and home lock record on a clean shutdown; one killed, as
   // Windows always does, leaves them behind. A record naming a pid Windows reuses would keep the uninstall from the
   // cache, or have a later stop ask the home's lock.
-  await forgetRecordOf(home, pid);
+  await forgetAfterStop(home, pid, machine);
   if (machine.platform === "win32") {
     machine.forgetMainInstanceHolder(pid);
     forgetHomeDaemonHolder(home, pid);

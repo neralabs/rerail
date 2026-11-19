@@ -1362,9 +1362,9 @@ describe("a record whose live pid is not the home's daemon", () => {
     { cell: "daemon.json unreadable", rule: 2, proof: "lock",
       before: ["record-unreadable"], signal: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "unreadable" },
     { cell: "daemon.json names another live process while the daemon holds the lock", rule: 2, proof: "lock",
-      before: ["record-other"], signal: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "another live process's" },
+      before: ["record-other"], signal: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "none" },
     { cell: "daemon.json names a process that is gone while the daemon holds the lock", rule: 2, proof: "lock",
-      before: ["record-dead"], signal: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "a gone process's" },
+      before: ["record-dead"], signal: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "none" },
     { cell: "daemon.json names a start's daemon, which holds the lock the daemon let go of while it runs on", rule: 3, proof: "lock",
       before: ["lets-go", "another-holds", "record-other"], sent: [], answer: "record-changed", record: "another live process's" },
     { cell: "daemon.json removed by a start, whose daemon takes the lock and records itself as the stop asks it", rule: 3,
@@ -1539,6 +1539,37 @@ describe("a record whose live pid is not the home's daemon", () => {
       for (const change of row.before ?? []) changeWorld(world, change, platform);
       const answer = await stopFoundDaemon(home, found, machine).catch((error: unknown) => unprovenOr(error));
       expect({ sent, answer, record: recordAfter(platform) }).toEqual({ sent: row.sent, answer: row.answer, record: row.record });
+    });
+
+    // Another program wrote daemon.json during the stop, naming a live program that started before the daemon. The stop
+    // ended the daemon and removed that record, so a second stop finds none and ends nothing; a record kept would have
+    // had it prove the program by its start and end it.
+    it("a second stop ends nothing after daemon.json was made to name another live process during the first", async () => {
+      const row = STOP_CELLS.find(cell => cell.before?.includes("record-other") === true && cell.rule === 2);
+      if (row === undefined) throw new Error("the table holds no row of a record naming another live process");
+      const { world, machine, found } = await stopCell(platform, row);
+      for (const change of row.before ?? []) changeWorld(world, change, platform);
+      expect(await stopFoundDaemon(home, found, machine)).toBe("stopped");
+      vi.stubGlobal("fetch", vi.fn(async () => {
+        throw new Error("connect ECONNREFUSED 127.0.0.1:1");
+      }));
+      const sent: string[] = [];
+      let running = true;
+      const second = fakeMachine(platform, {
+        env: { RERAIL_HOME: home },
+        pipes: () => [pipeNameOf(PIPE)],
+        capabilityProof: async () => "silent",
+        homeDaemonLockHeld: () => false,
+        processStartedAt: pid => (pid === OTHER_PID ? STARTED_AT - 500 : undefined),
+        kill: (pid, signal) => {
+          if (pid !== OTHER_PID || !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+          vi.setSystemTime(Date.now() + 1_000);
+          if (signal !== 0) sent.push(String(signal));
+          running = signal === 0;
+          return true;
+        },
+      });
+      expect({ answer: await stopDaemon(home, second), sent }).toEqual({ answer: "not-running", sent: [] });
     });
   });
 
