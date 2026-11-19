@@ -987,7 +987,17 @@ mod tests {
 
     #[test]
     fn discovers_current_repository_without_a_git_process() {
-        let workspace = discover(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        std::fs::create_dir_all(root.join("native/src")).unwrap();
+        initialize_repository(root, &[
+            ("native/build.rs", b"fn main() {}\n"), ("native/src/lib.rs", b"pub fn run() {}\n"),
+            (".gitignore", b"tmp/\n"),
+        ]);
+        std::fs::write(root.join("native/src/lib.rs"), b"pub fn edited() {}\n").unwrap();
+        std::fs::create_dir(root.join("tmp")).unwrap();
+        std::fs::write(root.join("tmp/ignored"), b"ignored").unwrap();
+        let workspace = discover(&root.join("native/src")).unwrap();
         assert!(workspace.worktree_root.is_absolute());
         assert!(workspace.common_directory.is_absolute());
         assert!(!workspace.trees.is_empty());
