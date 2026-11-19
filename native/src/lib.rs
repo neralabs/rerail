@@ -427,10 +427,24 @@ impl napi::Task for ScanRrPolicies {
     type JsValue = String;
 
     fn compute(&mut self) -> Result<String> {
+        use content_store::analysis_scope::{self, AnalysisRun, RunSource};
+        use code_rule_dsl::logic::plan::corpus;
         let path = Path::new(&self.store);
         let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
-        let ownership = self.owner.clone().map(|owner| (root.to_owned(), owner));
-        code_rule_dsl::logic::plan::corpus::with_tape_cache_path(path, ownership, || {
+        let mut warning = None;
+        let mut run = None;
+        if self.owner.is_none() && path != Path::new(":memory:") && !self.paths.is_empty() {
+            let scope = git_workspace::snapshot::analysis_scope(root).unwrap_or_else(|| analysis_scope::directory(root));
+            let source = self.snapshot.as_ref().map_or_else(|| RunSource::directory(root), |view| view.run_source());
+            match content_store::ContentStore::open(path).and_then(|store| AnalysisRun::begin_batch(store, &scope, source)) {
+                Ok(batch) => run = Some(batch),
+                Err(error) => warning = Some(error.to_string()),
+            }
+        }
+        let path = if warning.is_some() { Path::new(":memory:") } else { path };
+        let owner = self.owner.as_ref().or_else(|| run.as_ref().map(|run| &run.owner)).cloned();
+        let ownership = owner.clone().map(|owner| (root.to_owned(), owner));
+        let (mut reports, source_complete) = corpus::with_tape_cache_path(path, ownership, || {
             let options = serde_json::json!({ "sourcePaths": self.source_paths, "scanSpans": true, "reuse": path != Path::new(":memory:") });
             let preloaded = self.policies.is_some();
             let policies = self.policies.take().unwrap_or_else(|| self.paths.iter().map(|path|
@@ -473,7 +487,7 @@ impl napi::Task for ScanRrPolicies {
                     match tools::run_program_checked(program.clone(), &files, root, &out, &options) {
                         Ok(report) => Some(Ok(report)),
                         Err(tools::ProgramRunError::Cache(error)) => {
-                            if let Some(owner) = &self.owner { owner.warn(error.to_string()); }
+                            if let Some(owner) = &owner { owner.warn(error.to_string()); }
                             ephemeral = true;
                             None
                         }
@@ -494,8 +508,19 @@ impl napi::Task for ScanRrPolicies {
                     "error": error.to_string(), "ruleId": ids.first().filter(|_| ids.len() == 1),
                 })));
             }
-            serde_json::to_string(&reports).map_err(|e| Error::from_reason(e.to_string()))
-        })
+            (reports, corpus::git_source_reads_complete())
+        });
+        if let Some(mut run) = run {
+            let succeeded = source_complete && reports.iter().all(|report| report.get("error").is_none());
+            warning = match run.finish(succeeded) {
+                Ok(()) => run.publication_warning(),
+                Err(error) => Some(error.to_string()),
+            };
+        }
+        if let Some(warning) = warning {
+            for report in &mut reports { report["cacheWarnings"] = serde_json::json!([warning]); }
+        }
+        serde_json::to_string(&reports).map_err(|e| Error::from_reason(e.to_string()))
     }
 
     fn resolve(&mut self, _env: napi::Env, output: String) -> Result<String> {

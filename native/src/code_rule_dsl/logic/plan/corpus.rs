@@ -2374,6 +2374,11 @@ pub fn has_analysis_owner(root: &Path) -> bool {
     ThreadStore::owner(root).is_some()
 }
 
+/// Reads requested by this batch alone, even when later batches reuse its source view.
+pub fn git_source_reads_complete() -> bool {
+    ThreadStore::git_reads().is_none_or(|reads| reads.complete())
+}
+
 /// While the guard lives, every run of the process (without `RERAIL_TAPE_CACHE`) uses the store at `path`.
 pub fn use_store(path: std::path::PathBuf) -> UsedStore {
     let was = STORE.write().expect("the process's store").replace(path);

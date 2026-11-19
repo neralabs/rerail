@@ -75,6 +75,9 @@ Older records contain only a hash of the Git directory pathname. Their original 
 Rules can still enumerate those records by scope and scan ID.
 Passive catalog lookup checks the same directory identity before using saved checkout settings.
 A fresh clone can still inherit repository-wide settings through its remote.
+The native `scanRrPoliciesAsync` call acquires one run for a durable batch when the caller omits the run handle.
+The batch publishes once all policies and required source reads succeed. A failed batch preserves the earlier owners of its scope.
+An explicit run handle lets the caller group several evaluations before publication.
 Use the run key to join facts. Two calls can supply the same scan ID.
 
 ```rr

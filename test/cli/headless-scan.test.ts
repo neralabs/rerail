@@ -770,6 +770,48 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
     ]);
   });
 
+  it("publishes an implicit native batch only when its policies and required source reads succeed", async () => {
+    const root = checkout(), home = root + "-home", store = join(home, "implicit.sqlite");
+    mkdirSync(home);
+    const engine = loadNativeBinding();
+    const good = join(home, "good.rr"), bad = join(home, "bad.rr"), metadata = join(home, "metadata.rr");
+    writeFileSync(good, '#include "core.rr"\n.policy "good" revision 1\n.language python\n.violation V(at: node) "found"\nV(n) :- kind(n,"identifier").\n');
+    writeFileSync(bad, '#include "core.rr"\n.policy "bad" revision 1\n.language python\n.references {"unknownParameter":true}\n.violation V(at: node) "edge"\nV(n) :- reference_edge(n,_,_).\n');
+    writeFileSync(metadata, '#include "git.rr"\n.policy "metadata" revision 1\n.violation V(at:span) "tree"\nV(@place("git",1)) :- git_source_tree(_,_).\n');
+    const evaluate = async (files: string[], view?: InstanceType<typeof engine.GitRevisionSource>) =>
+      JSON.parse(await engine.scanRrPoliciesAsync(files, root, store, "", undefined, undefined, view));
+    const manifests = (scope: string) => queryContentStore(store, "SELECT manifest_id FROM analysis_scope_manifest WHERE scope=? ORDER BY manifest_id", [scope]);
+    const runs = (scope: string) => queryContentStore(store, "SELECT directory,tree,git_commit FROM analysis_scope_run WHERE scope=? ORDER BY acquisition", [scope]);
+    for (const historical of [true, false]) {
+      const view = historical ? new engine.GitRevisionSource(root, "HEAD", "autobatch") : undefined;
+      const scope = historical ? "named:autobatch" : "cwd:" + root;
+      await evaluate([good, bad], view);
+      expect(manifests(scope)).toEqual([]);
+      expect(runs(scope)).toEqual([]);
+      await evaluate([metadata], view);
+      expect(runs(scope)).toEqual([historical ? { directory: null, tree: view!.tree, git_commit: view!.commit } : { directory: root, tree: null, git_commit: null }]);
+      const published = manifests(scope);
+      expect(published.length).toBeGreaterThan(0);
+      for (const files of [[good, bad], [bad, good]]) {
+        const reports = await evaluate(files, view);
+        expect(reports[files.indexOf(good)].diagnostics.length).toBeGreaterThan(0);
+        expect(reports[files.indexOf(bad)].error).toContain("unknownParameter");
+        expect(manifests(scope)).toEqual(published);
+        expect(runs(scope)).toHaveLength(1);
+      }
+    }
+    const blob = git(root, "rev-parse", "HEAD:a.py"), missing = "1".repeat(40);
+    const tree = execFileSync("git", ["mktree", "--missing"], { cwd: root, encoding: "utf8",
+      input: `100644 blob ${blob}\ta.py\n040000 tree ${missing}\tunreadable\n` }).trim();
+    const partial = new engine.GitRevisionSource(root, tree, "partial-batch");
+    expect((await evaluate([good], partial))[0].diagnostics.length).toBeGreaterThan(0);
+    expect(partial.sourceFailures()).toContainEqual(expect.objectContaining({ path: "unreadable" }));
+    expect(manifests("named:partial-batch")).toEqual([]);
+    expect(runs("named:partial-batch")).toEqual([]);
+    expect((await evaluate([metadata], partial))[0].diagnostics).toHaveLength(1);
+    expect(runs("named:partial-batch")).toEqual([{ directory: null, tree, git_commit: null }]);
+  }, 60_000);
+
   it("rechecks loose parent trees and clears repaired errors in a reused revision view", async () => {
     const root = checkout();
     mkdirSync(join(root, "src"));

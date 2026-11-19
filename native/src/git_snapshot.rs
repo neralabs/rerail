@@ -87,6 +87,13 @@ fn relative_path(path: &Path) -> io::Result<PathBuf> {
 pub struct InventoryReads {
     root: Mutex<Option<(u64, String)>>,
     inventory: Mutex<Weak<Inventory>>,
+    incomplete: std::sync::atomic::AtomicBool,
+}
+
+impl InventoryReads {
+    pub fn mark_incomplete(&self) { self.incomplete.store(true, Ordering::Relaxed); }
+
+    pub fn complete(&self) -> bool { !self.incomplete.load(Ordering::Relaxed) }
 }
 
 #[derive(Debug)]
@@ -795,7 +802,10 @@ pub fn analysis_scope(path: &Path) -> Option<String> {
 pub fn scan_files(root: &Path, reads: Option<&InventoryReads>) -> Option<Result<Vec<(String, Option<String>)>, InventoryError>> {
     let v = view(root)?;
     let prefix = v.prefix.join(root.strip_prefix(&v.root).ok()?);
-    Some(v.inventory(None, None, reads).map(|inventory|
+    Some(v.inventory(None, None, reads).map(|inventory| {
+        if (!inventory.invalid_paths.is_empty() || !inventory.tree_failures.is_empty()) && let Some(reads) = reads {
+            reads.mark_incomplete();
+        }
         inventory.files
             .iter()
             .filter_map(|file| {
@@ -805,7 +815,7 @@ pub fn scan_files(root: &Path, reads: Option<&InventoryReads>) -> Option<Result<
                     .map(|p| (p.to_string_lossy().into_owned(), inventory.languages.get(&file.path).cloned()))
             })
             .collect()
-    ))
+    }))
 }
 
 /// The source library's language result, once this view has run its inventory.

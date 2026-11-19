@@ -334,16 +334,12 @@ impl PolicyInvocation {
             return Ok(invocation);
         }
         if let Some(path) = super::logic::plan::corpus::tape_cache_path() {
-            let id = format!("{}-{}", std::process::id(), analysis_scope::acquisition_time());
-            match ContentStore::open(&path).and_then(|store| AnalysisRun::begin(store, &scope, &id)) {
-                Ok(mut run) => {
-                    let source = match &invocation.source {
-                        PolicySource::Directory(root) => analysis_scope::RunSource::directory(root),
-                        PolicySource::Revision { snapshot, .. } => snapshot.run_source(),
-                    };
-                    run.select_source(source).map_err(|e| e.to_string())?;
-                    invocation.analysis = Some(run);
-                }
+            let source = match &invocation.source {
+                PolicySource::Directory(root) => analysis_scope::RunSource::directory(root),
+                PolicySource::Revision { snapshot, .. } => snapshot.run_source(),
+            };
+            match ContentStore::open(&path).and_then(|store| AnalysisRun::begin_batch(store, &scope, source)) {
+                Ok(run) => invocation.analysis = Some(run),
                 Err(error) => invocation.warning = Some(error.to_string()),
             }
         }

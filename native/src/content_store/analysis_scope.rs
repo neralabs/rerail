@@ -154,6 +154,13 @@ impl AnalysisRun {
         Self::begin_at(store, scope, id, 0)
     }
 
+    pub fn begin_batch(store: ContentStore, scope: &str, source: RunSource) -> StoreResult<Self> {
+        let mut run = Self::begin(store, scope, "batch")?;
+        run.scan_id = format!("batch:{}:{}", run.store_identity(), run.owner.acquisition);
+        run.select_source(source)?;
+        Ok(run)
+    }
+
     pub fn begin_at(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
         let lease = store.hold_collection()?;
         let mut owner = store.begin_analysis_scope_at(scope, acquired_at)?;

@@ -394,6 +394,7 @@ pub(super) fn verify_sources(
             return true;
         }
         let reason = failures.get(path).map_or("missing", String::as_str);
+        if let Some(reads) = super::ThreadStore::git_reads() { reads.mark_incomplete(); }
         snapshot::record_source_error(root, path, format!("Git source object is {reason}"));
         false
     });
