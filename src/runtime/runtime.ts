@@ -942,13 +942,23 @@ const SESSION_RECORDS_GITIGNORE = "# Created by Rerail: session records stay out
  * person's own files, so it is left as it is. In Rerail's own folder the file is rewritten whenever it holds anything
  * else, or is no regular file: a repository that commits one with `!*` would otherwise have the person's next
  * `git add -A` commit their prompts and pre-edit source. One this account may not read was written by another account
- * that records its own sessions in the same folder, private to it, and that account's Rerail keeps it.
+ * that records its own sessions in the same folder, private to it, and that account's Rerail keeps it. Where this
+ * account may make its session's folder but no file, as in a records folder another account repaired on Windows, that
+ * account, the one that may list the folder and whose Git could add what is in it, writes the file.
  */
 async function ignoreInGit(storageRoot: string): Promise<void> {
   const path = join(storageRoot, ".gitignore");
   const text = await gitignoreText(path, storageRoot);
   if (text === SESSION_RECORDS_GITIGNORE || text === ANOTHER_ACCOUNTS) return;
-  await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE);
+  await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE).catch((error: unknown) => {
+    if (!accessRefused(error)) throw error;
+  });
+}
+
+/** Whether a file operation failed because this account may not do it there (EACCES, or EPERM as Windows reports it). */
+function accessRefused(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EACCES" || code === "EPERM";
 }
 
 /** What {@link gitignoreText} gives for a file this account may not read. */

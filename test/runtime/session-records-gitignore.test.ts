@@ -95,6 +95,30 @@ async function openToThisAccount(file: string): Promise<void> {
   else await chmod(file, 0o600);
 }
 
+/**
+ * Lets this account make a folder in `folder` but write no file there, as a records folder another account repaired
+ * lets an account that could make a folder there before. On Windows an ACL of its own: this account may pass through,
+ * read attributes and the ACL, and make a folder; CREATOR OWNER gives what it makes back to it; Administrators, whose
+ * entry would let the test's account write, are left out. Elsewhere a folder's write bit covers files and folders
+ * alike, so `inner` is made first and the folder is then mode 0555.
+ */
+async function letMakeFoldersOnly(folder: string, inner: string): Promise<void> {
+  if (process.platform === "win32") {
+    // `whoami /user /fo csv /nh` prints "<domain>\<name>","<SID>".
+    const me = /"(S-1-[\d-]+)"\s*$/u.exec(execFileSync("whoami.exe", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" }))?.[1] ?? "";
+    execFileSync("icacls.exe", [folder, "/inheritance:r", "/grant:r", `*${me}:(X,AD,RA,RC,S)`, "*S-1-3-0:(OI)(CI)(IO)F", "*S-1-5-18:(OI)(CI)F", "/q"]);
+  } else {
+    await mkdir(inner, { recursive: true, mode: 0o700 });
+    await chmod(folder, 0o555);
+  }
+}
+
+/** Gives `folder` back to this account, so the test's folder can be removed. */
+async function letWriteAgain(folder: string): Promise<void> {
+  if (process.platform === "win32") execFileSync("icacls.exe", [folder, "/reset", "/q"]);
+  else await chmod(folder, 0o700);
+}
+
 describe("session records in a checkout", () => {
   it("never show in git status, so git add -A cannot commit them", async () => {
     const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
@@ -174,6 +198,21 @@ describe("session records in a checkout", () => {
     }
     const ledger = await readFile(join(storageRoot, createHash("sha256").update("gitignore").digest("hex"), "events.jsonl"), "utf8");
     expect(ledger).toContain("Add a priority score to each todo");
+  });
+
+  it("are kept where this account may make its session's folder but no file, as in a records folder another account repaired, which writes the .gitignore", async () => {
+    const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
+    const folder = join(storageRoot, createHash("sha256").update("gitignore").digest("hex"));
+    await mkdir(storageRoot, { recursive: true });
+    await letMakeFoldersOnly(storageRoot, folder);
+    try {
+      await openOneSession(checkout, storageRoot, databasePath);
+    } finally {
+      await letWriteAgain(storageRoot);
+    }
+    expect(await readFile(join(folder, "events.jsonl"), "utf8")).toContain("Add a priority score to each todo");
+    // The account that may list the records folder, the one whose Git could add what is in it, writes it.
+    expect(existsSync(join(storageRoot, ".gitignore"))).toBe(false);
   });
 
   it("leave a custom storage root outside a .rerail folder without a .gitignore, since it may hold the person's files", async () => {
