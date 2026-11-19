@@ -25,7 +25,7 @@ import { checkouts, repositories } from "../../engine/storage/schema.js";
 import { processAlive } from "../daemon-control.js";
 import { detectConflicts, STALE_BRANCH_DAYS } from "./conflict-detect.js";
 import { deliveryHandler, readSettings, settingsAt, writeSettings } from "./conflict-delivery.js";
-import { ConflictHook, conflictEvents, type ConflictFire, type ConflictHandlerContext } from "./conflict-hook.js";
+import { ConflictHook, conflictEvents, handedEvents, type ConflictFire, type ConflictHandlerContext } from "./conflict-hook.js";
 import { dismissedConflict, readConflicts, recordHandlerResult, replaceConflict, type StoredConflict } from "./conflict-store.js";
 import { createGithubClient, PULL_REQUEST_LIMIT, type GithubClient, type GithubRepository, type PullRequestSummary } from "./github.js";
 import { commandHandler, RunningCommands } from "./hook-command.js";
@@ -106,11 +106,11 @@ export interface MergeAssistRuntime extends MergeAssistService {
    * Stop: no conflict event is handed to the hook any more, and a handler that answers later records nothing. Every
    * hook command still running gets SIGTERM on its process group, then SIGKILL after a short grace. Waits at most
    * `waitMs` in all for the handlers, scans and detection passes running now: a pass that ends meanwhile stores what it
-   * found when that tells the hook nothing new; one that finds a conflict new or gone stores nothing, and the next pass
-   * finds it again and the hook hears it then. A pass still running after that ends at its next Git read and stores
-   * nothing, and the stop resolves once the Git it ended has exited, so none runs on in the checkout. It does not wait for
-   * a pass's other work, such as a file read on a drive that stopped answering: that pass ends by itself later, and
-   * stores nothing and starts no Git.
+   * found, as one that ended before the stop did. The events of what a pass stores from the stop on are kept in the
+   * database, and the next pass in that checkout, in this process or another, hands them to the hook before its own. A
+   * pass still running after the wait ends at its next Git read and stores nothing, and the stop resolves once the Git
+   * it ended has exited, so none runs on in the checkout. It does not wait for a pass's other work, such as a file read
+   * on a drive that stopped answering: that pass ends by itself later, and stores nothing and starts no Git.
    */
   stop(waitMs?: number): Promise<void>;
 }
@@ -310,13 +310,11 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   /**
-   * Whether the conflict hook hears the events of a pass that stores `after` over `before`: always, unless Merge Assist
-   * is stopping (`#fire` hands it nothing then) and the store would make an event. A pass stores only what is
-   * heard (`detectConflicts` asks this in its store's transaction), so a conflict found new or gone while stopping is
-   * found again by the next pass, in this process or the next, and the hook hears it then.
+   * The events to hand the hook for a change in the checkout that makes `fires`, asked in the change's transaction:
+   * none while stopping (`#fire` hands nothing then), whose events are kept for the next change to hand.
    */
-  #heard(before: readonly StoredConflict[], after: readonly StoredConflict[]): boolean {
-    return !this.#stopped || conflictEvents(before, after).length === 0;
+  #handed(tx: StateQueries, checkoutPath: string, fires: readonly ConflictFire[]): ConflictFire[] {
+    return handedEvents(tx, { checkoutPath, fires, muted: this.#stopped, now: this.#now() });
   }
 
   /**
@@ -437,10 +435,11 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   async #detect(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null, scan = false): Promise<void> {
     const { pulls, problems, login = null } = await this.#openPulls(checkout, scan);
     // The stop's wait ended while `gh` answered: the database may be closed. Within the wait, the pass runs and stores
-    // what it finds, as a pass that had begun when the stop came does, as long as the hook hears it (`#heard`).
+    // what it finds, as a pass that had begun when the stop came does, and its events are kept (`#handed`).
     if (this.#reads.stopped) return;
     const detected = await detectConflicts({
-      database: this.#db, checkout, pulls, login, now: this.#now, reads: this.#reads, heard: (before, after) => this.#heard(before, after),
+      database: this.#db, checkout, pulls, login, now: this.#now, reads: this.#reads,
+      events: (tx, before, after) => this.#handed(tx, checkout.checkoutPath, conflictEvents(before, after)),
     });
     if (detected === null) return;
     if (scan) {
@@ -449,7 +448,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
         if (mergeAssistEnabled(tx, checkout.repositoryKey)) writeState(tx, STATE_KEYS.scan(checkout.checkoutPath), last, this.#now());
       }, { behavior: "immediate" });
     }
-    this.#fire(checkout, conflictEvents(detected.before, detected.after), session, detected.checkout);
+    this.#fire(checkout, detected.fires, session, detected.checkout);
   }
 
   /** The checkout's branch (null while detached) and its base branch's short name, as the conflict hook hears them. */

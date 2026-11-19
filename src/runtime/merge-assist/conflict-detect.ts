@@ -32,10 +32,11 @@ import { conflictId, overlapQuestion, quietFiles, shortConflictId } from "../../
 import type { Conflict, ConflictSide } from "../../engine/merge-assist/model.js";
 import { ADJACENT_LINES, clipLines, type GitConflict, HUNK_LINES, identify, OverlapReader, type RefHunk, workspaceRanges } from "../../engine/merge-assist/overlap.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
+import { conflictEvents, type ConflictFire } from "./conflict-hook.js";
 import { mergeDetected, readConflicts, type StoredConflict, writeConflicts } from "./conflict-store.js";
 import { PULL_REQUEST_LIMIT, type PullRequestSummary } from "./github.js";
 import { personName } from "./people.js";
-import { isoSeconds } from "./state.js";
+import { isoSeconds, type StateQueries } from "./state.js";
 
 /** What a pass that could compare nothing (no base branch, no shared history) says of the open conflicts it kept. */
 export const UNCOMPARED_KEPT_PROBLEM = "The open conflicts found before stay as they were until this branch can be compared again.";
@@ -79,11 +80,10 @@ export interface DetectContext {
    */
   readonly reads?: GitReads;
   /**
-   * Whether the conflict events of storing `after` over `before` are heard, asked in the store's own transaction: when
-   * they are not, the pass stores nothing and answers null, so the next pass finds those conflicts again and its events
-   * are heard then. Heard when absent.
+   * The conflict events the pass hands the hook for storing `after` over `before`, asked in the store's own transaction
+   * (`tx`); the events between the two when absent.
    */
-  readonly heard?: (before: readonly StoredConflict[], after: readonly StoredConflict[]) => boolean;
+  readonly events?: (tx: StateQueries, before: readonly StoredConflict[], after: readonly StoredConflict[]) => ConflictFire[];
 }
 
 /** This checkout's side: where its work starts, its head and branch, the person, and its changed hunks per file. */
@@ -531,12 +531,14 @@ export interface DetectedConflicts {
   readonly problems: string[];
   /** The branch checked out and the base branch's short name, as the pass read them; null where there is none. */
   readonly checkout: { readonly branch: string | null; readonly base: string | null };
+  /** The conflict events to hand the hook (`events`); none for a pass that stored nothing. */
+  readonly fires: ConflictFire[];
 }
 
 /**
  * Find the checkout's conflicts and store them with the dismissed ones. A detection that finishes after Merge Assist
- * was turned off, or once the owner of its `reads` stops, or whose events would not be `heard`, stores nothing and
- * answers null; one that stored answers what it stored, though its `reads` stop after.
+ * was turned off, or once the owner of its `reads` stops, stores nothing and answers null; one that stored answers what
+ * it stored, though its `reads` stop after.
  */
 export async function detectConflicts(context: DetectContext): Promise<DetectedConflicts | null> {
   return await readsStoppedBy(context.reads, () => detectPass(context));
@@ -553,7 +555,7 @@ function readsStopped(context: DetectContext): boolean {
  */
 function uncompared(known: StoredConflict[], problem: string): DetectedConflicts {
   const stay = known.some(entry => entry.conflict.status === "open") ? [UNCOMPARED_KEPT_PROBLEM] : [];
-  return { before: known, after: known, peers: { branches: 0, pullRequests: 0 }, problems: [problem, ...stay], checkout: { branch: null, base: null } };
+  return { before: known, after: known, peers: { branches: 0, pullRequests: 0 }, problems: [problem, ...stay], checkout: { branch: null, base: null }, fires: [] };
 }
 
 /** {@link detectConflicts}, its Git reads run by its `reads`. */
@@ -585,11 +587,10 @@ async function detectPass(context: DetectContext): Promise<DetectedConflicts | n
     const before = readConflicts(tx, root);
     const unexamined = before.filter(entry => entry.conflict.status === "open" && !examined.has(entry.conflict.id));
     const after = [...mergeDetected(before, detected), ...unexamined];
-    if (context.heard?.(before, after) === false) return null;
     writeConflicts(tx, root, after, now);
     return {
       before, after, peers: { branches: refs.branches.length, pullRequests: refs.pulls.length }, problems,
-      checkout: { branch: view.checkedOut, base: view.base.name },
+      checkout: { branch: view.checkedOut, base: view.base.name }, fires: context.events?.(tx, before, after) ?? conflictEvents(before, after),
     };
   }, { behavior: "immediate" });
 }

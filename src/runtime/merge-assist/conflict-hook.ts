@@ -2,11 +2,14 @@
  * The conflict hook (docs/merge-assist-v1-build.md): an extensible point after detection. Each detection pass fires
  * `detected` (first seen in this checkout) and `closed` (dismissed or no longer found) once per conflict, and every
  * registered handler hears each one in the background: the pass, the session's boundary and the agent never wait for
- * a handler. A handler that throws is logged and skipped. The handlers are delivery and the person's command.
+ * a handler. A handler that throws is logged and skipped. The handlers are delivery and the person's command. The
+ * events of a change stored while the hook hears none (Merge Assist stopping) are kept for the next change to hand it.
  */
+import { z } from "zod";
 import type { RerailHost } from "../../engine/adapter-contract.js";
-import type { ConflictEvent, ConflictHookOutcome, MergeAssistSettings } from "../../engine/merge-assist/model.js";
-import type { StoredConflict } from "./conflict-store.js";
+import { CONFLICT_EVENTS, type ConflictEvent, type ConflictHookOutcome, type MergeAssistSettings } from "../../engine/merge-assist/model.js";
+import { storedConflictSchema, type StoredConflict } from "./conflict-store.js";
+import { STATE_KEYS, deleteState, readState, writeState, type StateQueries } from "./state.js";
 
 /** What every handler hears an event with. */
 export interface ConflictHandlerContext {
@@ -58,6 +61,50 @@ export function conflictEvents(before: readonly StoredConflict[], after: readonl
   });
   const gone = before.filter(entry => entry.conflict.status === "open" && !now.has(entry.conflict.id));
   return [...changed, ...gone.map(entry => ({ event: "closed" as const, conflict: entry }))];
+}
+
+/** The checkout's conflict events the hook did not hear, in the order the store changed (`unheard:<checkout>`). */
+const unheardSchema = z.array(z.object({ event: z.enum(CONFLICT_EVENTS), conflict: storedConflictSchema }));
+
+/** A change to the checkout's conflicts that makes `fires`, while the hook hears nothing (`muted`) or not. */
+export interface ConflictChange {
+  readonly checkoutPath: string;
+  readonly fires: readonly ConflictFire[];
+  readonly muted: boolean;
+  readonly now: number;
+}
+
+/**
+ * The events to hand the hook for `change`, asked in the change's own transaction. While muted, none: its events are
+ * kept under the checkout's `unheard` key. Else the events kept there first, then its own, and the key goes: one change
+ * takes them, in whichever process, so the hook hears each once and in the order the store changed.
+ */
+export function handedEvents(tx: StateQueries, change: ConflictChange): ConflictFire[] {
+  const key = STATE_KEYS.unheard(change.checkoutPath);
+  const kept = readState(tx, key, unheardSchema) ?? [];
+  if (change.muted) {
+    if (change.fires.length > 0) keepUnheard(tx, key, unheardAfter(kept, change.fires), change.now);
+    return [];
+  }
+  if (kept.length > 0) deleteState(tx, key);
+  return [...kept, ...change.fires];
+}
+
+function keepUnheard(tx: StateQueries, key: string, fires: readonly ConflictFire[], now: number): void {
+  if (fires.length > 0) writeState(tx, key, fires, now);
+  else deleteState(tx, key);
+}
+
+const idOf = (fire: ConflictFire): string => fire.conflict.conflict.id;
+
+/**
+ * `kept`, then `fires`, less a conflict kept as `detected` that `fires` closes: the hook never heard it open, and it is
+ * not open. So at most a `closed` and then a `detected` stay kept per conflict, however many stops come first.
+ */
+function unheardAfter(kept: readonly ConflictFire[], fires: readonly ConflictFire[]): ConflictFire[] {
+  const closing = new Set(fires.filter(fire => fire.event === "closed").map(idOf));
+  const unseen = new Set(kept.filter(fire => fire.event === "detected" && closing.has(idOf(fire))).map(idOf));
+  return [...kept.filter(fire => fire.event !== "detected" || !unseen.has(idOf(fire))), ...fires.filter(fire => !unseen.has(idOf(fire)))];
 }
 
 const failure = (error: unknown): string => (error instanceof Error ? error.message : String(error));
