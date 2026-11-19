@@ -18,12 +18,13 @@ use std::path::PathBuf;
 
 fn main() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let native = manifest.join("../..").canonicalize().expect("native/ is readable");
+    // Cargo supplies an absolute path. Canonicalizing it adds a Windows verbatim prefix that cl.exe rejects.
+    let native = manifest.ancestors().nth(2).expect("native/crates/lang is under native/");
     let omitted = languages::omitted_languages(&native.parent().expect("repository root").join("languages"));
-    grammars::build_all(&native, &omitted);
+    grammars::build_all(native, &omitted);
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
-    languages::generate_registry(&native, &omitted, &out);
-    token_automata_built(&native, &out);
+    languages::generate_registry(native, &omitted, &out);
+    token_automata_built(native, &out);
 }
 
 /// Each grammar's automata (`token_automata::GRAMMARS`) as bytes in `OUT_DIR/token_automata`, and `built(lang)`,

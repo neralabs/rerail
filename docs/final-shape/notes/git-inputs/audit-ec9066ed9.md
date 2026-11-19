@@ -4,6 +4,13 @@ The original [twenty cases and their regression tests](audit-c1b588f91.md) cover
 
 The repair goal covers the original cases and every open follow-up below. Windows runtime verification is a separate acceptance check for two cases.
 
+On Windows 11 ARM64, the build at `250c76fd4` failed before the tests could load the addon.
+The grammar build script appended a slash to a verbatim Windows path. All eight grammar reads failed with Windows error 123.
+Joining file names to native paths let Rust read the inputs. MSVC then rejected the verbatim scanner and header paths.
+The build must pass the ordinary absolute paths from Cargo's package directory to the compiler.
+The build then reached the JSON parser. Its SHA-256 code used GCC byte-swap and target intrinsics that MSVC rejected.
+The MSVC build needs its own compiler intrinsics. The parser must produce the same digest and tape through each supported kernel.
+
 The headless regression for case 102 reproduced the permission change before the repair.
 After the repair, each scan reported the expected violation and published its scope. The existing parents kept modes `0755` and `1777`.
 Both database files had mode `0600`. The native tests also check the journal mode and repair a managed cache directory on reopen.
