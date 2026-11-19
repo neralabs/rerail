@@ -45,6 +45,9 @@ const CL_MEM_READ_WRITE: u64 = 1;
 const CL_MEM_USE_HOST_PTR: u64 = 1 << 3;
 const CL_QUEUE_PROFILING_ENABLE: u64 = 1 << 1;
 const CL_PROGRAM_BUILD_LOG: ClUint = 0x1183;
+const CL_PROGRAM_BINARY_SIZES: ClUint = 0x1165;
+const CL_PROGRAM_BINARIES: ClUint = 0x1166;
+const CL_DRIVER_VERSION: ClUint = 0x102D;
 const CL_PROFILING_COMMAND_START: ClUint = 0x1282;
 const CL_PROFILING_COMMAND_END: ClUint = 0x1283;
 const CL_EVENT_COMMAND_EXECUTION_STATUS: ClUint = 0x11D3;
@@ -64,6 +67,8 @@ struct Api {
     release_mem_object: unsafe extern "C" fn(Ptr) -> ClInt,
     create_sub_buffer: unsafe extern "C" fn(Ptr, u64, ClUint, *const c_void, *mut ClInt) -> Ptr,
     create_program_with_source: unsafe extern "C" fn(Ptr, ClUint, *const *const c_char, *const usize, *mut ClInt) -> Ptr,
+    create_program_with_binary: unsafe extern "C" fn(Ptr, ClUint, *const Ptr, *const usize, *const *const u8, *mut ClInt, *mut ClInt) -> Ptr,
+    get_program_info: unsafe extern "C" fn(Ptr, ClUint, usize, Ptr, *mut usize) -> ClInt,
     build_program: unsafe extern "C" fn(Ptr, ClUint, *const Ptr, *const c_char, Ptr, Ptr) -> ClInt,
     get_program_build_info: unsafe extern "C" fn(Ptr, Ptr, ClUint, usize, Ptr, *mut usize) -> ClInt,
     release_program: unsafe extern "C" fn(Ptr) -> ClInt,
@@ -126,6 +131,8 @@ fn api() -> Result<&'static Api, String> {
             release_mem_object: f!("clReleaseMemObject"),
             create_sub_buffer: f!("clCreateSubBuffer"),
             create_program_with_source: f!("clCreateProgramWithSource"),
+            create_program_with_binary: f!("clCreateProgramWithBinary"),
+            get_program_info: f!("clGetProgramInfo"),
             build_program: f!("clBuildProgram"),
             get_program_build_info: f!("clGetProgramBuildInfo"),
             release_program: f!("clReleaseProgram"),
@@ -460,13 +467,31 @@ impl ClComputeFunctionLibrary {
     /// Builds OpenCL C (UKL preprocessed for OpenCL) with the device's driver.
     pub fn compile_from_source(device: &ClDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = api()?;
+        const OPTIONS: &str = "-cl-std=CL1.2";
+        let options = CString::new(OPTIONS).unwrap();
+        // The store's binary (`crate::store`), keyed by the device's name, version and driver beside the source.
+        let driver = device_info_string(a, device.0.device, CL_DRIVER_VERSION);
+        let key = crate::store::key(&[b"opencl", device.name().as_bytes(), driver.as_bytes(), OPTIONS.as_bytes(), preprocessed_source.as_bytes()]);
+        if let Some(bin) = crate::store::load("opencl", &key, "bin") {
+            let (n, p) = (bin.len(), bin.as_ptr());
+            let (mut status, mut e) = (0, 0);
+            let program = unsafe { (a.create_program_with_binary)(device.0.context, 1, &device.0.device, &n, &p, &mut status, &mut e) };
+            if e == CL_SUCCESS && status == CL_SUCCESS {
+                let program = Program(program);
+                let built = unsafe { (a.build_program)(program.0, 1, &device.0.device, options.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) };
+                if built == CL_SUCCESS {
+                    crate::store::count(true);
+                    return Ok(ClComputeFunctionLibrary { program: Arc::new(program), name: file_name_to_appear_in_error_messages.to_string() });
+                }
+            }
+        }
+        crate::store::count(false);
         let src = CString::new(preprocessed_source).map_err(|_| format!("{file_name_to_appear_in_error_messages}: a NUL in the source"))?;
         let p = src.as_ptr();
         let mut e = 0;
         let program = unsafe { (a.create_program_with_source)(device.0.context, 1, &p, std::ptr::null(), &mut e) };
         check("clCreateProgramWithSource", e)?;
         let program = Program(program);
-        let options = CString::new("-cl-std=CL1.2").unwrap();
         let e = unsafe { (a.build_program)(program.0, 1, &device.0.device, options.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) };
         if e != CL_SUCCESS {
             let mut n = 0usize;
@@ -476,6 +501,15 @@ impl ClComputeFunctionLibrary {
             let log = String::from_utf8_lossy(&log);
             let errors: Vec<&str> = log.lines().filter(|l| l.contains("error")).take(20).collect();
             return Err(format!("OpenCL building {file_name_to_appear_in_error_messages} for {} ({e}): {}", device.name(), errors.join("\n")));
+        }
+        // The one device's binary, kept for the next process.
+        let mut size = 0usize;
+        if unsafe { (a.get_program_info)(program.0, CL_PROGRAM_BINARY_SIZES, std::mem::size_of::<usize>(), (&raw mut size).cast(), std::ptr::null_mut()) } == CL_SUCCESS && size > 0 {
+            let mut bin = vec![0u8; size];
+            let mut ptr = bin.as_mut_ptr();
+            if unsafe { (a.get_program_info)(program.0, CL_PROGRAM_BINARIES, std::mem::size_of::<*mut u8>(), (&raw mut ptr).cast(), std::ptr::null_mut()) } == CL_SUCCESS {
+                crate::store::save("opencl", &key, "bin", &bin);
+            }
         }
         Ok(ClComputeFunctionLibrary { program: Arc::new(program), name: file_name_to_appear_in_error_messages.to_string() })
     }

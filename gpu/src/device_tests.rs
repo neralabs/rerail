@@ -284,3 +284,61 @@ fn a_blocks_device_buffer_is_its_pages() {
     q.flush().await_().unwrap();
     assert!(words.iter().enumerate().all(|(i, &w)| w == 2 * i as u32 + 7), "the kernel wrote the block where it lies");
 }
+
+/// A kernel compiled once is loaded from the store by the next compile of the same source (another process's, in
+/// the engine: `rerail_device::store`), and runs; an entry that does not load is compiled again and replaced.
+/// CUDA, OpenCL and the CPU (Metal's pipelines are in the engine's archive store until step C).
+#[test]
+fn a_kernel_compiled_once_is_loaded_from_the_store() {
+    use crate::device::ComputeFunctionLibrary;
+    use rerail_device::store;
+    let Some(shared) = crate::shared::get() else { return };
+    if crate::device::backend() == "Metal" || store::dir().is_none() {
+        return;
+    }
+    // A source no earlier run compiled: the first compile is a compile.
+    let nonce = format!("{}-{:?}", std::process::id(), std::time::SystemTime::now());
+    let text = format!("// {nonce}\n{KERNELS}");
+    let source = crate::kernels::preprocess("device_tests_store.ukl", &text).unwrap();
+    let run = |lib: &ComputeFunctionLibrary| {
+        let f = Box::leak(Box::new(lib.get_function(&shared.device, "d_in_place").unwrap()));
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct Args {
+            n: u32,
+            add: u32,
+        }
+        unsafe impl crate::Pod for Args {}
+        let b = crate::kernels::buffer_of(&[5u32; 64]).unwrap();
+        let mut q = crate::device::ComputeQueue::new(&shared.queue);
+        launch(&q, f).value("args", &Args { n: 64, add: 1 }).buffer("w", &b).run(&[1], &[64]).unwrap();
+        q.flush().await_().unwrap();
+        assert_eq!(read::<u32>(&b, 64), [11u32; 64]);
+    };
+    let compile = || {
+        let before = store::here();
+        let lib = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, "device_tests_store.ukl").unwrap_or_else(|e| panic!("{e}"));
+        let after = store::here();
+        (lib, (after.0 - before.0, after.1 - before.1))
+    };
+    let (first, counts) = compile();
+    assert_eq!(counts, (0, 1), "compiled the first time");
+    run(&first);
+    let (second, counts) = compile();
+    assert_eq!(counts, (1, 0), "loaded from the store the second time");
+    run(&second);
+    let entry = store::last_here().expect("the entry");
+    // The CPU's entry is a library this process has open: `dlopen` gives it again whatever the file holds now, so a
+    // damaged one is a later process's to compile again. CUDA's and OpenCL's are bytes each compile loads.
+    if shared.device.is_cpu() {
+        let _ = std::fs::remove_file(&entry);
+        let _ = std::fs::remove_dir_all(entry.with_extension("so.dSYM"));
+        return;
+    }
+    std::fs::write(&entry, b"not a kernel").unwrap();
+    let (third, counts) = compile();
+    assert_eq!(counts, (0, 1), "a damaged entry is compiled again");
+    run(&third);
+    assert_ne!(std::fs::read(&entry).unwrap(), b"not a kernel", "and replaced");
+    let _ = std::fs::remove_file(&entry);
+}

@@ -783,6 +783,8 @@ impl crate::upkeep::Job for Maintenance {
     fn step(&mut self, _slice: &crate::upkeep::Slice) -> Result<crate::upkeep::Step, String> {
         if compile_wanted(Which::All, 1).is_empty() {
             prune(max_bytes());
+            // The device layer's store (CUDA's cubins, OpenCL's binaries, the CPU's libraries; decision 0440 step B).
+            rerail_device::store::prune(rerail_device::store::max_bytes());
             self.pruned = true;
             return Ok(crate::upkeep::Step::Done);
         }

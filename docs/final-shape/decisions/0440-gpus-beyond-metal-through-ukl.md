@@ -970,8 +970,18 @@ preprocessor, whose lexer reaches the tape crate, then CLIF, then the blocks).
   device in it. The Metal accessors stay for the kernels not yet moved.
 - Found on the way: on Linux, a blocks test read the process-wide count of zeroed bytes, which its neighbours
   move; it reads its thread's count now (`zeroed_bytes_here`). The merge left `Tape16Z::pieces` unused: removed.
-Next in B: the kernel store, and the engine's Metal call sites onto `rerail-gpu`'s launches with their kernels in
-step C.
+- **The kernel store** (`rerail_device::store`, 0395's on the device layer): each backend's compiled form on
+  disk, under a key of everything its compile reads, so the next process loads it. CUDA keeps NVRTC's cubin
+  (keyed by the architecture, the options, NVRTC's and the driver's versions), OpenCL the program's binary (the
+  device's name, version and driver), the CPU the compiler's library (its `--version`: the old key named the
+  compiler but not its build, so an upgraded one loaded stale libraries; the libraries were in the temporary
+  directory). An entry that does not load is compiled again and replaced. The store keeps within
+  `RERAIL_GPU_KERNELS_MB` (2 GB), least recently used first, pruned by upkeep beside the Metal archives and once a
+  process. Metal's pipelines stay in the archive store until step C moves the engine's kernels. Tested
+  (`a_kernel_compiled_once_is_loaded_from_the_store`) on the CPU, OpenCL and a GB10's CUDA.
+
+B is done: what the engine's GPU lane needs is in the device layer, on every backend; the blocks and the pool hold
+its buffers. The engine's call sites stay on Metal's types until each moves with its kernel (C).
 
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's

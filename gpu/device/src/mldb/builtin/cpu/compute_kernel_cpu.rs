@@ -208,32 +208,65 @@ pub struct CpuComputeFunctionLibrary {
 unsafe impl Send for CpuComputeFunctionLibrary {}
 unsafe impl Sync for CpuComputeFunctionLibrary {}
 
-/// FNV-1a of a library's text, and of the compiler's name (a library from another compiler is another).
-fn key(text: &str, cxx: &str) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for b in cxx.bytes().chain([0]).chain(text.bytes()) {
-        h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+/// The compiler's options for a kernel library.
+const CXX_FLAGS: [&str; 8] = ["-std=c++20", "-O1", "-g", "-fPIC", "-shared", "-fno-exceptions", "-w", "-o"];
+
+/// What names the compiler's build: its `--version` (a store's key holds it, so an upgrade compiles again).
+fn compiler_version(cxx: &str) -> &'static str {
+    static V: OnceLock<String> = OnceLock::new();
+    V.get_or_init(|| std::process::Command::new(cxx).arg("--version").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default())
+}
+
+/// The kernel library at `lib`, loaded.
+fn open_library(lib: &std::path::Path) -> Result<*mut c_void, String> {
+    let c = CString::new(lib.to_string_lossy().as_bytes()).unwrap();
+    // SAFETY: a shared object a compiler made from UKL; it runs no initializers of its own.
+    let handle = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    if handle.is_null() {
+        let e = unsafe { CStr::from_ptr(libc::dlerror()) }.to_string_lossy().into_owned();
+        return Err(format!("loading {}: {e}", lib.display()));
     }
-    h
+    Ok(handle)
 }
 
 impl CpuComputeFunctionLibrary {
     /// Compiles C++ (UKL preprocessed for the CPU) with the host's compiler into a shared object, and loads it.
     pub fn compile_from_source(_device: &CpuDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let cxx = compiler()?;
-        let dir = std::env::temp_dir().join("rerail-ukl-cpu");
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let k = key(preprocessed_source, cxx);
-        let lib = dir.join(format!("{k:016x}.so"));
-        if !lib.exists() {
+        // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
+        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), preprocessed_source.as_bytes()]);
+        let lib = match crate::store::path("cpu", &k, "so") {
+            Some(p) => p,
+            None => {
+                let dir = std::env::temp_dir().join("rerail-ukl-cpu");
+                std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+                dir.join(format!("{k}.so"))
+            }
+        };
+        let dir = lib.parent().expect("a library's directory").to_path_buf();
+        let kept = lib.exists();
+        if kept {
+            match open_library(&lib) {
+                Ok(handle) => {
+                    crate::store::count(true);
+                    crate::store::used(&lib);
+                    return Ok(CpuComputeFunctionLibrary { handle, name: file_name_to_appear_in_error_messages.to_string() });
+                }
+                // Damaged, or another build's: compiled again, and replaced.
+                Err(_) => _ = std::fs::remove_file(&lib),
+            }
+        }
+        crate::store::count(false);
+        // The CPU's entry is written by the compiler, not `store::save`.
+        crate::store::prune_once();
+        {
             // A name of this compile's own: another thread or process may compile the same text meanwhile.
-            static N: AtomicU64 = AtomicU64::new(0);
-            let own = format!("{k:016x}.{}.{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
+            let own = format!("{k}.{}.{}", std::process::id(), crate::store::unique());
             let src = dir.join(format!("{own}.cpp"));
             std::fs::write(&src, preprocessed_source).map_err(|e| format!("{}: {e}", src.display()))?;
             let tmp = dir.join(format!("{own}.so"));
             let o = std::process::Command::new(cxx)
-                .args(["-std=c++20", "-O1", "-g", "-fPIC", "-shared", "-fno-exceptions", "-w", "-o"])
+                .args(CXX_FLAGS)
                 .arg(&tmp)
                 .arg(&src)
                 .output()
@@ -250,13 +283,7 @@ impl CpuComputeFunctionLibrary {
             let _ = std::fs::rename(sym(&tmp), sym(&lib));
             std::fs::rename(&tmp, &lib).map_err(|e| format!("{}: {e}", lib.display()))?;
         }
-        let c = CString::new(lib.to_string_lossy().as_bytes()).unwrap();
-        // SAFETY: a shared object this process's compiler made; it runs no initializers of its own.
-        let handle = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-        if handle.is_null() {
-            let e = unsafe { CStr::from_ptr(libc::dlerror()) }.to_string_lossy().into_owned();
-            return Err(format!("loading {}: {e}", lib.display()));
-        }
+        let handle = open_library(&lib)?;
         Ok(CpuComputeFunctionLibrary { handle, name: file_name_to_appear_in_error_messages.to_string() })
     }
 

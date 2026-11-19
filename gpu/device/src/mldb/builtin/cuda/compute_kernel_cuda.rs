@@ -66,6 +66,8 @@ struct Api {
     nvrtc_get_cubin_size: unsafe extern "C" fn(Ptr, *mut usize) -> i32,
     nvrtc_get_cubin: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
     nvrtc_destroy_program: unsafe extern "C" fn(*mut Ptr) -> i32,
+    nvrtc_version: unsafe extern "C" fn(*mut i32, *mut i32) -> i32,
+    cu_driver_get_version: unsafe extern "C" fn(*mut i32) -> CUresult,
 }
 
 unsafe impl Send for Api {}
@@ -157,6 +159,8 @@ fn api() -> Result<&'static Api, String> {
             nvrtc_get_cubin_size: sym!(nvrtc, "nvrtcGetCUBINSize"),
             nvrtc_get_cubin: sym!(nvrtc, "nvrtcGetCUBIN"),
             nvrtc_destroy_program: sym!(nvrtc, "nvrtcDestroyProgram"),
+            nvrtc_version: sym!(nvrtc, "nvrtcVersion"),
+            cu_driver_get_version: sym!(cuda, "cuDriverGetVersion"),
         })
     })
     .as_ref()
@@ -429,12 +433,24 @@ impl CudaComputeFunctionLibrary {
     /// Compiles CUDA C++ (UKL preprocessed for this device) with NVRTC for the device's architecture, and loads it.
     pub fn compile_from_source(device: &CudaDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = device.current();
+        let options = [format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into()];
+        // The store's cubin (`crate::store`), keyed by all the compile reads: NVRTC's and the driver's builds too.
+        let (mut major, mut minor, mut driver) = (0, 0, 0);
+        unsafe { (a.nvrtc_version)(&mut major, &mut minor) };
+        unsafe { (a.cu_driver_get_version)(&mut driver) };
+        let versions = format!("nvrtc {major}.{minor} driver {driver}");
+        let key = crate::store::key(&[b"cuda", versions.as_bytes(), options.join(" ").as_bytes(), preprocessed_source.as_bytes()]);
+        if let Some(cubin) = crate::store::load("cuda", &key, "cubin") {
+            let mut module = std::ptr::null_mut();
+            if unsafe { (a.cu_module_load_data)(&mut module, cubin.as_ptr().cast()) } == 0 {
+                crate::store::count(true);
+                return Ok(CudaComputeFunctionLibrary { module, device: *device });
+            }
+        }
+        crate::store::count(false);
         let src = CString::new(preprocessed_source).map_err(|e| e.to_string())?;
         let name = CString::new(file_name_to_appear_in_error_messages).map_err(|e| e.to_string())?;
-        let opts: Vec<CString> = [format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into()]
-            .into_iter()
-            .map(|o| CString::new(o).unwrap())
-            .collect();
+        let opts: Vec<CString> = options.into_iter().map(|o| CString::new(o).unwrap()).collect();
         let opt_ptrs: Vec<*const c_char> = opts.iter().map(|o| o.as_ptr()).collect();
         let mut prog = std::ptr::null_mut();
         unsafe {
@@ -459,6 +475,7 @@ impl CudaComputeFunctionLibrary {
             (a.nvrtc_destroy_program)(&mut prog);
             let mut module = std::ptr::null_mut();
             ck((a.cu_module_load_data)(&mut module, cubin.as_ptr().cast()), "cuModuleLoadData")?;
+            crate::store::save("cuda", &key, "cubin", &cubin);
             Ok(CudaComputeFunctionLibrary { module, device: *device })
         }
     }
