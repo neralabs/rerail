@@ -20,7 +20,9 @@
 
 use crate::directives::{self, Form, Kind, Span, Variadic};
 use rerail_c_lean::pp::{DIGRAPH, Options, P, Phase2, PpLexer};
-use rerail_tape_format::{Redo, View, Widths, Writer, key};
+use rerail_tape_format::f16::{Lang, Tape16, Written};
+use rerail_tape_format::tape::{CodeTable, Entry};
+use rerail_tape_format::{Redo, Sixteen, Target, View, Widths, Writer, key};
 
 /// The tape's kinds, by id.
 pub const KINDS: &[&str] = &[
@@ -148,6 +150,58 @@ impl Gather<'_> {
 
 /// `src`'s preprocessor tape, read as `opts` say.
 pub fn image(src: &[u8], opts: Options) -> Vec<u8> {
+    let nodes = nodes(src, opts);
+    let mut widths = Widths::guess(src.len());
+    loop {
+        match write(&nodes, src, widths, Target::F15).and_then(|w| w.finish(src)) {
+            Ok(image) => return image,
+            Err(Redo(w)) => widths = w,
+        }
+    }
+}
+
+/// The tape as format 16 (decision 0460 §1): the same nodes as `image`'s, written in one pass
+/// with the source's newline index. Every reader reads this one; `image`'s format 15 is the
+/// Bitlex grammar's comparison (0436 R4) until its tier 2 writes format 16 (0426).
+pub fn image_16(src: &[u8], opts: Options) -> Tape16 {
+    let nodes = nodes(src, opts);
+    let mut widths = Widths::guess(src.len());
+    let target = Target::F16(Sixteen { lang: lang(), tag: TAG, z: false, blocks: false, number: std::sync::Arc::new(number) });
+    loop {
+        match write(&nodes, src, widths, target.clone()).and_then(|mut w| w.finish_16()) {
+            Ok(Ok(f)) => match f.tape {
+                Written::F16(t) => return t,
+                Written::F16Z(_) => unreachable!("16z was not asked for"),
+            },
+            Ok(Err(e)) => panic!("the preprocessor tape in format 16: {e}"),
+            Err(Redo(w)) => widths = w,
+        }
+    }
+}
+
+/// The tape's tag (its language's; the preprocessor tape is no grammar's, so its language is
+/// given to every reader, `lang`, never looked up by tag).
+pub const TAG: u8 = 0;
+
+/// The tape's format 16 language: a code a kind with no field first (its number is its kind's,
+/// below the one-byte cut), then each kind with each field (`number`).
+pub fn lang() -> &'static Lang {
+    static LANG: std::sync::LazyLock<Lang> = std::sync::LazyLock::new(|| {
+        let entry = |kind: usize, field: usize| Entry { kind: kind as u16, field: field as u16, flags: 0, alias: None, classes: Vec::new() };
+        let entries = (0..=FIELDS.len()).flat_map(|f| (0..KINDS.len()).map(move |k| entry(k, f))).collect();
+        Lang::new(CodeTable::new(entries), [1, 1, 1], 1).expect("the preprocessor tape's language")
+    });
+    &LANG
+}
+
+/// A key's number in `lang`'s table: its field's row of kinds, then its kind.
+fn number(key: u32) -> Option<u32> {
+    let (kind, field) = (key & 0x3ff, key >> rerail_tape_format::KIND_BITS);
+    ((kind as usize) < KINDS.len() && (field as usize) <= FIELDS.len()).then(|| field * KINDS.len() as u32 + kind)
+}
+
+/// The tape's nodes, sorted by start, then the longest first, then by rank.
+fn nodes(src: &[u8], opts: Options) -> Vec<Node> {
     let toks = tokens(src, opts);
     let d = directives::scan(src, opts);
     let mut g = Gather { toks: &toks, src, nodes: Vec::new(), fields: vec![0; toks.len()] };
@@ -280,19 +334,13 @@ pub fn image(src: &[u8], opts: Options) -> Vec<u8> {
     }
     let mut nodes = g.nodes;
     nodes.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)).then(a.rank.cmp(&b.rank)));
-    let mut widths = Widths::guess(src.len());
-    loop {
-        match write(&nodes, src, widths) {
-            Ok(image) => return image,
-            Err(Redo(w)) => widths = w,
-        }
-    }
+    nodes
 }
 
 /// The nodes, sorted by start, then the longest first, then by rank, written in preorder under the
 /// root: a node is inside the open ones that end after its start.
-fn write(nodes: &[Node], src: &[u8], widths: Widths) -> Result<Vec<u8>, Redo> {
-    let mut w = Writer::new(0, widths, nodes.len() + 16);
+fn write(nodes: &[Node], src: &[u8], widths: Widths, target: Target) -> Result<Writer<Widths>, Redo> {
+    let mut w = Writer::new(TAG, widths, nodes.len() + 16).to(target, src);
     let root = w.push(key(PP, 0, 0), 0);
     let mut open: Vec<(usize, u32)> = Vec::new();
     for n in nodes {
@@ -312,7 +360,7 @@ fn write(nodes: &[Node], src: &[u8], widths: Widths) -> Result<Vec<u8>, Redo> {
         w.close(i, e);
     }
     w.close(root, src.len() as u32);
-    w.finish(src)
+    Ok(w)
 }
 
 /// A directive as a tape gives it: its kind's name, its bytes, and the conditional directive that

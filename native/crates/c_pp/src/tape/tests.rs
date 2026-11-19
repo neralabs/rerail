@@ -25,6 +25,31 @@ fn check(src: &[u8], opts: Options) -> Result<(), String> {
         let k = got.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(got.len().min(want.len()));
         return Err(format!("directive {k}: {:?} for the scan's {:?}", got.get(k), want.get(k)));
     }
+    sixteen(src, opts, &v)
+}
+
+/// The format 16 tape (0460 R1) has format 15's nodes, each its kind, field, bytes and subtree,
+/// and its newline index gives each node's line.
+fn sixteen(src: &[u8], opts: Options, v: &View<'_>) -> Result<(), String> {
+    use rerail_tape_format::tape::Tape;
+    let t = image_16(src, opts);
+    let r = t.reader(lang())?;
+    if r.len() != v.len() {
+        return Err(format!("{} nodes in format 16, {} in 15", r.len(), v.len()));
+    }
+    for i in 0..r.len() {
+        let e = r.table().entry(r.code(i));
+        let key = v.key(i);
+        let want = ((key & 0x3ff) as u16, (key >> rerail_tape_format::KIND_BITS & 0x3f) as u16, u64::from(v.start(i)), u64::from(v.end(i)), i + v.size(i));
+        let got = (e.kind, e.field, r.start(i), r.end(i), r.subtree_end(i));
+        if got != want {
+            return Err(format!("node {i}: {got:?} in format 16, {want:?} in 15"));
+        }
+        let line = src[..v.start(i) as usize].iter().filter(|&&b| b == b'\n').count() as u32;
+        if r.line(v.start(i)) != line {
+            return Err(format!("node {i}: line {} by the index, {line} counted", r.line(v.start(i))));
+        }
+    }
     Ok(())
 }
 
@@ -47,12 +72,13 @@ fn the_pp_tape_kinds_are_numbered_as_named() {
     }
 }
 
-/// R1: the tape is a v9np image (no new format), its root the file.
+/// R1 (0460): the tape is a format 16 image with its newline index, the nodes format 15's
+/// (`image`, the Bitlex grammar's comparison), its root the file.
 #[test]
-fn the_pp_tape_is_a_v9np_image() {
-    let src = b"#include <a.h>\n#define F(a, ...) a + 1\nint x = F(3);\n";
-    let image = image(src, c());
-    assert_eq!(&image[..8], rerail_tape_format::MAGIC);
+fn the_pp_tape_is_a_format_16_image() {
+    let src = b"#include <a.h>\n#define F(a, ...) a + 1\nint x = F(3);\n// a\\\n b\n\n#if X\n  y\n#endif\n";
+    assert_eq!(&image(src, c())[..8], rerail_tape_format::MAGIC);
+    assert!(image_16(src, c()).placement().newlines > 0, "the newline index");
     check(src, c()).unwrap();
 }
 
