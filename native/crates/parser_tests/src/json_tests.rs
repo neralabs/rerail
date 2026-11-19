@@ -158,6 +158,31 @@ fn simdjson_forms_trees_are_14_jsons() {
     eprintln!("{} files: {parsed} parsed, {refused} refused, by both forms alike", inputs.len());
 }
 
+/// Each dispatch's arm (`'bX: loop { match d { … } }`, its top level) that is only `d = M;
+/// continue 'bX;`, back into its own loop, in generated Rust whose comments hold no braces.
+#[cfg(target_arch = "aarch64")]
+fn dispatch_resets(src: &str) -> Vec<String> {
+    let lines: Vec<&str> = src.lines().filter(|l| !l.trim_start().starts_with("//")).collect();
+    let mut out = Vec::new();
+    for (i, l) in lines.iter().enumerate() {
+        let Some(b) = l.strip_prefix("'b").and_then(|r| r.strip_suffix(": loop {")) else { continue };
+        let Some(m) = lines[i + 1..].iter().position(|l| !l.starts_with("'m")).map(|k| i + 1 + k).filter(|&k| lines[k] == "match d {") else { continue };
+        let own = format!("continue 'b{b}; }}");
+        let mut depth = 1i64;
+        for l in &lines[m + 1..] {
+            let arm = l.split_once(" => { d = ").filter(|(a, _)| a.parse::<u32>().is_ok());
+            if depth == 1 && arm.is_some_and(|(_, rest)| rest.split_once("; ").is_some_and(|(n, tail)| n.parse::<u32>().is_ok() && tail == own)) {
+                out.push(format!("'b{b}: {l}"));
+            }
+            depth += l.matches('{').count() as i64 - l.matches('}').count() as i64;
+            if depth <= 0 {
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// The trees test's files: the made-up cases, then the corpus (`RERAIL_JSON_CORPUS`) where set.
 fn tree_inputs() -> Vec<Vec<u8>> {
     let mut inputs: Vec<Vec<u8>> = vec![
@@ -266,6 +291,9 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     let u = words.iter().position(|w| w.as_slice() == b"\\u").expect("the escape \\u") + 1;
     let calls = src.matches("s.check_1()?;").count();
     assert!(calls > 0 && src.matches(&format!("{u} => {{ s.check_1()?;")).count() == calls, "the \\u checks in the \\u arm alone");
+    // No dispatch's arm only sets `d` again for its own loop (`Shape::threaded`).
+    let resets = dispatch_resets(&src);
+    assert!(resets.is_empty(), "a dispatch's arm only re-sets d: {resets:?}");
     // No room check a token: the harness sizes the tape from the input once, as simdjson's.
     assert!(!aot.parser.tier2.room_checked() && !src.contains("room()?"), "no room check a token");
     let entry = aot_entry(&src);

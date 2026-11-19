@@ -593,6 +593,26 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 19, done: no dispatch arm only sets `d` again, in the generated Rust
+
+A loop's dispatch had an arm with no code of its own (`1 => { d = 3; continue 'b151; }`): its
+entry was a word whose code is only its jump. Code that came in with `d = 1` went round the
+loop twice. `rust_stream` now tells `Shape` which words are only a jump (`Shape::threaded`).
+Each edge labelled for such an entry carries the label of the entry it jumps to, and an arm that
+no edge labels isn't written. The `}` that closes an object now sets `d = 3` itself.
+
+Removing those words from the graph everywhere was tried first, and is worse. They are the joins
+that keep a loop's entries few: without them the value loop had 25 entries, and the `\u` arm
+went through the dispatch.
+
+The Rust trees test reads each dispatch's top-level arms and asserts that none only re-sets `d`
+for its own loop. Turning the threading off fails it at `'b151: 1 => { d = 3; continue 'b151; }`.
+
+A return is now one dynamic `match`, on `s.ret`. Two of its arms jump straight to their place
+(`break`). The third sets `d = 2`, a constant, then `continue 'b151`: that is how Rust writes a
+jump into a loop entered at several places, simdjson's `goto object_continue`. Making it a
+direct branch is up to rustc's jump threading, and the Rust can't show it.
+
 ## Step 18, done: one function, the nesting on a stack of its own, in the generated Rust
 
 Each rule was a Rust function: a value inside an array was a call (`r46(s)?`). It came back with
@@ -643,8 +663,7 @@ the Rust it writes:
 3. Done in step 16.
 4. Done in step 17.
 5. Done in step 18.
-6. Thread the dispatch's arms that only set `d` again (`1 => { d = 3; continue 'b151; }`) into
-   their target, so a return is one `match` on `s.ret`, then one jump: `Shape`, in the compiler.
+6. Done in step 19.
 
 ## Order
 

@@ -1868,7 +1868,11 @@ fn rule(out: &mut String, x: &Facts<'_>, entry: usize) -> Result<(), String> {
     }
     let first: Vec<Vec<usize>> = nodes.iter().map(|&pc| succ(x, pc).iter().map(|t| index[t]).collect()).collect();
     let sizes = vec![1; nodes.len()];
-    let shape = Shape::of(first, &sizes).ok_or_else(|| format!("rule at {entry}: an irreducible graph"))?;
+    // The words whose code is their one jump and nothing else (a `GOTO`, a check decided when
+    // tier 2 compiles): no dispatch's arm is only one (`Shape::threaded`).
+    const MARK: &str = "\u{0}jump";
+    let only_jump: Vec<bool> = (0..nodes.len()).map(|k| first[k].len() == 1 && word(x, nodes[k], &|j| Ok(format!("{MARK}{j}"))).is_ok_and(|c| c == format!("{MARK}0"))).collect();
+    let shape = Shape::threaded(first, &sizes, &only_jump).ok_or_else(|| format!("rule at {entry}: an irreducible graph"))?;
     let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> { word(x, nodes[node], jump) };
     let body = shape.tree(&emit, 0)?;
     let params = if x.context { ", mut word: u32, mut flags: u32" } else { "" };

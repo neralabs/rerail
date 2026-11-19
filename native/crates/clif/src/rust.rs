@@ -408,6 +408,13 @@ impl Shape {
     /// copies; past that, each loop with two entries given one, a dispatch.
     /// A graph's nodes' successors, the entry node 0, and each node's size (its copies' cost).
     pub fn of(first: Vec<Vec<usize>>, sizes: &[usize]) -> Option<Shape> {
+        Self::threaded(first, sizes, &vec![false; sizes.len()])
+    }
+
+    /// As `of`, `only_jump[b]` where block `b`'s code is its one jump: a dispatch's entry that
+    /// only jumps to another of its entries is not one; the edges labelled for it carry the
+    /// other's label (so no arm only sets `d` again).
+    pub fn threaded(first: Vec<Vec<usize>>, sizes: &[usize], only_jump: &[bool]) -> Option<Shape> {
         let size = |b: usize| sizes[b];
         let budget: usize = sizes.iter().sum();
         let (mut block, mut succ): (Vec<Option<usize>>, _) = ((0..first.len()).map(Some).collect(), first.clone());
@@ -420,6 +427,7 @@ impl Shape {
             copied += block[t].map_or(0, size);
             if copied > budget {
                 (block, succ, label) = Self::dispatched((0..first.len()).map(Some).collect(), first.clone())?;
+                Self::thread(&block, &mut succ, &mut label, only_jump);
                 let order = Order::of(&succ);
                 if order.irreducible(&succ).is_some() {
                     return None;
@@ -448,6 +456,31 @@ impl Shape {
             m.sort_by_key(|&b| std::cmp::Reverse(order.rpo[b]));
         }
         Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge })
+    }
+
+    /// Each dispatch's entry `e` that only jumps (`only_jump`) on into the same dispatch, with
+    /// label `i`: the edges labelled `e`'s place carry `i`, until none does. `e` is then
+    /// reached from no edge, and its arm is not written (`within`).
+    fn thread(block: &[Option<usize>], succ: &mut [Vec<usize>], label: &mut std::collections::HashMap<(usize, usize), usize>, only_jump: &[bool]) {
+        for d in (0..block.len()).filter(|&d| block[d].is_none()) {
+            for _ in 0..succ[d].len() {
+                let mut changed = false;
+                for j in 0..succ[d].len() {
+                    let e = succ[d][j];
+                    let jumps = block[e].is_some_and(|b| only_jump.get(b) == Some(&true)) && succ[e].len() == 1 && succ[e][0] == d;
+                    let Some(&i) = label.get(&(e, 0)).filter(|&&i| jumps && i != j) else { continue };
+                    for (&(u, k), l) in label.iter_mut() {
+                        if *l == j && u != e && succ[u][k] == d {
+                            *l = i;
+                            changed = true;
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
     }
 
     /// Each loop (a strongly connected part of the graph, its header out, then the parts within,
@@ -531,7 +564,8 @@ impl Shape {
         }
         let Some(b) = self.block[x] else {
             let mut s = String::from("match d {\n");
-            for k in 0..self.succ[x].len() {
+            // Only the arms an edge labels (`thread` leaves some none).
+            for k in (0..self.succ[x].len()).filter(|&k| self.label.iter().any(|(&(u, e), &l)| l == k && self.succ[u][e] == x)) {
                 writeln!(s, "{k} => {{ {} }}", self.transfer(emit, x, k)?).unwrap();
             }
             s.push_str("// SAFETY: a dispatch's label is one of its entries.\n_ => unsafe { core::hint::unreachable_unchecked() },\n}\n");
