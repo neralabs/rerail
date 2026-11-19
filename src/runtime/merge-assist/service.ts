@@ -26,7 +26,7 @@ import { processAlive } from "../daemon-control.js";
 import { detectConflicts, STALE_BRANCH_DAYS } from "./conflict-detect.js";
 import { deliveryHandler, readSettings, settingsAt, writeSettings } from "./conflict-delivery.js";
 import { ConflictHook, conflictEvents, handedEvents, type ConflictFire, type ConflictHandlerContext } from "./conflict-hook.js";
-import { dismissedConflict, readConflicts, recordHandlerResult, replaceConflict } from "./conflict-store.js";
+import { dismissedConflict, readConflicts, recordHandlerResult, replaceConflict, type StoredConflict } from "./conflict-store.js";
 import { createGithubClient, PULL_REQUEST_LIMIT, type GithubClient, type GithubRepository, type PullRequestSummary } from "./github.js";
 import { commandHandler, RunningCommands } from "./hook-command.js";
 import { currentNotice, forgetDelivered, markNotesDelivered, pendingNotes, type ConflictNoteOptions, type PendingNote } from "./notes.js";
@@ -311,11 +311,12 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   /**
-   * The events to hand the hook for a change in the checkout that makes `fires`, asked in the change's transaction:
-   * none while stopping (`#fire` hands nothing then), whose events are kept for the next change to hand.
+   * The events to hand the hook for a change in the checkout that makes `fires` over the conflicts the store held
+   * (`before`), asked in the change's transaction: none while stopping (`#fire` hands nothing then), whose events are
+   * kept for the next change to hand.
    */
-  #handed(tx: StateQueries, checkoutPath: string, fires: readonly ConflictFire[]): ConflictFire[] {
-    return handedEvents(tx, { checkoutPath, fires, muted: this.#stopped, now: this.#now() });
+  #handed(tx: StateQueries, checkoutPath: string, before: readonly StoredConflict[], fires: readonly ConflictFire[]): ConflictFire[] {
+    return handedEvents(tx, { checkoutPath, before, fires, muted: this.#stopped, now: this.#now() });
   }
 
   /**
@@ -440,7 +441,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     if (this.#reads.stopped) return;
     const detected = await detectConflicts({
       database: this.#db, checkout, pulls, login, now: this.#now, reads: this.#reads,
-      events: (tx, before, after) => this.#handed(tx, checkout.checkoutPath, conflictEvents(before, after)),
+      events: (tx, before, after) => this.#handed(tx, checkout.checkoutPath, before, conflictEvents(before, after)),
     });
     if (detected === null) return;
     if (scan) {
@@ -502,7 +503,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     });
     forgetDelivered(tx, new Set(cleared.flatMap(({ stored }) => stored.map(entry => entry.conflict.id))), this.#now());
     return cleared.map(({ path, stored }) => ({
-      path, fires: this.#handed(tx, path, stored.filter(entry => entry.conflict.status === "open").map(conflict => ({ event: "closed", conflict }))),
+      path, fires: this.#handed(tx, path, stored, stored.filter(entry => entry.conflict.status === "open").map(conflict => ({ event: "closed", conflict }))),
     }));
   }
 
@@ -536,12 +537,13 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     // Found, checked and replaced in one transaction: of two dismissals at once, one changes the conflict and fires
     // `closed`; the other finds it dismissed.
     const fires = this.#db.transaction(tx => {
-      const stored = readConflicts(tx, root).find(entry => entry.conflict.id === conflictId);
+      const before = readConflicts(tx, root);
+      const stored = before.find(entry => entry.conflict.id === conflictId);
       if (stored === undefined) throw new MergeAssistError("not-found", `This checkout has no conflict ${conflictId}.`);
       if (stored.conflict.status !== "open") throw new MergeAssistError("invalid-state", `Conflict ${conflictId} is already dismissed.`);
       const entry = dismissedConflict(stored, name, this.#now());
       replaceConflict(tx, root, entry, this.#now());
-      return this.#handed(tx, root, [{ event: "closed", conflict: entry }]);
+      return this.#handed(tx, root, before, [{ event: "closed", conflict: entry }]);
     }, { behavior: "immediate" });
     this.#fire(checkout, fires, null, branches);
     return await this.status(root);

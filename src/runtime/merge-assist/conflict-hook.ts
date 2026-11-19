@@ -66,9 +66,13 @@ export function conflictEvents(before: readonly StoredConflict[], after: readonl
 /** The checkout's conflict events the hook did not hear, in the order the store changed (`unheard:<checkout>`). */
 const unheardSchema = z.array(z.object({ event: z.enum(CONFLICT_EVENTS), conflict: storedConflictSchema }));
 
-/** A change to the checkout's conflicts that makes `fires`, while the hook hears nothing (`muted`) or not. */
+/**
+ * A change to the checkout's conflicts that makes `fires` over `before`, the conflicts the store held when it began,
+ * while the hook hears nothing (`muted`) or not.
+ */
 export interface ConflictChange {
   readonly checkoutPath: string;
+  readonly before: readonly StoredConflict[];
   readonly fires: readonly ConflictFire[];
   readonly muted: boolean;
   readonly now: number;
@@ -77,16 +81,18 @@ export interface ConflictChange {
 /**
  * The events to hand the hook for `change`, asked in the change's own transaction. While muted, none: its events are
  * kept under the checkout's `unheard` key. Else the events kept there first, then its own, and the key goes: one change
- * takes them, in whichever process, so the hook hears each once and in the order the store changed.
+ * takes them, in whichever process, so the hook hears each once and in the order the store changed. A kept event the
+ * store contradicts is never handed (`agreeing`).
  */
 export function handedEvents(tx: StateQueries, change: ConflictChange): ConflictFire[] {
   const key = STATE_KEYS.unheard(change.checkoutPath);
-  const kept = readState(tx, key, unheardSchema) ?? [];
+  const stored = readState(tx, key, unheardSchema) ?? [];
+  const kept = agreeing(stored, change.before);
   if (change.muted) {
     if (change.fires.length > 0) keepUnheard(tx, key, unheardAfter(kept, change.fires), change.now);
     return [];
   }
-  if (kept.length > 0) deleteState(tx, key);
+  if (stored.length > 0) deleteState(tx, key);
   return [...kept, ...change.fires];
 }
 
@@ -96,6 +102,18 @@ function keepUnheard(tx: StateQueries, key: string, fires: readonly ConflictFire
 }
 
 const idOf = (fire: ConflictFire): string => fire.conflict.conflict.id;
+
+/**
+ * The `kept` events of each conflict whose last kept event agrees with `before`: a `detected` for a conflict open there,
+ * a `closed` for one not open. Every change of this build keeps its events in the transaction that stores it, so the
+ * two agree; a build without the key changes the store and leaves the key, and its change stands over the kept events.
+ */
+function agreeing(kept: readonly ConflictFire[], before: readonly StoredConflict[]): ConflictFire[] {
+  const open = new Set(before.filter(entry => entry.conflict.status === "open").map(entry => entry.conflict.id));
+  const last = new Map(kept.map(fire => [idOf(fire), fire.event]));
+  const stale = new Set([...last].filter(([id, event]) => (event === "detected") !== open.has(id)).map(([id]) => id));
+  return kept.filter(fire => !stale.has(idOf(fire)));
+}
 
 /**
  * `kept`, then `fires`, less a conflict kept as `detected` that `fires` closes: the hook never heard it open, and it is

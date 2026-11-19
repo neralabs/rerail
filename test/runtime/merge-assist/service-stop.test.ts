@@ -2,9 +2,11 @@ import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { eq } from "drizzle-orm";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { type MergeAssistStatus, openRerailDatabase, type RerailDatabase } from "../../../src/engine/index.js";
+import { mergeAssistState, type MergeAssistStatus, openRerailDatabase, type RerailDatabase } from "../../../src/engine/index.js";
 import { createMergeAssistService, type GithubClient, type MergeAssistRuntime, type PullRequestSummary } from "../../../src/runtime/index.js";
+import { readConflicts, writeConflicts } from "../../../src/runtime/merge-assist/conflict-store.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 import { git } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
@@ -48,6 +50,16 @@ function commitPeer(ws: Workspace, index: number, subject: string, file = "src/a
   ].join("\n");
   execFileSync("git", ["fast-import", "--quiet", "--force"], { cwd: ws.repo, input: commit, env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" } });
   return git(ws.repo, "rev-parse", `refs/remotes/origin/peer-${index}`);
+}
+
+/** Commits every peer anew changing a file of its own: a pass finds each conflict gone. */
+function peersElsewhere(ws: Workspace): void {
+  for (let index = 0; index < PEERS; index += 1) commitPeer(ws, index, `Peer ${index}, elsewhere`, `src/peer-${index}.ts`);
+}
+
+/** Commits every peer anew with the change {@link addPeers} gave it: a pass finds each conflict again, the same one. */
+function peersBack(ws: Workspace): void {
+  for (let index = 0; index < PEERS; index += 1) commitPeer(ws, index, `Orders, take ${index}, again`);
 }
 
 /**
@@ -321,6 +333,9 @@ async function stopWhileScanWaits(ws: Workspace, github: HeldGithub): Promise<{ 
   return { service, scan, stopped: service.stop(UNREACHED_MS) };
 }
 
+/** How many rows hold the checkout's kept conflict events: none once a change has taken them. */
+const keptRows = (ws: Workspace): number => ws.database.select().from(mergeAssistState).where(eq(mergeAssistState.key, `unheard:${ws.repo}`)).all().length;
+
 /** The checkout's last scan, scan mark and conflicts as a new service reads them. */
 async function stored(ws: Workspace): Promise<Pick<MergeAssistStatus, "lastScan" | "scanning" | "conflicts">> {
   const { lastScan, scanning, conflicts } = await ws.service().status(ws.repo);
@@ -463,6 +478,25 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     await nextPass(ws, []);
 
     expect(heard()).toEqual([]);
+  });
+
+  it.each([
+    ["new", "gone", peersElsewhere],
+    ["gone", "open again", peersBack],
+  ] as const)("hands the hook no kept event the store contradicts: a scan that ends within the stop's wait finds the conflicts %s, then a build without the kept events' key stores them %s", async (change, _, undo) => {
+    const ws = await workspace();
+    const pullRequests = await CHANGES[change](ws);
+    const heard = await loggedHook(ws);
+    const before = readConflicts(ws.database, ws.repo);
+    await scanEndingWithinStop(ws, "--name-only", pullRequests);
+    // As a pass of a build without the key: it finds the conflicts as they were before the scan and stores them,
+    // neither reading the key nor clearing it.
+    undo(ws);
+    writeConflicts(ws.database, ws.repo, before, Date.now());
+
+    await nextPass(ws, pullRequests);
+
+    expect({ heard: heard(), open: await openConflicts(ws), kept: keptRows(ws) }).toEqual({ heard: [], open: change === "new" ? 0 : PEERS, kept: 0 });
   });
 
   it("keeps the `closed` of a conflict dismissed during the stop's wait, and a service opened after hands it to its hook", async () => {

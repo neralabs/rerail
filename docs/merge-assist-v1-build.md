@@ -175,7 +175,8 @@ it. Otherwise the conflict closes when the overlap is gone.
   one that could not be read for one), `delivered:<session>` (the notes a session was handed) and
   `settings:<repository>` (the hook command), and `unheard:<checkout>` (conflict events stored while Merge Assist was
   stopping, which the next pass that stores in the checkout, a dismissal or Merge Assist turned off hands to the hook
-  first, once). A value that does not match what the build expects reads as absent, one
+  first, once, leaving out a conflict's events where the stored conflicts say otherwise, as after a build without this
+  key changed them). A value that does not match what the build expects reads as absent, one
   conflict at a time. A checkout Rerail forgets takes its `conflicts:`, `scan:`, `scanning:` and `unheard:` rows with it; a
   repository that takes a new key (a clone that gains a remote) takes its `settings:` row along and drops its
   `github:` one, and a repository Rerail removes takes both with it; `rerail reset` drops the `delivered:` rows of the
