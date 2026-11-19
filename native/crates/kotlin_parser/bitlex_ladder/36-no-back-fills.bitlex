@@ -266,25 +266,23 @@ mask lf_end     = lf & code & ~after_semi
 # A `}` after a `;`: the `;` closed the line, so the `}` closes as after a line break.
 mask close_at   = lf_end | code & rbrace & (prev(after_semi) | prev(code & semicolon))
 
-# A block comment the lean lexer's `asi` reads (one that starts the line after a line break where
-# a semicolon may come): what follows it decides, as there. Each test is told at the byte that
-# decides it, after the comment, as the lexer reads on: the first solid byte after a block
-# comment's end (`after_blk`), and after an `else` there, the solid byte after the word.
-mask after_blk  = solid & prev(fill(block_end, solid))
+# A block comment the lean lexer's `asi` reads: one that starts the line after a line break where
+# a semicolon may come (`asked_blk`). What follows it decides, as there. Each test is told at the
+# byte that decides it, after the comment, as the lexer reads on: the first solid byte after the
+# comment (`after_asked`), and after an `else` there, the solid byte after the word. A `*/` in a
+# string, or a comment inside a line, is no such comment.
+mask asked_blk  = fill(o_block & prev(fill(lf_end & prev(fill(solid, lf)), solid)), block_end)
+mask after_asked = solid & prev(fill(block_end & prev(asked_blk), solid))
 # Where what follows goes on, tree-sitter loses the comment (a comment of no width): not read
 # yet. What goes on, at the first solid byte after the comment: a byte of `goes_on`, `!=`, `as`,
 # `where`, `catch`, `finally`, `by`, `constructor` in a class's header, `else` but a `when`
 # entry's (`else ->`), and an annotation or a visibility modifier before a header's `constructor`.
 mask goes_now   = code & goes_on | code & text("!=") | as_w | where_w | catch_w | finally_w | by_w | ctor_w & class_head
-mask else_blk   = else_w & after_blk
+mask else_blk   = else_w & after_asked
 mask else_next  = solid & (prev(else_blk, 4) | prev(fill(prev(else_blk, 4) & ~solid, solid)))
-mask ann_blk    = code & (at_sign | vis_w) & class_head & after_blk
+mask ann_blk    = code & (at_sign | vis_w) & class_head & after_asked
 mask ann_ctor   = ctor_w & class_head & prev(fill(ann_blk, ctor_stop))
-escape "a block comment before a token that goes on the line" when goes_now & after_blk | else_next & ~text("->") | ann_ctor
-# A block comment that starts a line after a token's line: the scanner reads it. (Where what
-# follows goes on, the escape above refuses the file, so the line break is any that may end a
-# statement.)
-mask asked_blk  = fill(o_block & prev(fill(lf_end & prev(fill(solid, lf)), solid)), block_end)
+escape "a block comment before a token that goes on the line" when goes_now & after_asked | else_next & ~text("->") | ann_ctor
 # After a token's line, before another comment, the scanner reads it through and the tree keeps
 # a comment of no width where the next one starts: not read yet.
 escape "a block comment that starts a line, before a comment" when (o_line | o_block) & prev(fill(block_end & prev(asked_blk), ~ws))
@@ -297,7 +295,6 @@ escape "a block comment that starts a line, before a comment" when (o_line | o_b
 # after a delegation specifier or a property with no initializer, a word with `b` does the same
 # (open, 0332).
 mask awe_word   = code & word & ~prev(w) & (text("a") | text("e") | text("w")) & ~as_w & ~where_w & ~else_w
-mask after_asked = solid & prev(fill(block_end & prev(asked_blk), solid))
 # A `when` entry's `else ->` after one: the scanner swallows the comment there too, which the
 # grammar does not say yet (the `->`).
 mask else_asked = else_w & after_asked

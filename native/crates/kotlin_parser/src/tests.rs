@@ -676,6 +676,12 @@ fn corpus() {
                     let tables = Default::default();
                     let why = match ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &tables) {
                         Ok(out) => match out.errors.first() {
+                            // `RERAIL_KOTLIN_WHY=bytes`: with the byte, and the text there.
+                            Some(e) if std::env::var("RERAIL_KOTLIN_WHY").as_deref() == Ok("bytes") => {
+                                let at = e.split(" (byte ").nth(1).and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next()).and_then(|n| n.parse::<usize>().ok());
+                                let near = at.filter(|&a| text.is_char_boundary(a)).map_or(String::new(), |a| text[a.saturating_sub(60).min(a)..].chars().take(90).collect::<String>().replace('\n', "⏎"));
+                                format!("{e} `{near}`")
+                            }
                             Some(e) => e.split(" (byte").next().unwrap_or(e).to_string(),
                             // The interpreter's: the text at the token it refused.
                             None => match c.refused_at(&text) {
@@ -1224,5 +1230,10 @@ fn asked_comments_are_the_lean_parsers() {
         "val x = 1\n/* c */\nabstract class X\n",
         "fun f() = g()\n\n/* c */\nwhen (x) {}\n",
         "fun f() {\n    a +\n    /* c */\n    abstract()\n}\n",
+        // No comment the scanner reads: a `*/` in a string, a comment inside a line.
+        "fun f() {\n    val x = g(\"*/*\", y)\n        ?: h()\n}\n",
+        "val x = \"\"\"\n  a/*/\n\"\"\"\n    .trimIndent()\n",
+        "fun f() = g(a, 0 /*r*/, b)\n",
+        "fun f() {\n    g(\n        true /* s */,\n        x,\n    )\n}\n",
     ]);
 }

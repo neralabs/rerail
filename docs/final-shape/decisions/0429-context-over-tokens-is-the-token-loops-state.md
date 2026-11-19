@@ -116,3 +116,9 @@ stream, Cranelift and Bitlex's reference.
 The corpus: 442 the same, 49 refused, 0 differ, from 431 and 60. The CPU form: 1,413 operations
 a block, from 1,500. Measured (load about 16, over the 442 files): tier 1 ahead of time took 416M
 instructions and 85M cycles. The lean lexer took 55M and 16M.
+
+The escape for comments that go on the line had the same breadth. Its `after_blk` held after any
+`*/`, one in a string (`"*/*"`) or a comment inside a line (`0 /*repeat*/,`) included. The
+comment the lean lexer reads is one that starts the line after a line break (`asked_blk`). All
+its tests now ask for that comment (`after_asked`). The corpus: 447 the same, 44 refused,
+0 differ.
