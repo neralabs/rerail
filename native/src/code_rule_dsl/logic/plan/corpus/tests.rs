@@ -1585,6 +1585,9 @@ fn every_switch_lowering_reads_is_classified() {
         // How the combine's link is made (decision 0373): spliced into the last one, linked whole, or both and compared;
         // the program is the same (`check` asserts it).
         "RERAIL_COMBINE_LINK",
+        // How the combine's tail is run (decision 0393): kept, whole, or both and compared; the program is the same
+        // (`check` asserts it).
+        "RERAIL_COMBINE_TAIL",
         // A measurement aid: the program as the passes before lowering leave it, written to a directory.
         "RERAIL_FRONT_DUMP",
         // A measurement aid (decision 0173): each version a program takes, written to a directory; the program is the same.
@@ -1700,7 +1703,8 @@ fn every_switch_lowering_reads_is_classified() {
     ]);
     combining.push(("corpus.rs, combine_tail".to_owned(), region("\nfn combine_tail(", "\n}\n")));
     combining.push(("corpus.rs, the combine's tail".to_owned(), region("\nenum Tail {", "\n/// The programs `programs` linked into one")));
-    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies }))")));
+    // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).
+    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "\npub fn merge_and_drop_repeats(")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`combining::FoldOwn`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under

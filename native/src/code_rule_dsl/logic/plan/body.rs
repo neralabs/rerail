@@ -140,6 +140,10 @@ impl<'v> Body<'v> {
     pub fn with_head_bound(&self) -> Body<'v> {
         Body { v: self.v, rule: self.rule, lits: self.lits.clone(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: self.sources, head_bound: true }
     }
+    /// Whether its head's plain variables are bound before its first step (a recheck, `with_head_bound`).
+    pub fn head_bound(&self) -> bool {
+        self.head_bound
+    }
     /// The variables bound before its first step: its head's plain ones for a recheck (`with_head_bound`), else none.
     /// A computed term's variables are not bound by the candidate.
     pub fn bound_before(&self) -> VarSet {

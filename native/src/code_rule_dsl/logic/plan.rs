@@ -8342,7 +8342,7 @@ impl<'a> Run<'a, '_> {
             self.model.late(pf, &bound, None, false)?;
             plan_site("the maintain mode's recheck");
             let priced = match self.model.plan_rule_reused(pf, &bound, None) {
-                Ok(((order, _, _), _)) => self.whole_join_spec(b, &order, None, &ri, scc, &native_rels).map(|spec| (spec, self.model.reused_key(&bound, None))),
+                Ok(((order, _, _), _)) => self.whole_join_spec(&bound, &order, None, &ri, scc, &native_rels).map(|spec| (spec, self.model.reused_key(&bound, None))),
                 Err(_) => None,
             };
             let (spec, key) = match priced {
