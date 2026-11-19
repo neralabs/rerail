@@ -5,7 +5,7 @@
  * reasons, filtered to one rule from its dropdown in either Show all events state.
  */
 import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from "../dom.js";
-import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId, truncate } from "../format.js";
+import { fmt, plural, ago, clock, stamp, dayLabel, daysAgo, shortSessionId, startOfDay, truncate } from "../format.js";
 import { data, ui, repoName, titleOf as ruleTitle, packRuleOf } from "../state.js";
 import { ensureTitle, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier } from "../poll.js";
 import { sessionTurns, sessionCorrections, sessionViolationTotal, sessionDeclinedTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, violationCounts } from "../sessions-model.js";
@@ -107,8 +107,11 @@ function build() {
   el.hpick = h("select", { id: "hpick", "aria-label": "Choose a session" });
   el.hpickLabel = h("span.m", { "aria-hidden": "true" });
   el.hpickWrap = h("h2.hpick", { hidden: true }, h("span.sel", null, el.hpickLabel, el.hpick, chevron(12)));
-  el.state = h("span", { hidden: true });
-  el.started = h("span"); el.dur = h("span"); el.events = h("span"); el.violations = h("span"); el.declined = h("span", { hidden: true }); el.sid = h("span.mono");
+  // The header: the title and its one action; when the session ran; what Rerail saw in it.
+  el.stateText = h("span");
+  el.state = h("span.state", null, h("i.dot", { "aria-hidden": "true" }), el.stateText);
+  el.started = h("span"); el.last = h("span", { hidden: true });
+  el.events = h("span"); el.violations = h("span"); el.steered = h("span", { hidden: true }); el.declined = h("span", { hidden: true });
   el.resume = h("button.btn.sm.solid", { "data-act": "resumetoggle", "aria-expanded": "false" });
   el.resumeLbl = h("p.lbl");
   el.resumeText = h("textarea.one", { id: "resumeText", readonly: true, "aria-label": "Resume command" });
@@ -134,8 +137,9 @@ function build() {
     el.aside,
     h("section", null, h("div.list", null,
       h("div.shead", null,
-        h("div.l1", null, el.title, el.hpickWrap, el.state),
-        h("div.l3", null, el.started, el.dur, el.events, el.violations, el.declined, el.sid, h("span.acts", null, el.resume)),
+        h("div.l1", null, el.title, el.hpickWrap, h("span.acts", null, el.resume)),
+        h("div.l2.when", null, el.started, el.state, el.last),
+        h("div.l2.stats", null, el.events, el.violations, el.steered, el.declined),
         el.resumeBox),
       h("div.tfilter", null, el.ruleCtl, h("label.tall", null, el.showAll, " Show all events")),
       el.scroll)));
@@ -286,10 +290,44 @@ function renderListToggle() {
   setText(v.listToggle, listHidden ? "Show list" : "Hide list");
 }
 
+/**
+ * The session's state: in progress, no end recorded (open but silent), or when it ended, as a time beside its start
+ * (with the date only when it ended on another day), so its length reads from the two.
+ */
 function headerState(st, sess) {
-  if (st === "live") return `In progress · last event ${ago(lastEventAt(sess))}`;
-  if (st === "stale") return `No end recorded · last event ${ago(lastEventAt(sess))}`;
-  return "";
+  if (st === "live") return "In progress";
+  if (st === "stale") return "No end recorded";
+  const sameDay = startOfDay(sess.endedAt) === startOfDay(sess.startedAt);
+  return `Ended ${sameDay ? clock(sess.endedAt) : stamp(sess.endedAt)}`;
+}
+
+/** A count in the header's stats line, hidden at zero when `hideZero`. */
+function setCount(el, n, label, hideZero = false) {
+  setAttr(el, "hidden", hideZero && n === 0);
+  setText(el, `${fmt(n)} ${label}`);
+}
+
+/** "Started Nov 19, 12:09 PM · Ended 12:47 PM", or "Started … · ● In progress · last event 3m ago" while open. */
+function renderWhen(sess) {
+  const st = openState(sess);
+  setText(v.started, `Started ${stamp(sess.startedAt)}`);
+  // `data-state`, not the list's live/stale classes, so the separator before it stays the header's "·".
+  setAttr(v.state, "data-state", st ?? "ended");
+  setText(v.stateText, headerState(st, sess));
+  setAttr(v.last, "hidden", st === null);
+  setText(v.last, `last event ${ago(lastEventAt(sess))}`);
+}
+
+/** "6 events · 5 violations · 3 steered · 1 declined", over the whole session; a count the daemon has not given is left out. */
+function renderStats(sess) {
+  setCount(v.events, sess.eventCount, "events");
+  // The violation count sits here; the controls row below is only the rule filter and Show all events.
+  const violations = sessionViolationTotal(sess.sessionId) ?? sess.violationCount ?? 0;
+  setCount(v.violations, violations, plural(violations, "violation"));
+  // A deep-linked session past the loaded list has no list row, so no steered count to show.
+  setCount(v.steered, sess.steeredViolations ?? 0, "steered", true);
+  setCount(v.declined, sessionDeclinedTotal(sess), "declined", true);
+  setAttr(v.declined, "title", "Steered violations whose steer the coding agent declined, with its reason on each card.");
 }
 
 function resumeLabel(rc, st) {
@@ -301,22 +339,11 @@ function renderHeader(sess) {
   ensureTitle(sess);
   const title = titleOf(sess.sessionId);
   setText(v.title, title); setAttr(v.title, "title", title);
+  // The session's id is in the resume box and the list's search, not on show; tests and links read it here.
+  setAttr(v.title.closest(".shead"), "data-session", sess.sessionId);
+  renderWhen(sess);
+  renderStats(sess);
   const st = openState(sess);
-  setAttr(v.state, "hidden", st === null);
-  setAttr(v.state, "class", st ?? "");
-  setText(v.state, headerState(st, sess));
-  setText(v.started, `Started ${stamp(sess.startedAt)}`);
-  setText(v.dur, duration((sess.endedAt ?? lastEventAt(sess)) - sess.startedAt));
-  setText(v.events, `${fmt(sess.eventCount)} events`);
-  // The violation count sits in the meta line; the controls row below is only the rule filter and Show all events.
-  const violations = sessionViolationTotal(sess.sessionId) ?? sess.violationCount ?? 0;
-  setText(v.violations, `${fmt(violations)} ${plural(violations, "violation")}`);
-  const declined = sessionDeclinedTotal(sess);
-  setAttr(v.declined, "hidden", declined === 0);
-  setText(v.declined, `${fmt(declined)} declined`);
-  setAttr(v.declined, "title", "Steered violations whose steer the coding agent declined. Declined on a card opens its reason.");
-  setText(v.sid, shortSessionId(sess.sessionId, sess.host));
-  setAttr(v.sid, "title", sess.sessionId);
   const rc = resumeCommand(sess);
   setText(v.resume, resumeLabel(rc, st));
   setAttr(v.resume, "aria-expanded", String(ui.resumeOpen));

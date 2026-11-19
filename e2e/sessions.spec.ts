@@ -3,8 +3,8 @@ import { expect, test } from "./dashboard-test.js";
 
 /** The list row for one session. */
 const rowOf = (page: Page, id: string) => page.locator(`#content .srow[data-i="${id}"]`);
-/** The selected session's short id in the header's meta line; its tooltip is the full id. */
-const headerId = (page: Page) => page.locator("#content .shead .l3 .mono");
+/** The selected session's header, which carries its full id as `data-session`. */
+const headerId = (page: Page) => page.locator("#content .shead");
 
 test.describe("History by session", () => {
   test("mature: the open session is selected first and reads live, with its counts on the row", async ({ page, rerail }) => {
@@ -16,7 +16,7 @@ test.describe("History by session", () => {
     const row = rowOf(page, open);
     await expect(row).toHaveAttribute("aria-current", "true");
     await expect(row.locator(".state")).toHaveClass(/\blive\b/);
-    await expect(page.locator("#content .shead .live")).toBeVisible();
+    await expect(page.locator('#content .shead .state[data-state="live"]')).toBeVisible();
     // The lead counts the sessions the daemon reports.
     await expect(page.locator("#content .hhead p")).toContainText(`${manifest.sessionIds.length} sessions, newest first.`);
     // Every row with violations logged says on its meta line how many of them were steered; the row shows no event
@@ -35,7 +35,7 @@ test.describe("History by session", () => {
     await page.goto(await rerail.dashboard("mature", { hash: "sessions" }));
 
     await expect(rowOf(page, open).locator(".dc")).toHaveText("1 declined");
-    await expect(page.locator("#content .shead .l3")).toContainText("1 declined");
+    await expect(page.locator("#content .shead .stats")).toContainText("1 declined");
     const declined = page.locator("#content .corr").filter({ has: page.locator(".badge.declined:visible") });
     await expect(declined).toHaveCount(1);
     await expect(declined.locator(".ch .mono")).toHaveText("typescript-eslint-no-non-null-assertion");
@@ -116,7 +116,7 @@ test.describe("History by session", () => {
 
     await expect(page).toHaveURL(new RegExp(`sessionId=${id}.*#sessions`));
     await expect(rowOf(page, id!)).toHaveAttribute("aria-current", "true");
-    await expect(page.locator("#content .shead .mono")).not.toBeEmpty();
+    await expect(page.locator("#content .shead")).toHaveAttribute("data-session", id!);
   });
 
   test("mature: a deep link with sessionId and host selects that session, and survives a reload", async ({ page, rerail }) => {
@@ -128,10 +128,10 @@ test.describe("History by session", () => {
 
     await page.goto(url.href);
     await expect(rowOf(page, target)).toHaveAttribute("aria-current", "true");
-    await expect(headerId(page)).toHaveAttribute("title", target);
+    await expect(headerId(page)).toHaveAttribute("data-session", target);
 
     await page.reload();
-    await expect(headerId(page)).toHaveAttribute("title", target);
+    await expect(headerId(page)).toHaveAttribute("data-session", target);
   });
 
   test("mature: Hide list folds the list into a heading picker that still switches sessions; Show list brings it back", async ({ page, rerail }) => {
@@ -146,7 +146,7 @@ test.describe("History by session", () => {
     const picker = page.locator("#hpick");
     await expect(picker).toBeVisible();
     await picker.selectOption(other);
-    await expect(headerId(page)).toHaveAttribute("title", other);
+    await expect(headerId(page)).toHaveAttribute("data-session", other);
 
     await page.locator('#content [data-act="slisttoggle"]').click();
     await expect(aside).toBeVisible();
@@ -172,7 +172,7 @@ test.describe("History by session", () => {
     const rule = page.locator("#srule");
     await expect(cards.first()).toBeVisible();
     const total = await cards.count();
-    await expect(page.locator("#content .shead .l3")).toContainText(`${total} violation`);
+    await expect(page.locator("#content .shead .stats")).toContainText(`${total} violation`);
     await expect(rule.locator("option").first()).toHaveText(`All rules · ${total}`);
 
     // The first rule listed is the one that logged most here; filtering keeps only its cards.
