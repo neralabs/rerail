@@ -1899,3 +1899,38 @@ mod layouts {
         assert!(shown.contains("tree(p -> c) (by rule #"), "{shown}");
     }
 }
+
+/// A rule written literal by literal on an open rule (`Builder::open_rule`, the lowering's writer, decision 0276 A3)
+/// is the rule `RuleBuilder` writes, byte for byte; a rule ended once (`close_rule_once`) leaves out its repeat.
+#[test]
+fn an_open_rule_writes_what_the_rule_builder_writes() {
+    let x = || T::Var("x");
+    let join = AggOp::Join { by: vec!["k".into()], sep: ", ".into() };
+    let mut a = Builder::base();
+    a.rule()
+        .head("r", &[x(), T::Call("cat", vec![T::Top, T::Str("s")])])
+        .atom("a", &[x(), T::Wild])
+        .atom_with("b", &[x()], true, true)
+        .cmp(x(), CmpOp::Le, T::Int(i64::MIN))
+        .agg(T::Var("j"), &join, Some(T::Var("y")), "a", &[T::Var("y"), T::Var("k")])
+        .ast(T::Var("d"), x(), "{\"kind\": \"call\"}", &[("NAME", T::Var("v"))])
+        .finish()
+        .unwrap();
+    let mut b = Builder::base();
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..2 {
+        let mut o = b.open_rule();
+        b.put_head(&mut o, "r", &[x(), T::Call("cat", vec![T::Top, T::Str("s")])]);
+        b.put_atom(&mut o, "a", &[x(), T::Wild], false, false);
+        b.put_atom(&mut o, "b", &[x()], true, true);
+        b.put_cmp(&mut o, x(), CmpOp::Le, T::Int(i64::MIN));
+        b.put_agg(&mut o, "j", &join, Some("y"), "a", &[T::Var("y"), T::Var("k")]);
+        b.put_ast(&mut o, "d", "x", "{\"kind\": \"call\"}", &[("NAME", "v")]);
+        b.close_rule_once(o, &mut seen).unwrap();
+    }
+    assert_eq!(a.finish_bytes().unwrap(), b.finish_bytes().unwrap());
+    let mut c = Builder::base();
+    let o = c.open_rule();
+    assert!(c.close_rule(o).is_err(), "a rule with no head is refused");
+    assert_eq!(c.finish().unwrap().0.rules().count(), 0);
+}

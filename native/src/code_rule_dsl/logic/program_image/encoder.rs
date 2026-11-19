@@ -121,6 +121,8 @@ pub struct Encoder<'p> {
     rule_vars: Vec<u32>,
     vars: Vec<u32>,
     rule_hash: Vec<u64>,
+    /// How many big integers there were when the open rule began: what `abandon` keeps.
+    ints_at_rule: usize,
     heads: Vec<(u32, u32)>,
     /// (relation, read entry), with the entries' rules and nodes beside.
     reads: Vec<(u32, u32)>,
@@ -156,6 +158,7 @@ impl<'p> Encoder<'p> {
             rule_vars: vec![0],
             vars: Vec::new(),
             rule_hash: Vec::new(),
+            ints_at_rule: 0,
             heads: Vec::new(),
             reads: Vec::new(),
             read_rules: Vec::new(),
@@ -303,6 +306,7 @@ impl<'p> Encoder<'p> {
     pub fn begin_rule(&mut self) -> usize {
         self.slots.clear();
         self.slot_names.clear();
+        self.ints_at_rule = self.ints.len();
         let at = self.open(kind::RULE, 0);
         self.rule_node.push(at as u32);
         at
@@ -314,23 +318,36 @@ impl<'p> Encoder<'p> {
         self.vars.extend_from_slice(&self.slot_names);
         self.rule_vars.push(self.vars.len() as u32);
         let end = self.kind.len();
-        let mut h = hasher();
         let head_at = at + 1;
         let head_end = head_at + self.size.get(head_at) as usize;
         for n in at..end {
+            let (kd, val) = (self.kind.get(n), self.val.get(n));
+            if kd & kind::MASK == kind::ATOM {
+                if n == head_at {
+                    self.heads.push((val, k));
+                } else if n >= head_end {
+                    let e = self.read_rules.len() as u32;
+                    self.reads.push((val, e));
+                    self.read_rules.push(k);
+                    self.read_nodes.push(n as u32);
+                }
+            }
+        }
+        let h = self.hash_closed(at);
+        self.rule_hash.push(h);
+        self.from.push(super::NO_RULE);
+        k
+    }
+    /// The hash of the rule begun at `at`, its nodes closed (`close`) and not yet ended: what `end_rule` records,
+    /// so a writer can leave out a rule it wrote before (`Builder::close_rule_once`).
+    pub fn hash_closed(&mut self, at: usize) -> u64 {
+        let mut h = hasher();
+        for n in at..self.kind.len() {
             let (kd, size, val) = (self.kind.get(n), self.size.get(n), self.val.get(n));
             h.write_u8(kd);
             h.write_u32(size);
             match kd & kind::MASK {
                 kind::ATOM => {
-                    if n == head_at {
-                        self.heads.push((val, k));
-                    } else if n >= head_end {
-                        let e = self.read_rules.len() as u32;
-                        self.reads.push((val, e));
-                        self.read_rules.push(k);
-                        self.read_nodes.push(n as u32);
-                    }
                     let a = self.rel_atom(val);
                     h.write_u64(self.text_hash(a));
                 }
@@ -343,9 +360,7 @@ impl<'p> Encoder<'p> {
             let a = self.slot_names[s];
             h.write_u64(self.text_hash(a));
         }
-        self.rule_hash.push(h.finish());
-        self.from.push(super::NO_RULE);
-        k
+        h.finish()
     }
     /// Records that local rule `k` came from rule `src` of the input (§9).
     pub fn set_from(&mut self, k: u32, src: super::RuleId) {
@@ -459,6 +474,7 @@ impl<'p> Encoder<'p> {
         self.kind.truncate(at);
         self.size.truncate(at);
         self.val.truncate(at);
+        self.ints.truncate(self.ints_at_rule);
         self.rule_node.pop();
     }
 

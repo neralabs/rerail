@@ -302,6 +302,125 @@ impl<'p> Builder<'p> {
         RuleBuilder { b: self, at, head: false, failed: None, done: false, from: None }
     }
 
+    /// Opens a rule written literal by literal between other reads and edits of this builder's fields (the
+    /// lowering reads declarations while it writes a rule, decision 0276 A3): its head first, then its body, then
+    /// `close_rule`. One rule is open at a time.
+    pub fn open_rule(&mut self) -> Open {
+        Open { at: self.enc.begin_rule(), head: false, failed: None }
+    }
+    fn put_atom_node(&mut self, rel: Rel<'_>, args: &[T<'_>], flags: u8) {
+        let r = self.rel_id(rel);
+        let at = self.enc.open(kind::ATOM | flags, r);
+        for a in args {
+            write_t(&mut self.enc, a);
+        }
+        self.enc.close(at);
+    }
+    fn put_body(o: &mut Open) {
+        if !o.head && o.failed.is_none() {
+            o.failed = Some(super::bad("a rule's body before its head"));
+        }
+    }
+    /// Open rule `o`'s head.
+    pub fn put_head<'r>(&mut self, o: &mut Open, rel: impl Into<Rel<'r>>, args: &[T<'_>]) {
+        if o.head {
+            o.failed = Some(super::bad("a rule with two heads"));
+        }
+        self.put_atom_node(rel.into(), args, 0);
+        o.head = true;
+    }
+    /// An atom of open rule `o`'s body: negated, gated.
+    pub fn put_atom<'r>(&mut self, o: &mut Open, rel: impl Into<Rel<'r>>, args: &[T<'_>], neg: bool, gated: bool) {
+        Self::put_body(o);
+        self.put_atom_node(rel.into(), args, if neg { kind::NEG } else { 0 } | if gated { kind::GATED } else { 0 });
+    }
+    /// A comparison of open rule `o`'s body.
+    pub fn put_cmp(&mut self, o: &mut Open, l: T<'_>, op: CmpOp, r: T<'_>) {
+        Self::put_body(o);
+        let at = self.enc.open(kind::CMP, op as u32);
+        write_t(&mut self.enc, &l);
+        write_t(&mut self.enc, &r);
+        self.enc.close(at);
+    }
+    /// `nearest(n, a, kindset)` in open rule `o`'s body: `a` the nearest ancestor of `n` in the kind set.
+    pub fn put_nearest(&mut self, o: &mut Open, n: &str, a: &str, kindset: &str) {
+        Self::put_body(o);
+        let k = self.enc.atom(kindset);
+        let at = self.enc.open(kind::NEAREST, k);
+        self.enc.var(n);
+        self.enc.var(a);
+        self.enc.close(at);
+    }
+    /// An `ast(document, node, matcher)` literal of open rule `o`'s body, its captures (name, variable) in order.
+    pub fn put_ast(&mut self, o: &mut Open, document: &str, node: &str, matcher: &str, captures: &[(&str, &str)]) {
+        Self::put_body(o);
+        let m = self.enc.atom(matcher);
+        let at = self.enc.open(kind::AST, m);
+        self.enc.var(document);
+        self.enc.var(node);
+        for (name, var) in captures {
+            let a = self.enc.atom(name);
+            self.enc.leaf(kind::STR, a);
+            self.enc.var(var);
+        }
+        self.enc.close(at);
+    }
+    /// An aggregate `var = op over : { rel(args) }` of open rule `o`'s body (`over` `None` for a count); a join's
+    /// keys follow `over`, then its separator.
+    pub fn put_agg<'r>(&mut self, o: &mut Open, var: &str, op: &crate::code_rule_dsl::logic::front::ast::AggOp, over: Option<&str>, rel: impl Into<Rel<'r>>, args: &[T<'_>]) {
+        use crate::code_rule_dsl::logic::front::ast::AggOp;
+        Self::put_body(o);
+        let code: u8 = match op {
+            AggOp::Count => 0,
+            AggOp::Min => 1,
+            AggOp::Max => 2,
+            AggOp::Sum => 3,
+            AggOp::Product => 4,
+            AggOp::Join { .. } => 5,
+        };
+        let a = self.enc.atom(var);
+        let s = self.enc.slot_of(a);
+        let at = self.enc.open(kind::AGG | code << 5, s);
+        match over {
+            Some(v) => self.enc.var(v),
+            None => self.enc.leaf(kind::WILD, 0),
+        }
+        if let AggOp::Join { by, sep } = op {
+            for k in by {
+                self.enc.var(k);
+            }
+            let a = self.enc.atom(sep);
+            self.enc.leaf(kind::STR, a);
+        }
+        self.put_atom_node(rel.into(), args, 0);
+        self.enc.close(at);
+    }
+    /// Ends open rule `o`: its id, or why it is refused (then it is not written).
+    pub fn close_rule(&mut self, mut o: Open) -> Result<RuleId, String> {
+        if let Some(e) = o.failed.take().or_else(|| (!o.head).then(|| super::bad("a rule with no head"))) {
+            self.enc.abandon(o.at);
+            return Err(e);
+        }
+        Ok(RuleId(self.enc.rule_base() + self.enc.end_rule(o.at)))
+    }
+    /// Ends open rule `o` unless a rule of the same hash was ended before (its hash in `seen`): then it is left out
+    /// and `None`.
+    pub fn close_rule_once(&mut self, o: Open, seen: &mut std::collections::HashSet<u64>) -> Result<Option<RuleId>, String> {
+        if o.failed.is_none() && o.head {
+            self.enc.close(o.at);
+            let h = self.enc.hash_closed(o.at);
+            if !seen.insert(h) {
+                self.enc.abandon(o.at);
+                return Ok(None);
+            }
+        }
+        self.close_rule(o).map(Some)
+    }
+    /// Leaves open rule `o` out.
+    pub fn abandon_rule(&mut self, o: Open) {
+        self.enc.abandon(o.at);
+    }
+
     /// Starts a rule that is `from`'s rule `rule` rewritten by `rw` as it is copied: its head, then each body literal
     /// `rw` keeps. More literals may follow; `finish` writes it, recording `rule` as its source (§9).
     pub fn rewrite(&mut self, from: &Version, rule: RuleRef<'_>, rw: &mut impl Rewrite) -> RuleBuilder<'_, 'p> {
@@ -690,6 +809,14 @@ pub fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
         }
     }
     Some(Version::view(over, out, size, digest))
+}
+
+/// A rule open on a builder (`Builder::open_rule`), written by the builder's `put_` writes.
+#[must_use]
+pub struct Open {
+    at: usize,
+    head: bool,
+    failed: Option<String>,
 }
 
 /// A rule written term by term: its head, then its body's literals, in order. A rule refused (`finish`'s error) or
