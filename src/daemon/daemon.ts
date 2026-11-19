@@ -975,13 +975,14 @@ export class TlsKeyUnparsedError extends Error {
  * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
  * `C:\certs` say, inherits an ACL that lets every local user read it. A key file this account reads, which parses as a
  * private key, and others can read too is a `TlsKeyExposedError`, on which the daemon serves this computer alone
- * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). Any other path that is no key
- * this account can read (a missing or misspelled one, a folder, a FIFO, a file this account may not read, one another
- * program holds with a lease or an oplock, one larger than any key, one that holds no key such as the certificate, one
- * whose readers cannot be read), and a certificate that would not serve with the key, is a mistake in the command and
- * stops the start within seconds. So does a certificate that is empty or does not parse (`refuseUnparsed`), in a line
- * that names the file. A key that is empty or does not parse is a `TlsKeyUnparsedError`, on which the daemon serves this
- * computer alone. `access` is for tests.
+ * (`serveRerailDaemon`), when the certificate would serve with it (`certificateServes`). A key others can read that is
+ * no key this account can read (a folder, a FIFO, a file this account may not read, one another program holds with a
+ * lease or an oplock, one larger than any key, one that holds no key such as the certificate) or that the certificate
+ * would not serve with, a key whose readers cannot be read (a missing or misspelled one), and a key only its owner
+ * reads that cannot be read (a folder, a file this account may not read), is a mistake in the command and stops the
+ * start within seconds. So does a certificate that is empty or does not parse (`refuseUnparsed`), in a line that names
+ * the file. A key only its owner reads that is empty or does not parse, such as one that holds the certificate, is a
+ * `TlsKeyUnparsedError`, on which the daemon serves this computer alone. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
