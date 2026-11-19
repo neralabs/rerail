@@ -1468,8 +1468,9 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
       const child = join(root, "sub");
       mkdirSync(child);
       const generation = await acquireDirectoryAnalysisGeneration(databasePath, child, store);
-      const [{ before }] = queryContentStore<{ before: number }>(store, "SELECT before FROM analysis_scope_release");
-      expect(generation).toBeGreaterThan(before);
+      const receipts = queryContentStore<{ before: number }>(store, "SELECT before FROM analysis_scope_release");
+      expect(receipts.length).toBeGreaterThan(0);
+      for (const { before } of receipts) expect(generation).toBeGreaterThan(before);
       await run();
       renameSync(databasePath + ".backup", databasePath);
       stop();
