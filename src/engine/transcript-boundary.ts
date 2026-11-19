@@ -125,12 +125,19 @@ const namesAnotherMachine = (path: string): boolean =>
 
 /**
  * A Windows drive letter at the end of the token before a lone `:`, read from the token's last two characters: `C` in
- * `"C:\\Users\\me"` written in JSON, in `**C`, in `[C` and in the escaped long-path prefix `\\\\?\\C`. A letter after
- * an ASCII letter or digit is part of a word, and one after a dash or a slash is a switch's: `-P` in PowerShell's
- * `-P:\\host\share` (which also takes an en dash, an em dash or a horizontal bar for the dash) and `/G` in findstr's
- * `/G:\\host\share\words.txt`.
+ * `"C:\\Users\\me"` written in JSON, in `**C`, in `[C`, in the escaped long-path prefix `\\\\?\\C` and after a `file:`
+ * URL's slashes (`file:///C:\\Users\\me`, whose token is `///C`). A letter after an ASCII letter or digit is part of a
+ * word. A one-letter switch ({@link ONE_LETTER_SWITCH}) is not a drive either.
  */
-const DRIVE_AT_END = /(?:^|[^-a-z\d/\u2013-\u2015])[a-z]$/iu;
+const DRIVE_AT_END = /(?:^|[^a-z\d])[a-z]$/iu;
+
+/**
+ * A one-letter switch as the whole token before a `:`: a dash, `--` or a slash, then the letter, as in PowerShell's
+ * `-P:\\host\share` (which also takes an en dash, an em dash or a horizontal bar for the dash) and findstr's
+ * `/G:\\host\share\words.txt`. Only the whole token is read, since a slash before a drive letter also ends a `file:`
+ * URL's `///`.
+ */
+const ONE_LETTER_SWITCH = /^(?:[-/\u2013-\u2015]|--)[a-z]$/iu;
 
 /** A run of path separators, which Windows reads as one. */
 const SEPARATOR_RUN = /([\\/])[\\/]+/gu;
@@ -153,9 +160,12 @@ const SHARE_SCHEME_AT_END = /(?:^|[^a-z\d.-])(?:file|smb)$/iu;
 const urlAfter = (before: string, path: string): boolean =>
   path.startsWith("//") && !SHARE_SCHEME_AT_END.test(before);
 
-/** Whether a drive letter ({@link DRIVE_AT_END}) ends the token `before` a lone `:`, the run of `delimiters`. */
+/**
+ * Whether a drive letter ({@link DRIVE_AT_END}) ends the token `before` a lone `:`, the run of `delimiters`, and that
+ * token is no one-letter switch ({@link ONE_LETTER_SWITCH}).
+ */
 const driveBefore = (delimiters: string, before: string): boolean =>
-  delimiters === ":" && DRIVE_AT_END.test(before.slice(-2));
+  delimiters === ":" && DRIVE_AT_END.test(before.slice(-2)) && !ONE_LETTER_SWITCH.test(before);
 
 /**
  * On Windows, what `path`, after the run of `delimiters` and the token `before` them, is looked up as: a share on

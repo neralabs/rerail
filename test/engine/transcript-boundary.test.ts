@@ -185,6 +185,104 @@ function onVolume(path: string): string {
   throw new Error(`no HarddiskVolume device holds ${path}`);
 }
 
+/**
+ * What stands before a word and its `:` in the table of spellings, with what this check promises for the word there:
+ * `drive`, whether a one-letter word is a drive letter on Windows (no ASCII letter or digit before it, and the word
+ * before the `:` is no one-letter switch: a dash, `--` or a slash, then the letter); `webScheme`, whether `https` is
+ * for certain a web scheme on Linux and macOS (nothing but marks before it in its word).
+ */
+const BEFORE_A_WORD = [
+  { form: "a word's start", text: "", drive: true, webScheme: true },
+  { form: "a space", text: "type ", drive: true, webScheme: true },
+  { form: "a quote", text: "\"", drive: true, webScheme: true },
+  { form: "=", text: "path=", drive: true, webScheme: true },
+  { form: "(", text: "(", drive: true, webScheme: true },
+  { form: "-", text: "-", drive: false, webScheme: true },
+  { form: "an en dash", text: "–", drive: false, webScheme: true },
+  { form: "--", text: "--", drive: false, webScheme: true },
+  { form: "/", text: "/", drive: false, webScheme: false },
+  { form: "//", text: "//", drive: true, webScheme: false },
+  { form: "///", text: "///", drive: true, webScheme: false },
+  { form: "file:///", text: "file:///", drive: true, webScheme: false },
+  { form: "another letter", text: "a", drive: false, webScheme: false },
+  { form: "a digit", text: "1", drive: false, webScheme: false },
+] as const;
+
+/**
+ * The separators right after the `:`, each with the one between the names after them: one backslash, two as JSON
+ * carries one, four as JSON in JSON does, one slash, two slashes before a URL's host.
+ */
+const AFTER_A_COLON = [
+  { lead: "\\", inner: "\\" }, { lead: "\\\\", inner: "\\\\" }, { lead: "\\\\\\\\", inner: "\\\\\\\\" },
+  { lead: "/", inner: "/" }, { lead: "//", inner: "/" },
+] as const;
+
+/** The names after the separators: a folder, and a host under the automount root `/net` on Linux and macOS. */
+const NAMES_AFTER = [["Users", "me"], ["net", "192.0.2.1", "me"]] as const;
+
+/** One spelling of the table: `text`, built from `before`, `word`, the `:`, `lead` and the word `afterColon`. */
+interface Spelling {
+  readonly text: string;
+  readonly before: (typeof BEFORE_A_WORD)[number];
+  readonly word: string;
+  readonly lead: string;
+  readonly afterColon: string;
+  readonly net: boolean;
+}
+
+/** Every spelling: each thing before a word, one letter or a word of letters, each separator run, each set of names. */
+const SPELLINGS: readonly Spelling[] = BEFORE_A_WORD.flatMap(before => ["C", "https"].flatMap(word =>
+  AFTER_A_COLON.flatMap(({ lead, inner }) => NAMES_AFTER.map(names => {
+    const afterColon = `${lead}${names.join(inner)}`;
+    return { text: `${before.text}${word}:${afterColon}`, before, word, lead, afterColon, net: names[0] === "net" };
+  }))));
+
+/** `main`'s delimiters around a word (`TOKEN_BREAK` at 821eac82e), which keeps none of them. */
+const MAIN_TOKEN_BREAK = /[\s"'`|;&<>(),:={}]+/u;
+
+/** Whether `word` has a segment that is a name: not empty, not `.`, `..` or a run of dots, not a spread (`...x`). */
+const hasName = (word: string): boolean =>
+  word.split(/[\\/]+/u).some(segment => segment !== "" && !/^(?:\.+|\.{3}.*)$/u.test(segment));
+
+/**
+ * The words `main`'s check looks up in `text`, in order, each once. `textNamesPath` at 821eac82e splits the text at
+ * {@link MAIN_TOKEN_BREAK}, drops brackets, and looks up as written every word with a letter and a name that is shaped
+ * like a path (a separator, a leading `.` or `~`, or an extension). It reads no word's neighbours, so this restatement
+ * stays `main`'s while the check under test changes.
+ */
+function mainLookups(text: string): string[] {
+  const words = text.split(MAIN_TOKEN_BREAK).map(word => word.replace(/[[\]]/gu, ""));
+  return [...new Set(words.filter(word => /[A-Za-z]/u.test(word) && hasName(word) && /[\\/]|^[.~]|\.[^.]+$/u.test(word)))];
+}
+
+const AS_ON_MAIN = "as on main";
+const DRIVE_PATH = "a drive path: looked up as its single-separator spelling";
+const URL_HOST = "a URL's host and path, which would reach another machine: not looked up";
+const NET_URL = "a web URL under /net on another host: not looked up";
+
+/**
+ * On Windows, what the description promises for the word after the `:`: only two separators then a name open a share
+ * on another machine. After a drive letter that word is a drive path written with doubled separators; after any other
+ * word, one written with `//` may be a URL's host and path; one written with backslashes is looked up as on `main`.
+ */
+function windowsChange({ before, word, lead }: Spelling): string {
+  if (lead !== "\\\\" && lead !== "//") return AS_ON_MAIN;
+  if (word.length === 1 && before.drive) return DRIVE_PATH;
+  return lead === "//" ? URL_HOST : AS_ON_MAIN;
+}
+
+/** On Linux and macOS, what the description promises: a web URL's `//` host and path under `/net` is not looked up. */
+const posixChange = ({ before, word, lead, net }: Spelling): string =>
+  word === "https" && before.webScheme && lead === "//" && net ? NET_URL : AS_ON_MAIN;
+
+/** The words the description promises are looked up for `spelling` on this system, from `main`'s and its `change`. */
+function promisedLookups(spelling: Spelling, change: string): string[] {
+  const main = mainLookups(spelling.text);
+  if (change === AS_ON_MAIN) return main;
+  const others = main.filter(word => word !== spelling.afterColon);
+  return change === DRIVE_PATH ? [...others, spelling.afterColon.replace(/([\\/])[\\/]+/gu, "$1")] : others;
+}
+
 describe("the transcript boundary for coding agents", () => {
   it("finds a hidden or secret-like path wherever a call's input carries it", () => {
     for (const input of [
@@ -431,13 +529,41 @@ describe("the transcript boundary for coding agents", () => {
     ] as const) {
       expect(lookedUp(spelled), spelled).toEqual(lookedUp(single));
     }
-    // A letter is read as a drive at a word's start, after a space, a quote or an equals sign: each spelling is looked up
-    // as the single-backslash one, never as a share.
-    for (const before of ["", "type ", "\"", "path="]) {
-      for (const [spelled, single] of [["C:\\\\x\\\\a.txt", "C:\\x\\a.txt"], ["D://x/a.txt", "D:\\x\\a.txt"]] as const) {
+    // A letter is read as a drive at a word's start, after a space, a quote, an equals sign or a `file:` URL's `///`:
+    // each spelling is looked up as the single-backslash one, never as a share and never skipped.
+    for (const before of ["", "type ", "\"", "path=", "file:///"]) {
+      for (const [spelled, single] of [
+        ["C:\\\\x\\\\a.txt", "C:\\x\\a.txt"], ["D://x/a.txt", "D:\\x\\a.txt"], ["C:\\\\Users\\\\me", "C:\\Users\\me"],
+        ["C://Users/me", "C:\\Users\\me"],
+      ] as const) {
         expect(lookedUp(`${before}${spelled}`), `${before}${spelled}`).toEqual(lookedUp(`${before}${single}`));
       }
     }
+  });
+
+  it("gives every spelling of a word, a `:` and separators `main`'s lookups, but for the changes the description names, and reaches no machine `main` does not", () => {
+    const root = checkout("rerail-transcript-spellings-");
+    const lookups = recordLookups();
+    const lookedUp = (text: string): string[] => {
+      lookups.splice(0);
+      callNamesSecretPath({ command: text }, root);
+      return lookups.filter(path => path !== root);
+    };
+    const changeOf = process.platform === "win32" ? windowsChange : posixChange;
+    // Three verdicts beside each spelling: `main`'s, this check's, and the one the description promises.
+    const table = SPELLINGS.map(spelling => {
+      const change = changeOf(spelling);
+      const main = mainLookups(spelling.text).map(word => resolve(root, word));
+      const promised = promisedLookups(spelling, change).map(word => resolve(root, word));
+      return { text: spelling.text, change, main, head: lookedUp(spelling.text), promised };
+    });
+    expect(table.filter(row => JSON.stringify(row.head) !== JSON.stringify(row.promised))).toEqual([]);
+    expect(table.filter(row => row.head.some(path => reachesAnotherMachine(path) && !row.main.includes(path)))).toEqual([]);
+    // Each change the description names holds the spellings it names; every other spelling is looked up as on `main`.
+    const counts = Object.fromEntries([AS_ON_MAIN, DRIVE_PATH, URL_HOST, NET_URL].map(change => [change, table.filter(row => row.change === change).length]));
+    expect(counts).toEqual(process.platform === "win32"
+      ? { [AS_ON_MAIN]: 208, [DRIVE_PATH]: 32, [URL_HOST]: 40, [NET_URL]: 0 }
+      : { [AS_ON_MAIN]: 272, [DRIVE_PATH]: 0, [URL_HOST]: 0, [NET_URL]: 8 });
   });
 
   it.runIf(process.platform === "win32")("looks up a device path or a loopback share right after a `:` as `main` does, and skips only a share on another machine there", () => {
