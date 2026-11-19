@@ -108,6 +108,48 @@ fn replaying_a_directory_analysis_scope_release_keeps_a_later_run() {
     assert!(store.record_corpus_run_retaining(root, &[], 1, 1, plan, &[], None, None, 101, None, Some(&next)).unwrap());
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn directory_releases_distinguish_raw_bytes_from_the_replacement_character() {
+    use crate::content_store::analysis_scope::{self, AnalysisRun, RunSource};
+    use std::{ffi::OsStr, os::unix::{ffi::OsStrExt, fs::symlink}};
+    let (db_path, store) = store("scope-byte-paths");
+    let base = tempfile::tempdir().unwrap();
+    let parent = base.path();
+    let raw = parent.join(OsStr::from_bytes(b"repo-\xff"));
+    let unicode = parent.join("repo-\u{fffd}");
+    let raw_link = parent.join("first");
+    let unicode_link = parent.join("second");
+    for (dir, link) in [(&raw, &raw_link), (&unicode, &unicode_link)] {
+        std::fs::create_dir(dir).unwrap();
+        symlink(dir, link).unwrap();
+    }
+    let publish = |scope: &str, dir: &std::path::Path, id: &str| {
+        let mut run = AnalysisRun::begin_at(ContentStore::open(&db_path).unwrap(), scope, id, 1).unwrap();
+        run.set_directory_scope(dir);
+        run.select_source(RunSource::directory(dir)).unwrap();
+        assert!(store.record_corpus_run_retaining(id, &[], 1, 1, [7; 32], &[], None, None, 1, None, Some(&run.owner)).unwrap());
+        run.finish(true).unwrap();
+    };
+    let legacy = format!("cwd:home:{}", unicode.display());
+    publish(&legacy, &unicode_link, "legacy");
+    publish(&analysis_scope::directory_in(&raw_link, Some("home")), &raw_link, "raw");
+    publish(&analysis_scope::directory_in(&unicode_link, Some("home")), &unicode_link, "unicode");
+    let survivors = || {
+        let mut ids: Vec<_> = store.completed_analysis_runs().unwrap().into_iter().map(|row| row.scan_id).collect();
+        ids.sort();
+        ids
+    };
+    store.delete_directory_analysis_scopes(&raw_link, Some("2:one:home")).unwrap();
+    assert_eq!(survivors(), ["legacy", "unicode"]);
+    assert!(!analysis_scope::existing_directory_ownership(&db_path, &raw_link, "home").unwrap());
+    assert!(analysis_scope::existing_directory_ownership(&db_path, &unicode_link, "home").unwrap());
+    store.delete_directory_analysis_scopes(&unicode_link, Some("3:two:home")).unwrap();
+    assert_eq!(survivors(), ["legacy"]);
+    store.delete_directory_analysis_scopes(parent, Some("4:parent:home")).unwrap();
+    assert!(survivors().is_empty());
+}
+
 #[test]
 fn analysis_scope_stop_distinguishes_discovery_before_and_after_it() {
     use crate::content_store::analysis_scope;

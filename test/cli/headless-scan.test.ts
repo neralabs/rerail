@@ -2094,6 +2094,48 @@ Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis
     } finally { vi.unstubAllEnvs(); }
   });
 
+  it.skipIf(process.platform !== "linux")("releases only the selected directory when two symlink targets differ in raw bytes", async () => {
+    const parent = checkout(), dbPath = join(parent, "home.sqlite"), store = join(parent, "content.sqlite");
+    const raw = Buffer.concat([Buffer.from(parent + "/repo-"), Buffer.from([0xff])]);
+    const unicode = join(parent, "repo-\uFFFD"), first = join(parent, "first"), second = join(parent, "second");
+    mkdirSync(raw);
+    mkdirSync(unicode);
+    symlinkSync(raw, first);
+    symlinkSync(unicode, second);
+    // The old text conversion silently opened the sibling repository through the first symlink.
+    git(unicode, "init", "--quiet", "--initial-branch=main");
+    git(unicode, "commit", "--allow-empty", "-qm", "wrong checkout");
+    await expect(scan(first, { databasePath: dbPath, revision: "HEAD", analysisScope: "revision" })).rejects.toThrow("Checkout path is not valid UTF-8");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    const home = analysisScopeHome(dbPath);
+    try {
+      const binding = loadNativeBinding();
+      for (const [link, id] of [[first, "first"], [second, "second"]] as const) {
+        const generation = await acquireDirectoryAnalysisGeneration(dbPath, link, store);
+        const run = new binding.AnalysisScopeRun(store, link, true, id, generation, home);
+        run.selectSource(link);
+        run.finish(true);
+        expect(run.publication).toBe("published");
+      }
+      const records = () => queryContentStore<{ scan_id: string; directory: string }>(store, "SELECT scan_id,directory FROM analysis_scope_run ORDER BY scan_id");
+      expect(records()).toEqual([
+        { scan_id: "first", directory: parent + "/./7265706f2dff" },
+        { scan_id: "second", directory: parent + "/./7265706f2defbfbd" },
+      ]);
+      const db = openRerailDatabase(dbPath);
+      try { db.transaction(tx => queueAnalysisScopeReleases(tx, [first], dbPath)); }
+      finally { db.$client.close(); }
+      rmSync(first);
+      symlinkSync(unicode, first);
+      settleAnalysisScopeReleases(dbPath);
+      expect(records().map(row => row.scan_id)).toEqual(["second"]);
+      const registry = new Database(dbPath + ".analysis-stores.sqlite", { readonly: true });
+      try {
+        expect(registry.prepare("SELECT directory FROM analysis_directory_store").pluck().all()).toEqual([parent + "/./7265706f2defbfbd"]);
+      } finally { registry.close(); }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it.each(["replaced", "missing", "watched again"])("releases the recorded directory when its path is %s before delivery", async mode => {
     const root = checkout(), other = checkout(), home = root + "-home";
     const databasePath = join(home, "rerail.sqlite"), store = join(home, "content.sqlite");

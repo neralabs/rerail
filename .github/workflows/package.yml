@@ -179,6 +179,10 @@ jobs:
           [System.IO.DriveInfo]::new($drive).DriveFormat
           ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "same-size rewrite" --reporter=verbose
 
+      - name: Check directory scope identity on Linux
+        if: runner.os == 'Linux'
+        run: ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "two symlink targets differ in raw bytes" --reporter=verbose
+
       - name: Smoke Windows junction lifecycle
         if: matrix.windows_runtime_smoke
         run: ./node_modules/.bin/vitest run test/setup/updater.test.ts test/setup/harness-registration.test.ts -t "Windows.*junction"

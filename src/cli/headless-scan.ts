@@ -13,11 +13,12 @@
  *   session's: content no one approved in the Rerail home (`rerail rules approve`) runs in Log.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, parse, posix, relative, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from "../engine/audit/audit.js";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
+import { textRealPath } from "../engine/catalog/checkout-control.js";
 import { checkoutStatus, lookupCheckout, parentCheckouts, recordCheckout, standaloneRepository } from "../engine/catalog/repository-registry.js";
 import type { RrPolicySource, RuleCatalog } from "../engine/catalog/repository-model.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -415,12 +416,12 @@ function scanRoot(options: HeadlessScanOptions): { root: string; requested: stri
   if (options.revision === undefined && options.analysisScope !== undefined) {
     throw new Error("--analysis-scope requires --revision");
   }
-  const requested = realpathSync.native(resolve(options.repo));
+  const requested = textRealPath(resolve(options.repo));
   const top = gitMaybe(requested, ["rev-parse", "--show-toplevel"]);
   if (options.revision !== undefined && options.scope !== "repository") throw new Error("--revision applies only to --scope repository");
   const bare = options.revision !== undefined && top === null && gitMaybe(requested, ["rev-parse", "--is-bare-repository"]) === "true";
   if (top === null && !bare) throw new Error(`${requested} is not inside a Git checkout`);
-  const root = top === null ? requested : realpathSync.native(top);
+  const root = top === null ? requested : textRealPath(top);
   if (options.base !== undefined && options.scope !== "git-diff") throw new Error("--base applies only to --scope git-diff");
   if (options.paths !== undefined && options.scope !== "repository") throw new Error("--path and --paths-from apply only to --scope repository");
   return { root, requested };

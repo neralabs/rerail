@@ -538,10 +538,10 @@ impl napi::Task for PrepareAnalysisStore {
 
 #[napi]
 pub fn prepare_directory_analysis_store_async(store: String, directory: String, home: String) -> napi::bindgen_prelude::AsyncTask<PrepareDirectoryAnalysisStore> {
-    napi::bindgen_prelude::AsyncTask::new(PrepareDirectoryAnalysisStore { store, directory, home })
+    napi::bindgen_prelude::AsyncTask::new(PrepareDirectoryAnalysisStore { store, directory, home, recorded: false })
 }
 
-pub struct PrepareDirectoryAnalysisStore { store: String, directory: String, home: String }
+pub struct PrepareDirectoryAnalysisStore { store: String, directory: String, home: String, recorded: bool }
 
 #[napi(object)]
 pub struct AnalysisStoreRegistration {
@@ -552,15 +552,17 @@ pub struct AnalysisStoreRegistration {
 impl PrepareDirectoryAnalysisStore {
     fn registration(&self) -> Result<AnalysisStoreRegistration> {
         let store = content_store::ContentStore::open(Path::new(&self.store)).map_err(|error| Error::from_reason(error.to_string()))?;
-        let cutoff = store.directory_release_cutoff(Path::new(&self.directory), &self.home).map_err(|error| Error::from_reason(error.to_string()))?;
+        let cutoff = if self.recorded { store.recorded_directory_release_cutoff(&self.directory, &self.home) }
+            else { store.directory_release_cutoff(Path::new(&self.directory), &self.home) }
+            .map_err(|error| Error::from_reason(error.to_string()))?;
         Ok(AnalysisStoreRegistration { identity: store.identity().to_string(), cutoff: cutoff.map(|n| n as f64) })
     }
 }
 
 #[cfg(not(feature = "headless"))]
 #[napi]
-pub fn prepare_analysis_store_registration_async(store: String, directory: String, home: String) -> napi::bindgen_prelude::AsyncTask<PrepareRegistration> {
-    napi::bindgen_prelude::AsyncTask::new(PrepareRegistration(PrepareDirectoryAnalysisStore { store, directory, home }))
+pub fn prepare_analysis_store_registration_async(store: String, directory: String, home: String, recorded: Option<bool>) -> napi::bindgen_prelude::AsyncTask<PrepareRegistration> {
+    napi::bindgen_prelude::AsyncTask::new(PrepareRegistration(PrepareDirectoryAnalysisStore { store, directory, home, recorded: recorded == Some(true) }))
 }
 
 #[cfg(not(feature = "headless"))]

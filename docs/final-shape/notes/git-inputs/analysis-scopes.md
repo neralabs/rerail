@@ -84,6 +84,13 @@ When the engine saves an answer for reuse, it saves the rows even if the first p
 On upgrade, the engine rechecks entries written with the earlier native-answer format before it reuses them.
 
 Include `analysis.rr` to query completed scans in the selected content store.
+On Unix, a directory scope preserves the bytes of each physical path component.
+Most components keep their UTF-8 spelling. A component with invalid UTF-8 or the literal replacement character uses `./` followed by its lowercase hex bytes.
+The dot component cannot occur in a canonical path. Slashes between components preserve directory ancestry for parent stops.
+Use this spelling to join scope and history facts. Use the original path or its symlink for filesystem operations.
+Registration captures this key before publication. A queued stop keeps its captured key even if a symlink changes.
+Older releases could merge these names into one replacement character. An individual stop leaves that ambiguous history for a stop on the common parent.
+The headless CLI requires a UTF-8 checkout path. If a symlink leads to an unsupported path, source selection reports the error before opening a checkout.
 Scope presence comes from published ownership or recorded history. A scope imported from an older store can own manifests or snapshots without a recorded scan.
 The engine reads the requested scope and run relations from one SQLite snapshot.
 A run has an opaque key. Its scan ID is the value that the caller supplied or the standalone command assigned.

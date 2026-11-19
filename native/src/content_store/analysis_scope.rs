@@ -105,7 +105,7 @@ pub enum RunSource {
 
 impl RunSource {
     pub fn directory(path: &Path) -> Self {
-        Self::Directory(path.canonicalize().unwrap_or_else(|_| path.to_owned()).to_string_lossy().into_owned())
+        Self::Directory(directory_value(path))
     }
 }
 
@@ -246,12 +246,35 @@ pub fn directory(path: &Path) -> String {
 }
 
 pub fn directory_in(path: &Path, home: Option<&str>) -> String {
-    recorded_directory(&path.canonicalize().unwrap_or_else(|_| path.to_owned()), home)
+    recorded_directory(&directory_value(path), home)
+}
+
+#[cfg(unix)]
+fn directory_value(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let path = path.ancestors().find_map(|ancestor| {
+        let mut existing = ancestor.canonicalize().ok()?;
+        existing.extend(path.strip_prefix(ancestor).ok()?.components());
+        Some(existing)
+    }).unwrap_or_else(|| path.components().collect());
+    if let Some(text) = path.to_str() && !text.contains(char::REPLACEMENT_CHARACTER) { return text.to_owned(); }
+    path.as_os_str().as_bytes().split(|&b| b == b'/').map(|part| {
+        if let Ok(text) = std::str::from_utf8(part) && !text.contains(char::REPLACEMENT_CHARACTER) { return text.to_owned(); }
+        // A physical path cannot have a literal dot component. Keep separators visible for ancestor release.
+        use std::fmt::Write as _;
+        let mut value = String::from("./");
+        for byte in part { write!(value, "{byte:02x}").expect("writing to a string"); }
+        value
+    }).collect::<Vec<_>>().join("/")
+}
+
+#[cfg(not(unix))]
+fn directory_value(path: &Path) -> String {
+    path.canonicalize().unwrap_or_else(|_| path.to_owned()).to_string_lossy().into_owned()
 }
 
 // A committed stop must use the path captured at enqueue, even after a rename or symlink change.
-fn recorded_directory(path: &Path, home: Option<&str>) -> String {
-    let value = path.to_string_lossy();
+fn recorded_directory(value: &str, home: Option<&str>) -> String {
     match home {
         Some(home) => format!("cwd:{home}:{value}"),
         None => format!("cwd:{value}"),
@@ -271,10 +294,14 @@ pub fn existing_directory_ownership(store: &Path, directory: &Path, home: &str) 
 
 // Some(None) identifies a real owner from before store identities were recorded.
 pub fn owning_directory_store(store: &Path, directory: &Path, home: &str) -> rusqlite::Result<Option<Option<i64>>> {
-    owning_recorded_directory_store(store, &directory.canonicalize().unwrap_or_else(|_| directory.to_owned()), home)
+    owning_directory_key(store, &directory_value(directory), home)
 }
 
 pub fn owning_recorded_directory_store(store: &Path, directory: &Path, home: &str) -> rusqlite::Result<Option<Option<i64>>> {
+    owning_directory_key(store, directory.to_str().ok_or(rusqlite::Error::InvalidQuery)?, home)
+}
+
+fn owning_directory_key(store: &Path, directory: &str, home: &str) -> rusqlite::Result<Option<Option<i64>>> {
     let db = rusqlite::Connection::open_with_flags(store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let legacy = recorded_directory(directory, None);
     let scoped = recorded_directory(directory, Some(home));
@@ -373,7 +400,11 @@ impl ContentStore {
     }
 
     pub fn directory_release_cutoff(&self, path: &Path, home: &str) -> StoreResult<Option<i64>> {
-        let scope = directory_in(path, Some(home));
+        self.recorded_directory_release_cutoff(&directory_value(path), home)
+    }
+
+    pub fn recorded_directory_release_cutoff(&self, key: &str, home: &str) -> StoreResult<Option<i64>> {
+        let scope = recorded_directory(key, Some(home));
         let db = self.connection.lock().map_err(super::StoreError::Invalid)?;
         self.check_scope_store(&db)?;
         Ok(db.query_row_cached("SELECT max(before) FROM analysis_scope_release
@@ -461,7 +492,7 @@ impl<'a> DirectoryRelease<'a> {
         Ok(Self { id, before: Some(before), home })
     }
 
-    fn apply_to(&self, tx: &rusqlite::Connection, path: &Path) -> StoreResult<usize> {
+    fn apply_to(&self, tx: &rusqlite::Connection, path: &str) -> StoreResult<usize> {
         let scope = recorded_directory(path, self.home);
         let subtree = scope_prefix(&scope);
         let legacy = self.home.map(|_| recorded_directory(path, None));
@@ -470,11 +501,13 @@ impl<'a> DirectoryRelease<'a> {
 
     /// Pin this existing database for identity validation, schema upgrade and release.
     pub fn deliver(&self, file: &Path, directory: &Path, expected: Option<i64>) -> StoreResult<usize> {
-        self.deliver_recorded(file, &directory.canonicalize().unwrap_or_else(|_| directory.to_owned()), expected)
+        let key = directory_value(directory);
+        with_existing_release_store(file, expected.as_slice(), |tx, _| self.apply_to(tx, &key))
     }
 
     pub fn deliver_recorded(&self, file: &Path, directory: &Path, expected: Option<i64>) -> StoreResult<usize> {
-        with_existing_release_store(file, expected.as_slice(), |tx, _| self.apply_to(tx, directory))
+        let key = directory.to_str().ok_or_else(|| super::StoreError::Invalid("recorded directory scope key must be UTF-8".into()))?;
+        with_existing_release_store(file, expected.as_slice(), |tx, _| self.apply_to(tx, key))
     }
 }
 
@@ -569,7 +602,7 @@ impl ContentStore {
 
     pub fn delete_directory_analysis_scopes(&self, path: &Path, release: Option<&str>) -> StoreResult<usize> {
         let receipt = DirectoryRelease::parse(release)?;
-        let directory = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+        let directory = directory_value(path);
         self.immediate_transaction(|tx| receipt.apply_to(tx, &directory))
     }
 

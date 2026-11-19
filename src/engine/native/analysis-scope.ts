@@ -7,7 +7,7 @@ import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../
 import { loadNativeBinding, type NativeAnalysisScopeRun } from "./native.js";
 import { contentStoreOverride, contentStorePath } from "./rerail-build.js";
 import { assertContentStoreOwner } from "./main-instance.js";
-import { storedPath } from "../catalog/checkout-control.js";
+import { storedPath, storedScopeDirectory } from "../catalog/checkout-control.js";
 
 export function scanContentStore(databasePath: string): string {
   return contentStoreOverride() ?? defaultScanStore(databasePath);
@@ -66,8 +66,8 @@ export async function acquireDirectoryAnalysisGeneration(databasePath: string, d
 
 /** Register the observed store and obtain its generation in one registry transaction. */
 export async function acquireDirectoryAnalysisRegistration(databasePath: string, directory: string, store: string): Promise<DirectoryAnalysisRegistration> {
-  const root = storedPath(directory);
-  const { cutoff, identity } = await loadNativeBinding().prepareAnalysisStoreRegistrationAsync(store, root, analysisScopeHome(databasePath));
+  const root = storedScopeDirectory(directory);
+  const { cutoff, identity } = await loadNativeBinding().prepareAnalysisStoreRegistrationAsync(store, root, analysisScopeHome(databasePath), process.platform !== "win32");
   const floor = Math.max(readControlGeneration(databasePath), (cutoff ?? 0) + 1);
   return { generation: registerDirectoryAnalysisStore(databasePath, root, store, identity, floor), identity };
 }
@@ -338,7 +338,7 @@ export function queueAnalysisScopeReleases(tx: Transaction, directories: readonl
   const home = analysisScopeHome(databasePath);
   const nextAttemptAt = Date.now();
   for (const directory of directories) {
-    tx.insert(analysisScopeReleases).values({ id: `${generation - 1}:${randomUUID()}:${home}`, directory: storedPath(directory), nextAttemptAt }).run();
+    tx.insert(analysisScopeReleases).values({ id: `${generation - 1}:${randomUUID()}:${home}`, directory: storedScopeDirectory(directory), nextAttemptAt }).run();
   }
 }
 

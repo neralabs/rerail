@@ -429,7 +429,7 @@ export interface NativeLoadedRrPolicies {
 export interface NativeBinding {
   AnalysisScopeRun: new (store: string, scope: string, directory: boolean, id: string, generation: number, home?: string, expectedStore?: string) => NativeAnalysisScopeRun;
   prepareAnalysisStoreAsync(store: string): Promise<void>;
-  prepareAnalysisStoreRegistrationAsync(store: string, directory: string, home: string): Promise<{ identity: string; cutoff?: number }>;
+  prepareAnalysisStoreRegistrationAsync(store: string, directory: string, home: string, recorded?: boolean): Promise<{ identity: string; cutoff?: number }>;
   prepareDirectoryAnalysisStoreAsync(store: string, directory: string, home: string): Promise<number | null>;
   collectAnalysisCacheAsync(store: string, identities?: string[]): Promise<void>;
   inspectRrPolicy(path: string, source?: NativeGitRevisionSource): string;
