@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { closeSync, cpSync, ftruncateSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
+import { closeSync, cpSync, ftruncateSync, mkdirSync, openSync, realpathSync, symlinkSync, writeSync } from "node:fs";
 import { chmod, mkdtemp, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -649,6 +649,42 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
 
     vi.stubEnv("GIT_OBJECT_DIRECTORY", join(root, "main.git", "objects"));
     expect(registryPlacements(main)).toBe(1);
+  });
+
+  it("places such a checkout once for lists around a commit at a detached HEAD and a switch to another branch, and again once Git no longer takes its HEAD", async () => {
+    const root = await temporaryRoot();
+    const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
+    git(main, "checkout", "--quiet", "--detach");
+    expect(registryPlacements(main)).toBe(1);
+    git(main, "commit", "--quiet", "--allow-empty", "-m", "next");
+    expect(registryPlacements(main)).toBe(0);
+    git(main, "checkout", "--quiet", "-b", "other");
+    expect(registryPlacements(main)).toBe(0);
+
+    await writeFile(join(root, "main.git", "HEAD"), "no commit\n");
+    expect(gitsAnswer(main).git).toBe(false);
+    expect(worktreeRegistry(main)).toBeUndefined();
+  });
+
+  it.skipIf(process.platform === "win32")("places such a checkout whose HEAD is a link again only once the link stops naming a ref", async () => {
+    // Git for Windows writes no HEAD link; a link Git reads there needs a privilege a person may not have.
+    const root = await temporaryRoot();
+    const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
+    const head = join(root, "main.git", "HEAD");
+    git(main, "branch", "other");
+    const branch = execFileSync("git", ["symbolic-ref", "HEAD"], { cwd: main, encoding: "utf8" }).trim();
+    await unlink(head);
+    symlinkSync(branch, head);
+    expect(registryPlacements(main)).toBe(1);
+    await unlink(head);
+    symlinkSync("refs/heads/other", head);
+    expect(registryPlacements(main)).toBe(0);
+
+    // Git takes a HEAD link only by its text, so a link naming the same ref by its full path is refused.
+    await unlink(head);
+    symlinkSync(join(root, "main.git", "refs", "heads", "other"), head);
+    expect(gitsAnswer(main).git).toBe(false);
+    expect(worktreeRegistry(main)).toBeUndefined();
   });
 
   it("places a worktree whose .git file names a link to its Git folder once, and again once the link names another", async () => {

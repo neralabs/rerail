@@ -452,16 +452,24 @@ function namedBehind(realFolder: string, dotGit: string, facts: string, resolved
 }
 
 /**
- * A Git folder's facts as Git reads them to place a checkout: its identity, its `HEAD` (a link's text, else the file's),
- * `commondir` and `config.worktree`, and the common Git folder's ({@link commonRaw}).
+ * A Git folder's facts as Git reads them to place a checkout: its identity, what Git takes of its `HEAD` ({@link
+ * headRaw}), `commondir` and `config.worktree`, and the common Git folder's ({@link commonRaw}).
  */
 function gitFolderRaw(gitFolder: string | undefined): string {
   if (gitFolder === undefined) return "-";
-  const head = join(gitFolder, "HEAD");
-  const headLooked = look(head);
-  const headText = isEntry(headLooked) && headLooked.isSymbolicLink() ? `link:${linkText(head)}` : textFact(fileText(head));
   const commondir = fileText(join(gitFolder, "commondir"));
-  return [gitFolder, described(look(gitFolder)), described(headLooked), headText, textFact(commondir), textFact(fileText(join(gitFolder, "config.worktree"))), commonRaw(gitFolder, commondir)].join("\n");
+  return [gitFolder, described(look(gitFolder)), headRaw(join(gitFolder, "HEAD")), textFact(commondir), textFact(fileText(join(gitFolder, "config.worktree"))), commonRaw(gitFolder, commondir)].join("\n");
+}
+
+/**
+ * What Git reads of a `HEAD` to take its folder for a Git folder: for a link, whether its text names a path under
+ * `refs/`; else whether it is a file Git takes ({@link headTaken}). The commit or branch it names is left out, since Git
+ * places the folder alike whichever it is: a commit at a detached `HEAD`, or a switch to another branch, moves nothing.
+ */
+function headRaw(head: string): string {
+  const looked = look(head);
+  if (isEntry(looked) && looked.isSymbolicLink()) return `link:${linkText(head).startsWith("refs/")}`;
+  return `taken:${headTaken(fileText(head))}`;
 }
 
 /** The common Git folder `commondir` names (else the Git folder): its real path, identity, `objects`, `refs` and `config`. */
