@@ -611,13 +611,15 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
     // A start that runs past its own time limit, for the error Node gives it on this system.
     const ranOut = actualChildProcess.spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], { timeout: 50 }).error as NodeJS.ErrnoException | undefined;
 
-    // Git's version, the config listing, the diff, the index's submodules, the top folder and `.gitmodules`, then the
-    // first submodule's config listing and status, each with what was left; the next submodule's listing never started.
+    // Git's version, the config listing, the diff, the index's submodules and the top folder, then the first submodule's
+    // config listing and status and the second's listing, each with what was left; the second's status never started.
     expect(gits.map(leftAt)).toEqual(Array(8).fill(true));
     expect([answer.status, answer.stdout, answer.stderr, answer.error?.message]).toEqual([null, "", "", `spawnSync ${gits[0]?.file} ETIMEDOUT`]);
     expect(answer.error).toMatchObject({ code: "ETIMEDOUT", errno: ranOut?.errno, syscall: `spawnSync ${gits[0]?.file}`, path: gits[0]?.file });
     const spawnargs = (answer.error as unknown as { spawnargs: string[] }).spawnargs;
-    expect([spawnargs.slice(0, 2), spawnargs.at(-6), spawnargs.slice(-4)]).toEqual([["-c", "core.fsmonitor=false"], "-C", ["config", "-z", "--show-scope", "--list"]]);
+    expect([spawnargs.slice(0, 2), spawnargs.at(-7), spawnargs.slice(-5)]).toEqual([
+      ["-c", "core.fsmonitor=false"], "-C", ["status", "--porcelain=2", "-z", "--no-renames", "--ignore-submodules=dirty"],
+    ]);
   }, 60_000);
 
   it.each([["status", "--porcelain=2", "-z"], ["ls-files", "-z", "--modified"]])("and so does a guarded `git %s`", async (...args: string[]) => {
