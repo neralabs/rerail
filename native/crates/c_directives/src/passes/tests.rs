@@ -173,10 +173,23 @@ fn the_corpus_by_the_programs() {
             let p = path.to_string_lossy().into_owned();
             let settled = prof.settle(&p);
             let mut io = Search::new(settled.dirs.clone(), read_fs);
+            let prof = env("RERAIL_PP_PROFILE").is_some();
+            rerail_compiler::array::profile(prof);
             let t0 = std::time::Instant::now();
             let (out, st, ws) = if words { run_words(settled.cfg.clone(), &mut io, &p, crate::expand::native) } else { let (o, s) = run(settled.cfg.clone(), &mut io, &p); (o, s, Default::default()) };
             if each {
                 println!("{p}: {} ms; {}; {st:?} {ws:?}", t0.elapsed().as_millis(), out.as_ref().map_or_else(|w| w.to_string(), |o| if *o == settled.tokens { "same".into() } else { "DIFFERS".into() }));
+            }
+            if prof {
+                // The operations by time: program, operation, steps, ms, elements.
+                let mut rows: Vec<_> = rerail_compiler::array::profile(false).into_iter().collect();
+                rows.sort_by_key(|r| std::cmp::Reverse(r.1.1));
+                let total: u64 = rows.iter().map(|r| r.1.1).sum();
+                println!("  the operations: {} ms", total / 1_000_000);
+                for ((p, i), (n, ns, len)) in rows.iter().take(30) {
+                    let (name, prog) = if *p == &ROUND.p as *const _ as usize { ("ROUND", &ROUND.p) } else { ("TEXT", &TEXT.p) };
+                    println!("  {name} %{i:<4} {n:>5} steps {:>7.1} ms {len:>10} elements  {}", *ns as f64 / 1e6, prog.ops[*i].text());
+                }
             }
             match out {
                 Ok(o) if o == settled.tokens => same += 1,

@@ -21,6 +21,16 @@
 
 use crate::Error;
 
+thread_local! {
+    static PROFILE: std::cell::RefCell<Option<std::collections::HashMap<(usize, usize), (u64, u64, u64)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Profile this thread's runs from now (`true`), or stop: each operation's steps, time (ns)
+/// and elements made, by (program's address, operation), taken.
+pub fn profile(on: bool) -> std::collections::HashMap<(usize, usize), (u64, u64, u64)> {
+    PROFILE.with(|p| std::mem::replace(&mut *p.borrow_mut(), on.then(Default::default)).unwrap_or_default())
+}
+
 /// The most rounds a fixed point runs before its run is refused.
 pub const MAX_ROUNDS: usize = 1000;
 
@@ -572,8 +582,25 @@ impl ArrayProgram {
         }
     }
 
-    /// Operation `i`'s value; a carry's is `carried` after the first round.
+    /// Operation `i`'s value; a carry's is `carried` after the first round. Where this thread
+    /// profiles (`profile`), its count and time.
     fn step(&self, i: usize, v: &mut Values, inputs: &[&[i64]], params: &[i64], calls: &mut dyn Calls, carried: Option<Vec<i64>>) -> Result<(), &'static str> {
+        if !PROFILE.with(|p| p.borrow().is_some()) {
+            return self.step_op(i, v, inputs, params, calls, carried);
+        }
+        let t = std::time::Instant::now();
+        let r = self.step_op(i, v, inputs, params, calls, carried);
+        let ns = t.elapsed().as_nanos() as u64;
+        let len = v.arrays[i].len() as u64;
+        PROFILE.with(|p| {
+            let mut p = p.borrow_mut();
+            let e = p.as_mut().unwrap().entry((self as *const ArrayProgram as usize, i)).or_default();
+            *e = (e.0 + 1, e.1 + ns, e.2 + len);
+        });
+        r
+    }
+
+    fn step_op(&self, i: usize, v: &mut Values, inputs: &[&[i64]], params: &[i64], calls: &mut dyn Calls, carried: Option<Vec<i64>>) -> Result<(), &'static str> {
         let a = |k: u16| -> &Vec<i64> { &v.arrays[usize::from(k)] };
         let scalar = |k: u16| -> Result<i64, &'static str> {
             match a(k).as_slice() {

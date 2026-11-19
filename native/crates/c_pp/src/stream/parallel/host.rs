@@ -339,8 +339,11 @@ impl<'a> Unit<'a> {
             }
         };
         let Some(f) = f.filter(|_| !deep) else { return Ok(-1) };
-        self.tu.tab(&mut self.pp, f);
-        self.sync();
+        if self.number.get(f as usize).is_none_or(|&n| n == NONE) {
+            // A file not tabled yet: its tables, and the columns.
+            self.tu.tab(&mut self.pp, f);
+            self.sync();
+        }
         let guard = self.tu.tabs[f as usize].as_ref().unwrap().guard;
         if guard.is_some_and(|g| self.pp.vis.as_ref().unwrap().at(g, pos as u64).is_some()) {
             return Ok(-1);

@@ -509,6 +509,11 @@ fn token_pos(b: &mut B, inst: V, file: V, tok: V, w: &TokenPlace) -> V {
     let kg = b.search(true, dkey, q);
     let fdb = b.gather(w.f_dirbase, file);
     let k = b.sub(kg, fdb);
+    token_pos_after(b, inst, tok, k, w)
+}
+
+/// `token_pos` of a token with `k` directives before it in its file.
+fn token_pos_after(b: &mut B, inst: V, tok: V, k: V, w: &TokenPlace) -> V {
     // The sizes of the includes before its `k` directives.
     let ib = b.gather(w.i_dbase, inst);
     let at0 = b.add(ib, k);
@@ -845,7 +850,9 @@ fn stretches(b: &mut B, x: &Base, act: V, tp: &TokenPlace) -> Stretches {
     let tb = b.gather(x.f_textbase, file);
     let g_start = b.add(tb, start);
     let g_end = b.add(tb, end);
-    let pos = token_pos(b, inst, file, start, tp);
+    // Its first token has its `k` directives before it (a nonempty stretch's; an empty one is
+    // never active).
+    let pos = token_pos_after(b, inst, start, k, tp);
     let nonempty = b.lt(start, end);
     let active = b.and(active, nonempty);
     Stretches { inst, k, active, g_start, g_end, pos }

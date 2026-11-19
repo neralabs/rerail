@@ -74,6 +74,8 @@ pub struct WordStats {
     /// Wall time in the words' runs, and in making the elements' files, in µs.
     pub run_us: u64,
     pub make_us: u64,
+    /// Wall time in the calls (`test`, `expand`), in µs.
+    pub call_us: u64,
 }
 
 /// An element as the words read it.
@@ -112,6 +114,14 @@ impl Words {
     /// refusal's code plus one, and to `looked` each name it may have looked up, with the
     /// table's value there (the memo's pairs).
     pub fn test(&mut self, unit: &mut Unit, inst: i64, dir: i64, pos: i64, keys: &[i64], vals: &[i64], looked: &mut Vec<(i64, i64)>) -> (bool, i64) {
+        let t = std::time::Instant::now();
+        let r = self.test_(unit, inst, dir, pos, keys, vals, looked);
+        self.stats.call_us += t.elapsed().as_micros() as u64;
+        r
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn test_(&mut self, unit: &mut Unit, inst: i64, dir: i64, pos: i64, keys: &[i64], vals: &[i64], looked: &mut Vec<(i64, i64)>) -> (bool, i64) {
         let (kind, line) = unit.directive(inst, dir);
         if kind == Kind::Else {
             return (true, 0);
@@ -134,6 +144,14 @@ impl Words {
     /// handles to `out`, and its count of `__COUNTER__`s.
     #[allow(clippy::too_many_arguments)]
     pub fn expand(&mut self, unit: &mut Unit, inst: i64, first: i64, last: i64, stop: i64, pos: i64, counter: i64, keys: &[i64], vals: &[i64], out: &mut Vec<i64>) -> Result<i64, i64> {
+        let t = std::time::Instant::now();
+        let r = self.expand_(unit, inst, first, last, stop, pos, counter, keys, vals, out);
+        self.stats.call_us += t.elapsed().as_micros() as u64;
+        r
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn expand_(&mut self, unit: &mut Unit, inst: i64, first: i64, last: i64, stop: i64, pos: i64, counter: i64, keys: &[i64], vals: &[i64], out: &mut Vec<i64>) -> Result<i64, i64> {
         self.stats.expansions += 1;
         let (toks, after) = unit.text_toks(inst, first, last, stop);
         let (toks, after) = (toks.to_vec(), after.filter(|t| t.is(T::LParen)).copied());
