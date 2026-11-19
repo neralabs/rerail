@@ -1171,8 +1171,8 @@
         // the same rows on a second solve.
         let chunk = batch.chunk();
         let read = |c: &crate::code_rule_dsl::facts::nearest::InChunk| -> Vec<(i64, i64)> { (0..c.rows.len()).map(|r| (c.rows.get(r, 0), c.rows.get(r, 1))).collect() };
-        let once = mj::axis_in_chunk(chunk, None, true).unwrap();
-        let again = mj::axis_in_chunk(chunk, None, true).unwrap();
+        let once = mj::axis_in_chunk(&[chunk], None, true).unwrap();
+        let again = mj::axis_in_chunk(&[chunk], None, true).unwrap();
         assert!(once.rows.len() > 0);
         assert_eq!(once.rows.len() as usize, Within::new(Arc::clone(&batch), Mode::Tree).len());
         // Room for its rows, rounded up to whole chunks: not a bound sized before the count.

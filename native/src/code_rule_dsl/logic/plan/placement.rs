@@ -228,11 +228,11 @@ pub(in crate::code_rule_dsl) fn device() -> bool {
 }
 
 /// Sets whether this thread's run may place strata on the device; the previous value, to restore. `RERAIL_DEVICE=always`
-/// makes a Metal binding `Always`.
+/// makes a Metal binding `Always`, and so does a caller's `Always` (a test's, `set_binding`).
 pub(in crate::code_rule_dsl) fn set_device(on: bool) -> bool {
     let b = match on {
         false => Binding::Cpu,
-        true if always_env() => Binding::Always,
+        true if always_env() || binding() == Binding::Always => Binding::Always,
         true => Binding::Metal,
     };
     set_binding(b) != Binding::Cpu

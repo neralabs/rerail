@@ -464,16 +464,16 @@ kernel void axis_count(device const char* B [[buffer(0)]], device uint* start [[
 
 // Each node row's rows from its start (the scanned counts), nearest first: the ids of `n` and `a`, written once into
 // the axis's relation (decision 0353 step 5) through the writer written once, bounded by its chunks. p[4] is the
-// rows the relation holds, the total (`start[n]`) read before: a total past it writes nothing. p[5], p[6]: the
-// relation's rows' descriptor's offset in `out`'s block (low, high).
+// rows the relation holds, the totals read before: a chunk's rows past it write nothing. p[5], p[6]: the relation's
+// rows' descriptor's offset in `out`'s block (low, high). p[7]: the first row of this chunk's, past the chunks' before.
 kernel void axis_write(device const char* B [[buffer(0)]], device const uint* start [[buffer(1)]], device uchar* out [[buffer(2)]],
                        constant uint* p [[buffer(3)]], uint v [[thread_position_in_grid]]) {
-    if (v >= p[1] || start[p[1]] > p[4]) return;
+    if (v >= p[1] || p[7] + start[p[1]] > p[4]) return;
     ulong rows_at = ulong(p[5]) | (ulong(p[6]) << 32);
     device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
     device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
     device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, v)];
-    uint at = start[v];
+    uint at = p[7] + start[v];
     uint l = v - d.node_row;
     long n_id = global_of(d, l);
     uint up = parent_of(d, l);
@@ -1927,59 +1927,79 @@ pub fn available() -> bool {
     rerail_accel::gpu::join::device().is_ok()
 }
 
-/// A kind-set axis's batch solve on the device (decision 0289 §2, `facts::nearest::ChunkAxis`), from `chunk`: each
-/// node's rows counted by a climb of its ancestors and the counts scanned into the starts (in the chunk, page-aligned,
-/// bound as a buffer of their own with no copy); then, the total read, the rows written, each the ids of `n` and `a`,
-/// into a relation of exactly that many rows (decision 0353 step 5). It is a derived fact like a rule's head: it lies
-/// in a run's block, not leased from the device's budget, which a room sized before the count (containment's up to
-/// several rows a node) filled.
-pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk, bits: Option<&[u32]>, inside: bool)
+/// A kind-set axis's batch solve on the device (decision 0289 §2, `facts::nearest::ChunkAxis`), from `chunks`: each
+/// node's rows counted by a climb of its ancestors and the counts scanned into the starts (in its chunk, page-aligned,
+/// bound as a buffer of their own with no copy); then, the totals read, the rows written, each the ids of `n` and `a`,
+/// into one relation of exactly that many rows (decision 0353 step 5), each chunk's past the one's before (a chunk's
+/// batch and its tape values, decision 0431 §8). It is a derived fact like a rule's head: it lies in a run's block,
+/// not leased from the device's budget, which a room sized before the count (containment's up to several rows a node)
+/// filled. Its starts are the first chunk's.
+pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk], bits: Option<&[u32]>, inside: bool)
                      -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
     use crate::code_rule_dsl::facts::rows::Part;
     use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ChunkRoot;
     const PAGE: usize = 16384;
-    let b = &chunk.block;
-    // SAFETY: the chunk's root, which `device_chunk::build` wrote.
-    let n = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).nodes } as usize;
     let full = || "the chunk block cannot hold the axis".to_string();
-    let bits_at = match bits {
-        Some(words) => {
-            let p: *mut u32 = b.try_alloc_t(words.len()).ok_or_else(full)?;
-            // SAFETY: just allocated for `words.len()` values.
-            // copy: not block data: the set's membership bits, made here for the kernel.
-            unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), p, words.len()) };
-            b.offset_of(p)
-        }
-        None => 0,
-    };
-    let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
-    let start_at = b.try_alloc(start_bytes, PAGE).ok_or_else(full)?;
+    let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
     let device = rerail_accel::gpu::join::device()?;
-    let whole = b.gpu_buffer(device);
-    let starts = device.new_buffer_with_bytes_no_copy(b.ptr::<u8>(start_at) as *const std::ffi::c_void, start_bytes as u64, metal::MTLResourceOptions::StorageModeShared, None);
     let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
     let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
-    let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
-    let mut p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), 0, 0, 0];
-    let scan = Scan::owned(n + 1)?;
-    let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-    let pass = batch.pass(16).map_err(|e| format!("{e:?}"))?;
-    pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
-    scan.encode(pass, &starts)?;
-    batch.finish().map_err(|e| format!("{e:?}"))?;
-    // SAFETY: the scan completed: its last value is the total.
-    let len = unsafe { *b.ptr::<u32>(start_at + 4 * n) } as usize;
+    // Each chunk's counts scanned into its starts: its parameters, its starts' offset, and its rows.
+    let mut each: Vec<([u32; 8], usize, usize)> = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        let b = &chunk.block;
+        // SAFETY: the chunk's root, which `device_chunk::build` wrote.
+        let n = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).nodes } as usize;
+        let bits_at = match bits {
+            Some(words) => {
+                let p: *mut u32 = b.try_alloc_t(words.len()).ok_or_else(full)?;
+                // SAFETY: just allocated for `words.len()` values.
+                // copy: not block data: the set's membership bits, made here for the kernel.
+                unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), p, words.len()) };
+                b.offset_of(p)
+            }
+            None => 0,
+        };
+        let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
+        let start_at = b.try_alloc(start_bytes, PAGE).ok_or_else(full)?;
+        let whole = b.gpu_buffer(device);
+        let starts = device.new_buffer_with_bytes_no_copy(b.ptr::<u8>(start_at) as *const std::ffi::c_void, start_bytes as u64, metal::MTLResourceOptions::StorageModeShared, None);
+        let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), 0, 0, 0, 0];
+        let scan = Scan::owned(n + 1)?;
+        let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
+        let pass = batch.pass(16).map_err(|e| format!("{e:?}"))?;
+        pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
+        scan.encode(pass, &starts)?;
+        batch.finish().map_err(|e| format!("{e:?}"))?;
+        // SAFETY: the scan completed: its last value is the total.
+        let len = unsafe { *b.ptr::<u32>(start_at + 4 * n) } as usize;
+        each.push((p, start_at, len));
+    }
+    let total: usize = each.iter().map(|e| e.2).sum();
+    let first_start = each.first().map_or(0, |e| e.1);
     // Alone in its block, with room for an index by each column: strata probe an axis by `n` and by `a`.
-    let rows = Part::for_writes_indexed(2, len, 2);
-    if len > 0 {
+    let rows = Part::for_writes_indexed(2, total, 2);
+    if total > 0 {
         let needed = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
         let rows_at = rows.rows_at() as u64;
-        (p[4], p[5], p[6]) = (len as u32, rows_at as u32, (rows_at >> 32) as u32);
         let out = rows.facts().block.gpu_buffer(device);
-        let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-        let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
-        pass.run(&write, &[&whole, &starts, &out], &p, &[], groups(n));
-        batch.finish().map_err(|e| format!("{e:?}"))?;
+        let mut past = 0usize;
+        for (chunk, (mut p, start_at, len)) in chunks.iter().zip(each) {
+            let b = &chunk.block;
+            let n = p[1] as usize;
+            // p[4]: the rows the relation holds; p[7]: the first of this chunk's.
+            (p[4], p[5], p[6], p[7]) = (total as u32, rows_at as u32, (rows_at >> 32) as u32, past as u32);
+            past += len;
+            if len == 0 {
+                continue;
+            }
+            let whole = b.gpu_buffer(device);
+            let starts = device.new_buffer_with_bytes_no_copy(b.ptr::<u8>(start_at) as *const std::ffi::c_void, (4 * (n + 1)).next_multiple_of(PAGE) as u64, metal::MTLResourceOptions::StorageModeShared, None);
+            let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
+            let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
+            pass.run(&write, &[&whole, &starts, &out], &p, &[], groups(n));
+            batch.finish().map_err(|e| format!("{e:?}"))?;
+        }
         // Bounded by the relation's chunks (decision 0403): what the writer refused fails the solve, which the host
         // then makes.
         let now = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
@@ -1987,9 +2007,9 @@ pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_c
             return Err(format!("the axis's writer refused {} rows past its relation's chunks (decision 0403)", now.wrapping_sub(needed)));
         }
     }
-    // SAFETY: the write completed, every row below the total written.
-    unsafe { rows.written(len as u32) };
-    Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, rows })
+    // SAFETY: the writes completed, every row below the total written.
+    unsafe { rows.written(total as u32) };
+    Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: first_start, rows })
 }
 
 /// A relation's columns on the device: `rows` 64-bit values each, column-major.

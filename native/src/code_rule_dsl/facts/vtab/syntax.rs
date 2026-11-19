@@ -565,6 +565,10 @@ impl Source for LongTexts {
 }
 
 /// The batch's relation `name` as a source: `rr_long_text_node` with the batch (`LongTexts`), any other as rows.
+/// How a batch's relations are made of their rows: written into a block (`Relation::from_rows`), or staged
+/// (`Relation::staged`).
+pub(super) type Make = fn(&[&str], &mut dyn Iterator<Item = Vec<i64>>) -> Relation;
+
 fn as_source(name: &str, rows: Arc<Relation>, batch: &Arc<Batch>) -> Arc<dyn Source> {
     if name == LONG_TEXT_NODES { Arc::new(LongTexts::new(rows, batch)) } else { rows }
 }
@@ -3159,10 +3163,7 @@ impl Extra {
 
     /// The relations read, their strings as atoms (`atom` of a string index), and the `match_all` relations read.
     #[allow(clippy::type_complexity)]
-    fn relations(self, atom: &dyn Fn(i64) -> i64) -> (Vec<(&'static str, Relation)>, Vec<(String, Relation)>) {
-        let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
-            Relation::from_rows(columns, rows)
-        };
+    fn relations(self, atom: &dyn Fn(i64) -> i64, relation: Make) -> (Vec<(&'static str, Relation)>, Vec<(String, Relation)>) {
         let mut out = Vec::new();
         if self.source {
             out.push(("source", relation(&["d", "sp"], &mut self.sources.iter().map(|r| r.to_vec()))));
@@ -3750,9 +3751,8 @@ impl Batch {
             .map(|(f, v)| v.map(|(tag, strings)| f.bind(tag, &dialects[tag].catalog, &strings.into_iter().map(atom).collect::<Vec<_>>(), docs.len())))
             .collect();
         let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
-        let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
-            Relation::from_rows(columns, rows)
-        };
+        // A value alone's rows are staged: they are written once, past the chunk's relations' rows (`Grower::admit`).
+        let relation: Make = if alone { Relation::staged } else { Relation::from_rows };
         let pairs = |columns: &[&str], rows: &[[i64; 2]], sym: [bool; 2]| {
             relation(columns, &mut rows.iter().map(|&[a, b]| vec![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }]))
         };
@@ -3765,12 +3765,12 @@ impl Batch {
             ("intval", pairs(&["n", "v"], &rows.intval, [false, false])),
             ("op_t", pairs(&["n", "s"], &rows.op, [false, true])),
         ];
-        relations.extend(g.relations(&atom));
+        relations.extend(g.relations(&atom, relation));
         if core {
             extra.literal_values(c.values_of(&unvalued));
         }
-        let (mut read, matched) = extra.relations(&atom);
-        read.extend(tree.relations(&atom));
+        let (mut read, matched) = extra.relations(&atom, relation);
+        read.extend(tree.relations(&atom, relation));
         for (_, run) in produced.iter_mut() {
             read.extend(run.relations(&atom));
         }
@@ -4790,6 +4790,9 @@ pub struct Grower {
     matched: Vec<(String, Arc<dyn Source>)>,
     /// The batches made: the first's relations are taken as they come (a name twice is bound twice, as before).
     built: usize,
+    /// Each relation with the rows of the tape values admitted since (decision 0431 §8, `admit`): the chunk's rows,
+    /// then the values', in the same block relation. The chunk's relations (`rels`) stay its own rows.
+    with_values: Vec<(String, Arc<Relation>)>,
 }
 
 impl Grower {
@@ -4835,6 +4838,25 @@ impl Grower {
         projection: &Projection,
     ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
         self.sources_of(store, vec![document], sets, None, tests, binding, projection, true, true)
+    }
+
+    /// Tape value's relation `name`, its rows admitted (decision 0431 §8): written once, past the chunk's rows of
+    /// `name` and the values' admitted before, in the same block relation (`Relation::grown`), so that the device
+    /// binds the chunk's and the values' rows whole; read as the rows past those (`values::Slice`). A relation the
+    /// chunk makes none of, or one read with its batch (`as_source`), is the value's own.
+    fn admitted(&mut self, name: &str, rows: Relation, batch: &Arc<Batch>) -> Arc<dyn Source> {
+        let at = self.with_values.iter().position(|(n, _)| n == name);
+        let prev = at.map(|i| &self.with_values[i].1).or_else(|| self.rels.iter().find(|(n, _)| n == name).map(|(_, r)| r));
+        let Some(prev) = prev.filter(|p| name != LONG_TEXT_NODES && Source::columns(p.as_ref()) == Source::columns(&rows)) else {
+            return as_source(name, Arc::new(rows), batch);
+        };
+        let start = Source::len(prev.as_ref());
+        let whole = Arc::new(prev.grown(rows));
+        match at {
+            Some(i) => self.with_values[i].1 = Arc::clone(&whole),
+            None => self.with_values.push((name.to_owned(), Arc::clone(&whole))),
+        }
+        Arc::new(values::Slice::new(whole, start))
     }
 
     /// The relation `name` with `rows` after its own (the first rows of a name are its own), as one that grows.
@@ -4884,13 +4906,13 @@ impl Grower {
     drop(built);
     // The batch's relations, but none the program derives (`Projection::derived`); the `match_all` relations
     // (`logic::strings::as_relations`): each regex's matches in the batch's spans.
-    // An admitted value's relations are its own (a part of the chunk's), never merged into them.
-    let mut own: Vec<(String, Arc<Relation>)> = Vec::new();
+    // An admitted value's relations are a part of the chunk's (`admitted`), never merged into its own.
+    let mut own: Vec<(String, Arc<dyn Source>)> = Vec::new();
     for (name, r) in relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)) {
-        if alone { own.push((name.to_owned(), Arc::new(r))) } else { self.merge(name.to_owned(), r, growing) }
+        if alone { own.push((name.to_owned(), self.admitted(name, r, &batch))) } else { self.merge(name.to_owned(), r, growing) }
     }
     for (name, r) in match_all {
-        if alone { own.push((name, Arc::new(r))) } else { self.merge(name, r, growing) }
+        if alone { own.push((name.clone(), self.admitted(&name, r, &batch))) } else { self.merge(name, r, growing) }
     }
     if let Some(Matchers(Some(wave))) = matchers {
         self.matched = wave.matched(&batch, &tapes, binding, &store.atoms_handle())?;
@@ -4911,11 +4933,11 @@ impl Grower {
         })
         .collect();
     for (name, r) in tested {
-        if alone { own.push((name, Arc::new(r))) } else { self.merge(name, r, growing) }
+        if alone { own.push((name.clone(), self.admitted(&name, r, &batch))) } else { self.merge(name, r, growing) }
     }
     drop(text);
     let mut out: Vec<(String, Arc<dyn Source>)> = if alone {
-        own.iter().map(|(name, r)| (name.clone(), as_source(name, Arc::clone(r), &batch))).collect()
+        own
     } else {
         self.built += 1;
         let mut out: Vec<(String, Arc<dyn Source>)> = self.rels.iter().map(|(name, r)| (name.clone(), as_source(name, Arc::clone(r), &batch))).collect();
@@ -4954,16 +4976,18 @@ impl Grower {
         let keys: Vec<u32> = batch.docs.iter().map(|p| p.key).collect();
         drop(_nearest);
         stored_spike::run(&db, &read, &keys);
-        return Ok(out_with_within(out, &batch));
+        return Ok(out_with_within(out, &batch, binding));
     }
     // Containment (decision 0050): made per looked-up node, so a program that never reads it pays nothing.
-    Ok(out_with_within(out, &batch))
+    Ok(out_with_within(out, &batch, binding))
     }
 }
 
 /// `out` with containment's two relations (decision 0050).
-fn out_with_within(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>) -> Vec<(String, Arc<dyn Source>)> {
-    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Tree))));
+/// Containment is solved where the run is bound (a Metal run's on the device, its batch's and its tape values' in one
+/// relation, decision 0431 §8; the host's where the device cannot).
+fn out_with_within(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, binding: crate::code_rule_dsl::facts::nearest::Binding) -> Vec<(String, Arc<dyn Source>)> {
+    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Tree).bound(binding))));
     out.push((SPAN_WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Span))));
     out
 }

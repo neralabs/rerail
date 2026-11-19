@@ -1899,6 +1899,11 @@ fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
 /// Decision 0431 R5's run: `program` (`.rr`, with its includes) over `files` in a store of its own, giving the report
 /// and the rows of `output`, as shown.
 fn batch_run(name: &str, files: &[(&str, &str)], program: &str, output: &str) -> (super::Report, Vec<Vec<String>>) {
+    batch_run_on(name, files, program, output, crate::code_rule_dsl::typing::file_local::Binding::Cpu)
+}
+
+/// `batch_run` under `binding`.
+fn batch_run_on(name: &str, files: &[(&str, &str)], program: &str, output: &str, binding: crate::code_rule_dsl::typing::file_local::Binding) -> (super::Report, Vec<Vec<String>>) {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     let _ = std::fs::remove_dir_all(&dir);
     let ws = dir.join("ws");
@@ -1910,7 +1915,7 @@ fn batch_run(name: &str, files: &[(&str, &str)], program: &str, output: &str) ->
     std::fs::write(&rule, program).unwrap();
     let flat = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let report = super::run(&flat, &ws, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let report = super::run(&flat, &ws, None, &dir.join("out"), "program", binding, 1 << 18).unwrap();
     let rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get(output).map(|r| r.shown()).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&dir);
     (report, rows)
@@ -1958,6 +1963,67 @@ flat(x) :- kind(m, "identifier"), text(m, x).
     assert_eq!(set(names), ["Foo", "List", "Optional", "int"].map(str::to_owned).into(), "both levels' values are read");
     let (_, flat) = batch_run("r10-flat", &files, program, "flat");
     assert_eq!(set(flat), ["a", "f", "x"].map(str::to_owned).into(), "no scan lists a value's nodes");
+}
+
+/// Decision 0431 R8: CPU and Metal give the same rows, the device reading the same tapes, with both kinds: tape values
+/// read in the fixpoint (R10's program: values, a value inside one, and a scan that lists none), and a file's programs
+/// (an HTML file's scripts).
+#[cfg(target_os = "macos")]
+#[test]
+fn cpu_and_metal_read_the_same_tape_values() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let values = r#"
+.language python
+.decl ann(n: node)
+ann(r) :- string_annotation(s), parsed(s, "annotation", r).
+ann(r) :- ann(s), kind(s, "string"), parsed(s, "annotation", r).
+ann(c) :- ann(p), child(p, c, _).
+.decl names(x: symbol)
+names(x) :- ann(m), kind(m, "identifier"), text(m, x).
+.decl flat(x: symbol)
+flat(x) :- kind(m, "identifier"), text(m, x).
+.output names, flat
+"#;
+    let files = [("a.py", "x: \"List[int]\" = []\ndef f(a: \"Optional['Foo']\"): pass\n")];
+    // Every stratum the device can run is placed there (`placement::Binding::Always`), and the rows it reads, the
+    // chunk's and its values', are read where they are (copy 0353 step 6 is not taken for them): a run with values
+    // uploads no more than the same program over a file with none (whose uploads are the engine's, its empty versions
+    // and the like), but for `parsed`: the grammar its atoms give is a filter of the input, and an input a constant
+    // filters is uploaded still (Q266), its rows' three columns.
+    let q266 = |rows: u64| 8 * 3 * rows;
+    let uploaded = || rerail_prof::copies::sites().into_iter().filter(|(site, _)| site.name.contains("DevRel::upload")).map(|(_, t)| t.bytes).sum::<u64>();
+    let on_device = |name: &str, files: &[(&str, &str)], program: &str, output: &str| {
+        let was = crate::code_rule_dsl::logic::plan::placement::set_binding(crate::code_rule_dsl::logic::plan::placement::Binding::Always);
+        let before = uploaded();
+        let got = batch_run_on(name, files, program, output, Binding::Metal);
+        crate::code_rule_dsl::logic::plan::placement::set_binding(was);
+        (got, uploaded() - before)
+    };
+    let none = [("a.py", "x = []\ndef f(a): pass\n")];
+    for output in ["names", "flat"] {
+        let (cpu, on_cpu) = batch_run_on(&format!("r8-{output}-cpu"), &files, values, output, Binding::Cpu);
+        let ((metal, on_metal), bytes) = on_device(&format!("r8-{output}-metal"), &files, values, output);
+        let (_, base) = on_device(&format!("r8-{output}-none"), &none, values, output);
+        // `parsed`'s rows: the three annotations' places.
+        assert!(bytes <= base + q266(3), "{output}: the values' rows are read where they lie ({bytes} bytes uploaded, {base} with no values)");
+        assert!(!on_cpu.is_empty(), "{output}: rows");
+        assert_eq!(on_metal, on_cpu, "{output}: the device's rows are the CPU's");
+        assert_eq!((metal.values_admitted, metal.guest_parses, metal.slice_runs), (cpu.values_admitted, cpu.guest_parses, cpu.slice_runs), "{output}: the same values, read alike");
+    }
+    let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
+    let programs = r#"
+.language html
+#include "html/embeds.rr"
+.decl calls(x: symbol)
+calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x).
+.output calls
+"#;
+    let (_, on_cpu) = batch_run_on("r8-programs-cpu", &[("a.html", html)], programs, "calls", Binding::Cpu);
+    // The programs' library (`html/embeds.rr`) filters `child` and `node` by constants: those inputs are uploaded
+    // (Q266), so the uploads here say nothing of the programs' rows.
+    let ((_, on_metal), _) = on_device("r8-programs-metal", &[("a.html", html)], programs, "calls");
+    assert_eq!(on_cpu.len(), 2, "both scripts' calls: {on_cpu:?}");
+    assert_eq!(on_metal, on_cpu, "a file's programs: the device's rows are the CPU's");
 }
 
 /// Decision 0431 R6, a guard of today's: within one run, equal texts are parsed once, whichever files hold them.

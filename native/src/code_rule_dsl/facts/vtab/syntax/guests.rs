@@ -151,10 +151,7 @@ impl GuestRows {
         }
     }
 
-    pub(super) fn relations(&self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
-        let rel = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
-            Relation::from_rows(columns, rows)
-        };
+    pub(super) fn relations(&self, atom: &dyn Fn(i64) -> i64, rel: super::Make) -> Vec<(&'static str, Relation)> {
         vec![
             ("guest", rel(&["g", "host", "at", "grammar"], &mut self.guest.iter().map(|&[g, h, a, s]| vec![g, h, a, atom(s)]))),
             ("doc_role", rel(&["d", "r"], &mut self.role.iter().map(|&[d, r]| vec![d, atom(r)]))),

@@ -156,6 +156,24 @@ code may be named by which rules asked for it, or in what order.
    - A partial hit counts no guest unseen: a value is made only as the cone's rules ask for it, so the cone test
      counts `values_admitted`.
 
+   As built (the device, step 4c): the device reads a value's rows where they lie, as it reads the batch's (0353), and
+   nothing is made for it on the host.
+   - A value's relation rows are written once, past the chunk's rows and the values' admitted before, in the same
+     block relation (`Grower::admitted`, `Relation::grown`). They are staged until then (`Relation::staged`). The
+     device binds that relation whole (`Layered::in_block`). On the CPU each value reads its own rows of it
+     (`values::Slice`).
+   - A view's rows are read in place through one directory of the chunk's documents and each value's, each view's
+     rows numbered as the layered source numbers them (`device_chunk::views_over`). The directory is made again only
+     when more values are admitted. A source with no values yet is the batch's own, read as before.
+   - Containment is solved where the run is bound: on Metal, on the device. The chunk's pairs and each value's are
+     solved into one relation (`axis_in_chunk` over several chunks, each one's rows past the ones before). The device
+     binds it whole, though the layered source numbers a value's pairs only as they are looked up.
+   - A source that grew is bound again: the device's resident copy of a source is reused only while its rows are the
+     same (or the source is made on lookup).
+   - Left: an input a constant filters (`parsed(s, "annotation", r)`, and the `child` and `node` filters in
+     `html/embeds.rr`) is uploaded, the batch's and a value's alike (Q266). R8's test allows exactly `parsed`'s rows
+     for it.
+
 ## Requirements, each with its test
 
 | | Requirement | Test |
@@ -167,7 +185,7 @@ code may be named by which rules asked for it, or in what order.
 | R5 | The batch is built once a chunk and grows by the rest (§6; `Report::batch_grown` counts the documents added): a file's programs, and the rows read are a rebuilt batch's. A tape value no longer grows it (§8, R10, which supersedes `tape_values_build_no_second_batch`) | `a_files_programs_build_no_second_batch` |
 | R6 | A text a run parsed is not parsed again: after an edit elsewhere in its file, in a new file, after a rule's edit (`Report::guest_parses`) | `an_edit_elsewhere_parses_no_text_the_last_run_parsed`, `a_new_file_with_a_text_parsed_before_parses_nothing`, `an_edited_rule_parses_no_text_the_last_run_parsed`; guard `equal_texts_are_parsed_once_a_run` |
 | R7 | A file read from the memo has its programs and tape values for a cross-file rule: a value's rows are base rows of each file that asked for it (`owners`, `askers`), kept in its entry and restored with it | `a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule` |
-| R8 | CPU and Metal give the same rows, the device reading the same tapes | the Metal path's parity tests, with both kinds |
+| R8 | CPU and Metal give the same rows, the device reading the same tapes: a value's rows read where they lie, none uploaded (but Q266's filtered inputs) | `cpu_and_metal_read_the_same_tape_values`, with both kinds |
 | R9 | A finding placed at a tape value's node is refused: the lowering derives `rr_unplaced(clause)`, and the run fails naming the clauses | `a_finding_at_a_tape_values_node_is_refused` |
 | R10 | A string a rule parses is parsed in the program's fixpoint (§8): no slice and no round runs for it, the batch never grows by a value, each value is admitted once at its first lookup (`Report::values_admitted`), a string inside a value too; no scan lists a hidden value's nodes, and a shown one's are read after the request (§8, as built) | `tape_values_are_read_in_the_fixpoint` |
 
@@ -188,7 +206,8 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
    requests name, every tag where one is not a constant), else parsed and queued for the store with its text, which
    the manifest names (R6; Q30's "a guest's tape is not stored" is superseded). 4b, done: the batch grows by a round's
    documents (§6, R5). 4c: `@parse` as a functor in the fixpoint, a value read on lookup (§8, R10): the
-   CPU done (§8, as built), the device's rolling cache next; `parsed` and `sub_tape` of strings derived by the
+   CPU and the device done (§8, as built; the device reads a 16z value through the views' one rolling cache, 0353
+   step 4b); `parsed` and `sub_tape` of strings derived by the
    program; tape values stored and loaded before the waves (R4, R6, R7, R5's annotations). The embed slice and its
    rounds stay for the grammar's programs until step 3.
 5. PostHog cold on CPU and Metal against 1ca497070's 32.1 s and 34.4 s of guests, findings unchanged (29,747,

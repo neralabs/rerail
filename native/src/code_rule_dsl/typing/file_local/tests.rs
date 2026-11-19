@@ -717,17 +717,15 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
         .output observed
         observed(answer) :- node(_, p, "some-kind", _, _), child(p, g, 0), mid = g, answer = mid, !excluded(g).
     "#;
-    let mut program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    // The tree's split, which this pass was once checked against, went with decision 0276 step 6: the version's
+    // pass alone makes the helper, and the head reads it.
+    let program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
     let (image, _) = Builder::of_program(&program).unwrap().finish().unwrap();
     let mut pass = PushLocalJoins::default();
     let mut pipeline = Pipeline::new("test", image);
     pipeline.program(&mut pass);
     let (result, _) = pipeline.finish().unwrap();
-    let made = push_local_joins(&mut program);
-    assert_eq!(pass.made, made);
-    let (tree, _) = Builder::of_program(&program).unwrap().finish().unwrap();
-    assert_eq!(result.digest(), tree.digest(), "{}\n---\n{}", result.show(), tree.show());
-    let helpers: Vec<_> = made.iter().filter(|name| name.ends_with("_observed")).collect();
+    let helpers: Vec<_> = pass.made.iter().filter(|name| name.ends_with("_observed")).collect();
     assert_eq!(helpers.len(), usize::from(push_equal_columns()), "{}", result.show());
     if let [helper] = helpers.as_slice() {
         assert!(result.show().contains(&format!("observed($answer) :- {helper}(")));

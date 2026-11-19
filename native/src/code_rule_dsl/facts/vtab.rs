@@ -1416,6 +1416,13 @@ impl Relation {
         let _ = r.cells.set(cells.freeze(r.rows));
         r
     }
+    /// A relation of `rows`, staged (`push`), not yet written into a block: rows a relation that goes on from another
+    /// writes once, past that one's (`grown`: a tape value's rows admitted inside a chunk's fixpoint, decision 0431 §8).
+    pub fn staged(columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>) -> Self {
+        let mut r = Relation::new(columns);
+        rows.for_each(|row| r.push(&row));
+        r
+    }
     /// A relation of `rows`: written straight into its block, at their number, when the iterator knows it exactly
     /// (no staging, no growth or move); else staged, as `push` stages them.
     pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>) -> Self {

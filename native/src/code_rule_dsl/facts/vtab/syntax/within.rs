@@ -161,6 +161,11 @@ impl Within {
         }
     }
 
+    /// The same, solved where `binding` places it (`solved`).
+    pub fn bound(self, binding: crate::code_rule_dsl::facts::nearest::Binding) -> Self {
+        Within { binding, ..self }
+    }
+
     /// The same, reading the documents' tapes in `format` rather than as held (a test's comparison of formats).
     pub fn reading(self, format: Format) -> Self {
         Within { format: Some(format), ..self }
@@ -442,6 +447,23 @@ impl Within {
     /// one is registered: `None` sends it to the host's.
     #[cfg(target_os = "macos")]
     fn solved_in_chunk(&self) -> Option<Solved> {
+        self.solved_in(&[self.batch.chunk()]).map(|c| Solved { start: Vec::new(), rows: c.rows, start_in_chunk: Some(c.start) })
+    }
+
+    /// Its solve and those of `more`, the axis over a chunk's tape values (decision 0431 §8), made on the device in
+    /// one relation: its rows, then each one's of `more`, as the device binds a layered source's (`values::Layered`).
+    #[cfg(target_os = "macos")]
+    pub(super) fn solved_with(&self, more: &[&Within]) -> Option<crate::code_rule_dsl::facts::rows::Part> {
+        if !self.solvable() || more.iter().any(|w| w.mode != self.mode) {
+            return None;
+        }
+        let chunks: Vec<&super::device_chunk::Chunk> = std::iter::once(self).chain(more.iter().copied()).map(|w| w.batch.chunk()).collect();
+        self.solved_in(&chunks).map(|c| c.rows)
+    }
+
+    /// The axis solved on the device over `chunks`, in one relation (`nearest::ChunkAxis`).
+    #[cfg(target_os = "macos")]
+    fn solved_in(&self, chunks: &[&super::device_chunk::Chunk]) -> Option<crate::code_rule_dsl::facts::nearest::InChunk> {
         use crate::code_rule_dsl::facts::core::KIND_STRIDE;
         use crate::code_rule_dsl::facts::nearest::chunk_axis;
         let solve = chunk_axis().filter(|_| self.binding == Binding::Metal)?;
@@ -458,8 +480,8 @@ impl Within {
             bits
         });
         let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
-        match solve(self.batch.chunk(), bits.as_deref(), inside) {
-            Ok(c) => Some(Solved { start: Vec::new(), rows: c.rows, start_in_chunk: Some(c.start) }),
+        match solve(chunks, bits.as_deref(), inside) {
+            Ok(c) => Some(c),
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0289)", || format!("solved on the host: {why}"));
                 None
@@ -743,6 +765,9 @@ impl Within {
 }
 
 impl Source for Within {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     /// Read whole by the device: the batch's solve, the relation it was written into, where it lies (decision 0353
     /// step 5).
     #[cfg(target_os = "macos")]
