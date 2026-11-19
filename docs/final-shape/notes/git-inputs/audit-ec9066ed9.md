@@ -15,6 +15,9 @@ A second experiment populated a store with decoder version 3. Version 4 returned
 Cases 31 and 32 now reject a direct or tagged commit with a local root of the wrong kind.
 The walk reports missing trees and wrong-kind targets. Only verified trees produce directory placements, including both paths to one shared subtree.
 
+For case 33, filesystem and revision scans now return the same finding for `src/../src/a.py`.
+The report preserves the requested and skipped spellings. Both providers reject absolute paths and escapes.
+
 ## Status at `8a328d0a0`
 
 Of the twenty cases open at `8a490c35e`, seven now have repairs.

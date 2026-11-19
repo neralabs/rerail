@@ -42,6 +42,8 @@ rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--revis
 
 - With `--path` or `--paths-from`, paths are relative to the repository. The scan skips absent paths.
   The JSON report records the supplied names in `requestedPaths` and the absent names in `skippedPaths`.
+  Both providers resolve `.` and `..` components before selecting files. An absolute path or a path outside the repository is an error.
+  The `paths` field gives the normalized selections. For example, `src/../src/a.py` selects `src/a.py`.
   A trailing directory separator or `/.` requires a directory on both source providers.
   A path list accepts one UTF-8 name per line and preserves spaces in each name.
   An invalid UTF-8 line stops the scan and reports its line number.

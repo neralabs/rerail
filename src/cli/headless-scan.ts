@@ -14,7 +14,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, parse, posix, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from "../engine/audit/audit.js";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
@@ -430,24 +430,29 @@ function homeIsScanConfiguration(options: HeadlessScanOptions, home: RerailDatab
 function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): Pick<ScanReport, "base" | "paths" | "requestedPaths" | "skippedPaths"> & { failures?: ScanFailure[] } {
   if (options.paths !== undefined) {
     const failures: ScanFailure[] = [];
-    const inputs = [...new Set(options.paths.filter(path => path.length > 0).map(path => path.replace(/^(?:\.\/)+/u, "") || "."))];
     const skippedPaths: string[] = [];
-    const paths = inputs.filter(path => {
+    const selected = new Set<string>();
+    for (const requested of new Set(options.paths)) {
+      if (requested.length === 0) continue;
+      const spelling = sep === "\\" ? requested.replaceAll("\\", "/") : requested;
+      const path = posix.normalize(spelling).replace(/\/$/u, "") || ".";
+      if (parse(requested).root || path === ".." || path.startsWith("../")) {
+        throw new Error(`Expected a repository-relative scan path within the repository: ${requested}`);
+      }
+      const directory = spelling.endsWith("/") || spelling.endsWith("/.") || spelling.endsWith("/..");
+      const lookup = directory ? path + "/" : path;
       try {
-        // join() strips a final "/.". Let the filesystem check the directory requirement.
-        const directory = path.endsWith("/.") || path.endsWith(sep + ".");
-        if (path === "." || (source === undefined ? existsSync(join(root, path) + (directory ? sep : "")) : source.containsPath(path))) return true;
-        skippedPaths.push(path);
-        return false;
+        if (path === "." || (source === undefined ? existsSync(join(root, lookup)) : source.containsPath(lookup))) selected.add(path);
+        else skippedPaths.push(requested);
       } catch (error) {
         failures.push({
-          code: "adapter-error", path, ruleId: null,
+          code: "adapter-error", path: requested, ruleId: null,
           message: error instanceof Error ? error.message : String(error),
         });
-        return false;
       }
-    }).sort((left, right) => left.localeCompare(right));
-    return { base: null, paths: paths.includes(".") ? null : paths, requestedPaths: [...options.paths], skippedPaths, failures };
+    }
+    const paths = selected.has(".") ? null : [...selected].sort((left, right) => left.localeCompare(right));
+    return { base: null, paths, requestedPaths: [...options.paths], skippedPaths, failures };
   }
   if (options.scope !== "git-diff") return { base: null, paths: null };
   if (options.base === undefined) {

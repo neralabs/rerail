@@ -622,6 +622,26 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
     }
   });
 
+  it("normalizes repository-relative selections before both lookup and rule evaluation", async () => {
+    const root = checkout();
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src/a.py"), "NEEDLE\n");
+    git(root, "add", "--", "src/a.py");
+    git(root, "commit", "-qm", "nested file");
+    const paths = ["src/../src/a.py", "./src//a.py", "./src/absent", "src/a.py/."];
+    for (const input of [{}, { revision: "HEAD", analysisScope: "paths" }]) {
+      const report = await scan(root, { ...input, paths });
+      expect(report.status).toBe("completed");
+      expect(report.paths).toEqual(["src/a.py"]);
+      expect(report.requestedPaths).toEqual(paths);
+      expect(report.skippedPaths).toEqual(["./src/absent", "src/a.py/."]);
+      expect(report.violations.map(v => v.path)).toEqual(["src/a.py"]);
+      for (const outside of ["../outside", "src/../../outside", join(root, "src/a.py")]) {
+        await expect(scan(root, { ...input, paths: [outside] })).rejects.toThrow(/repository-relative/u);
+      }
+    }
+  });
+
   it("reports unreadable requested Git paths while scanning the paths it can read", async () => {
     const root = checkout();
     const blob = git(root, "rev-parse", "HEAD:a.py");
