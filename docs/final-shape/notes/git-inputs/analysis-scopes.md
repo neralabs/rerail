@@ -177,7 +177,32 @@ its supplier, including when several packs contain the same object.
 
 With 12 unrelated single-object packs, a warm scan of 4 directories went from 60 index probes to zero.
 With 64 directories, the count fell from 780 to three. Both scans still returned one finding per directory and decoded zero trees.
-An index with more than 256 objects still gets one lookup per requested ID. These counts measure index probes, not elapsed time.
+For a larger index, the observer first uses ordinary Git lookups.
+After one unsuccessful lookup per 32 indexed objects, it can keep a bitmap of ID prefixes.
+A clear bit rules out that pack. A set bit still requires the full ID lookup.
+The bitmap uses at most 64 KiB per index. Indexes too dense for this bitmap keep ordinary lookups.
+
+A 64-directory scan also ran against 12 unrelated packs of 257 objects each.
+Three pairs of cold and warm scans used each implementation. The implementations alternated on the same macOS machine.
+Each scan found 64 violations. Cold scans decoded 65 trees. Warm scans decoded zero.
+
+| Measurement | Ordinary index lookup | Adaptive prefix lookup |
+| --- | ---: | ---: |
+| Warm index probes | 780 | 149–152 |
+| New bitmaps per process | 0 | 6,144 bytes for 12 bitmaps |
+| Median cold scan | 451 ms | 427 ms |
+| Median warm scan | 178 ms | 169 ms |
+| Median warm process peak RSS | 309,040 KiB | 308,880 KiB |
+
+The one-minute load average at the end was 20. The first ordinary cold scan took 8 seconds.
+With the project object store as an alternate, warm probes fell from 1,281 to 804–811.
+Those scans allocated 11,264 bitmap bytes. Their median warm times were 189 ms and 214 ms in separate batches.
+The probe reduction alone does not establish an end-to-end speedup.
+
+A separate benchmark opened 21 pack indexes containing 252,499 entries. One in 16 requests named an indexed object.
+The measured interval included opening indexes, constructing routing data, and finding all suppliers.
+Median times for 4,096 lookups fell from 3,226 to 2,129 microseconds.
+For 16,384 lookups, the medians were 11,149 and 5,773 microseconds.
 
 In a two-file Python fixture, three separate native processes used the same
 store and scope. The initial scan had zero file memo hits. A new commit with
