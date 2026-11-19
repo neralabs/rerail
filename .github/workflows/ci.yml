@@ -30,8 +30,9 @@ permissions:
 # caches, unless a manual run on a branch asks to (`save-warm`); a run on a tag never saves. A run on a ref named main
 # (the branch, or a tag) starts from main's own whatever `warm-ref` says: what it uploads reads as main's for every
 # later run (scripts/check/ci/trusted-artifact.mjs takes main's runs by name, event and history), so another branch's
-# never become main's. Both guards live in this file, so a tag named main on an older commit, whose ci.yml lacks
-# them, can still be dispatched to save as main's; only a ruleset refusing that tag name would close it.
+# never become main's. A tag named main on an older commit of main runs that commit's ci.yml, which saved only on a
+# push to the branch; main takes squash merges alone (its ruleset), so no commit with a weaker version of this file
+# joins main's history.
 env:
   WARM_REF: ${{ github.ref_name == 'main' && 'main' || inputs.warm-ref || 'main' }}
   SAVE_WARM: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && inputs.save-warm) }}
