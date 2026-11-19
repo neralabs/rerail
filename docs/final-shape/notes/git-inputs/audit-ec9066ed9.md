@@ -2,6 +2,73 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Status at `6e3f1618e`
+
+There are 24 open implementation findings and two missing Windows results. Case numbers refer to this follow-up audit.
+The twenty cases in the original audit have their own numbers and regression tests.
+
+### Repository selection and Git facts
+
+| Case | Evidence | Repair and acceptance check |
+| --- | --- | --- |
+| 50 | Reproduced again. With explicit checkout A and `GIT_DIR` pointing to B, the report contains A's source commit and B's checkout HEAD. Adding B's worktree gives “prefix not found”. | Bind discovery, rule evaluation and report metadata to the same repository. Test both environment settings with distinct HEADs and branches. |
+| 48 | A packed ref with byte `ff` in its name appears as its replacement-character sibling in the report. The two branches have different tips. | Preserve ref bytes through discovery. Emit a raw name when UTF-8 decoding fails. Resolve the reported name back to its commit. |
+| 44 | The first scan of a readable checkout fails when its Git directory is read-only and has no Rerail clone ID. | Resolve an existing ID first. Keep a fallback ID in the Rerail home. Check identity across restarts and when the checkout becomes writable. |
+| 45 | A bare repository and its linked worktree have different Rerail IDs. | Use the common Git directory for both. Test both scan orders and reconcile existing IDs. |
+| 34 | Reproduced again. After a branch switch, Git resolves `@{-1}@{0}`. Rerail rejects it. | Carry the previous checkout's ref through the reflog suffix. Compare the source and rule APIs with Git. |
+| 35 | Reproduced again. With a parent commit, Git rejects `HEAD:./src/..` as a single revision. Rerail returns the root tree. | Apply Git's revision interpretation before path normalization. Compare the trailing-slash and subdirectory variants. |
+| 54 | New native API fixture. Two policy commits use the same path and emit “one” and “two”. Loading both into one catalog, then explicitly requesting the first policy source, emits “two”. The same request without the catalog emits “one”. | Key a loaded policy by source identity and relative path, or reject a conflicting source. Test both load orders. The headless CLI normally creates a catalog per scan. |
+
+### File selection
+
+| Case | Evidence | Repair and acceptance check |
+| --- | --- | --- |
+| 46 | Reproduced again on a case-insensitive volume. The filesystem report selects `SRC/A.PY` and returns zero findings. The stored spelling returns one. | Resolve the name from the inventory and use that spelling for evaluation and reporting. Test both volume types. |
+| 11 | A broad policy scans a 32,000,001-byte NUL-filled file alongside a text violation. The revision scan fails on the binary. The filesystem scan completes. | Classify from a bounded blob prefix. Compare large binary, text and unavailable objects across providers. |
+| 28 | The native nullable source reader returns the same result for a missing path and an unavailable tracked blob. The checked file reader reports the object failure. | Provide distinct absence, oversize and object-error results to source consumers. Test removal and restoration on the same view. |
+| 47 | A tracked symlink appears in the revision report's list of absent paths. | Report the exclusion reason and Git entry mode. Test an absent path, symlink and gitlink together. |
+| 49 | The CLI accepts the file `--alpha.py` from a path list. Passing it to `--path` fails. | Accept `--path=--alpha.py`. Compare path, finding and exit code for both input forms. |
+
+### Scope ownership and collection
+
+| Case | Evidence | Repair and acceptance check |
+| --- | --- | --- |
+| 13 | Scope ownership exists in SQLite. An ordinary policy cannot join a run to its scope and snapshot. | Expose committed memberships through explicitly keyed relations. Test two scopes sharing a snapshot, then delete one and repeat the join. |
+| 23 | Restoring the control database after a committed stop can lose the release queue. Three memberships survived the fixture. | Persist the stop's routes and cutoff with recoverable commit evidence. Test commit, rollback, crash and restore around delivery. |
+| 14 | Named deletion succeeds against the currently configured store even when a different store still owns the scope. | Locate the registered owners and report which stores acknowledged deletion. Test an override change and a repeated delete. |
+| 41 | A custom store used only by named scans disappears from maintenance when the override changes. | Register named-run stores on acquisition. Verify collection after restart and after deleting the last owner. |
+| 42 | The maintenance registry retains a path for every recorded directory store. It has no retirement operation. | Retire a permanently removed store once its owners and deliveries are resolved. Keep temporarily offline stores eligible. |
+| 15 | Deleted one-use scope names keep a generation row indefinitely. | Compact generations after older writers lose their permits. Test delayed publication, name reuse and restart. |
+| 17 | A permanently failing legacy-store probe retries after five seconds. Its row omits the failure reason. | Keep the error and retry count, use capped backoff, and retain the stop cutoff through recovery. |
+| 29 | A saved revision report identifies the selection scope as `repository`. It omits the named analysis scope that owns the results. | Add the retention scope kind and name. Test the same revision in two scopes and check exported directory reports for local path disclosure. |
+| 30 | After a collector failure, text output says the cache was not retained. The named manifest is still present. | Report publication and collection separately. Inject each failure and compare the message with actual ownership. |
+
+### Cache cost and platform evidence
+
+| Case | Evidence | Repair and acceptance check |
+| --- | --- | --- |
+| 18 | A long-lived native view keeps previously decoded trees as its path selection moves. | Bound the decoded tree buffer. Walk disjoint subtrees and measure retained bytes and decode counts. |
+| 52 | New. A Git-backed policy takes the native include reader and lowering path on every inspection. Thirty warm loads of one policy took a median 2.39 ms through Git and 0.045 ms from the worktree in one catalog. | Retain the lowered policy by its blob, resolved includes and engine inputs. Reopen the store and count compilations. Change one include and verify the new diagnostic. |
+| 53 | New. A new catalog reading an unchanged local policy in the same store took a median 2.76 ms, up from 0.057 ms before the cross-store repair. The hit validates and decodes a durable program the process already holds. | Validate the input record and check that the selected store has the program without decoding a second copy. Measure both same-store and cross-store loads, including after collection. |
+| 21 | Windows verification pending. A same-size NTFS rewrite with restored modification time can preserve all fields currently used for the object stamp. | Run the mutation on NTFS. Compare warm and cold diagnostics for the damaged object, then restore its bytes and repeat. |
+| 22 | Windows verification pending. The Git message-selector suite has a macOS result and a Windows workflow step. | Run the packaged addon against Git for Windows. Record versions, accepted object IDs and rejected expressions. |
+
+The timings measure inspection only. Each path had three warmup reads and thirty measured reads of the same policy on macOS.
+The performance fixtures returned identical inspection data on each repeat.
+The Windows cases describe missing evidence. Neither has a reproduced Windows failure.
+
+### What changed in this pass
+
+Commit `6e3f1618e` closes cases 43 and 51 for working-tree policies in the per-project store configuration.
+A policy inspected in store A ran against store B. A separate process reopened B and returned findings with zero source-tape parses and zero Git tree decodes.
+The control scope owned at least one memo row exclusively. The row survived scope deletion and disappeared during collection. Rows for shared plans survived.
+A separate test edits an include between policy inspection and evaluation. The pinned evaluation returns the original message. A new inspection returns the edited message.
+
+All 140 headless and Git helper tests passed. Seven targeted Rust tests passed under Cargo. The TypeScript build typecheck passed.
+The collection test also passed with explicit checks for shared rows before and after collection.
+The package workflow and the full native gate were outside this run.
+An older run hit `ENOTEMPTY` during fixture cleanup. It did not recur in these runs and its cause remains unknown.
+
 ## Open findings at `0c5fb730a`
 
 Sixteen of the previous 25 findings remain open. Their original fixtures and repair checks appear under the case numbers below.
