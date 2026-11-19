@@ -961,6 +961,36 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     } finally { vi.unstubAllEnvs(); }
   });
 
+  it("releases an unregistered store after its directory comes back online", async () => {
+    const root = checkout();
+    const databasePath = join(`${root}-home`, "rerail.sqlite");
+    const mount = join(`${root}-home`, "mount");
+    const offline = `${mount}-offline`;
+    mkdirSync(mount, { recursive: true });
+    const store = join(mount, "legacy.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      expect((await scan(root, { databasePath })).status).toBe("completed");
+      expect(directoryOwnerCount(store)).toBe(1);
+      const registry = new Database(`${databasePath}.analysis-stores.sqlite`);
+      try { registry.exec("DELETE FROM analysis_directory_store"); }
+      finally { registry.close(); }
+      loadNativeBinding().retireUpkeepUnder?.(mount);
+      renameSync(mount, offline);
+      const db = openRerailDatabase(databasePath);
+      try {
+        db.transaction(tx => queueAnalysisScopeReleases(tx, [root], databasePath));
+        settleAnalysisScopeReleases(databasePath);
+        expect(db.$client.prepare("SELECT store FROM analysis_scope_release_probes").pluck().all()).toEqual([store]);
+        renameSync(offline, mount);
+        vi.unstubAllEnvs();
+        settleAnalysisScopeReleases(databasePath, -1);
+        expect(directoryOwnerCount(store)).toBe(0);
+        expect(db.$client.prepare("SELECT count(*) FROM analysis_scope_release_probes").pluck().get()).toBe(0);
+      } finally { db.$client.close(); }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("services later stops while a full batch of releases waits for an unavailable store", async () => {
     const root = checkout();
     const home = `${root}-home`;

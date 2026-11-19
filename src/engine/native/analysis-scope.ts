@@ -58,8 +58,10 @@ function registerDirectoryAnalysisStore(databasePath: string, directory: string,
 }
 
 function analysisStores(databasePath: string): { fallback: Set<string>; registered: { directory: string; path: string }[] } {
-  const fallback = new Set([defaultScanStore(databasePath), scanContentStore(databasePath), contentStorePath()]
+  const fallback = new Set([defaultScanStore(databasePath), contentStorePath()]
     .filter(path => existsSync(path)).map(path => storedPath(path)));
+  const configured = contentStoreOverride();
+  if (configured !== undefined) fallback.add(storedPath(configured));
   const registered: { directory: string; path: string }[] = [];
   const indexPath = storeRegistryPath(databasePath);
   if (!existsSync(indexPath)) return { fallback, registered };

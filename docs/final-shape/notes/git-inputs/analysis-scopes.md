@@ -100,6 +100,7 @@ For a store from before directory registration, the stop first checks for matchi
 A store can hold these rows for one directory and have registrations for other directories.
 A legacy candidate outside the current process's store access does not delay a stop.
 If access is unavailable or the ownership query fails, the stop records a deferred probe for that store.
+A configured store can be absent at the time of the stop. The stop records a deferred probe for that path too.
 The probe keeps the original stop generation, home, and directory.
 The daemon tries the probe again after a delay, independently of release delivery.
 If the query finds matching ownership, the daemon delivers the original release.
