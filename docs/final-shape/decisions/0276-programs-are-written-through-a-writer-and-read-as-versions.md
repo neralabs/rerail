@@ -587,6 +587,8 @@ Progress (2026-11-18):
     combine is kept under the masked texts, 0225 §3), so a message edit finds the program prepared. Locked by
     `a_message_edit_finds_the_program_prepared_and_a_rule_edit_does_not`. The run's `front::Lists`, read by the
     print alone, goes.
+  - *Done (shared domains).* `Lowered::domains` is an `Arc<Domains>`: a part or an edit (`with_version`) shares
+    its program's, never copies them.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 

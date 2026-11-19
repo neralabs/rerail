@@ -267,7 +267,8 @@ domains.iter().map(|(r, ds)| (r.as_str(), ds.iter().copied().map(Some).collect()
 #[derive(Clone)]
 pub struct Lowered {
     pub version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
-    pub domains: Domains,
+    /// Shared by every part and edit of the program (`with_version`), never copied per part (0276 §2).
+    pub domains: std::sync::Arc<Domains>,
     /// The name atoms of `flat_bin`'s operators `+`, `-` and `*`.
     pub(in crate::code_rule_dsl) ops: [i64; 3],
     pub dialect: GrammarDialect,
@@ -276,12 +277,12 @@ pub struct Lowered {
 impl Lowered {
     /// The program `p` places, read beside `domains`, `ops` and `dialect`.
     pub fn of_placed(p: super::body::Placed, domains: Domains, ops: [i64; 3], dialect: GrammarDialect) -> Lowered {
-        Lowered { version: p.v, domains, ops, dialect }
+        Lowered { version: p.v, domains: std::sync::Arc::new(domains), ops, dialect }
     }
     /// A program of version `v` read beside this one's domains, operators and dialect (a part of it, or an edit of
-    /// it).
+    /// it): the domains shared, not copied.
     pub fn with_version(&self, v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Lowered {
-        Lowered { version: v, domains: self.domains.clone(), ops: self.ops, dialect: self.dialect }
+        Lowered { version: v, domains: std::sync::Arc::clone(&self.domains), ops: self.ops, dialect: self.dialect }
     }
     /// What the program's run reads beside its version (`plan::run`).
     pub fn lowering(&self) -> Lowering<'_> {

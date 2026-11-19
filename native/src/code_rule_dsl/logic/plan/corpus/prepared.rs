@@ -132,7 +132,7 @@ fn rest_of(prepared: &Prepared) -> Facts {
     let s = |x: &str| Value::Str(x.to_owned().into());
     let n = |x: usize| Value::Int(x as i64);
     let mut row = |rel: &str, values: Vec<Value>| facts.entry(rel.to_owned()).or_default().push(values.into());
-    for (rel, domains) in &prepared.lowered.domains {
+    for (rel, domains) in prepared.lowered.domains.iter() {
         for (i, d) in domains.iter().enumerate() {
             row("prepared_domain", vec![s(rel), n(i), s(domain_name(*d))]);
         }
@@ -380,7 +380,7 @@ pub fn prepared_of(
         source,
         vocabulary: Arc::new(vocabulary),
         // Its stored image alone: the tree read is the split's, made above, and dropped.
-        lowered: lower::Lowered { version, domains, ops, dialect },
+        lowered: lower::Lowered { version, domains: Arc::new(domains), ops, dialect },
         sets,
         matchers,
         demanded: list("prepared_demanded")?,

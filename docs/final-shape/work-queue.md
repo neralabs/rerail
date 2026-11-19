@@ -5282,3 +5282,13 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
     asserted.
   All four are decision 0400's listing checks, and 27 of the 31 observer tests pass. Not PR #508's.
 - **Done when**: all four pass.
+
+### Q251. 0364 R7 is red: after a use is added, two recheck lines are unpriced
+
+Seen 2026-11-19 on an M-series farm host, at this branch's a9c6b3b62 and on the hub (django-bugs' 2e9d16bc8 names it
+failing at 24740af51): `maintain_tests::r7_the_recheck_order_is_priced` fails at maintain_tests.rs:327, "R7: after a
+use added, every recheck line is priced" (left 2, right 0). R7 is an agreed requirement (0364 R1-R10), so this is a
+regression of the maintain mode's plans (0328 §4), not a stale test.
+
+- **Done when**: the two lines are priced as the others are, and R7 passes.
+- **Record**: —
