@@ -378,6 +378,8 @@ pub struct Structure {
     /// The local checks (`Words::local_checks`).
     pub local_checks: Vec<crate::program::LocalCheck>,
     pub rules: Vec<u16>,
+    /// The grammar's names (`Words::names`).
+    pub names: crate::program::Names,
     /// The block programs, lowered (`BlockNative`).
     pub block_programs: Vec<BlockNative>,
     pub output: FunctionRef,
@@ -550,6 +552,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         switches: program.switches.clone(),
         readings: program.readings.clone(),
         rules: program.rules.clone(),
+        names: program.names.clone(),
         word_kinds: program.word_kinds.clone(),
         extras: program.extras.clone(),
         token_marks: program.token_marks.clone(),

@@ -461,6 +461,27 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             index(line, parts.rules.len(), "rule")?;
             parts.rules.push(line.number("@")?);
         }
+        "name" => {
+            let what = line.word()?;
+            match what.as_str() {
+                "rule" => {
+                    let r = line.number("")?;
+                    let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
+                    parts.names.rules.push((r, n));
+                }
+                "kind" => {
+                    let k = line.number("#")?;
+                    let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
+                    parts.names.kinds.push((k, n));
+                }
+                "token" => {
+                    let k = line.number("")?;
+                    let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
+                    parts.names.tokens.push((k, n));
+                }
+                w => return Err(format!("`name {w}`: a name is a rule's, a kind's or a token's")),
+            }
+        }
         "markword" => {
             let k: u8 = line.number("")?;
             let s: u16 = line.number("s")?;
@@ -992,6 +1013,7 @@ pub fn head_rows(out: &mut String, program: &Words) {
     crate::rir_text::count_rows(out, &program.counts);
     crate::rir_text::local_check_rows(out, &program.local_checks);
     crate::rir_text::rule_rows(out, &program.rules);
+    crate::rir_text::name_rows(out, &program.names);
     for s in &program.pp.ops {
         let _ = writeln!(out, "  ppop s{s}");
     }

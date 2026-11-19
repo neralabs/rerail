@@ -2973,7 +2973,13 @@ fn token_check_ops(accept: &[bool], arms: &[(u16, ByteSet, u16)]) -> Result<Vec<
 /// The tree section lowered: the grammar's state machine (`grammar`), its checks added to the
 /// fallback, and tier 2's words (`bitlex_tier2`), with the grammar's ids from `symbols`.
 fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Tier2, String> {
-        let id = |name: &str| (symbols.kind)(name).ok_or_else(|| format!("no kind `{name}` in the grammar"));
+    // The kinds' names, as the grammar asks for them (`Words::names`).
+    let named: std::cell::RefCell<std::collections::BTreeMap<u16, String>> = Default::default();
+    let id = |name: &str| {
+        let k = (symbols.kind)(name).ok_or_else(|| format!("no kind `{name}` in the grammar"))?;
+        named.borrow_mut().entry(k).or_insert_with(|| name.to_owned());
+        Ok::<u16, String>(k)
+    };
     let field_id = |name: &str| (symbols.field)(name).ok_or_else(|| format!("no field `{name}`"));
     // A token row whose every token is a keyword (`required`) has kind 0: the keyword's is its.
     let required: Vec<String> = low.keywords.iter().filter(|k| k.2).map(|k| k.0.clone()).collect();
@@ -4324,7 +4330,31 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             return Err("a mark's token tests need the extra's mark from its reader".into());
         }
     }
-    Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks, records))
+    // The names (`Words::names`): each rule's, its level's kind's; each node kind's; each record
+    // kind's, the first token row's whose first byte has it.
+    let named = named.into_inner();
+    let mut names = crate::program::Names::default();
+    for (i, &r) in lowered.rule_ids.iter().enumerate() {
+        if let Some(n) = states.iter().find(|s| s.rule == r).and_then(|s| named.get(&s.level)) {
+            names.rules.push((i as u16, n.clone()));
+        }
+    }
+    names.kinds = named.iter().map(|(&k, n)| (k, n.clone())).collect();
+    let mut token_named = [false; 256];
+    for b in 0..256usize {
+        let k = records.kinds[b];
+        if token_named[usize::from(k)] {
+            continue;
+        }
+        if let Some(r) = (0..rows.len()).find(|&r| !low.inside.get(r).copied().unwrap_or(false) && rows[r].first[b / 64] >> (b % 64) & 1 == 1) {
+            token_named[usize::from(k)] = true;
+            names.tokens.push((k, token_rows[r].0.clone()));
+        }
+    }
+    names.tokens.sort();
+    let mut text = lowered.text;
+    crate::rir_text::name_rows(&mut text, &names);
+    Ok((grammar::text(&states, &arms), text, takes_last, mark_masks, records))
 }
 
 /// The rows each state of tier 2 can meet: `meets[s][r]`, whether a token of row `r` can be

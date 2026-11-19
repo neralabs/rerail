@@ -240,6 +240,16 @@ pub fn split(word: u32) -> (u8, u8, u16) {
     (word as u8, (word >> 8) as u8, (word >> 16) as u16)
 }
 
+/// The grammar's names for a program's numbers (`name rule R "N"`, `name kind #K "N"`, `name
+/// token K "N"`): each rule's (by its place among `Words::rules`), each node kind's, and each
+/// record kind's (the token kinds tier 1's records give).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Names {
+    pub rules: Vec<(u16, String)>,
+    pub kinds: Vec<(u16, String)>,
+    pub tokens: Vec<(u8, String)>,
+}
+
 /// A program's words and the tables they index.
 #[derive(Clone, Default)]
 pub struct Words {
@@ -265,6 +275,9 @@ pub struct Words {
     /// rule's), its calls (`PUSH`) native calls: only a call's `GOTO`, the word after its
     /// `PUSH`, goes to another rule (`stream::validate_rules`). Empty: one state machine.
     pub rules: Vec<u16>,
+    /// The grammar's names (`name …` rows), for code that reads as the grammar does: none changes
+    /// what the program does.
+    pub names: Names,
     /// Tier 2's marks that hold only at a token of one word (`markword K sW`): mark `K` (its
     /// order) holds where its mask does and the token's record names string `W`, as a parser
     /// tests the next token's word. Rising by mark.

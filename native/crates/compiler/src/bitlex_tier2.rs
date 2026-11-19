@@ -160,6 +160,8 @@ pub struct Lowered {
     /// A function a rule (`lower`'s `rules`): each rule's first place (`Words::rules`); else
     /// empty.
     pub rules: Vec<u16>,
+    /// Each of `rules`' rule: its index (`StateRow::rule`).
+    pub rule_ids: Vec<u16>,
     /// The marks of one word: (order, string), rising (`Words::mark_words`).
     pub mark_words: Vec<(u8, u16)>,
     /// The token marks (`Mark::tokens`), rising by order: each element's offset, its kinds'
@@ -1388,7 +1390,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     if let Some(at) = std::env::var_os("RR_LOWERED_TEXT") {
         let _ = std::fs::write(at, &text);
     }
-    Ok(Lowered { text, switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, mark_words, token_marks })
+    let rule_ids = firsts.iter().map(|&pc| kept_rules[usize::from(pc)]).collect();
+    Ok(Lowered { text, switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, rule_ids, mark_words, token_marks })
 }
 
 /// The words laid out as compiled code is, with no jump a layout can spare (the lean parser's

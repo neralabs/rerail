@@ -64,6 +64,118 @@ struct Facts<'a> {
     /// The tape's widths and the language's tag (`native_cpu_stream::compile_at`'s).
     widths: rerail_tape_format::Widths,
     tag: u8,
+    /// The grammar's names (`Words::names`), as Rust: each function's (by its entry), each node
+    /// kind's constant (`k::…`), each record kind's (`t::…`) and each word's (`w::…`).
+    fn_names: HashMap<usize, String>,
+    kind_names: HashMap<u16, String>,
+    token_names: HashMap<u8, String>,
+    word_names: Vec<String>,
+}
+
+impl Facts<'_> {
+    /// The function of the rule entered at `pc`.
+    fn function(&self, pc: usize) -> String {
+        self.fn_names.get(&pc).cloned().unwrap_or_else(|| format!("r{pc}"))
+    }
+
+    /// Node kind `k` (as a `u16`).
+    fn kind(&self, k: u16) -> String {
+        self.kind_names.get(&k).map_or_else(|| format!("{k}"), |n| format!("k::{n}"))
+    }
+
+    /// Node kind `k` and field bits `f` (`kind_field`, a `u32`).
+    fn kind_field(&self, k: u16, f: u32) -> String {
+        match (self.kind_names.get(&k), f) {
+            (Some(n), 0) => format!("k::{n} as u32"),
+            (Some(n), f) => format!("k::{n} as u32 | {f:#x}"),
+            (None, f) => format!("{}", u32::from(k) | f),
+        }
+    }
+
+    /// String `s`'s word, as a record names it (`S::word`).
+    fn word(&self, s: u16) -> String {
+        self.word_names.get(usize::from(s)).map_or_else(|| format!("{}", u32::from(s) + 1), |n| format!("w::{n}"))
+    }
+
+    /// Record kind `k`, the stream's end past them (`end_kind`).
+    fn token(&self, k: usize) -> String {
+        if self.end_kind.is_some_and(|e| usize::from(e) == k) {
+            return "t::END".into();
+        }
+        u8::try_from(k).ok().and_then(|k| self.token_names.get(&k)).map_or_else(|| format!("{k}"), |n| format!("t::{n}"))
+    }
+
+    /// The named constants: `k`, `t` and `w`.
+    fn constants(&self, out: &mut String) {
+        let mut k: Vec<(&u16, &String)> = self.kind_names.iter().collect();
+        k.sort();
+        out.push_str("/// The node kinds, by the grammar's names.\nmod k {\n");
+        for (v, n) in k {
+            writeln!(out, "    pub const {n}: u16 = {v};").unwrap();
+        }
+        out.push_str("}\n\n/// The record kinds (a token's, by its first byte), by the grammar's names.\nmod t {\n");
+        let mut t: Vec<(&u8, &String)> = self.token_names.iter().collect();
+        t.sort();
+        for (v, n) in t {
+            writeln!(out, "    pub const {n}: u32 = {v};").unwrap();
+        }
+        if let Some(e) = self.end_kind {
+            writeln!(out, "    /// The stream's end, a kind past the records'.\n    pub const END: u32 = {e};").unwrap();
+        }
+        out.push_str("}\n\n/// The words, as a record names them (a string's index, plus one).\nmod w {\n");
+        for (i, n) in self.word_names.iter().enumerate() {
+            writeln!(out, "    pub const {n}: u32 = {};", i + 1).unwrap();
+        }
+        out.push_str("}\n\n");
+    }
+}
+
+/// The Rust keywords, which a grammar's name may be.
+const KEYWORDS: &[&str] = &[
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while", "abstract", "become", "box", "do", "final", "macro", "override", "priv", "try", "typeof", "unsized", "virtual", "yield", "gen",
+];
+
+/// A grammar's name (a rule's, a kind's, a word's: `import_header`, `"`, `?.`) as a Rust name:
+/// its letters, digits and `_`, each other character by its name; upper case for a constant.
+fn rust_name(name: &str, upper: bool) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        let part = match c {
+            c if c.is_ascii_alphanumeric() || c == '_' => {
+                out.push(if upper { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() });
+                continue;
+            }
+            '"' => "quote", '\'' => "tick", '`' => "backtick", '.' => "dot", ',' => "comma", ':' => "colon", ';' => "semi",
+            '(' => "lparen", ')' => "rparen", '[' => "lbrack", ']' => "rbrack", '{' => "lbrace", '}' => "rbrace",
+            '<' => "lt", '>' => "gt", '=' => "eq", '!' => "bang", '?' => "question", '+' => "plus", '-' => "minus",
+            '*' => "star", '/' => "slash", '%' => "percent", '&' => "amp", '|' => "bar", '^' => "caret", '~' => "tilde",
+            '@' => "at", '#' => "hash", '$' => "dollar", '\\' => "backslash", ' ' => "space",
+            _ => "x",
+        };
+        if !out.is_empty() && !out.ends_with('_') {
+            out.push('_');
+        }
+        out.push_str(&if upper { part.to_ascii_uppercase() } else { part.to_owned() });
+        out.push('_');
+    }
+    let mut out = out.trim_end_matches('_').to_owned();
+    if out.is_empty() || out.starts_with(|c: char| c.is_ascii_digit()) || KEYWORDS.contains(&out.as_str()) {
+        out.insert(0, if upper { 'N' } else { 'r' });
+        out.insert(1, '_');
+    }
+    out
+}
+
+/// Each number's name, distinct: the second of one name gets its number after it.
+fn distinct<K: Copy + std::fmt::Display + std::hash::Hash + Eq>(names: impl Iterator<Item = (K, String)>) -> HashMap<K, String> {
+    let mut seen: HashMap<String, usize> = HashMap::default();
+    let mut out = HashMap::default();
+    for (k, n) in names {
+        let c = seen.entry(n.clone()).or_default();
+        *c += 1;
+        out.insert(k, if *c == 1 { n } else { format!("{n}_{k}") });
+    }
+    out
 }
 
 /// Tier 2's program as Rust source: `tier2_entry(ctx)`, the harness's entry
@@ -118,11 +230,22 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
     }
     let phase = crate::native_cpu_stream::phases(native, &crate::native_cpu_stream::push_targets(native));
     let flagged = phase.iter().any(|&p| p == crate::stream::TAKEN | crate::stream::UNTAKEN);
-    let facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag };
+    let names = &native.names;
+    let fn_names = distinct(names.rules.iter().filter_map(|(i, n)| native.rules.get(usize::from(*i)).map(|&pc| (usize::from(pc), rust_name(n, false)))));
+    // A rule's function and the harness's own share no name.
+    let fn_names = fn_names.into_iter().map(|(pc, n)| (pc, if n == "tier2_entry" || n.starts_with('r') && n[1..].bytes().all(|b| b.is_ascii_digit()) { format!("rule_{n}") } else { n })).collect();
+    let kind_names = distinct(names.kinds.iter().map(|(k, n)| (*k, rust_name(n, true))));
+    let token_names = distinct(names.tokens.iter().map(|(k, n)| (*k, rust_name(n, true))));
+    let word_names: Vec<String> = {
+        let d = distinct(native.strings.iter().enumerate().map(|(i, s)| (i, rust_name(&String::from_utf8_lossy(s), true))));
+        (0..native.strings.len()).map(|i| d[&i].clone()).collect()
+    };
+    let facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fn_names, kind_names, token_names, word_names };
     let mut out = String::new();
     out.push_str("// Generated by rerail_compiler::rust_stream from tier 2's native IR. Do not edit.\n");
     out.push_str("#![allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, non_snake_case, dead_code, clippy::all)]\n\n");
     out.push_str("use core::arch::aarch64::*;\n\n");
+    facts.constants(&mut out);
     prelude(&mut out, &facts)?;
     for &e in &facts.entries {
         rule(&mut out, &facts, e)?;
@@ -169,7 +292,8 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
 ",
     );
     let args = if x.context { ", 0, 0" } else { "" };
-    writeln!(out, "    match r0(&mut s{args}) {{\n        Ok(_) => 0,\n        Err(true) => u64::MAX,\n        Err(false) => REFUSED,\n    }}\n}}\n").unwrap();
+    writeln!(out, "    match {}(&mut s{args}) {{", x.function(0)).unwrap();
+    writeln!(out, "        Ok(_) => 0,\n        Err(true) => u64::MAX,\n        Err(false) => REFUSED,\n    }}\n}}\n").unwrap();
 
     out.push_str("impl S {\n");
     // The room: the most a token's path writes (`Bounds`), a call open's pops where returns chain.
@@ -1556,7 +1680,7 @@ impl Plan {
 /// A `match` over `values` (each value's place), `0..len`: the runs of a place one arm, the
 /// place with the most runs the default where every value has one; else a value with no
 /// place refuses.
-fn arms(p: &mut Plan, scrutinee: &str, values: &[u16]) -> String {
+fn arms(p: &mut Plan, scrutinee: &str, values: &[u16], name: &dyn Fn(usize) -> String) -> String {
     let mut by: BTreeMap<u16, Vec<(usize, usize)>> = BTreeMap::new();
     let mut i = 0;
     while i < values.len() {
@@ -1573,7 +1697,7 @@ fn arms(p: &mut Plan, scrutinee: &str, values: &[u16]) -> String {
         if t == REFUSE || Some(t) == dflt {
             continue;
         }
-        let pats: Vec<String> = runs.iter().map(|&(a, b)| if a == b { format!("{a}") } else { format!("{a}..={b}") }).collect();
+        let pats: Vec<String> = runs.iter().map(|&(a, b)| if a == b { name(a) } else { format!("{}..={}", name(a), name(b)) }).collect();
         let j = p.to(t);
         writeln!(s, "{} => {{ {j} }}", pats.join(" | ")).unwrap();
     }
@@ -1586,6 +1710,16 @@ fn arms(p: &mut Plan, scrutinee: &str, values: &[u16]) -> String {
     }
     s.push_str("}\n");
     s
+}
+
+/// A byte as a pattern: a printable ASCII byte as its literal (`b'.'`).
+fn byte_literal(b: usize) -> String {
+    match u8::try_from(b) {
+        Ok(c @ (b'!'..=b'~')) if c != b'\'' && c != b'\\' => format!("b'{}'", c as char),
+        Ok(b'\'') => "b'\\''".into(),
+        Ok(b'\\') => "b'\\\\'".into(),
+        _ => format!("{b:#04x}"),
+    }
 }
 
 /// A switch's `match`: on the record's kind (a kind whose words the switch names, on its word
@@ -1614,13 +1748,13 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
             let mut inner = String::from("match s.word() {\n");
             for (w, to_w) in named {
                 let j = p.to(to_w);
-                writeln!(inner, "{} => {{ {j} }}", u32::from(w) + 1).unwrap();
+                writeln!(inner, "{} => {{ {j} }}", x.word(w)).unwrap();
             }
             let j = p.to(tk);
             writeln!(inner, "_ => {{ {j} }}\n}}").unwrap();
-            writeln!(by_word, "{k} => {{ {inner} }}").unwrap();
+            writeln!(by_word, "{} => {{ {inner} }}", x.token(k)).unwrap();
         }
-        let rest = arms(&mut p, "kind", &values);
+        let rest = arms(&mut p, "kind", &values, &|k| x.token(k));
         let body = if by_word.is_empty() { rest } else { format!("match kind {{\n{by_word}_ => {{ {rest} }}\n}}\n") };
         p.code = format!("{head}{{ let kind = s.code & 0xff;\n{body}}}");
         return p;
@@ -1631,12 +1765,12 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
         out.push_str("match s.word() {\n");
         for &(w, t) in &sw.words {
             let j = p.to(t);
-            writeln!(out, "{} => {{ {j} }}", u32::from(w) + 1).unwrap();
+            writeln!(out, "{} => {{ {j} }}", x.word(w)).unwrap();
         }
         out.push_str("_ => {}\n}\n");
     }
     writeln!(out, "let at = s.start + {};\nif at >= s.rec_end {{ return Err(false); }}", sw.offset).unwrap();
-    out.push_str(&arms(&mut p, "unsafe { *s.bytes.add(at as usize) }", &sw.targets));
+    out.push_str(&arms(&mut p, "unsafe { *s.bytes.add(at as usize) }", &sw.targets, &byte_literal));
     out.push_str("}\n");
     p.code = out;
     p
@@ -1645,7 +1779,7 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
 /// A word's code, `jump(k)` its `k`th successor's.
 fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>) -> Result<String, String> {
     let n = x.native;
-    let kind_of = |k: u16| -> String { if k == REMEMBERED { "{ if word == 0 { return Err(false) } word as u16 }".into() } else { format!("{k}") } };
+    let kind_of = |k: u16| -> String { if k == REMEMBERED { "{ if word == 0 { return Err(false) } word as u16 }".into() } else { x.kind(k) } };
     // The token's end, as this word reads it: its phase's (`phases`), or the run's field.
     let taken = x.phase[pc] == crate::stream::TAKEN;
     let end = if x.flagged {
@@ -1663,16 +1797,16 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         Op::Span { last: false, len } => format!("if s.start + {len} != s.rec_end {{ return Err(false); }}\n{}{}", if x.flagged { "s.end = s.rec_end;\ns.need = true;\n" } else { "" }, jump(0)?),
         Op::Span { last: true, .. } => format!("{}{}", if x.flagged { "s.end = s.rec_end;\ns.need = true;\n" } else { "" }, jump(0)?),
         Op::Empty { total } => format!("if s.total({total}) != 0 {{ return Err(false); }}\n{}", jump(0)?),
-        Op::Word { string, test: true } => format!("if s.word() == {} {{\n{}\n}}{}", u32::from(string) + 1, jump(0)?, or_else(&jump(1)?)),
-        Op::Word { string, test: false } => format!("if s.word() != {} {{ return Err(false); }}\n{}", u32::from(string) + 1, jump(0)?),
-        Op::Open { kind } => format!("s.open({});\n{}", u32::from(kind) | u32::from(field_after(x, pc).unwrap_or(0)) << 16, jump(0)?),
+        Op::Word { string, test: true } => format!("if s.word() == {} {{\n{}\n}}{}", x.word(string), jump(0)?, or_else(&jump(1)?)),
+        Op::Word { string, test: false } => format!("if s.word() != {} {{ return Err(false); }}\n{}", x.word(string), jump(0)?),
+        Op::Open { kind } => format!("s.open({});\n{}", x.kind_field(kind, u32::from(field_after(x, pc).unwrap_or(0)) << 16), jump(0)?),
         Op::Close { this } => format!("s.close::<{this}>({})?;\n{}", if this { end } else { "0" }, jump(0)?),
         Op::Leaf { kind, deferred, extra } => {
             let f = u32::from(field_after(x, pc).unwrap_or(0)) << 16;
             let k = match (kind == WORD_KIND, f) {
                 (true, 0) => "s.word_kind()?".to_string(),
                 (true, f) => format!("s.word_kind()? | {f}"),
-                (false, f) => format!("{}", u32::from(kind) | f),
+                (false, f) => x.kind_field(kind, f),
             };
             format!("s.leaf::<{deferred}, {extra}>({k}, {end});\n{}", jump(0)?)
         }
@@ -1696,7 +1830,7 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
                 }
             } else {
                 let o = mask_output(n, mask)?;
-                let w = mark_word.map_or(String::new(), |s| format!("s.word() == {} && ", u32::from(s) + 1));
+                let w = mark_word.map_or(String::new(), |s| format!("s.word() == {} && ", x.word(s)));
                 format!("(if s.at_end {{ {end} }} else {{ {w}s.bit({o}, s.start) }})")
             };
             let take = if keep { String::new() } else { format!("s.live &= !((2u64 << {k}) - 1);\n") };
@@ -1704,13 +1838,13 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
             format!("if s.live >> {k} & 1 != 0{here} {{\n{take}{}\n}}{}", jump(0)?, or_else(&jump(1)?))
         }
         Op::Row { mask } => format!("if s.bit({}, s.start) {{\n{}\n}}{}", mask_output(n, mask)?, jump(0)?, or_else(&jump(1)?)),
-        Op::Retag { kind, on: On::Here } => format!("s.here_kind({kind})?;\n{}", jump(0)?),
+        Op::Retag { kind, on: On::Here } => format!("s.here_kind({})?;\n{}", x.kind(kind), jump(0)?),
         Op::Retag { kind, on: On::Moved } => format!("s.moved_kind({});\n{}", kind_of(kind), jump(0)?),
         Op::Retag { kind, on: On::Made } => format!("s.made_kind::<{}>({})?;\n{}", kind == DEAD, kind_of(kind), jump(0)?),
         Op::Reread { reading } => format!("s.reread_{reading}({})?;\n{}", if x.context { "word" } else { "0" }, jump(0)?),
-        Op::Wrap { kind } => format!("s.wrap({kind})?;\n{}", jump(0)?),
-        Op::Merge { kind, fold: true } => format!("s.fold({kind})?;\n{}", jump(0)?),
-        Op::Merge { kind, fold: false } => format!("s.merge({kind}, {end})?;\n{}", jump(0)?),
+        Op::Wrap { kind } => format!("s.wrap({})?;\n{}", x.kind(kind), jump(0)?),
+        Op::Merge { kind, fold: true } => format!("s.fold({})?;\n{}", x.kind(kind), jump(0)?),
+        Op::Merge { kind, fold: false } => format!("s.merge({}, {end})?;\n{}", x.kind(kind), jump(0)?),
         Op::NodeField { field, on: On::Here } => format!("unsafe {{ (*s.row(s.nodes - 1)).field = {field} }};\n{}", jump(0)?),
         Op::NodeField { field, on: On::Moved } => format!("unsafe {{ (*s.row(s.moved)).field = {field} }};\n{}", jump(0)?),
         Op::NodeField { field, on: On::Made } => format!("s.made_field::<false>({field})?;\n{}", jump(0)?),
@@ -1729,7 +1863,7 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
             } else {
                 String::new()
             };
-            format!("if s.deeper(move |s| r{callee}(s{args}))? {{\n{}\n}}{}", jump(1)?, or_else(&jump(0)?))
+            format!("if s.deeper(move |s| {}(s{args}))? {{\n{}\n}}{}", x.function(callee), jump(1)?, or_else(&jump(0)?))
         }
         Op::Remember { kind: WORD_KIND } => format!("word = s.word_kind()?;\n{}", jump(0)?),
         Op::Remember { kind } => format!("word = {kind};\n{}", jump(0)?),
@@ -1761,6 +1895,7 @@ fn or_else(e: &str) -> String {
 /// Whether `t`, an `if`, is one statement: every brace that closes at its outer level is followed
 /// by `else` or the end.
 fn one_if(t: &str) -> bool {
+    let t = &no_literals(t);
     let mut depth = 0i32;
     for (i, c) in t.char_indices() {
         match c {
@@ -1782,6 +1917,27 @@ fn one_if(t: &str) -> bool {
     depth == 0
 }
 
+/// `s` with each byte literal's contents left out (`b'{'` is `b''`): its braces are no code's.
+fn no_literals(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut cs = s.chars().peekable();
+    while let Some(c) = cs.next() {
+        out.push(c);
+        if c == 'b' && cs.peek() == Some(&'\'') {
+            out.push(cs.next().expect("a quote"));
+            while let Some(d) = cs.next() {
+                if d == '\\' {
+                    cs.next();
+                } else if d == '\'' {
+                    out.push(d);
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
 /// `body` indented by its braces, four spaces a level from `base` (the generated code has no
 /// braces in strings or characters; a comment's are not counted).
 fn indent(body: &str, base: usize) -> String {
@@ -1792,7 +1948,7 @@ fn indent(body: &str, base: usize) -> String {
         if l.is_empty() {
             continue;
         }
-        let code = l.split("//").next().unwrap_or("");
+        let code = no_literals(l.split("//").next().unwrap_or(""));
         let lead = code.chars().take_while(|c| matches!(c, '}' | ')' | ']')).count() as i32;
         let level = (depth - lead).max(0);
         for _ in 0..level {
@@ -1831,7 +1987,7 @@ fn rule(out: &mut String, x: &Facts<'_>, entry: usize) -> Result<(), String> {
     let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> { word(x, nodes[node], jump) };
     let body = indent(&shape.tree(&emit, 0)?, 1);
     let params = if x.context { ", mut word: u32, mut flags: u32" } else { "" };
-    writeln!(out, "/// The rule entered at word {entry}.\n#[inline(never)]\nfn r{entry}(s: &mut S{params}) -> Result<bool, bool> {{\n    let mut d: u32 = 0;\n{body}}}\n").unwrap();
+    writeln!(out, "/// The rule entered at word {entry}.\n#[inline(never)]\nfn {}(s: &mut S{params}) -> Result<bool, bool> {{\n    let mut d: u32 = 0;\n{body}}}\n", x.function(entry)).unwrap();
     Ok(())
 }
 
