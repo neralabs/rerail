@@ -109,8 +109,11 @@ Asked why the device caches relations at all, the user set the rule (2026-11-19)
      a 64-bit mask of those known, so 32 bytes cover 64 symbols and neighbours share an entry's LRU life. The cache
      is the Machine's (`Shared`, decision 0442), passed in, never global; it lives across a session's runs, as
      symbols are the store's ids and a test is keyed by its automaton's slot (`text::automata`).
-   - **2e.** The text functions' outputs (`mapped`), by (functions, symbol). Their representation is decided
-     when 2d is in: an output is a text, not a verdict.
+   - **2e.** The text functions' outputs (`mapped`), by (functions, symbol). Decided by the user (2026-11-19,
+     asked why a cache's entries are fixed in size): the rolling cache's entries are of any size up to a most, each
+     generation a fixed hash index and a bump arena; a text is an entry of its own length (most 4 KB a text; a
+     longer one is made each time it is read, not kept). Built in two parts: the cache (below, "Built, step 2e,
+     the cache"), then the texts on it.
 3. Views' indexes go in the chunk block, and the copies are no longer cached. R4.
 4. The device's automata go in a block.
 5. The CPU's indexes, orders and dead rows go in the relation's block. R2, R5.
@@ -217,3 +220,38 @@ pending into a new buffer.
   MB, against step 2c's three runs at the same load of 76.6-82.4 B, peak 1,228-1,399 MB; 1,629 findings in each (the
   new binary's first launch, 100 B and 35 s, left out). The build before the fix stopped once in five runs at the ast
   matcher wave's `BackendCapacity` (work queue, Q261 "Found"); none of the five after it did.
+
+## Built (2026-11-19, step 2e, the cache's entries of any size)
+
+Amends decision 0353 step 4b's rolling cache, whose entries were of one size (its log2 in the header, `SHIFT`):
+that size came from the cache's first use, a 16z block decoded, and nothing else needs it.
+
+- **Layout.** A generation is its words (its stamp, its entries taken, its arena's bytes taken `BUMP`, its writers
+  `WRITERS`), its hash index (u32 slots: a tag above an entry's number plus one, as before), its entries' offsets in
+  its arena by number (a u32 each), then its arena. An entry is its key, its completion and its bytes (`LEN`: header
+  and payload), then its payload; entries are 64-byte aligned. The header's `MAX` (was `SHIFT`) is the most bytes an
+  entry takes. `Spec::arena(gens, entries, arena, max)` makes any shape; `Spec::new` keeps the one size for its
+  callers (the 16z caches, the verdicts).
+- **A generation is full** when its index's entries or its arena's bytes are: the bound is in bytes too. An entry
+  past `MAX` is not kept (the dead entry, a failure counted) and turns no generation. A hit in the oldest generation
+  is copied with its own length.
+- **No write of an older epoch lands in a newer one's entry.** The fixed size gave this by the entry's own completion
+  word, which a writer of an older epoch still held. With entries of any size a new one can overlap an old writer's
+  partly, so a writer counts itself in its generation from before it takes an entry to its completion, and checks
+  after counting that its generation is still its epoch's. The thread that turns the head unstamps the next spare
+  and clears it only with no writer in it (`cache_clear`, one thread by a compare-and-swap of its stamp); else the
+  spare stays unstamped and a later full head clears it. Every loop stays bounded.
+- **An open lookup** (`reads::cache_lookup` with no fill) waits for no writer. It returns the entry found (`FOUND`),
+  an entry taken for the size asked that its caller writes and completes (`TAKEN`, `cache_done`), `PENDING` (another
+  thread writes it), or `NOT_KEPT`, in the result's low bits. A device pass that measures a text then writes it in a
+  later pass uses it. Reads `text_find`, `text_open`, `cache_done`, in CLIF; a text's key has bit 63 set, so none
+  meets a verdict's in one cache.
+- Test: `texts_of_any_length_are_kept_in_the_arenas_by_bytes` (lengths 0 to 200 apart and aligned; past the most not
+  kept, nothing turned; pending while written; full by bytes, a text read as others come kept and one not read let
+  go; a generation with a writer in it not cleared under it, and cleared once the writer is done). The verdicts' and
+  the 16z caches' tests pass unchanged.
+- hogql cold, Metal, profiling, load 35-44, interleaved with the build before (32cdea49d), 1,629 findings in every
+  run. Format 15: 76.3-78.0 B against 76.9-80.7 B, peak 1,350-1,492 MB against 1,317-1,485 MB. Format 16z (the
+  block cache's own runs): 102.9 B against 101.8 B, peak 2,297 MB against 2,232 MB; no lookup failed, none turned
+  a generation, 6,155 misses against 5,898. Left out: each build's first run of each format, which compiles the
+  kernels whose reads changed (180 B and 124 s; 124 B).
