@@ -97,9 +97,21 @@ export function contentStoreOverride(): string | undefined {
 }
 
 /**
+ * What the engine writes beside a content store, as suffixes of its path: SQLite's `-wal`, `-shm` and `-journal`, the
+ * locks its collection and upkeep take (`.collection.lock`, `.runs.lock`), and the folders of segments that hold its
+ * frames, its memo and its tapes and sources (`.frames`, `.memo`, `.objects`).
+ */
+export const CONTENT_STORE_SIDECARS = ["-wal", "-shm", "-journal", ".collection.lock", ".runs.lock", ".frames", ".memo", ".objects"] as const;
+
+/** The store at `store` and everything the engine writes beside it ({@link CONTENT_STORE_SIDECARS}), store first. */
+export function contentStoreFiles(store: string): string[] {
+  return [store, ...CONTENT_STORE_SIDECARS.map(suffix => `${store}${suffix}`)];
+}
+
+/**
  * The content store `build` (default: this process's) opens: the machine-wide one for main, `<checkout>/.rerail/`
  * for dev, so no two checkouts and no checkout and the managed installation share a store. The file name is the
- * native binary's (`content-v1.sqlite` at store floor 1), so a floor raise renames every store at once.
+ * native binary's (`content-v5.sqlite` at store floor 5), so a floor raise renames every store at once.
  * `RERAIL_CONTENT_STORE_PATH` overrides both (tests give each run its own file), and then no build is resolved.
  */
 export function contentStorePath(build?: RerailBuild): string {

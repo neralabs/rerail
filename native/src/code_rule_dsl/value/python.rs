@@ -2,15 +2,17 @@
 //! builtin constructors over them folded as CPython evaluates them.
 
 use crate::code_rule_dsl::language::Family;
+use crate::code_rule_dsl::tree::Tree;
 
-mod ops;
+pub mod ops;
+pub mod words;
 
 use super::{BigInt, ContainerKind, Context, MAX_INT_BITS, MAX_STRING_BYTES, Value, int_to_float};
 use crate::code_rule_dsl::identifier::python_identifier;
 use ast_grep_core::{Doc, Node};
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.
-pub(crate) fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
+pub fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     if !context.enter() {
         return Value::Unknown;
     }
@@ -84,7 +86,7 @@ fn follow<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 /// Expressions: the subtypes of the grammar's `expression` and `primary_expression` supertypes
 /// (tree-sitter-python 0.25.0 `node-types.json`), and bare tuples. Only an expression has a value;
 /// on any other node (a statement, a keyword argument, punctuation) every value predicate fails.
-pub(crate) const EXPRESSION_KINDS: &[&str] = &[
+pub const EXPRESSION_KINDS: &[&str] = &[
     "as_pattern",
     "attribute",
     "await",
@@ -122,7 +124,7 @@ pub(crate) const EXPRESSION_KINDS: &[&str] = &[
 ];
 
 /// Kinds whose value `decode` can know; any other expression is `Unknown`.
-pub(crate) const VALUE_KINDS: &[&str] = &[
+pub const VALUE_KINDS: &[&str] = &[
     "integer",
     "float",
     "true",
@@ -147,17 +149,13 @@ pub(crate) const VALUE_KINDS: &[&str] = &[
 
 /// Named children other than comments.
 fn operands<'r, D: Doc>(node: &Node<'r, D>) -> Vec<Node<'r, D>> {
-    node.children()
-        .filter(|child| child.is_named() && child.kind() != "comment")
-        .collect()
+    node.named_code().collect()
 }
 
 /// The one named child of a parenthesized expression, comments aside; a parenthesized yield or a
 /// generator has other shapes.
 pub(super) fn single_child<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
-    let mut named = node
-        .children()
-        .filter(|child| child.is_named() && child.kind() != "comment");
+    let mut named = node.named_code();
     match (named.next(), named.next()) {
         (Some(inner), None) => Some(inner),
         _ => None,
@@ -275,10 +273,7 @@ fn string<D: Doc>(node: &Node<'_, D>) -> Value {
 pub(crate) fn string_literal<D: Doc>(node: &Node<'_, D>) -> Option<String> {
     let parts = match node.kind().as_ref() {
         "string" => vec![node.clone()],
-        "concatenated_string" => node
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment")
-            .collect(),
+        "concatenated_string" => node.named_code().collect(),
         _ => return None,
     };
     let mut value = String::new();
@@ -338,6 +333,15 @@ fn concatenated<D: Doc>(node: &Node<'_, D>) -> Value {
     }
 }
 
+/// A string literal's value from its source text (`core.rerail`'s `value`): its body decoded, escapes and all; none for
+/// bytes, templates, or a literal Python refuses.
+pub(crate) fn str_value(text: &str) -> Option<String> {
+    match piece(text)? {
+        Piece::Str(s) => Some(s),
+        Piece::Bytes(_) => None,
+    }
+}
+
 /// Decodes one literal's source text: prefix, quotes, body. A template (`t`) string is no `str`.
 fn piece(text: &str) -> Option<Piece> {
     let quote_at = text.find(['\'', '"'])?;
@@ -391,8 +395,8 @@ pub(super) fn decode_body(body: &str, prefix: &Prefix) -> Option<Piece> {
 }
 
 /// Python's escape sequences, as code points (bytes for a `bytes` literal). `None` for a malformed
-/// or out-of-range escape, a name `\N{...}` does not know, or a lone surrogate (which `String`
-/// cannot hold).
+/// or out-of-range escape, or an unknown Unicode name. Surrogates remain code points;
+/// scalar callers still reject them when they construct a Rust String.
 fn decode_escapes(body: &str, bytes: bool) -> Option<Vec<u32>> {
     let mut out = Vec::with_capacity(body.len());
     let mut chars = body.chars().peekable();
@@ -442,8 +446,8 @@ fn decode_escapes(body: &str, bytes: bool) -> Option<Vec<u32>> {
                 out.push(if bytes { code & 0xff } else { code });
             }
             'x' => out.push(hex(&mut chars, 2)?),
-            'u' if !bytes => out.push(scalar(hex(&mut chars, 4)?)?),
-            'U' if !bytes => out.push(scalar(hex(&mut chars, 8)?)?),
+            'u' if !bytes => out.push(codepoint(hex(&mut chars, 4)?)?),
+            'U' if !bytes => out.push(codepoint(hex(&mut chars, 8)?)?),
             // `\N{name}`: a character by its Unicode name or alias.
             'N' if !bytes => {
                 if chars.next()? != '{' {
@@ -468,14 +472,14 @@ fn decode_escapes(body: &str, bytes: bool) -> Option<Vec<u32>> {
     Some(out)
 }
 
-/// A code point a Rust `char` can hold: not a surrogate, at most U+10FFFF.
-fn scalar(code: u32) -> Option<u32> {
-    char::from_u32(code).map(u32::from)
+/// A Python str code point, including lone surrogates.
+fn codepoint(code: u32) -> Option<u32> {
+    (code <= 0x10ffff).then_some(code)
 }
 
 /// `+x`, `-x`, `~x`.
 fn unary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
-    let (Some(operator), Some(operand)) = (node.field("operator"), node.field("argument")) else {
+    let (Some(operator), Some(operand)) = (node.operator_token(), node.field("argument")) else {
         return Value::Unknown;
     };
     let operand = decode(&operand, context);
@@ -486,7 +490,7 @@ fn unary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     let (Some(left), Some(operator), Some(right)) = (
         node.field("left"),
-        node.field("operator"),
+        node.operator_token(),
         node.field("right"),
     ) else {
         return Value::Unknown;
@@ -503,7 +507,7 @@ fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 fn boolean<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     let (Some(left), Some(operator), Some(right)) = (
         node.field("left"),
-        node.field("operator"),
+        node.operator_token(),
         node.field("right"),
     ) else {
         return Value::Unknown;
@@ -674,10 +678,7 @@ fn iterable(name: &str, value: &Value) -> Value {
 /// A display: a tuple whose elements are all known is a value; otherwise, and for lists, sets and
 /// dicts, only its kind, length and emptiness are, so far as splats allow.
 fn sequence<D: Doc>(node: &Node<'_, D>, kind: ContainerKind, context: &mut Context<'_>) -> Value {
-    let elements = node
-        .children()
-        .filter(|child| child.is_named() && child.kind() != "comment")
-        .collect::<Vec<_>>();
+    let elements = node.named_code().collect::<Vec<_>>();
     let splat = |element: &Node<'_, D>| {
         matches!(
             element.kind().as_ref(),
@@ -734,7 +735,7 @@ pub(crate) fn to_str(value: &Value) -> Option<String> {
 /// CPython's `float_repr` (`repr` style `'r'`): the shortest digits that round-trip, positional
 /// where the decimal point falls within 16 digits of them (then with `.0` if integral), else
 /// scientific with a signed exponent of at least two digits.
-pub(crate) fn float_repr(value: f64) -> String {
+pub fn float_repr(value: f64) -> String {
     if value.is_nan() {
         return "nan".to_owned();
     }
@@ -777,5 +778,4 @@ pub(crate) fn float_repr(value: f64) -> String {
     format!("{sign}{body}")
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

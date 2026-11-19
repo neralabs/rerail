@@ -1,0 +1,219 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b010-set-attr-with-constant",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use plain attribute assignment instead of setattr() with a constant attribute name; it is no safer and harder to read.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "set-attr-with-constant",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "ref-setattr": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "global": [
+                  "setattr"
+                ],
+                "import": [
+                  "builtins.setattr"
+                ]
+              }
+            },
+            "callee": {
+              "any": [
+                {
+                  "matches": "ref-setattr"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "identifier-literal": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "string",
+                      "regex": "^[rRuU]{0,2}['\"]"
+                    },
+                    {
+                      "kind": "concatenated_string",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "string",
+                          "not": {
+                            "regex": "^[rRuU]{0,2}['\"]"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "value": {
+                    "regex": "^[\\p{XID_Start}_]\\p{XID_Continue}*$"
+                  },
+                  "not": {
+                    "any": [
+                      {
+                        "value": {
+                          "regex": "^(False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)$"
+                        }
+                      },
+                      {
+                        "all": [
+                          {
+                            "value": {
+                              "regex": "^__"
+                            }
+                          },
+                          {
+                            "not": {
+                              "value": {
+                                "regex": "__$"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "value": {
+                          "eq": "__debug__"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "identifier-literal"
+                  }
+                }
+              ]
+            },
+            "positional": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "keyword_argument"
+                  },
+                  {
+                    "kind": "dictionary_splat"
+                  },
+                  {
+                    "kind": "list_splat"
+                  }
+                ]
+              }
+            },
+            "argument": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "keyword_argument"
+                  },
+                  {
+                    "kind": "dictionary_splat"
+                  }
+                ]
+              }
+            },
+            "no-keywords": {
+              "kind": "argument_list",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "keyword_argument"
+                    },
+                    {
+                      "kind": "dictionary_splat"
+                    }
+                  ]
+                }
+              }
+            },
+            "statement-expression": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "expression_statement",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "matches": "statement-expression"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "pattern": "$FUNC($OBJ, $NAME, $VALUE)",
+            "matches": "statement-expression",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "no-keywords"
+            }
+          },
+          "constraints": {
+            "FUNC": {
+              "matches": "callee"
+            },
+            "OBJ": {
+              "matches": "positional"
+            },
+            "NAME": {
+              "matches": "identifier-literal"
+            },
+            "VALUE": {
+              "matches": "argument"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B010",
+        "message": "Replace this `setattr` call with a plain assignment, such as `obj.name = value`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B010"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

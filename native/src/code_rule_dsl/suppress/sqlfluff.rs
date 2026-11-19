@@ -6,6 +6,19 @@ use crate::code_rule_dsl::lines::LineTable;
 use ast_grep_core::{Doc, Node};
 use serde_json::Value;
 
+/// SQLFluff's `-- noqa` comments, a linter other than Ruff: the references a directive may
+/// name the violation's rule by.
+pub struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "sqlfluff";
+    const DETAIL: &'static str = "sqlfluff: -- noqa comments are SQLFluff's";
+    type Spec = Vec<String>;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Vec<String>> {
+        spec(value, at)
+    }
+}
+
 /// `suppress.sqlfluff`: `{ "rules": [...] }`, the references SQLFluff knows the violation's rule
 /// by, the keys of its `RulePack.reference_map` that map to the rule: its code, its name, its
 /// legacy aliases and its groups (`["AL05", "L025", "aliasing", "aliasing.unused", "all",
@@ -337,9 +350,9 @@ fn fnmatchcase(globs: &[Glob], text: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
-    use crate::code_rule_dsl::oracle;
+    use crate::code_rule_dsl::fixtures::oracle;
     use serde_json::Value;
 
     fn refs(code: &str) -> Vec<String> {
@@ -642,7 +655,7 @@ mod tests {
             "range.sql",
             "routine_bodies.sql",
         ] {
-            let path = std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
+            let path = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!())
                 .join("sql/suppress/sqlfluff")
                 .join(file);
             let source = std::fs::read_to_string(path).unwrap();

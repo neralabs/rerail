@@ -1,0 +1,4 @@
+^(?:_explicit_authority_var|_legacy_boundary_var)$
+^(?:execution_boundary)$
+^(?:explicit_execution_authority)$
+^(?:setattr)$
