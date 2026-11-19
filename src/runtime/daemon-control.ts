@@ -1662,15 +1662,15 @@ function provenNow(home: string, state: DaemonState, proof: StopProof, machine: 
 
 /**
  * {@link SignalVerdict} for the process `state` names, by the facts that proved it (`proof`). A daemon that did not
- * answer is as {@link recordedProcess} shows it: the home's lock held as its recorded holder, or a start no later than
- * its record. One that answered as itself while it held no lock stays proven while it runs; one that answered while it
- * held the lock stays proven while it holds it or its start shows it the process that wrote its record, as when its
- * exit runs on after it let go of the lock. It is `ending` once its start reads later than its record by more than the
- * clock's slack ({@link startVerdict}), as a process that took its pid since does, and `unknown` while neither the lock
- * nor its start decides.
+ * answer and held no lock when the stop began is as {@link recordedProcess} shows it: the home's lock held as its
+ * recorded holder, or a start no later than its record. One that answered as itself while it held no lock stays proven
+ * while it runs. One that held the lock when the stop began, whether it answered or was too busy to, stays proven while
+ * it holds it or its start shows it the process that wrote its record, as when its exit runs on after it let go of the
+ * lock. It is `ending` once its start reads later than its record by more than the clock's slack ({@link startVerdict}),
+ * as a process that took its pid since does, and `unknown` while neither the lock nor its start decides.
  */
 function provenBy(home: string, state: DaemonState, proof: StopProof, machine: DaemonMachine): SignalVerdict {
-  if (proof === "record" || proof === "holder") return recordedProcess(home, state, machine, Date.now() + STOP_TIMEOUT_MS);
+  if (proof === "record") return recordedProcess(home, state, machine, Date.now() + STOP_TIMEOUT_MS);
   if (proof === "answer" || lockVerdict(home, state.pid, machine) === "ours") return "ours";
   const byStart = startVerdict(state, machine, Date.now() + STOP_TIMEOUT_MS);
   return byStart === "not-ours" ? "ending" : byStart;

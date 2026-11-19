@@ -1320,7 +1320,8 @@ describe("a record whose live pid is not the home's daemon", () => {
   /** A change to the stop's world: to daemon.json, to the process daemon.json named, or to the home's lock. */
   type WorldChange =
     | "record-gone" | "record-other" | "record-dead" | "record-unreadable"
-    | "exits" | "lets-go" | "reused" | "start-unread" | "another-holds" | "another-lets-go" | "dead-recorded";
+    | "exits" | "lets-go" | "reused" | "start-unread" | "another-holds" | "another-start-read" | "another-lets-go"
+    | "dead-recorded";
   /**
    * One state a stop can meet between its proof and its answer: how it proved `LIVE_PID` the home's daemon, what changes
    * and when, what it sends, what it answers and what daemon.json holds after. The stop proved the daemon by its answer to
@@ -1417,6 +1418,9 @@ describe("a record whose live pid is not the home's daemon", () => {
     { cell: "the daemon exits at its SIGTERM and daemon.json names a gone process while a start's daemon holds the lock at the stop's cleanup",
       rule: 3, proof: "lock", signal: ["lets-go", "exits", "another-holds", "record-dead"], sent: ["SIGTERM"], answer: "stopped",
       record: "none" },
+    { cell: "a start's daemon takes the lock the daemon, too busy to answer, let go of at its SIGTERM while daemon.json still names that daemon, whose start cannot be read and whose exit runs on past the wait",
+      rule: 2, proof: "lock", signal: ["another-holds", "another-start-read"], sent: ["SIGTERM", "SIGKILL"], answer: "stopped",
+      record: "none" },
   ];
 
   /** The process daemon.json named, its start, and who holds the home's lock, as a {@link StopCell} changes them. */
@@ -1424,6 +1428,7 @@ describe("a record whose live pid is not the home's daemon", () => {
     running: boolean;
     started: number | undefined;
     holder: number | undefined;
+    otherStarted: number | undefined;
   }
 
   /** Applies `change` to `world` and to the files in the home, as the process or program it stands for would. */
@@ -1459,6 +1464,10 @@ describe("a record whose live pid is not the home's daemon", () => {
         world.started = undefined;
       },
       "another-holds": () => holdBy(OTHER_PID),
+      // The start of the process that took the lock reads, earlier than the record it wrote beside the lock.
+      "another-start-read": () => {
+        world.otherStarted = STARTED_AT + 60_000;
+      },
       // A start's daemon closes: it lets go of the lock while its record beside it stays, as one another program holds open.
       "another-lets-go": () => {
         world.holder = undefined;
@@ -1511,13 +1520,19 @@ describe("a record whose live pid is not the home's daemon", () => {
         at((asks += 1) === 1 ? "ask" : "again");
         return world.holder !== undefined;
       },
-      processStartedAt: pid => (pid === LIVE_PID && world.running ? world.started : undefined),
+      processStartedAt: pid => startOf(world, pid),
       kill: (pid, signal) => {
         if (pid === OTHER_PID && signal === 0) return true;
         if (pid !== LIVE_PID || !world.running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
         return signal === 0 ? look() : signalled(signal);
       },
     });
+  }
+
+  /** The start `world` gives `pid`: `LIVE_PID`'s while it runs, `OTHER_PID`'s once it can be read, no other. */
+  function startOf(world: StopWorld, pid: number): number | undefined {
+    if (pid === OTHER_PID) return world.otherStarted;
+    return pid === LIVE_PID && world.running ? world.started : undefined;
   }
 
   /** What daemon.json in the home holds after a stop, in the words of {@link StopCell}'s `record`. */
@@ -1535,7 +1550,9 @@ describe("a record whose live pid is not the home's daemon", () => {
    * `LIVE_PID`, which holds the home's lock as its recorded holder unless its start proves it.
    */
   async function stopCell(platform: NodeJS.Platform, row: StopCell): Promise<{ world: StopWorld; sent: string[]; machine: DaemonMachine; found: FoundDaemon }> {
-    const world: StopWorld = { running: true, started: row.proof === "lock" ? undefined : STARTED_AT - 500, holder: undefined };
+    const world: StopWorld = {
+      running: true, started: row.proof === "lock" ? undefined : STARTED_AT - 500, holder: undefined, otherStarted: undefined,
+    };
     await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state(platform)));
     if (row.proof !== "start") {
       await holdHome(home, LIVE_PID);
