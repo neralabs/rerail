@@ -1070,7 +1070,8 @@ export function startPolling(listener) {
   followChanges();
   document.addEventListener("visibilitychange", () => { if (hidden()) endChanges(); else followChanges(); });
   // Another tab of this origin stored the capability (the link `rerail manage` opens): read with it now.
-  window.addEventListener("storage", event => { if (event.key === ACCESS_KEY && !hidden()) refreshNow(); });
+  // Outside a browser page (a test's Node) there is no window, as there is no document for `hidden`.
+  globalThis.window?.addEventListener("storage", event => { if (event.key === ACCESS_KEY && !hidden()) refreshNow(); });
 }
 
 /** A user action that changes what to fetch (view, range, selected session) wants data now. */

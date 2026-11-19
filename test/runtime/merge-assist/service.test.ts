@@ -4,11 +4,12 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { mergeAssistState, openRerailDatabase, type GithubReadiness, type MergeAssistStatus } from "../../../src/engine/index.js";
 import { PULL_REQUEST_LIMIT, type GithubRepository, type PullRequestListing, type PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
+import { SignInReads } from "../../../src/runtime/merge-assist/sign-in.js";
 import { commit, git } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, type Workspace } from "../../support/merge-assist/workspace.js";
 import { withExperiments } from "../../support/environment/experiments.js";
@@ -479,9 +480,19 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(github.readinessReads).toBe(reads + 1);
 
     // Two checkouts of the repository scanned at once: both listings ask while one read is out, and it serves both.
+    // Each scan finds its checkout through Git first, so the read is let go once both listings have asked for it.
     const other = ws.worktree("jbarnes-docs");
+    const bothAsked = Promise.withResolvers<void>();
+    const read = SignInReads.prototype.read;
+    let asks = 0;
+    const asking = vi.spyOn(SignInReads.prototype, "read").mockImplementation(function (this: SignInReads, repositoryKey: string) {
+      if ((asks += 1) === 2) bothAsked.resolve();
+      return read.call(this, repositoryKey);
+    });
+    onTestFinished(() => asking.mockRestore());
     github.hold();
     const scans = [service.scan(ws.repo), service.scan(other)];
+    await bothAsked.promise;
     github.release();
     await Promise.all(scans);
     expect(github.readinessReads).toBe(reads + 2);

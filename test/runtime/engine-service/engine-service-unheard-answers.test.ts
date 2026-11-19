@@ -169,14 +169,16 @@ describe("engine service answers a hook no longer waits for", () => {
   });
 
   it("answers a session's end once the service has let go of the session, as before", async () => {
-    const service = await checkingService({ idleRuntimeMs: 0 });
+    const service = await checkingService();
     const responses = serverResponses(1);
     const ending = ingestEngineEvent(service.engine, { kind: "session-end", eventId: "end", sessionId: SESSION, session: { host: "claude-code", sessionId: SESSION, cwd: service.root } });
-    // What the service holds as it writes the answer: the session's runtime is gone already.
-    let openWhenAnswered = -1;
-    atItsAnswer((await responses)[0], () => (openWhenAnswered = service.openRuntimes()));
+    // What the service holds as it writes the answer: no session uses the session's runtime any more, so it is among
+    // the runtimes no session uses, kept for its checkout's next session, and closing those closes it.
+    let closing: Promise<void> | undefined;
+    atItsAnswer((await responses)[0], () => (closing = service.closeUnusedRuntimes()));
     await ending;
-    expect(openWhenAnswered).toBe(0);
+    await closing;
+    expect(service.openRuntimes()).toBe(0);
   });
 });
 
@@ -327,8 +329,6 @@ function hook(socketPath: string, event: AdapterEvent): {
 }
 
 interface ServiceOptions {
-  /** 0 closes a runtime as its last session ends. */
-  idleRuntimeMs?: number;
   idleSessionMs?: number;
   now?: () => number;
   /** A folder an earlier service of the test ran in: this one runs over its records, as a daemon started again does. */
@@ -351,6 +351,8 @@ async function checkingService(options: ServiceOptions = {}): Promise<{
   start: (sessionId: string) => Promise<void>;
   steer: (sessionId: string, content: string) => Promise<void>;
   openRuntimes: () => number;
+  /** Closes every runtime no session uses (`EngineService.closeUnusedRuntimes`). */
+  closeUnusedRuntimes: () => Promise<void>;
   closeIdleSessions: () => Promise<void>;
   deliveriesOf: (content: string) => Promise<number>;
   close: () => Promise<void>;
@@ -416,6 +418,7 @@ async function checkingService(options: ServiceOptions = {}): Promise<{
   return {
     root, socketPath, engine: { socketPath }, checking: checking.promise, steered: steered.promise, finishCheck: () => check.resolve(), start,
     openRuntimes: () => service.openRuntimes(),
+    closeUnusedRuntimes: () => service.closeUnusedRuntimes(),
     closeIdleSessions: () => service.closeIdleSessions(),
     deliveriesOf: content => deliveryEntries(join(root, "state"), content),
     close,

@@ -496,8 +496,11 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async signInStamp(checkoutPath: string): Promise<string> {
-    const checkout = await this.#activeCheckout(checkoutPath);
-    return checkout === undefined ? "" : await this.#signIn.stamp(checkout.repositoryKey);
+    // The dashboard's change stream asks at each beat with the path Rerail recorded: its row answers with no Git. Any
+    // other spelling of the checkout is located through Git, off the thread.
+    const recorded = this.#db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get()?.key;
+    const repositoryKey = recorded ?? (await this.#activeCheckout(checkoutPath))?.repositoryKey;
+    return repositoryKey === undefined || !mergeAssistEnabled(this.#db, repositoryKey) ? "" : await this.#signIn.stamp(repositoryKey);
   }
 
   /**
