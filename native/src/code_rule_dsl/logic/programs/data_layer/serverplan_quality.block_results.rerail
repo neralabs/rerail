@@ -1,0 +1,38 @@
+// expect: NotStratifiable
+// serverplan-quality, quality-conditional-1, stage block_results (E0 § 2.5 row 27), written over the tree: the stage
+// serverplan_quality.quality_conditional_1.rdl declares OUTSIDE.
+//
+// The SQL folds the contract blocks in sequence (smallest first) into a JSON map block → raises. Over the tree, a block
+// raises when a statement before its first raise/return barrier is `raise TypeError`, or is an if (with an else) or a
+// match all of whose contract blocks raise. "All of its blocks raise" is "no block of it fails to raise": a negation
+// of `raises` inside its own component, which §12 rejects (NotStratifiable). It is stratified by tree depth, which the
+// front end cannot see: the sequence order (by size) is what makes the SQL fold well-founded.
+// contract_block: serverplan_quality.quality_conditional_1.rdl's contract_blocks.
+.decl contract_block(b: node)
+.input contract_block
+.decl barrier(b: node, s: number)
+barrier(b, s) :- contract_block(b), child(b, x, _), kind(x, "raise_statement"), start(x, s).
+barrier(b, s) :- contract_block(b), child(b, x, _), kind(x, "return_statement"), start(x, s).
+.decl barrier_start(b: node, s: number)
+barrier_start(b, m) :- barrier(b, _), m = min s : { barrier(b, s) }.
+
+.decl body_statement(b: node, s: node)
+body_statement(b, s) :- contract_block(b), child(b, s, _), start(s, ss), barrier_start(b, x), ss <= x.
+body_statement(b, s) :- contract_block(b), child(b, s, _), !barrier_start(b, _).
+// A contract block directly under the if, or under one of its elif/else arms; or under one of a match's case arms.
+.decl arm_block(s: node, c: node)
+arm_block(s, c) :- kind(s, "if_statement"), child(s, c, _), contract_block(c).
+arm_block(s, c) :- kind(s, "if_statement"), child(s, a, _), kind(a, "elif_clause"), child(a, c, _), contract_block(c).
+arm_block(s, c) :- kind(s, "if_statement"), child(s, a, _), kind(a, "else_clause"), child(a, c, _), contract_block(c).
+arm_block(s, c) :- kind(s, "match_statement"), kind(a, "case_clause"), @within(a, s) = 1, child(a, c, _), contract_block(c).
+.decl has_else(s: node)
+has_else(s) :- kind(s, "if_statement"), child(s, a, _), kind(a, "else_clause").
+.decl has_case(s: node)
+has_case(s) :- kind(s, "match_statement"), kind(a, "case_clause"), @within(a, s) = 1.
+.decl some_arm_fails(s: node)
+some_arm_fails(s) :- arm_block(s, c), !raises(c).
+.decl raises(b: node)
+raises(b) :- body_statement(b, s), kind(s, "raise_statement"), text(s, t), @rx_matches(t, "^raise\\s+TypeError(?:\\s*\\(|\\s*$)") = 1.
+raises(b) :- body_statement(b, s), has_else(s), !some_arm_fails(s).
+raises(b) :- body_statement(b, s), has_case(s), !some_arm_fails(s).
+.output raises

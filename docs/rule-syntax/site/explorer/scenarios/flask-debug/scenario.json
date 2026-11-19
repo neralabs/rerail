@@ -1,0 +1,5 @@
+{
+  "title": "Flask's debugger in production",
+  "rule": "bandit-b201-flask-debug-true",
+  "note": "B201 flags app.run(debug=True) on a Flask app: the debugger runs arbitrary code from the browser. debug=False and a value read from the environment are not findings."
+}

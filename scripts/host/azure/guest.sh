@@ -185,7 +185,7 @@ packages:
   "**":
     access: \$all
     proxy: npmjs
-max_body_size: 200mb
+max_body_size: 1gb
 log: { type: stdout, level: warn }
 EOF
   # Its own session where there is setsid (Linux); macOS has none, and a background job is enough there.

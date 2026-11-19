@@ -1,0 +1,302 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-g002-logging-percent-format",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass values to a logging call as arguments instead of formatting its message with the percent operator; the logger then formats only records it emits.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "logging-percent-format",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "logging-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "logging",
+                      "flask.current_app.logger"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "logging-ref"
+                  }
+                }
+              ]
+            },
+            "factory": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "logging.getLogger",
+                      "logging.Logger"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "factory"
+                  }
+                }
+              ]
+            },
+            "name-chain": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "name-chain"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-chain"
+                  }
+                }
+              ]
+            },
+            "log-tail": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:log|LOG)|(?:logger|logging|LOGGER|LOGGING)$"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^(?:log|LOG)|(?:logger|logging|LOGGER|LOGGING)$"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "log-tail"
+                  }
+                }
+              ]
+            },
+            "logger": {
+              "any": [
+                {
+                  "matches": "logging-ref"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "factory"
+                  }
+                },
+                {
+                  "matches": "name-chain",
+                  "all": [
+                    {
+                      "matches": "log-tail"
+                    }
+                  ],
+                  "not": {
+                    "resolves": {
+                      "import": true
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "logger"
+                  }
+                }
+              ]
+            },
+            "level-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^(?:debug|critical|error|exception|info|warn|warning)$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "logger"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "logging.debug",
+                      "logging.critical",
+                      "logging.error",
+                      "logging.exception",
+                      "logging.info",
+                      "logging.warn",
+                      "logging.warning"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "level-callee"
+                  }
+                }
+              ]
+            },
+            "log-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^log$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "logger"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "logging.log"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "log-callee"
+                  }
+                }
+              ]
+            },
+            "msg": {
+              "any": [
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^%$"
+                  },
+                  "pattern": "$X"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "msg"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "any": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "level-callee"
+                },
+                "arguments": {
+                  "signature": [
+                    "msg"
+                  ],
+                  "bind": {
+                    "M": "msg"
+                  },
+                  "mode": "syntactic"
+                }
+              },
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "log-callee"
+                },
+                "arguments": {
+                  "signature": [
+                    "level",
+                    "msg"
+                  ],
+                  "bind": {
+                    "M": "msg"
+                  },
+                  "mode": "syntactic"
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "M": {
+              "matches": "msg"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.X",
+        "code": "G002",
+        "message": "Pass the values after `%` as logger arguments, e.g. `logger.info(\"x=%s\", x)` not `logger.info(\"x=%s\" % x)`; leave it if `%` is arithmetic or the logger is not from `logging`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "G002"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

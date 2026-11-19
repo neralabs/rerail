@@ -1,0 +1,12 @@
+C2SPLIT=0
+  reference: marked 2000, waves 2000, seeds 1
+  (c2) self-encoding ICB, execute split none     wall    11.114 ms  gpu     9.343 ms  waves 1 (tg-loop 0)  11114.25 us/wave  MISMATCH marked 1/2000 ICB pre-encode 1.2 ms (CPU, reusable)
+C2SPLIT=1
+  reference: marked 2000, waves 2000, seeds 1
+  (c2) self-encoding ICB, execute split 1        wall    38.489 ms  gpu    28.015 ms  waves 2000 (tg-loop 0)    19.24 us/wave  ok ICB pre-encode 3.2 ms (CPU, reusable)
+C2SPLIT=2
+  reference: marked 2000, waves 2000, seeds 1
+  (c2) self-encoding ICB, execute split 2        wall    16.211 ms  gpu    13.957 ms  waves 1 (tg-loop 0)  16210.88 us/wave  MISMATCH marked 1/2000 ICB pre-encode 0.7 ms (CPU, reusable)
+C2SPLIT=8
+  reference: marked 2000, waves 2000, seeds 1
+  (c2) self-encoding ICB, execute split 8        wall    12.153 ms  gpu    10.989 ms  waves 1 (tg-loop 0)  12153.04 us/wave  MISMATCH marked 1/2000 ICB pre-encode 6.6 ms (CPU, reusable)

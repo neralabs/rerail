@@ -364,6 +364,25 @@
           "selector": "switch_case"
         }
       }
+    },
+    {
+      "id": "contextual-switch-case-body-trails",
+      "language": "typescript",
+      "source": "switch (x) { case 1: f(); break; default: g(); }\n",
+      "rule": {
+        "pattern": {
+          "context": "switch ($X) { case $V: }",
+          "selector": "switch_case"
+        }
+      }
+    },
+    {
+      "id": "pattern-call-refuses-later-argument",
+      "language": "typescript",
+      "source": "f(a);\nf(a, b);\n",
+      "rule": {
+        "pattern": "f($A)"
+      }
     }
   ]
 }

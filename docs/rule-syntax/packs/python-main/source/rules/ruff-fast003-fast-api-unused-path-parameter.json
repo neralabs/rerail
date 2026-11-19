@@ -1,0 +1,1490 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-fast003-fast-api-unused-path-parameter",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Declare each path parameter of a FastAPI route as a function parameter, so the route can read the value its path captures.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unused-path-parameter",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "route-ctor": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "fastapi.FastAPI",
+                      "fastapi.APIRouter"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-ctor"
+                  }
+                }
+              ]
+            },
+            "route-ann": {
+              "any": [
+                {
+                  "matches": "route-ctor"
+                },
+                {
+                  "kind": "type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-ann"
+                  }
+                }
+              ]
+            },
+            "route-init": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "route-ctor"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-init"
+                  }
+                }
+              ]
+            },
+            "plain-target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "plain-target"
+                  }
+                }
+              ]
+            },
+            "route-name": {
+              "kind": "identifier",
+              "any": [
+                {
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "matches": "route-init"
+                      },
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "as_pattern",
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "with_item"
+                        },
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "route-init",
+                              "precedes": {
+                                "stopBy": "end",
+                                "regex": "^as$"
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "as_pattern_target",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "plain-target"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "annotation": {
+                        "matches": "route-ann"
+                      },
+                      "site": {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "list_splat_pattern"
+                              },
+                              {
+                                "kind": "dictionary_splat_pattern"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "function_definition",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "return_type",
+                          "matches": "route-ann"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "route-receiver": {
+              "any": [
+                {
+                  "matches": "route-name"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-receiver"
+                  }
+                }
+              ]
+            },
+            "route-attr": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "matches": "route-receiver"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^(get|post|put|delete|patch|options|head|trace)$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-attr"
+                  }
+                }
+              ]
+            },
+            "route-call": {
+              "kind": "call",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "function",
+                "matches": "route-attr"
+              }
+            },
+            "route-decorator": {
+              "kind": "decorator",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "route-call-expr"
+              }
+            },
+            "route-call-expr": {
+              "any": [
+                {
+                  "matches": "route-call"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "route-call-expr"
+                  }
+                }
+              ]
+            },
+            "plain-str": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "kind": "string",
+                      "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                    }
+                  }
+                }
+              ]
+            },
+            "depends-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "fastapi.Depends"
+                ]
+              }
+            },
+            "path-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "fastapi.Path"
+                ]
+              }
+            },
+            "annotated-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.Annotated",
+                  "typing_extensions.Annotated",
+                  "_typeshed.Annotated"
+                ]
+              }
+            },
+            "pydantic-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pydantic.BaseModel"
+                ]
+              }
+            },
+            "depends-call": {
+              "kind": "call",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "depends-ref",
+                "field": "function"
+              }
+            },
+            "alias-str": {
+              "any": [
+                {
+                  "matches": "plain-str",
+                  "pattern": "$AL"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "alias-str"
+                  }
+                }
+              ]
+            },
+            "plain-param": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "typed_parameter"
+                },
+                {
+                  "kind": "default_parameter"
+                },
+                {
+                  "kind": "typed_default_parameter"
+                }
+              ]
+            },
+            "typed-param": {
+              "any": [
+                {
+                  "kind": "typed_parameter",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier"
+                  }
+                },
+                {
+                  "kind": "typed_default_parameter"
+                }
+              ]
+            },
+            "annotated-g": {
+              "kind": "generic_type",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "identifier",
+                "matches": "annotated-ref"
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "type",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "typed-param"
+                }
+              }
+            },
+            "annotated-s": {
+              "kind": "subscript",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "annotated-ref",
+                "field": "value"
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "type",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "typed-param"
+                }
+              }
+            },
+            "elem-1": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "matches": "ann-slot",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^,$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "matches": "ann-slot",
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "elem-2": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "matches": "ann-slot",
+                    "all": [
+                      {
+                        "follows": {
+                          "stopBy": "end",
+                          "regex": "^,$"
+                        }
+                      },
+                      {
+                        "not": {
+                          "follows": {
+                            "stopBy": "end",
+                            "regex": "^,$",
+                            "follows": {
+                              "stopBy": "end",
+                              "regex": "^,$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "ann-slot",
+                  "all": [
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^,$"
+                      }
+                    },
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "regex": "^,$",
+                          "follows": {
+                            "stopBy": "end",
+                            "regex": "^,$"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "elem-meta": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "matches": "ann-slot",
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
+                  }
+                },
+                {
+                  "matches": "ann-slot",
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^,$"
+                  }
+                }
+              ]
+            },
+            "param-eq": {
+              "params": [
+                "K"
+              ],
+              "rule": {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "pattern": "$N",
+                    "compare": {
+                      "left": "K",
+                      "op": "eq",
+                      "right": "N"
+                    }
+                  },
+                  {
+                    "kind": "typed_parameter",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$N",
+                      "compare": {
+                        "left": "K",
+                        "op": "eq",
+                        "right": "N"
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "default_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ],
+                    "has": {
+                      "stopBy": "neighbor",
+                      "pattern": "$N",
+                      "compare": {
+                        "left": "K",
+                        "op": "eq",
+                        "right": "N"
+                      },
+                      "field": "name"
+                    }
+                  }
+                ]
+              }
+            },
+            "alias-form": {
+              "matches": "typed-param",
+              "has": {
+                "stopBy": "neighbor",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "call",
+                  "all": [
+                    {
+                      "matches": "elem-2"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "path-ref",
+                        "field": "function"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "argument_list",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "keyword_argument",
+                          "all": [
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "regex": "^alias$",
+                                "field": "name"
+                              }
+                            },
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "alias-str",
+                                "field": "value"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                "field": "type"
+              }
+            },
+            "fn-has": {
+              "params": [
+                "K"
+              ],
+              "rule": {
+                "kind": "function_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "parameters",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": {
+                      "param-eq": {
+                        "K": "$K"
+                      }
+                    },
+                    "not": {
+                      "precedes": {
+                        "stopBy": "end",
+                        "kind": "positional_separator"
+                      }
+                    }
+                  },
+                  "field": "parameters"
+                }
+              }
+            },
+            "pyd-base": {
+              "kind": "class_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "pydantic-ref"
+                },
+                "field": "superclasses"
+              }
+            },
+            "pyd-field": {
+              "params": [
+                "K"
+              ],
+              "rule": {
+                "matches": "pyd-base",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "expression_statement",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "assignment",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type",
+                            "field": "type"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "identifier",
+                            "pattern": "$N",
+                            "compare": {
+                              "left": "K",
+                              "op": "eq",
+                              "right": "N"
+                            },
+                            "field": "left"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "field": "body"
+                }
+              }
+            },
+            "init-has": {
+              "params": [
+                "K"
+              ],
+              "rule": {
+                "kind": "class_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "decorated_definition"
+                      }
+                    },
+                    "kind": "function_definition",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^__init__$",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "parameters",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": {
+                              "param-eq": {
+                                "K": "$K"
+                              }
+                            },
+                            "not": {
+                              "precedes": {
+                                "stopBy": "end",
+                                "kind": "positional_separator"
+                              }
+                            },
+                            "follows": {
+                              "stopBy": "end",
+                              "matches": "plain-param",
+                              "not": {
+                                "precedes": {
+                                  "stopBy": "end",
+                                  "kind": "positional_separator"
+                                }
+                              }
+                            }
+                          },
+                          "field": "parameters"
+                        }
+                      }
+                    ]
+                  },
+                  "field": "body"
+                }
+              }
+            },
+            "call-has": {
+              "params": [
+                "K"
+              ],
+              "rule": {
+                "kind": "class_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "decorated_definition"
+                      }
+                    },
+                    "kind": "function_definition",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^__call__$",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "parameters",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": {
+                              "param-eq": {
+                                "K": "$K"
+                              }
+                            },
+                            "not": {
+                              "precedes": {
+                                "stopBy": "end",
+                                "kind": "positional_separator"
+                              }
+                            },
+                            "follows": {
+                              "stopBy": "end",
+                              "matches": "plain-param",
+                              "not": {
+                                "precedes": {
+                                  "stopBy": "end",
+                                  "kind": "positional_separator"
+                                }
+                              }
+                            }
+                          },
+                          "field": "parameters"
+                        }
+                      }
+                    ]
+                  },
+                  "field": "body"
+                }
+              }
+            },
+            "covers-target": {
+              "params": [
+                "K"
+              ],
+              "rule": {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "not": {
+                      "resolves": {
+                        "binding": {
+                          "only": true,
+                          "site": {
+                            "any": [
+                              {
+                                "kind": "function_definition",
+                                "not": {
+                                  "matches": {
+                                    "fn-has": {
+                                      "K": "$K"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "class_definition",
+                                "not": {
+                                  "kind": "class_definition",
+                                  "any": [
+                                    {
+                                      "matches": {
+                                        "pyd-field": {
+                                          "K": "$K"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "matches": "pyd-base"
+                                      },
+                                      "matches": {
+                                        "init-has": {
+                                          "K": "$K"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "call",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "not": {
+                        "resolves": {
+                          "binding": {
+                            "only": true,
+                            "site": {
+                              "kind": "class_definition",
+                              "not": {
+                                "kind": "class_definition",
+                                "any": [
+                                  {
+                                    "matches": {
+                                      "pyd-field": {
+                                        "K": "$K"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "not": {
+                                      "matches": "pyd-base"
+                                    },
+                                    "matches": {
+                                      "call-has": {
+                                        "K": "$K"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "field": "function"
+                    }
+                  }
+                ]
+              }
+            },
+            "covers-call": {
+              "params": [
+                "K"
+              ],
+              "rule": {
+                "matches": "depends-call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": {
+                          "covers-target": {
+                            "K": "$K"
+                          }
+                        },
+                        "not": {
+                          "follows": {
+                            "stopBy": "end",
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "regex": "^\\($"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "keyword_argument",
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "regex": "^dependency$",
+                              "field": "name"
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": {
+                                "covers-target": {
+                                  "K": "$K"
+                                }
+                              },
+                              "field": "value"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "param-ok": {
+              "params": [
+                "K"
+              ],
+              "rule": {
+                "any": [
+                  {
+                    "matches": "alias-form",
+                    "compare": {
+                      "left": "K",
+                      "op": "eq",
+                      "right": "AL",
+                      "text": "unquoted"
+                    }
+                  },
+                  {
+                    "not": {
+                      "matches": "alias-form"
+                    },
+                    "matches": {
+                      "param-eq": {
+                        "K": "$K"
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "default_parameter"
+                      },
+                      {
+                        "kind": "typed_default_parameter"
+                      }
+                    ],
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": {
+                        "covers-call": {
+                          "K": "$K"
+                        }
+                      },
+                      "field": "value"
+                    }
+                  },
+                  {
+                    "matches": "typed-param",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call",
+                        "all": [
+                          {
+                            "matches": "elem-meta"
+                          },
+                          {
+                            "matches": {
+                              "covers-call": {
+                                "K": "$K"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "field": "type"
+                    },
+                    "all": [
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "dep-arg-some"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matches": "typed-param",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "identifier",
+                            "all": [
+                              {
+                                "matches": "elem-1"
+                              },
+                              {
+                                "matches": {
+                                  "covers-target": {
+                                    "K": "$K"
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          "field": "type"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "call",
+                            "all": [
+                              {
+                                "matches": "elem-meta"
+                              },
+                              {
+                                "matches": "depends-call"
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "argument_list",
+                                  "regex": "^\\(\\s*\\)$"
+                                }
+                              }
+                            ]
+                          },
+                          "field": "type"
+                        }
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "dep-arg-some"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matches": "typed-param",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "type",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "call",
+                        "all": [
+                          {
+                            "matches": "elem-meta"
+                          },
+                          {
+                            "matches": "dep-call-some"
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type",
+                                  "precedes": {
+                                    "stopBy": "end",
+                                    "kind": "type",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "dep-call-some"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "precedes": {
+                                  "stopBy": "end",
+                                  "matches": "dep-call-some"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "all": [
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "dep-arg-some"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "covered": {
+              "params": [
+                "K"
+              ],
+              "rule": {
+                "inside": {
+                  "stopBy": {
+                    "kind": "decorated_definition"
+                  },
+                  "kind": "decorated_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "parameters",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": {
+                          "param-ok": {
+                            "K": "$K"
+                          }
+                        },
+                        "not": {
+                          "precedes": {
+                            "stopBy": "end",
+                            "kind": "positional_separator"
+                          }
+                        }
+                      },
+                      "field": "parameters"
+                    }
+                  }
+                }
+              }
+            },
+            "route-arg": {
+              "any": [
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^\\($"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "matches": "route-call",
+                      "inside": {
+                        "stopBy": {
+                          "kind": "decorator"
+                        },
+                        "kind": "decorator",
+                        "matches": "route-decorator",
+                        "not": {
+                          "follows": {
+                            "stopBy": "end",
+                            "matches": "route-decorator"
+                          }
+                        },
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "decorated_definition",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "function_definition",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "pattern": "$FN",
+                              "field": "name"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "route-arg"
+                  }
+                }
+              ]
+            },
+            "ann-slot": {
+              "any": [
+                {
+                  "kind": "type",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "annotated-g"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "annotated-s"
+                  },
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^\\[$"
+                  }
+                }
+              ]
+            },
+            "dep-target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "kind": "identifier"
+                  }
+                }
+              ]
+            },
+            "dep-arg-some": {
+              "matches": "depends-call",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "dep-target",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "regex": "^\\($"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "keyword_argument",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "name",
+                            "regex": "^dependency$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "dep-target"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "first-ident-slot": {
+              "any": [
+                {
+                  "kind": "type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier"
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^\\[$"
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "dep-call-some": {
+              "matches": "depends-call",
+              "any": [
+                {
+                  "matches": "dep-arg-some"
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "regex": "^\\(\\s*\\)$"
+                  },
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "type",
+                        "follows": {
+                          "stopBy": "end",
+                          "matches": "first-ident-slot"
+                        }
+                      }
+                    },
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "matches": "first-ident-slot"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "plain-str"
+              },
+              {
+                "matches": "route-arg"
+              }
+            ],
+            "parse": {
+              "grammar": "braceFormat",
+              "has": {
+                "stopBy": "end",
+                "kind": "field",
+                "regex": "^\\{[a-zA-Z_][a-zA-Z0-9_]*(?::[a-zA-Z_][a-zA-Z0-9_]*)?\\}$",
+                "capture": "F",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "name",
+                  "capture": "K"
+                },
+                "host": {
+                  "not": {
+                    "matches": {
+                      "covered": {
+                        "K": "$K"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "FAST003",
+        "anchor": "capture.F",
+        "each": "F",
+        "message": "Declare `$K` as a non-positional-only parameter of `$FN` so FastAPI passes the `{$K}` path value. Leave it if the handler reads `request.path_params`; else drop `{$K}` from the path.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "FAST003"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

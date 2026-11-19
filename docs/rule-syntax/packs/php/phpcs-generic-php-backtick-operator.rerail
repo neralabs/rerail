@@ -1,0 +1,18 @@
+.policy "phpcs-generic-php-backtick-operator" revision 3
+.description "Avoid the backtick shell operator in PHP; it runs shell commands implicitly and invites command injection."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+// PHP_CodeSniffer's Generic.PHP.BacktickOperator (code Found): `…` runs its contents in a shell, as shell_exec()
+// does. The sniff reports each backtick token, the opening and the closing one:
+//   $out = `ls -al`;        two findings on the line, at both backticks
+//   $out = `ls
+//       -al`;               one on each line
+.violation backtick(at: loc) code "Generic.PHP.BacktickOperator"
+    "Replace this backtick shell command with proc_open() given the command as an array, so no shell parses the arguments."
+    suppress phpcs "Generic.PHP.BacktickOperator.Found"
+// At each backtick: n's first and last characters (the kind implies them; the tape keeps none).
+backtick(n) :- kind(n, "shell_command_expression").
+backtick(t) :- kind(n, "shell_command_expression"), match("(?s).*(?<t>`)", n).

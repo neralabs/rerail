@@ -1,0 +1,13 @@
+# The per-row cost of planner statistics (decision 0096): `cargo run --release --offline -- <scratch dir>` here.
+# Standalone (its own workspace), built in seconds; it includes the engine's `logic/plan/sketch.rs` by path.
+[package]
+name = "statbench"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+libc = "0.2"
+rustc-hash = "2"

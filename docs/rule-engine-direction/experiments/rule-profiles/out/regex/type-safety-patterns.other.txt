@@ -1,0 +1,2 @@
+\*columns\s*:\s*str\b|columns\s*:\s*str\b|:\s*str\s*\|
+expression\s*:\s*str\b|:\s*str\s*\|
