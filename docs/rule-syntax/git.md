@@ -43,10 +43,9 @@ To query `HEAD` when scanning yesterday's source, request `"HEAD"` as above.
 The selected source has no effect on what that expression resolves to.
 Explicit relative paths in rule expressions start at the worktree root of the named repository.
 Paths in a bare repository can name tree entries from the tree root.
-Commit message searches accept POSIX extended regular expressions on Unix.
+Commit message searches accept POSIX extended regular expressions.
 For example, `:/^release [[:digit:]]+` selects a commit by its message.
-The Windows implementation currently uses Rust's byte regex syntax.
-The package tests compare message selectors with the installed Git.
+The package tests compare message selectors with the installed Git on each host platform.
 The `git_revision_error` reason is one of these symbols.
 
 | Reason | Meaning |

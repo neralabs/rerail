@@ -213,7 +213,7 @@ impl<'repo> Revision<'repo> {
             if seen.insert(commit.id) { enqueue(commit, &mut pending)?; }
         }
         while let Some(commit) = pending.pop_value() {
-            if matcher.matches(commit.message_raw_sloppy()) ^ negated {
+            if matcher.matches(commit.message_raw_sloppy()).map_err(|error| lookup_error("invalid-revision", error))? ^ negated {
                 return Ok(commit.id);
             }
             if shallow

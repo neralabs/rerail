@@ -37,6 +37,13 @@ zstd = "=0.14.3"
 [target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
 tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
+[target.'cfg(windows)'.dependencies]
+onig = { version = "=6.5.3", default-features = false }
+
+[target.'cfg(unix)'.dev-dependencies]
+# Exercise the Windows matcher on Unix in the same test suite.
+onig = { version = "=6.5.3", default-features = false }
+
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-store = { path = ".", features = ["test-hooks"] }
