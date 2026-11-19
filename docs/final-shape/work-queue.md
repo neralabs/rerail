@@ -5336,6 +5336,15 @@ Open:
   - `parser_tests::metal_tests::every_step_on_metal_equals_the_interpreter`: 182 of 2,206 files differ over the 13
     steps Metal runs (step `01-vrai`'s mutations first: `"vra^"`, `"\nvra="`), where Q183 left none.
 - **Done when**: both pass on a Mac with Metal.
+- **Read** (2026-11-19, from the source; not yet run, the M3 at load 84–118 with no cores to spare):
+  - Both pass at 572ff69db (a hub commit after Q183), so the change is the hub's, after it.
+  - `a_refused_files_…`: its third input reads now. Q40 (98c9f82ab, decision 0413) has tier 1 read `1.2.3` as `1.2`,
+    `.`, `3`; a clause's chain is refused by tier 2, so neither tier 1's totals refuses it. The token the record pass
+    still refuses is an integer of 19 digits or more (0413's `all(E) at least N`): the input to test with.
+  - `every_step_on_metal_…`: the 182 files are step 01's mutations (`vra^`), files the step refuses; the candidates
+    are 0411 (the CPU's record pass makes the outputs in `records_made`, and tier 1's runs are compared `without`
+    them) and Q200 (a refused file's records stop at the refusal). Check which by one run of the test, then compare
+    as `compile_tests` does.
 
 ### Q253. The journal's wait bound (Q221) is gone, and the FSEvents tests disturb each other
 
