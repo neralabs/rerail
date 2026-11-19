@@ -1998,6 +1998,8 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     }
     let mut all = link::Merged::new(P::fields());
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
+    // The library part's names for its kind sets, as the merge renamed them.
+    let mut library_sets: BTreeMap<String, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut policies: Vec<scoping::Policy> = Vec::new();
     // A library's rule may ask for guests too (`vue/view.rr`'s view, decision 0222): read once, it is no program's.
@@ -2035,14 +2037,19 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
                 all.text_globs.push(g.clone());
             }
         }
-        // Kind sets by their kinds: this program's name for each, and the shared one.
-        let mut set_of: BTreeMap<String, String> = BTreeMap::new();
+        // Kind sets by their kinds: this program's name for each, and the shared one. A set the program reads but
+        // does not hold (a library rule its request copied, `rr::with_cone_version`) is the library's: named as the
+        // library part names it, not left on a name the merge renamed (PR #508's afeb076e5, t47).
+        let mut set_of: BTreeMap<String, String> = if unit.is_some() { library_sets.clone() } else { BTreeMap::new() };
         let kinds_of = prog.kindsets();
         for (name, kinds) in kinds_of.clone() {
             let n = sets.len();
             let shared = sets.entry(kinds.clone()).or_insert_with(|| format!("ks{n}")).clone();
             all.kindsets.insert(shared.clone(), kinds);
             set_of.insert(name, shared);
+        }
+        if unit.is_none() {
+            library_sets = set_of.clone();
         }
         // The library's relations keep their names (decision 0089 §2). Named repository readers belong to their
         // policy (`own_names`): equal relation names alone do not mean equal input files or selectors.
@@ -11078,7 +11085,16 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     } else {
     // Phase 0's observer lists each directory: again only when its stat changed (t23).
     let mut pending = vec![root.to_path_buf()];
-    observe(|o| o.preload(root));
+    // The run reads its files by their canonical paths too (`Observer::canonical`): a root reached through a symlink
+    // (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is asked.
+    observe(|o| {
+        o.preload(root);
+        if let Ok(real) = std::fs::canonicalize(root)
+            && real != root
+        {
+            o.preload(&real);
+        }
+    });
     while let Some(dir) = pending.pop() {
         let listing = observe(|o| o.listing(&dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
         for (name, is_dir) in listing.iter() {

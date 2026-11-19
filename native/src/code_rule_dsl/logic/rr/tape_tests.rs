@@ -491,7 +491,6 @@ fn statements_from_the_tape_are_the_parsers() {
 /// dialect, and a policy whose scope gives other dialects runs in a pack of its own. Before, such policies ran alone.
 /// PR #508's 1999e204e (t47).
 #[test]
-#[ignore = "PR #508 1999e204e not ported: Q242"]
 fn a_batchs_policies_of_several_dialects_run_as_one_pack_a_dialect() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrdialectpack");
     std::fs::create_dir_all(&dir).unwrap();
@@ -546,7 +545,6 @@ fn a_batchs_policies_of_several_dialects_run_as_one_pack_a_dialect() {
 /// policy that asks for other guests runs in its own pack (`rr::guest_asks`): C408 finds what it finds alone, and a
 /// policy that asks the same as C408 still shares its pack. PR #508's 370b90f9c (t47).
 #[test]
-#[ignore = "PR #508 370b90f9c not ported: Q242"]
 fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrguestpack");
     std::fs::create_dir_all(&dir).unwrap();
@@ -588,7 +586,6 @@ fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
 /// decision 0201 §5 and §6, ruff-ruf013-implicit-optional found none of its 33 keys on the ruff fixtures, so he
 /// reverted them; the hub's own 0201 must keep its findings.
 #[test]
-#[ignore = "RUF013 finds nothing on the hub (PR #508 adfb49fac): Q247"]
 fn ruff_ruf013_finds_an_implicit_optional() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("ruf013");
     std::fs::create_dir_all(&dir).unwrap();

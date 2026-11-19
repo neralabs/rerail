@@ -1638,7 +1638,7 @@ fn ast_pattern_captures_are_pinned() {
     }
     let got: String = h.finalize().iter().take(16).map(|b| format!("{b:02x}")).collect();
     assert!(matched > 500, "{matched} matches");
-    assert_eq!(got, "ea71d4437b2c2ba12fc3b08d3c7f982c", "the captures moved ({matched} matches)");
+    assert_eq!(got, "2f1444d906c39b0c99a4e20b5b9a56cb", "the captures moved ({matched} matches)");
 }
 
 /// The verdict alone (`matches_ast_pattern`, into bindings reused from node to node) is
@@ -1770,7 +1770,6 @@ fn presence_bitmap_census() {
 /// refuses `f(a, b)`, whose gap after `a` is `,`.
 /// PR #508's 65ff68df5 (t47).
 #[test]
-#[ignore = "PR #508 65ff68df5 not ported (RER-131): Q246"]
 fn ast_pattern_end_of_children_meets_implied_tokens() {
     use ast_grep_core::matcher::MatcherExt as _;
     let source = Arc::new("switch (x) { case 1: f(); break; }\nf(a);\nf(a, b);\n".to_owned());

@@ -1031,32 +1031,49 @@ impl ProgramPass for ScopeGlobs {
 /// (A set of nodes is read as climbs where it is given, `node_axis`.)
 pub struct KindSets {
     pub sets: BTreeSet<String>,
+    /// The linked library of a module lowered in its scope (`rr::Library::version`): a set it reads has the library's
+    /// kinds first (`kinds_of`).
+    pub library: Option<std::sync::Arc<Version>>,
 }
 
 /// The kinds of a unary relation of kinds: its facts, and the kinds of `s` for each rule `set(k) :- s(k)`, rules gone
-/// by head left out.
-fn kinds_of(v: &Version, head: &(impl ProgramFields + ?Sized), gone: &BTreeSet<String>, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
+/// by head left out. A relation of the linked `library` of a module lowered in its scope (declared here, its facts and
+/// rules not held) has its kinds there first, as the whole program read alone has them: its kind set, else its facts
+/// and rules (python/names.rr's `scope`; eslint-a-control.rr's `breakable_kind(k) :- loop_kind(k)`; a program's own
+/// `fn_stop(k) :- function_kind(k)` over one: PR #508's afeb076e5 and 4146acbd9, t47).
+fn kinds_of(v: &Version, head: &(impl ProgramFields + ?Sized), library: Option<(&Version, &BTreeMap<String, Vec<String>>)>, gone: &BTreeSet<String>, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
     use crate::code_rule_dsl::logic::front::Value;
     if !seen.insert(set.to_owned()) || head.input_names().iter().any(|i| i == set) || head.columns_of(set).is_some_and(|c| c.len() != 1) {
         return None;
     }
     let mut kinds: Vec<String> = Vec::new();
-    for row in head.fact_rows(set) {
-        let [Value::Str(k)] = row.as_slice() else { return None };
-        kinds.push(k.to_string());
-    }
-    for r in v.rel(set).into_iter().flat_map(|rel| v.heads(rel)).filter(|_| !gone.contains(set)) {
-        let mut args = r.head().args();
-        let (Some(TermRef::Var(k)), None) = (args.next(), args.next()) else { return None };
-        let mut body = r.body();
-        let (Some(l), None) = (body.next(), body.next()) else { return None };
-        let L::Atom(a) = l.view() else { return None };
-        let mut aargs = a.args();
-        if a.neg() || !matches!((aargs.next(), aargs.next()), (Some(TermRef::Var(x)), None) if x == k) {
-            return None;
+    // `set`'s facts and its rules `set(k) :- s(k)` in `of`, each `s` read through `kinds_of` again.
+    let from = |of: &Version, facts: Vec<crate::code_rule_dsl::logic::front::List<Value>>, gone: &BTreeSet<String>, kinds: &mut Vec<String>, seen: &mut BTreeSet<String>| -> Option<()> {
+        for row in facts {
+            let [Value::Str(k)] = row.as_slice() else { return None };
+            kinds.push(k.to_string());
         }
-        kinds.extend(kinds_of(v, head, gone, v.rel_name(a.rel()), seen)?);
+        for r in of.rel(set).into_iter().flat_map(|rel| of.heads(rel)).filter(|_| !gone.contains(set)) {
+            let mut args = r.head().args();
+            let (Some(TermRef::Var(k)), None) = (args.next(), args.next()) else { return None };
+            let mut body = r.body();
+            let (Some(l), None) = (body.next(), body.next()) else { return None };
+            let L::Atom(a) = l.view() else { return None };
+            let mut aargs = a.args();
+            if a.neg() || !matches!((aargs.next(), aargs.next()), (Some(TermRef::Var(x)), None) if x == k) {
+                return None;
+            }
+            kinds.extend(kinds_of(v, head, library, gone, of.rel_name(a.rel()), seen)?);
+        }
+        Some(())
+    };
+    if let Some((lib, sets)) = library.filter(|(lib, _)| lib.declares(set)) {
+        match sets.get(set) {
+            Some(set_kinds) => kinds.extend(set_kinds.iter().cloned()),
+            None => from(lib, ProgramFields::fact_rows(lib, set), &BTreeSet::new(), &mut kinds, seen)?,
+        }
     }
+    from(v, head.fact_rows(set), gone, &mut kinds, seen)?;
     let mut once = BTreeSet::new();
     kinds.retain(|k| once.insert(k.clone()));
     Some(kinds)
@@ -1075,7 +1092,14 @@ struct AxisLit {
 impl ProgramPass for KindSets {
     const NAME: &'static str = "kind sets";
     fn settings(&self) -> Vec<u8> {
-        self.sets.iter().cloned().collect::<Vec<_>>().join("\n").into_bytes()
+        let mut bytes = self.sets.iter().cloned().collect::<Vec<_>>().join("\n").into_bytes();
+        if let Some(library) = &self.library {
+            // The library's rules, declarations and facts (its digest), and its kind sets, which the digest does not hold.
+            bytes.extend_from_slice(&library.digest().to_le_bytes());
+            let sets = format!("{:?}", library.kindset_map().unwrap_or_default());
+            bytes.extend_from_slice(&crate::content_store::HashKey::sha256(sets.as_bytes()).sha256_bytes().unwrap_or_default());
+        }
+        bytes
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::front::{Error, axis};
@@ -1085,6 +1109,9 @@ impl ProgramPass for KindSets {
         let mut head = crate::code_rule_dsl::logic::program_image::fields::Edit::on(&input);
         let mut kindsets = v.kindset_map()?;
         let was_kindsets = kindsets.clone();
+        let library = self.library.clone();
+        let library_sets = library.as_ref().map(|l| l.kindset_map()).transpose()?;
+        let library = library.as_deref().zip(library_sets.as_ref());
         let mut gone: BTreeSet<String> = BTreeSet::new();
         let mut derived: BTreeSet<String> = BTreeSet::new();
         for set in std::mem::take(&mut self.sets) {
@@ -1092,7 +1119,7 @@ impl ProgramPass for KindSets {
                 continue;
             }
             // `members`.
-            match kinds_of(v, &head, &gone, &set, &mut BTreeSet::new()) {
+            match kinds_of(v, &head, library, &gone, &set, &mut BTreeSet::new()) {
                 Some(kinds) => drop(kindsets.insert(set, kinds)),
                 None if matches!(head.columns_of(&set).as_deref(), Some([(_, t)]) if t == "sym") => drop(derived.insert(set)),
                 None => return Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")).to_string()),
@@ -1303,44 +1330,57 @@ impl ProgramPass for BuiltinsOut {
 }
 
 /// `lower::span_patterns` on the version: the same analysis, read off the image's rules and header, the rx spans and
-/// AST patterns it finds added to the header.
-pub struct SpanPatterns;
+/// AST patterns it finds added to the header. `library`: the columns' spans of the library a module is lowered in the
+/// scope of (`rr::Library::spans`), with the library version's digest for the pass's key.
+pub struct SpanPatterns {
+    pub library: Option<(std::sync::Arc<crate::code_rule_dsl::logic::rr::lower::SpanColumns>, u64)>,
+}
+
+/// `f` over the version read as `lower::span_patterns` reads a program, the library's columns' spans `library`.
+pub fn with_span_program<R>(v: &Version, library: Option<&crate::code_rule_dsl::logic::rr::lower::SpanColumns>, f: impl FnOnce(&crate::code_rule_dsl::logic::rr::lower::SpanProgram<'_>) -> R) -> Result<R, String> {
+    use crate::code_rule_dsl::logic::rr::lower::{SpanAtom, SpanProgram, SpanRule, SpanTerm};
+    let (inputs, outputs, natives) = (v.input_names(), v.output_names(), v.native_map()?);
+    let term = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, t: TermRef<'_>| match t {
+        TermRef::Var(x) => SpanTerm::Var(v.text(r.var(x))),
+        TermRef::Str(x) => SpanTerm::Str(v.text(x)),
+        _ => SpanTerm::Other,
+    };
+    let program = SpanProgram {
+        rules: v
+            .rules()
+            .map(|r| SpanRule {
+                head: SpanAtom { rel: v.rel_name(r.head().rel()), args: r.head().args().map(|t| term(r, t)).collect(), neg: false },
+                body: r
+                    .body()
+                    .filter_map(|l| match l.view() {
+                        L::Atom(a) | L::Agg { atom: a, .. } => Some(SpanAtom { rel: v.rel_name(a.rel()), args: a.args().map(|t| term(r, t)).collect(), neg: a.neg() }),
+                        _ => None,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        decls: {
+            let mut d: Vec<(&str, usize)> = v.decls().into_iter().map(|d| (v.text(d.name()), d.cols().count())).collect();
+            d.sort();
+            d
+        },
+        inputs: inputs.iter().map(String::as_str).collect(),
+        natives: natives.keys().map(String::as_str).collect(),
+        outputs: outputs.iter().map(String::as_str).collect(),
+        library,
+    };
+    Ok(f(&program))
+}
 
 impl ProgramPass for SpanPatterns {
     const NAME: &'static str = "span patterns";
+    fn settings(&self) -> Vec<u8> {
+        self.library.as_ref().map(|(_, digest)| digest.to_le_bytes().to_vec()).unwrap_or_default()
+    }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        use crate::code_rule_dsl::logic::rr::lower::{SpanAtom, SpanProgram, SpanRule, SpanTerm, span_patterns};
+        use crate::code_rule_dsl::logic::rr::lower::span_patterns;
         let v = cx.v();
-        let (inputs, outputs, natives) = (v.input_names(), v.output_names(), v.native_map()?);
-        let term = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, t: TermRef<'_>| match t {
-            TermRef::Var(x) => SpanTerm::Var(v.text(r.var(x))),
-            TermRef::Str(x) => SpanTerm::Str(v.text(x)),
-            _ => SpanTerm::Other,
-        };
-        let program = SpanProgram {
-            rules: v
-                .rules()
-                .map(|r| SpanRule {
-                    head: SpanAtom { rel: v.rel_name(r.head().rel()), args: r.head().args().map(|t| term(r, t)).collect(), neg: false },
-                    body: r
-                        .body()
-                        .filter_map(|l| match l.view() {
-                            L::Atom(a) | L::Agg { atom: a, .. } => Some(SpanAtom { rel: v.rel_name(a.rel()), args: a.args().map(|t| term(r, t)).collect(), neg: a.neg() }),
-                            _ => None,
-                        })
-                        .collect(),
-                })
-                .collect(),
-            decls: {
-                let mut d: Vec<(&str, usize)> = v.decls().into_iter().map(|d| (v.text(d.name()), d.cols().count())).collect();
-                d.sort();
-                d
-            },
-            inputs: inputs.iter().map(String::as_str).collect(),
-            natives: natives.keys().map(String::as_str).collect(),
-            outputs: outputs.iter().map(String::as_str).collect(),
-        };
-        let found = span_patterns(&program).map_err(|e| e.to_string())?;
+        let found = with_span_program(v, self.library.as_ref().map(|(spans, _)| &**spans), span_patterns)?.map_err(|e| e.to_string())?;
         let (was_spans, was_patterns) = (v.rx_spans()?, v.ast_patterns()?);
         let (mut spans, mut patterns) = (was_spans.clone(), was_patterns.clone());
         spans.extend(found.0);

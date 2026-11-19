@@ -1254,7 +1254,6 @@ fn a_runs_output_directory_is_rerails_own() {
 /// cross part whose every stratum was kept, a program of no rules, kept planning choices of its own. Each run is a
 /// process of its own, as the CLI's are: this test binary again, running `one_corpus_run_for_a_parent`.
 #[test]
-#[ignore = "the warm run writes its kept plans; PR #508 4f9110496 and 70026ed6b not ported: Q243"]
 fn the_run_after_a_cold_one_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
@@ -1268,7 +1267,6 @@ fn the_run_after_a_cold_one_writes_nothing() {
 /// and faulted "the observer's store not asked inside the waves". PR #508's 0206654a5 (t47).
 #[cfg(unix)]
 #[test]
-#[ignore = "PR #508 0206654a5 not ported: Q243"]
 fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("real")).unwrap();
@@ -1822,7 +1820,6 @@ fn reads_of(v: &crate::code_rule_dsl::logic::program_image::Version, head: &str)
 /// no-access-state-in-setstate) finds its rows in a pack. The library linked alone dropped it, and the react pack
 /// failed on `no such table: main.keyed_kind`. PR #508's 363b91c0b (t47).
 #[test]
-#[ignore = "PR #508 363b91c0b not ported: Q241"]
 fn a_librarys_kind_set_is_a_relation_its_includers_read_in_a_pack() {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
     let reads = ".language typescript\n#include \"tsx/react-class.rr\"\n.decl keyed(p: node)\nkeyed(p) :- kind(p, k), keyed_kind(k).\n.output keyed\n";
@@ -1838,7 +1835,6 @@ fn a_librarys_kind_set_is_a_relation_its_includers_read_in_a_pack() {
 /// vitest's expect-expect (`name_of`) failed the typescript pack as unbounded value cycles, though each is bounded
 /// alone. PR #508's 363b91c0b (t47).
 #[test]
-#[ignore = "PR #508 363b91c0b not ported: Q241"]
 fn a_value_cycle_a_library_relation_bounds_is_bounded_in_a_pack() {
     let cycle = ".language typescript\n#include \"tsx/ts-b.rr\"\n\
                  .decl ua(x: node, a: node)\nua(x, a) :- kind(x, \"unary_expression\"), field(x, \"argument\", e), deparen(e, a).\n\
@@ -1855,7 +1851,6 @@ fn a_value_cycle_a_library_relation_bounds_is_bounded_in_a_pack() {
 /// its request, over its facts. Taken as the library's, they read the library's relation without them, and
 /// clippy-decimal-literal-representation found nothing in a pack. PR #508's 363b91c0b (t47).
 #[test]
-#[ignore = "PR #508 363b91c0b not ported: Q241"]
 fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
     let stating = ".language rust\n#include \"rust/syntax-literals.rr\"\n.decl hit(n: node)\nhit(n) :- dec_lit_repr(n).\n.output hit\nlit_repr_threshold(16384).\n";
@@ -1873,7 +1868,6 @@ fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
 /// set's declaration but not its facts, so it held `scope` empty, and its `nearest` climbed to nothing: ruff-n807,
 /// RUF033, AIR303 and F406 found nothing in the python pack. PR #508's afeb076e5 (t47).
 #[test]
-#[ignore = "PR #508 afeb076e5 not ported: Q241"]
 fn a_programs_nearest_over_a_library_kind_set_finds_in_a_pack_what_it_finds_alone() {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
     let near = ".language python\n#include \"python/names.rr\"\n.decl top(x: symbol)\n\
@@ -1899,7 +1893,6 @@ fn a_programs_nearest_over_a_library_kind_set_finds_in_a_pack_what_it_finds_alon
 /// the spans the library's rules bind it to in a pack, as alone: the program held the library relation declared and
 /// not derived, ran no pattern, and ruff-fast003 found nothing in a pack. PR #508's 4146acbd9 (t47).
 #[test]
-#[ignore = "PR #508 4146acbd9 not ported: Q241"]
 fn a_match_over_a_library_relations_node_finds_in_a_pack_what_it_finds_alone() {
     let words = ".language python\n#include \"python/ast.rr\"\n.decl word(k: symbol)\n\
                  word(k) :- plain_str(s, _), match_all(\"(?<K>[a-z]+)\", s), text(K, k).\n.output word\n";
@@ -1914,7 +1907,6 @@ fn a_match_over_a_library_relations_node_finds_in_a_pack_what_it_finds_alone() {
 /// program climbs to them in a pack, as alone: eslint's no-extra-label found nothing in a pack, no-unsafe-finally
 /// climbed past functions. PR #508's 4146acbd9 (t47).
 #[test]
-#[ignore = "PR #508 4146acbd9 not ported: Q241"]
 fn a_programs_nearest_over_a_library_relation_of_kinds_finds_in_a_pack_what_it_finds_alone() {
     let near = ".language typescript\n#include \"tsx/eslint-a-control.rr\"\n.decl left(k: symbol)\n\
                 left(k) :- kind(j, \"break_statement\"), nearest(j, s, breakable_kind), kind(s, k).\n.output left\n\

@@ -4620,7 +4620,6 @@ fn layouts_are_carried_with_the_program() {
 /// rule's context: alone its helper is every pair of strings in the corpus (eslint-yoda's `yoda_in_order`). One whose
 /// literals tie them (`!(link(lo, hi), lit(hi, _))`) needs none. PR #508's 3fe6f8227 (t47).
 #[test]
-#[ignore = "PR #508 3fe6f8227 not ported: Q244"]
 fn a_negated_cross_product_is_bound_by_the_rules_context() {
     let p = parse(concat!(
         ".decl want(a: node, b: node)\n.decl lit(e: node, v: symbol)\n.decl link(a: node, b: node)\n.input want, lit, link\n",

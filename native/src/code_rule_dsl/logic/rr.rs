@@ -264,7 +264,7 @@ impl Text {
     /// library is its own version; one that asks has its cone copied on the version (`plan::corpus::cone_on_version`),
     /// the library's tree never decoded.
     fn lowered_in_version(self, library: &Library, scoped: &Scoped) -> Result<Option<std::sync::Arc<super::program_image::Version>>, Error> {
-        let Some(Own { version: own, asked, declared }) = self.lowered_own(scoped)? else { return Ok(None) };
+        let Some(Own { version: own, asked, declared }) = self.lowered_own(scoped, Some(library))? else { return Ok(None) };
         if asked.is_empty() {
             return Ok(Some(own));
         }
@@ -273,7 +273,8 @@ impl Text {
 
     /// The text's own program, lowered and linked in its libraries' scope, and what it asks of the library: the
     /// library relations it adds to (decision 0089 §3), and every relation the library's files declare.
-    fn lowered_own(self, scoped: &Scoped) -> Result<Option<Own>, Error> {
+    /// `library`, the scope's library linked, gives the guarantees of its relations to the value cycles' check.
+    fn lowered_own(self, scoped: &Scoped, library: Option<&Library>) -> Result<Option<Own>, Error> {
         let Read::Modular { files, own } = self.0 else { return Ok(None) };
         let checked: Vec<Stmt> = own.iter().filter(|s| !(matches!(s.what(), Some(S::Clause)) && !s.has_body())).cloned().collect();
         let reads_core = files.first().is_some_and(|(path, _, _)| path.ends_with("core.rr"));
@@ -283,7 +284,7 @@ impl Text {
         // Its rules written as a version in the walk (decision 0377 step 3).
         let linked = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
         let written = std::sync::Arc::clone(&linked.own);
-        let version = link_seeded_version(linked, written, scoped, core_names())?;
+        let version = link_seeded_version(linked, written, scoped, core_names(), library)?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
         // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request.
@@ -291,7 +292,14 @@ impl Text {
             S::Decl(name) | S::Violation(name) => Some(name.to_owned()),
             _ => None,
         }).collect();
-        let asked: BTreeSet<String> = version.rules().map(|r| version.rel_name(r.head().rel()).to_owned()).filter(|h| declared.contains(h) && !core_names().contains(h)).collect();
+        // A fact adds as a rule does (`lit_repr_threshold(16384).`): left out, the library's readers read the library's
+        // relation without it, and found nothing in a pack (PR #508's 363b91c0b, t47).
+        let asked: BTreeSet<String> = version
+            .rules()
+            .map(|r| version.rel_name(r.head().rel()).to_owned())
+            .chain(super::program_image::fields::ProgramFields::fact_names(&*version))
+            .filter(|h| declared.contains(h) && !core_names().contains(h))
+            .collect();
         Ok(Some(Own { version, asked, declared }))
     }
 
@@ -408,6 +416,8 @@ pub struct Library {
     pub keys: Vec<crate::content_store::HashKey>,
     /// The linked library, as its image read from the store or made once (decision 0281's path, step 7a-2).
     pub version: std::sync::Arc<super::program_image::Version>,
+    /// Its columns' spans (`lower::span_columns`), made when a program lowered in its scope first reads them (`spans`).
+    spans: std::sync::OnceLock<std::sync::Arc<lower::SpanColumns>>,
 }
 
 impl Text {
@@ -447,7 +457,17 @@ impl Scoped {
 
 impl Library {
     fn of(modules: Vec<lower::Module>, files: Vec<Vec<PathBuf>>, keys: Vec<crate::content_store::HashKey>, version: std::sync::Arc<super::program_image::Version>) -> Self {
-        Library { modules, files, keys, version }
+        Library { modules, files, keys, version, spans: Default::default() }
+    }
+
+    /// Its columns' spans, which a program lowered in its scope reads of the library relations it does not derive
+    /// (`lowering_tail::SpanPatterns`, PR #508's 4146acbd9). Made once; a library whose rules the analysis refuses
+    /// gives none.
+    pub fn spans(&self) -> std::sync::Arc<lower::SpanColumns> {
+        std::sync::Arc::clone(self.spans.get_or_init(|| {
+            let columns = super::plan::corpus::preparation::lowering_tail::with_span_program(&self.version, None, lower::span_columns);
+            std::sync::Arc::new(columns.ok().and_then(Result::ok).unwrap_or_default())
+        }))
     }
 
     /// The aliases the library's images are kept under: each module's, and the linked library's.
@@ -507,14 +527,20 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
             crate::code_rule_dsl::prof::count("rr.linked_library_read", 1);
             Some(version)
         });
+        // Its declared kind sets are relations its includers may read (`lower::keep_declared_kind_sets`), whether
+        // its image was kept before this or not.
         match stored {
-            Some(version) => Library::of(modules, members, keys, version),
+            Some(version) => {
+                let version = lower::keep_declared_kind_sets(&version, &modules)?;
+                Library::of(modules, members, keys, version)
+            }
             None => {
                 // Linked on versions (decision 0377): the modules' rules are never a tree.
                 let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
                 if keep_image(store, "a linked library's image", key, version.base_bytes().expect("a folded version is a base").to_vec()) {
                     crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
                 }
+                let version = lower::keep_declared_kind_sets(&version, &modules)?;
                 Library::of(modules, members, keys, version)
             }
         }
@@ -917,9 +943,17 @@ pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::V
     if natives.len() != n {
         b.set_field(Field::Natives(&natives));
     }
+    // A relation the program states facts of has the library's too, as the program read whole holds both.
     for rel in library.fact_names().into_iter().filter(|r| take.contains(r)) {
-        if !program.states_facts(&rel) {
-            b.set_facts(&rel, &library.fact_rows(&rel));
+        let mut rows = program.fact_rows(&rel);
+        let n = rows.len();
+        for row in library.fact_rows(&rel) {
+            if !rows.contains(&row) {
+                rows.push(row);
+            }
+        }
+        if rows.len() != n || !program.states_facts(&rel) {
+            b.set_facts(&rel, &rows);
         }
     }
     let mut lattice = ProgramFields::lattice(&**program);
@@ -935,11 +969,11 @@ pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::V
 
 /// The module linked in `scoped` (`lower::link_seeded_parts`), its own program `own_v`, appended onto
 /// the scope's version and through the lowering's tail.
-fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>, library: Option<&Library>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::Builder;
     let seeds = &scoped.seeds;
     let lower::Linked { lowered, stated, own_stated, .. } = linked;
-    let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered)?;
+    let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered, library)?;
     let mut b = Builder::on(&v);
     lower::unseed(&mut b, seeds, core);
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
@@ -956,14 +990,14 @@ pub fn lower_statements_version(statements: Vec<Stmt>) -> Result<std::sync::Arc<
 /// (`lowering_tail_on`), folded to a base. The program `lower::link` makes of them as a tree, as a version.
 pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let linked = lower::link_versions(modules)?;
-    let version = lowering_tail_on(linked.first, linked.appended, false, linked.lowered)?;
+    let version = lowering_tail_on(linked.first, linked.appended, false, linked.lowered, None)?;
     if version.base_bytes().is_some() { Ok(version) } else { version.fold().map_err(Error::Syntax) }
 }
 
 /// The lowering's whole-program half on versions (`lower::whole` on a tree): the modules `appended` onto `start`
 /// (`lowering_tail::AppendModule`), checked declared where `declared` (a text's link: `link_seeded`), then the passes
 /// `whole` runs, in its order, from what the lowerer knows of the modules (`lowered`).
-fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, appended: Vec<(std::sync::Arc<super::program_image::Version>, usize, usize)>, declared: bool, lowered: lower::Lowered) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, appended: Vec<(std::sync::Arc<super::program_image::Version>, usize, usize)>, declared: bool, lowered: lower::Lowered, library: Option<&Library>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::manager::Pipeline;
     let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
     let mut p = Pipeline::new("the lowering's tail", start);
@@ -978,15 +1012,15 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
         }
         p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
         p.program(&mut lowering_tail::Findings { pending: findings.clone() });
-        p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
-        p.program(&mut lowering_tail::KindSets { sets: sets.clone() }).program(&mut lowering_tail::Unit);
+        p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) }).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
+        p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) }).program(&mut lowering_tail::Unit);
         p.program(&mut lowering_tail::BooleanRelations).program(&mut lowering_tail::ScopeGlobs);
         for round in lower::ON_REQUEST {
             p.program(&mut SourcesOnRequest { round });
         }
         p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
         // `finish`'s checks, on the version.
-        super::front::finish_checks_on(p.current().map_err(Error::Syntax)?)?;
+        super::front::finish_checks_given(p.current().map_err(Error::Syntax)?, library.map(|l| &*l.version))?;
     }
     {
         use super::plan::corpus::preparation::{DropRepeated, lowering_tail};
@@ -1595,6 +1629,85 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&Stmt>)]) -> File
             ((*file).clone(), items)
         })
         .collect()
+}
+
+/// What a program asks guests of when it runs alone (decisions 0055, 0058 §1): a pack's programs make one set of
+/// guests, and a rule that reaches a guest reads every one the run made (an annotation one program's library asked
+/// for was every program's, `C408` in a `Literal["dict()"]`). Programs that ask the same run as one pack
+/// (`tools::policy_groups`); the rest run in packs of their own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuestAsks {
+    /// Its `.guests` settings: `guest_policy`'s facts, which a pack's programs share.
+    pub settings: Vec<String>,
+    /// `None` when no rule it reaches reads a guest: alone it makes none (`corpus`'s guest requests are no outputs).
+    /// Else the library files whose clauses ask (`asks`, or an `embed`): an included file's asking clauses are kept
+    /// whatever reads them (`reached_statements`), so these files' clauses are what it asks for.
+    pub files: Option<Vec<PathBuf>>,
+    /// Its own clauses ask too: what it asks for is its own.
+    pub own: bool,
+}
+
+/// `src`'s guest requests (`GuestAsks`), read from its statements and its includes'.
+pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
+    use super::plan::corpus::guests::READS;
+    let text = read_text(src)?;
+    let (files, own): (Vec<(&Path, &[Stmt])>, &[Stmt]) = match &text.0 {
+        Read::Plain(statements) => (Vec::new(), statements),
+        Read::Modular { files, own } => (files.iter().map(|(path, _, statements)| (path.as_path(), statements.as_slice())).collect(), own),
+    };
+    let settings: Vec<String> = own.iter().filter_map(|st| match st.what() {
+        Some(S::Setting { key: "guests", text }) => Some(text.to_owned()),
+        _ => None,
+    }).collect();
+    // What a clause reads, off its tape, and whether it makes a guest request (a read `lower` makes a demand of, or an
+    // `embed`): its heads' arguments', its body's and its edits' names.
+    let read = |st: &Stmt| -> BTreeSet<String> {
+        let (t, n) = st.tape();
+        let mut out = BTreeSet::new();
+        for h in t.all(n, tape::Field::Head) {
+            for a in t.kids(h).filter(|&a| t.field(a) != tape::Field::Relation as u16) {
+                t.names_in(a, &mut out);
+            }
+        }
+        for c in t.all(n, tape::Field::Body).chain(t.all(n, tape::Field::Edit)) {
+            t.names_in(c, &mut out);
+        }
+        out
+    };
+    let asking = |heads: &[&str], read: &BTreeSet<String>| {
+        read.iter().any(|r| asks(r) && !WORLD.iter().any(|(w, _)| w == r)) || heads.iter().any(|h| LIBRARY_DERIVED[..2].contains(h))
+    };
+    let reads_guest = |read: &BTreeSet<String>| read.iter().any(|r| READS.contains(&r.as_str()) || r == "parse" || r == "splice");
+    let mut by_head: std::collections::HashMap<&str, Vec<BTreeSet<String>>> = std::collections::HashMap::new();
+    let mut asking_files: Vec<PathBuf> = Vec::new();
+    for (path, statements) in &files {
+        for st in statements.iter().filter(|st| matches!(st.what(), Some(S::Clause))) {
+            let (heads, r) = (st.heads(), read(st));
+            if asking(&heads, &r) && !asking_files.iter().any(|p| p == path) {
+                asking_files.push(path.to_path_buf());
+            }
+            heads.iter().for_each(|h| by_head.entry(h).or_default().push(r.clone()));
+        }
+    }
+    // The program's own clauses read what its findings reach; a guest read among what they reach makes its requests.
+    let (mut own_asks, mut reads) = (false, false);
+    let mut reached: BTreeSet<String> = BTreeSet::new();
+    for st in own.iter().filter(|st| matches!(st.what(), Some(S::Clause))) {
+        let (heads, r) = (st.heads(), read(st));
+        own_asks |= asking(&heads, &r);
+        reads |= reads_guest(&r);
+        reached.extend(heads.iter().map(|h| (*h).to_owned()));
+        reached.extend(r);
+    }
+    let mut todo: Vec<String> = reached.iter().cloned().collect();
+    while let Some(rel) = todo.pop().filter(|_| !reads) {
+        for r in by_head.get(rel.as_str()).into_iter().flatten() {
+            reads |= reads_guest(r);
+            todo.extend(r.iter().filter(|n| reached.insert((*n).clone())).cloned());
+        }
+    }
+    asking_files.sort();
+    Ok(GuestAsks { settings, files: reads.then_some(asking_files), own: reads && own_asks })
 }
 
 /// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0141), and names

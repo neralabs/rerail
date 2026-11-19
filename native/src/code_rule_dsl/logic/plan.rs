@@ -1953,9 +1953,13 @@ pub fn prepared_stored(id: &[u8; 32]) -> Option<Arc<prepared::Prepared>> {
     PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.prepared.load().get(id).cloned()))
 }
 
-/// Keeps `made`, the prepared plans this run made of the version whose identity is `id`, for the store.
+/// Keeps `made`, the prepared plans this run made of the version whose identity is `id`, for the store. A version
+/// with no prepared line is held but not new: the store keeps a row a line (`prepared::store_rows`), so it has none
+/// of it, and every run makes it again; counted new, a warm run gathered a write of the kept plans as read
+/// (`the_run_after_a_cold_one_writes_nothing`, Q243).
 #[doc(hidden)]
 pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
+    let new = !made.0.is_empty();
     PLANS.with(|p| {
         if let Some(p) = p.borrow().as_ref() {
             p.prepared.rcu(|m| {
@@ -1963,7 +1967,9 @@ pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
                 m.insert(id, Arc::clone(&made));
                 m
             });
-            p.prepared_new.store(true, std::sync::atomic::Ordering::Relaxed);
+            if new {
+                p.prepared_new.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     });
 }
