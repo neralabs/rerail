@@ -2,6 +2,27 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
+## Status at `c1093d9a5`
+
+Three more cases have repairs. Eighteen implementation findings remain, including the partial performance repair for case 53.
+Cases 21 and 22 also need Windows runtime results.
+
+| Case | Change | Evidence |
+| --- | --- | --- |
+| 58 | `963d9473f` gives a complete working-tree batch one directory owner. Both packed and individual policies use it. | Two packed policies found four identifiers. After an edit, the batch found six. Adding a broken policy at either end returned all six and preserved every previous directory membership, including the acquisition and run numbers. Removing the broken policy published the new memberships. The nested batch test also aborted the outer owner and found zero published manifests. |
+| 34 | `c1093d9a5` resolves the previous branch before applying its reflog suffix. | Git, the native source API and the rule agree on `@{-1}@{0}`, `@{-1}@{1}`, and `@{-1}@{0}^`. Switching back from a detached checkout makes those selectors fail on all three paths. |
+| 35 | `c1093d9a5` checks whether both range endpoints resolve before selecting a tree path that contains two dots. | From the fixture root, Git and Rerail reject `HEAD:./src/..` and select the parent tree for `HEAD:./src/../`. From inside `src`, both accept the first spelling. A directory named `two..dots` still resolves. |
+
+The remaining cases are 11, 13–15, 17–18, 23, 28–30, 41–42, 44–47 and 52–53.
+The [scope fixture](#scope-membership-at-publication) shows why public run membership still needs a change to the store.
+The [repair list](#repairs-and-remaining-work) gives the other actions and their affected operations.
+
+The 31 targeted Rust store and Git tests passed. The final executable and engine run passed eight tests, including all three executable regressions.
+The full TypeScript typecheck passed after `e4915918f` made the restore test check that the release table contains a receipt.
+The old addon failed four comparisons in the new selector fixture. The corrected addon passed it in isolation and in the headless suite.
+The first full run passed 146 of 147 tests. The cold checkout test exceeded its five-second timeout.
+The repeat passed all 147 with the same addon and timeout.
+
 ## Status at `680694436`
 
 Twenty-one implementation findings remain open, including one partial performance repair. Two additional checks need Windows runtime results.
