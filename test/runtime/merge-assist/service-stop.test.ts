@@ -800,7 +800,7 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     await first.setEnabled(ws.repo, true);
     for (const checkout of checkouts) expect((await first.scan(checkout)).conflicts).toHaveLength(PEERS);
     // Rerail's own connection, which waits five seconds for a lock.
-    const { service } = ownConnection(ws, new FakeGithub());
+    const { service, close } = ownConnection(ws, new FakeGithub());
     const reading = Promise.withResolvers<ChildProcess>();
     let held = false;
     // The turn-off's first branch read is held until the test ends it.
@@ -829,6 +829,8 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
       await holder.release();
       read.kill("SIGKILL");
       await turnOff;
+      // Closed before the workspace's folder goes: Windows refuses to remove a database a connection holds open.
+      close();
     } finally {
       vi.mocked(spawn).mockImplementation(actualSpawn);
     }
