@@ -430,6 +430,15 @@ Progress (2026-11-18):
       node and writes it as it reaches it. Two pieces remain for A2. A clause is still read as the parser's form,
       by `Tape::clause`, for the lowering and the clause checks. The parser's `syntax::Item` is still built for the
       tape tests' parser comparison only. The coverage census still parses its files with the text parser.
+    - *Done (A2, the lowering).* The clause lowering reads its clause off the tape (`lower/reads.rs`). A literal
+      and a term are positions (`LitAt`, `At`), viewed as they are read (`L`, `T`); a disjunction's alternatives
+      are positions, and each combination is lowered by walking them again. What the lowering moved by rewriting a
+      clause's copy is a substitution: a hoisted aggregate, tape operation or digest, a wildcard named for a demand
+      or a count, is a fresh variable in a per-literal substitution set (`Sub`) over the node it stands for. What it
+      made is named: a value's binding (`LitAt::Eq`), a cover's atom (`LitAt::Made`). Fresh names come in the same
+      order as before, so the lowered programs are unchanged (the print-back tests). Left for A2: the clause
+      checks (`check`, the tape type check, the token-read refusal) still read `Tape::clause`'s parser form, and
+      `from_tape` still builds it for them.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,

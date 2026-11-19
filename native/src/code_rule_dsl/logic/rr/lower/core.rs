@@ -26,7 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
-use rerail_rr_syntax::syntax::Term as STerm;
+use super::At;
 use super::{Lowerer, ty};
 use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Rule, Term, is_axis};
 
@@ -111,7 +111,7 @@ impl Lowerer {
     }
 
     /// `rel(args)` (negated: `neg`) as the literals the engine reads, where `rewritten(rel)`.
-    pub(super) fn rewrite(&mut self, rel: &str, args: &[STerm], neg: bool) -> Result<Option<Vec<Literal>>, Error> {
+    pub(super) fn rewrite(&mut self, rel: &str, args: &[At], neg: bool) -> Result<Option<Vec<Literal>>, Error> {
         if !self.rewritten(rel) {
             return Ok(None);
         }

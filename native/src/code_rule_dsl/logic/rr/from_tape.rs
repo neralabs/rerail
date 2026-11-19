@@ -183,7 +183,7 @@ impl Stmt {
 }
 
 /// An operator's text, as the parser holds it.
-fn op(text: &str) -> Result<&'static str, Error> {
+pub fn op(text: &str) -> Result<&'static str, Error> {
     const OPS: [&str; 11] = ["=", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/", "%"];
     OPS.iter().find(|o| **o == text).copied().ok_or_else(|| Error::Syntax(format!("tape: unknown operator {text:?}")))
 }
@@ -199,19 +199,24 @@ impl<'a> Tape<'a> {
         super::tape::kind_field(self.v.key(n as usize)).0
     }
 
-    fn field(&self, n: u32) -> u16 {
+    pub fn field(&self, n: u32) -> u16 {
         super::tape::kind_field(self.v.key(n as usize)).1
     }
 
-    fn extra(&self, n: u32) -> bool {
+    pub fn extra(&self, n: u32) -> bool {
         self.v.key(n as usize) >> 16 & u32::from(CODE_EXTRA) != 0
+    }
+
+    /// How many nodes node `n`'s subtree holds, `n` included.
+    pub fn size(&self, n: u32) -> u32 {
+        self.v.size(n as usize) as u32
     }
 
     pub fn is(&self, n: u32, kind: Kind) -> bool {
         self.kind(n) == kind as u16
     }
 
-    fn end(&self, n: u32) -> usize {
+    pub fn end(&self, n: u32) -> usize {
         self.v.end(n as usize) as usize
     }
 
@@ -259,20 +264,20 @@ impl<'a> Tape<'a> {
         self.all(n, field).next()
     }
 
-    fn one(&self, n: u32, field: Field) -> Result<u32, Error> {
+    pub fn one(&self, n: u32, field: Field) -> Result<u32, Error> {
         self.get(n, field).map_or_else(|| bad(&format!("{} has no {field:?}", super::tape::KIND_NAMES.get(usize::from(self.kind(n))).unwrap_or(&"?"))), Ok)
     }
 
-    fn name(&self, n: u32, field: Field) -> Result<String, Error> {
+    pub fn name(&self, n: u32, field: Field) -> Result<String, Error> {
         Ok(self.text(self.one(n, field)?).to_owned())
     }
 
     /// An anonymous child written `text`.
-    fn has_token(&self, n: u32, text: &str) -> bool {
+    pub fn has_token(&self, n: u32, text: &str) -> bool {
         self.kids(n).any(|c| self.kind(c) >= super::tape::FIRST_ANONYMOUS && self.text(c) == text)
     }
 
-    fn string(&self, n: u32) -> Result<String, Error> {
+    pub fn string(&self, n: u32) -> Result<String, Error> {
         string_value(self.text(n)).map_or_else(|| bad("a string that does not read"), Ok)
     }
 

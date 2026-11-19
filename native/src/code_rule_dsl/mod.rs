@@ -1731,8 +1731,6 @@ pub(crate) mod logic {
         // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
         pub mod compose {
             #[cfg(test)]
-            pub use rerail_logic::code_rule_dsl::logic::plan::compose::*;
-            #[cfg(test)]
             pub mod engine_tests;
         }
         // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
