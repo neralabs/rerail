@@ -1625,10 +1625,29 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
 
   async #finishScopeAudit(completion: ScopeAuditCompletion): Promise<ScopeAuditSummary | undefined> {
-    const { workspace, auditId, revision, scope, mode, sourcePaths, failures, stopped, generatedEdit, indexed } =
-      completion;
+    const { workspace, auditId, revision, scope, mode, sourcePaths, failures, generatedEdit } = completion;
+    if (!(await this.#completeScopeAuditRequest(completion))) return;
+    const resultPagesStartedAt = performance.now();
+    const streamed = await this.#resultPages(workspace, scope, auditId, mode === "log" && !generatedEdit, failures);
+    const resultPagesMilliseconds = performance.now() - resultPagesStartedAt;
+    const { result, allFailures, unboundedFailures, status } = this.#recordScopeAuditResult(completion, streamed);
+    this.#answerScopeAudit(revision, mode, result, allFailures);
+    this.#keepAuditFindings(completion, result.violations);
+    await this.#publish(
+      revision,
+      scope === "repository" ? [] : sourcePaths,
+      result.violations,
+      mode,
+      { kind: scope === "repository" ? "audit" : "edit" },
+      generatedEdit,
+    );
+    return { resultPagesMilliseconds, violations: streamed.violationCount, failures: unboundedFailures.length, status };
+  }
+
+  /** Applies a scope audit's last request and keeps its index for reuse; false when the evaluator closes meanwhile. */
+  async #completeScopeAuditRequest({ workspace, stopped, indexed }: ScopeAuditCompletion): Promise<boolean> {
     await this.#waitForEvaluationIdle();
-    if (this.#closing) return;
+    if (this.#closing) return false;
     await this.#applyRequest(workspace, {
       files: [],
       removed: [],
@@ -1640,10 +1659,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       await workspace.completeStorageRevisionAsync().catch((error: unknown) => {
         process.stderr.write(`rerail: repository reuse was not recorded: ${errorMessage(error)}\n`);
       });
-    if (this.#closing) return;
-    const resultPagesStartedAt = performance.now();
-    const streamed = await this.#resultPages(workspace, scope, auditId, mode === "log" && !generatedEdit, failures);
-    const resultPagesMilliseconds = performance.now() - resultPagesStartedAt;
+    return !this.#closing;
+  }
+
+  /** A scope audit's result from its pages, recorded as the audit's end. */
+  #recordScopeAuditResult(
+    { auditId, scope, failures }: ScopeAuditCompletion,
+    streamed: Pick<Evaluation, "violations" | "failures"> & { paged: boolean },
+  ) {
     // Gaps are listed but do not fail the audit; files read only in part are gaps of a repository audit alone.
     const result: Evaluation = {
       status: failsAudit(streamed.failures, scope) ? "failed" : "completed",
@@ -1658,36 +1681,32 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const allFailures = auditFailureCap(scope)(unboundedFailures);
     // The paged list is capped by the same rule over the same failures, so it leaves out as many.
     const unlisted = unboundedFailures.length - allFailures.length;
-    const status = failsAudit(unboundedFailures, scope) ? "failed" : "completed";
+    const status: AuditResult["status"] = failsAudit(unboundedFailures, scope) ? "failed" : "completed";
     if (streamed.paged && auditId !== undefined) {
       this.#record(() => this.#audits.finishResultPages?.(auditId, status, unlisted));
       this.#runningAudits.delete(auditId);
     } else {
       this.#finishAudit(auditId, status, result.violations, allFailures, unlisted);
     }
-    if (this.#scope === "repository" && revision === this.#revision) {
-      this.#answerWith(revision, result.violations, mode);
-      this.#evaluation = { ...result, failures: allFailures };
-    }
-    // A touched-files steer speaks for each of its sources: a revision of one drops it whole, so each source's findings
-    // are recorded for `#steerAgain` to steer the others again. A source a later revision reached keeps what it reported.
-    if (scope === "touched-files" && mode === "steer")
-      for (const path of sourcePaths)
-        if ((this.#versions.get(path) ?? 0) <= revision)
-          this.#auditFindings.set(path, {
-            revision,
-            mode,
-            violations: result.violations.filter((violation) => violation.path === path),
-          });
-    await this.#publish(
-      revision,
-      scope === "repository" ? [] : sourcePaths,
-      result.violations,
-      mode,
-      { kind: scope === "repository" ? "audit" : "edit" },
-      generatedEdit,
-    );
-    return { resultPagesMilliseconds, violations: streamed.violationCount, failures: unboundedFailures.length, status };
+    return { result, allFailures, unboundedFailures, status };
+  }
+
+  /** In repository scope, the repository audit of the newest revision is what `#response` answers with. */
+  #answerScopeAudit(revision: number, mode: AuditMode, result: Evaluation, failures: Evaluation["failures"]): void {
+    if (this.#scope !== "repository" || revision !== this.#revision) return;
+    this.#answerWith(revision, result.violations, mode);
+    this.#evaluation = { ...result, failures };
+  }
+
+  /**
+   * A touched-files steer speaks for each of its sources: a revision of one drops it whole, so each source's findings
+   * are recorded for `#steerAgain` to steer the others again. A source a later revision reached keeps what it reported.
+   */
+  #keepAuditFindings({ scope, mode, revision, sourcePaths }: ScopeAuditCompletion, violations: Evaluation["violations"]): void {
+    if (scope !== "touched-files" || mode !== "steer") return;
+    for (const path of sourcePaths)
+      if ((this.#versions.get(path) ?? 0) <= revision)
+        this.#auditFindings.set(path, { revision, mode, violations: violations.filter((violation) => violation.path === path) });
   }
 
   async #waitForEvaluationIdle(): Promise<void> {
