@@ -176,7 +176,9 @@ jobs:
         shell: pwsh
         run: |
           $drive = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetTempPath())
-          [System.IO.DriveInfo]::new($drive).DriveFormat
+          $format = [System.IO.DriveInfo]::new($drive).DriveFormat
+          Write-Output "Temporary directory filesystem: $format"
+          if ($format -ne 'NTFS') { throw "This object-invalidation check requires NTFS." }
           ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "same-size rewrite" --reporter=verbose
 
       - name: Check directory scope identity and concurrent Git evaluations on Linux

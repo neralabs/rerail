@@ -1,13 +1,76 @@
 # Git and scope audit at `ec9066ed9`
 
-The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
+The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-## Current findings at `ba58532ee`
+## Open findings after `be7e18211`
 
-**28 items remain open.** Cases 92 and 93 from the previous review now pass their acceptance checks.
-The other 22 remain open. They include six rule-interface gaps and one unexplained timing difference.
+This review tracks 29 open items. The [previous review](#findings-at-ba58532ee-on-macos) gives the evidence and acceptance checks for 28 carried forward.
+They include a performance measurement with an unknown cause and proposed rule APIs.
+Case 102 adds a filesystem side effect. The [Linux verification](#linux-verification-after-8ea34a1a1) records the repairs and their regression results.
+
+Fix the operations that can change unrelated permissions, delete live settings, or return the wrong rule answer first.
+The corresponding regressions check the parent directory's mode, the surviving catalog rows, and the exact exported or negated relation.
+For cache reuse, case 101 measures derivations across runs and scopes. Case 61 measures unrelated history reads.
+
+### 102. Opening a scope store changes permissions on its parent
+
+An unprivileged Linux user created two existing directories under a disposable root.
+One directory had mode `1777`. The other had mode `0755`.
+The user opened `scope.sqlite` in each directory with `AnalysisScopeRun` and called `finish(false)`.
+Both directories changed to `0700`. Both databases had mode `0600`.
+A user who only had access through the group or other permission bits would lose access to unrelated files there.
+
+The headless scan reproduced this with `RERAIL_CONTENT_STORE_PATH` pointing to a new database in an existing `1777` directory.
+A rule reported the expected HEAD. The report had zero failures and published the named scope. The directory ended at `0700`.
+
+The native store applies the same permission change to every existing parent that the caller owns.
+The repair needs to distinguish a Rerail-managed directory from a file path that the caller places in an existing directory.
+Preserve the mode and special bits on the caller's existing parent.
+Keep the protection for Rerail-managed directories, database files, and sidecars.
+Test both shared modes, a fresh managed directory, an older managed directory with loose permissions, and a reopened store.
+[Database preparation](../../../../native/src/content_store/private_files.rs) · [Existing store permission tests](../../../../native/src/content_store/tests.rs)
+
+### Linux verification after `8ea34a1a1`
+
+The byte-directory fixture ran on Linux arm64, on overlayfs, with Node 24.22.3 and Git 2.39.5.
+Two readable symlinks pointed to physical directories named with byte `ff` and with the UTF-8 replacement character.
+Stopping the first directory previously removed three runs. The three belonged to the raw directory, its Unicode sibling, and an older ambiguous scope.
+The headless CLI also completed a scan against the sibling's commit when given the first symlink.
+
+`7ef059534` gives each directory a distinct scope. An individual stop preserves the sibling and the old record.
+A stop at the common parent collects the old record. Changing the first symlink after queuing its stop preserves the second registration.
+The CLI reports an encoding error for the unsupported checkout path before selecting a commit.
+[Scope contract](analysis-scopes.md) · [Store regression](../../../../native/src/content_store/corpus_runs/tests.rs) · [Queued release and CLI regression](../../../../test/cli/headless-scan.test.ts)
+
+The same environment exposed a hang when Node loaded the addon. A separate process timed out inside `require`.
+`98c76de86` starts workers after the library loads. Fresh Node processes now return the kernel version.
+Historical scans also return with `RERAIL_THREADS=1`. [Native health checks](../../../../test/engine/native/native-health.test.ts)
+
+The original concurrent tracking test then timed out with four evaluations and three CPU workers.
+The debugger showed all three workers waiting for answers. The callers needed queued document work to produce those answers.
+`be7e18211` lets a waiting worker run queued work after its receive times out.
+Four simultaneous evaluations returned the correct tracking answers in three batches at each pool size from one through four.
+Eight simultaneous evaluations on two workers also returned all forty expected answers across five batches.
+The Linux package check runs the opposite-repository test with two workers. [Answer handling](../../../../native/src/code_rule_dsl/logic/plan/corpus.rs)
+
+The Linux selector comparisons, the Linux same-length rewrite, and all six standalone revision command tests passed.
+Git for Windows and the NTFS rewrite still need Windows runtime results. The package job checks the test volume format.
+[Package checks](../../../../.github/workflows/package.yml)
+
+The Linux headless and native health suites passed 142 tests as root. The two skipped permission tests both passed as an ordinary user.
+On macOS, two tests exceeded five seconds. Teardown found a remaining `content.sqlite.upkeep` file.
+Both tests passed in isolation. With two engine workers, the full suites passed 143 tests and skipped the Linux byte-directory test.
+The content store suite passed 257 tests on Linux and 264 on macOS, with four skipped on each platform.
+The Datalog suite passed 399 tests. The one-worker SQL example returned the three expected counts from one submission.
+`b04243db4` removed eight import-boundary violations in the schema generator and headless tests.
+The full structural check still reported 15 failing categories. The same check reported 16 at `8ea34a1a1`.
+
+## Findings at `ba58532ee` on macOS
+
+This review recorded 28 open items. Cases 92 and 93 passed their acceptance checks.
+The 22 carried forward included six rule-interface gaps and one unexplained timing difference.
 Four more failures affect checkout pruning and long-running filesystem watches. One drops a rule's exported rows. One prevents reuse across identical revision scans.
-The Git-for-Windows, NTFS, and raw Unix directory checks still lack results.
+At that point, the Git-for-Windows, NTFS, and raw Unix directory checks lacked results.
 
 ### Six more failures
 
