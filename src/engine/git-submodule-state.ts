@@ -405,7 +405,14 @@ export function submoduleGitFolder(folder: string): string | GitFailure | undefi
   const dotGit = join(folder, ".git");
   const stats = statOf(dotGit);
   if (stats === undefined) return undefined;
-  if (stats.isDirectory()) return dotGit;
+  return stats.isDirectory() ? dotGit : namedGitFolder(folder, dotGit, stats);
+}
+
+/**
+ * The Git folder the `.git` file `dotGit` (`stats`) names, relative to `folder`; undefined when it went before it could
+ * be read, and how it failed for one Git cannot read as a `.git` file (not a regular file, too large, no `gitdir:`).
+ */
+function namedGitFolder(folder: string, dotGit: string, stats: Stats): string | GitFailure | undefined {
   const text = stats.isFile() && stats.size <= MAX_GITFILE_BYTES ? textOf(dotGit) : "";
   if (text === undefined) return undefined;
   return text.startsWith("gitdir: ") ? resolve(folder, text.slice("gitdir: ".length).replace(/[\r\n]+$/u, "")) : notARepository(dotGit);
