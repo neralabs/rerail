@@ -705,6 +705,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#steerDelivery = options.steerDelivery;
     this.#scope = options.scope ?? DEFAULT_AUDIT_SETTINGS.scope;
     this.#mode = options.mode ?? DEFAULT_AUDIT_SETTINGS.mode;
+    // The answer before any revision, set here rather than through `#answerWith` so the field is definitely assigned.
     this.#responseMode = this.#mode;
     this.#presentPath = options.presentPath ?? (path => path);
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
@@ -1665,8 +1666,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       this.#finishAudit(auditId, status, result.violations, allFailures, unlisted);
     }
     if (this.#scope === "repository" && revision === this.#revision) {
-      this.#reportableViolations = result.violations;
-      this.#responseMode = mode;
+      this.#answerWith(revision, result.violations, mode);
       this.#evaluation = { ...result, failures: allFailures };
     }
     // A touched-files steer speaks for each of its sources: a revision of one drops it whole, so each source's findings

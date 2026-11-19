@@ -781,6 +781,55 @@ describe("mechanical code rule regressions", () => {
         expect(status.violations.map(violation => violation.path)).toEqual(["api/c.py"]);
       } finally { await enforcer.close(); }
     });
+
+    it("and keeps a repository audit's answer when a tool call queued before the scope changed goes out after it", async () => {
+      const { root, enforcer } = await fixture({ scope: "touched-files", mode: "steer" });
+      const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+      const spooling = Promise.withResolvers<void>();
+      const stored = Promise.withResolvers<void>();
+      let first: Promise<unknown> | undefined;
+      try {
+        for (const name of ["a", "r"]) await writeFile(join(root, "api", `${name}.py`), "NEEDLE\n");
+        // The first call's large file is held as it is stored to disk, so the call's edits are queued only once the
+        // repository audit of the next call has answered.
+        vi.mocked(writeFile).mockImplementation(async (...args) => {
+          if (String(args[0]).includes("rerail-policy-")) {
+            spooling.resolve();
+            await stored.promise;
+          }
+          return actual.writeFile(...args);
+        });
+        await enforcer.openWorkspace("repository-answer-kept");
+        first = enforcer.auditGeneratedEdits("repository-answer-kept", {
+          revision: 1,
+          checkpoints: ["edit"],
+          edits: [
+            { path: "api/large.py", language: "python", generatedText: "x".repeat(9 * 1024 * 1024), readError: "unreadable" },
+            { path: "api/a.py", language: "python", generatedText: "NEEDLE\n" },
+          ],
+        });
+        await spooling.promise;
+        enforcer.updateSettings({ scope: "repository", mode: "steer" });
+        await enforcer.auditGeneratedEdits("repository-answer-kept", {
+          revision: 2,
+          checkpoints: ["edit"],
+          edits: [{ path: "api/r.py", language: "python", generatedText: "NEEDLE\n" }],
+        });
+        await enforcer.settleGeneratedEdits();
+        const repository = enforcer.snapshotStatus().violations.map(violation => violation.path).sort();
+        stored.resolve();
+        await first;
+        const status = await settled(enforcer);
+
+        expect(repository).toEqual(["api/a.py", "api/r.py"]);
+        expect(status.violations.map(violation => violation.path).sort()).toEqual(repository);
+      } finally {
+        stored.resolve();
+        await first;
+        vi.mocked(writeFile).mockReset();
+        await enforcer.close();
+      }
+    });
   });
 
   it("credits a steer to the distinct rules whose steer and block violations it rendered", async () => {
