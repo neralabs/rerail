@@ -847,7 +847,7 @@ Rerail is off in every repository until started. Rules belong to the repository;
 <details>
 <summary>What stopping does, inheritance and the footer</summary>
 
-A stopped checkout records nothing, runs no rules and delivers no guidance. Its Claude Code, Codex and Cursor hooks never start the daemon, but each one still asks a running daemon whether Rerail is on in the checkout, and so does the Claude Code status line. A busy daemon gets up to 2 s to answer (on Windows up to 4 s: 2 s for its engine to prove itself over its pipe, then 2 s for the answer; a hook first waits up to 30 s for a free instance of that pipe while every instance is taken, so its event still reaches a daemon that frees one in that time); past that, or with no daemon running, the hook reads the database itself.
+A stopped checkout records nothing, runs no rules and delivers no guidance. Its Claude Code, Codex and Cursor hooks never start the daemon, but each one still asks a running daemon whether Rerail is on in the checkout, and so does the Claude Code status line. A busy daemon gets up to 2 s to answer (on Windows up to 4 s: 2 s for its engine to prove itself over its pipe, then 2 s for the answer; a hook first waits up to 30 s for a free instance of that pipe while every instance is taken, so beside a daemon hung for good each hook of a stopped checkout waits about 30 s); past that, or with no daemon running, the hook reads the database itself.
 
 A checkout without its own value inherits from the nearest containing checkout of the same repository with one, else the repository. Starting or stopping a checkout reaches the checkouts inside it, which follow it again.
 
