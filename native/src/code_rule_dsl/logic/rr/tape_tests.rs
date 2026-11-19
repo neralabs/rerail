@@ -444,7 +444,7 @@ fn statements_from_the_tape_are_the_parsers() {
             }
             let src = std::fs::read_to_string(&path).unwrap();
             let parsed = syntax::Parser::new(&src).and_then(|mut p| p.statements());
-            let taped = from_tape::statements(&src, &crate::code_rule_dsl::logic::rr::nodes(&src));
+            let taped = from_tape::statements(&src);
             match (parsed, taped) {
                 (Ok(parsed), Ok(taped)) => {
                     assert_eq!(parsed.len(), taped.len(), "{}", path.display());

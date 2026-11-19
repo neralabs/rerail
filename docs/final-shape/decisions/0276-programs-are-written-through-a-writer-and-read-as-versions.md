@@ -411,6 +411,23 @@ Progress (2026-11-18):
   and writes through the builder. It is the last tree pass on the preparation path, and goes with the forms. The
   rank form's tree entry (`rank_form::find`) went, and its tests moved onto the version's pass.
 
+- **Stage 6, the intermediate forms: the plan (user, 2026-11-18: "work through all of these").** The goal is
+  0246's: a module's tape is walked once, and the walk writes its image. The tape is read where it is, and nothing
+  builds the program in another form or decodes the image back into one. Four steps, each in commits verified
+  under Relax:
+  - **A. The walk writes the image.** A1: a file is carried as its tape (its text and nodes), never as
+    statements. Each directive writes its field through the fields API as the walk reaches it, and every reader of
+    statements (includes, the checks, testing, the type check) reads the tape's statement nodes. `from_tape`'s
+    statement types go. A2: the clause lowering reads the clause's tape nodes. A disjunction's alternatives are
+    positions in the tape, and a rule is written by walking the chosen positions. A3: each rule is written term by
+    term with the builder's rule writer, so the lowering builds no `front::Rule`.
+  - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
+    (`Tree::rule`) goes.
+  - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,
+    `lowering_tail`, text and the compose stages. Smallest first, each one's tests ported before its tree path goes.
+  - **D. The forms go**: `front::Rule`/`Literal`/`Atom`/`Term`, `Builder::add(&Rule)`, `encoder::tree_rule` and
+    `program_image::Tree`, and §6's guard refuses them.
+
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 
 **The bounded cross-file rounds** (`typing::cross_rounds`, `.pragma "cross-rounds"`).

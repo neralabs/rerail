@@ -1,6 +1,8 @@
-//! A `.rr` file's statements, read off its tape (decision 0062). The tape is what the parser makes
-//! (`syntax::Parser::taped`, decision 0061) and what the content store keeps; lowering reads the statements this module
-//! gives, so a rule file's program is a function of its stored tape.
+//! A `.rr` file's statements, read off its tape (decision 0062). The tape is the lean parser's image
+//! (`rerail_rr_syntax::tape`, decision 0140) and what the content store keeps; lowering reads the statements this
+//! module gives, so a rule file's program is a function of its stored tape. The image is read where it is
+//! (`tape_format::View`): each node's kind, field and span from its columns, its children by their subtree sizes,
+//! with no node decoded ahead and no index of children made.
 //!
 //! Every statement kind and term kind of decision 0061 maps back to the form `lower` takes (`syntax::Item`,
 //! `syntax::Lit`, `syntax::Term`). Texts come from the source by the nodes' spans: a string is unescaped as the lexer
@@ -8,14 +10,14 @@
 
 use super::Error;
 use super::syntax::{Code, Fix, Head, Item, Lines, Lit, Statement, Suppress, Term};
-use super::tape::{ERROR, Field, Kind, Node};
+use super::tape::{ERROR, Field, Kind};
+use rerail_rr_syntax::tape_format::{CODE_EXTRA, View};
 
-/// The tape of `src` as a tree: each node's children in order, extras (comments) left out.
-struct Tree<'a> {
+/// A `.rr` tape read in place: its source and its image's columns.
+pub struct Tape<'a> {
     src: &'a str,
     lines: Lines,
-    nodes: &'a [Node],
-    children: Vec<Vec<u32>>,
+    v: View<'a>,
 }
 
 /// An operator's text, as the parser holds it.
@@ -28,38 +30,52 @@ fn bad<T>(what: &str) -> Result<T, Error> {
     Err(Error::Syntax(format!("tape: {what}")))
 }
 
-impl<'a> Tree<'a> {
-    fn new(src: &'a str, nodes: &'a [Node]) -> Self {
-        let mut children = vec![Vec::new(); nodes.len()];
-        for (i, node) in nodes.iter().enumerate() {
-            if let Some(p) = node.parent
-                && !node.extra
-            {
-                children[p as usize].push(i as u32);
-            }
-        }
-        Self { src, lines: Lines::of(src), nodes, children }
+impl<'a> Tape<'a> {
+    /// `image` (the lean parser's tape of `src`) over `src`.
+    pub fn new(src: &'a str, image: &'a [u8]) -> Result<Self, Error> {
+        Ok(Self { src, lines: Lines::of(src), v: View::new(image).map_err(|e| Error::Syntax(format!("tape: {e}")))? })
     }
 
     fn kind(&self, n: u32) -> u16 {
-        self.nodes[n as usize].kind
+        super::tape::kind_field(self.v.key(n as usize)).0
+    }
+
+    fn field(&self, n: u32) -> u16 {
+        super::tape::kind_field(self.v.key(n as usize)).1
+    }
+
+    fn extra(&self, n: u32) -> bool {
+        self.v.key(n as usize) >> 16 & u32::from(CODE_EXTRA) != 0
     }
 
     fn is(&self, n: u32, kind: Kind) -> bool {
         self.kind(n) == kind as u16
     }
 
+    fn end(&self, n: u32) -> usize {
+        self.v.end(n as usize) as usize
+    }
+
     fn text(&self, n: u32) -> &'a str {
-        let node = &self.nodes[n as usize];
-        &self.src[node.start as usize..node.end as usize]
+        &self.src[self.v.start(n as usize) as usize..self.end(n)]
     }
 
     fn line(&self, n: u32) -> usize {
-        self.lines.line(self.nodes[n as usize].start as usize)
+        self.lines.line(self.v.start(n as usize) as usize)
+    }
+
+    /// `n`'s children in order, extras (comments) left out.
+    fn kids(&self, n: u32) -> impl Iterator<Item = u32> + '_ {
+        self.v.children(n as usize).map(|c| c as u32).filter(move |&c| !self.extra(c))
+    }
+
+    /// Whether a node of the tape is an ERROR: a statement that does not parse.
+    fn has_error(&self) -> bool {
+        (0..self.v.len() as u32).any(|i| self.kind(i) == ERROR)
     }
 
     fn all(&self, n: u32, field: Field) -> impl Iterator<Item = u32> + '_ {
-        self.children[n as usize].iter().copied().filter(move |&c| self.nodes[c as usize].field == field as u16)
+        self.kids(n).filter(move |&c| self.field(c) == field as u16)
     }
 
     fn get(&self, n: u32, field: Field) -> Option<u32> {
@@ -76,7 +92,7 @@ impl<'a> Tree<'a> {
 
     /// An anonymous child written `text`.
     fn has_token(&self, n: u32, text: &str) -> bool {
-        self.children[n as usize].iter().any(|&c| self.kind(c) >= super::tape::FIRST_ANONYMOUS && self.text(c) == text)
+        self.kids(n).any(|c| self.kind(c) >= super::tape::FIRST_ANONYMOUS && self.text(c) == text)
     }
 
     fn string(&self, n: u32) -> Result<String, Error> {
@@ -89,7 +105,7 @@ impl<'a> Tree<'a> {
     }
 
     fn statements(&self) -> Result<Vec<Statement>, Error> {
-        self.children[0].iter().map(|&s| Ok((self.statement(s)?, self.line(s)))).collect()
+        self.kids(0).map(|s| Ok((self.statement(s)?, self.line(s)))).collect()
     }
 
     fn columns(&self, n: u32) -> Result<Vec<(String, String)>, Error> {
@@ -115,7 +131,7 @@ impl<'a> Tree<'a> {
             k if k == Kind::Declaration as u16 => {
                 // The words after the columns, as `rest_of_line` reads them.
                 let list = self.one(s, Field::Columns)?;
-                let after = self.children[s as usize].iter().copied().skip_while(|&c| c != list).skip(1);
+                let after = self.kids(s).skip_while(|&c| c != list).skip(1);
                 let tail = after
                     .map(|c| {
                         Ok(match self.kind(c) {
@@ -137,10 +153,10 @@ impl<'a> Tree<'a> {
                     let name = self.name(r, Field::Name)?;
                     // `r(…)`: the parameters' text, from the byte after the name's `(` to its `)`. The parentheses
                     // around parameters are implied; `r()` stores them.
-                    let open = self.nodes[self.one(r, Field::Name)? as usize].end as usize;
+                    let open = self.end(self.one(r, Field::Name)?);
                     if let Some(p) = self.get(r, Field::Parameters) {
                         let from = self.src[open..].find('(').map_or(open, |k| open + k + 1);
-                        let to = self.src[..self.nodes[r as usize].end as usize].rfind(')').unwrap_or(self.nodes[p as usize].end as usize);
+                        let to = self.src[..self.end(r)].rfind(')').unwrap_or(self.end(p));
                         params.push((name.clone(), self.src[from..to].to_owned()));
                     } else if self.has_token(r, "(") {
                         params.push((name.clone(), String::new()));
@@ -225,9 +241,9 @@ impl<'a> Tree<'a> {
             },
             k if k == Kind::Setting as u16 => {
                 let name = self.one(s, Field::Name)?;
-                let first = self.children[s as usize].iter().copied().skip_while(|&c| c != name).nth(1);
-                let end = self.nodes[s as usize].end as usize;
-                let text = first.map_or("", |f| &self.src[self.nodes[f as usize].start as usize..end]);
+                let first = self.kids(s).skip_while(|&c| c != name).nth(1);
+                let end = self.end(s);
+                let text = first.map_or("", |f| &self.src[self.v.start(f as usize) as usize..end]);
                 Item::Setting { key: self.text(name).to_owned(), text: text.to_owned() }
             }
             k if k == Kind::Clause as u16 => Item::Clause {
@@ -331,40 +347,17 @@ impl<'a> Tree<'a> {
     }
 }
 
-/// The statements of `src` from its tape `nodes` (`super::tape`, or a stored tape's facts: `nodes_of_facts`). A tape
-/// with an ERROR gives the error running the file gives (`super::syntax_error`).
-pub fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Error> {
-    if nodes.iter().any(|n| n.kind == ERROR) {
+/// The statements of `src`, read off its tape (`rerail_rr_syntax::tape`). A tape with an ERROR gives the error
+/// running the file gives (`super::syntax_error`).
+pub fn statements(src: &str) -> Result<Vec<Statement>, Error> {
+    let image = rerail_rr_syntax::tape(src);
+    let tape = Tape::new(src, &image)?;
+    if tape.has_error() {
         let (_, message) = super::syntax_error(src).unwrap_or((0, "a statement that does not parse".to_owned()));
         return Err(Error::Syntax(message));
     }
-    if nodes.is_empty() {
+    if tape.v.is_empty() {
         return Ok(Vec::new());
     }
-    Tree::new(src, nodes).statements()
-}
-
-/// A stored tape's nodes, from the facts the store's tape gives (`facts::core::build_cached`).
-pub(super) fn nodes_of_facts(facts: &crate::code_rule_dsl::facts::core::Facts) -> Vec<Node> {
-    // Each node's parent from the subtrees open around it, in one pass (a parent asked per node is a search on
-    // format 15).
-    let mut open: Vec<(u32, u32)> = Vec::new();
-    (0..facts.len())
-        .map(|i| {
-            let flags = facts.flags(i as u32);
-            while open.last().is_some_and(|&(_, end)| end as usize <= i) {
-                open.pop();
-            }
-            let parent = open.last().map_or(u32::MAX, |&(at, _)| at);
-            open.push((i as u32, facts.subtree_end(i as u32)));
-            Node {
-                kind: if flags & 8 != 0 { ERROR } else { crate::code_rule_dsl::facts::core::kind_code(facts.kind(i as u32)) },
-                field: facts.field(i as u32),
-                start: facts.start(i as u32),
-                end: facts.end(i as u32),
-                parent: (i != 0 && parent != u32::MAX).then_some(parent),
-                extra: flags & 2 != 0,
-            }
-        })
-        .collect()
+    tape.statements()
 }

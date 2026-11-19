@@ -32,11 +32,6 @@ pub use rerail_rr::code_rule_dsl::logic::rr::print::{self};
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
 
-/// `src`'s tape as nodes: the lean parser's image (decision 0140) read back (`tape::nodes`), what
-/// the statements are read off as a stored tape's are (decision 0062).
-pub fn nodes(src: &str) -> Vec<tape::Node> {
-    tape::nodes(&tape(src)).expect("the lean parser's image decodes")
-}
 /// `src` with each `.violation`'s message reduced to its placeholders (`lower::findings::message_skeleton`): the
 /// text a program's keys are made of (`corpus::texts_digest`). Lowering reads a message's placeholders alone, and the
 /// writer puts its texts in (decision 0225 §3), so an edit of a message's words is no edit of the program.
@@ -45,7 +40,13 @@ pub fn message_masked(src: &str) -> std::borrow::Cow<'_, str> {
         return std::borrow::Cow::Borrowed(src);
     }
     let message = tape::Field::Message as u16;
-    let mut spans: Vec<(usize, usize)> = nodes(src).iter().filter(|n| n.field == message && !n.is_error()).map(|n| (n.start as usize, n.end as usize)).collect();
+    // The messages' spans, read off the lean parser's image in place (`tape_format::View`).
+    let image = tape(src);
+    let Ok(v) = rerail_rr_syntax::tape_format::View::new(&image) else { return std::borrow::Cow::Borrowed(src) };
+    let mut spans: Vec<(usize, usize)> = (0..v.len())
+        .filter(|&i| matches!(tape::kind_field(v.key(i)), (kind, field) if field == message && kind != tape::ERROR))
+        .map(|i| (v.start(i) as usize, v.end(i) as usize))
+        .collect();
     spans.sort();
     let mut out = String::with_capacity(src.len());
     let mut at = 0;
@@ -67,7 +68,7 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
     if !src.contains(".violation") && !src.contains(".message") {
         return Vec::new();
     }
-    let Ok(statements) = from_tape::statements(src, &nodes(src)) else { return Vec::new() };
+    let Ok(statements) = from_tape::statements(src) else { return Vec::new() };
     let policy = statements
         .iter()
         .find_map(|(item, _)| match item {
@@ -181,7 +182,7 @@ enum Read {
 
 /// `src` read once, its includes resolved (`Text`).
 pub fn read_text(src: &str) -> Result<Text, Error> {
-    read_parsed(from_tape::statements(src, &nodes(src))?)
+    read_parsed(from_tape::statements(src)?)
 }
 
 /// `read_text` of statements already parsed.
@@ -1077,7 +1078,7 @@ pub struct TextNames {
 /// `src` parsed, and its seed (`TextRead`).
 pub fn read_seed(src: &str) -> Result<TextRead, Error> {
     use super::plan::corpus::phase0;
-    let statements = from_tape::statements(src, &nodes(src))?;
+    let statements = from_tape::statements(src)?;
     let includes: Vec<(i64, String)> = statements
         .iter()
         .filter_map(|(item, _)| match item {
@@ -1240,7 +1241,7 @@ fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>
     if lexed.error.is_none() && !lexed.toks.iter().any(|(t,_,_)| matches!(t, syntax::Tok::Hash(_))) {
         return Ok(None);
     }
-    let statements = from_tape::statements(src, &nodes(src))?;
+    let statements = from_tape::statements(src)?;
     let names: Vec<(i64, String)> = statements
         .iter()
         .filter_map(|(item, _)| match item {
@@ -1830,7 +1831,7 @@ fn read_shared(path: &Path) -> Result<(std::sync::Arc<Vec<syntax::Statement>>, L
 }
 
 fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
-    from_tape::statements(&src, &nodes(&src))
+    from_tape::statements(&src)
 }
 
 pub type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
