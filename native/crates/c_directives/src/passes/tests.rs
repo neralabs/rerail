@@ -225,7 +225,7 @@ fn the_corpus_by_the_programs() {
     #[cfg(not(target_os = "macos"))]
     let exec = Exec::Interpreter;
     let mut results_words: Vec<words::WordStats> = Vec::new();
-        let mut device = DeviceStats::default();
+    let mut device = DeviceStats::default();
     // Units a batch (`run_batch`): their rounds and their text in the same runs.
     let batch: usize = env("RERAIL_PP_BATCH").and_then(|s| s.parse().ok()).unwrap_or(1).max(1);
     let mut wrong = 0;
@@ -234,6 +234,8 @@ fn the_corpus_by_the_programs() {
         let mut names: Vec<_> = std::fs::read_dir(root.join(lang)).unwrap().flatten().map(|e| e.path()).collect();
         names.sort();
         let (mut same, mut differ) = (0, 0);
+        // The passes' time, the files settled before it: wall, and this thread's CPU.
+        let (mut wall, mut cpu) = (0.0f64, 0.0f64);
         let mut refused: HashMap<&str, usize> = HashMap::new();
         let chosen: Vec<_> = names.iter().skip(first).take(count).collect();
         for chunk in chosen.chunks(batch) {
@@ -243,6 +245,7 @@ fn the_corpus_by_the_programs() {
             let profiled = env("RERAIL_PP_PROFILE").is_some();
             rerail_compiler::array::profile(profiled);
             let t0 = std::time::Instant::now();
+            let c0 = rerail_compiler::native_cpu_block::thread_cpu();
             let results: Vec<(Outcome, Stats, words::WordStats)> = if words || exec != Exec::Interpreter {
                 let units: Vec<(Config, &mut dyn Files, &str)> = settled.iter().zip(ios.iter_mut()).zip(&paths).map(|((s, io), p)| (s.cfg.clone(), io as &mut dyn Files, p.as_str())).collect();
                 let (r, d) = run_batch(units, crate::expand::native, exec);
@@ -252,6 +255,8 @@ fn the_corpus_by_the_programs() {
                 settled.iter().zip(ios.iter_mut()).zip(&paths).map(|((s, io), p)| { let (o, st) = run(s.cfg.clone(), io, p); (o, st, Default::default()) }).collect()
             };
             let ms = t0.elapsed().as_millis();
+            wall += t0.elapsed().as_secs_f64();
+            cpu += rerail_compiler::native_cpu_block::thread_cpu() - c0;
             if profiled {
                 // The operations by time: program, operation, steps, ms, elements.
                 let mut rows: Vec<_> = rerail_compiler::array::profile(false).into_iter().collect();
@@ -281,6 +286,7 @@ fn the_corpus_by_the_programs() {
             }
         }
         println!("{lang}: {same} the same, {differ} differ, refused {refused:?}");
+        println!("  the passes ({exec:?}, words {words}): {wall:.3} s wall, {cpu:.3} s CPU (this thread)");
         if exec != Exec::Interpreter {
             println!("  the device: {device:?}");
             let w = |f: fn(&words::WordStats) -> u64| results_words.iter().map(f).sum::<u64>();

@@ -134,6 +134,22 @@ launches, the user's bound of 2026-11-03). An array program runs many command bu
 the host's reads between them. The executor takes the execution lock and the ledger's scope
 per command buffer, and ends a buffer at the ledger's bound. The bound itself is unchanged.
 
+## On the CPU: Cranelift
+
+`rerail_compiler::native_cpu_array` emits each shape of operation a program has (its map, its
+combination, its flags) as one Cranelift function over a block of words: lengths, pointers,
+and a mask by which an operand's index is taken (0 broadcasts a scalar). The host's driver is
+the interpreter's: it chooses lengths, runs the rounds and answers the calls. Every loop over
+elements is emitted code:
+- maps, selects, iotas, copies;
+- segmented scans;
+- a stable LSD radix sort, a byte a pass, skipping a pass where every element has one byte;
+- gathers, scatters (with a `set` scatter's written flags), searches (a sortedness check,
+  then a binary search a query), compacts, expands;
+- the fixed points' verdict.
+
+`Exec::Cranelift` runs the passes on it; the calls run on the CPU.
+
 ## Measured
 
 **Correct, the interpreter, the lean calls** (the serial pass's own expansion per element),
@@ -144,6 +160,9 @@ both corpora under clang's profile:
 **Correct, the calls on the words:** the passes' unit tests, 10 C units and 2 C++ units the
 same. The heaviest C++ unit: 38 rounds, 40,450 tests, 18,763 expansions; under 13 s on the
 interpreter, down from 106 s.
+
+**Correct, on Cranelift:** the device's operation tests, the same programs and lengths, equal
+the interpreter, refusals at its operation; every passes test; the first 50 C units.
 
 **Correct, on Metal:** every operation equals the interpreter over lengths 0 to 70,001 (two
 levels of tiles), and the refusals are at the interpreter's operation. The passes' 10 unit
@@ -211,6 +230,7 @@ first operation whose value differs):
    device.
 3. ~~The calls on the device, through 0408's lockstep batch~~ (built, above). The element's
    files are still made on the host; making them by array operations is next.
-4. **Cranelift**, the CPU path.
+4. ~~Cranelift, the CPU path~~ (built, above). Fused elementwise runs are not built yet:
+   each operation is a loop of its own.
 5. **Timing** through `quiet-run`, warm, against rustc's build of the serial pass.
 6. P0 (each file's tables) on the device; merges; an expansion cache.
