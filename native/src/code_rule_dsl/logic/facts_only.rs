@@ -33,6 +33,9 @@ const FACT_STORE: &[&str] = &[
     "tape_objects",
     "file_documents",
     "object_pins",
+    // Physical segments holding stored object bytes and relation frames.
+    "object_segments",
+    "frame_segments",
     "store_state",
     // The store's identity (RER-131): its atoms and connections belong to this store only.
     "store_identity",
@@ -51,6 +54,13 @@ const FACT_STORE: &[&str] = &[
     "analysis_scope_workspace_snapshot",
     "analysis_scope_collect",
     "analysis_scope_release",
+    // Pending acquisitions and the scope, run, and snapshot facts published together on success.
+    "analysis_scope_pending",
+    "analysis_history_scope",
+    "analysis_scope_run",
+    "analysis_run_workspace_snapshot",
+    // Index of each history scope's stop ancestors, populated on insert and removed by foreign-key cascade.
+    "analysis_history_ancestor",
     "node",
     "tape",
     "node_type",

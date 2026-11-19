@@ -147,6 +147,33 @@ fn analysis_scope_only_publishes_staged_memberships_on_success() {
 }
 
 #[test]
+fn a_publication_error_rolls_back_history_and_its_ancestor_index_before_retry() {
+    use crate::content_store::analysis_scope::{AnalysisRun, RunSource};
+    let (path, store) = store("scope-history-rollback");
+    let directory = path.parent().unwrap().join("work");
+    let scope = crate::content_store::analysis_scope::directory(&directory);
+    let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), &scope, "scan").unwrap();
+    run.select_source(RunSource::Directory(directory.to_str().unwrap().to_owned())).unwrap();
+    let counts = || {
+        store.connection.lock().unwrap().query_row("SELECT
+            (SELECT count(*) FROM analysis_scope_pending),
+            (SELECT count(*) FROM analysis_history_scope WHERE scope=?1),
+            (SELECT count(*) FROM analysis_scope_run WHERE scope=?1),
+            EXISTS(SELECT 1 FROM analysis_history_ancestor WHERE scope=?1)", [&scope],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, bool>(3)?))).unwrap()
+    };
+    store.connection.lock().unwrap().execute_batch("CREATE TRIGGER fail_fixture BEFORE INSERT ON analysis_scope_run
+        BEGIN SELECT RAISE(ABORT,'interrupted fixture'); END;").unwrap();
+    assert!(run.finish(true).is_err());
+    assert_eq!(counts(), (1, 0, 0, false));
+    store.connection.lock().unwrap().execute_batch("DROP TRIGGER fail_fixture").unwrap();
+    run.finish(true).unwrap();
+    assert_eq!(counts(), (0, 1, 1, true));
+    store.delete_analysis_scope(&scope).unwrap();
+    assert_eq!(counts(), (0, 0, 0, false));
+}
+
+#[test]
 fn concurrent_analysis_runs_order_snapshots_and_isolate_staging() {
     use crate::content_store::{analysis_scope::AnalysisRun, GitTree, HashKey};
     let (path, store) = store("scope-acquisitions");
