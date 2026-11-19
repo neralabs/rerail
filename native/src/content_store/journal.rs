@@ -667,7 +667,8 @@ mod fsevents {
             let t = Instant::now();
             let fresh = all[at].synced.is_none_or(|(e, _)| e != epoch);
             let first = all[at].synced.is_none();
-            let r = sync(&mut all[at], epoch, WAIT.max(settle));
+            // The caller's bound, else the journal's wait, lengthened to the settle window (Q184 with Q179).
+            let r = sync(&mut all[at], epoch, wait.unwrap_or(WAIT.max(settle)));
             if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
                 let live = &all[at];
                 let (n, history, cookie) = live.shared.seen.lock().map(|s| (s.events.len(), s.history_at, s.cookie_at)).unwrap_or((0, None, None));
@@ -837,11 +838,11 @@ mod tests {
         std::fs::File::options().write(true).open(&kept).unwrap().set_times(std::fs::FileTimes::new().set_accessed(std::time::SystemTime::now()).set_modified(mtime)).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(500));
         next_epoch();
-        let Since::Changed { paths, cursor: touched } = since(std::slice::from_ref(&root), Some(settled), &cookies) else { panic!("a replay") };
+        let Since::Changed { paths, cursor: touched } = since(std::slice::from_ref(&root), Some(settled), &cookies, SETTLE) else { panic!("a replay") };
         assert!(!paths.contains(&kept), "an access time set is no change: {paths:?}");
         std::fs::write(&kept, "x = 2\n").unwrap();
         next_epoch();
-        let Since::Changed { paths, .. } = since(std::slice::from_ref(&root), Some(touched), &cookies) else { panic!("a replay") };
+        let Since::Changed { paths, .. } = since(std::slice::from_ref(&root), Some(touched), &cookies, SETTLE) else { panic!("a replay") };
         assert!(paths.contains(&kept), "a write is named: {paths:?}");
         // A root under one asked is answered by the same stream, kept for the process: a change made since the
         // run's question is told to the next run.

@@ -5358,3 +5358,22 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   1-5 B more on the CPU (the two first-chunk runs at one size also differ, 127 against 154 strata); 2 (row blocks
   reserved large and grown in place, tails released); the Metal peak footprint at big chunks
   (1.36-1.47 GB, the count's most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
+
+### Q262. Four observer tests fail: the settle window's, and Q189's listings
+
+- **Found** (2026-11-19, on CUDA-support): `rerail-store`'s tests did not compile. A merge (the settle window,
+  Q179, with Q184's bound) left two of the journal test's `since` calls without `settle`, and the replay's wait
+  took `WAIT.max(settle)` in place of the caller's bound. Both are fixed on CUDA-support. The journal's tests pass
+  again, Q221's bound of nothing included.
+- **Open**: `observe::tests::an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing`
+  fails with or without the bound's fix. With no window (`settle_ns = 0`) it expects the journal's silence trusted
+  and the edit missed; the observer instead forgets both answers as changed and hashes the file again (`0 trusted by
+  the journal (2 forgotten as changed)`, `1 files hashed`).
+- **Also open**, failing with or without the bound's fix, hidden while the tests did not compile: Q189's listing
+  tests `a_small_root_is_checked_by_listings_not_stats`, `a_listing_names_an_edited_file_and_no_other` and
+  `a_directory_that_cannot_be_listed_names_what_it_held` (the last: `0 directories listed`, 9 stats where it
+  expects none).
+- **Keep**: Q179's window (an answer recorded within it is checked though the journal names nothing); Q184's bound;
+  Q189's listings (a small root checked by listing its directories, not by a stat a file).
+- **Done when**: the four pass, or an assertion is shown to state a behaviour the observer no longer has on
+  purpose, and is changed with the reason.

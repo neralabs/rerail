@@ -891,7 +891,7 @@ static TAPE_VIEWS: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|
             crate::code_rule_dsl::residency::slabs::msl(),
             std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
             reads,
-            include_str!("metal_tape.metal")
+            include_str!("device_tape.h")
         )
     })
 });

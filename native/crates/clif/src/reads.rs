@@ -1,5 +1,5 @@
 //! The tape's primitive reads as CLIF functions, written once (decision 0310): the reads
-//! `rerail_tape_format::f16::View` and format 15's columns make, as `metal_tape.metal` ports them.
+//! `rerail_tape_format::f16::View` and format 15's columns make, as `device_tape.h` ports them.
 //!
 //! A read takes the tape's base (the bytes its view's offsets count from), its view
 //! (`view::TapeView`) and a document-local node, and returns a u32 (`NONE` for no node). Format 16's
@@ -249,7 +249,7 @@ pub fn rust_source() -> Result<String, String> {
 
 /// The reads as UKL (decisions 0310, 0440 §3.3), for every GPU's kernels: each read built for either format, as its
 /// view says (a batch holds documents of both), `clif_` before its name. The library's `<ukl/reads/tape.h>`, which
-/// `metal_tape.metal`'s readers call; made again by `the_kernels_reads_are_these`.
+/// `device_tape.h`'s readers call; made again by `the_kernels_reads_are_these`.
 pub fn tape_ukl_source() -> Result<String, String> {
     tape_ukl(false)
 }

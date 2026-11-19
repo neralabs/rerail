@@ -87,7 +87,7 @@ kernel void label_round(device uint* flags [[buffer(0)]],device uint* head [[buf
 // pass marks its start at the first emit; a targets pass marks every node an emitting path
 // captured. A walk that outgrows its frames, captures or steps, or reads an unsaved cursor, sets
 // bit 1 of flags[0], and the clause runs again with its passes on the interpreter.
-// A walk's document (decision 0032): its tape read in place from the chunk, by `metal_tape.metal`'s
+// A walk's document (decision 0032): its tape read in place from the chunk, by `device_tape.h`'s
 // accessors. Nodes are the batch's numbering throughout (labels, texts, records); a step reads
 // its node at `node - doc.node_base`. `head` is the label prefix: {label count, words}, then the
 // labels' bits.
@@ -210,7 +210,7 @@ static void micro_run(uint FRAMES,device const DocView* docs,device const uchar*
   uint lanes=max(shape.lanes,1u),limit=shape.itemCount*lanes;
   uint item=tid,round=0u;
   ulong mask=0ul;uint pass=0u,file=0u,group=0u;
-  SimdRoots r=simd_roots(0ul);
+  SimdRoots r=simd_roots(0ul,lane);
   bool walking=true,fresh=true;
   WorkQueue wq={q.slots,q.control,q.capacity};
   uint polls=0u,idle=tid<MICRO_STANDBY?MICRO_POLLS:1u,turn=0u;
@@ -226,7 +226,7 @@ static void micro_run(uint FRAMES,device const DocView* docs,device const uchar*
           pass=low;group=at-passes[low].threadStart;file=roots_file(items,group);group-=roots_first_group(items,file);
           mask=root_mask_in(chunk,docs[file],items,passes[low].itemStart,file,group,part*(ROOT_GROUP/lanes),(part+1u)*(ROOT_GROUP/lanes));
         }
-        r=simd_roots(mask);round=0u;fresh=false;
+        r=simd_roots(mask,lane);round=0u;fresh=false;
       }
       if(round>=r.total){item+=grid;fresh=true;continue;}
       uint i=round+lane;ushort owner=ushort(simd_root_lane(r,i));
@@ -645,7 +645,7 @@ static void label_group_run(uint FRAMES,Stack stack,device const DocView* docs,d
         // together.
         for(uint group=lane,groups=roots_file_groups(items,file);group-simdLane<groups;group+=width){
           ulong mask=group<groups?root_mask(chunk,own,items,pass.itemStart,file,group):0ul;
-          SimdRoots r=simd_roots(mask);
+          SimdRoots r=simd_roots(mask,simdLane);
           for(uint round=0u;round<r.total;round+=32u){
             uint i=round+simdLane;ushort owner=ushort(simd_root_lane(r,i));
             uint lo=simd_shuffle(uint(mask),owner),hi=simd_shuffle(uint(mask>>32u),owner),from=simd_shuffle(r.prefix,owner),g=simd_shuffle(group,owner);
@@ -831,7 +831,7 @@ kernel void label_leaves(device const DocView* docs [[buffer(0)]],device const u
     for(uint l=0u;l<shape.targetCount;l++)atomic_store_explicit(&leaves[l*shape.recursive+region+w],0u,memory_order_relaxed);
     for(uint k=0u;k<32u&&w*32u+k<nodes;k++){
       uint n=w*32u+k;
-      device const DeviceCode& code=tape_code(chunk,d,n);
+      device const DeviceCode& code=*tape_code(chunk,d,n);
       for(uint l=0u;l<shape.targetCount;l++){
         uint test=tests[l],op=test&255u,arg=test>>8u;bool hit;
         if(op==18u)hit=tape_next(chunk,d,n)!=TAPE_NONE;

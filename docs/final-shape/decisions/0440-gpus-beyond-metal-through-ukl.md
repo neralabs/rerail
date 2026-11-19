@@ -983,6 +983,23 @@ preprocessor, whose lexer reaches the tape crate, then CLIF, then the blocks).
 B is done: what the engine's GPU lane needs is in the device layer, on every backend; the blocks and the pool hold
 its buffers. The engine's call sites stay on Metal's types until each moves with its kernel (C).
 
+**C: the tape's views in UKL (2026-11-19).** `metal_tape.metal`, the views every tape kernel reads documents
+through (a node's code, kind, parent, siblings, lines; a pass's roots; a SIMD group's roots), is UKL now:
+`device_tape.h`. Its types are UKL's, `tape_code` gives a pointer (OpenCL C has no references), the SIMD group's
+helpers take the lane and call `ukl_sg_*`, and its constants are defines. Its kernels (the label passes, the sweep,
+the program backend) include it as before, preprocessed for Metal.
+- Its test (`the_device_reads_resident_tapes_as_the_packed_batch_records_them`) is a UKL kernel launched through
+  the device layer by its rows' names, binding the batch's slab by its device-layer buffer (`Slab::device_buffer`;
+  a slab holds the device layer's buffer now, Metal's for the kernels not yet moved). It runs on the process's
+  device and checks every node of a batch against the tape's own answers; its source is compiled for the CPU and
+  OpenCL too. OpenCL found a parameter named `local`, an address space there: renamed.
+- The residency runs on Metal alone still: its slabs lease from the pool, whose `get` is Metal's while the engine's
+  kernels are, and `rerail-accel`'s GPU lane builds on macOS alone (step E). The kernels move next, in the plan's
+  order: the label passes, the sweep, then the batch runtime.
+- Found on the way: `rerail-store`'s tests did not compile after a merge, and the journal's replay ignored the
+  caller's bound (Q184) for the settle window's wait (Q179). Both fixed. Four observer tests that fail with or
+  without the fix are Q262.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

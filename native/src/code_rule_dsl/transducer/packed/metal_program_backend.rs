@@ -293,7 +293,7 @@ fn prefix(defines: &str) -> String {
         "{defines}#include <metal_stdlib>\nusing namespace metal;\n{}{}{}",
         crate::code_rule_dsl::residency::slabs::msl(),
         "#include <ukl/reads/tape_z.h>\n",
-        include_str!("metal_tape.metal")
+        include_str!("device_tape.h")
     )
 }
 

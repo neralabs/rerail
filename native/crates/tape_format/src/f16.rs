@@ -72,7 +72,7 @@ impl Lang {
     pub fn number(&self, entry: &Entry) -> Option<u32> {
         self.index.get(entry).copied()
     }
-    /// What a reader elsewhere (the device's, `metal_tape.metal`) needs of the language to read its tapes in
+    /// What a reader elsewhere (the device's, `device_tape.h`) needs of the language to read its tapes in
     /// place: the cutoff, the numbers a prefix byte covers, and the slot, gap and length widths.
     pub fn device(&self) -> (u32, u32, [usize; 3]) {
         (self.cut, self.per, self.widths)
@@ -307,7 +307,7 @@ impl Tape16 {
 }
 
 /// Where a format 16 tape's parts lie, as its header says, for a reader that reads them there without this crate
-/// (the device's, `metal_tape.metal`): block 0's start and the blocks' stride (`column`), each side list's start, each
+/// (the device's, `device_tape.h`): block 0's start and the blocks' stride (`column`), each side list's start, each
 /// one's part starts (u32s, a part a block and one more at the end), the newline index, the end; the node count, the
 /// checkpoints' width, the side lists' value widths and the slot, gap and length widths.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

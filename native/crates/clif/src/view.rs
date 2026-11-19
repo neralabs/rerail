@@ -3,7 +3,7 @@
 //! host), its format, its widths. One definition: the device's `DocView` is this, and its MSL is
 //! written from it ([`ukl`]), with each field's offset asserted against Rust's.
 
-/// A document's view (120 bytes, u32s; the device's `DocView`, `metal_tape.metal`).
+/// A document's view (120 bytes, u32s; the device's `DocView`, `device_tape.h`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TapeView {

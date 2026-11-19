@@ -1,5 +1,7 @@
-//! The device's tape accessors (`metal_tape.metal`) over resident documents, against the packed
-//! batch's node records they replace (decision 0032): every node of a batch of stored fixtures.
+//! The device's tape accessors (`device_tape.h`) over resident documents, against the packed
+//! batch's node records they replace (decision 0032): every node of a batch of stored fixtures. The kernel is UKL,
+//! launched through the device layer (decision 0440 step C): it runs on the process's device, and its source
+//! compiles for every backend this machine has.
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
@@ -7,25 +9,35 @@ use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
 use crate::code_rule_dsl::tape::{Grammar, TapeDoc};
 use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
-// What the backend reads through its own imports, which its facade in the engine does not re-export.
 use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
+use rerail_gpu::device::{ComputeFunctionLibrary, ComputeQueue};
+use rerail_gpu::kernels::{buffer_of, launch, read};
 use metal::MTLSize;
 
-const TAPE: &str = concat!("#include <ukl/reads/tape_z.h>\n", include_str!("metal_tape.metal"));
+const TAPE: &str = concat!("#include <ukl/reads/tape_z.h>\n", include_str!("device_tape.h"));
 const FIELDS: usize = 12;
 
 const KERNEL: &str = r#"
-inline uint tape_global(DocView d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
-kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* chunk [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
- if(g>=count)return;
- device const uchar* s=chunk;
+UKL_INLINE uint32_t tape_global(DocView d,uint32_t i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
+typedef struct Conformance { uint32_t count; uint32_t pad; } Conformance;
+UKL_REFLECT_STRUCT(Conformance, count, pad)
+DEFINE_KERNEL2(tape_tests, tape_conformance,
+               ROBUFFER, DocView,  docs,    "[documents]",
+               ROBUFFER, uint32_t, nodeDoc, "[count]",
+               RWBUFFER, uint32_t, out,     "[count * 12]",
+               ROBUFFER, uint8_t,  chunk,   "[slab]",
+               ARGS,     Conformance, args, ,
+               GID0,     uint32_t, g,       )
+{
+ if(g>=args.count)return;
+ UKL_GLOBAL const uint8_t* s=chunk;
  DocView d=docs[nodeDoc[g]];
- uint i=g-d.node_base;
- device uint* o=out+g*12u;
+ uint32_t i=g-d.node_base;
+ UKL_GLOBAL uint32_t* o=out+g*12u;
  o[0]=tape_kind(s,d,i);o[1]=tape_field(s,d,i);o[2]=tape_flags(s,d,i);
  o[3]=tape_global(d,tape_parent(s,d,i));o[4]=tape_global(d,tape_next(s,d,i));o[5]=tape_global(d,tape_next_named(s,d,i));
  o[6]=tape_child_count(s,d,i);o[7]=d.node_base+i+tape_size(s,d,i);o[8]=tape_start(s,d,i);o[9]=tape_end(s,d,i);
- o[10]=tape_global(d,tape_first_child(s,d,i));o[11]=tape_code(s,d,i).classCount;
+ o[10]=tape_global(d,tape_first_child(s,d,i));o[11]=tape_code(s,d,i)->classCount;
 }
 "#;
 
@@ -36,6 +48,21 @@ const SOURCES: [(&str, GrammarDialect); 5] = [
     ("fn main() { let x: Vec<u8> = vec![1, 2]; if let Some(y) = x.first() { println!(\"{y}\"); } }\n", GrammarDialect::Rust),
     ("import os\n\n\ndef g(*args, **kw):\n    '''doc'''\n    return [a for a in args if a]  # noqa\n", GrammarDialect::Python),
 ];
+
+/// The kernel's arguments.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Conformance {
+    count: u32,
+    pad: u32,
+}
+unsafe impl rerail_gpu::Pod for Conformance {}
+
+/// The views' words (`DocView` is 30 u32s, `#[repr(C)]`).
+fn bytemuck_words(views: &[DocView]) -> &[u32] {
+    // SAFETY: a `DocView` is u32s alone, with no padding.
+    unsafe { std::slice::from_raw_parts(views.as_ptr().cast::<u32>(), std::mem::size_of_val(views) / 4) }
+}
 
 #[test]
 fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
@@ -57,27 +84,40 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     let table = DocTable::new(slabs::admit(&store, &digests, &grammar).unwrap()).unwrap();
     assert_eq!(tapes.iter().map(TapeDoc::transducer_len).sum::<usize>(), table.nodes);
     let node_doc = table.views.iter().enumerate().flat_map(|(doc, view)| std::iter::repeat_n(doc as u32, view.nodes as usize)).collect::<Vec<_>>();
-    let docs = MappedBuffer::from_slice::<DocView>(device, &table.views).unwrap();
-    let node_doc = MappedBuffer::from_slice(device, &node_doc).unwrap();
-    let out = MappedBuffer::zeroed::<u32>(device, table.nodes * FIELDS).unwrap();
-    let source = format!("#include <metal_stdlib>\nusing namespace metal;\n{}{TAPE}{KERNEL}", slabs::msl());
-    let pipeline = pipeline_named(&source, "tape_conformance").unwrap();
-    let queue = device.new_command_queue();
-    let command = queue.new_command_buffer();
-    let encoder = command.new_compute_command_encoder();
-    encoder.set_compute_pipeline_state(&pipeline);
-    encoder.set_buffer(0, Some(&docs.buffer), 0);
-    encoder.set_buffer(1, Some(&node_doc.buffer), 0);
-    encoder.set_buffer(2, Some(&out.buffer), 0);
-    // The batch's one block (decision 0289 §4).
-    encoder.set_buffer(3, Some(table.block.as_ref().unwrap().buffer()), 0);
-    let count = table.nodes as u32;
-    encoder.set_bytes(7, 4, std::ptr::from_ref(&count).cast());
-    encoder.dispatch_threads(MTLSize::new(table.nodes as u64, 1, 1), MTLSize::new(64, 1, 1));
-    encoder.end_encoding();
-    command.commit();
-    command.wait_until_completed();
-    let read = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), table.nodes * FIELDS) };
+    let _ = device;
+    let shared = rerail_gpu::shared::get().expect("the process's device");
+    let source = format!("{}{TAPE}{KERNEL}", slabs::msl());
+    // The same source for every backend this machine has: the views are portable UKL.
+    let others = [
+        rerail_gpu::compute_kernel_cpu::CpuDevice::system_default().map(rerail_gpu::device::Device::Cpu),
+        rerail_gpu::compute_kernel_opencl::ClDevice::open().ok().map(rerail_gpu::device::Device::OpenCl),
+    ];
+    for device in others.into_iter().flatten() {
+        let which = if device.is_cpu() { "the CPU" } else { "OpenCL" };
+        let text = rerail_gpu::Preprocessing::preprocess(&device).file("/<tests>/tape_conformance.ukl", source.as_str()).run("/<tests>/tape_conformance.ukl").unwrap_or_else(|e| panic!("{which}: {e}"));
+        let lib = ComputeFunctionLibrary::compile_from_source(&device, &text, "tape_conformance.ukl").unwrap_or_else(|e| {
+            let kept = std::env::temp_dir().join(format!("tape_conformance.{}.cl", std::process::id()));
+            let _ = std::fs::write(&kept, &text);
+            panic!("{which}: {e} (the text compiled: {})", kept.display())
+        });
+        lib.get_function(&device, "tape_conformance").unwrap_or_else(|e| panic!("{which}: {e}"));
+    }
+    let program = rerail_gpu::kernels::program("tape_conformance.ukl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("{e}"));
+    let docs = buffer_of::<u32>(bytemuck_words(&table.views)).unwrap();
+    let node_doc = buffer_of(&node_doc).unwrap();
+    let out = buffer_of(&vec![0u32; table.nodes * FIELDS]).unwrap();
+    let mut q = ComputeQueue::new(&shared.queue);
+    launch(&q, program.function("tape_conformance").unwrap())
+        .buffer("docs", &docs)
+        .buffer("nodeDoc", &node_doc)
+        .buffer("out", &out)
+        // The batch's one block (decision 0289 §4), read where it lies.
+        .buffer("chunk", table.block.as_ref().unwrap().device_buffer())
+        .value("args", &Conformance { count: table.nodes as u32, pad: 0 })
+        .run(&[table.nodes.div_ceil(64) as u64], &[64])
+        .unwrap_or_else(|e| panic!("{e}"));
+    q.flush().await_().unwrap();
+    let read: Vec<u32> = read(&out, table.nodes * FIELDS);
     // The tape's own answers, by its accessors, in the batch's numbering (each file's nodes past the files before).
     let mut base = 0u32;
     for (file, tape) in tapes.iter().enumerate() {
