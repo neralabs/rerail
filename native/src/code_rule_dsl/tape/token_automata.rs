@@ -624,6 +624,13 @@ impl<'b> Reader<'b> {
     fn strs<T: FromIterator<&'b str>>(&mut self) -> Option<T> {
         (0..self.n()?).map(|_| self.str()).collect()
     }
+    /// `n` entries of `width` words each, left where they lie.
+    fn words(&mut self, width: usize) -> Option<Words<'b>> {
+        let n = self.n()?;
+        let bytes = self.0.get(..n.checked_mul(4 * width)?)?;
+        self.0 = &self.0[bytes.len()..];
+        Some(Words { bytes, width })
+    }
     /// Past `n` bytes, unread.
     fn skip(&mut self, n: usize) -> Option<()> {
         self.0 = self.0.get(n..)?;
@@ -690,9 +697,10 @@ impl<'b> Reader<'b> {
 const LABEL_BYTES: usize = 12;
 
 /// What `encode` wrote, each kind's automaton left in its bytes (`decode_automaton` reads it): a grammar holds
-/// hundreds of kinds, and a process reads a few of them (a rule's patterns, a file's kinds).
+/// hundreds of kinds, and a process reads a few of them (a rule's patterns, a file's kinds). Its names are read
+/// where they lie, not copied.
 pub(crate) struct Index<'b> {
-    pub(crate) texts: Vec<String>,
+    pub(crate) texts: Vec<&'b str>,
     /// Each kind's symbol, and the bytes its automaton lies in.
     pub(crate) kinds: Vec<(Sym, &'b [u8])>,
     pub(crate) unsupported: BTreeSet<String>,
@@ -705,7 +713,7 @@ pub(crate) fn index(bytes: &[u8]) -> Option<Index<'_>> {
     if r.u()? != FORMAT {
         return None;
     }
-    let texts: Vec<String> = r.texts()?;
+    let texts: Vec<&str> = r.strs()?;
     let unsupported = r.texts()?;
     let extras = r.texts()?;
     let count = r.n()?;
@@ -738,65 +746,171 @@ pub(crate) struct Census {
 }
 
 /// The census of `kinds`' automata, their names in `texts`, and the grammar's `extras`.
-pub(crate) fn census<'a>(texts: &[String], kinds: impl Iterator<Item = (&'a Sym, &'a Automaton)>, extras: &BTreeSet<String>) -> Census {
+pub(crate) fn census<'a, T: AsRef<str>>(texts: &[T], kinds: impl Iterator<Item = (&'a Sym, &'a Automaton)>, extras: &BTreeSet<String>) -> Census {
     let mut out = Census { extras: extras.clone(), ..Census::default() };
+    let text = |sym: Sym| texts[sym as usize].as_ref().to_owned();
     for (kind, automaton) in kinds {
-        let name = &texts[*kind as usize];
+        let name = text(*kind);
         let entry = out.implied.entry(name.clone()).or_default();
         for label in automaton.dropped() {
-            entry.insert((texts[label.name as usize].clone(), texts[label.field as usize].clone()));
+            entry.insert((text(label.name), text(label.field)));
         }
         for label in automaton.moves.iter().flat_map(|moves| moves.keys()) {
             if label.token {
-                out.tokens.insert(texts[label.name as usize].clone());
+                out.tokens.insert(text(label.name));
             } else {
-                out.parents.entry(texts[label.name as usize].clone()).or_default().insert(name.clone());
+                out.parents.entry(text(label.name)).or_default().insert(name.clone());
             }
         }
     }
     out
 }
 
+/// The census's own bytes (`encode_census`), apart from the automata's.
+const CENSUS_FORMAT: u32 = 0x7461_0002;
+
+/// The census as bytes read where they lie (`decode_census`): its names once, sorted, and every list of them as
+/// indexes into those, in their texts' order; each kind's implied pairs and parents a range of one flat list, so a
+/// kind's are found by a binary search and nothing is decoded until it is asked; and the (token, field) pairs some
+/// kind implies, once (`token_census::Lang::distinct`).
 pub(crate) fn encode_census(census: &Census) -> Vec<u8> {
-    let mut w = Writer(Vec::new());
-    w.u(FORMAT);
-    w.n(census.implied.len());
+    let mut names: BTreeSet<&str> = BTreeSet::new();
     for (kind, pairs) in &census.implied {
-        w.text(kind);
-        w.n(pairs.len());
+        names.insert(kind);
         for (token, field) in pairs {
-            w.text(token);
-            w.text(field);
+            names.extend([token.as_str(), field.as_str()]);
         }
     }
-    w.n(census.parents.len());
     for (kind, parents) in &census.parents {
-        w.text(kind);
-        w.texts(parents.iter());
+        names.insert(kind);
+        names.extend(parents.iter().map(String::as_str));
     }
-    w.texts(census.tokens.iter());
-    w.texts(census.extras.iter());
+    names.extend(census.tokens.iter().chain(&census.extras).map(String::as_str));
+    let names: Vec<&str> = names.into_iter().collect();
+    let at = |name: &str| u32::try_from(names.binary_search(&name).expect("every name is listed")).expect("a census's names fit a u32");
+    let mut w = Writer(Vec::new());
+    w.u(CENSUS_FORMAT);
+    w.n(names.len());
+    names.iter().for_each(|name| w.text(name));
+    let distinct: BTreeSet<(u32, u32)> = census.implied.values().flatten().map(|(token, field)| (at(token), at(field))).collect();
+    w.n(distinct.len());
+    distinct.into_iter().for_each(|(token, field)| {
+        w.u(token);
+        w.u(field);
+    });
+    for set in [&census.tokens, &census.extras] {
+        w.n(set.len());
+        set.iter().for_each(|name| w.u(at(name)));
+    }
+    w.n(census.implied.len());
+    let mut start = 0;
+    for (kind, pairs) in &census.implied {
+        w.u(at(kind));
+        w.n(start);
+        w.n(pairs.len());
+        start += pairs.len();
+    }
+    w.n(start);
+    census.implied.values().flatten().for_each(|(token, field)| {
+        w.u(at(token));
+        w.u(at(field));
+    });
+    w.n(census.parents.len());
+    let mut start = 0;
+    for (kind, parents) in &census.parents {
+        w.u(at(kind));
+        w.n(start);
+        w.n(parents.len());
+        start += parents.len();
+    }
+    w.n(start);
+    census.parents.values().flatten().for_each(|parent| w.u(at(parent)));
     w.0
 }
 
-/// A census as `encode_census` wrote it, its names read where they lie (`decode_census`).
-pub(crate) struct CensusIn<'b> {
-    pub(crate) implied: BTreeMap<&'b str, BTreeSet<(&'b str, &'b str)>>,
-    pub(crate) parents: BTreeMap<&'b str, BTreeSet<&'b str>>,
-    pub(crate) tokens: BTreeSet<&'b str>,
-    pub(crate) extras: BTreeSet<&'b str>,
+/// Little-endian `u32`s where they lie, `width` to an entry.
+#[derive(Clone, Copy)]
+pub(crate) struct Words<'b> {
+    bytes: &'b [u8],
+    width: usize,
 }
 
-/// The census `encode_census` wrote, its names read in place, not copied (it is read once a dialect, as a rule of
-/// it first compiles); `None` for bytes it did not write.
+impl<'b> Words<'b> {
+    pub(crate) fn len(&self) -> usize {
+        self.bytes.len() / (4 * self.width)
+    }
+
+    /// Entry `at`'s word `of` (below `width`).
+    pub(crate) fn get(&self, at: usize, of: usize) -> u32 {
+        let start = 4 * (at * self.width + of);
+        u32::from_le_bytes(self.bytes[start..start + 4].try_into().expect("four bytes"))
+    }
+
+    /// Entries `start..start + len`.
+    pub(crate) fn slice(&self, start: usize, len: usize) -> Words<'b> {
+        Words { bytes: &self.bytes[4 * start * self.width..4 * (start + len) * self.width], width: self.width }
+    }
+
+    /// Every entry's first word.
+    pub(crate) fn firsts(self) -> impl Iterator<Item = u32> + 'b {
+        (0..self.len()).map(move |at| self.get(at, 0))
+    }
+
+    /// The entry whose first word is `key`, where the entries are sorted by it.
+    pub(crate) fn find(&self, key: u32) -> Option<usize> {
+        let (mut low, mut high) = (0, self.len());
+        while low < high {
+            let middle = (low + high) / 2;
+            match self.get(middle, 0).cmp(&key) {
+                std::cmp::Ordering::Less => low = middle + 1,
+                std::cmp::Ordering::Greater => high = middle,
+                std::cmp::Ordering::Equal => return Some(middle),
+            }
+        }
+        None
+    }
+}
+
+/// A census as `encode_census` wrote it, read where it lies (`decode_census`): its names, and its lists of them as
+/// indexes. `implied` and `parents` hold (kind, start, length) of a range of `implied_pairs` ((token, field)) and
+/// `parent_kinds`, sorted by kind.
+pub(crate) struct CensusIn<'b> {
+    pub(crate) names: Vec<&'b str>,
+    pub(crate) distinct: Words<'b>,
+    pub(crate) tokens: Words<'b>,
+    pub(crate) extras: Words<'b>,
+    pub(crate) implied: Words<'b>,
+    pub(crate) implied_pairs: Words<'b>,
+    pub(crate) parents: Words<'b>,
+    pub(crate) parent_kinds: Words<'b>,
+}
+
+/// The census `encode_census` wrote, read in place (it is read once a dialect, as a rule of it first compiles): its
+/// names checked once, its lists left in their bytes; `None` for bytes it did not write, or an index or range that
+/// lies outside what it names.
 pub(crate) fn decode_census(bytes: &[u8]) -> Option<CensusIn<'_>> {
     let mut r = Reader(bytes);
-    if r.u()? != FORMAT {
+    if r.u()? != CENSUS_FORMAT {
         return None;
     }
-    let implied = (0..r.n()?).map(|_| Some((r.str()?, (0..r.n()?).map(|_| Some((r.str()?, r.str()?))).collect::<Option<_>>()?))).collect::<Option<_>>()?;
-    let parents = (0..r.n()?).map(|_| Some((r.str()?, r.strs()?))).collect::<Option<_>>()?;
-    let tokens = r.strs()?;
-    let extras = r.strs()?;
-    r.0.is_empty().then_some(CensusIn { implied, parents, tokens, extras })
+    let names: Vec<&str> = r.strs()?;
+    let census = CensusIn {
+        distinct: r.words(2)?,
+        tokens: r.words(1)?,
+        extras: r.words(1)?,
+        implied: r.words(3)?,
+        implied_pairs: r.words(2)?,
+        parents: r.words(3)?,
+        parent_kinds: r.words(1)?,
+        names,
+    };
+    let named = |words: Words<'_>| (0..words.len()).all(|at| (0..words.width).all(|of| (words.get(at, of) as usize) < census.names.len()));
+    let ranged = |ranges: Words<'_>, items: Words<'_>| {
+        (0..ranges.len()).all(|at| (ranges.get(at, 0) as usize) < census.names.len() && (ranges.get(at, 1) as usize).checked_add(ranges.get(at, 2) as usize).is_some_and(|end| end <= items.len()))
+    };
+    let whole = r.0.is_empty()
+        && [census.distinct, census.tokens, census.extras, census.implied_pairs, census.parent_kinds].into_iter().all(named)
+        && ranged(census.implied, census.implied_pairs)
+        && ranged(census.parents, census.parent_kinds);
+    whole.then_some(census)
 }

@@ -54,10 +54,11 @@ impl FilterScratch {
     }
 }
 
-/// Every visible kind's automaton for one grammar.
+/// Every visible kind's automaton for one grammar. Its names are the build's bytes, read where they lie (a grammar
+/// built here from a `grammar.json` holds its own, for the life of the process).
 pub struct TokenGrammar {
-    names: FxHashMap<String, Sym>,
-    texts: Vec<String>,
+    names: FxHashMap<&'static str, Sym>,
+    texts: Vec<&'static str>,
     kinds: FxHashMap<Sym, Kind>,
     /// Per tree-sitter field id: its symbol (0 where the grammar has none).
     field_sym: Vec<Sym>,
@@ -66,7 +67,7 @@ pub struct TokenGrammar {
     pub(in crate::code_rule_dsl) unsupported: BTreeSet<String>,
     /// The grammar's extras (comments and the like): in no automaton, anywhere among children.
     extras: BTreeSet<String>,
-    /// Every token text and field name, sorted, leaked once per dialect ([`Self::intern`]).
+    /// Every token text and field name, sorted ([`Self::intern`]).
     interned: Vec<&'static str>,
 }
 
@@ -114,6 +115,8 @@ impl TokenGrammar {
     pub fn from_json(json: &str, language: &Language) -> Result<Self, String> {
         token_automata::build(json).map(|built| {
             let token_automata::Built { texts, kinds, unsupported, extras } = built;
+            // Built once per dialect and never dropped, as the build's are.
+            let texts = texts.into_iter().map(|text| &*Box::leak(text.into_boxed_str())).collect();
             Self::from_kinds(texts, kinds.into_iter().map(|(sym, automaton)| (sym, Kind::held(automaton))).collect(), unsupported, extras, language)
         })
     }
@@ -126,14 +129,14 @@ impl TokenGrammar {
         Self::from_kinds(texts, kinds, unsupported, extras, language)
     }
 
-    fn from_kinds(texts: Vec<String>, kinds: FxHashMap<Sym, Kind>, unsupported: BTreeSet<String>, extras: BTreeSet<String>, language: &Language) -> Self {
-        let names: FxHashMap<String, Sym> = texts.iter().enumerate().map(|(sym, text)| (text.clone(), sym as Sym)).collect();
+    fn from_kinds(texts: Vec<&'static str>, kinds: FxHashMap<Sym, Kind>, unsupported: BTreeSet<String>, extras: BTreeSet<String>, language: &Language) -> Self {
+        let names: FxHashMap<&'static str, Sym> = texts.iter().enumerate().map(|(sym, &text)| (text, sym as Sym)).collect();
         let field_sym = (0..=language.field_count() as u16)
             .map(|id| language.field_name_for_id(id).and_then(|name| names.get(name).copied()).unwrap_or(0))
             .collect();
         let kind_sym = (0..language.node_kind_count() as u16)
             .map(|id| language.node_kind_for_id(id).and_then(|name| names.get(name).copied())).collect();
-        let mut interned: Vec<&'static str> = texts.iter().map(|text| &*Box::leak(text.clone().into_boxed_str())).collect();
+        let mut interned = texts.clone();
         interned.push("");
         interned.sort_unstable();
         interned.dedup();
@@ -156,7 +159,7 @@ impl TokenGrammar {
 
     #[cfg(any(test, feature = "test-hooks"))]
     fn text(&self, sym: Sym) -> &str {
-        &self.texts[sym as usize]
+        self.texts[sym as usize]
     }
 
     /// Which of `node`'s children the tape stores, in order: `false` for an implied token (see the
@@ -237,7 +240,7 @@ impl TokenGrammar {
     /// The field names `kind`'s automaton labels its children with.
     pub(in crate::code_rule_dsl) fn fields_of(&self, kind: &str) -> impl Iterator<Item = &str> {
         let fields = self.names.get(kind).and_then(|&sym| self.automaton(sym)).map_or(&[][..], |automaton| &automaton.fields[..]);
-        fields.iter().map(|&field| self.texts[field as usize].as_str())
+        fields.iter().map(|&field| self.texts[field as usize])
     }
 
     /// The gaps of a `kind` node whose stored children are `children` (named, kind, field; `""`
@@ -246,7 +249,7 @@ impl TokenGrammar {
     /// `None` where the kind has no automaton or the automaton refuses the children.
     pub(in crate::code_rule_dsl) fn gaps<'c>(&self, kind: &str, children: impl IntoIterator<Item = (bool, &'c str, &'c str)>) -> Option<Gaps<'_>> {
         let automaton = self.automaton(*self.names.get(kind)?)?;
-        let word = |labels: &[Label]| labels.iter().map(|label| (self.texts[label.name as usize].as_str(), self.texts[label.field as usize].as_str())).collect::<Vec<_>>();
+        let word = |labels: &[Label]| labels.iter().map(|label| (self.texts[label.name as usize], self.texts[label.field as usize])).collect::<Vec<_>>();
         let walk = |mut state: u32, labels: &[Label]| -> Option<u32> {
             for label in labels {
                 state = *automaton.moves[state as usize].get(label)?;
@@ -353,7 +356,7 @@ impl TokenGrammar {
         let label = |l: &Label| format!("{}\x1e{}\x1e{}", if l.token { "t" } else { "n" }, self.texts[l.name as usize], self.texts[l.field as usize]);
         let word = |w: &[Label]| w.iter().map(label).collect::<Vec<_>>().join("\x1f");
         let mut kinds: Vec<_> = self.automata().filter(|(_, automaton)| automaton.dropped().next().is_some()).collect();
-        kinds.sort_by_key(|(sym, _)| self.texts[**sym as usize].clone());
+        kinds.sort_by_key(|(sym, _)| self.texts[**sym as usize]);
         let mut out = String::new();
         for (sym, a) in kinds {
             out.push_str(&format!("K\t{}\n", self.texts[*sym as usize]));
