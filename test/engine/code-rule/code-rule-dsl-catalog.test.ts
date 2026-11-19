@@ -29,7 +29,7 @@ import { setRepositoryStarted } from "../../../src/runtime/index.js";
 import { addAttachment, loadCheckoutRuleSet, ruleConfigurationSignature, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
 import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
-import { setUpTestRepository } from "../../support/repository-rules.js";
+import { setUpTestRepository, testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { validateCodeRule } from "../../../src/engine/rules.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -1639,4 +1639,30 @@ describe("compiled rule cache", () => {
     }
     return reference.deref() === undefined;
   }
+});
+
+describe("rules whose finding in one file can depend on another", () => {
+  it("marks each compiled rule that counts, pairs, follows calls or reads imports across files", () => {
+    const evidence = { evidence: { as: "s", query: { ast: { language: "python", rule: { kind: "identifier" } } }, project: { path: "file.path" } } };
+    const document = (id: string, clause: Record<string, unknown>) => codeRuleSchema.parse({
+      format: "rerail.policy/v1", id, revision: 1, mode: "block", scope: { include: ["**/*.py"], exclude: [] },
+      clauses: [{ id: "c", violation: { code: "X", anchor: "witness.span", message: "x" }, ...clause }],
+    });
+    const callsSleep = {
+      kind: "function_definition", regex: "^async ",
+      has: { stopBy: { kind: "function_definition" }, kind: "call", calls: { through: "sync", has: { stopBy: { kind: "function_definition" }, kind: "call" } } },
+    };
+    const rules = [
+      document("test:plain", { forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }),
+      document("test:budget", { budget: { query: evidence, count: { lte: 1 } } }),
+      document("test:pairs", { require_each: { subject: evidence, evidence } }),
+      document("test:calls", { forbid: { ast: { language: "python", rule: callsSleep } } }),
+      codeRuleSchema.parse(JSON.parse(readFileSync(join("packs", "node", "rules", "n-no-missing-import.json"), "utf8"))),
+    ];
+    const catalog = testCodeRuleCatalog(rules, writeCapabilities(temporaryRoot()));
+    expect(catalog.quarantined()).toEqual([]);
+    expect(Object.fromEntries(catalog.snapshot().codeRules.map(rule => [rule.id, rule.crossFile]))).toEqual({
+      "test:plain": false, "test:budget": true, "test:pairs": true, "test:calls": true, "n-no-missing-import": true,
+    });
+  });
 });
