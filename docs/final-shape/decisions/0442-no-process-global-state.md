@@ -92,3 +92,9 @@ by any caller in the process, so two callers of different trust could not be kep
   - Outside a run, `shared::<T>()` gives a value nothing keeps. That is wrong for an interner or a per-file registry,
     whose ids must agree wherever they are read, so those move only once every reader is inside a run or holds the
     object (each group's move says which).
+- Step 5, the machine (the user, 2026-11-19): the machine's resources are a second explicit object, `Machine`: the CPU
+  job pool and its queues, the pool threads' CPU accounts, the measured roofline, and the cost and price model learned
+  from this machine's runs. A caller makes it and every `Shared` is made on one (`Shared::on(&machine)`), so callers of
+  different trust can share one pool and one model of the machine while holding different `Shared` objects. A job on
+  the pool carries its own caller's run and `Shared`, so nothing crosses between callers through the pool. A `Shared`
+  made with none has a machine of its own.

@@ -61,7 +61,7 @@ impl Run {
     }
 }
 
-pub use super::profile::{Shared, local, local_if_any, setting, shared, shared_object, with_local};
+pub use super::profile::{Machine, Shared, local, local_if_any, machine, setting, shared, shared_object, with_local};
 
 /// What a run returns of its own state with its result.
 #[derive(Clone, Debug, Default)]
@@ -192,6 +192,26 @@ mod tests {
         });
         let _f = scope_in(Some(&one), cutting(10));
         assert_eq!((other.join().unwrap(), *shared::<Model>().0.lock()), (0, 5));
+    }
+
+    /// Decision 0442: two callers with different `Shared` objects on one `Machine` share the machine's values, not
+    /// each other's shared ones.
+    #[test]
+    fn shared_objects_on_one_machine_share_only_the_machine() {
+        #[derive(Default)]
+        struct Pool(parking_lot::Mutex<u64>);
+        #[derive(Default)]
+        struct Names(parking_lot::Mutex<u64>);
+        let machine = Machine::new();
+        let (a, b) = (Shared::on(&machine), Shared::on(&machine));
+        {
+            let _a = scope_in(Some(&a), cutting(10));
+            *super::machine::<Pool>().0.lock() += 1;
+            *shared::<Names>().0.lock() += 1;
+        }
+        let _b = scope_in(Some(&b), cutting(10));
+        assert_eq!(*super::machine::<Pool>().0.lock(), 1, "one machine");
+        assert_eq!(*shared::<Names>().0.lock(), 0, "another caller's shared object");
     }
 
     /// A setting is read once a run, and again by the next run; a local is the run's own.

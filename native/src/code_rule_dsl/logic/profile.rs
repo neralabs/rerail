@@ -1517,11 +1517,42 @@ pub struct RunValues {
 #[derive(Default)]
 pub struct Shared {
     values: parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, AnyArc>>,
+    /// The machine it runs on (`Machine`).
+    machine: std::sync::Arc<Machine>,
+}
+
+/// The machine's resources (decision 0442, the user's choice): the CPU job pool and its queues, the pool threads'
+/// accounts, the measured roofline, the cost and price model learned from the machine's runs. A caller makes it, and
+/// every `Shared` is made on one (`Shared::on`): callers of different trust hold different `Shared` objects on one
+/// `Machine`, with one pool and one model of the machine. A job on the pool carries its own caller's run and `Shared`.
+#[derive(Default)]
+pub struct Machine {
+    values: parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, AnyArc>>,
+}
+
+impl Machine {
+    pub fn new() -> std::sync::Arc<Machine> {
+        std::sync::Arc::default()
+    }
+    /// Its value of type `T`, made the first time it is asked for.
+    pub fn get<T: Default + Send + Sync + 'static>(&self) -> std::sync::Arc<T> {
+        let v = std::sync::Arc::clone(self.values.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
+        v.downcast::<T>().expect("a machine value's type is its key")
+    }
 }
 
 impl Shared {
+    /// A shared object on a machine of its own.
     pub fn new() -> std::sync::Arc<Shared> {
         std::sync::Arc::default()
+    }
+    /// A shared object on `machine`.
+    pub fn on(machine: &std::sync::Arc<Machine>) -> std::sync::Arc<Shared> {
+        std::sync::Arc::new(Shared { values: Default::default(), machine: std::sync::Arc::clone(machine) })
+    }
+    /// The machine it runs on.
+    pub fn machine(&self) -> &std::sync::Arc<Machine> {
+        &self.machine
     }
     /// Its value of type `T`, made the first time it is asked for.
     pub fn get<T: Default + Send + Sync + 'static>(&self) -> std::sync::Arc<T> {
@@ -1554,6 +1585,15 @@ fn shared_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
     let v = run.shared().get::<T>();
     SEEN.with(|seen| seen.borrow_mut().of(&run).shared.insert(std::any::TypeId::of::<T>(), v.clone()));
     v
+}
+
+/// The value of type `T` of the machine the run under way runs on (`Machine`). Outside a run, a value of its own that
+/// nothing keeps.
+pub fn machine<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
+    match run_own() {
+        Some(run) => run.shared().machine().get::<T>(),
+        None => std::sync::Arc::new(T::default()),
+    }
 }
 
 /// The shared object of the run under way, if one is (for a caller that hands it on).
