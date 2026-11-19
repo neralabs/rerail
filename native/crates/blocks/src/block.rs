@@ -68,6 +68,8 @@ pub struct Block {
     base: *mut u8,
     reserved: usize,
     top: AtomicUsize,
+    /// A file block's file. Unix: an open block's, for the truncation at its freeze, and closed then: a mapping
+    /// needs no descriptor, so a frozen block holds none. Windows: kept while the view is, which `drop` unmaps.
     file: Option<File>,
     writable: bool,
     /// A slab's owner, when the block lives in one: dropped with the block, which never unmaps it.
@@ -350,6 +352,11 @@ impl Block {
             b.base = crate::windows::map_file(f, len, false).expect("map a frozen journal block");
             b.reserved = len;
         }
+        // Unix: nothing is left to truncate, and the mapping outlives the file's descriptor: it is closed.
+        #[cfg(unix)]
+        {
+            b.file = None;
+        }
         b.writable = false;
         Frozen(Arc::new(b))
     }
@@ -377,13 +384,14 @@ impl Block {
         if len < size_of::<Header>() {
             return Err(format!("{}: {len} bytes, shorter than a header", path.display()));
         }
+        // Unix: the mapping keeps the pages, so the descriptor is closed (`f`, dropped as this returns).
         #[cfg(unix)]
         let b = {
             let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
             if p == libc::MAP_FAILED {
                 return Err(io::Error::last_os_error().to_string());
             }
-            Block::make(p.cast(), len, len, Some(f), false, None)
+            Block::make(p.cast(), len, len, None, false, None)
         };
         #[cfg(windows)]
         let b = {
@@ -543,4 +551,38 @@ pub fn frame(kind: u32, root_len: usize) -> (Vec<u8>, Vec<u8>) {
     // SAFETY: `head` holds at least a header; every field is a plain integer.
     unsafe { std::ptr::write_unaligned(head.as_mut_ptr().cast::<Header>(), h) };
     (head, vec![0u8; length - root - root_len])
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// The descriptors this process has open.
+    fn open_descriptors() -> usize {
+        std::fs::read_dir("/dev/fd").expect("/dev/fd").count()
+    }
+
+    /// Frozen file blocks hold no descriptor: a store keeps many segments mapped at once (its caches hold them), and
+    /// a descriptor each reached the default limit of 1,024 (`unable to open database file` from SQLite after).
+    #[test]
+    fn frozen_file_blocks_hold_no_descriptor() {
+        const N: usize = 256;
+        let dir = std::env::temp_dir().join(format!("rerail-block-descriptors-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let before = open_descriptors();
+        let mut held = Vec::new();
+        for i in 0..N {
+            let path = dir.join(format!("{i}.block"));
+            let block = Block::file(&path, kind::JOURNAL, PAGE).unwrap();
+            block.alloc(64, 64);
+            held.push(block.freeze());
+            held.push(Block::open_file(&path, kind::JOURNAL).unwrap());
+        }
+        let grown = open_descriptors().saturating_sub(before);
+        assert_eq!(held.iter().map(|b| b.used()).min(), held.iter().map(|b| b.used()).max(), "every block read back whole");
+        drop(held);
+        std::fs::remove_dir_all(&dir).unwrap();
+        // Other tests of this binary open files meanwhile: a bound well under the blocks' count, not an exact one.
+        assert!(grown < N / 4, "{} frozen file blocks held {grown} more descriptors open", 2 * N);
+    }
 }
