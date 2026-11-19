@@ -1626,15 +1626,19 @@ type SignalVerdict = RecordedProcess | "ending";
 
 /**
  * What proved the daemon a stop found the home's ({@link provenNow}): its answer to the health probe as itself, given
- * while it held the home's lock (`lock`) or while it held none (`answer`); or, for one that did not answer, the facts
- * {@link recordedProcess} reads (`record`).
+ * while it held the home's lock (`lock`) or while it held none (`answer`); or, for one that did not answer, the home's
+ * lock held as its recorded holder when the stop began (`holder`), else the facts {@link recordedProcess} reads
+ * (`record`).
  */
-type StopProof = "lock" | "answer" | "record";
+type StopProof = "lock" | "answer" | "holder" | "record";
+
+/** The proofs that rest on the home's lock held as the daemon's when the stop began. */
+const LOCK_PROOFS: ReadonlySet<StopProof> = new Set(["lock", "holder"]);
 
 /** The {@link provenNow} a stop asks just before each signal to the daemon `found` names. */
 function signalCheck(home: string, found: FoundDaemon, machine: DaemonMachine): () => SignalVerdict {
-  const answered = found.status === "running";
-  const proof: StopProof = !answered ? "record" : lockVerdict(home, found.state.pid, machine) === "ours" ? "lock" : "answer";
+  const held = lockVerdict(home, found.state.pid, machine) === "ours";
+  const proof: StopProof = found.status === "running" ? (held ? "lock" : "answer") : (held ? "holder" : "record");
   return () => provenNow(home, found.state, proof, machine);
 }
 
@@ -1644,16 +1648,16 @@ function signalCheck(home: string, found: FoundDaemon, machine: DaemonMachine): 
  * A process still proven is `ours`, to be ended as main does. One no longer proven gets nothing: `ending` once it has
  * exited; `not-ours` when the home's lock belongs to another live process and daemon.json names it no longer
  * ({@link lockOfAnother}), as when a start beside the stop launched a daemon; otherwise what {@link provenBy} said. A
- * daemon that answered while it held the lock, and that neither the lock nor its start decides by now, is `ours` while
- * it runs: its exit can run on after it let go of the lock, and on macOS, or on Windows when PowerShell does not answer,
- * no start is read.
+ * daemon that held the lock when the stop began ({@link LOCK_PROOFS}), whether it answered or was too busy to, and that
+ * neither the lock nor its start decides by now, is `ours` while it runs: its exit can run on after it let go of the
+ * lock, and on macOS, or on Windows when PowerShell does not answer, no start is read.
  */
 function provenNow(home: string, state: DaemonState, proof: StopProof, machine: DaemonMachine): SignalVerdict {
   const verdict = provenBy(home, state, proof, machine);
   if (verdict === "ours") return "ours";
   if (!processAlive(state.pid, machine.kill)) return "ending";
   if (lockOfAnother(home, state.pid, machine)) return "not-ours";
-  return proof === "lock" && verdict === "unknown" ? "ours" : verdict;
+  return verdict === "unknown" && LOCK_PROOFS.has(proof) ? "ours" : verdict;
 }
 
 /**
@@ -1666,7 +1670,7 @@ function provenNow(home: string, state: DaemonState, proof: StopProof, machine: 
  * nor its start decides.
  */
 function provenBy(home: string, state: DaemonState, proof: StopProof, machine: DaemonMachine): SignalVerdict {
-  if (proof === "record") return recordedProcess(home, state, machine, Date.now() + STOP_TIMEOUT_MS);
+  if (proof === "record" || proof === "holder") return recordedProcess(home, state, machine, Date.now() + STOP_TIMEOUT_MS);
   if (proof === "answer" || lockVerdict(home, state.pid, machine) === "ours") return "ours";
   const byStart = startVerdict(state, machine, Date.now() + STOP_TIMEOUT_MS);
   return byStart === "not-ours" ? "ending" : byStart;
@@ -1703,9 +1707,9 @@ function commandLineCheck(pid: number, platform: NodeJS.Platform): string {
 
 /**
  * Whether the pid a stop signalled in `home` may be killed, now that it outlived the stop's wait, by `verdict`: only while
- * it is proven the home's daemon. One that is ending or another process's by now is left alone, and so is one recorded
- * as the holder of the home's lock whose lock file is there and held by no one: a daemon lets go of it once it has
- * closed, just before it exits. One that runs while nothing proves it either way is left alone too, with every record,
+ * it is proven the home's daemon. One that is ending or another process's by now is left alone, and so is one that did
+ * not hold the home's lock when the stop began ({@link provenNow}), recorded as its holder, whose lock file is there and
+ * held by no one: a daemon lets go of it once it has closed, just before it exits. One that runs while nothing proves it either way is left alone too, with every record,
  * and the stop says so ({@link unprovenDaemonMessage}): the cleanup after a stop would forget a daemon that may still
  * run. A missing lock file is no lock let go ({@link homeDaemonLockHeld}).
  */
