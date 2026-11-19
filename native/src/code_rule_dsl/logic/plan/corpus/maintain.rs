@@ -134,6 +134,8 @@ pub mod shape {
     static RECHECKS_UNPRICED: AtomicUsize = AtomicUsize::new(0);
     static NEGATED_LED: AtomicUsize = AtomicUsize::new(0);
     static MEASURES_UNKEYED: AtomicUsize = AtomicUsize::new(0);
+    static INPUTS_HASHED: AtomicUsize = AtomicUsize::new(0);
+    static INPUTS_FROM_ENTRIES: AtomicUsize = AtomicUsize::new(0);
     static DRIVERS_UNLED: AtomicUsize = AtomicUsize::new(0);
 
     /// The counts so far.
@@ -156,6 +158,11 @@ pub mod shape {
         /// R6: proved components whose measure is by a node's depth or document order, run where that key is not
         /// read: their candidates go unordered, a stay checked again as each of its supports goes.
         pub measures_unkeyed: usize,
+        /// R2: a session's inputs whose delta was found by hashing their documents (`retain::document_delta`),
+        /// which reads every document's rows, the unchanged ones too, not the changed documents' memo entries.
+        pub inputs_hashed: usize,
+        /// R2: a session's inputs whose delta was read from the changed documents' memo entries (`input_delta`).
+        pub inputs_from_entries: usize,
     }
 
     pub fn now() -> Shape {
@@ -167,6 +174,8 @@ pub mod shape {
             negated_led: NEGATED_LED.load(Relaxed),
             drivers_unled: DRIVERS_UNLED.load(Relaxed),
             measures_unkeyed: MEASURES_UNKEYED.load(Relaxed),
+            inputs_hashed: INPUTS_HASHED.load(Relaxed),
+            inputs_from_entries: INPUTS_FROM_ENTRIES.load(Relaxed),
         }
     }
 
@@ -181,6 +190,8 @@ pub mod shape {
             negated_led: n.negated_led - before.negated_led,
             drivers_unled: n.drivers_unled - before.drivers_unled,
             measures_unkeyed: n.measures_unkeyed - before.measures_unkeyed,
+            inputs_hashed: n.inputs_hashed - before.inputs_hashed,
+            inputs_from_entries: n.inputs_from_entries - before.inputs_from_entries,
         }
     }
 
@@ -195,6 +206,12 @@ pub mod shape {
     }
     pub fn negated_led() {
         NEGATED_LED.fetch_add(1, Relaxed);
+    }
+    pub fn input_from_entries() {
+        INPUTS_FROM_ENTRIES.fetch_add(1, Relaxed);
+    }
+    pub fn input_hashed() {
+        INPUTS_HASHED.fetch_add(1, Relaxed);
     }
     pub fn measure_unkeyed() {
         MEASURES_UNKEYED.fetch_add(1, Relaxed);

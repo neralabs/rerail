@@ -9028,7 +9028,7 @@ fn run_observed(
                             if was.is_none() && std::env::var_os("RERAIL_STRATA_LIVE").is_some() {
                                 eprintln!("RERAIL_STRATA_LIVE changed documents: the kept run holds no documents of this program");
                             }
-                            was.and_then(|was| input_delta::changed(was, &run_docs_held.lock().expect("the run's documents"), &held.memo, &memo_whole))
+                            was.and_then(|was| input_delta::changed(was, &run_docs_held.lock().expect("the run's documents"), &held.memo, &memo_plan.id))
                         }
                         _ => None,
                     };
@@ -9079,6 +9079,7 @@ fn run_observed(
                             }
                             if let Some(d) = delta.filter(adds_up) {
                                 from_entries += 1;
+                                crate::code_rule_dsl::logic::plan::corpus::maintain::shape::input_from_entries();
                                 from_entries_rows += d.gone.len() + d.new.len();
                                 let width = new.columns().len();
                                 // Read from the entries where the rows lie (0364 R2): its versions, named as the
@@ -9105,6 +9106,7 @@ fn run_observed(
                         };
                         input_docs.insert(rel.to_owned(), docs);
                         hashed.push(rel.to_owned());
+                        crate::code_rule_dsl::logic::plan::corpus::maintain::shape::input_hashed();
                         if std::env::var_os("RERAIL_SPIKE_DELTA").is_some() {
                             eprintln!("O125 input delta {rel}: +{} -{} of {} rows", delta.0.len(), delta.1.len(), new.len());
                         }

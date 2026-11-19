@@ -449,6 +449,11 @@ against the forms' figures (t43, "Measurements").
   of the whole program's version that a part's run asks by component. It reads `nearest` as the engine lowers it
   (`rr_nearest_<set>`). Still worth teaching it string length (`@pkg_up`-style chains) and the tree helpers it
   cannot read yet.
+- **Inputs still found by hashing their documents.** A session reads an input's delta from the changed documents'
+  memo entries (t43 step 13), but on O125 a few are still found by hashing every document's rows (`inputs_hashed`):
+  per-document relations no entry holds (`doc_key`, `observer__source_file`, `doc`, `tape_of`), and a semi-join
+  input (`child`) whose kept rows for an unchanged document grow when another document's exports start to mention
+  its nodes (phase 1's imports name other documents' nodes), so the changed entries' rows do not add up.
 - **A dump artifact.** In the data-layer history's first state, the run split into 2 chunks and dumped 210
   `dotted_expr` rows that no `drv` rule derives. It is a file-local relation, and the rows measured are the heads,
   but the cause is not known (`REC_LAX`).

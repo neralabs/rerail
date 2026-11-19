@@ -573,3 +573,19 @@ A kept edit, a new process, still reads 2,500–5,100 frame parts back, its kept
 edit reads none (R8). In the session, the first run takes 28.6 s CPU and the edits 8.9–22.8 s, 0.31–0.80 of it.
 Step 05's edit is the costliest in both kept and session.
 
+## Step 13: a session's input deltas from the changed documents' entries
+
+Profiling step 05's session edit (12.0 s of cross part) showed 2.81 s spent finding the inputs' deltas, and all
+105 of them were found by hashing every document's rows, unchanged ones too. None were read from the changed
+documents' memo entries. `input_delta::changed` looked up an entry under the whole program's plan digest
+(`memo_whole`) and the run's absolute path. The memo holds an entry under its plan's id (`memo_plan.id`, the space
+digest of 0225 §2) and the store path (`world::store_path`). So no lookup ever found one, and every session edit fell
+back to hashing. Both keys are fixed. On O125, 111 inputs are now read from the entries and 4 are hashed. Reading
+them still took 2.7 s for 180,000 rows, because `Delta` searched the entry's relations by name for every cell read.
+Each entry's rows are now found once, and the read takes 0.88 s.
+
+`maintain::shape` counts both paths (`inputs_from_entries`, `inputs_hashed`). R1/R2's test asserts that the
+entries are read (0 before). The inputs still hashed are an open item of 0364.
+
+Session CPU per step, after: 28.0 (00), 11.5, 9.8, 14.2, 8.6, 24.2, 9.8, 11.3, 15.8 s. Session = cold at every step.
+
