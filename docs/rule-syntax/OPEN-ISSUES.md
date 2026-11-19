@@ -129,14 +129,14 @@ route for each:
    stay `match`. Teaching it `\bWORD\b` (and `(?i)\bA\s+B\b` as `iword("a b", s)`) is the next exact case.
 5. Ordered first-match reachability (the Data-layer branch's `reachability` stage) is addition 7, `dfs_first`
    / `dfs_first_memo` (data-layer/DESIGN.md). Closed 2026-11-05:
-   - the search and the cycle pass are native in spikes/dfs-first/native: Tarjan reads the CSR edge array, no
+   - the search and the cycle pass are native in spikes/dfs-first/native (removed; at 7efcac9c67): Tarjan reads the CSR edge array, no
      table is materialised; 1,000,000 functions and 5,000,000 calls take 0.2 s of set passes;
    - the producer's supplied visiting set and memo are a rewrite of `edge` and `target`, checked on 20,000
      graphs; no extra arguments;
    - ordering roots by a symbol column matches Soufflé after all: Soufflé's `<` on symbols compares the
      decoded strings (interpreter Engine.cpp, COMPARE_STRING); only `ord()` is the table index. The earlier
      note here was wrong.
-   - on the real repository (spikes/dfs-first/realgraph.py, checked against the real linter's fact cache on
+   - on the real repository (spikes/dfs-first/realgraph.py (removed; at 7efcac9c67), checked against the real linter's fact cache on
      355 files), `dfs_first_memo` equals LEG-083's search on every root: 61,403 roots in its files, 152,753
      over every .py file. `dfs_first` adds 34 findings on the wider graph;
    - steps 1-3 and 5 run on 8 threads and steps 1-3 on Metal, with arrays equal to the sequential passes.
