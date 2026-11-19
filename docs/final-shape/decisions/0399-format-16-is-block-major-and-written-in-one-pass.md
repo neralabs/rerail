@@ -353,7 +353,10 @@ programs, a fold before the commit point and a retag of the passed root, and che
 interpreter's nodes and both formats against the writer's. Each fails when the lag, the root's `w_retag`, or the
 fold's taking back is removed. Not yet measured: the run's cost a node against format 15's image plus `write_from`.
 
-Next: R17's second half, tier 2 on the device, needs tier 2 on Metal, which nothing generates yet.
+R17's second half, tier 2 writing its tape on the device, waits on tier 2 on Metal, its own track: the user put
+steps 5 and 6 first (2026-11-18).
+
+Next: step 5, after the lab measures node-range matching against LZ4 HC 9.
 
 ## Requirements, each with its test
 
@@ -376,7 +379,7 @@ Next: R17's second half, tier 2 on the device, needs tier 2 on Metal, which noth
 | R14 | An op fails as the reference does; a full part fails as full, and nothing is written past its capacity | `the_clif_ops_fail_as_the_reference`, `a_full_writer_writes_nothing_past_its_parts` (step 4) |
 | R15 | The ops in MSL write the same tape on the device | `the_device_writes_the_references_tape` (step 4) |
 | R16 | The host's `Writer` is the generated ops; the hand-written one is the tests' oracle only | `the_writer_is_the_clif_ops` (step 4) |
-| R17 | Tier 2's tape words call the ops, and its GPU path writes its tape on the device | `tier2_writes_format_16_by_the_ops`, `edits_of_nodes_passed_reach_the_ops` (CPU, done); the device: open |
+| R17 | Tier 2's tape words call the ops, and its GPU path writes its tape on the device | `tier2_writes_format_16_by_the_ops`, `edits_of_nodes_passed_reach_the_ops` (CPU, done); the device waits on tier 2 on Metal |
 
 ## Steps
 
