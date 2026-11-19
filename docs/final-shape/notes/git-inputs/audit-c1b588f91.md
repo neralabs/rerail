@@ -93,3 +93,21 @@ It took 64 reads in a 64-commit history. Both searches returned the same root ID
 - The headless runner still creates a scratch directory for audit configuration and rule output. Git source reads use the object database. To remove the scratch directory from headless scans, use an in-memory configuration and return diagnostic rows directly. [Scan runner](../../../../src/cli/headless-scan.ts)
 
 Fix cases 1–8 and 13–16 first. These cases can select the wrong source, suppress findings, reuse stale answers, or transfer cache ownership. The acceptance checks above exercise both rule answers and retained ownership where applicable.
+
+## Repairs checked after the audit
+
+| Cases | Commit | Evidence |
+| --- | --- | --- |
+| 1–2 | `a2d8c22f2` | The report identifies the checkout with the trailing space. Both path interfaces preserve the leading space and report the violation. |
+| 3–4, 9–12 | `6bfa331f2` | The scan rejects duplicate entries and malformed commits. Selector tests check Git's answer. A byte-name child remains reachable by ID. |
+| 5 | `0a770a110` | A second policy can fail in either order. The report keeps the successful policy's findings. |
+| 6–8 | `68ccbe8ac` | Overlapping runs keep opposite tracking answers. Removing and restoring a split index changes warm answers. A literal Unix backslash survives lookup. |
+| 13–14, 16 | `a91b1bf7f` | Reverse completion preserves the newer directory snapshot. Aborting one run preserves the other run's rows. A failed ownership query reaches the release worker. |
+| 15, 17–18 | `1150e5031` | Two runs share a source view and publish separate manifests. The view retracts a repaired subtree error and applies a replacement language registry. |
+| 19 | `b19722b7f` | An unrelated pack or a rewritten multi-pack index causes zero tree decodes. Damaging and restoring the supplying pack changes the answer. |
+| 20 | `5fb92bb6e` | A cold scan builds three binding contributions. An unused decorator change builds zero. A matching change builds one and produces the sibling finding. |
+
+Later checks found further problems in policy inspection, worker store selection, scope publication, and release probes.
+The [scope and cache notes](analysis-scopes.md) record the repair behavior and the fresh-process measurements.
+The [headless regressions](../../../../test/cli/headless-scan.test.ts) exercise the scan interface.
+The [scope store tests](../../../../native/src/content_store/corpus_runs/tests.rs) inspect durable ownership after publication, cancellation, and deletion.
