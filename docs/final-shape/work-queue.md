@@ -2748,10 +2748,32 @@ submitted" now hold device memory at once.
   none in 30 of 43 tapes and held the chunks' pipeline 215 s (t62 wall 100-253 s against t54's 31-34 s): removed,
   a one-tape capacity refusal goes to the cores at once (0334). t63 (both): 584.2-616.5 G, CPU 54-59 s, wall
   37.5-48.9 s against t54's 621-624 G, 61 s, 29-34 s (one t63 run idle 11.5 s at 0.1 G/s, not in the profiled one).
-- **Open**: (a) the inputs' frames job's doubled own CPU since t41 (about 1.8 s, 3%); (b) a GPU batch's waiting
-  thread runs long jobs meanwhile ("a column sketched" 2.7 s, "a merge's part" 2.5 s) and comes back up to 7.7 s late
-  (p63's waits table); (c) the refusals left are leases past a stratum's reservation (an estimate under its rows, or an unestimated
-  stage), which `lease_within` refuses without waiting.
+- **The plan** (the user, 2026-11-19: "tell me how we should properly address the things you found, rather than pile
+  lazy fixes on top of each other", then "please implement this full plan"), in order 6, 1, 2, 3, 4, 5:
+  - (6) t61's deaths: rerun three times (ab66): 745-790 G, wall 127-210 s, none died. ab62's "deaths" were the
+    300 s cap's `KILLED` (counted with panics), reached through the one-tape wave's wait; that wait is gone and
+    admission is bounded (0.5 s), so the path is not there to test.
+  - (1) The device's room (ebed2808e): one account (the pool's leases and slabs from the ledger; a no-copy wrap of
+    host pages is host memory, so `driver_refuses` asks the OS's working set, not the budget); idle buffers and kept
+    workspaces evicted by `make_room` (`evict_one`, `evict_workspace`); a matcher wave's workspace admitted as a
+    stratum's tables are (`admit`, `admission_patience`); a level past the room run in the lanes that fit
+    (`lanes_in`); the cores by the cost model only. The wait the wave had is admission now, bounded. Tests:
+    `host_pages_wrapped_past_the_budget_leave_the_budgets_buffers`,
+    `two_works_past_the_budget_together_both_run_on_the_device_in_turn`,
+    `a_level_larger_than_the_room_runs_in_the_lanes_that_fit`.
+  - (2) Kept facts in one format: final-rerail-shape-rr-align's chain (0443, was 0402) merged (40e610525), the
+    gathering kept as one append a space a wave.
+  - (4) The inputs' frames job (641515550): since the chain, a granule's frame is metadata, yet its job still
+    encoded the rows into the frames' segments (dropped by the writer) and copied them twice for the kept entry.
+    Now the rows are read once into the entry and the frame shares them (`Data::Queued`). Spans split.
+  - (5) Late GPU waits (e22c75a47): a wait for a batch's launches has a deadline (their expected end), and a named
+    job expected past it, or unknown, declines and goes back to its queue (`declines`, `Waiting::help_within`).
+    The end state stays a batch's completion scheduling its continuation (0386).
+  - (3) Chunk count: same binary at 7 and 16 forced chunks (ab68), pending. On ab62's pair (two binaries), native
+    steps grow 11.9 -> 15.0 s, of which strata with unchanged work add 0.46 s over 901 extra runs (0.5 ms a run).
+- **Open**: (c) the refusals left are leases past a stratum's reservation (an estimate under its rows, or an
+  unestimated stage), which `lease_within` refuses without waiting; (d) a derived relation's frame is still
+  encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —
 
 ### Q189. (bend's Q117, benchmarks-on-integration's Q54, then Q179 there) The journal's answer across processes is not a guarantee FSEvents makes
