@@ -175,14 +175,18 @@ describe("processStartedAtThroughEngine", () => {
 
   it.runIf(process.platform === "linux")("reads Linux's start from /proc whatever time is left, and asks the engine nothing", () => {
     const asked: number[] = [];
-    // As processStartedAt does. Each read counts the start back from the clock at its own moment, so two reads can
-    // differ by the time they took and by /proc's 10 ms resolution, and no more.
+    // As processStartedAt does, with no time left and with time left, when a lookup would load the engine to ask it.
+    // Each read counts the start back from the clock at its own moment, so the reads can differ by the time they took
+    // and by /proc's 10 ms resolution, and no more.
     const before = Date.now();
-    const started = processStartedAtThroughEngine(process.pid, 0, "linux", answeringEngine(asked));
+    const withNone = processStartedAtThroughEngine(process.pid, 0, "linux", answeringEngine(asked));
+    const withSome = processStartedAtThroughEngine(process.pid, 2_000, "linux", answeringEngine(asked));
     const again = processStartedAt(process.pid, 0, "linux");
     const took = Date.now() - before;
-    expect(started).toBeDefined();
-    expect(Math.abs(started! - again!)).toBeLessThanOrEqual(took + 20);
+    for (const started of [withNone, withSome]) {
+      expect(started).toBeDefined();
+      expect(Math.abs(started! - again!)).toBeLessThanOrEqual(took + 20);
+    }
     expect(asked).toEqual([]);
   });
 
