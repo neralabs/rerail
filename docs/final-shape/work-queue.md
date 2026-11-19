@@ -4487,8 +4487,9 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
   (0401's condition for step 9). The chain takes 31.6 MB after a cold run and 38.9 MB after the edit's legs (5.0 MB
   of it replaced files the next write removes), load 18: cold 7.9 s, 215.8 G; the edit 2.5 s, 37.3 G; 589 outputs
   equal (0439 "Met").
-- **Next:** the tape views as reads of the tape, not framed inputs (0353), and the per-chunk fixed cost of a
-  one-file chunk.
+- **Next** (decided 2026-11-19, 0458): the cross part reads its base relations off every file's tape, and their
+  three copies go (the gathered columns, the memo entries' base rows, the kept inputs' granules: about 5 MB of the
+  chain's 17.9 MB of values, `chain_bytes_by_relation`); then the per-chunk fixed cost of a one-file chunk.
 
 ### Q284. (Q243 here before the hub merge 535cc2c8b) A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 
