@@ -24,6 +24,7 @@ import {
   lookupEnvironment,
   placementInputs,
   realOf,
+  searchedEntryFacts,
   type PlacementInputs,
 } from "./checkouts/git-placement.js";
 import { foldersGitSearches } from "./checkouts/git-search.js";
@@ -150,9 +151,12 @@ function searchedUp(requested: string): Searched[] {
   return real === undefined ? [] : foldersGitSearches(real).map(folder => ({ folder, entries: searchedIn(folder) }));
 }
 
-/** What `folder` holds where Git's search looks ({@link GIT_MARKERS}), as an lstat gives each: two lstats, no Git process. */
+/**
+ * What `folder` holds where Git's search looks ({@link GIT_MARKERS}): the `.git` entry as {@link searchedEntryFacts}
+ * reads it and the `HEAD` as an lstat gives it; two lstats, a third in a `.git` folder, and no Git process.
+ */
 function searchedIn(folder: string): string {
-  return GIT_MARKERS.map(name => entryFacts(join(folder, name))).join(" ");
+  return `${searchedEntryFacts(join(folder, ".git"))} ${entryFacts(join(folder, "HEAD"))}`;
 }
 
 function linkedLocation(inputs: PlacementInputs): RepositoryIdentityLocation | undefined {
@@ -476,8 +480,9 @@ function acceptedByGit(requested: string): RepositoryIdentityLocation {
  * Keeps Git's acceptance `located` of `requested` for the worktree registry under `facts`, the facts of the folder's own
  * `.git`, and what Git's search read in each folder from `requested` up to the top level Git named ({@link upToTop}),
  * all read before Git ran. One that names a folder above ends once the folder's own `.git` moves (`git init`, a clone or
- * a restore there makes one Git reads first), once a folder between becomes a repository, and once the top level's own
- * `.git` moves. A refusal is not kept.
+ * a restore there makes one Git reads first), once a folder between becomes a repository (an empty `.git` folder there
+ * filled in place included), and once the top level's own `.git` moves or, as a file, is rewritten in place. A refusal
+ * is not kept.
  */
 function keepAcceptance(requested: string, facts: string | undefined, located: Located): void {
   if (!located.location.git) {

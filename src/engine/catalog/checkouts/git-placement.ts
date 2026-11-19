@@ -416,6 +416,21 @@ export function entryFacts(path: string): string {
   return described(look(path));
 }
 
+/**
+ * What Git's search for a repository reads at the `.git` entry `dotGit`, read now: the entry's facts ({@link
+ * described}), and the `HEAD` in it when it is a folder (`git init` fills an empty one where it is) or its text when
+ * it is a file (rewritten in place to name another Git folder). One lstat where nothing is there.
+ */
+export function searchedEntryFacts(dotGit: string): string {
+  const looked = look(dotGit);
+  return `${described(looked)}:${heldIn(dotGit, looked)}`;
+}
+
+function heldIn(dotGit: string, looked: Looked): string {
+  if (isFolder(looked)) return entryFacts(join(dotGit, "HEAD"));
+  return isEntry(looked) && looked.isFile() ? textFact(fileText(dotGit)) : "-";
+}
+
 function linkText(path: string): string {
   try {
     return readlinkSync(path);

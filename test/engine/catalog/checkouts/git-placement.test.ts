@@ -1156,6 +1156,41 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(vi.mocked(runGit).mock.calls.length).toBe(started);
   });
 
+  it("lists the folder between's list once a folder between such a checkout and the repository above holding an empty .git folder is made a repository in place", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    // An empty Git folder, which Git passes over as it searches up, and `git init` fills where it is.
+    mkdirSync(join(middle, ".git"), { recursive: true });
+    mkdirSync(inner);
+    expect(registryPlacements(inner)).toBe(1);
+
+    git(middle, "init", "--quiet");
+    git(middle, "commit", "--quiet", "--allow-empty", "-m", "seed");
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
+  });
+
+  it("lists as Git does once the .git file of the folder Git places such a checkout in is rewritten in place to name another repository", async () => {
+    const root = await temporaryRoot();
+    const x = repository(join(root, "x"));
+    git(x, "worktree", "add", "--quiet", "-b", "xw", join(root, "xw"));
+    const y = repository(join(root, "y"));
+    const middle = join(root, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    // A work tree whose Git folder is kept apart: Git places the checkout in the folder holding the .git file.
+    await writeFile(join(middle, ".git"), `gitdir: ${join(x, ".git")}\n`);
+    expect(registryPlacements(inner)).toBe(1);
+    expect(gitsRegistry(inner)).toHaveLength(2);
+
+    await rewriteInPlace(join(middle, ".git"), `gitdir: ${join(y, ".git")}\n`);
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toHaveLength(1);
+  });
+
   it("lists as Git does once the .git link of a checkout whose real path cannot be read names another repository's Git folder", async () => {
     const root = await temporaryRoot();
     const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
