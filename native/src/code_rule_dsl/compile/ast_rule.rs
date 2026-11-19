@@ -322,14 +322,16 @@ fn is_supertype(kind: &str, language: GrammarDialect) -> bool {
         && language.kind_is_supertype(language.kind_to_id(kind))
 }
 
-/// The names of `language`'s grammar's supertypes, found once a process.
+/// The names of `language`'s grammar's supertypes, found once a process (its kind catalog read once:
+/// each `GrammarDialect` call finds the catalog again).
 fn supertype_names(language: GrammarDialect) -> &'static BTreeSet<&'static str> {
     static BY_DIALECT: [std::sync::OnceLock<BTreeSet<&'static str>>; 256] =
         [const { std::sync::OnceLock::new() }; 256];
     BY_DIALECT[language as usize].get_or_init(|| {
-        let ids = 0..u16::try_from(language.kind_count()).unwrap_or(u16::MAX);
-        ids.filter(|&id| language.kind_is_supertype(id))
-            .filter_map(|id| language.kind_name(id))
+        let kinds = language.kinds();
+        let ids = 0..u16::try_from(kinds.kind_count()).unwrap_or(u16::MAX);
+        ids.filter(|&id| kinds.kind_is_supertype(id))
+            .filter_map(|id| kinds.kind_name(id))
             .collect()
     })
 }
