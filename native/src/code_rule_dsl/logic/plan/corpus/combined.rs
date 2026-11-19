@@ -100,7 +100,7 @@ pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
 /// first key that settles it.
 pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<LibraryFile>)>> {
     let Some((digest, read)) = read_record(store, key)? else { return Ok(None) };
-    if !read.iter().all(LibraryFile::unchanged) {
+    if !LibraryFile::inputs_match(&read) {
         return Ok(None);
     }
     Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| (program, read)))

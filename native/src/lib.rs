@@ -274,7 +274,7 @@ pub fn content_store_file_name() -> &'static str {
 #[cfg(not(feature = "headless"))]
 #[napi]
 pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
-    LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()))?.inspection()
+    LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), None)?.inspection()
 }
 
 #[cfg(not(feature = "headless"))]
@@ -294,9 +294,9 @@ struct LoadedRrPolicy {
 
 #[cfg(not(feature = "headless"))]
 impl LoadedRrPolicy {
-    fn read(path: &str, snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>) -> Result<Self> {
+    fn read(path: &str, snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>, inspected: Option<&[code_rule_dsl::logic::rr::LibraryFile]>) -> Result<Self> {
         let path = rr_policy_path(path, snapshot.as_deref())?;
-        let (program, files) = tools::read_policy(&path).map_err(Error::from_reason)?;
+        let (program, files) = tools::read_policy_after(&path, inspected).map_err(Error::from_reason)?;
         let location = match snapshot {
             Some(snapshot) => PolicyLocation::Git(snapshot),
             None => PolicyLocation::Worktree(path),
@@ -334,14 +334,11 @@ impl LoadedRrPolicies {
     pub fn load(&self, path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
         let key = policy_file_path(&path)?;
         let read = || {
-            if source.is_none() && let Ok(local) = key.canonicalize()
-                && let Some(policy) = self.programs.lock().unwrap_or_else(|err| err.into_inner()).get(key).and_then(|versions| versions.get(&None))
-                && matches!(&policy.location, PolicyLocation::Worktree(stored) if stored == &local)
-                && policy.files.iter().all(|file| file.unchanged())
-            {
-                return policy.inspection();
-            }
-            let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()))?;
+            let inspected = if source.is_none() && self.store.is_some() {
+                self.programs.lock().unwrap_or_else(|err| err.into_inner()).get(key)
+                    .and_then(|versions| versions.get(&None)).map(|policy| policy.files.clone())
+            } else { None };
+            let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), inspected.as_deref())?;
             let inspection = policy.inspection()?;
             let origin = match &policy.location {
                 PolicyLocation::Git(snapshot) => Some(snapshot.source_key()),
@@ -437,7 +434,7 @@ impl napi::Task for ScanRrPolicies {
             let options = serde_json::json!({ "sourcePaths": self.source_paths, "scanSpans": true, "reuse": path != Path::new(":memory:") });
             let preloaded = self.policies.is_some();
             let policies = self.policies.take().unwrap_or_else(|| self.paths.iter().map(|path|
-                LoadedRrPolicy::read(path, self.policy_snapshot.clone()).map_err(|error| error.to_string())
+                LoadedRrPolicy::read(path, self.policy_snapshot.clone(), None).map_err(|error| error.to_string())
             ).collect());
             let mut counts = std::collections::HashMap::new();
             let policies: Vec<_> = policies.into_iter().map(|policy| {
@@ -470,7 +467,7 @@ impl napi::Task for ScanRrPolicies {
                 let report = if ephemeral {
                     None
                 } else {
-                    if preloaded && let PolicyLocation::Worktree(path) = &location && files.iter().all(|file| file.unchanged()) {
+                    if preloaded && let PolicyLocation::Worktree(path) = &location {
                         code_rule_dsl::logic::rr::retain_read_program(path, &files, &program);
                     }
                     match tools::run_program_checked(program.clone(), &files, root, &out, &options) {

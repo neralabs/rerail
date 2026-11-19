@@ -1228,6 +1228,12 @@ pub const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
 const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
 pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
+    read_file_after(path, None)
+}
+
+/// A repeated inspection in the same catalog can use the reader's current in-process program.
+/// Execution attaches the inspected graph to its destination store, including after collection.
+pub fn read_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result<(Program, Vec<LibraryFile>), Error> {
     if crate::git_workspace::snapshot::contains(path) {
         let (modules, files) = builtin_program(path)?;
         return Ok((lower_files_dropping(path, modules, true)?, files));
@@ -1238,9 +1244,11 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let cache = PROGRAMS.get_or_init(Default::default);
     let cached = cache.lock().expect("the program cache").get(&key)
-        .filter(|(files, _)| files.iter().all(|file| LibraryFile::now(&file.path) == *file)).cloned();
+        .filter(|(files, _)| LibraryFile::inputs_match(files)).cloned();
     if let Some((files, program)) = cached {
-        retain_read_program(&key, &files, &program);
+        if inspected != Some(files.as_slice()) {
+            retain_current_read(&key, &files, &program);
+        }
         files.iter().for_each(noted);
         crate::code_rule_dsl::prof::count("rr.program_reused", 1);
         return Ok((program, files));
@@ -1325,6 +1333,12 @@ pub fn kept_program_found(path: &Path) -> Option<(Program, Vec<LibraryFile>)> {
 
 /// Attach an inspected program to the store selected by its consumer. The inputs belong to that inspection.
 pub fn retain_read_program(path: &Path, files: &[LibraryFile], program: &Program) {
+    if LibraryFile::inputs_match(files) {
+        retain_current_read(path, files, program);
+    }
+}
+
+fn retain_current_read(path: &Path, files: &[LibraryFile], program: &Program) {
     use super::plan::corpus::combined;
     let Some(sha) = files.iter().find(|file| file.path == path).and_then(|file| file.sha256) else { return };
     let Some((key, Some(store))) = rule_file_store(path, &sha) else { return };
@@ -1624,6 +1638,10 @@ fn noted(file: &LibraryFile) {
 }
 
 impl LibraryFile {
+    pub(in crate::code_rule_dsl) fn inputs_match(files: &[Self]) -> bool {
+        files.iter().all(Self::unchanged)
+    }
+
     /// Whether the file still reads as recorded: the same bytes, or still no file.
     pub fn unchanged(&self) -> bool {
         Self::now(&self.path) == *self

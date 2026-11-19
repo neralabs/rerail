@@ -372,3 +372,12 @@ Tests must state whether the store is cold, retained, collected, or reopened in 
 The first implementation must include direct counts for a cold run, a warm run, and a new process.
 Output equality alone does not prove cache reuse.
 The cache-architecture guard must also pass, including its prohibition on new private retained mechanisms.
+
+### Inspecting and running a local policy
+
+An inspection uses the rule-program reader for the current policy and its includes.
+The reader checks both files it read and missing files that could change include resolution.
+The scan keeps the program from that inspection until execution finishes.
+If an include changes, a second inspection sees the edit. The first scan still executes its inspected program.
+Only a program whose inputs still match can populate the current file's entry in another store.
+Pending scope runs hold leases while a scan stages ownership. Their table contains no analysis results.

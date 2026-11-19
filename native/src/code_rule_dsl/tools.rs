@@ -271,7 +271,11 @@ pub fn run_rr(
 }
 
 pub fn read_policy(path: &Path) -> Result<(super::logic::front::Program, Vec<super::logic::rr::LibraryFile>), String> {
-    let (program, files) = super::logic::rr::read_file(path).map_err(|e| e.to_string())?;
+    read_policy_after(path, None)
+}
+
+pub fn read_policy_after(path: &Path, inspected: Option<&[super::logic::rr::LibraryFile]>) -> Result<(super::logic::front::Program, Vec<super::logic::rr::LibraryFile>), String> {
+    let (program, files) = super::logic::rr::read_file_after(path, inspected).map_err(|e| e.to_string())?;
     if !program.outputs.iter().any(|name| super::logic::rr::is_diagnostic(name)) {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
