@@ -5174,6 +5174,18 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Keep**: Tim's 4f9110496 (a graph kept as an image names no plans), 70026ed6b (a memo hit known by digest names
   its source), 0206654a5 (the corpus walk reads the root's real path before the waves).
 - **Done when**: both pass, unignored.
+- **Done** (2026-11-18, branch `pr508-fixes-as-tests`). The hub's causes differ from those Tim fixed, so neither
+  4f9110496 nor 70026ed6b is ported; the hub keeps Q150's plans in images and has its own `read_unstored` naming.
+  Three changes:
+  - A version with no prepared line is made again every run, because the kept plans store a row a line. Its
+    making counted as new (`plan::prepared_made`), so the warm run gathered a write of the plans as read; it is
+    held but not new now.
+  - 0206654a5 is ported (the corpus walk preloads the root's canonical form), with `std::fs::canonicalize`.
+  - The observer's sweep (`observe::collect`) kept one of two names of a directory. Through a symlink both are
+    used by every run (files are read by their canonical paths too), and both stored `L0`. The sweep dropped
+    `real/src`'s cursor, and the warm run wrote that root's first cursor back. Two names with the same cursor are
+    both kept now.
+  Both tests pass unignored on the M1 Max, with the second-run manifest test and the prepared-plan tests (16 of 16).
 
 ### Q244. (PR #508, t47) A negated cross product is bound by its rule's context
 
@@ -5240,3 +5252,13 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   `res` has no connected demand" (1). Not PR #508's: the same with Q241's and Q244's ports and without them.
 - **Done when**: the 30 pass, the product bound at its producer (no relation computed in full to be filtered).
 
+### Q250. Four observer tests fail at the hub's tip
+
+- **Seen** (2026-11-18, the M1 Max, `-p rerail-store`, both with and without Q243's sweep change):
+  - `a_directory_that_cannot_be_listed_names_what_it_held`: 9 stats where 1 is asserted.
+  - `an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing`: the edit is not missed.
+  - `a_listing_names_an_edited_file_and_no_other`: (1, 2, 7) where (1, 1, 2) is asserted.
+  - `a_small_root_is_checked_by_listings_not_stats`: 7 stats and 0 answers reused, where 1 stat and 6 reused are
+    asserted.
+  All four are decision 0400's listing checks, and 27 of the 31 observer tests pass. Not PR #508's.
+- **Done when**: all four pass.

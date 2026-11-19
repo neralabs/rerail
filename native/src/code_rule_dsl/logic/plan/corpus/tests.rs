@@ -1260,7 +1260,6 @@ fn a_runs_output_directory_is_rerails_own() {
 /// cross part whose every stratum was kept, a program of no rules, kept planning choices of its own. Each run is a
 /// process of its own, as the CLI's are: this test binary again, running `one_corpus_run_for_a_parent`.
 #[test]
-#[ignore = "the warm run writes its kept plans; PR #508 4f9110496 and 70026ed6b not ported: Q243"]
 fn the_run_after_a_cold_one_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
@@ -1274,7 +1273,6 @@ fn the_run_after_a_cold_one_writes_nothing() {
 /// and faulted "the observer's store not asked inside the waves". PR #508's 0206654a5 (t47).
 #[cfg(unix)]
 #[test]
-#[ignore = "PR #508 0206654a5 not ported: Q243"]
 fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("real")).unwrap();
