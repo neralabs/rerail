@@ -544,9 +544,10 @@ boundary judges paths by secret-like name and, where a checkout is known, by sym
 
 - Names cannot see `printenv`, or a path the shell builds at run time such as `base64 -d <<< LmVudg== | xargs cat`.
 - User prompts and assistant messages pass whole.
-- `violations_list`, `audits_list` and `repository_audit_entries_list` judge a finding's file by where it links in the
-  agent's own checkout for the first 256 paths of an answer, past those by name only. `rerail rules evidence` judges
-  findings by name only.
+- `violations_list`, `audits_list` and `repository_audit_entries_list` judge a finding's file by where it links from
+  the folder it was recorded in, for the first 256 paths of an answer, past those by name only. A finding recorded in a
+  folder outside the agent's own checkout, such as a worktree beside it, is judged by name only.
+  `rerail rules evidence` judges findings by name only.
 - A link named without a separator, leading dot or extension (`notes -> .env`, read as `cat notes`) is not looked up
   on disk, so its target is not judged.
 

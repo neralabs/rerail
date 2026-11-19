@@ -8,7 +8,7 @@ import { checkoutRealpath, withinCheckout } from "../engine/catalog/checkout-con
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
 import { internalTesting } from "../engine/internal-testing.js";
 import { agentTranscriptPayload } from "../engine/transcript-boundary.js";
-import { checkoutPathBoundary, sensitiveByName } from "../engine/path-boundary.js";
+import { CHECKOUT_PATH_RESOLUTIONS, checkoutPathBoundary, sensitiveByName, type CheckoutPathBoundary } from "../engine/path-boundary.js";
 import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../engine/storage/schema.js";
 import {
   auditControlsSchema,
@@ -69,18 +69,56 @@ const codeRuleViolationSchema: z.ZodType<CodeRuleViolation> = z.object({
   fix: codeRuleViolationFixSchema.optional(),
 }).strict();
 
+/** A boundary for paths under `root` when it is an absolute folder whose real path lies inside `checkout`; else none. */
+function boundaryInside(checkout: string, root: string): CheckoutPathBoundary | undefined {
+  if (!isAbsolute(root)) return undefined;
+  try {
+    const real = checkoutRealpath(root);
+    return within(checkout, real) === undefined ? undefined : checkoutPathBoundary(real);
+  } catch {
+    // The folder is gone since its audit ran.
+    return undefined;
+  }
+}
+
 /**
- * Violations as `caller` may see them. A coding agent sees one in a secret-like file by rule and place only, as the
- * in-session steer says it: the message may carry the file's text through the rule's metavariables, `variables` are
- * that text, and the fix is its replacement; a person reads them in the dashboard. A file is secret-like by its name or
- * by where it leads in the agent's checkout, as the steer judges it, so `conf/config.py` with `conf` a link to `.aws`
- * is one. Make one view per answer: it resolves each distinct path once, and past the boundary's limit judges by name.
+ * Whether a finding's path is secret-like for a coding agent at work in `checkout`: by its name, or by where it leads
+ * from `root`, the folder its audit ran in. The runtime keeps the path relative to that folder and its steer judged it
+ * there, so from a session in `web`, `conf/config.py` with `web/conf` a link to `../.aws` is one. A folder outside
+ * `checkout` (a worktree beside it, one a link leads out to, one gone or not recorded) is not read: its findings are
+ * judged by name. One judge serves one answer: it reads each folder's real path once and resolves at most
+ * CHECKOUT_PATH_RESOLUTIONS distinct paths across all its folders, past which it judges by name.
  */
-function violationView(caller: ApiCaller): (violation: CodeRuleViolation) => CodeRuleViolation {
+function recordedPathJudge(checkout: string): (root: string | undefined, path: string) => boolean {
+  const boundaries = new Map<string, CheckoutPathBoundary | undefined>();
+  const resolved = new Set<string>();
+  const boundaryOf = (root: string | undefined): CheckoutPathBoundary | undefined => {
+    if (root === undefined) return undefined;
+    if (!boundaries.has(root)) boundaries.set(root, boundaryInside(checkout, root));
+    return boundaries.get(root);
+  };
+  return (root, path) => {
+    if (sensitiveByName(path)) return true;
+    const boundary = boundaryOf(root);
+    const key = `${root}\0${path}`;
+    if (boundary === undefined || (!resolved.has(key) && resolved.size >= CHECKOUT_PATH_RESOLUTIONS)) return false;
+    resolved.add(key);
+    return boundary.sensitive(path);
+  };
+}
+
+/**
+ * Violations as `caller` may see them, each with the folder its audit ran in. A coding agent sees one in a secret-like
+ * file ({@link recordedPathJudge}) by rule and place only, as the in-session steer says it: the message may carry the
+ * file's text through the rule's metavariables, `variables` are that text, and the fix is its replacement; a person
+ * reads them in the dashboard. Make one view per answer.
+ */
+function violationView(caller: ApiCaller): (violation: CodeRuleViolation, root: string | undefined) => CodeRuleViolation {
   if (caller.kind === "person") return violation => violation;
-  const sensitive = caller.checkout === undefined ? sensitiveByName : checkoutPathBoundary(caller.checkout).sensitive;
-  return violation => {
-    if (violation.path === undefined || !sensitive(violation.path)) return violation;
+  // Defensive: every list calls historyScope first, which refuses an agent with no checkout.
+  const sensitive = caller.checkout === undefined ? (_root: string | undefined, path: string) => sensitiveByName(path) : recordedPathJudge(caller.checkout);
+  return (violation, root) => {
+    if (violation.path === undefined || !sensitive(root, violation.path)) return violation;
     const { fix: _fix, ...rest } = violation;
     return { ...rest, message: SECRET_FILE_FINDING_MESSAGE, variables: {} };
   };
@@ -624,9 +662,10 @@ export const operations: readonly Operation[] = [
       const page = readable ? stores.audits.listRepositoryAuditEntries(repositoryAuditEntryQuery(input)) : undefined;
       if (page === undefined) throw new ApiError(404, "repository-audit-not-found", `repository audit ${input.auditId} does not exist`);
       const view = violationView(caller);
+      const root = stores.audits.workspaceRoots([input.auditId]).get(input.auditId);
       return {
         entries: page.entries.map(entry => entry.kind === "violation"
-          ? { kind: "violation" as const, violation: view(codeRuleViolationSchema.parse(entry.payload)) }
+          ? { kind: "violation" as const, violation: view(codeRuleViolationSchema.parse(entry.payload), root) }
           : { kind: "failure" as const, failure: auditFailureSchema.parse(entry.payload) }),
         total: page.total,
       };
@@ -643,7 +682,7 @@ export const operations: readonly Operation[] = [
       const page = stores.audits.list(auditQuery(input), historyScope(stores, caller, input.repository));
       if (caller.kind === "person") return page;
       const view = violationView(caller);
-      return { ...page, audits: page.audits.map(audit => ({ ...audit, violations: audit.violations.map(view) })) };
+      return { ...page, audits: page.audits.map(audit => ({ ...audit, violations: audit.violations.map(violation => view(violation, audit.workspaceRoot)) })) };
     },
   }),
   defineOperation({
@@ -669,11 +708,12 @@ export const operations: readonly Operation[] = [
         ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
       }, historyScope(stores, caller, input.repository));
       const view = violationView(caller);
+      const roots = stores.audits.workspaceRoots([...new Set(page.violations.map(v => v.auditId))]);
       const reasons = declineReasonsBySteer(stores.reader.placedDeclineNotes([...new Set(page.violations.map(v => v.sessionId))]));
       return {
         total: page.total,
         violations: page.violations.map(({ violation: found, sessionId, auditId, at, host, logged }) => {
-          const { id, ruleId, clauseId, code, mode, message, path, span, fix } = view(found);
+          const { id, ruleId, clauseId, code, mode, message, path, span, fix } = view(found, roots.get(auditId));
           const declinedReasons = logged ? [] : reasons.get(steerKey(auditId, ruleId)) ?? [];
           return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host, logged, declinedReasons };
         }),

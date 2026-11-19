@@ -556,7 +556,7 @@ An agent reads only its own repository's history, since transcripts hold prompts
 
 The check reads names, not a shell, so paths built at run time are missed. `rerail rules evidence` names such calls by tool only, and lists no Git-ignored standards file.
 
-Violations in secret-named files (`secrets.yaml`, `credentials.json`, `token.txt`, `gcp-key.json`, `kubeconfig`, `prod.sops.yaml`, anything under `.aws/`; `SENSITIVE_FILE_NAMES` and `SENSITIVE_FOLDER_NAMES`; hidden alone doesn't count) reach an agent by rule and place only. The steer, `violations_list`, `audits_list` and `repository_audit_entries_list` withhold the message (which metavariables may fill with file text), `variables` and fix, and the steer says so. The steer and those three lists also judge a file by where it links in the agent's checkout. Audits still run, and people see full findings via `/api` and the dashboard.
+Violations in secret-named files (`secrets.yaml`, `credentials.json`, `token.txt`, `gcp-key.json`, `kubeconfig`, `prod.sops.yaml`, anything under `.aws/`; `SENSITIVE_FILE_NAMES` and `SENSITIVE_FOLDER_NAMES`; hidden alone doesn't count) reach an agent by rule and place only. The steer, `violations_list`, `audits_list` and `repository_audit_entries_list` withhold the message (which metavariables may fill with file text), `variables` and fix, and the steer says so. The steer also judges a file by where it links from the folder the session runs in, and those three lists do the same from the folder each finding was recorded in, when that folder is in the agent's checkout. Audits still run, and people see full findings via `/api` and the dashboard.
 
 </details>
 
