@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, toNamespacedPath } from "node:path";
 import { deflateSync } from "node:zlib";
 import Database from "better-sqlite3";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -2152,7 +2152,7 @@ Seen(n) :- kind(n, "identifier").
     try {
       setCheckoutStarted(database, recordCheckout(database, root), false);
       settleAnalysisScopeReleases(databasePath);
-      expect(probe).toHaveBeenCalledWith(legacy, root, analysisScopeHome(databasePath));
+      expect(probe).toHaveBeenCalledWith(legacy, toNamespacedPath(root), analysisScopeHome(databasePath), true);
       expect(database.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get()).toBe(0);
     } finally {
       database.$client.close();
