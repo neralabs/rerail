@@ -1452,10 +1452,12 @@ export function autostartDaemon(machine: DaemonMachine = THIS_MACHINE): void {
 }
 
 /**
- * What a stop did: stopped the home's daemon; found none; found a record naming a live process that is not the home's
- * daemon, which it removed, ending nothing (`not-daemon`, said with {@link NOT_HOME_DAEMON_NOTE}); or found daemon.json
- * naming another pid when it would signal the one it named, or none while that pid ran on past the stop's wait, and
- * ended and removed nothing (`record-changed`).
+ * What a stop did: `stopped`, it asked the daemon it found to close, or found it ending, and killed it past the stop's
+ * wait only while still proven the home's daemon; `not-running`, it found no daemon, only no record or a stale one the
+ * lookup cleared; `not-daemon`, the record named a live process proven not the home's daemon, at the lookup or just
+ * before the SIGTERM, and it removed that record and ended nothing (said with {@link NOT_HOME_DAEMON_NOTE});
+ * `record-changed`, just before the SIGTERM the pid was proven not the home's daemon while daemon.json named it no
+ * longer (another pid, none, or unreadable), and it ended and removed nothing.
  */
 export type StopDaemonResult = "stopped" | "not-running" | "not-daemon" | "record-changed";
 
