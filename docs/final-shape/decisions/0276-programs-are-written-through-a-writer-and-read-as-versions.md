@@ -527,6 +527,23 @@ Progress (2026-11-18):
       `many_within_stops_read_their_sets_relation`. Left of A: the walk's literals are still `front::Literal`
       values handed to `emit` (S2: emit terms, `T`, straight into the open rule), and `negate`'s bodies and the
       findings' rules (`findings_on`, which a version's edit places) are made as literals.
+    - *Done (A3 S2, the walk writes terms).* Each literal's lowering writes builder terms (`Tm`, `T` with its texts
+      interned in the builder) into the open rule: `emit_atom`, `emit_cmp`, `emit_agg`, `emit_nearest`, `emit_ast`,
+      each fed to the scan first. A clause's term is read straight into a builder term (`term_tm`: the SQL builtins,
+      `printf`'s pieces, `concat`'s folds, arithmetic, floats' keys). A context, a cover and a negated conjunction
+      are their helper's name and head terms; a test set writes its test where picked; the demands, climbs,
+      `precedes_stop`, `match_all`'s native rule and core.rr's rewritten relations write term by term
+      (`fixed_rule_with`, `core::write_definition`). `unset` is applied per atom (`emit_atom`), and a negated test is
+      held as a term until the next literal (`merge_negated_test`). Gone: `emit(Literal)`, `fixed_rule` over
+      literals, `put_rule`, `put_literal`, `Written::write`, `Lowerer::write`, `RulesSeen::of`, `rename_literal`,
+      `widen_violation_heads` and the walk's every `front::Term`. Relax's ahead type checks fill its type interner on
+      this code, which rustc accepts (`scripts/dev/relax/README.md`, "Known limits"): its runs set
+      `RELAX_TYCK_AHEAD=0`, and each step is confirmed under cargo on a farm host too.
+    - *Done (C: the findings and the projections).* `findings_on` writes onto a derivation of the version: its
+      fields, and its rules after the program's, each through the open-rule writer (a body is a writer closure, a
+      message placeholder's read a `Reads`); `findings_write` says from the settings alone whether there are rules,
+      and without them the fields' edit is all. `projections` names the projected relations and `write_projection`
+      writes each one's rule. Neither hands `lowering_tail` a `front::Rule`.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,
