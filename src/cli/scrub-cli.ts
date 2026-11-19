@@ -433,25 +433,34 @@ async function sessionFolders(sessions: string, sessionIds: readonly string[]): 
 async function scrubSessionFiles(recorded: RecordedSessions): Promise<SessionFilesReport> {
   const report: SessionFilesReport = { lines: 0, files: 0, pendingFiles: 0, checkouts: 0, skipped: [] };
   for (const checkout of recorded.checkouts) {
-    const sessions = defaultStorageRoot(checkout);
-    if (!isAbsolute(checkout) || !realDirectory(checkout) || !realDirectory(join(checkout, ".rerail")) || !realDirectory(sessions)) continue;
+    const sessions = recordsFolder(checkout);
+    if (sessions === undefined) continue;
     report.checkouts += 1;
-    for (const folder of await sessionFolders(sessions, recorded.sessionIds)) {
-      const path = join(folder, "events.jsonl");
-      try {
-        const lines = await rewriteAppendedFile(flags => openLedgerFile(path, flags), ledgerLine);
-        if (lines === undefined) report.skipped.push(`${path} (a session kept writing to it)`);
-        else if (lines > 0) {
-          report.lines += lines;
-          report.files += 1;
-        }
-      } catch (error) {
-        report.skipped.push(`${path} (${message(error)})`);
-      }
-    }
+    for (const folder of await sessionFolders(sessions, recorded.sessionIds)) await scrubLedger(join(folder, "events.jsonl"), report);
     await scrubPending(sessions, report);
   }
   return report;
+}
+
+/** `<checkout>/.rerail/sessions` when the checkout path is absolute and it, `.rerail` and `sessions` are each a real folder. */
+function recordsFolder(checkout: string): string | undefined {
+  const sessions = defaultStorageRoot(checkout);
+  const real = isAbsolute(checkout) && [checkout, join(checkout, ".rerail"), sessions].every(folder => realDirectory(folder));
+  return real ? sessions : undefined;
+}
+
+/** Scrubs one session ledger in place (`rewriteAppendedFile`), counting it in `report`, or naming it there as left. */
+async function scrubLedger(path: string, report: SessionFilesReport): Promise<void> {
+  try {
+    const lines = await rewriteAppendedFile(flags => openLedgerFile(path, flags), ledgerLine);
+    if (lines === undefined) report.skipped.push(`${path} (a session kept writing to it)`);
+    else if (lines > 0) {
+      report.lines += lines;
+      report.files += 1;
+    }
+  } catch (error) {
+    report.skipped.push(`${path} (${message(error)})`);
+  }
 }
 
 /** Scrubs `daemon.log` in the Rerail home in place (`rewriteAppendedFile`), never through a link. */
@@ -533,6 +542,25 @@ function scrubDatabaseFile(path: string, openDatabase: () => RerailDatabase, ope
 }
 
 /**
+ * Scrubs the Rerail database at `path`, when there is one, and gives what it records of checkouts and sessions, read
+ * first so the ledgers are scrubbed even when the database cannot be.
+ */
+function scrubRecordingDatabase(path: string): { complete: boolean; recorded: RecordedSessions } {
+  let recorded: RecordedSessions = { checkouts: [], sessionIds: [] };
+  if (!existsSync(path)) {
+    process.stdout.write(`No Rerail database at ${path}; no stored history to scrub.\n`);
+    return { complete: true, recorded };
+  }
+  const complete = scrubDatabaseFile(path, () => openRerailDatabase(path), db => {
+    recorded = {
+      checkouts: db.$client.prepare("SELECT checkout_path FROM checkouts ORDER BY checkout_path").pluck().all() as string[],
+      sessionIds: db.$client.prepare("SELECT session_id FROM sessions ORDER BY session_id").pluck().all() as string[],
+    };
+  });
+  return { complete, recorded };
+}
+
+/**
  * `rerail scrub`: redacts secrets from what earlier builds stored, with the scrubber writes now use (`secret-scrub`):
  * the Rerail database's events and audit text (then rewritten so the old text is gone from its bytes and WAL), the
  * copy `rerail update` keeps of it for a rollback, the session ledgers and held steers of every checkout it records,
@@ -546,22 +574,13 @@ export async function runScrubCommand(args: readonly string[], usage: () => stri
   const home = defaultRerailHome();
   const path = join(home, RERAIL_DATABASE_FILE);
   markHintShown(home);
-  let complete = true;
-  let recorded: RecordedSessions = { checkouts: [], sessionIds: [] };
-  if (existsSync(path)) {
-    // The checkouts and sessions are read first, so the ledgers are scrubbed even when the database cannot be.
-    complete = scrubDatabaseFile(path, () => openRerailDatabase(path), db => {
-      recorded = {
-        checkouts: db.$client.prepare("SELECT checkout_path FROM checkouts ORDER BY checkout_path").pluck().all() as string[],
-        sessionIds: db.$client.prepare("SELECT session_id FROM sessions ORDER BY session_id").pluck().all() as string[],
-      };
-    });
-  } else process.stdout.write(`No Rerail database at ${path}; no stored history to scrub.\n`);
+  const scrubbed = scrubRecordingDatabase(path);
+  let { complete } = scrubbed;
   // The copy `rerail update` took before switching versions: opened without this build's schema, so it stays the
   // earlier version's file.
   const copy = preUpdateSnapshotPath(path);
   if (existsSync(copy)) complete = scrubDatabaseFile(copy, () => openSqliteDatabase(copy)) && complete;
-  const files = await scrubSessionFiles(recorded);
+  const files = await scrubSessionFiles(scrubbed.recorded);
   const daemonLogLines = await scrubDaemonLog(home, files);
   process.stdout.write(
     `Scrubbed ${plural(files.lines, "line")} in ${plural(files.files, "session ledger")} and ${plural(files.pendingFiles, "held steer file")} `
