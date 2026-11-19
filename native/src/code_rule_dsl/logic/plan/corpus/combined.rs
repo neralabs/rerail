@@ -99,6 +99,21 @@ pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
 /// as `LibraryFile::unchanged` checks it, by its `stat` while that holds and by its bytes' sha256 when it moved: the
 /// first key that settles it.
 pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<LibraryFile>)>> {
+    let Some((digest, read)) = read_record(store, key)? else { return Ok(None) };
+    if !read.iter().all(LibraryFile::unchanged) {
+        return Ok(None);
+    }
+    Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| (program, read)))
+}
+
+/// A process hit already checked these inputs. Match them against this store's entry and verify its program is available.
+pub(in crate::code_rule_dsl) fn retains_read(store: &ContentStore, key: &[u8; 32], files: &[LibraryFile]) -> StoreResult<bool> {
+    let Some((digest, read)) = read_record(store, key)? else { return Ok(false) };
+    if read != files { return Ok(false); }
+    program_text::available(store, &digest)
+}
+
+fn read_record(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<([u8; 32], Vec<LibraryFile>)>> {
     // The store's entry, or, where the store has none, the one the engine ships (decision 0264).
     let entry = match store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? {
         Some(source) => {
@@ -118,18 +133,18 @@ pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32]
     let Ok(facts) = program_facts::decode(&entry) else { return Ok(None) };
     let mut read = Vec::new();
     for row in facts.get(READ_FILE).into_iter().flatten() {
-        let file = match row.as_slice() {
-            [Value::Str(path), Value::Str(digest)] => LibraryFile { path: PathBuf::from(path.as_str()), sha256: unhex(digest) },
-            _ => return Ok(None),
+        let [Value::Str(path), Value::Str(digest)] = row.as_slice() else { return Ok(None) };
+        let sha256 = if digest.is_empty() {
+            None
+        } else {
+            let Some(hash) = unhex(digest) else { return Ok(None) };
+            Some(hash)
         };
-        if !file.unchanged() {
-            return Ok(None);
-        }
-        read.push(file);
+        read.push(LibraryFile { path: PathBuf::from(path.as_str()), sha256 });
     }
     let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
     let Some(digest) = unhex(&digest) else { return Ok(None) };
-    Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| (program, read)))
+    Ok(Some((digest, read)))
 }
 
 thread_local! {

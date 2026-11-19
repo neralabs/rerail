@@ -87,6 +87,8 @@ A reused source view can supply their verified tree entries. The programs publis
 Repeated inventory requests within that evaluation can use the same materialized result.
 After scope deletion, a new acquisition must retain the same plans as a fresh view of that source.
 Each store that consumes a compiled policy needs its input record and the graph of its includes.
+When the process already holds a validated local policy, it checks the destination store's recorded inputs and compiled program.
+Matching inputs and an available program let it reuse the policy in memory. If collection removed either entry, it records the policy again.
 The process can reuse a checked graph from another store. It must save that graph in the selected image store.
 On restart, the engine checks the recorded file digests and missing include candidates before it reuses a graph.
 A scan can execute a policy inspected for another store. It retains the program there while the inspected inputs still match.

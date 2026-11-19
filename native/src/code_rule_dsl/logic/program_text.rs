@@ -443,9 +443,6 @@ pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::col
     Ok(out)
 }
 
-/// The program `store` keeps of sha256 `digest` (`store`), from its image where it has one, else its text, and the
-/// sources it is kept as; `None` when the store has lost it, or it no longer reads. Its lists are taken from the
-/// run's `lists`.
 /// The sources `texts` names for `digests` (each program's text and image), with none read: a run that holds the
 /// programs in memory names what it would have read (the manifest's), so collection keeps them while it keeps the run.
 pub fn sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<SourceId>> {
@@ -462,6 +459,28 @@ pub fn sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<So
     Ok(out)
 }
 
+/// A program already in memory needs its durable representation for the next process.
+/// Current images use their own bytes' digest. Older images and text use the normal reader's format checks.
+pub fn available(store: &ContentStore, digest: &[u8; 32]) -> StoreResult<bool> {
+    let mode = images();
+    let hash = HashKey::from_sha256_digest(*digest);
+    if mode != "off" {
+        let key = image_key(digest);
+        if let Some(source) = store.source_by_alias(key)? {
+            if store.source_by_hash(hash)? == Some(source) {
+                return Ok(true);
+            }
+        } else if let Some(bytes) = crate::code_rule_dsl::logic::rr::images::shipped().and_then(|bundle| bundle.get(key)) {
+            if Sha256::digest(bytes).as_slice() == digest { return Ok(true); }
+        } else if mode == "require" {
+            return Ok(false);
+        }
+    }
+    Ok(load(store, digest, &Default::default())?.is_some())
+}
+
+/// Load a program and its source IDs from its image or text, using the run's lists.
+/// A missing or unreadable program gives `None`.
 pub fn load(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<SourceId>)>> {
     let mut found = texts(store, &[*digest])?;
     let Some((stored, sources)) = found.remove(digest) else { return Ok(None) };

@@ -1325,40 +1325,40 @@ pub fn kept_program_found(path: &Path) -> Option<(Program, Vec<LibraryFile>)> {
 
 /// Attach an inspected program to the store selected by its consumer. The inputs belong to that inspection.
 pub fn retain_read_program(path: &Path, files: &[LibraryFile], program: &Program) {
+    use super::plan::corpus::combined;
     let Some(sha) = files.iter().find(|file| file.path == path).and_then(|file| file.sha256) else { return };
-    if let Some((entry, Some(store), None)) = kept_program_by_digest(path, &sha) {
-        super::plan::corpus::combined::record(&store, "a rule file's program", &entry, files, program, &[]);
-        super::plan::corpus::combined::read_before_the_run(entry);
+    let Some((key, Some(store))) = rule_file_store(path, &sha) else { return };
+    let Ok(_held) = store.hold_collection() else { return };
+    store.settle(&combined::queued(&key));
+    if !combined::retains_read(&store, &key, files).unwrap_or(false) {
+        combined::record(&store, "a rule file's program", &key, files, program, &[]);
     }
+    combined::read_before_the_run(key);
 }
 
-/// The entry of the rule file at `path` (canonical): its key, the store it is kept in, and its program and read
-/// record when the store keeps one that still holds (`combined::lookup_read`). `None` where there is no file to key
-/// by, or the program is phase 0's own (its builtin reader).
+fn rule_file_store(path: &Path, sha: &[u8; 32]) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>)> {
+    use super::plan::corpus::{combined, phases};
+    if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() { return None; }
+    Some((combined::rule_file_key(path, sha), phases::reading_store()))
+}
+
+/// The entry of the rule file at `path` and the program whose recorded inputs still hold.
 #[allow(clippy::type_complexity)]
 fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>)> {
+    use super::plan::corpus::combined;
     let sha = super::plan::corpus::observe(|o| o.digest(path))?;
-    kept_program_by_digest(path, &sha)
-}
-
-#[allow(clippy::type_complexity)]
-fn kept_program_by_digest(path: &Path, sha: &[u8; 32]) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>)> {
-    use super::plan::corpus::{combined, phases};
-    if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() {
-        return None;
-    }
-    let key = combined::rule_file_key(path, sha);
-    let Some(store) = phases::reading_store() else { return Some((key, None, None)) };
-    let found = {
-        // Read while collection is held off, as a combined program's is (`combine_stored`).
+    let (key, store) = rule_file_store(path, &sha)?;
+    let found = if let Some(store) = &store {
         let _held = store.hold_collection().ok()?;
         store.settle(&combined::queued(&key));
-        combined::lookup_read(&store, &key, &Default::default()).ok().flatten()
+        combined::lookup_read(store, &key, &Default::default()).ok().flatten()
+    } else {
+        None
     };
     if found.is_some() {
         combined::read_before_the_run(key);
     }
-    Some((key, Some(store), found))
+    Some((key, store, found))
 }
 
 /// A file's program from its modules' statements (`program`): its names checked, its own rules grounded, and lowered,

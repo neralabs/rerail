@@ -42,6 +42,8 @@
         store.settle(&queued(&key));
         let back = lookup(&store, &key, &Default::default()).unwrap().expect("kept");
         assert_eq!(format!("{back:?}"), format!("{program:?}"));
+        assert!(retains_read(&store, &key, &read).unwrap());
+        assert!(!retains_read(&store, &key, &read[..1]).unwrap(), "the destination must have the same include observations");
         // The source the manifest names is the store's.
         let (text, _) = named(&key);
         assert!(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())]).unwrap()[0].is_some());
@@ -62,4 +64,38 @@
         next_run();
         assert!(lookup(&store, &key, &Default::default()).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_process_hit_reinstalls_a_collected_program_with_a_surviving_read_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rule.rr");
+        let text = ".decl e(x: int)\n.output e\ne(1).\n";
+        std::fs::write(&path, text).unwrap();
+        let path = path.canonicalize().unwrap();
+        let program = rr::parse(text).unwrap();
+        let digest = Sha256::digest(text.as_bytes()).into();
+        let files = [LibraryFile { path: path.clone(), sha256: Some(digest) }];
+        let key = rule_file_key(&path, &digest);
+        let database = dir.path().join("store.sqlite");
+        super::super::with_tape_cache_path(&database, None, || {
+            let store = ContentStore::open(&database).unwrap();
+            rr::retain_read_program(&path, &files, &program);
+            store.settle(&queued(&key));
+            assert!(retains_read(&store, &key, &files).unwrap());
+
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+            let entry = store.source_by_hash(HashKey::sha256(source_text(&key).as_bytes())).unwrap().unwrap();
+            store.pin_source(entry, "keep just the input record", now + 3600).unwrap();
+            drop(Pins::new(&store, &key));
+            store.written().unwrap();
+            for _ in 0..2 { store.collect(now, 256).unwrap(); }
+            assert!(read_record(&store, &key).unwrap().is_some());
+            assert!(!retains_read(&store, &key, &files).unwrap());
+
+            rr::retain_read_program(&path, &files, &program);
+            store.settle(&queued(&key));
+            assert!(retains_read(&store, &key, &files).unwrap());
+            assert!(lookup_read(&store, &key, &Default::default()).unwrap().is_some());
+        });
     }
