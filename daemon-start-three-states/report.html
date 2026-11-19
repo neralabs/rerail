@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request, not opened yet</div>
+  <h1>A daemon start ends in the state it reports, in three cases</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Should <code>rerail daemon start</code> end in the state it reports beside a one-instance pipe, past its 15 s wait and with an empty TLS key?</p>
+  </div>
+  <p class="rec"><b>We recommend:</b> approve it: each start now says what is true and leaves a serving daemon where one can serve, and no state gives less than <code>main</code>.</p>
+  <div class="big">
+    <div><b class="w">912 lines</b><span>in 15 files. 258 ship, 654 are tests and text.</span></div><div><b class="w">Standard review</b><span>No ruling asked; no high-risk path.</span></div><div><b class="w">Waits on Nothing</b><span>No CI run on GitHub yet: not pushed.</span></div><div><b class="w">1 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/tree/JeanFrancoisGagne/daemon-start-three-states">GitHub</a> on 19 November 2026, at head e30f3ae42.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><span class="lb">A</span><b>An empty key file</b></td><td class="in" data-l="Intended">A TLS key the daemon may not serve with &quot;no longer keeps it from this one&quot;: it serves this computer alone, &quot;so hooks keep recording&quot;. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">An empty key started a daemon whose port served nothing; the start waited 15.2 s, 5 of 5. <span class="tagx">a real daemon</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and serves this computer alone over http, naming the file in one line.</td></tr><tr><td class="k"><span class="lb">B</span><b>A start&#x27;s wait ends</b></td><td class="in" data-l="Intended">A daemon slow to come up is left for &quot;the next start to use&quot;. <span class="tagx">a test&#x27;s name</span></td><td class="fo" data-l="Found">The first start said the daemon did not become ready; it served 7 to 8 s later. <span class="tagx">the built CLI</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and names that daemon by pid as one that may still be starting, which <code>rerail status</code> shows running once it answers.</td></tr><tr><td class="k"><span class="lb">C</span><b>A held pipe name</b></td><td class="in" data-l="Intended">A name another process holds moves the engine to &quot;the same name with a random hex suffix&quot;. <span class="tagx">docs</span></td><td class="fo" data-l="Found">Beside a one-instance pipe every start exited 1 with <code>listen EBUSY</code>. <span class="tagx">Windows 11 probe</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and moves the engine to its fallback pipe without asking the holder.</td></tr></tbody></table>
+<figcaption>Found in November 2026 on Linux x64 and Windows 11 machines, with a real daemon and the built CLI.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. An empty key file</td><td data-l="Where main states the intent"><code>src/daemon/daemon.ts</code> at 7efcac9c6, above <code>serveRerailDaemon</code>: &quot;a TLS key it may not serve with (<code>TlsKeyExposedError</code>), which keeps it from serving https and from other machines, no longer keeps it from this one ... so hooks keep recording and steering&quot;.</td><td data-l="The cause, and what was measured"><code>loadDaemonTls</code> read the key as text and handed it on unparsed, and Node&#x27;s TLS server sets a key only when its value is truthy, so an empty key read as none: the daemon listened with a certificate and no key. A key file of spaces or text was refused by OpenSSL with a line that named no file.</td></tr><tr><td class="k">B. A start&#x27;s wait ends</td><td data-l="Where main states the intent"><code>test/runtime/daemon-control/daemon-home.test.ts</code> at 7efcac9c6, line 280: &quot;leaves the next start to use a daemon slow to come up after the first start&#x27;s wait ran out, never a second&quot;. <code>src/runtime/daemon-control.ts</code> line 1166 throws <code>Rerail daemon did not become ready within 15s</code>.</td><td data-l="The cause, and what was measured"><code>readyDaemon</code> threw &quot;did not become ready&quot; when its clock ran out and never asked the launched process again, so the message came from the clock, not the process. The daemon went on to write <code>daemon.json</code> and serve as the command asked.</td></tr><tr><td class="k">C. A held pipe name</td><td data-l="Where main states the intent"><code>docs/windows.md</code> at 7efcac9c6, line 526: the engine &quot;listens on the same name with a random hex suffix, recorded in <code>daemon.json</code> as <code>kernelSocketPath</code>&quot;. <code>src/runtime/engine-service.ts</code> line 941: &quot;libuv ... reports a name another process holds as EACCES or EADDRINUSE.&quot;</td><td data-l="The cause, and what was measured">libuv reports a holder that capped its instances and made them all as <code>EBUSY</code>. <code>listenOnSocket</code> sent only <code>EACCES</code> and <code>EADDRINUSE</code> to <code>listenBesideHeldPipe</code>, so it rethrew <code>EBUSY</code> and the daemon exited before it was ready.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 311" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Empty TLS key serves locally, low risk, 60 lines; B, Start names a daemon still starting, low risk, 172 lines; C, Fallback pipe beside a capped holder, low risk, 26 lines. Read first: daemon.ts, daemon-control.ts, engine-service.ts. To skim: 645 lines of tests and 9 lines of what each start now does.." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk low"/><text x="49" y="38" class="t s">Low risk, 60 lines</text><text x="128" y="59" text-anchor="end" class="t s">daemon.ts</text><g><title>daemon.ts: 60 changed lines, low risk</title><path d="M134 50h14a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-14z" class="rk low"/></g><text x="157" y="59" class="t n">60</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><rect x="4.5" y="73.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="87" text-anchor="middle" class="t b">B</text><rect x="30" y="78" width="14" height="10" rx="2" class="rk low"/><text x="49" y="87" class="t s">Low risk, 172 lines</text><text x="128" y="108" text-anchor="end" class="t s">daemon-control.ts</text><g><title>daemon-control.ts: 140 changed lines, low risk</title><path d="M134 99h38a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-38z" class="rk low"/></g><text x="181" y="108" class="t n">140</text><text x="336" y="108" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="104" r="8.5" class="nc"/><text x="254" y="108" text-anchor="middle" class="t b inv">2</text><text x="128" y="125" text-anchor="end" class="t s">home-daemon-lock.ts</text><g><title>home-daemon-lock.ts: 32 changed lines, low risk</title><path d="M134 116h5.6a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-5.6z" class="rk low"/></g><text x="148.6" y="125" class="t n">32</text><rect x="4.5" y="139.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="153" text-anchor="middle" class="t b">C</text><rect x="30" y="144" width="14" height="10" rx="2" class="rk low"/><text x="49" y="153" class="t s">Low risk, 26 lines</text><text x="128" y="174" text-anchor="end" class="t s">engine-service.ts</text><g><title>engine-service.ts: 26 changed lines, low risk</title><path d="M134 165h3.8a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-3.8z" class="rk low"/></g><text x="146.8" y="174" class="t n">26</text><text x="336" y="174" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="170" r="8.5" class="nc"/><text x="254" y="174" text-anchor="middle" class="t b inv">3</text><line x1="4" y1="188" x2="336" y2="188" class="ar thin"/><text x="4" y="208" class="t b">Skim: tests and text</text><text x="128" y="228" text-anchor="end" class="t s">tests of A</text><g><title>Tests of change A: 157 changed lines, skim</title><path d="M134 219h43.1a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-43.1z" class="rk skim"/></g><text x="186.1" y="228" class="t n">157</text><text x="128" y="245" text-anchor="end" class="t s">tests of B</text><g><title>Tests of change B: 328 changed lines, skim</title><path d="M134 236h94.4a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-94.4z" class="rk skim"/></g><text x="237.4" y="245" class="t n">328</text><text x="128" y="262" text-anchor="end" class="t s">tests of C</text><g><title>Tests of change C: 160 changed lines, skim</title><path d="M134 253h44a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-44z" class="rk skim"/></g><text x="187" y="262" class="t n">160</text><text x="128" y="279" text-anchor="end" class="t s">docs, release notes</text><g><title>What each start now does.: 9 lines</title><path d="M134 270h0a2.7 2.7 0 0 1 2.7 2.7v5.6a2.7 2.7 0 0 1 -2.7 2.7h-0z" class="rk skim"/></g><text x="141.7" y="279" class="t n">9</text><rect x="4" y="295" width="14" height="10" rx="2" class="rk high"/><text x="22" y="304" class="t s">High</text><rect x="62.8" y="295" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="304" class="t s">Medium</text><rect x="133" y="295" width="14" height="10" rx="2" class="rk low"/><text x="151" y="304" class="t s">Low risk</text><rect x="214.6" y="295" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="304" class="t s">Skim</text></svg>
+<figcaption>B is most of what ships; each change is one source area.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>daemon.ts</code>: <code>loadDaemonTls</code>, <code>refuseUnparsed</code>, <code>serveRerailDaemon</code></b><span class="min">5 min</span><span class="x">Does an empty key get what a key others can read gets?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>daemon-control.ts</code>: <code>unansweredLaunch</code>, <code>holderNotRecorded</code>, <code>holderComingUp</code>, <code>readTail</code></b><span class="min">10 min</span><span class="x">Can a daemon that never answers be told it may still be starting by every start?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>engine-service.ts</code>: <code>listenBesideHeldPipe</code>, <code>HELD_PIPE_CODES</code></b><span class="min">5 min</span><span class="x">Can a start skip the question beside this home&#x27;s own busy engine?</span></div></li><li><div><b>B: <code>home-daemon-lock.ts</code>, <code>homeDaemonHeldFor</code></b><span class="min">1 min</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">10 min</span><span class="x">The tests: each change&#x27;s cases at its seam, and one case where a slow daemon meets a held pipe on Windows. The release notes and five doc lines.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 223" role="img" aria-label="The changes by risk, high on top, against six checks. A, Empty TLS key, low risk: the first five checks hold. B, Still starting, low risk: the first five checks hold. C, Capped pipe, low risk: the first five checks hold. CI at this head holds with a limit for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="114" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk low"/><text x="28" y="34" class="t s b">Low risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">Empty TLS key</text><g><title>Empty TLS key, fails without the fix: The new cases fail without the change on Linux x64 and Windows 11: the start exits 1 with no daemon. Each line taken out fails a case: the key&#x27;s own error, its loopback answer, the certificate read first.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Empty TLS key, independent review: Through the built CLI and hook at `main` 7efcac9c6 and here, Linux x64 and Windows 11: both record 7 ledger lines from hooks on the engine socket; here the start also says why, in 0.7 s on Linux, and serves http.</title><circle cx="184" cy="52" r="8" class="mh"/><path d="M180 52l3 3l5 -6" class="mt"/></g><g><title>Empty TLS key, users lose nothing: A key others can read takes the same path as on `main`, and every key file a server took before still serves https; an empty or unreadable certificate still stops the start, now naming the file.</title><circle cx="218" cy="52" r="8" class="mh"/><path d="M214 52l3 3l5 -6" class="mt"/></g><g><title>Empty TLS key, rules scan: nothing new: The automated reviewer&#x27;s rules at `main` d0c10e05e over the diff: no new finding, with the published 0.1.5 and with Rerail built from `main`; no function this change adds or edits counts over 6.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Empty TLS key, Windows 11: no new failure: Windows 11, the engine built for this tree: this change&#x27;s cases pass 2 of 2 runs, 21 each. Windows 11: the 23 changed and importing test files pass at 1be9a52aa (478) and at `main` 7efcac9c6 (461), none failing; at this head two other tests failed once on a busy machine, then passed 3 of 3 at both.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Empty TLS key, CI at this head: No CI run at this head on GitHub yet: the branch is not pushed. CI&#x27;s lint and type-check job is clean here; its integration job passed at 1be9a52aa: 91 tests, 4 skipped.</title><circle cx="320" cy="52" r="7.4" class="ml"/><path d="M320 44.6A7.4 7.4 0 0 0 320 59.4Z" class="mlf"/></g><line x1="8" y1="68" x2="332" y2="68" class="ar thin"/><rect x="8.5" y="74.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="88" text-anchor="middle" class="t b">B</text><text x="34" y="88" class="t b">Still starting</text><g><title>Still starting, fails without the fix: `main`&#x27;s &quot;did not become ready&quot; line put back fails five cases on Linux x64 and Windows 11. Two cases pin that the line promises no second wait. A 30 s gap between the file system&#x27;s clock and this machine&#x27;s fails the holder case without the file system&#x27;s stamp, on both systems; only that case shows the gap.</title><circle cx="150" cy="84" r="8" class="mh"/><path d="M146 84l3 3l5 -6" class="mt"/></g><g><title>Still starting, independent review: A second reader ran the built CLI with a real daemon at `main` and at the fix, 5 rounds on each system: no behaviour defect. Its two text points are answered here.</title><circle cx="184" cy="84" r="8" class="mh"/><path d="M180 84l3 3l5 -6" class="mt"/></g><g><title>Still starting, users lose nothing: Through the built CLI a hung daemon gets `main`&#x27;s text naming it, and how to check it, from the second start on, and a serving one the same start, status and stop as on `main`. The wait and the exit code are `main`&#x27;s.</title><circle cx="218" cy="84" r="8" class="mh"/><path d="M214 84l3 3l5 -6" class="mt"/></g><g><title>Still starting, rules scan: nothing new: The automated reviewer&#x27;s rules at `main` d0c10e05e over the diff: no new finding, with the published 0.1.5 and with Rerail built from `main`; no function this change adds or edits counts over 6.</title><circle cx="252" cy="84" r="8" class="mh"/><path d="M248 84l3 3l5 -6" class="mt"/></g><g><title>Still starting, Windows 11: no new failure: Windows 11, the engine built for this tree: the start cases and the case with a pipe held pass 2 of 2 runs. The 23 changed and importing test files pass at 1be9a52aa (478) and at `main` 7efcac9c6 (461), none failing; at this head two other tests failed once on a busy machine, then passed 3 of 3 at both.</title><circle cx="286" cy="84" r="8" class="mh"/><path d="M282 84l3 3l5 -6" class="mt"/></g><g><title>Still starting, CI at this head: No CI run at this head on GitHub yet: the branch is not pushed. CI&#x27;s lint and type-check job is clean here; its integration job passed at 1be9a52aa: 91 tests, 4 skipped.</title><circle cx="320" cy="84" r="7.4" class="ml"/><path d="M320 76.6A7.4 7.4 0 0 0 320 91.4Z" class="mlf"/></g><line x1="8" y1="100" x2="332" y2="100" class="ar thin"/><rect x="8.5" y="106.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="120" text-anchor="middle" class="t b">C</text><text x="34" y="120" class="t b">Capped pipe</text><g><title>Capped pipe, fails without the fix: The new cases fail at `main` on Windows 11 with `listen EBUSY`; `EBUSY` taken out of the held codes fails the `EBUSY` case on Linux x64, and with the first lines out the Windows cases fail 5 of 5 rounds.</title><circle cx="150" cy="116" r="8" class="mh"/><path d="M146 116l3 3l5 -6" class="mt"/></g><g><title>Capped pipe, independent review: A second reader checked the fix at `main` f41b8fe6c on Windows 11, with six one-line changes each failing a case: nothing blocking. The source here is the same.</title><circle cx="184" cy="116" r="8" class="mh"/><path d="M180 116l3 3l5 -6" class="mt"/></g><g><title>Capped pipe, users lose nothing: Every holder that may make more instances, and every other listen failure, takes `main`&#x27;s path. A Node pipe server with every instance taken reads as `EADDRINUSE`, so a busy engine of the home is still asked; a case checks it.</title><circle cx="218" cy="116" r="8" class="mh"/><path d="M214 116l3 3l5 -6" class="mt"/></g><g><title>Capped pipe, rules scan: nothing new: The automated reviewer&#x27;s rules at `main` d0c10e05e: no new finding. `listenOnSocket` drops from 8 to 6, `listenBesideHeldPipe` 3 to 5, `listenCode` 1.</title><circle cx="252" cy="116" r="8" class="mh"/><path d="M248 116l3 3l5 -6" class="mt"/></g><g><title>Capped pipe, Windows 11: no new failure: Windows 11, the engine built for this tree: the pipe cases pass 2 of 2 runs and fail 2 of 2 with `EBUSY` out; through the built CLI and hooks at `main` 7efcac9c6, 4 of 4 starts exited 1 with `listen EBUSY` and the hooks recorded nothing; here 2 of 2 served on the fallback pipe and the hooks recorded.</title><circle cx="286" cy="116" r="8" class="mh"/><path d="M282 116l3 3l5 -6" class="mt"/></g><g><title>Capped pipe, CI at this head: No CI run at this head on GitHub yet: the branch is not pushed. CI&#x27;s lint and type-check job is clean here; its integration job passed at 1be9a52aa: 91 tests, 4 skipped.</title><circle cx="320" cy="116" r="7.4" class="ml"/><path d="M320 108.6A7.4 7.4 0 0 0 320 123.4Z" class="mlf"/></g><text x="8" y="153" class="t s">1  fails without the fix</text><text x="168" y="153" class="t s">2  independent review</text><text x="8" y="169" class="t s">3  users lose nothing</text><text x="168" y="169" class="t s">4  rules scan: nothing new</text><text x="8" y="185" class="t s">5  Windows 11: no new failure</text><text x="168" y="185" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="209" r="8" class="mh"/><path d="M10 209l3 3l5 -6" class="mt"/></g><text x="28" y="213" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="209" r="7.4" class="ml"/><path d="M92 201.6A7.4 7.4 0 0 0 92 216.4Z" class="mlf"/></g><text x="106" y="213" class="t s">holds with a limit</text></svg>
+<figcaption>Three changes, one source area each; none gives less than <code>main</code>.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">A to C</td><td data-l="Check">CI at this head</td><td data-l="It holds with this limit">No CI run at this head on GitHub yet: the branch is not pushed. CI&#x27;s lint and type-check job is clean here; its integration job passed at 1be9a52aa: 91 tests, 4 skipped.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>Empty TLS key serves locally</b><span class="chip low"><i></i>Low risk</span><span class="sx">A start with an empty key: <code>main</code> 15.2 s and a daemon serving nothing; here 0.7 s, serving loopback.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>A daemon given an empty <code>--tls-key</code> said it listened on https while every handshake failed and a plain request was reset; the start waited 15 s, said it did not become ready, and left it running.</dd>
+<dt>Who meets it</dt><dd>Anyone whose key file is truncated or not yet written, on every such start: 9 of 9 starts at <code>main</code> 7efcac9c6 on Linux x64 and Windows 11. How many people meet it is not known.</dd>
+<dt>What it does</dt><dd><code>loadDaemonTls</code> parses the certificate as the start does, then the key as the https server does. A key that fails is a <code>TlsKeyUnparsedError</code>, which <code>serveRerailDaemon</code> answers as it answers a key others can read: this computer alone, over http, saying why in one line naming the file.</dd>
+<dt>Risk</dt><dd>Low: the path a key others can read already takes; every key a server took before still serves.</dd>
+<dt>Check</dt><dd><code>serveRerailDaemon</code>: does an empty key now get exactly what a key others can read gets, and nothing more? <code>refuseUnparsed</code>: is every key a server took before still taken? The parse is the server&#x27;s own.</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="An empty TLS key, the built CLI and Claude Code hook on Linux x64, two runs a side: at main 7efcac9c6 the start answered after 15.2 s, its port serving nothing; here it answered in 0.69 s naming the file and served http. Hooks on the engine socket recorded 7 ledger lines a run at both." class="dg pic"><text x="4" y="17" class="t b">Seconds to the start&#x27;s answer</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Seconds to the start&#x27;s answer, main: 15.2 s</title><path d="M80 24h176.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-176.5z" class="rk was"/></g><text x="266.5" y="34" class="t n">15.2 s</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Seconds to the start&#x27;s answer, this change: 0.7 s</title><path d="M80 41h4.19375a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-4.19375z" class="rk now"/></g><text x="94.1937" y="51" class="t n">0.7 s</text><text x="4" y="75" class="t b">Ledger lines a round from hooks</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>Ledger lines a round from hooks, main: 7</title><path d="M80 82h79.125a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-79.125z" class="rk was"/></g><text x="169.125" y="92" class="t n">7</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>Ledger lines a round from hooks, this change: 7</title><path d="M80 99h79.125a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-79.125z" class="rk now"/></g><text x="169.125" y="109" class="t n">7</text></svg><figcaption>Method: Linux x64, the built CLI and hook, two runs a side at <code>main</code> 7efcac9c6 and at this head on one machine; the start timed from its start to its exit, the port asked over http and https, two hooks sent to the recorded engine socket.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>Start names a daemon still starting</b><span class="chip low"><i></i>Low risk</span><span class="sx">Paused daemon: <code>main</code>&#x27;s first start said it failed, 4 of 4; here it says the daemon may still be starting.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>The start waited 15 s, said the daemon did not become ready, and exited 1, while the daemon it launched went on to serve.</dd>
+<dt>Who meets it</dt><dd>Every start whose daemon takes over 15 s to answer: a busy machine, or a key file another program holds. 4 of 4 starts through the built CLI at <code>main</code> 7efcac9c6 on Linux x64 and Windows 11.</dd>
+<dt>What it does</dt><dd><code>unansweredLaunch</code> asks the process once more when the wait ends, names it by pid as possibly still starting and points to <code>rerail status</code>. <code>holderNotRecorded</code> judges a daemon not yet in <code>daemon.json</code> by <code>homeDaemonHeldFor</code>, read on the clock that stamped its record: within one wait the same line, else the stop&#x27;s text. <code>readTail</code> reads at most 64 KiB.</dd>
+<dt>Risk</dt><dd>Low: one message at the end of a wait that ran out; the 15 s wait, the exit code and when a daemon ends are <code>main</code>&#x27;s.</dd>
+<dt>Check</dt><dd><code>holderComingUp</code>: can a daemon that never answers be told &quot;may still be starting&quot; by every start? It compares two times the file system stamped, the holder&#x27;s record and a file written beside it, by their distance either way. Does <code>readTail</code> leave out the line its 64 KiB edge cuts into?</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="Through the built CLI on Linux x64 and Windows 11, a daemon paused right after it took the home, two runs a side on each system: at main 7efcac9c6 every first start said the daemon did not become ready and every daemon then served; here each said it may still be starting, and each daemon served." class="dg pic"><text x="4" y="17" class="t b">First starts told it failed</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>First starts told it failed, main: 4 of 4</title><path d="M80 24h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="34" class="t n">4 of 4</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>First starts told it failed, this change: 0 of 4</title><path d="M80 41h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="51" class="t n">0 of 4</text><text x="4" y="75" class="t b">Daemons that then served</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>Daemons that then served, main: 4 of 4</title><path d="M80 82h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="92" class="t n">4 of 4</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>Daemons that then served, this change: 4 of 4</title><path d="M80 99h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk now"/></g><text x="276" y="109" class="t n">4 of 4</text></svg><figcaption>Method: Linux x64 and Windows 11, the built CLI, a daemon paused right after it took the home and resumed once the first start ended, two runs a side at <code>main</code> 7efcac9c6 and at this head on one machine; a second start, <code>rerail status</code> and <code>rerail daemon stop</code> after it.</figcaption></figure></div></details><details class="card"><summary><span class="lb">C</span><b>Fallback pipe beside a capped holder</b><span class="chip low"><i></i>Low risk</span><span class="sx">Starts beside a one-instance pipe: <code>main</code> exited 1 with <code>listen EBUSY</code>; here both served on the fallback pipe.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>On Windows, while another program held the engine pipe&#x27;s name with a one-instance pipe, every start exited 1 with <code>listen EBUSY</code> and a hook&#x27;s autostart started no daemon.</dd>
+<dt>Who meets it</dt><dd>A Windows computer with such a program running, on every start and every hook while it runs. How many computers meet it is not known.</dd>
+<dt>What it does</dt><dd><code>listenOnSocket</code> hands every listen failure on a pipe name to <code>listenBesideHeldPipe</code>, which owns the held codes (<code>HELD_PIPE_CODES</code>: <code>EACCES</code>, <code>EADDRINUSE</code>, <code>EBUSY</code>). For <code>EBUSY</code> it listens on the fallback pipe without asking the holder.</dd>
+<dt>Risk</dt><dd>Low: the changed code runs only when a listen on a pipe name fails; every code but <code>EBUSY</code> takes <code>main</code>&#x27;s path.</dd>
+<dt>Check</dt><dd><code>listenBesideHeldPipe</code>: can a start beside this home&#x27;s own busy engine skip the question and run a second daemon? Only <code>EBUSY</code> skips it, and a case shows a busy Node pipe server reads as <code>EADDRINUSE</code>.</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="On Windows 11 at main 7efcac9c6 beside a one-instance pipe on the engine pipe&#x27;s name: no start served, each exited 1 with listen EBUSY; here both served on the fallback pipe." class="dg pic"><text x="4" y="17" class="t b">Starts that serve</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Starts that serve, main: 0 of 2</title><path d="M80 24h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk was"/></g><text x="88" y="34" class="t n">0 of 2</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Starts that serve, this change: 2 of 2</title><path d="M80 41h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk now"/></g><text x="276" y="51" class="t n">2 of 2</text></svg><figcaption>Method: Windows 11, the built CLI and two Claude Code hooks from each build, two runs a side on one machine, beside a PowerShell pipe of one instance that only holds the name.</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>What does a start say when its daemon has not answered in 15 s?</h3>
+<p><b>We chose</b> it asks once more, names the daemon by pid as possibly still starting, points to <code>rerail status</code>, and exits 1.</p>
+<p><b>Would change our mind:</b> a maintainer who wants scripts to tell &quot;still starting&quot; from &quot;failed&quot; by the exit code.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Ask once more; decide a later start by when the daemon took the home <span class='tag new'>chosen</span></td><td data-l="What a user gets">A true message in every state, and <code>main</code>&#x27;s text naming a daemon that never answers.</td><td data-l="Cost">One file written and removed beside the holder&#x27;s record, once, when a wait runs out.</td><td data-l="What it breaks">A second start that ends before a slow daemon answers gives <code>main</code>&#x27;s text.</td></tr><tr><td class="k">End the daemon when the wait runs out</td><td data-l="What a user gets">A true &quot;failed&quot;.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">A daemon slower than 15 s never comes up; <code>main</code> keeps it for the next start.</td></tr><tr><td class="k">Every later start says &quot;still starting&quot;</td><td data-l="What a user gets">Starts that agree while a daemon comes up.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">No start names a hung daemon to end, and <code>rerail status</code> says nothing runs.</td></tr></tbody></table></div><p><b>Evidence.</b> Through the built CLI on Linux x64, two rounds a side: a hung daemon was named to end from the second and third starts at <code>main</code> and here, and here also &quot;This start leaves that process running.&quot; A refused remote start already exits 1 while a daemon keeps running.</p></details></div>
+<div class="dblock"><h3>Ask a holder that capped the pipe&#x27;s instances whether it is this home&#x27;s engine?</h3>
+<p><b>We chose</b> no: no Rerail engine caps its instances, and asking costs 2 to 30 s.</p>
+<p><b>Would change our mind:</b> a Rerail engine that makes its pipe through something other than Node.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">The fallback pipe at once, without asking <span class='tag new'>chosen</span></td><td data-l="What a user gets">A daemon as fast as with no holder; nothing sent to the holder.</td><td data-l="Cost">Nothing on the common path.</td><td data-l="What it breaks">It rests on Node never capping a pipe server&#x27;s instances, which a case checks.</td></tr><tr><td class="k">Ask, as for other holders, then the fallback pipe</td><td data-l="What a user gets">One path for every holder.</td><td data-l="Cost">The ask takes the holder&#x27;s one free instance (2.0 s) or waits 30 s for one it never frees.</td><td data-l="What it breaks">The start reports failure at 15 s while the daemon then serves.</td></tr></tbody></table></div><p><b>Evidence.</b> On Windows 11 at <code>main</code>, three rounds of each holder: a one-instance pipe, free or taken, gives <code>EBUSY</code>; a Node pipe server, busy or not, gives <code>EADDRINUSE</code>. The ask against the one-instance holder answered false in 2.0 s free and 30.0 s taken.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 216" role="img" aria-label="This pull request is based on main at d0c10e05e, which holds #677, and needs no other change; nothing waits on it. In trial merges it adds no conflict to three open pull requests that share a file." class="dg fit"><rect x="4" y="4" width="332" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main at d0c10e05e</text><text x="14" y="38" class="t s">needs no other change</text><line x1="170" y1="55" x2="170" y2="79" class="ar " marker-end="url(#ah)"/><text x="176" y="71" class="t s">based on</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">Three start fixes</text><text x="170" y="116" text-anchor="middle" class="t s">three source areas</text><text x="4" y="146" class="t b">Trial merges with open work</text><rect x="4" y="154" width="108" height="58" rx="8" class="bx good"/><text x="12" y="171" class="t b">3 other open</text><text x="12" y="187" class="t s">shared files:</text><text x="12" y="201" class="t s">no new conflict</text></svg></figure>
+<div><p>It stands on <code>main</code> d0c10e05e, merged in; nothing has to merge first.</p>
+<p>That <code>main</code> holds #677, which edits the same lookup: the merge keeps #677&#x27;s read limit and text, and reads the holder&#x27;s age as before.</p>
+<details class="ev"><summary>Shared files and trial merges</summary><p>Trial merges of e30f3ae42 on 19 November 2026, to refresh against GitHub: <code>main</code> d0c10e05e, with #677, merged in. #674, #676 and #812 share a file each and add no conflict beyond their own with <code>main</code>.</p></details>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>macOS</b> never ran.</li>
+</ul>
+<details class="ev"><summary>Five limits that stay</summary>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>A pipe holder that may make more instances but keeps every one taken still makes a start wait 30 s for its answer, as on <code>main</code>.</li>
+<li>Two starts at once while a daemon takes 15 to 30 s: whether the second finds it depends on which wait ends first, as on <code>main</code>.</li>
+<li>A file system that keeps file times to the second or two moves the 15 s line by as much.</li>
+<li>Until a daemon still coming up answers, <code>rerail status</code> says it is not running or not answering, as on <code>main</code>.</li>
+<li>A start with the key fixed, beside the daemon an empty key left serving this computer alone, finds it serving and exits 0 still over http; run <code>rerail daemon stop</code> first, as for a key others can read.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p>We ask no ruling.</p>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record: &quot;How you tested it&quot; holds the runs at <code>main</code> and here.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">Windows 11</td><td data-l="What ran">The built CLI and two Claude Code hooks beside a one-instance pipe on the engine pipe&#x27;s name, <code>main</code> 7efcac9c6, ba0545900 and here on one machine</td><td data-l="Result"><code>main</code> 7efcac9c6: the start exited 1 with <code>listen EBUSY</code> in 2.0 to 4.3 s, 4 of 4, and the hooks recorded nothing (ba0545900: 1.3 and 1.5 s). Here: the fallback pipe in 2.4 and 4.7 s, http 200, 7 ledger lines.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">At this head: a daemon paused while it starts, and #677&#x27;s paused daemon asked six times</td><td data-l="Result">The start says the daemon may still be starting, by pid, where <code>main</code> d0c10e05e said it did not become ready; status and the next start give <code>main</code>&#x27;s text. Six <code>rerail status</code> beside the paused daemon: each <code>alive but not answering</code> in 2.2 to 2.3 s, <code>daemon.json</code> kept.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">The built CLI with a daemon paused right after it took the home, two runs a side</td><td data-l="Result"><code>main</code> 7efcac9c6: the first start said it did not become ready at 15.3 to 16.7 s and the daemon then served, as at ba0545900. Here: it said the daemon may still be starting, by pid; resumed, <code>rerail status</code> showed it running and the next start found it. Kept paused, <code>rerail status</code> and the next start gave what <code>main</code> gives, in each of three states.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">The built CLI and the built Claude Code hook with an empty TLS key, two runs a side</td><td data-l="Result"><code>main</code> 7efcac9c6: the start exited 1 after 15.2 to 17.0 s, its port reset http and failed https; hooks on the engine socket recorded 7 ledger lines a run, as at ba0545900. Here: exit 0 in 0.7 s on Linux and 2.7 to 14.0 s on Windows, naming the file, http 200 on loopback, 7 ledger lines a run.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">Each fix&#x27;s cases at this head; each fix&#x27;s first line out</td><td data-l="Result">Linux 17 passed in each of 3 runs, Windows 21 in each of 2. Lines out: each fails its cases on Linux x64; on Windows 11 a commit with the four first lines out failed 2 of 2 runs, 12 cases each.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">The test files of this change and of #677, at this head and at <code>main</code> d0c10e05e</td><td data-l="Result">Windows 11, 12 files: here 420 passed, <code>main</code> 400, none failing at either. Linux, with every importing file (27): here 708 passed, <code>main</code> 692, none failing. At 16cd83190 the 23 files passed beside <code>main</code> 7efcac9c6 on both systems.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">CI&#x27;s integration job, at 1be9a52aa</td><td data-l="Result">91 passed, 4 skipped.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The automated reviewer&#x27;s rules at <code>main</code> d0c10e05e over the diff</td><td data-l="Result">no new finding, with the published 0.1.5 and with Rerail built from <code>main</code>; no function this change adds or edits counts over 6.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>Sources</summary><p>The branch at 16cd83190, <code>main</code> 7efcac9c6 merged into it, and its diff against that <code>main</code>, read on 19 November 2026; runs at 16cd83190, 1be9a52aa, 7efcac9c6 and ba0545900 on Linux x64 machines and Windows 11 virtual machines, each beside other test runs.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
