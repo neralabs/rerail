@@ -617,7 +617,11 @@ impl Atoms {
     /// (`install`).
     pub fn attach(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
         let atoms = match connection.path().filter(|path| !path.is_empty()) {
-            Some(path) => Atoms::for_database(Path::new(path), Atoms::identity(connection)?),
+            Some(path) => {
+                // And the kept facts (decision 0401 F5), read where they lie as the atoms are.
+                super::kept_facts::vtab::install(connection, Path::new(path))?;
+                Atoms::for_database(Path::new(path), Atoms::identity(connection)?)
+            }
             None => Arc::clone(&MEMORY),
         };
         vtab::install(connection, &atoms)?;

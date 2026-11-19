@@ -461,5 +461,7 @@ pub fn copy_facts(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+pub(in crate::content_store) mod vtab;
+
 #[cfg(test)]
 mod tests;

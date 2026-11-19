@@ -28,6 +28,11 @@ impl KeptRows for Lent {
 }
 
 fn lent(rows: &[(i64, i64)]) -> Box<dyn KeptRows> {
+    lent_dead(rows, &[])
+}
+
+/// `lent`, its rows `dead` killed by the run (the entry's dead bits).
+fn lent_dead(rows: &[(i64, i64)], dead: &[u32]) -> Box<dyn KeptRows> {
     let block = Block::anon(kind::FACTS, 16 << 20);
     let spec = Spec { widths: vec![8, 8], order: vec![0], indexes: vec![vec![0]], min_log: 4 };
     let rel = Relation::create(&block, &spec, None);
@@ -38,7 +43,11 @@ fn lent(rows: &[(i64, i64)]) -> Box<dyn KeptRows> {
     }
     freeze(&block, rel, &spec, None);
     let at = block.offset_of(std::ptr::from_ref(rel));
-    Box::new(Lent { block, at, dead: Vec::new() })
+    let mut bits = vec![0u64; rows.len().div_ceil(64)];
+    for id in dead {
+        bits[*id as usize / 64] |= 1 << (id % 64);
+    }
+    Box::new(Lent { block, at, dead: if dead.is_empty() { Vec::new() } else { bits } })
 }
 
 const SPACE: [u8; 32] = [7; 32];
@@ -187,4 +196,52 @@ fn a_waves_puts_are_one_block_a_space() {
     assert_eq!(files(&path).len(), 1, "one block for the space's wave: {:?}", files(&path));
     assert!(space_row(&c, &OTHER).unwrap().is_some(), "the other space written in the same job");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// F-R5 (decision 0401 F5): the kept relations read through SQL are their views. `kept_entries` gives each entry's
+/// key, digest, types, reads and live rows' count; `kept_rows` each live row's values where they lie, a row the run
+/// killed left out, a column past the entry's width NULL; an entry not kept, none.
+#[test]
+fn the_kept_relations_read_through_sql_equal_their_views() {
+    let (path, c) = store("vtab");
+    write(&path, &c, vec![put("q", 0, 2, KeptWhat::Rows(lent_dead(&[(1, 10), (2, 20), (3, 30)], &[1]))), put("p", 4, 3, flat(&[7, 70, 8, 80]))]);
+    crate::content_store::atoms::Atoms::attach(&c).unwrap();
+    let row = space_row(&c, &SPACE).unwrap().unwrap();
+    let space = KeptSpace::open(&path, &SPACE, &row).unwrap();
+    // The views, as a run binds them: each entry's live rows (neither dead in the entry nor in its relation).
+    let view = space.view();
+    let views: Vec<(String, i64, i64, i64, Vec<Vec<i64>>)> = view
+        .all()
+        .map(|k| {
+            let v = k.view();
+            let rows: Vec<Vec<i64>> = (0..v.total()).filter(|&id| v.live(id) && k.dead.get(id as usize / 64).is_none_or(|w| w & (1 << (id % 64)) == 0)).map(|id| v.row(id)).collect();
+            (k.key.rel.to_owned(), k.key.part, k.digest as i64, rows.len() as i64, rows)
+        })
+        .collect();
+    let entries: Vec<(String, i64, i64, i64, String, String)> = c
+        .prepare("SELECT rel, part, digest, rows, types, reads FROM kept_entries WHERE space = ?1 ORDER BY rel, part")
+        .unwrap()
+        .query_map([SPACE.as_slice()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(entries.iter().map(|e| (e.0.clone(), e.1, e.2, e.3)).collect::<Vec<_>>(), views.iter().map(|v| (v.0.clone(), v.1, v.2, v.3)).collect::<Vec<_>>());
+    assert_eq!((entries[1].4.as_str(), entries[1].5.as_str()), ("ii", "r:0000000000000002"), "q's types and reads");
+    for (rel, part, _, _, rows) in &views {
+        let sql: Vec<Vec<i64>> = c
+            .prepare("SELECT c0, c1 FROM kept_rows(?1, ?2, ?3, ?4)")
+            .unwrap()
+            .query_map(rusqlite::params![SPACE.as_slice(), rel, ID.as_slice(), part], |r| Ok(vec![r.get(0)?, r.get(1)?]))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(&sql, rows, "{rel}'s rows through SQL");
+    }
+    assert_eq!(views[1].4, [vec![1, 10], vec![3, 30]], "the killed row is left out");
+    let past: Option<i64> = c.query_row("SELECT c2 FROM kept_rows(?1, 'q', ?2, 0)", rusqlite::params![SPACE.as_slice(), ID.as_slice()], |r| r.get(0)).unwrap();
+    assert_eq!(past, None, "a column past the entry's width");
+    let none: i64 = c.query_row("SELECT count(*) FROM kept_rows(?1, 'nothing', ?2, 0)", rusqlite::params![SPACE.as_slice(), ID.as_slice()], |r| r.get(0)).unwrap();
+    assert_eq!(none, 0, "an entry not kept has no rows");
+    let all: i64 = c.query_row("SELECT count(*) FROM kept_entries", [], |r| r.get(0)).unwrap();
+    assert_eq!(all, 2, "every space's entries, unconstrained");
 }
