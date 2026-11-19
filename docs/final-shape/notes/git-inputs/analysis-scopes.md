@@ -94,6 +94,8 @@ that owns a directory scope. Homes can share a store and keep independent
 directory scopes. A directory scope keeps the latest snapshot for each
 workspace. It protects the latest manifest for each policy set. An edited
 policy keeps its policy set and gets a new cache key.
+Each directory membership records its acquisition sequence and the manifest's order within that run.
+Only successful publication can advance that order. An aborted run or a read in another scope can still use the same manifest.
 
 Deleting a named scope releases its memberships. The store retains a generation row to reject older writers.
 The home also keeps directory-to-store registrations after a stop. One-time scope names and directories can accumulate these bookkeeping rows.

@@ -14,7 +14,7 @@ pub struct AnalysisOwner {
     #[serde(default)]
     acquired_at: i64,
     #[serde(default)]
-    acquisition: i64,
+    pub(super) acquisition: i64,
     #[serde(skip)]
     warning: Option<std::sync::Arc<std::sync::Mutex<Option<String>>>>,
 }
@@ -94,9 +94,11 @@ impl AnalysisRun {
         let pending = owner.membership();
         self.store.immediate_transaction(|tx| {
             if succeeded && owner.cache_warning().is_none() && owner.current(tx)? {
-                tx.execute_cached("INSERT INTO analysis_scope_manifest(scope,manifest_id,acquired_at) \
-                    SELECT ?1,manifest_id,acquired_at FROM analysis_scope_manifest WHERE scope=?2 \
-                    ON CONFLICT(scope,manifest_id) DO UPDATE SET acquired_at=max(acquired_at,excluded.acquired_at)", (&owner.scope, pending))?;
+                tx.execute_cached("INSERT INTO analysis_scope_manifest(scope,manifest_id,acquired_at,acquisition,recorded_run)
+                    SELECT ?1,manifest_id,acquired_at,acquisition,recorded_run FROM analysis_scope_manifest WHERE scope=?2
+                    ON CONFLICT(scope,manifest_id) DO UPDATE SET
+                      (acquired_at,acquisition,recorded_run)=(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)
+                    WHERE (acquired_at,acquisition,recorded_run)<(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)", (&owner.scope, pending))?;
                 let rows = tx.prepare_cached("SELECT workspace,snapshot_id FROM analysis_scope_workspace_snapshot WHERE scope=?1")?
                     .query_map([pending], |r| Ok((r.get::<_, String>(0)?, SnapshotId(r.get(1)?))))?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -173,6 +175,11 @@ pub fn acquisition_time() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |t| t.as_micros() as i64)
 }
 
+pub(super) fn next_acquisition(tx: &rusqlite::Connection) -> rusqlite::Result<i64> {
+    tx.query_row_cached("UPDATE store_state SET analysis_acquisitions=analysis_acquisitions+1
+        WHERE singleton=1 RETURNING analysis_acquisitions", [], |row| row.get(0))
+}
+
 impl ContentStore {
     pub fn begin_analysis_scope(&self, scope: &str) -> StoreResult<AnalysisOwner> {
         self.begin_analysis_scope_at(scope, 0)
@@ -184,8 +191,7 @@ impl ContentStore {
             let generation = tx.query_row_cached(
                 "SELECT generation FROM analysis_scope_generation WHERE scope=?1", [scope], |row| row.get(0),
             )?;
-            let acquisition = tx.query_row_cached("UPDATE store_state SET analysis_acquisitions=analysis_acquisitions+1
-                WHERE singleton=1 RETURNING analysis_acquisitions", [], |row| row.get(0))?;
+            let acquisition = next_acquisition(tx)?;
             Ok(AnalysisOwner { scope: scope.to_owned(), generation, pending: None, acquired_at, acquisition, warning: None })
         })
     }

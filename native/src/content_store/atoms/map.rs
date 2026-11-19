@@ -765,7 +765,7 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("store_identity", &["singleton", "id"]),
     ("analysis_scope_collect", &["snapshot_id"]),
     ("analysis_scope_generation", &["generation"]),
-    ("analysis_scope_manifest", &["manifest_id", "acquired_at"]),
+    ("analysis_scope_manifest", &["manifest_id", "acquired_at", "acquisition", "recorded_run"]),
     ("analysis_scope_release", &["before"]),
     ("analysis_scope_snapshot", &["snapshot_id", "acquired_at"]),
     ("analysis_scope_workspace_snapshot", &["snapshot_id", "acquired_at", "acquisition"]),

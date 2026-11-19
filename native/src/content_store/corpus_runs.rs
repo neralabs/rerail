@@ -461,9 +461,15 @@ impl ContentStore {
                 .optional()?;
             let set_lane = |manifest: i64| -> rusqlite::Result<()> {
                 if let Some(scope) = scope {
-                    tx.execute_cached("INSERT INTO analysis_scope_manifest(scope,manifest_id,acquired_at) VALUES (?1,?2,?3) \
-                        ON CONFLICT(scope,manifest_id) DO UPDATE SET acquired_at=max(acquired_at,excluded.acquired_at)",
-                        (scope, manifest, owner.map_or(0, super::analysis_scope::AnalysisOwner::acquired_at)))?;
+                    let acquisition = match owner {
+                        Some(owner) => owner.acquisition,
+                        None => super::analysis_scope::next_acquisition(tx)?,
+                    };
+                    tx.execute_cached("INSERT INTO analysis_scope_manifest(scope,manifest_id,acquired_at,acquisition,recorded_run)
+                        VALUES (?1,?2,?3,?4,?5) ON CONFLICT(scope,manifest_id) DO UPDATE SET
+                          (acquired_at,acquisition,recorded_run)=(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)
+                        WHERE (acquired_at,acquisition,recorded_run)<(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)",
+                        (scope, manifest, owner.map_or(0, super::analysis_scope::AnalysisOwner::acquired_at), acquisition, run))?;
                 }
                 if let Some(lane) = &lane {
                     tx.prepare_cached("UPDATE corpus_manifests SET lane = ?2 WHERE manifest_id = ?1")?.execute(params![manifest, &lane[..]])?;
@@ -665,7 +671,8 @@ impl ContentStore {
                  WHERE a.scope GLOB 'named:*' OR (a.scope GLOB 'cwd:*' AND NOT EXISTS (\
                     SELECT 1 FROM analysis_scope_manifest b JOIN corpus_manifests newer USING(manifest_id) \
                     WHERE b.scope=a.scope AND newer.root_id=m.root_id AND newer.policy IS m.policy \
-                      AND (m.policy IS NOT NULL OR newer.lane IS m.lane) AND newer.last_run>m.last_run))",
+                      AND (m.policy IS NOT NULL OR newer.lane IS m.lane)
+                      AND (b.acquired_at,b.acquisition,b.recorded_run)>(a.acquired_at,a.acquisition,a.recorded_run)))",
             )?
                 .query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
             // Bytes of each live source, and of its tape of the live grammar version and format.

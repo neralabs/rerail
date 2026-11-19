@@ -193,6 +193,62 @@ fn analysis_scope_keeps_each_directory_policy_sets_latest_manifest_under_pressur
 }
 
 #[test]
+fn directory_manifest_protection_follows_its_own_successful_acquisitions() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, store) = store("scope-manifest-order");
+    let begin = |scope: &str| AnalysisRun::begin_at(ContentStore::open(&path).unwrap(), scope, "scan", 7).unwrap();
+    let record = |run: &AnalysisRun, plan: [u8; 32]| {
+        let source = store.put_source(&plan, &[]).unwrap();
+        store.record_corpus_run_retaining("/repo", &[source], 1, 1, plan, &[], Some(plan), Some([0; 32]),
+            100, None, Some(&run.owner)).unwrap();
+    };
+    let scope = "cwd:/repo";
+    let old = [1; 32];
+    let latest = [2; 32];
+    let mut older = begin(scope);
+    let mut newer = begin(scope);
+    record(&newer, latest);
+    newer.finish(true).unwrap();
+    record(&older, old);
+    older.finish(true).unwrap();
+    let mut aborted = begin(scope);
+    record(&aborted, old);
+    aborted.finish(false).unwrap();
+    let mut other = begin("named:other");
+    record(&other, old);
+    other.finish(true).unwrap();
+    store.delete_analysis_scope("named:other").unwrap();
+    let policy = CorpusPolicy { protected_runs: 0, low_water: 0, high_water: 0, backstop_secs: 0, missing_secs: 0, ..CorpusPolicy::default() };
+    store.keep_corpus_runs(&policy, 101).unwrap();
+    assert_eq!(store.live_plans().unwrap(), HashSet::from([latest]));
+}
+
+#[test]
+fn migrating_directory_membership_freezes_the_existing_manifest_order() {
+    let (path, store) = store("scope-manifest-upgrade");
+    for plan in [[1; 32], [2; 32]] {
+        store.record_scoped_corpus_run("/repo", &[], 1, 1, plan, &[], None, Some([0; 32]), 100, Some("cwd:/repo")).unwrap();
+    }
+    drop(store);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TEMP TABLE old_rows AS SELECT scope,manifest_id,acquired_at FROM analysis_scope_manifest;
+        DROP TABLE analysis_scope_manifest;
+        CREATE TABLE analysis_scope_manifest (
+            scope TEXT NOT NULL, manifest_id INTEGER NOT NULL REFERENCES corpus_manifests(manifest_id) ON DELETE CASCADE,
+            acquired_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(scope,manifest_id)
+        ) STRICT, WITHOUT ROWID;
+        INSERT INTO analysis_scope_manifest SELECT * FROM old_rows").unwrap();
+    drop(db);
+    let store = ContentStore::open(&path).unwrap();
+    let db = store.connection.lock().unwrap();
+    let rows = db.prepare("SELECT a.acquisition,a.recorded_run,m.last_run FROM analysis_scope_manifest a
+        JOIN corpus_manifests m USING(manifest_id) ORDER BY a.recorded_run").unwrap()
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?,row.get::<_, i64>(1)?,row.get::<_, i64>(2)?))).unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>().unwrap();
+    assert_eq!(rows, [(0, 1, 1), (0, 2, 2)]);
+}
+
+#[test]
 fn analysis_scope_cache_keys_distinguish_parser_and_tape_versions() {
     let (_path, store) = store("analysis-scope-tape-version");
     let bytes = b"x = 1\n";

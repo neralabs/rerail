@@ -419,6 +419,8 @@ CREATE TABLE IF NOT EXISTS analysis_scope_manifest (
     scope TEXT NOT NULL,
     manifest_id INTEGER NOT NULL REFERENCES corpus_manifests(manifest_id) ON DELETE CASCADE,
     acquired_at INTEGER NOT NULL DEFAULT 0,
+    acquisition INTEGER NOT NULL DEFAULT 0,
+    recorded_run INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(scope, manifest_id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS analysis_scope_manifest_by_manifest ON analysis_scope_manifest(manifest_id);
@@ -822,6 +824,10 @@ impl ContentStore {
                         let version = compatible_version(&transaction)?;
                         for (table, column, declaration) in missing_columns(&transaction)? {
                             transaction.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"))?;
+                            if (*table, *column) == ("analysis_scope_manifest", "recorded_run") {
+                                transaction.execute_batch("UPDATE analysis_scope_manifest SET recorded_run=(
+                                    SELECT last_run FROM corpus_manifests m WHERE m.manifest_id=analysis_scope_manifest.manifest_id)")?;
+                            }
                         }
                         transaction.execute_batch(SCHEMA)?;
                         // Each numbered receipt also covers all earlier stops for the same directory.
@@ -905,6 +911,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("analysis_scope_snapshot", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
     ("analysis_scope_workspace_snapshot", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
     ("analysis_scope_manifest", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_manifest", "acquisition", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_manifest", "recorded_run", "INTEGER NOT NULL DEFAULT 0"),
     ("analysis_scope_release", "scope", "TEXT NOT NULL DEFAULT ''"),
     ("analysis_scope_release", "before", "INTEGER NOT NULL DEFAULT 0"),
     ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
