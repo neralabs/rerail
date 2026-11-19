@@ -133,28 +133,35 @@ const DRIVE_AT_END = /(?:^|[^a-z\d])[a-z]$/iu;
 /** A run of path separators, which Windows reads as one. */
 const SEPARATOR_RUN = /([\\/])[\\/]+/gu;
 
-/** The `file` scheme at the end of the token before a `:`, read from its last four characters. */
-const FILE_AT_END = /file$/iu;
+/** A scheme whose URL names a share outright, `file` or `smb`, at the end of the token before a `:`. */
+const SHARE_SCHEME_AT_END = /(?:file|smb)$/iu;
 
 /**
- * On Windows, whether a share on another machine after the run of `delimiters` and the token `before` them may be a
- * URL's host and path: it comes right after a `:`, whatever stands before it, a scheme (`https://host/x`), a
- * placeholder (`${SCHEME}://`, `{}://`), a digit or `%20` glued to a scheme, or nothing. The text cannot tell a URL's
- * host and path from a share there. A `file:` URL with a host names a share outright, and is looked up.
+ * On Windows, whether a share on another machine right after a `:` and the token `before` it may be a URL's host and
+ * path: it starts with a URL's `//`, after a scheme (`https://host/x`), a placeholder (`${SCHEME}://`, `{}://`), a
+ * digit or `%20` glued to a scheme, or nothing, and the scheme is neither `file` nor `smb`. The text cannot tell such a
+ * URL's host and path from a share there. A `file:` or `smb:` URL with a host names a share outright, and a share
+ * written with backslashes is no URL's (robocopy's `/LOG:\\host\share\run.txt`, PowerShell's `-Path:\\host\share`):
+ * both are looked up.
  */
-const urlAfter = (delimiters: string, before: string): boolean =>
-  delimiters.endsWith(":") && !FILE_AT_END.test(before.slice(-4));
+const urlAfter = (before: string, path: string): boolean =>
+  path.startsWith("//") && !SHARE_SCHEME_AT_END.test(before.slice(-4));
+
+/** Whether a drive letter ({@link DRIVE_AT_END}) ends the token `before` a lone `:`, the run of `delimiters`. */
+const driveBefore = (delimiters: string, before: string): boolean =>
+  delimiters === ":" && DRIVE_AT_END.test(before.slice(-2));
 
 /**
  * On Windows, what `path`, after the run of `delimiters` and the token `before` them, is looked up as: a share on
- * another machine ({@link namesAnotherMachine}) that may be a URL's host and path ({@link urlAfter}) is not looked up.
- * The one exception is a drive letter before a lone `:`: the share is then the rest of a drive path written with doubled
- * separators (`"C:\\Users\\me"` in JSON, `C://Users/me`), looked up as `C:\Users\me` is, its path on the checkout's
- * drive. A device path or a loopback share is looked up wherever it stands, as any other token.
+ * another machine ({@link namesAnotherMachine}) right after a `:` that may be a URL's host and path ({@link urlAfter})
+ * is not looked up. A drive letter before a lone `:` comes first: the share is then the rest of a drive path written
+ * with doubled separators (`"C:\\Users\\me"` in JSON, `C://Users/me`), looked up as `C:\Users\me` is, its path on the
+ * checkout's drive. A device path or a loopback share is looked up wherever it stands, as any other token.
  */
 function windowsLookup(delimiters: string, before: string, path: string): string | undefined {
-  if (!urlAfter(delimiters, before) || !namesAnotherMachine(path)) return path;
-  return delimiters === ":" && DRIVE_AT_END.test(before.slice(-2)) ? path.replace(SEPARATOR_RUN, "$1") : undefined;
+  if (!delimiters.endsWith(":") || !namesAnotherMachine(path)) return path;
+  if (driveBefore(delimiters, before)) return path.replace(SEPARATOR_RUN, "$1");
+  return urlAfter(before, path) ? undefined : path;
 }
 
 /**
@@ -194,8 +201,9 @@ const posixLookup = (delimiters: string, before: string, path: string): string |
 /**
  * Each platform reads a token after a `:` as its paths resolve. On Windows a `//` token is a share, which reaches
  * another machine unless its host is this machine by its spelling or its own name ({@link hostReached}), so a share on
- * another machine right after a `:` is skipped, unless a `file:` URL or a drive letter comes before. On Linux and macOS
- * it is a local path, so a token in doubt is looked up, as are the entries of a list such as `PATH=bin://home/me/bin`.
+ * another machine written with `//` right after a `:` is skipped, unless a `file:` or `smb:` URL or a drive letter
+ * comes before. On Linux and macOS it is a local path, so a token in doubt is looked up, as are the entries of a list
+ * such as `PATH=bin://home/me/bin`.
  */
 const lookupAfter = process.platform === "win32" ? windowsLookup : posixLookup;
 
@@ -279,13 +287,14 @@ const callNames = (input: unknown, judge: (path: string) => boolean, root: strin
  * ({@link sensitiveByName}), so `cat docs/a.md` is outside when `docs/a.md` links to `.env`, while a link into a hidden
  * folder alone (pnpm's `node_modules/pkg` into `.pnpm/`) is not; only a path-shaped token (`docs/a.md`, `.envrc`,
  * `notes.txt`) is resolved, the first `INPUT_RESOLUTIONS` distinct ones, and a bare word by its name alone, as is a
- * URL's host and path where a lookup would reach another machine: on Windows a share on another machine right after a
- * `:`, where `//host/api` in `https://host/api` or `${SCHEME}://host/api` names a network share, and on Linux and
- * macOS a web URL under the automount root `/net` (`https://net/host/api`) on another machine. Every other path-shaped
- * token is resolved: a `file:` URL's host and path, a URL's path with no host (`unix:///run/app.sock`), a share or
- * `/net` path on the loopback host or on this machine's own name, on Windows a device path (`\\?\...`) wherever it
- * stands, and a drive path written with doubled separators (`"C:\\Users\\me"` in JSON) as `C:\Users\me` is. On Linux
- * and macOS a `//` path is a local one. On Windows a share on another machine that does not follow a `:`, and a `file:`
+ * URL's host and path where a lookup would reach another machine: on Windows a share on another machine written with
+ * `//` right after a `:`, where `//host/api` in `https://host/api` or `${SCHEME}://host/api` names a network share,
+ * and on Linux and macOS a web URL under the automount root `/net` (`https://net/host/api`) on another machine. Every
+ * other path-shaped token is resolved: a `file:` URL's host and path, a URL's path with no host
+ * (`unix:///run/app.sock`), a share or `/net` path on the loopback host or on this machine's own name, on Windows a
+ * device path (`\\?\...`) wherever it stands, and a drive path written with doubled separators (`"C:\\Users\\me"` in
+ * JSON) as `C:\Users\me` is. On Linux and macOS a `//` path is a local one. On Windows a share on another machine that
+ * does not follow a `:`, one written with backslashes after it (`/LOG:\\host\share\run.txt`), and a `file:` or `smb:`
  * URL with a host, are resolved too, as paths the call names. It reads names, not a shell: a path built at run time
  * (`cat $(echo .e)nv`) is not seen. An input deeper or larger than it reads counts as naming one.
  */
