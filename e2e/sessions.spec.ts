@@ -127,7 +127,7 @@ test.describe("History by session", () => {
     expect(layout.overflow).toBeLessThanOrEqual(1);
   });
 
-  test("mature: on a phone the header's button goes under a two-line title, and no wrapped line starts with a dot", async ({ page, rerail }) => {
+  test("mature: on a phone the header's button goes under a two-line title", async ({ page, rerail }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(await rerail.dashboard("mature", { hash: "sessions" }));
     const head = page.locator("#content .shead");
@@ -135,13 +135,10 @@ test.describe("History by session", () => {
     const header = await head.evaluate(node => {
       const title = node.querySelector("h2.clamp2")!.getBoundingClientRect(), button = node.querySelector(".acts")!.getBoundingClientRect();
       const lineHeight = parseFloat(getComputedStyle(node.querySelector("h2.clamp2")!).lineHeight);
-      // Each meta row clips the 17px strip a line-starting item's "·" falls in.
-      const rows = [...node.querySelectorAll(".l2")].map(row => getComputedStyle(row).clipPath.startsWith("inset(0px 0px 0px 17px"));
-      return { buttonUnder: button.top >= title.bottom - 1, titleLines: Math.round(title.height / lineHeight), rows };
+      return { buttonUnder: button.top >= title.bottom - 1, titleLines: Math.round(title.height / lineHeight) };
     });
     expect(header.buttonUnder).toBe(true);
     expect(header.titleLines).toBeLessThanOrEqual(2);
-    expect(header.rows.every(Boolean)).toBe(true);
   });
 
   test("mature: an MCP call names its server and tool beside its MCP badge", async ({ page, rerail }) => {

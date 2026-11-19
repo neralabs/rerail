@@ -86,12 +86,10 @@ body[data-panel="open"] .sess > aside{display:none}
 .hpick select{grid-area:1/1;width:100%;min-width:0;appearance:none;-webkit-appearance:none;border:0;background:transparent;font:inherit;color:var(--header);padding:3px 34px 3px 9px;border-radius:999px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hpick select:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 .hpick .sel svg{position:absolute;right:11px;top:50%;margin-top:-6px;transform:rotate(90deg);opacity:.7;pointer-events:none}
-/* Each item after the first has its "·" in the gap before it; the line's first 17px are clipped, so a line the row
- * wraps onto never starts with a stray dot. */
-.shead .l2{display:flex;flex-wrap:wrap;align-items:center;gap:2px 0;margin:4px 0 0 -17px;clip-path:inset(0 0 0 17px);font-size:12.5px;color:var(--muted-foreground)}
+.shead .l2{display:flex;flex-wrap:wrap;align-items:center;gap:2px 0;margin-top:4px;font-size:12.5px;color:var(--muted-foreground)}
 .shead .l2.when{margin-top:6px}
-.shead .l2 > span{white-space:nowrap;margin-left:17px}
-.shead .l2 > span::before{content:"·";display:inline-block;width:17px;margin-left:-17px;text-align:center;opacity:.6}
+.shead .l2 > span{white-space:nowrap}
+.shead .l2 > span + span::before{content:"·";margin:0 8px;opacity:.6}
 /* The state keeps the list's dot (live green, silent grey; none once ended) but not its green text. */
 .shead .when .state .dot{display:inline-block;width:7px;height:7px;margin-right:6px;border-radius:50%;vertical-align:1px}
 .shead .when .state[data-state="live"] .dot{background:var(--success)}
@@ -131,7 +129,7 @@ body[data-panel="open"] .sess > aside{display:none}
 .rail .tick:hover{transform:translateY(-6px) scale(1.25)}
 /* A tick takes its card's outcome: yellow for steered, the quiet grey of a logged card. */
 .rail .tick[data-outcome="logged"]{background:var(--log-fg);box-shadow:0 0 0 1px var(--log-fg)}
-.tl{grid-column:2;padding:6px 16px 16px 8px;display:flex;flex-direction:column;gap:4px;min-width:0;container-type:inline-size}
+.tl{grid-column:2;padding:6px 16px 16px 8px;display:flex;flex-direction:column;gap:4px;min-width:0}
 .tl .turns{display:flex;flex-direction:column;gap:4px}
 .bound{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.05em;padding:8px 0}
 .bound::after{content:"";flex:1;height:1px;background:var(--border)}
@@ -164,7 +162,6 @@ body[data-panel="open"] .sess > aside{display:none}
 .beats dt.nera{color:var(--brand-foreground)}
 /* A card can be narrow (the rule's sheet open beside it): a long word, id or path wraps inside it, never past its edge. */
 .beats dd{margin:0;min-width:0;overflow-wrap:anywhere}
-.beats dd code{-webkit-box-decoration-break:clone;box-decoration-break:clone}
 /* A declined steer: its red badge beside the outcome's, and the agent's reasons, one per line, however long a word. */
 .corr .badge.declined{background:var(--danger-subtle);color:var(--danger-foreground)}
 .beats dt.reason{color:var(--danger-foreground)}
@@ -200,17 +197,18 @@ body[data-panel="open"] .sess > aside{display:none}
 .out .tn{display:none;width:104px;font-family:var(--font-mono);font-size:11px;opacity:.8;overflow:hidden;text-overflow:ellipsis}
 @media (min-width:1600px){.out .tn{display:inline-block}}
 body[data-panel="open"] .out .tn{display:none}
-/* A narrow timeline (a small window, or the sheet open beside it): a call's right side keeps its outcome and time and
- * lets go of the tool, so the time is never cut off; a message's time goes under it instead of squeezing it. The
- * time's tooltip still names the call. */
-@container (max-width:640px){
-  .out{gap:8px}
-  .out .tn{display:none}
+/* Where the timeline is narrow (the sheet open beside it, or a small window), a message's time goes under it instead of
+ * squeezing it. */
+@media (min-width:1100px){
+  body[data-panel="open"] .msgrow{grid-template-columns:40px minmax(0,1fr)}
+  body[data-panel="open"] .msgrow .mt{grid-column:2;line-height:18px;padding-right:0}
+}
+@media (max-width:760px){
   .msgrow{grid-template-columns:40px minmax(0,1fr)}
   .msgrow .mt{grid-column:2;line-height:18px;padding-right:0}
 }
-/* A phone-width timeline: a call's outcome and time take a second line under it, so a long label never pushes them out. */
-@container (max-width:440px){
+/* A phone: a call's outcome and time take a second line under it, so a long label never pushes them out. */
+@media (max-width:640px){
   .evt .eh{grid-template-columns:20px minmax(0,auto) minmax(0,1fr);row-gap:2px}
   .evt .eh .out{grid-column:2 / -1;justify-self:start}
 }
