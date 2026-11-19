@@ -1017,7 +1017,7 @@ Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
     expect(await evaluate()).toEqual(resolved);
   }, 30_000);
 
-  it("invalidates a Git tree after a same-size rewrite with restored modification time", async () => {
+  it("invalidates a Git tree after a same-size rewrite with restored modification time", () => {
     const root = checkout(), path = "pkg/inside.py";
     mkdirSync(join(root, "pkg"));
     writeFileSync(join(root, path), "NEEDLE\n");
@@ -1031,13 +1031,18 @@ Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
     const initial = statSync(file, { bigint: true });
     const open = () => new (loadNativeBinding().GitRevisionSource)(root, "HEAD", "mutation");
     const view = open();
-    const run = async (name: string) => {
-      vi.stubEnv("RERAIL_CONTENT_STORE_PATH", join(root + "-home", name + ".sqlite"));
-      try { return await scan(root, { revision: "HEAD", analysisScope: "mutation", paths: [path] }); }
-      finally { vi.unstubAllEnvs(); }
+    const run = (name: string, expectedExit: number): ScanReport => {
+      const home = root + "-home";
+      const child = spawnSync(process.execPath, ["--import", "tsx", "src/cli/cli.ts", "--rerail-managed-child", "scan",
+        "--repo", root, "--revision", "HEAD", "--analysis-scope", "mutation", "--path", path, "--json", "--no-send"], {
+        env: { ...process.env, RERAIL_HOME: home, RERAIL_CONTENT_STORE_PATH: join(home, name + ".sqlite") }, encoding: "utf8",
+      });
+      expect(child.error).toBeUndefined();
+      expect(child.status, child.stderr || child.stdout).toBe(expectedExit);
+      return JSON.parse(child.stdout) as ScanReport;
     };
     expect(view.readDirectory("pkg")).toHaveLength(1);
-    expect(await run("warm")).toMatchObject({ status: "completed", violations: [{ path }] });
+    expect(run("warm", 0)).toMatchObject({ status: "completed", violations: [{ path }] });
     const rewrite = (bytes: Buffer) => { writeFileSync(file, bytes); utimesSync(file, time, time); };
     rewrite(Buffer.alloc(original.length));
     const changed = statSync(file, { bigint: true });
@@ -1045,14 +1050,14 @@ Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
     if (process.platform === "win32") expect(changed.birthtimeNs).toBe(initial.birthtimeNs);
     expect(() => open().readDirectory("pkg")).toThrow();
     expect(() => view.readDirectory("pkg")).toThrow();
-    const cold = await run("cold"), warm = await run("warm");
+    const cold = run("cold", 1), warm = run("warm", 1);
     expect(cold.status).toBe("failed");
     expect(cold.failures.length).toBeGreaterThan(0);
     expect(warm).toMatchObject({ status: "failed", failures: cold.failures, violations: [] });
     rewrite(original);
     expect(view.readDirectory("pkg")).toHaveLength(1);
-    expect(await run("warm")).toMatchObject({ status: "completed", violations: [{ path }] });
-  }, 30_000);
+    expect(run("warm", 0)).toMatchObject({ status: "completed", violations: [{ path }] });
+  }, 60_000);
 
   it("compares Git message selectors with the installed Git", () => {
     const root = checkout();

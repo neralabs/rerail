@@ -12,6 +12,10 @@ The build then reached the JSON parser. Its SHA-256 code used GCC byte-swap and 
 The MSVC build needs its own compiler intrinsics. The parser must produce the same digest and tape through each supported kernel.
 The engine's `repeat` command also called Unix `getrusage` on Windows. It must read user and kernel time from the existing platform profiler.
 
+The Windows addon matched Git on every message selector. The NTFS test reached teardown, where Windows refused to delete the open stores.
+The packaged addon keeps maintenance jobs for the life of the process. The test must let each scan exit before removing its store.
+Keep the native view open across corruption and restoration. Reopen the same warm store from a new CLI process to check persistent invalidation.
+
 The headless regression for case 102 reproduced the permission change before the repair.
 After the repair, each scan reported the expected violation and published its scope. The existing parents kept modes `0755` and `1777`.
 Both database files had mode `0600`. The native tests also check the journal mode and repair a managed cache directory on reopen.
