@@ -515,6 +515,12 @@ export interface NativeBinding {
    * Linux only: runs Git as `spawnSync` does, through `posix_spawn` (`git-start.ts`). A binary built before it lacks it.
    */
   runGit?(program: string, args: string[], env: string[], timeoutMs: number | undefined, maxBuffer: number): EngineGitRun;
+  /**
+   * Windows only: whether every path's owner is one Git for Windows takes as this process's user (the user, or the
+   * Administrators group while the process's token is a member); false when an owner cannot be read, and on every
+   * other platform. A binary built before it lacks it.
+   */
+  pathsOwnedByCurrentUser?(paths: string[]): boolean;
   /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
@@ -589,4 +595,36 @@ export function isWorkspaceBusy(error: unknown): boolean {
 
 export function nativeHealth(): NativeHealth {
   return loadNativeBinding().health();
+}
+
+/**
+ * On Windows, whether Git, started by this process, takes every one of `paths` as its user's own: the engine reads each
+ * owner as Git for Windows does. Undefined on every other platform, and when no engine here can tell (none loads, one
+ * built before it, or a read that throws), so the caller asks Git; the first such failure is reported
+ * ({@link reportOwnerReadFailure}).
+ */
+export function pathsOwnedByCurrentUser(paths: readonly string[]): boolean | undefined {
+  if (process.platform !== "win32") return undefined;
+  try {
+    const binding = loadNativeBinding();
+    if (binding.pathsOwnedByCurrentUser === undefined) throw new Error("the engine was built before it could read a path's owner");
+    return binding.pathsOwnedByCurrentUser([...paths]);
+  } catch (error) {
+    reportOwnerReadFailure(error);
+    return undefined;
+  }
+}
+
+/** Whether a failure of the engine's owner read was reported in this process. */
+let ownerReadFailureReported = false;
+
+/**
+ * Writes the first failure of the engine's owner read to stderr, which a daemon keeps in its log, once per process:
+ * without that read every worktree a repository start places is asked of Git, one process each.
+ */
+function reportOwnerReadFailure(error: unknown): void {
+  if (ownerReadFailureReported) return;
+  ownerReadFailureReported = true;
+  const reason = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`rerail: the engine could not read path owners, so Git places each worktree a start asks after: ${reason}\n`);
 }

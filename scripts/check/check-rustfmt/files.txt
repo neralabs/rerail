@@ -365,5 +365,6 @@ native/src/tree_watch/windows.rs
 native/src/git_start.rs
 native/src/git_start/run.rs
 native/src/git_start/spawn.rs
+native/src/path_owner.rs
 scripts/profiling/preparation/src/code_rule_dsl.rs
 scripts/profiling/reachability/src/code_rule_dsl.rs
