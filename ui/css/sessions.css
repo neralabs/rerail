@@ -92,7 +92,8 @@ body[data-panel="open"] .sess > aside{display:none}
 /* The controls row: the rule dropdown, then Show all events at the right end. */
 .tfilter{display:flex;flex-wrap:wrap;gap:6px 12px;padding:10px 16px;border-bottom:1px solid var(--border);align-items:center}
 .tfilter .srule{min-width:0;max-width:100%}
-.tfilter .srule select{max-width:min(360px,100%);overflow:hidden;text-overflow:ellipsis}
+/* The select fills its label (which draws the chevron), up to 360px and never past the row. */
+.tfilter .srule select{width:100%;max-width:360px;overflow:hidden;text-overflow:ellipsis}
 .tfilter .tall{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap}
 .tfilter .tall input{width:15px;height:15px;margin:0;accent-color:var(--brand)}
 .ssearch{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:6px 9px;margin-bottom:8px}
