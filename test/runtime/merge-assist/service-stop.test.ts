@@ -427,9 +427,12 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     await scanEndingWithinStop(ws, "--name-only", []);
     expect(await openConflicts(ws)).toBe(PEERS);
 
-    const passes = [ownConnection(ws, new FakeGithub()).service, ownConnection(ws, new FakeGithub()).service];
+    const own = [ownConnection(ws, new FakeGithub()), ownConnection(ws, new FakeGithub())];
+    const passes = own.map(({ service }) => service);
     expect(await Promise.all(passes.map(async pass => await pass.detectAfterEdit(ws.repo)))).toEqual([true, true]);
     await Promise.all(passes.map(async pass => await pass.settled()));
+    // Closed now, before the workspace's folder is removed: Windows refuses to remove a database a connection holds.
+    for (const { close } of own) close();
 
     expect(heard().map(({ event }) => event)).toEqual(Array.from({ length: PEERS }, () => "detected"));
   });
@@ -512,9 +515,6 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     const scan = service.openSession(ws.repo, "claude-code", "session-1");
     await asked.promise;
     const holder = openRerailDatabase(ws.databasePath);
-    onTestFinished(() => {
-      holder.$client.close();
-    });
     holder.$client.exec("BEGIN IMMEDIATE");
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     // As `DatabaseApiStores.close()` does: the stop, then the database closed in the same call.
@@ -523,6 +523,8 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     const written = stderr.mock.calls.map(([text]) => String(text));
     stderr.mockRestore();
     holder.$client.exec("ROLLBACK");
+    // Closed now, before the workspace's folder is removed: Windows refuses to remove a database a connection holds.
+    holder.$client.close();
     github.release();
     await scan;
 
