@@ -179,6 +179,15 @@ tail        the four side lists (each block's part, as today), their part starts
 - When a block is final, its pieces are written as ordinary LZ4 sequences: matches from the registered subtrees
   within the block, literals for the rest. Decoders do not change.
 - Measured against LZ4 HC 9 in the lab before it replaces it.
+- **Measured, not taken (2026-11-18).** The lab's `zrange` (`lab/tape16/src/zlevel.rs`) parses each 16z piece
+  into LZ4 sequences whose matches are node ranges: at each row, an earlier subtree of the block with the same
+  bytes in the column (a), else one whose descendants have them, the root's edge cell a literal (b); each match
+  extended as LZ4 extends one; the side-list part literals; each piece stored by 16z's rule. Against HC 9 on the
+  same pieces: dl-10 +32% (JSON, 7.0 M nodes), +16% (Python, 2.5 M), +17% (Rust), +18% (JavaScript); rr +21%
+  (2.0 M nodes). LZ4's fast compressor is +2–4% there (+12–13% on JSON and rr). Node ranges are a subset of the
+  matches HC 9 finds (a block's column is at most 8 KB, inside LZ4's 64 KB window, and HC 9 searches every
+  position), so they cannot be smaller; they could only be faster, and the fast compressor is both faster and
+  smaller than them. 16z keeps HC 9 (decision 0399 §3).
 
 ### 6. The ops in CLIF (step 4, 2026-11-18)
 
@@ -356,7 +365,7 @@ fold's taking back is removed. Not yet measured: the run's cost a node against f
 R17's second half, tier 2 writing its tape on the device, waits on tier 2 on Metal, its own track: the user put
 steps 5 and 6 first (2026-11-18).
 
-Next: step 5, after the lab measures node-range matching against LZ4 HC 9.
+Next: step 6 (step 5 was measured and not taken, §5).
 
 ## Requirements, each with its test
 
@@ -390,7 +399,7 @@ Next: step 5, after the lab measures node-range matching against LZ4 HC 9.
    commit at their statements (R7a).
 3. Tree-sitter's cursor walk and derived documents call the ops (R12); then tier 2's words.
 4. The ops in CLIF, three backends; tier 2's GPU path writes its tape on the device.
-5. Node-range LZ4 for 16z (§5), after the lab measures it.
+5. Node-range LZ4 for 16z (§5), after the lab measures it. Measured and not taken: HC 9 stays (§5).
 6. The store keeps the presence; the planner leaves out the documents and blocks a program's anchor cannot touch.
 
 ## Measured

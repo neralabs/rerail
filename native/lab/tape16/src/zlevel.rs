@@ -176,3 +176,158 @@ pub fn print_ops(title: &str, r: &Ops) {
     println!("ns/node: 16 reference {:.1}, ops {:.1}; 16z reference {:.1}, ops {:.1}", per(r.ns_ref[0]), per(r.ns_ops[0]), per(r.ns_ref[1]), per(r.ns_ops[1]));
     println!("instructions/node: 16 reference {:.0}, ops {:.0}; 16z reference {:.0}, ops {:.0}\n", per(r.in_ref[0]), per(r.in_ops[0]), per(r.in_ref[1]), per(r.in_ops[1]));
 }
+
+/// Decision 0399 §5 (step 5), measured before it is built: 16z's pieces as LZ4 sequences whose matches are node
+/// ranges. A subtree is contiguous in every column, so a block's column at a subtree's rows can match the same
+/// column at an earlier subtree's rows in the block: (a) the whole subtree, or (b) its descendants alone (the root's
+/// cell, an edge cell, being a literal). At each row the parse takes (a), else (b), else a literal; a match then
+/// extends byte by byte as LZ4's does. The side-list part is literals. Each piece is stored as `run` stores it
+/// (LZ4 when that shrinks it by a tenth), against HC 9 and LZ4's fast compressor on the same pieces.
+#[derive(Default)]
+pub struct Ranges {
+    pub files: usize,
+    pub nodes: u64,
+    pub raw: u64,
+    /// Stored bytes: HC 9, LZ4 fast, node ranges (a), node ranges (a) and (b).
+    pub stored: [u64; 4],
+    /// Each one's time, ns.
+    pub ns: [u64; 4],
+    /// The node-range parse's matches, (a) and (b), and the bytes they cover.
+    pub matches: [u64; 2],
+    pub matched: u64,
+}
+
+/// LZ4's bytes for sequences of `(literals, match length)` (the last with no match): a token each, the lengths'
+/// extra bytes, the literals, a 2-byte offset a match.
+fn lz4_bytes(seqs: &[(usize, usize)]) -> usize {
+    let extra = |n: usize| if n >= 15 { (n - 15) / 255 + 1 } else { 0 };
+    seqs.iter().map(|&(lit, ml)| 1 + extra(lit) + lit + if ml > 0 { 2 + extra(ml - 4) } else { 0 }).sum()
+}
+
+/// The node-range parse of a block's column `col` (`cell` bytes a row), rows `ends[r]` its subtrees' local ends,
+/// then `side` as literals: its LZ4 bytes, matches (a) and (b), and the bytes matched.
+fn range_parse(col: &[u8], cell: usize, ends: &[usize], side: usize, descendants: bool) -> (usize, [u64; 2], u64) {
+    use std::collections::HashMap;
+    let rows = ends.len();
+    let (mut whole, mut inner): (HashMap<&[u8], usize>, HashMap<&[u8], usize>) = (HashMap::new(), HashMap::new());
+    let mut seqs = Vec::new();
+    let (mut lit, mut matches, mut matched) = (0usize, [0u64; 2], 0u64);
+    let mut pos = 0usize;
+    let mut r = 0usize;
+    while r < rows {
+        // Row r's subtree and its descendants, looked up, then registered (the earliest stays).
+        let (a, b) = (r * cell, ends[r] * cell);
+        let key = &col[a..b];
+        let found = if b - a >= 4 { whole.get(key).copied() } else { None };
+        let inner_key = &col[a + cell..b];
+        let found_inner = if descendants && found.is_none() && b - a - cell >= 4 { inner.get(inner_key).copied() } else { None };
+        whole.entry(key).or_insert(r);
+        if ends[r] > r + 1 {
+            inner.entry(inner_key).or_insert(r);
+        }
+        let (start, src, kind) = match (found, found_inner) {
+            (Some(j), _) => (a, j * cell, 0),
+            (None, Some(j)) => (a + cell, j * cell + cell, 1),
+            _ => {
+                r += 1;
+                continue;
+            }
+        };
+        if start < pos {
+            r += 1;
+            continue;
+        }
+        // The literals up to the match, then the match, extended as far as the bytes repeat.
+        lit += start - pos;
+        let off = start - src;
+        let mut end = b;
+        while end < col.len() && col[end] == col[end - off] {
+            end += 1;
+        }
+        seqs.push((lit, end - start));
+        lit = 0;
+        matches[kind] += 1;
+        matched += (end - start) as u64;
+        pos = end;
+        // The rows the match covers register their subtrees too.
+        let next = pos.div_ceil(cell);
+        for k in r + 1..next.min(rows) {
+            let (a, b) = (k * cell, ends[k] * cell);
+            whole.entry(&col[a..b]).or_insert(k);
+            if ends[k] > k + 1 {
+                inner.entry(&col[a + cell..b]).or_insert(k);
+            }
+        }
+        r = next;
+    }
+    lit += col.len() - pos + side;
+    seqs.push((lit, 0));
+    (lz4_bytes(&seqs), matches, matched)
+}
+
+pub fn ranges(files: &[&File]) -> Result<Ranges, String> {
+    let mut r = Ranges::default();
+    for f in files {
+        let (columns, table) = f15_columns(&f.image)?;
+        let t = F15::new(&f.image, columns, &table)?;
+        let Some(lang) = f16::lang(f.tag) else { return Err(format!("no format 16 table for tag {}", f.tag)) };
+        let number = f16::numbers(lang, &table)?;
+        let Written::F16(t16) = f16::write_from(lang, &t, &number, &f.source, f.tag, false)? else { unreachable!() };
+        let tb = t16.as_bytes();
+        r.files += 1;
+        let n = t.len();
+        r.nodes += n as u64;
+        let w = [tb[36] as usize, tb[37] as usize, tb[38] as usize];
+        let stride = u32_at(tb, 40);
+        let side: [usize; 4] = std::array::from_fn(|q| u32_at(tb, 48 + 4 * q));
+        let parts: [usize; 4] = std::array::from_fn(|q| u32_at(tb, 64 + 4 * q));
+        let cells = [1, w[0], w[1], w[2]];
+        let ends_all: Vec<usize> = (0..n).map(|i| t.subtree_end(i)).collect();
+        for b in 0..n.div_ceil(Z) {
+            let rows = (n - b * Z).min(Z);
+            let ends: Vec<usize> = (0..rows).map(|k| ends_all[b * Z + k].min(b * Z + rows) - b * Z).collect();
+            let room = HEAD16 + b * stride;
+            for q in 0..4 {
+                let before: usize = cells[..q].iter().sum();
+                let col = &tb[room + rows * before..room + rows * (before + cells[q])];
+                let (s, e) = (u32_at(tb, parts[q] + 4 * b), u32_at(tb, parts[q] + 4 * (b + 1)));
+                let sp = &tb[side[q] + s..side[q] + e];
+                let mut piece = col.to_vec();
+                piece.extend_from_slice(sp);
+                let raw = piece.len();
+                r.raw += raw as u64;
+                let store = |z: usize| if raw >= LZ4_MIN && 10 * z <= 9 * raw { z } else { raw } as u64;
+                for (k, level) in [(0usize, 9), (1, 0)] {
+                    let t0 = std::time::Instant::now();
+                    let z = if raw >= LZ4_MIN { compress(&piece, level) } else { raw };
+                    r.ns[k] += t0.elapsed().as_nanos() as u64;
+                    r.stored[k] += store(z);
+                }
+                for (k, descendants) in [(2usize, false), (3, true)] {
+                    let t0 = std::time::Instant::now();
+                    let (z, m, matched) = range_parse(col, cells[q], &ends, sp.len(), descendants);
+                    r.ns[k] += t0.elapsed().as_nanos() as u64;
+                    r.stored[k] += store(z);
+                    if descendants {
+                        r.matches[0] += m[0];
+                        r.matches[1] += m[1];
+                        r.matched += matched;
+                    }
+                }
+            }
+        }
+    }
+    Ok(r)
+}
+
+pub fn print_ranges(title: &str, r: &Ranges) {
+    println!("### {title}\n");
+    println!("{} files, {} nodes, pieces {:.2} B/node raw; node ranges (a)+(b): {} whole-subtree and {} descendant matches, {:.2} B/node matched\n", r.files, r.nodes, r.raw as f64 / r.nodes as f64, r.matches[0], r.matches[1], r.matched as f64 / r.nodes as f64);
+    println!("| compressor | stored B/node | vs HC 9 | ns/node |");
+    println!("|---|---|---|---|");
+    let hc9 = r.stored[0] as f64;
+    for (k, name) in ["HC 9", "LZ4 fast", "node ranges (a)", "node ranges (a)+(b)"].iter().enumerate() {
+        println!("| {name} | {:.3} | {:+.1}% | {:.1} |", r.stored[k] as f64 / r.nodes as f64, 100.0 * (r.stored[k] as f64 / hc9 - 1.0), r.ns[k] as f64 / r.nodes as f64);
+    }
+    println!();
+}

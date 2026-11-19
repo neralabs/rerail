@@ -1779,6 +1779,23 @@ fn cmd_zlevel(path: &str) {
     }
 }
 
+/// Decision 0399 §5 (step 5): 16z's pieces as LZ4 sequences of node-range matches, against HC 9 (`zlevel.rs`).
+fn cmd_zrange(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let title = format!("{path}, {} ({tag})", capture::language(*tag));
+        match rerail_tape_lab::zlevel::ranges(fs) {
+            Ok(r) => rerail_tape_lab::zlevel::print_ranges(&title, &r),
+            Err(e) => println!("### {title}\n\n{e}\n"),
+        }
+    }
+}
+
 /// Decision 0399 §6: the writer's ops in CLIF against the reference writer, on every file (`zlevel.rs`).
 fn cmd_zops(path: &str) {
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
@@ -1958,6 +1975,7 @@ fn main() {
         "f16" => cmd_f16(path),
         "zlevel" => cmd_zlevel(path),
         "zops" => cmd_zops(path),
+        "zrange" => cmd_zrange(path),
         "f16w" => cmd_f16w(path),
         #[cfg(target_os = "macos")]
         "f16-gpu" => cmd_f16_gpu(path),
