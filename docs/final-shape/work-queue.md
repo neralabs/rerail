@@ -2769,8 +2769,28 @@ submitted" now hold device memory at once.
   - (5) Late GPU waits (e22c75a47): a wait for a batch's launches has a deadline (their expected end), and a named
     job expected past it, or unknown, declines and goes back to its queue (`declines`, `Waiting::help_within`).
     The end state stays a batch's completion scheduling its continuation (0386).
-  - (3) Chunk count: same binary at 7 and 16 forced chunks (ab68), pending. On ab62's pair (two binaries), native
-    steps grow 11.9 -> 15.0 s, of which strata with unchanged work add 0.46 s over 901 extra runs (0.5 ms a run).
+  - (3) Chunk count, measured (t65, the M1 Max at load 6-14, unprofiled, alternated, ab70): 7 forced chunks
+    600-672 G (median 610), 14 chunks 667-701 G (median 694): about 12 G (1.3 s CPU) a chunk; t54 at 16 chunks
+    625 G. Where it is not: native steps' per-run setup (strata with unchanged rows: 0.46 s over 901 extra runs);
+    the 3 s single runs of `class_chain`, `value`, `qual_part`, `rr_up`, `node_text` at 16 chunks (8 s of
+    native.tsv's "outside steps") are other jobs those runs ran while they waited, counted in their thread's CPU,
+    and vary run to run. Whole-run samples at 7 and 14 chunks (ab71: +6,112 running samples) spread it over each
+    stratum's per-chunk pipeline: joins (+~1,500), the program image's lookups by name (`Version::text`,
+    `Image::find`, `Image::node`, `rel_atom`: +~700 attributed, more in frames the sampler could not walk),
+    memcmp/memmove (+~570), and the item 5 regression below (+~670, fixed in a9e38758b). Rayon's idle workers'
+    yields are 17% of the running samples.
+  - (3) Why a default run cuts 7, 10, 12 or 14 chunks: the sizer (`corpus.rs`, "chunk size") takes the process's
+    footprint rise during a chunk over the chunks in flight, and keeps the most bytes a node seen. One chunk that
+    meets the run's one-time allocations (2.1-2.3 GB for 25,829 nodes) sets ~11,000-node chunks for the rest; later
+    chunks reuse freed pages and measure 1 MB, "sizing nothing". So the instructions a run retires depend on when
+    that rise lands.
+  - (3) What fixes it properly: (i) a chunk sized by what its own work holds (the rows' blocks, relations and texts
+    it made: `facts::rows::held` and the allocator's per-job bytes), not the process's footprint, so the count is a
+    function of the corpus and the memory line; (ii) per-chunk per-stratum work that does not depend on the chunk's
+    rows (the program's lookups by name, specs, plans) made once a run and read by each chunk (prepared plans,
+    [[planning-lean-replan-slow]]); then 7 vs 16 forced chunks again, by instructions.
+  - (5, regression) e22c75a47's deadline was inherited by jobs run in the wait, and rayon's own waits inside them
+    declined and re-stole in a loop; job walls sat under one contended lock. Fixed (a9e38758b).
 - **Open**: (c) the refusals left are leases past a stratum's reservation (an estimate under its rows, or an
   unestimated stage), which `lease_within` refuses without waiting; (d) a derived relation's frame is still
   encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
