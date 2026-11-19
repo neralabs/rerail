@@ -225,6 +225,39 @@ fn numbered_directory_stops_keep_one_cutoff_per_directory() {
 }
 
 #[test]
+fn a_numbered_home_stop_revokes_older_unqualified_directory_writers_once() {
+    use crate::content_store::analysis_scope::{self, AnalysisRun, RunSource};
+    let (path, store) = store("scope-legacy-pending-stop");
+    let parent = std::path::Path::new("/virtual/project");
+    let child = parent.join("pkg");
+    let begin = |home, generation, id| {
+        let scope = analysis_scope::directory_in(&child, home);
+        let mut run = AnalysisRun::begin_at(ContentStore::open(&path).unwrap(), &scope, id, generation).unwrap();
+        run.select_source(RunSource::directory(&child)).unwrap();
+        assert!(store.record_corpus_run_retaining(id, &[], 1, 1, [7; 32], &[], None, None, 100, None, Some(&run.owner)).unwrap());
+        run
+    };
+    begin(None, 0, "published").finish(true).unwrap();
+    let mut old = begin(None, 0, "old");
+    let mut newer = begin(None, 11, "higher-generation");
+    let mut other = begin(Some("other"), 5, "other-home");
+    let mut qualified = begin(Some("home"), 5, "qualified");
+    store.delete_directory_analysis_scopes(parent, Some("10:stop:home")).unwrap();
+    let mut fresh = begin(None, 0, "after-delivery");
+    store.delete_directory_analysis_scopes(parent, Some("10:stop:home")).unwrap();
+    for r in [&mut old, &mut newer, &mut other, &mut qualified, &mut fresh] { r.finish(true).unwrap(); }
+    let mut scans: Vec<_> = store.completed_analysis_runs().unwrap().into_iter().map(|r| r.scan_id).collect();
+    scans.sort();
+    assert_eq!(scans, ["after-delivery", "higher-generation", "other-home"]);
+    for id in ["old", "qualified", "published"] {
+        assert!(store.corpus_run_of(id).unwrap().is_none(), "{id} still has a manifest");
+    }
+    for id in &scans {
+        assert!(store.corpus_run_of(id).unwrap().is_some(), "{id} lost its manifest");
+    }
+}
+
+#[test]
 fn analysis_scope_keeps_each_directory_policy_sets_latest_manifest_under_pressure() {
     let (_path, store) = store("analysis-scope-pressure");
     let root = "/virtual/repository";

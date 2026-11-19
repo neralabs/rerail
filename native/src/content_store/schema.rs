@@ -197,9 +197,12 @@ CREATE TABLE IF NOT EXISTS analysis_scope_pending (
 CREATE TABLE IF NOT EXISTS analysis_scope_release (
     id TEXT PRIMARY KEY,
     scope TEXT NOT NULL DEFAULT '',
-    before INTEGER NOT NULL DEFAULT 0
+    before INTEGER NOT NULL DEFAULT 0,
+    legacy_scope TEXT,
+    legacy_acquisition INTEGER
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS analysis_scope_release_by_scope ON analysis_scope_release(scope,before);
+CREATE INDEX IF NOT EXISTS analysis_scope_release_legacy ON analysis_scope_release(legacy_scope,before) WHERE legacy_scope IS NOT NULL;
 CREATE TABLE IF NOT EXISTS analysis_history_scope (
     scope TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -270,6 +273,17 @@ CREATE TABLE IF NOT EXISTS store_state (
     analysis_acquisitions INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 INSERT OR IGNORE INTO store_state(singleton, generation) VALUES (1, 1);
+
+-- A home-qualified stop also covers unqualified owners acquired by the time it reaches this store.
+-- Capture that boundary for deliveries from older binaries too. Replays do not insert a receipt.
+CREATE TRIGGER IF NOT EXISTS analysis_scope_legacy_stop AFTER INSERT ON analysis_scope_release
+WHEN NEW.scope<>'' AND instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0 BEGIN
+    UPDATE analysis_scope_release SET legacy_scope='cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':')),
+        legacy_acquisition=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1) WHERE id=NEW.id;
+END;
+UPDATE analysis_scope_release SET legacy_scope='cwd:'||substr(scope,5+instr(substr(scope,5),':')),
+    legacy_acquisition=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1)
+    WHERE legacy_acquisition IS NULL AND scope<>'' AND instr(substr(id,instr(id,':')+1),':')>0;
 
 -- Which store this file is: random when it is created. What a process holds of a store by its path (its atoms,
 -- atoms.rs; its threads' connections, connection.rs) belongs to the store of this identity only, so a store
@@ -959,6 +973,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("analysis_scope_manifest", "recorded_run", "INTEGER NOT NULL DEFAULT 0"),
     ("analysis_scope_release", "scope", "TEXT NOT NULL DEFAULT ''"),
     ("analysis_scope_release", "before", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_release", "legacy_scope", "TEXT"),
+    ("analysis_scope_release", "legacy_acquisition", "INTEGER"),
     ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
     ("corpus_manifests", "policy", "BLOB CHECK(policy IS NULL OR length(policy) = 32)"),
     ("memo_entries", "over_pack", "INTEGER NOT NULL DEFAULT 0"),

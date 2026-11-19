@@ -167,6 +167,10 @@ Rolling back that transaction can leave a gap between generations.
 Acquisition also checks the store's numbered release receipts. A scan after restoration
 of an older control database must acquire a generation above those cutoffs.
 Already running scans keep their original generations.
+A numbered stop from a home also releases older directory owners that have no home.
+The store records its last acquisition number at delivery. An earlier writer without a home cannot publish under that stop's cutoff.
+A later acquisition can use the directory again. Replaying the receipt keeps the original acquisition boundary.
+An older receipt has no acquisition number. Upgrade uses the store's current acquisition number to fence outstanding writers before accepting new ones.
 The native run and workspace APIs accept nonnegative safe integer generation numbers.
 A numbered stop receipt contains its cutoff, a delivery ID, and an optional home, separated by colons.
 A malformed numbered receipt is an error. An older unnumbered delivery ID still identifies a single unconditional stop.

@@ -45,8 +45,10 @@ impl AnalysisOwner {
             "SELECT EXISTS (SELECT 1 FROM analysis_scope_generation WHERE scope=?1 AND generation=?2) \
                 AND (?5 IS NULL OR EXISTS (SELECT 1 FROM analysis_scope_pending WHERE id=?5)) \
                 AND (?6 IS NULL OR (SELECT id FROM store_identity WHERE singleton=1)=?6) \
-                AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE scope IN (SELECT value FROM json_each(?4)) AND before>=?3)",
-            (&self.scope, self.generation, self.acquired_at, receipt_scopes(&self.scope), self.pending.as_deref(), self.store_identity), |row| row.get(0),
+                AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE scope IN (SELECT value FROM json_each(?4)) AND before>=?3) \
+                AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE legacy_scope IN (SELECT value FROM json_each(?4))
+                    AND before>=?3 AND legacy_acquisition>=?7)",
+            (&self.scope, self.generation, self.acquired_at, receipt_scopes(&self.scope), self.pending.as_deref(), self.store_identity, self.acquisition), |row| row.get(0),
         )
     }
 }
