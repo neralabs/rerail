@@ -482,15 +482,18 @@ pub(super) fn metadata_only(program: &Program) -> bool {
     }
     let heads: std::collections::BTreeSet<_> = program.rules.iter().map(|rule| rule.head.rel.as_str()).collect();
     needed.iter().all(|rel| {
-        !program.natives.contains_key(rel.as_str())
-            && (heads.contains(rel.as_str())
-                || program.facts.contains_key(rel.as_str())
-                || INPUTS.contains(&rel.as_str())
-                || super::analysis_history::is_input(rel)
-                || super::source_languages::is_input(rel)
-                // A declared relation with no producers is empty, unless a phase can supply it.
-                || (program.decls.contains_key(rel.as_str()) && !rel.contains("__") && !program.inputs.contains(rel))
-                || matches!(rel.as_str(), "git_view_revision_of" | "git_revision_of" | "git_object_of" | "git_inventory_child_of"))
+        // These operators read strings from their input relation. `front::needed` visits that relation too.
+        if let Some(native) = program.natives.get(rel.as_str()) {
+            return matches!(native, super::front::Native::MatchAll { .. } | super::front::Native::TextTest { .. });
+        }
+        heads.contains(rel.as_str())
+            || program.facts.contains_key(rel.as_str())
+            || INPUTS.contains(&rel.as_str())
+            || super::analysis_history::is_input(rel)
+            || super::source_languages::is_input(rel)
+            // A declared relation with no producers is empty, unless a phase can supply it.
+            || (program.decls.contains_key(rel.as_str()) && !rel.contains("__") && !program.inputs.contains(rel))
+            || matches!(rel.as_str(), "git_view_revision_of" | "git_revision_of" | "git_object_of" | "git_inventory_child_of")
     })
 }
 

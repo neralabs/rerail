@@ -72,6 +72,7 @@ Without an object request, the parent relation can be empty even for a commit wi
 
 `git_trailer(repo, commit, position, name, value)` returns one row per trailer in a decoded UTF-8 commit message.
 Positions start at zero. Repeated trailers retain their own positions, including duplicates with the same value. Names preserve their case.
+Reading trailers requires the commit object. A metadata-only policy can read them when the source tree is unavailable.
 
 ```rr
 #include "git.rr"

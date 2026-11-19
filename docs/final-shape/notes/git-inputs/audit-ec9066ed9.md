@@ -22,7 +22,9 @@ Eighteen of the 28 follow-up findings have verified results. Ten remain open. Th
 The standalone CLI exported every trailer from 14 fixture commits with its name, unfolded value and zero-based position.
 The regression compares its rows with the installed Git. It covers exact duplicates, empty values, mixed prose and the end of the trailer block.
 An additional comparison with Git 2.50.1 found the same rows for all 530 distinct messages. An earlier run exposed a difference for `Conflicts:` followed by spaces.
-The permanent regression includes that case. All ten Git revision CLI tests passed together.
+The permanent regression includes that case. A separate check removed the root tree object and exposed an unnecessary inventory read for text matching.
+The regression now reads all 14 commits with that tree missing. Adding a document path match makes the same CLI report the missing tree.
+All ten Git revision CLI tests passed together after that repair.
 The relation uses the cached Git message and a Datalog cache key for the trailer rules. [Implementation](../../../rule-syntax/lib/git/messages.rr) · [CLI regression](../../../../native/tests/git_revision_cli.rs)
 
 ## Windows test execution and store lifetime

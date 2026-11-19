@@ -302,7 +302,9 @@ result(c, i, k, v) :- git_root_repo(r), requested(c), git_trailer(r, c, i, k, v)
         }
     }
     expected.sort();
-    fs::write(&policy, source).unwrap();
+    let tree = f.git(&["rev-parse", "HEAD^{tree}"]);
+    fs::remove_file(f.repo.join(".git/objects").join(&tree[..2]).join(&tree[2..])).unwrap();
+    fs::write(&policy, &source).unwrap();
     let run = f.run("logic", &[&policy, &f.repo, &out], Some("trailers"));
     assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
     assert!(f.run("csv", &[&out], None).status.success());
@@ -310,6 +312,12 @@ result(c, i, k, v) :- git_root_repo(r), requested(c), git_trailer(r, c, i, k, v)
     let mut actual: Vec<_> = csv.lines().collect();
     actual.sort_unstable();
     assert_eq!(actual, expected);
+
+    source.push_str(".decl filename(i: number, word: symbol)\nfilename(i, word) :- doc(_, path, _), match_all(\"(?<word>[a-z]+)\", path, i, _, _).\n.output filename\n");
+    fs::write(&policy, source).unwrap();
+    let with_documents = f.run("logic", &[&policy, &f.repo, &out], Some("trailers"));
+    assert!(!with_documents.status.success());
+    assert!(String::from_utf8_lossy(&with_documents.stderr).contains(&tree));
 }
 
 #[test]
