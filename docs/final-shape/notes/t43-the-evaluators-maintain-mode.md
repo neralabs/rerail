@@ -621,3 +621,39 @@ changed, about half the lines) took 3.1 s before the other owners' rows were has
 open costs are 0364's: `load` copies and hashes the inputs it reads from the frames, and the kept-facts writer carries
 a delta's entries forward (0353 row 12).
 
+## Step 15: the goal measured again, and θ measured (0090 §4: "θ is set by measurement")
+
+O125 00-08 on the M1 Max (the M3 was loaded at 24 and short of disk). Kept instructions as a fraction of cold,
+with the forms' qd and kd beside them:
+
+| Step | Kept / cold | qd | kd |
+|---|---|---|---|
+| 01 | 0.51 | 0.64 | 0.64 |
+| 02 | 0.47 | 0.58 | 0.58 |
+| 03 | 0.64 | 0.74 | 0.74 |
+| 04 | 0.44 | 0.55 | 0.54 |
+| 05 | 0.88 | 0.59 | 0.82 |
+| 06 | 0.49 | 0.63 | 0.64 |
+| 07 | 0.53 | 0.61 | 0.61 |
+| 08 | 0.69 | 0.71 | 0.71 |
+
+Every step's findings are the cold run's, and session = cold holds at every step. Step 05 is the one short of the
+forms. Its kept run derives 39 of 121 strata again, every one past θ ("strata derived again, by reason", a new
+decision line), and those cost what the cold run's do: `vopen` 291,842 rows and 0.42 s in both.
+
+θ measured, kept instructions (G) per step:
+
+| θ | 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 |
+|---|---|---|---|---|---|---|---|---|
+| 0.25 (default) | 189 | 170 | 233 | 161 | 327 | 180 | 197 | 263 |
+| 0.5 | 186 | 169 | 231 | 160 | 333 | 185 | 203 | 269 |
+| off (`RERAIL_AGAIN=off`) | 196 | 215 | 350 | 199 | 506 | 227 | 201 | 396 |
+
+Maintaining what θ derives again costs up to 1.5 times as much (05, 08), so the threshold is right. Between 0.25
+and 0.5 the difference is within 2%, and θ stays 0.25 until the data layer's 9,010 files measure it too. Step 05's
+gap is then the kept run's own overheads, not θ:
+
+- the kept-facts writer's 2.9 s (a delta carries its predecessor's entries forward: 0353 row 12);
+- `load` copying and hashing the inputs it reads from the frames (1.7 s);
+- the input delta's owner reads (about 1.4 s, step 14).
+

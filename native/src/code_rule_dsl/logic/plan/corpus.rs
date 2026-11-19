@@ -9337,6 +9337,13 @@ fn run_observed(
                             (maintained.maintained, maintained.recursive) = got.maintained;
                             maintained.again = got.again.clone();
                             maintained.derived_again = maintained.again.len();
+                            crate::code_rule_dsl::logic::profile::decision("strata derived again, by reason (0364 R3, R4)", || {
+                                let mut by: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+                                for (rel, why) in &maintained.again {
+                                    by.entry(why).or_default().push(rel);
+                                }
+                                by.iter().map(|(why, rels)| format!("{why}: {} ({}{})", rels.len(), rels.iter().take(6).copied().collect::<Vec<_>>().join(", "), if rels.len() > 6 { ", …" } else { "" })).collect::<Vec<_>>().join("; ")
+                            });
                             crate::code_rule_dsl::logic::profile::decision("maintenance driven by deltas (decision 0117 step 3)", || {
                                 format!("{reached} of {of} strata reached by a changed read: {} maintained ({} recursive), {} derived again; {quiet} not reached, held as kept", maintained.maintained, maintained.recursive, maintained.derived_again)
                             });
