@@ -1,0 +1,5 @@
+{
+  "title": "Weak hashes",
+  "rule": "bandit-b303-md5",
+  "note": "B303 flags MD5 and SHA-1 constructors from the cryptography package (and pycrypto). hashlib.md5 is Bandit's B324, a separate check, so it is not a finding here; SHA-256 is fine."
+}

@@ -17,7 +17,7 @@ import { reportQuarantinedRule, type QuarantinedRule } from "../catalog/rule-qua
 import { languageNotSupportedOf } from "./code-rule-language-support.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../native/native.js";
 import type { RepositoryAuditRuleProvenance, AuditRuleProvenance, RulePlacementDecision } from "../audit/audit.js";
-import { bundledCodeRuleDslDirectory } from "./code-rule-compile.js";
+import { bundledCodeRuleDslDirectory, relationalRulesOff } from "./code-rule-compile.js";
 import {
   folderContains,
   type RuleCatalog,
@@ -303,8 +303,8 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
   #compiled(id: string, { rule, decisions }: PlacedRule, loaded: LoadedCheckoutRules): BuiltRule | { readonly quarantined: QuarantinedRule } | undefined {
     const placement = placementOf(decisions, loaded.folders);
     if (placement.length === 0) return undefined;
-    if (rule.configError !== null)
-      return { quarantined: { ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` } };
+    const refused = refusedBeforeCompile(id, rule);
+    if (refused !== undefined) return { quarantined: refused };
     const source = ruleSourceText(rule.document.rule);
     if (source === undefined) throw new Error(`Policy ${id} is not JSON representable`);
     const outcome = compiledRules.compile(this.#capabilities, id, source.text, source.digest, stableJsonText(rule.config) ?? "");
@@ -326,6 +326,18 @@ interface BuiltRule {
   readonly entry: CompiledCodeRuleDslEntry;
   readonly provenance: RepositoryAuditRuleProvenance;
   readonly versioned: unknown;
+}
+
+/**
+ * Why a placed rule is quarantined before it compiles: the repository's config for it does not apply, or it is a
+ * relational rule while relational rules are off. Undefined when it goes on to compile.
+ */
+function refusedBeforeCompile(id: string, rule: EffectiveRule): QuarantinedRule | undefined {
+  if (rule.configError !== null)
+    return { ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` };
+  const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
+  if (relationalOff === undefined) return undefined;
+  return { ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER, reason: relationalOff };
 }
 
 /**

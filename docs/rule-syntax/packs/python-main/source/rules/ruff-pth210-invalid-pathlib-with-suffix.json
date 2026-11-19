@@ -1,0 +1,467 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth210-invalid-pathlib-with-suffix",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass a suffix that starts with a dot to Path.with_suffix(); a suffix without one raises an error at runtime.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "path-class": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "pathlib.Path",
+                    "pathlib.PosixPath",
+                    "pathlib.PurePath",
+                    "pathlib.PurePosixPath",
+                    "pathlib.PureWindowsPath",
+                    "pathlib.WindowsPath"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-class"
+                }
+              }
+            ]
+          },
+          "path-ann": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "pathlib.Path",
+                    "pathlib.PosixPath",
+                    "pathlib.PurePath",
+                    "pathlib.PurePosixPath",
+                    "pathlib.PureWindowsPath",
+                    "pathlib.WindowsPath"
+                  ]
+                }
+              },
+              {
+                "kind": "type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-ann"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-ann"
+                }
+              }
+            ]
+          },
+          "path-init": {
+            "any": [
+              {
+                "kind": "call",
+                "has": {
+                  "field": "function",
+                  "matches": "path-class"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-init"
+                }
+              }
+            ]
+          },
+          "path-name": {
+            "kind": "identifier",
+            "any": [
+              {
+                "resolves": {
+                  "binding": {
+                    "only": true,
+                    "site": {
+                      "not": {
+                        "kind": "assignment",
+                        "has": {
+                          "field": "type",
+                          "kind": "type"
+                        }
+                      }
+                    },
+                    "value": {
+                      "matches": "path-init"
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "only": true,
+                    "site": {
+                      "kind": "as_pattern",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "path-init"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "as_pattern_target",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "identifier"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "only": true,
+                    "site": {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "list_splat_pattern"
+                            },
+                            {
+                              "kind": "dictionary_splat_pattern"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "annotation": {
+                      "matches": "path-ann"
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "only": true,
+                    "site": {
+                      "kind": "function_definition",
+                      "has": {
+                        "field": "return_type",
+                        "matches": "path-ann"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "path-object": {
+            "any": [
+              {
+                "matches": "path-name"
+              },
+              {
+                "matches": "path-init"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-object"
+                }
+              }
+            ]
+          },
+          "with-suffix": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "kind": "identifier",
+                      "regex": "^with_suffix$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "object",
+                      "matches": "path-object"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "with-suffix"
+                }
+              }
+            ]
+          },
+          "plain-part": {
+            "kind": "string",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "[fFtT]"
+              }
+            }
+          },
+          "plain-string": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "[fFtT]"
+                  }
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "matches": "plain-part"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-string"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "dotless-suffix",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "with-suffix"
+                }
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "suffix"
+                  ],
+                  "mode": "syntactic",
+                  "bind": {
+                    "S": "suffix"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),\\[\\]{}]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "S": {
+              "all": [
+                {
+                  "matches": "plain-string"
+                },
+                {
+                  "value": {
+                    "type": "str",
+                    "regex": "^[^.]"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PTH210",
+        "message": "Add a leading dot to the suffix $S, such as `\".py\"`; `with_suffix` raises ValueError for a non-empty suffix that does not start with a dot.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH210"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "single-dot-suffix",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.13"
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "with-suffix"
+                }
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "suffix"
+                  ],
+                  "mode": "syntactic",
+                  "bind": {
+                    "S": "suffix"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),\\[\\]{}]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "S": {
+              "all": [
+                {
+                  "matches": "plain-string"
+                },
+                {
+                  "value": {
+                    "type": "str",
+                    "eq": "."
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PTH210",
+        "message": "Pass a suffix such as `\".py\"`, or `\"\"` to drop it: before Python 3.14, `with_suffix(\".\")` raises ValueError.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH210"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

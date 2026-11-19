@@ -1,0 +1,161 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-async210-blocking-http-call-in-async-function",
+ "revision": 2,
+ "mode": "steer",
+ "description": "Don't make blocking HTTP calls with requests, httpx, urllib or urllib3 inside async functions; they stall the event loop.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "blocking-http-call",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "scope-body": {
+       "kind": "block",
+       "inside": {
+        "stopBy": "neighbor",
+        "any": [
+         {
+          "kind": "function_definition"
+         },
+         {
+          "kind": "class_definition"
+         }
+        ]
+       }
+      },
+      "lambda-body": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "lambda"
+       },
+       "follows": {
+        "stopBy": "end",
+        "regex": "^:$"
+       }
+      },
+      "callee-position": {
+       "any": [
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "call"
+         },
+         "precedes": {
+          "stopBy": "neighbor",
+          "any": [
+           {
+            "kind": "argument_list"
+           },
+           {
+            "kind": "generator_expression"
+           }
+          ]
+         }
+        },
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "parenthesized_expression",
+          "matches": "callee-position"
+         }
+        }
+       ]
+      },
+      "async-context": {
+       "inside": {
+        "stopBy": {
+         "any": [
+          {
+           "matches": "scope-body"
+          },
+          {
+           "matches": "lambda-body"
+          }
+         ]
+        },
+        "kind": "block",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "function_definition",
+         "has": {
+          "stopBy": "neighbor",
+          "regex": "^async$"
+         }
+        }
+       }
+      },
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "urllib.request.urlopen",
+         "urllib3.request",
+         "httpx.request",
+         "httpx.get",
+         "httpx.post",
+         "httpx.delete",
+         "httpx.patch",
+         "httpx.put",
+         "httpx.head",
+         "httpx.connect",
+         "httpx.options",
+         "httpx.trace",
+         "requests.request",
+         "requests.get",
+         "requests.post",
+         "requests.delete",
+         "requests.patch",
+         "requests.put",
+         "requests.head",
+         "requests.connect",
+         "requests.options",
+         "requests.trace"
+        ]
+       }
+      }
+     },
+     "rule": {
+      "all": [
+       {
+        "matches": "callee-position"
+       },
+       {
+        "matches": "async-context"
+       },
+       {
+        "matches": "target"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "ASYNC210",
+    "message": "Use an existing async client, or `await asyncio.to_thread(helper, ...)` for the request and response handling; preserve the API and options.",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC210"
+        ]
+      }
+    }
+   }
+  }
+ ]
+}

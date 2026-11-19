@@ -1,0 +1,99 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f525-string-dot-format-mixing-automatic",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't mix automatic and manually numbered fields in one str.format() string; Python raises ValueError at runtime.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "string-dot-format-mixing-automatic",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "kind": "string",
+                      "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                    }
+                  }
+                }
+              ]
+            },
+            "format-string": {
+              "any": [
+                {
+                  "matches": "plain-string",
+                  "parse": {
+                    "grammar": "braceFormat",
+                    "not": {
+                      "has": {
+                        "kind": "error"
+                      }
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "auto",
+                          "stopBy": "end"
+                        }
+                      },
+                      {
+                        "has": {
+                          "kind": "index",
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "format-string"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "pattern": "$S.format($$$A)"
+          },
+          "constraints": {
+            "S": {
+              "matches": "format-string"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F525",
+        "message": "`.format` string mixes automatic and manual numbering",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F525"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+# corpus: tree: two brackets sep semicolon keywords pairs one root
+lexer corpus
+class open  = '[' '{'
+class close = ']' '}'
+class sep   = ';'
+class colon = ':'
+class ws    = ' ' '\n' '\t'
+class digit = '0'..'9'
+class w     = 'a'..'z' '0'..'9' '-' '.'
+token punct = start open | close | sep | colon
+keywords punct { "[" "]" "{" "}" ";" ":" } required
+token atom  = start starts(w) last lasts(w)
+keywords atom { "true" -> true  "null" -> null }
+skip ws
+error "a stray byte" when ~(open | close | ws | w | sep | colon)
+tree t {
+  node doc = value
+  node list nested = '[' [value (';' value)*] ']'
+  node obj nested = '{' [pair (';' pair)*] '}'
+  node pair = key: atom ':' value: value
+  choice value supertype _value = list | obj | atom | true | null
+}

@@ -1,0 +1,2 @@
+// vue/compare: a Vue rule's `compare` reads its view's script as tsx/compare reads a script file (decision 0222).
+#include "tsx/compare.rerail"

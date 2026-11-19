@@ -1,0 +1,316 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up022-replace-stdout-stderr",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use capture_output with subprocess.run instead of setting both stdout and stderr to a pipe; it does the same thing in one argument.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "run-callee": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "subprocess.run"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "run-callee"
+                }
+              }
+            ]
+          },
+          "pipe": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "subprocess.PIPE"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "pipe"
+                }
+              }
+            ]
+          },
+          "stdout-pipe": {
+            "kind": "keyword_argument",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "identifier",
+              "regex": "^stdout$"
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "pipe"
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "kind": "identifier",
+                      "regex": "^stdout$"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "stderr-pipe": {
+            "kind": "keyword_argument",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "identifier",
+              "regex": "^stderr$"
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "pipe"
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "kind": "identifier",
+                      "regex": "^stderr$"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "capture-output": {
+            "kind": "keyword_argument",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "identifier",
+              "regex": "^capture_output$"
+            }
+          },
+          "piped-run": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "function",
+              "matches": "run-callee"
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "stdout-pipe"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "stderr-pipe"
+                  }
+                }
+              }
+            ]
+          },
+          "without-capture": {
+            "matches": "piped-run",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "capture-output"
+                }
+              }
+            }
+          },
+          "with-capture": {
+            "matches": "piped-run",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "capture-output"
+              }
+            }
+          },
+          "without-capture-in-annotation": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "without-capture",
+                    "capture": "CALL"
+                  },
+                  {
+                    "matches": "without-capture-in-annotation"
+                  }
+                ]
+              }
+            }
+          },
+          "with-capture-in-annotation": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "with-capture",
+                    "capture": "CALL"
+                  },
+                  {
+                    "matches": "with-capture-in-annotation"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "use-capture-output",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "without-capture",
+                "pattern": "$CALL"
+              },
+              {
+                "matches": "without-capture-in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "UP022",
+        "message": "Replace `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` with `capture_output=True`; it is equivalent. Keep them only if the code must still run on Python 3.6.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP022"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "merge-into-capture-output",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "with-capture",
+                "pattern": "$CALL"
+              },
+              {
+                "matches": "with-capture-in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "UP022",
+        "message": "Remove `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` and pass `capture_output=True` instead; a true `capture_output` combined with them raises ValueError.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP022"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

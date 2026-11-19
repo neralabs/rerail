@@ -1,6 +1,5 @@
 import { execFileSync, fork } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
-import Database from "better-sqlite3";
 import { EventEmitter, once } from "node:events";
 import { existsSync, opendirSync, type Dir, type Dirent } from "node:fs";
 import * as fsPromises from "node:fs/promises";
@@ -34,6 +33,7 @@ import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engin
 import * as native from "../../../src/engine/native/native.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { queryContentStore } from "../../support/engine/content-store-query.js";
 import { GIT_OPEN_AGAIN_MS, nativeGitAccess } from "../../../src/engine/native/git-access.js";
 
 
@@ -206,10 +206,10 @@ async function writeAuditTree(root: string, git: boolean): Promise<void> {
   if (!git) return;
   const nested = join(root, "api", "nested");
   execFileSync("git", ["init", "--quiet"], { cwd: nested });
-  execFileSync("git", ["add", "."], { cwd: nested });
+  execFileSync("git", ["add", "--", ".gitignore", "d.py"], { cwd: nested });
   execFileSync("git", gitCommit, { cwd: nested });
   execFileSync("git", ["init", "--quiet"], { cwd: root });
-  execFileSync("git", ["add", "."], { cwd: root });
+  execFileSync("git", ["add", "--", ".gitignore", ".rerailignore", "api/a.py", "api/tmp/b.py", "api/nested", "api/skip/f.py", "api/build/g.py", "tmp/ws/api/a.py"], { cwd: root });
   execFileSync("git", gitCommit, { cwd: root });
 }
 
@@ -292,13 +292,10 @@ function listingInOrder(directory: Dir, names: readonly string[]): Dir {
   return Object.defineProperty(directory, Symbol.asyncIterator, { value: entries });
 }
 
-/** Clean directories the shared content store records as complete. */
+/** Clean directories the shared content store records as complete, read in another process (`queryContentStore`). */
 function completedDirectories(): number {
-  const store = new Database(process.env.RERAIL_CONTENT_STORE_PATH!, { readonly: true });
-  try {
-    const count: unknown = store.prepare("SELECT count(*) FROM completed_directory_reuse").pluck().get();
-    return typeof count === "number" ? count : Number.NaN;
-  } finally { store.close(); }
+  const [row] = queryContentStore(process.env.RERAIL_CONTENT_STORE_PATH!, "SELECT count(*) AS n FROM completed_directory_reuse");
+  return typeof row?.n === "number" ? row.n : Number.NaN;
 }
 
 /** Another process that takes the content store's write lock (`lock`) and gives it back (`release`) on request. */
@@ -899,7 +896,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       await writeFile(join(root, "api", "binary.py"), "NEEDLE\0\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py", "api/binary.py"], { cwd: root });
       execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
       await writeFile(join(root, "api", "ignored.py"), "NEEDLE\n");
       await enforcer.openWorkspace("git-repository-audit");
@@ -982,7 +979,7 @@ describe("mechanical code rule regressions", () => {
         await mkdir(join(root, "web"));
         for (const [path, content] of Object.entries(files)) await writeFile(join(root, path), content);
         execFileSync("git", ["init", "--quiet"], { cwd: root });
-        execFileSync("git", ["add", "."], { cwd: root });
+        execFileSync("git", ["add", "--", "capabilities.json", ...Object.keys(files)], { cwd: root });
         execFileSync("git", gitCommit, { cwd: root });
         await enforcer.openWorkspace("source-gap-contract");
         const [auditId] = await enforcer.audit("source-gap-contract", { scope: "repository", mode: "log" });
@@ -1058,7 +1055,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       await enforcer.openWorkspace("failing-index");
       for (let scan = 0; scan < 2; scan += 1) {
@@ -1112,7 +1109,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "safe()\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       await enforcer.openWorkspace("released-source");
       const [auditId] = await enforcer.audit("released-source", { scope: "repository", mode: "log" });
@@ -1158,7 +1155,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       await enforcer.openWorkspace("stopped-index");
       const [auditId] = await enforcer.audit("stopped-index", { scope: "repository", mode: "log" });
@@ -1480,7 +1477,7 @@ describe("mechanical code rule regressions", () => {
     const source = join(await realpath(root), "api", "once.py");
     await writeFile(source, "NEEDLE\n");
     execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["add", "--", "capabilities.json", "api/once.py"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
     const reads = vi.spyOn(fsPromises, "readFile");
     try {
@@ -1627,7 +1624,7 @@ describe("mechanical code rule regressions", () => {
         await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
         if (root === checkout) {
           execFileSync("git", ["init", "--quiet"], { cwd: root });
-          execFileSync("git", ["add", "."], { cwd: root });
+          execFileSync("git", ["add", "--", "api/a.py"], { cwd: root });
           execFileSync("git", gitCommit, { cwd: root });
         }
         // Untracked and not gitignored; `tmp/` is also outside Rerail's Git status.
@@ -1730,7 +1727,7 @@ describe("mechanical code rule regressions", () => {
     try {
       await writeFile(join(root, "api", "a.py"), "safe()\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", "capabilities.json", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       restore = await unreadableDirectory(join(root, "api", "new"));
       await enforcer.openWorkspace("unreadable-untracked");
@@ -1759,7 +1756,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       await enforcer.openWorkspace("busy-store-completion");
       const before = completedDirectories();
@@ -1786,7 +1783,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "safe()\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       // The store is a cache: an attach that waits out its write deadline runs without reuse instead of failing.
       await holder.request("lock");
@@ -1820,7 +1817,7 @@ describe("mechanical code rule regressions", () => {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
       execFileSync("git", ["init", "--quiet"], { cwd: root });
-      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["add", "--", ".gitignore", "api/a.py"], { cwd: root });
       execFileSync("git", gitCommit, { cwd: root });
       await enforcer.openWorkspace("failed-completion");
       const before = completedDirectories();
@@ -1925,7 +1922,7 @@ describe("mechanical code rule regressions", () => {
     const { root, enforcer } = await fixture({ audits: recorder, timingLog: line => lines.push(line) });
     await writeFile(join(root, "api", "once.py"), "NEEDLE\n");
     execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["add", "--", "capabilities.json", "api/once.py"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
     try {
       await enforcer.openWorkspace("timed-audit");
@@ -1945,7 +1942,7 @@ describe("mechanical code rule regressions", () => {
     const { root, enforcer } = await fixture({ audits: recorder });
     await writeFile(join(root, "api", "once.py"), "NEEDLE\n");
     execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["add", "--", "capabilities.json", "api/once.py"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
