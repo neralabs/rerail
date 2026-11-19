@@ -580,10 +580,14 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
 - **Secret-like files.** A tool result for a call naming a secret-like path is stored without its output
   (`callNamesSecretPath` in `persistEvent`, `src/runtime/runtime.ts`). The judgment goes to the session ledger
   (`secret-call`, `secret-result`), so a result arriving after a daemon restart or host reconnect is withheld too.
-  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size. A finding in a
-  secret-like file that a session still owes its agent when its memory is freed, or when the daemon stops or restarts,
-  is kept in the ledger without its message or fix, as its steer withholds them. Each steer and finding it owes then
-  keeps the SHA-256 of each file it names, as a preimage does, so a file changed meanwhile drops it.
+  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size. A file is secret-like
+  there by the path the tool named or by its real path in its checkout, so a link to a folder on the way
+  (`conf -> .aws`) or a Windows short name of a folder or a file (`AWS~1`, `WP-CON~1.PHP`) does not hide it. As with
+  text that holds a secret, the session keeps in memory the text of a file secret-like only by its real path, so
+  `rewind` can still put it back. A finding in a secret-like file that a session still owes its agent when its memory
+  is freed, or when the daemon stops or restarts, is kept in the ledger without its message or fix, as its steer
+  withholds them. Each steer and finding it owes then keeps the SHA-256 of each file it names, as a preimage does, so
+  a file changed meanwhile drops it.
 - **Erasure.** Database writers use `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM`, and checkpoints
   again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
