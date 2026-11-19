@@ -255,6 +255,36 @@ describe("The runtime's audit control polling", () => {
       await runtime.dispose();
     }
   }, 20_000);
+
+  // Once the row is back no write puts it back again, so a claim that failed there would stay away until the session
+  // opened again, and every scan asked for in it would fail.
+  it("writes at the session's next event the claim a failed write left owed, and a scan asked for there completes", async () => {
+    const { runtime, databasePath } = await idleRuntime(["gone"]);
+    const other = new SqliteAuditControlStore(databasePath);
+    try {
+      const claimed = ownerRow(databasePath, "gone");
+      removeSessionRow(databasePath, "gone");
+      const allowClaimWrites = refuseClaimWrites(databasePath);
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      await runtime.ingest({ kind: "user-prompt", eventId: "row-put-back", sessionId: "gone", text: "go on" });
+      allowClaimWrites();
+      expect(ownerRow(databasePath, "gone")).toBeUndefined();
+      await runtime.ingest({ kind: "user-prompt", eventId: "claim-owed", sessionId: "gone", text: "go on" });
+      expect(ownerRow(databasePath, "gone")).toEqual(claimed);
+      // Owed no more: the session's events write no claim, as before the row went.
+      const claimWrites = vi.spyOn(SqliteAuditControlStore.prototype, "claimAgain");
+      await runtime.ingest({ kind: "user-prompt", eventId: "claimed", sessionId: "gone", text: "go on" });
+      expect(claimWrites).not.toHaveBeenCalled();
+      const queued = other.requestAudit("gone", { scope: "repository" });
+      expect({ status: queued.status, error: queued.error }).toEqual({ status: "queued", error: null });
+      await vi.waitFor(() => {
+        expect(other.listAuditRequests("gone").find(request => request.id === queued.id)?.status).not.toBe("queued");
+      }, { timeout: 3_000, interval: 50 });
+    } finally {
+      other.close();
+      await runtime.dispose();
+    }
+  }, 20_000);
 });
 
 describe.runIf(process.platform === "win32")("A session in a Windows folder outside Git spelt otherwise than the disk stores it", () => {
