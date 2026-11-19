@@ -1479,9 +1479,24 @@ fn setting_slow<T: Clone + Send + Sync + 'static>(at: &'static std::panic::Locat
 
 /// The run's own value of type `T` (a measurement's sums, a log's state; decision 0442), made the first time the
 /// run asks for it. Outside a run, a value of its own that nothing keeps.
+#[inline]
 pub fn local<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
+    // This thread's copy of the run's locals (`SEEN`) first: no lock.
+    let held = SEEN.with(|seen| {
+        let seen = seen.borrow();
+        if seen.is_current() { seen.locals.get(&std::any::TypeId::of::<T>()).cloned() } else { None }
+    });
+    match held {
+        Some(v) => v.downcast::<T>().expect("a local's type is its key"),
+        None => local_slow::<T>(),
+    }
+}
+
+#[cold]
+fn local_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
     let Some(run) = run_own() else { return std::sync::Arc::new(T::default()) };
     let v = std::sync::Arc::clone(run.values().locals.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
+    SEEN.with(|seen| seen.borrow_mut().of(&run).locals.insert(std::any::TypeId::of::<T>(), v.clone()));
     v.downcast::<T>().expect("a local's type is its key")
 }
 
@@ -1506,10 +1521,7 @@ pub fn with_local<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R
 
 #[cold]
 fn with_local_slow<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R) -> R {
-    let Some(run) = run_own() else { return f(&T::default()) };
-    let v = local::<T>();
-    SEEN.with(|seen| seen.borrow_mut().of(&run).locals.insert(std::any::TypeId::of::<T>(), v.clone()));
-    f(&v)
+    f(&local::<T>())
 }
 
 /// The run's own value of type `T`, if the run under way made it (a report reads what the run wrote, and makes none).

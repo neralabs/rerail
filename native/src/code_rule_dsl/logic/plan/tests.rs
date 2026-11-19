@@ -3249,9 +3249,11 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
          hit(n) :- kind(n, \"expression_statement\"), child(p, n, _), kind(p, \"module\").\n",
     )
     .unwrap();
-    let before = prepared::TAKEN.load(std::sync::atomic::Ordering::Relaxed);
+    // The test's run holds the policy run (it joins it), so the plans counted taken are this run's alone.
+    let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
-    let taken = prepared::TAKEN.load(std::sync::atomic::Ordering::Relaxed) - before;
+    let taken = prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed);
+    drop(run);
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&policy);
     let mut hits: Vec<(String, i64)> = report["diagnostics"]

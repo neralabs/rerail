@@ -937,19 +937,14 @@ thread_local! {
     static NO_SHAPES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Reads of an input delta (`r__plus`, `r__minus`) priced with no size: each is priced at the default's 1,000 rows. A
-/// delta is bound with the run and measured, so none should be (the guard in `a_session_maintains_a_recursive_cross_file_stratum`).
-static UNSIZED_DELTAS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Relations whose statistics their layouts answered (`Model::resolve`, decision 0361 step 4): none was made.
-static SHAPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub fn shaped_statistics() -> u64 {
-    SHAPED.load(std::sync::atomic::Ordering::Relaxed)
+    run_counts().shaped.load(std::sync::atomic::Ordering::Relaxed)
 }
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub fn unsized_deltas() -> u64 {
-    UNSIZED_DELTAS.load(std::sync::atomic::Ordering::Relaxed)
+    run_counts().unsized_deltas.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Model {
@@ -978,7 +973,7 @@ impl Model {
                     self.ndv.insert((rel.to_owned(), c), n);
                     self.stats.fan.insert((rel.to_owned(), c), (rows / n).max(1.0));
                 }
-                SHAPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                run_counts().shaped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 super::profile::decision("statistics answered by a layout (decision 0361)", || rel.to_owned());
                 continue;
             }
@@ -1130,16 +1125,7 @@ pub fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
 
-/// The kept-plan outcomes of `plan_rule_reused` in this process, by `CacheOutcome`: `RERAIL_PLAN_CACHE_COUNTS`
-/// prints them at the end of each corpus run (`KeepPlans`).
-static PLAN_CACHE: [std::sync::atomic::AtomicU64; 12] = [const { std::sync::atomic::AtomicU64::new(0) }; 12];
 const PLAN_CACHE_NAMES: [&str; 12] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "kept: ran below a search", "searched: ran over its price", "started: its line's order", "started: its source rule's order"];
-/// Why a kept plan was not taken as it is (decision 0122), under `RERAIL_PLAN_CACHE_COUNTS`: no price kept, never
-/// ran, ran over a search's work, or its inputs grew past what that allows.
-static BUDGET_MISS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
-/// Decision 0123's statistics, under `RERAIL_PLAN_CACHE_COUNTS`: batches made, relations they made, relations made
-/// late (one line at a time, `Model::late`).
-static STATISTICS: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
 /// `RERAIL_PLAN_FRESH`: every plan searched, none reused (a measurement: what kept orders cost).
 fn plan_fresh() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PLAN_FRESH").is_some())
@@ -1151,19 +1137,13 @@ thread_local! {
 fn plan_site(site: &'static str) {
     PLAN_SITE.with(|c| c.set(site));
 }
-/// Orders made, by how (`RERAIL_PLAN_CACHE_COUNTS`): searched, and taken greedily under a search's cost (decision 0123
-/// §7).
-static SEARCHES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
-/// Decision 0123 §9's probes in this process: left unplanned when their stratum opened, and planned later (when their
-/// delta came, or when the device took their stratum). Never reset, so a test reads its own run's by difference.
-static LAZY: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub fn lazy_probes_counted() -> (u64, u64) {
-    (LAZY[0].load(std::sync::atomic::Ordering::Relaxed), LAZY[1].load(std::sync::atomic::Ordering::Relaxed))
+    (run_counts().lazy[0].load(std::sync::atomic::Ordering::Relaxed), run_counts().lazy[1].load(std::sync::atomic::Ordering::Relaxed))
 }
 
 fn plan_cache(outcome: usize) {
-    PLAN_CACHE[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    run_counts().plan_cache[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// A run's quiet strata (decision 0101 §1), counted across its strands (`Run::strand`) and reported in its
@@ -1572,8 +1552,6 @@ impl FromIterator<(PlanKey, Arc<Entry>)> for Plans {
     }
 }
 
-/// Publications of new plans and of new orders (decision 0301), and the entries they carried: for the profile.
-static PUBLISHED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 
 /// A run's plans: those it made or took (`kept`), and those the store kept from earlier processes (`stored`,
 /// decision 0116 step 2), taken into `kept` when a rule is first planned. Decision 0301: each part shared as it is
@@ -1696,8 +1674,8 @@ impl RunPlans {
             return;
         }
         let entries: Vec<(PlanKey, Arc<Entry>)> = plans.into_iter().map(|(k, v)| (k, Entry::of(v))).collect();
-        PUBLISHED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        PUBLISHED[1].fetch_add(entries.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        run_counts().published[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().published[1].fetch_add(entries.len() as u64, std::sync::atomic::Ordering::Relaxed);
         self.kept.rcu(|m| {
             let mut m = Plans::clone(m);
             m.extend(entries.iter().map(|(k, e)| (*k, Arc::clone(e))));
@@ -2072,20 +2050,20 @@ impl KeepPlans {
 impl Drop for KeepPlans {
     fn drop(&mut self) {
         if std::env::var_os("RERAIL_PLAN_CACHE_COUNTS").is_some() {
-            let counts: Vec<String> = PLAN_CACHE.iter().zip(PLAN_CACHE_NAMES).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
-            let miss: Vec<String> = BUDGET_MISS.iter().zip(["no price", "never ran", "ran over a search", "inputs grew"]).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
-            let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
-            let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
+            let counts: Vec<String> = run_counts().plan_cache.iter().zip(PLAN_CACHE_NAMES).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
+            let miss: Vec<String> = run_counts().budget_miss.iter().zip(["no price", "never ran", "ran over a search", "inputs grew"]).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
+            let st: Vec<u64> = run_counts().statistics.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
+            let searches: Vec<u64> = run_counts().searches.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let lazy = lazy_probes_counted();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared, {} searched once heavy ({} versions' plans read, {} made); mispredicted: {} blown up, {} over-estimated; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::SEARCHED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[1].swap(0, std::sync::atomic::Ordering::Relaxed), joins::MISSES[0].swap(0, std::sync::atomic::Ordering::Relaxed), joins::MISSES[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared, {} searched once heavy ({} versions' plans read, {} made); mispredicted: {} blown up, {} over-estimated; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], run_counts().shaped.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().taken.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().searched.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().versions[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::run_counts().versions[1].swap(0, std::sync::atomic::Ordering::Relaxed), joins::MISSES[0].swap(0, std::sync::atomic::Ordering::Relaxed), joins::MISSES[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
         let plans = PLANS.with(|p| p.borrow_mut().take());
         keeps::observing(false);
-        let published = PUBLISHED.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
-        let folds = keeps::FOLDS.swap(0, std::sync::atomic::Ordering::Relaxed);
-        let deferred = super::native::setfix::DEFERRED_WALKS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
+        let published = run_counts().published.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
+        let folds = keeps::run_counts().folds.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let deferred = super::native::setfix::run_counts().deferred_walks.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
         super::profile::decision("a walk's new texts interned at once (decision 0315)", || format!("{} walks in one piece interned {} new texts, one write of the arena each", deferred[0], deferred[1]));
         super::profile::decision("kept plans shared by RCU (decision 0301)", || format!("{} publications of {} new plans or orders; observed sums folded {folds} times", published[0], published[1]));
         if let (Some(g), Some(plans)) = (self.0, plans) {
@@ -2195,7 +2173,7 @@ impl Model {
             // `docof` (10,728 -> 25.8 M -> 10,728 rows); `impmod`, `ruff_qual` and `frag_str` the same.
             let card = self.stats.card.get(rel).copied();
             if card.is_none() && (rel.ends_with("__plus") || rel.ends_with("__minus")) && !self.stats.lazy.0.contains_key(rel) {
-                UNSIZED_DELTAS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                run_counts().unsized_deltas.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             card.unwrap_or(1000.0).max(1.0)
         }
@@ -2527,8 +2505,8 @@ impl Model {
         if wanted.is_empty() {
             return Ok(());
         }
-        STATISTICS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        STATISTICS[1].fetch_add(wanted.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        run_counts().statistics[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().statistics[1].fetch_add(wanted.len() as u64, std::sync::atomic::Ordering::Relaxed);
         let _span = super::profile::span(|| "statistics batch".into());
         super::profile::decision("statistics (decision 0123)", || format!("one batch of {} relations: {}", wanted.len(), wanted.join(", ")));
         self.resolve(f, wanted)
@@ -2544,7 +2522,7 @@ impl Model {
         if rels.is_empty() || !priced && !self.needs_statistics(b, first) {
             return Ok(());
         }
-        STATISTICS[2].fetch_add(rels.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        run_counts().statistics[2].fetch_add(rels.len() as u64, std::sync::atomic::Ordering::Relaxed);
         super::profile::decision("statistics (decision 0123)", || format!("made late, for one line: {}", rels.join(", ")));
         self.resolve(f, rels)
     }
@@ -2614,7 +2592,7 @@ impl Model {
                 // its delta.
                 _ => 3,
             };
-            BUDGET_MISS[why].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            run_counts().budget_miss[why].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if why == 1 && super::profile::on() {
                 let again = planned_now(&key);
                 super::profile::decision("planning budget missed: never ran (decision 0122)", || format!("planned by {}, {}", PLAN_SITE.with(std::cell::Cell::get), if again { "planned before in this run" } else { "kept from an earlier run" }));
@@ -3277,7 +3255,7 @@ impl Model {
         if !fresh {
             return None;
         }
-        prepared::SEARCHED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        prepared::run_counts().searched.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         super::profile::decision("prepared plans (decision 0361 step 5)", || {
             let n = self.stats.nodes.max(1.0);
             let met: Vec<String> = p.assumed.iter().map(|(r, per)| format!("{r} assumed {:.0} rows, holds {:.0}", per * n, self.card(r))).collect();
@@ -4281,7 +4259,7 @@ impl Model {
             .flatten()
             .filter(|g| g.0 <= search_rows(b, first));
         if started.is_none() {
-            SEARCHES[usize::from(cheap_greedy.is_some())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            run_counts().searches[usize::from(cheap_greedy.is_some())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         if let Some(g) = started {
             best_of.insert(full_mask, g);
@@ -5640,11 +5618,6 @@ pub trait Asking {
     fn arrived(&mut self, wait: std::time::Duration) -> Result<Vec<(u64, Vec<(String, Vec<Vec<i64>>)>)>>;
 }
 
-/// Answers a paused component's requests and adds the answers to its produced relations (decision 0065 §2a).
-/// Rows for a produced relation outside it are kept for the stratum that holds that relation.
-/// Time spent in answer hooks, and their calls (`RERAIL_STRATA_COUNTS` prints them): a measurement.
-pub static ANSWER_WAIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static ANSWER_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn answer_pending(db: &Connection, direct: bool, answer: &mut Option<Answer<'_>>, answered: &mut BTreeMap<String, Vec<Vec<i64>>>, log: Option<&mut BTreeMap<String, BTreeSet<Vec<i64>>>>, name: &str, scc: &BTreeSet<String>) -> Result<()> {
     if !direct {
@@ -5657,8 +5630,8 @@ fn answer_pending(db: &Connection, direct: bool, answer: &mut Option<Answer<'_>>
         let _span = super::profile::span(|| format!("answer {rel} ({} rows)", rows.len()));
         let t0 = std::time::Instant::now();
         given.extend(answer(rel, rows)?);
-        ANSWER_WAIT.fetch_add(t0.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-        ANSWER_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().answer_wait.fetch_add(t0.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        run_counts().answer_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     add_answers(db, answered, log, name, scc, given)
 }
@@ -5724,12 +5697,10 @@ pub(crate) fn input_view_shape(v: &super::program_image::Version, rule: super::p
     (key.is_some_and(|k| at.contains(&k)) || at.len() == args.len()).then(|| (base.to_owned(), at))
 }
 
-/// The strata the process held as views of a bound input's columns (`Run::input_view`, Q37), not derived.
-static INPUT_VIEWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// How many strata the process held as views of an input's columns, for tests and profiles.
 pub fn input_views() -> u64 {
-    INPUT_VIEWS.load(std::sync::atomic::Ordering::Relaxed)
+    run_counts().input_views.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The relations of `prog` whose one rule's body is a single atom of distinct variables and wildcards.
@@ -6918,11 +6889,9 @@ fn observed_fans(stats: &Stats, rule: u64, order: Order<'_, '_>) -> Vec<Option<f
 /// A view of an input's columns (`input_view_shape`, Q37) has its input's, read through its columns (`Some`).
 type ModeInputs = BTreeMap<String, ([Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 3], Option<Vec<usize>>)>;
 
-/// Strata the evaluator's maintain mode maintained (decision 0364 stage 3), over the process.
-static MODE_STRATA: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub fn mode_strata() -> u64 {
-    MODE_STRATA.load(std::sync::atomic::Ordering::Relaxed)
+    run_counts().mode_strata.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// A rule body's order with its head's variables bound first (a recheck, decision 0364 stage 3): each step the
@@ -8515,7 +8484,7 @@ impl<'a> Run<'a, '_> {
         if scc.iter().all(|r| super::native::component::held(self.db, r).and_then(|x| x.version_delta()).is_some_and(|(a, g)| a.is_empty() && g.is_empty())) {
             self.quiet.strata.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
-        MODE_STRATA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().mode_strata.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         super::profile::stratum(&stratum_key(scc), "native set engine", || "the maintain mode (decision 0364)".to_owned());
         Ok(Some(true))
     }
@@ -8762,7 +8731,7 @@ impl<'a> Run<'a, '_> {
                 }
             };
             live_stats(&mut self.model, rel, live);
-            INPUT_VIEWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            run_counts().input_views.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             super::profile::stratum(&stratum_key(scc), "native set engine", || format!("a view of {base}'s columns {cols:?}: {form}, no component opened"));
             self.native_rels.extend(scc.iter().cloned());
             return Ok(Native::Ran);
@@ -9048,7 +9017,7 @@ impl<'a> Run<'a, '_> {
                     probes.push((r, ai, Vec::new()));
                     sql_probe.push(false);
                     unplanned.push(true);
-                    LAZY[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    run_counts().lazy[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     continue;
                 }
                 unplanned.resize(probes.len() + 1, false);
@@ -9320,7 +9289,7 @@ impl<'a> Run<'a, '_> {
             .whole_join_spec(&b, &order, Some(at), ri, scc, native_rels)
             .ok_or_else(|| Error::Plan(format!("a probe of {} planned when its delta came has no native step", b.head_text())))?;
         let x = x.map(|x| delta_sources(x, Order::new(&b, &order), at, scc));
-        LAZY[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().lazy[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok((order, spec, x))
     }
 
@@ -9438,7 +9407,7 @@ impl<'a> Run<'a, '_> {
                 let asked = super::native::component::pending(&self.db, &name)?;
                 let asking = self.asking.as_deref_mut().expect("checked");
                 let tickets = asked.iter().map(|(rel, rows)| asking.post(rel, rows)).collect::<Result<Vec<u64>>>()?;
-                ANSWER_CALLS.fetch_add(tickets.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                run_counts().answer_calls.fetch_add(tickets.len() as u64, std::sync::atomic::Ordering::Relaxed);
                 return Ok(Native::Asking(suspended!(), tickets));
             }
             if f.last() == Some(&"2") {
@@ -13515,10 +13484,10 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             eprintln!(
                 "RERAIL_STRATA_COUNTS {:?} answers {} in {:.3} s; suspended on requests {} times, {:.3} s in all",
                 b.counts,
-                ANSWER_CALLS.load(r),
-                ANSWER_WAIT.load(r) as f64 * 1e-9,
-                ASK_SUSPENSIONS.load(r),
-                ASK_SUSPENDED.load(r) as f64 * 1e-9
+                run_counts().answer_calls.load(r),
+                run_counts().answer_wait.load(r) as f64 * 1e-9,
+                run_counts().ask_suspensions.load(r),
+                run_counts().ask_suspended.load(r) as f64 * 1e-9
             );
         }
     }
@@ -13667,9 +13636,6 @@ struct Asked {
     since: std::time::Instant,
 }
 
-/// How often strata suspended on requests, and for how long in all (`RERAIL_STRATA_COUNTS`, the profile).
-static ASK_SUSPENSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static ASK_SUSPENDED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Takes the answers that have come (waiting up to `wait` for one when none has), and resumes each stratum whose
 /// requests are all answered: it runs on, finishes, waits on its wave, or asks again.
@@ -13691,7 +13657,7 @@ fn take_answers<'a>(
     let t0 = std::time::Instant::now();
     let came = asking.arrived(wait)?;
     if !wait.is_zero() {
-        ANSWER_WAIT.fetch_add(t0.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        run_counts().answer_wait.fetch_add(t0.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
     }
     arrived.extend(came);
     let mut k = 0;
@@ -13701,8 +13667,8 @@ fn take_answers<'a>(
             continue;
         }
         let a = asked.remove(k);
-        ASK_SUSPENSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        ASK_SUSPENDED.fetch_add(a.since.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        run_counts().ask_suspensions.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().ask_suspended.fetch_add(a.since.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
         let given: Vec<(String, Vec<Vec<i64>>)> = a.tickets.iter().flat_map(|t| arrived.remove(t).unwrap_or_default()).collect();
         let _stratum = super::profile::span(|| format!("stratum {} (after its answers)", if a.key.len() > 80 { format!("{}…", &a.key[..80]) } else { a.key.clone() }));
         add_answers(&run.db, &mut run.answered, None, &a.d.name, &a.d.scc, given)?;
@@ -14986,4 +14952,49 @@ impl Walker<'_, '_> {
         self.seed.set(x);
         x
     }
+}
+
+/// The run's counts of this module's work (decision 0442: a run's own, `run::local`).
+#[derive(Default)]
+pub struct PlanCounts {
+    /// Reads of an input delta (`r__plus`, `r__minus`) priced with no size: each is priced at the default's 1,000 rows. A
+    /// delta is bound with the run and measured, so none should be (the guard in `a_session_maintains_a_recursive_cross_file_stratum`).
+    pub unsized_deltas: std::sync::atomic::AtomicU64,
+    /// Relations whose statistics their layouts answered (`Model::resolve`, decision 0361 step 4): none was made.
+    pub shaped: std::sync::atomic::AtomicU64,
+    /// The kept-plan outcomes of `plan_rule_reused` in this process, by `CacheOutcome`: `RERAIL_PLAN_CACHE_COUNTS`
+    /// prints them at the end of each corpus run (`KeepPlans`).
+    pub plan_cache: [std::sync::atomic::AtomicU64; 12],
+    /// Why a kept plan was not taken as it is (decision 0122), under `RERAIL_PLAN_CACHE_COUNTS`: no price kept, never
+    /// ran, ran over a search's work, or its inputs grew past what that allows.
+    pub budget_miss: [std::sync::atomic::AtomicU64; 4],
+    /// Decision 0123's statistics, under `RERAIL_PLAN_CACHE_COUNTS`: batches made, relations they made, relations made
+    /// late (one line at a time, `Model::late`).
+    pub statistics: [std::sync::atomic::AtomicU64; 3],
+    /// Orders made, by how (`RERAIL_PLAN_CACHE_COUNTS`): searched, and taken greedily under a search's cost (decision 0123
+    /// §7).
+    pub searches: [std::sync::atomic::AtomicU64; 2],
+    /// Decision 0123 §9's probes in this process: left unplanned when their stratum opened, and planned later (when their
+    /// delta came, or when the device took their stratum). Never reset, so a test reads its own run's by difference.
+    pub lazy: [std::sync::atomic::AtomicU64; 2],
+    /// Publications of new plans and of new orders (decision 0301), and the entries they carried: for the profile.
+    pub published: [std::sync::atomic::AtomicU64; 2],
+    /// Answers a paused component's requests and adds the answers to its produced relations (decision 0065 §2a).
+    /// Rows for a produced relation outside it are kept for the stratum that holds that relation.
+    /// Time spent in answer hooks, and their calls (`RERAIL_STRATA_COUNTS` prints them): a measurement.
+    pub answer_wait: std::sync::atomic::AtomicU64,
+    pub answer_calls: std::sync::atomic::AtomicU64,
+    /// The strata the process held as views of a bound input's columns (`Run::input_view`, Q37), not derived.
+    pub input_views: std::sync::atomic::AtomicU64,
+    /// Strata the evaluator's maintain mode maintained (decision 0364 stage 3), over the process.
+    pub mode_strata: std::sync::atomic::AtomicU64,
+    /// How often strata suspended on requests, and for how long in all (`RERAIL_STRATA_COUNTS`, the profile).
+    pub ask_suspensions: std::sync::atomic::AtomicU64,
+    pub ask_suspended: std::sync::atomic::AtomicU64,
+}
+
+/// The run's `PlanCounts`.
+#[inline]
+pub fn run_counts() -> std::sync::Arc<PlanCounts> {
+    crate::code_rule_dsl::logic::run::local::<PlanCounts>()
 }

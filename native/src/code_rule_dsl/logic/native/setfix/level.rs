@@ -185,7 +185,7 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
         return Ok(0);
     }
     let n = launches.len();
-    SENT.fetch_add(n as u64, Ordering::Relaxed);
+    run_counts().sent.fetch_add(n as u64, Ordering::Relaxed);
     let ex = crate::code_rule_dsl::logic::lanes::executor();
     let running = ex.begin_as("level joins", Batch(launches)).map_err(err)?;
     // The values, while the lanes commit and schedule: then the gate opens, and the device starts (decision 0100
@@ -241,14 +241,25 @@ pub fn clear() {
 
 /// What the batches did so far: launches sent, seeds run from their pairs.
 pub fn counts() -> (u64, u64) {
-    (SENT.load(Ordering::Relaxed), USED.load(Ordering::Relaxed))
+    (run_counts().sent.load(Ordering::Relaxed), run_counts().used.load(Ordering::Relaxed))
 }
 
-pub(super) static SENT: AtomicU64 = AtomicU64::new(0);
-pub(super) static USED: AtomicU64 = AtomicU64::new(0);
 
 /// Checks a qualifying spec's shape the first two steps need (for a test).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn qualifying(j: &super::JoinRule) -> bool {
     qualifies(j).is_some()
+}
+
+/// The run's counts of this module's work (decision 0442: a run's own, `run::local`).
+#[derive(Default)]
+pub struct LevelCounts {
+    pub sent: AtomicU64,
+    pub used: AtomicU64,
+}
+
+/// The run's `LevelCounts`.
+#[inline]
+pub fn run_counts() -> std::sync::Arc<LevelCounts> {
+    crate::code_rule_dsl::logic::run::local::<LevelCounts>()
 }

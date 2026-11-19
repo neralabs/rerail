@@ -113,9 +113,6 @@ pub struct Interner { pub atoms: Arc<crate::content_store::atoms::Atoms>, buf: S
 #[derive(Default)]
 struct Deferred { texts: Vec<String>, at: HashMap<String, u32> }
 
-/// Walks in one piece that deferred their new texts and interned them in one batch (`whole`), and those texts: for
-/// the profile.
-pub static DEFERRED_WALKS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 
 /// The first value of a text a morsel deferred (`Deferred`): past every atom (`Sym` is 32 bits) and below every node
 /// (whose document is in the high 32 bits, from 0x6000… on).
@@ -1499,13 +1496,10 @@ impl Rows0 {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CutReport { pub probe: usize, pub work: u64, pub done: u64, pub left: u64, pub led: bool, pub whole: bool }
 
-/// Cuts made, cut waves gone on reading only the rows left or all (`restricted`), and trials run (decision 0207),
-/// in this process.
-static CUTS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
 
 /// Decision 0206's counts: cuts, then waves gone on over the rows left only, and over all rows; then trials run.
 pub fn cut_counts() -> [u64; 4] {
-    CUTS.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+    run_counts().cuts.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// The limit a join's walk runs under (`run_join_in_each`): set by `run` for the probe it is about to run. `only`:
@@ -2425,9 +2419,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             // has left after a cut.
             let budget = p.budget.get();
             let only = if pi == start { resume_left.take().and_then(|(named, l)| match restricted(j, l.of, named) {
-                Some(i) => { CUTS[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed); Some((i, l)) }
+                Some(i) => { run_counts().cuts[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed); Some((i, l)) }
                 // At a step no longer known: the run reads all its rows.
-                None => { CUTS[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed); None }
+                None => { run_counts().cuts[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed); None }
             }) } else { None };
             let mut limited = (budget.is_some() || only.is_some()).then(|| Limited { limit: Some(Limit { budget: budget.unwrap_or(u64::MAX), only }), spent: None });
             let ran = if p.delta == SEED { run_seed(j, p.head, store, &mut syms, &mut fresh, limited.as_mut()) } else { run_join_limited(j, p.head, store, &mut syms, &mut fresh, limited.as_mut()) };
@@ -2447,7 +2441,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 p.budget.set(Some(b.saturating_sub(spent.work)));
                 if let Some(left) = spent.left {
                     p.budget.set(None);
-                    CUTS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    run_counts().cuts[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     cut_at = Some((pi, left, CutReport { probe: pi, work: spent.work, done: spent.done, left: 0, led: spent.led, whole }));
                 }
             }
@@ -3064,7 +3058,7 @@ pub fn trial_over(conn: impl Scoped, name: &str, probe: usize, spec: Option<&Joi
     let made_rows = got?;
     syms.check()?;
     drop(store);
-    CUTS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    run_counts().cuts[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let run = spent.map(|s| TrialRun { work: s.work, rows: n, done: if s.left.is_some() { s.done.min(n) } else { n }, made: made_rows, cut: s.left.is_some(), steps });
     // O169: the first trial to finish over the rows a cut left keeps its rows, to be the wave's (`keep_trial_rows`).
     if from_cut && run.as_ref().is_some_and(|r| !r.cut) && comp.trial_rows.as_ref().is_none_or(|t| t.0 != probe) {
@@ -3114,7 +3108,7 @@ pub fn trial_own(conn: impl Scoped, name: &str, spec: &JoinSpec, size: &dyn Fn(u
     let steps: Vec<(u64, u64)> = j.counts.iter().map(|[a, b]| (a.get(), b.get())).collect();
     let made = got?;
     syms.check()?;
-    CUTS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    run_counts().cuts[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Ok(spent.map(|s| (TrialRun { work: s.work, rows: n, done: if s.left.is_some() { s.done.min(n) } else { n }, made, cut: s.left.is_some(), steps }, all, picked)))
 }
 
@@ -3518,11 +3512,8 @@ fn loaded(i: usize, cpu: f64, rows: u64) {
     });
 }
 
-/// Derived inputs' orders opened (an index asked for at a join's compile) and made (first probed), decision 0186.
-static ORDERS_OPENED: OrderCount = OrderCount::new(0);
-static ORDERS_MADE: OrderCount = OrderCount::new(0);
 pub fn orders_counted() -> (u64, u64) {
-    (ORDERS_OPENED.load(AtomicOrdering::Relaxed), ORDERS_MADE.load(AtomicOrdering::Relaxed))
+    (run_counts().orders_opened.load(AtomicOrdering::Relaxed), run_counts().orders_made.load(AtomicOrdering::Relaxed))
 }
 
 /// `set_fixpoint_loads()`: "base_cpu_ms base_rows derived_cpu_ms derived_rows". Base-fact relations and their
@@ -3785,7 +3776,7 @@ impl Csr {
                 charge(Unit::IndexEntry, rel.len() as u64);
                 let mut order = if printed { Index::printed(self.cols.clone()) } else { Index::new(self.cols.clone()) };
                 order.add_run_in(&rel.rows, rel.k, 0, rel.n, 0, &rel.sorted.within(&self.cols, rel.k, 0, rel.n as u32));
-                ORDERS_MADE.fetch_add(1, AtomicOrdering::Relaxed);
+                run_counts().orders_made.fetch_add(1, AtomicOrdering::Relaxed);
                 loaded(1, thread_cpu() - c0, 0);
                 if env_set!("RERAIL_SPIKE_INDEX") {
                     eprintln!("O125 order made took {:.3} ms rows={} cols={:?} of {} viewed={}", (thread_cpu() - c0) * 1e3, rel.len(), self.cols, rel.name.get().map_or("?", String::as_str), rel.viewed);
@@ -5446,7 +5437,7 @@ impl InRel {
                     // row and a probe reads prints, not rows (`runs::print_span`).
                     // It is made on its first probe (`Csr::runs`), unless `RERAIL_LAZY_ORDERS=off` (a measurement aid).
                     let csr = Csr { ordered: Some(mode != 1), ..empty(false, false) };
-                    ORDERS_OPENED.fetch_add(1, AtomicOrdering::Relaxed);
+                    run_counts().orders_opened.fetch_add(1, AtomicOrdering::Relaxed);
                     if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LAZY_ORDERS").is_ok_and(|v| v == "off")) { csr.runs(self); }
                     csr
                 } else if let Some(v) = self.view.as_ref().filter(|v| v.ids.is_none() && v.eqs.is_empty())
@@ -6019,13 +6010,11 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
     c.cloned(&["CHUNK"], &crate::code_rule_dsl::facts::rows::CHUNK);
 }
 
-/// Rows a cut left that a walk going on from it read in their order, unsorted (`scan_order`, decision 0294).
-static LEFT_IN_ORDER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Tests: the rows a cut left that walks going on from it read in their order (`LEFT_IN_ORDER`).
+/// Tests: the rows a cut left that walks going on from it read in their order (`run_counts().left_in_order`).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn left_read_in_order() -> u64 {
-    LEFT_IN_ORDER.load(std::sync::atomic::Ordering::Relaxed)
+    run_counts().left_in_order.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Tests: the walks this thread has run in morsels.
@@ -6469,7 +6458,7 @@ fn run_join_limited(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
 fn run_seed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], limited: Option<&mut Limited>) -> Result<u64> {
     match level::take(j)? {
         Some(p) => {
-            level::USED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            level::run_counts().used.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             // From a level's pairs: unlimited.
             run_join_in(j, head, store, syms, fresh, &[], None, Some(&p))
         }
@@ -6728,7 +6717,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let known: Vec<(usize, usize)> = match left {
             Some(_) if (1..n).all(|p| key_cmp(p as u32 - 1, p as u32).is_le()) => {
                 runs::presorted::site_known(runs::presorted::SCAN, n as u64);
-                LEFT_IN_ORDER.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+                run_counts().left_in_order.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
                 return None;
             }
             _ => known,
@@ -7408,8 +7397,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         if texts.is_empty() {
             if !collecting { mine.settle(&cx.store.rels[head]); }
         } else {
-            DEFERRED_WALKS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            DEFERRED_WALKS[1].fetch_add(texts.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            run_counts().deferred_walks[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            run_counts().deferred_walks[1].fetch_add(texts.len() as u64, std::sync::atomic::Ordering::Relaxed);
             settle_deferred(cx, &mut [(&mut texts, &mut mine, &mut rows)]);
         }
         match (cx.collect.as_deref_mut(), before) {
@@ -8310,3 +8299,24 @@ pub mod sorted_tests {
     }
 }
 
+/// The run's counts of this module's work (decision 0442: a run's own, `run::local`).
+#[derive(Default)]
+pub struct SetfixCounts {
+    /// Walks in one piece that deferred their new texts and interned them in one batch (`whole`), and those texts: for
+    /// the profile.
+    pub deferred_walks: [std::sync::atomic::AtomicU64; 2],
+    /// Cuts made, cut waves gone on reading only the rows left or all (`restricted`), and trials run (decision 0207),
+    /// in this process.
+    pub cuts: [std::sync::atomic::AtomicU64; 4],
+    /// Derived inputs' orders opened (an index asked for at a join's compile) and made (first probed), decision 0186.
+    pub orders_opened: OrderCount,
+    pub orders_made: OrderCount,
+    /// Rows a cut left that a walk going on from it read in their order, unsorted (`scan_order`, decision 0294).
+    pub left_in_order: std::sync::atomic::AtomicU64,
+}
+
+/// The run's `SetfixCounts`.
+#[inline]
+pub fn run_counts() -> std::sync::Arc<SetfixCounts> {
+    crate::code_rule_dsl::logic::run::local::<SetfixCounts>()
+}

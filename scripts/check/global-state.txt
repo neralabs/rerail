@@ -177,14 +177,9 @@ native/src/code_rule_dsl/logic/native/extension/setfix.rs::SYMS	run	a run's own 
 native/src/code_rule_dsl/logic/native/setfix.rs::ADOPTED	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::CHANGING	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::COMPONENTS	connection	a connection's own state, keyed by connection in a process map
-native/src/code_rule_dsl/logic/native/setfix.rs::CUTS	review	
-native/src/code_rule_dsl/logic/native/setfix.rs::DEFERRED_WALKS	review	
 native/src/code_rule_dsl/logic/native/setfix.rs::DERIVED	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::INPUTS	connection	a connection's own state, keyed by connection in a process map
-native/src/code_rule_dsl/logic/native/setfix.rs::LEFT_IN_ORDER	review	
 native/src/code_rule_dsl/logic/native/setfix.rs::ONCE	review	
-native/src/code_rule_dsl/logic/native/setfix.rs::ORDERS_MADE	review	
-native/src/code_rule_dsl/logic/native/setfix.rs::ORDERS_OPENED	review	
 native/src/code_rule_dsl/logic/native/setfix.rs::SCOPE_PATHS	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::SCOPE_SYMS	connection	a connection's own state, keyed by connection in a process map
 native/src/code_rule_dsl/logic/native/setfix.rs::STORED	run	a run's own results or batch: two runs at once collide
@@ -195,30 +190,14 @@ native/src/code_rule_dsl/logic/native/setfix/lab.rs::STORED	review
 native/src/code_rule_dsl/logic/native/setfix/lab.rs::WRITTEN	review	
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	review	
 native/src/code_rule_dsl/logic/native/setfix/level.rs::PENDING	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/native/setfix/level.rs::SENT	review	
-native/src/code_rule_dsl/logic/native/setfix/level.rs::USED	review	
 native/src/code_rule_dsl/logic/native/setfix/runs.rs::COUNTS	review	
 native/src/code_rule_dsl/logic/native/setfix/runs.rs::SITES	review	
 native/src/code_rule_dsl/logic/native/setfix/table.rs::BUILT	run	a run's own results or batch: two runs at once collide
 native/src/code_rule_dsl/logic/native/setfix/table.rs::PAID	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/plan.rs::ANSWER_CALLS	review	
-native/src/code_rule_dsl/logic/plan.rs::ANSWER_WAIT	review	
-native/src/code_rule_dsl/logic/plan.rs::ASK_SUSPENDED	review	
-native/src/code_rule_dsl/logic/plan.rs::ASK_SUSPENSIONS	review	
-native/src/code_rule_dsl/logic/plan.rs::BUDGET_MISS	review	
-native/src/code_rule_dsl/logic/plan.rs::INPUT_VIEWS	review	
 native/src/code_rule_dsl/logic/plan.rs::KEPT	run	a run's own results or batch: two runs at once collide
-native/src/code_rule_dsl/logic/plan.rs::LAZY	review	
-native/src/code_rule_dsl/logic/plan.rs::MODE_STRATA	review	
-native/src/code_rule_dsl/logic/plan.rs::PLAN_CACHE	review	
-native/src/code_rule_dsl/logic/plan.rs::PUBLISHED	review	
 native/src/code_rule_dsl/logic/plan.rs::RUNS	review	
-native/src/code_rule_dsl/logic/plan.rs::SEARCHES	review	
-native/src/code_rule_dsl/logic/plan.rs::SHAPED	review	
 native/src/code_rule_dsl/logic/plan.rs::SHOWN	review	
-native/src/code_rule_dsl/logic/plan.rs::STATISTICS	review	
 native/src/code_rule_dsl/logic/plan.rs::TEMP_LEFT	connection	a connection's own state, keyed by connection in a process map
-native/src/code_rule_dsl/logic/plan.rs::UNSIZED_DELTAS	review	
 native/src/code_rule_dsl/logic/plan/choices.rs::KEPT	shared	a cache (decision 0104 moves it to facts, in the shared store)
 native/src/code_rule_dsl/logic/plan/corpus.rs::CLOSING	review	
 native/src/code_rule_dsl/logic/plan/corpus.rs::COMBINED	shared	a cache (decision 0104 moves it to facts, in the shared store)
@@ -252,14 +231,10 @@ native/src/code_rule_dsl/logic/plan/joins.rs::PRICER	shared	shared by design: a 
 native/src/code_rule_dsl/logic/plan/joins.rs::PRICING	review	
 native/src/code_rule_dsl/logic/plan/joins.rs::RAISED	review	
 native/src/code_rule_dsl/logic/plan/joins.rs::REQUESTS	shared	shared by design: a learned model, its queue or its job
-native/src/code_rule_dsl/logic/plan/keeps.rs::FOLDS	review	
 native/src/code_rule_dsl/logic/plan/keeps.rs::OBSERVED	review	
 native/src/code_rule_dsl/logic/plan/output.rs::WRITES	review	
 native/src/code_rule_dsl/logic/plan/placement.rs::RECORDED	run	a run's measurement: two runs at once mix their numbers
 native/src/code_rule_dsl/logic/plan/placement.rs::RECORDING	review	
-native/src/code_rule_dsl/logic/plan/prepared.rs::SEARCHED	review	
-native/src/code_rule_dsl/logic/plan/prepared.rs::TAKEN	review	
-native/src/code_rule_dsl/logic/plan/prepared.rs::VERSIONS	review	
 native/src/code_rule_dsl/logic/plan/table.rs::BATCHES	review	
 native/src/code_rule_dsl/logic/plan/table.rs::IN_PLACE	review	
 native/src/code_rule_dsl/logic/plan/table.rs::NAMES	shared	shared by design: an interner (names are visible to every caller holding it)

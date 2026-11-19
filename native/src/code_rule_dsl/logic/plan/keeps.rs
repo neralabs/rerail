@@ -951,8 +951,6 @@ pub(in crate::code_rule_dsl) struct ObservedShared {
 /// The jobs' sums handed in before one of them folds them in: the lag of an estimate read in a job.
 const FOLD_EVERY: usize = 256;
 
-/// Folds of the observed sums (decision 0301), for the profile.
-pub(super) static FOLDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl ObservedShared {
     fn observing(on: bool) -> Self {
@@ -990,7 +988,7 @@ impl ObservedShared {
             next.add(p);
         }
         self.published.store(Some(Arc::new(next)));
-        FOLDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().folds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// `f` on the run's sums, as a thread observing outside a job does: folded and published at once.
@@ -1898,4 +1896,17 @@ pub mod tests {
         let chosen = choose(&Placed::of_program(&prog).unwrap(), &mut model).unwrap();
         assert!(chosen.is_none(), "r inlined: {:?}", chosen.map(|c| c.0));
     }
+}
+
+/// The run's counts of this module's work (decision 0442: a run's own, `run::local`).
+#[derive(Default)]
+pub struct KeepsCounts {
+    /// Folds of the observed sums (decision 0301), for the profile.
+    pub folds: std::sync::atomic::AtomicU64,
+}
+
+/// The run's `KeepsCounts`.
+#[inline]
+pub fn run_counts() -> std::sync::Arc<KeepsCounts> {
+    crate::code_rule_dsl::logic::run::local::<KeepsCounts>()
 }

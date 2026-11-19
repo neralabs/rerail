@@ -36,12 +36,6 @@ pub struct PreparedPlan {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Prepared(pub HashMap<u128, PreparedPlan>);
 
-/// Lines a run took from the prepared plans (`RERAIL_PLAN_CACHE_COUNTS`).
-pub static TAKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-/// Lines a run found heavy while they ran their prepared plan, and searched once (`Model::prepared_heavy`).
-pub static SEARCHED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-/// Versions whose prepared plans a run read from the store, and made (Q183; `RERAIL_PLAN_CACHE_COUNTS`).
-pub static VERSIONS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 
 impl Prepared {
     /// The version's prepared plans: its analysis, shared; none under `RERAIL_PREPARED_PLANS=off` or
@@ -60,11 +54,11 @@ impl Prepared {
         // read, not made.
         let Some(id) = super::run_holds_plans().then(|| manager::identity(v)) else { return manager::analysis::<Prepared>(v).unwrap_or_default() };
         if let Some(p) = super::prepared_stored(&id) {
-            VERSIONS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            run_counts().versions[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return v.analyses().hold(p);
         }
         let p = manager::analysis::<Prepared>(v).unwrap_or_default();
-        VERSIONS[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().versions[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         super::prepared_made(id, Arc::clone(&p));
         p
     }
@@ -124,7 +118,7 @@ impl Prepared {
         if super::prepared_searched(line) {
             return None;
         }
-        TAKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().taken.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let n = nodes.max(1.0);
         Some((p.order.clone(), p.work_per_node * n, p.rows_per_node * n))
     }
@@ -465,4 +459,21 @@ fn mode_of(c: i64) -> Option<super::Mode> {
         3 => Some(super::Mode::Descend),
         _ => None,
     }
+}
+
+/// The run's counts of this module's work (decision 0442: a run's own, `run::local`).
+#[derive(Default)]
+pub struct PreparedCounts {
+    /// Lines a run took from the prepared plans (`RERAIL_PLAN_CACHE_COUNTS`).
+    pub taken: std::sync::atomic::AtomicU64,
+    /// Lines a run found heavy while they ran their prepared plan, and searched once (`Model::prepared_heavy`).
+    pub searched: std::sync::atomic::AtomicU64,
+    /// Versions whose prepared plans a run read from the store, and made (Q183; `RERAIL_PLAN_CACHE_COUNTS`).
+    pub versions: [std::sync::atomic::AtomicU64; 2],
+}
+
+/// The run's `PreparedCounts`.
+#[inline]
+pub fn run_counts() -> std::sync::Arc<PreparedCounts> {
+    crate::code_rule_dsl::logic::run::local::<PreparedCounts>()
 }
