@@ -1358,9 +1358,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (this.#closing) return;
     if (loaded.length === 0) return await this.#publishReady();
     if (prepared === undefined) throw new Error("Policy workspace could not be initialized");
+    await this.#finishAllTogether(prepared.workspace, loaded);
+  }
+
+  /** Applies `loaded` in one engine call, then reads each edit's findings: the last, the one that may steer, first. */
+  async #finishAllTogether(workspace: NativeCodeRuleDslWorkspace, loaded: readonly [string, StoredEdit, CodeRuleEdit][]): Promise<void> {
     for (const [path] of loaded) this.#readFailures.delete(path);
     this.#readFailures.delete("worker");
-    const applied = await this.#applyTogether(prepared.workspace, loaded.map(([, , edit]) => edit));
+    const applied = await this.#applyTogether(workspace, loaded.map(([, , edit]) => edit));
     for (const [path, stored, edit] of loaded) this.#replaceAppliedEdit(path, stored, edit);
     this.#unfinished = loaded.map(([, stored]) => stored);
     const [steering, ...others] = [loaded.at(-1)!, ...loaded.slice(0, -1)];
