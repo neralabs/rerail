@@ -286,6 +286,10 @@ pub fn without_filter_programs(repository: &mut gix::Repository) -> Result<(), S
 
 /// The system attributes file of Rerail's Git: `Ok(None)` where Git reads none, `Err` where it
 /// cannot be named without starting a Git (Windows, with no system file reported).
+#[allow(
+    clippy::result_unit_err,
+    reason = "main's signature: the error says only that the file cannot be named; public because its callers are in other crates"
+)]
 pub fn system_attributes() -> Result<Option<PathBuf>, ()> {
     if env_flag("GIT_ATTR_NOSYSTEM") {
         return Ok(None);
