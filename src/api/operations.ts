@@ -8,7 +8,7 @@ import { checkoutRealpath, withinCheckout } from "../engine/catalog/checkout-con
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
 import { internalTesting } from "../engine/internal-testing.js";
 import { agentTranscriptPayload } from "../engine/transcript-boundary.js";
-import { sensitiveByName } from "../engine/path-boundary.js";
+import { checkoutPathBoundary, sensitiveByName } from "../engine/path-boundary.js";
 import { audits, presentationPreferences, PRESENTATION_HOSTS, events, workLinks } from "../engine/storage/schema.js";
 import {
   auditControlsSchema,
@@ -70,14 +70,20 @@ const codeRuleViolationSchema: z.ZodType<CodeRuleViolation> = z.object({
 }).strict();
 
 /**
- * A violation as a coding agent may see it: in a file secret-like by name, the rule and the place only, as the
- * in-session steer says it. The message may carry the file's text through the rule's metavariables, `variables` are
- * that text, and the fix is its replacement; a person reads them in the dashboard.
+ * Violations as `caller` may see them. A coding agent sees one in a secret-like file by rule and place only, as the
+ * in-session steer says it: the message may carry the file's text through the rule's metavariables, `variables` are
+ * that text, and the fix is its replacement; a person reads them in the dashboard. A file is secret-like by its name or
+ * by where it leads in the agent's checkout, as the steer judges it, so `conf/config.py` with `conf` a link to `.aws`
+ * is one. Make one view per answer: it resolves each distinct path once, and past the boundary's limit judges by name.
  */
-function agentViolation(caller: ApiCaller, violation: CodeRuleViolation): CodeRuleViolation {
-  if (caller.kind === "person" || violation.path === undefined || !sensitiveByName(violation.path)) return violation;
-  const { fix: _fix, ...rest } = violation;
-  return { ...rest, message: SECRET_FILE_FINDING_MESSAGE, variables: {} };
+function violationView(caller: ApiCaller): (violation: CodeRuleViolation) => CodeRuleViolation {
+  if (caller.kind === "person") return violation => violation;
+  const sensitive = caller.checkout === undefined ? sensitiveByName : checkoutPathBoundary(caller.checkout).sensitive;
+  return violation => {
+    if (violation.path === undefined || !sensitive(violation.path)) return violation;
+    const { fix: _fix, ...rest } = violation;
+    return { ...rest, message: SECRET_FILE_FINDING_MESSAGE, variables: {} };
+  };
 }
 
 const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
@@ -567,9 +573,10 @@ export const operations: readonly Operation[] = [
       const readable = ids === undefined || stores.audits.list({ auditId: input.auditId, limit: 1 }, ids).total > 0;
       const page = readable ? stores.audits.listRepositoryAuditEntries(repositoryAuditEntryQuery(input)) : undefined;
       if (page === undefined) throw new ApiError(404, "repository-audit-not-found", `repository audit ${input.auditId} does not exist`);
+      const view = violationView(caller);
       return {
         entries: page.entries.map(entry => entry.kind === "violation"
-          ? { kind: "violation" as const, violation: agentViolation(caller, codeRuleViolationSchema.parse(entry.payload)) }
+          ? { kind: "violation" as const, violation: view(codeRuleViolationSchema.parse(entry.payload)) }
           : { kind: "failure" as const, failure: auditFailureSchema.parse(entry.payload) }),
         total: page.total,
       };
@@ -584,7 +591,9 @@ export const operations: readonly Operation[] = [
     output: z.object({ audits: z.array(auditRecordSchema), total: z.number().int().nonnegative() }),
     handler: (stores, input, caller) => {
       const page = stores.audits.list(auditQuery(input), historyScope(stores, caller, input.repository));
-      return caller.kind === "person" ? page : { ...page, audits: page.audits.map(audit => ({ ...audit, violations: audit.violations.map(violation => agentViolation(caller, violation)) })) };
+      if (caller.kind === "person") return page;
+      const view = violationView(caller);
+      return { ...page, audits: page.audits.map(audit => ({ ...audit, violations: audit.violations.map(view) })) };
     },
   }),
   defineOperation({
@@ -609,10 +618,11 @@ export const operations: readonly Operation[] = [
         ...(input.ruleId === undefined ? {} : { ruleId: input.ruleId }),
         ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
       }, historyScope(stores, caller, input.repository));
+      const view = violationView(caller);
       return {
         total: page.total,
         violations: page.violations.map(({ violation: found, sessionId, auditId, at, host, logged }) => {
-          const { id, ruleId, clauseId, code, mode, message, path, span, fix } = agentViolation(caller, found);
+          const { id, ruleId, clauseId, code, mode, message, path, span, fix } = view(found);
           return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host, logged };
         }),
         nextCursor: page.nextCursor,

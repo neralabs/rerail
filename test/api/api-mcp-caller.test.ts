@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
@@ -25,6 +25,7 @@ import {
 import { MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { installPack } from "../support/installed-packs.js";
 import { shortSpelling } from "../engine/support/short-path.js";
+import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { withExperiments } from "../support/environment/experiments.js";
 
@@ -459,6 +460,82 @@ describe("MCP callers and the agent guard", () => {
       events: [{ payload: { text: `cat ${nested}/.env` } }, { payload: { input: { command: `cat ${nested}/.env` } } }, { payload: { output: "API_KEY=hunter2" } }, {}],
     });
     expect((await app.request(`/api/repository-audits/${repositoryAuditIds.get("in-lib")}/entries`)).status).toBe(200);
+  });
+
+  /** Records a finished repository audit in the parent checkout with one finding, text, variables and fix, per path. */
+  function auditFinding(paths: readonly string[]): string {
+    stores.sessionStore().openSession({ host: "codex", sessionId: "linked", cwd: parent }, 1_000, parentKey);
+    const auditStore = new SqliteAuditStore(databasePath);
+    try {
+      stores.auditControls().claimRepositoryAudit("linked", parent);
+      const auditId = auditStore.start({
+        sessionId: "linked", workspaceRoot: parent, scope: "repository", mode: "log", revision: 1, catalogRevision: null, ruleRevisions: [], paths: [],
+      });
+      auditStore.finish(auditId, {
+        status: "completed",
+        violations: paths.map(path => ({
+          id: path, ruleId: "no-plaintext", clauseId: "clause", code: "SECRET", mode: "log" as const, message: "`KEY = 'hunter2'` is plaintext",
+          path, captures: {}, variables: { VALUE: "hunter2" },
+          fix: { span: { startLine: 0, startColumn: 0, endLine: 0, endColumn: 3, startByte: 0, endByte: 3 }, text: "KEY = environ['KEY']" },
+        })),
+      });
+      stores.auditControls().finishRepositoryAudit("linked", parent, auditId, "completed");
+      return auditId;
+    } finally {
+      auditStore.close();
+    }
+  }
+
+  /** How each finding reads, by path: `whole`, or `withheld` (rule and place only), in each list that serves findings. */
+  async function findingViews(auditId: string, caller: string | undefined): Promise<Array<Record<string, string>>> {
+    const read = async (name: string, args: Record<string, unknown>, path: string): Promise<Record<string, unknown>> => {
+      if (caller !== undefined) return (await call(name, args, caller)).result as Record<string, unknown>;
+      return await (await createRerailApi(stores, operations, { version: "0.0.0-test" }).request(path)).json() as Record<string, unknown>;
+    };
+    // `violations_list` gives no variables, and a missing fix as null.
+    const view = ({ message, fix = null, variables = {} }: Record<string, unknown>): string => {
+      if (typeof message === "string" && message.includes("withheld from this conversation") && fix === null && JSON.stringify(variables) === "{}") return "withheld";
+      return message === "`KEY = 'hunter2'` is plaintext" && fix !== null ? "whole" : JSON.stringify({ message, fix, variables });
+    };
+    const byPath = (rows: Array<Record<string, unknown>>): Record<string, string> => Object.fromEntries(rows.map(row => [String(row.path), view(row)]));
+    const listed = await read("violations_list", { since: 0 }, "/api/violations?since=0") as { violations: Array<Record<string, unknown>> };
+    const audits = await read("audits_list", {}, "/api/audits") as { audits: Array<{ violations: Array<Record<string, unknown>> }> };
+    const entries = await read("repository_audit_entries_list", { auditId }, `/api/repository-audits/${auditId}/entries`) as { entries: Array<{ violation: Record<string, unknown> }> };
+    return [byPath(listed.violations), byPath(audits.audits[0]!.violations), byPath(entries.entries.map(entry => entry.violation))];
+  }
+
+  // A finding is kept under the path its file was read by, which can reach a folder holding secrets through a link:
+  // `conf/config.py`, with `conf` a link (a junction on Windows) to `.aws`, is `.aws/config.py`. A coding agent reads it
+  // by rule and place only, as it reads one in `.aws/` itself and as its steer said it; a link to an ordinary folder
+  // changes nothing, and a person reads every finding whole.
+  it("serves an agent a finding in a file a folder link leads into a folder holding secrets by rule and place only", async () => {
+    mkdirSync(join(parent, ".aws"));
+    writeFileSync(join(parent, ".aws", "config.py"), "KEY = 'hunter2'\n");
+    linkFolder(".aws", join(parent, "conf"));
+    writeFileSync(join(parent, "web", "src", "app.py"), "KEY = 'hunter2'\n");
+    linkFolder(join("web", "src"), join(parent, "docs"));
+    const auditId = auditFinding(["conf/config.py", ".aws/config.py", "docs/app.py", "web/src/app.py"]);
+    const agent = { "conf/config.py": "withheld", ".aws/config.py": "withheld", "docs/app.py": "whole", "web/src/app.py": "whole" };
+    expect(await findingViews(auditId, from(join(parent, "web")))).toEqual([agent, agent, agent]);
+    const person = { "conf/config.py": "whole", ".aws/config.py": "whole", "docs/app.py": "whole", "web/src/app.py": "whole" };
+    expect(await findingViews(auditId, undefined)).toEqual([person, person, person]);
+  });
+
+  // Windows opens a folder or a file by its 8.3 short name too (`AWS~1` for `.aws`, `WP-CON~1.PHP` for `wp-config.php`),
+  // which no name check knows: a finding kept under one reaches an agent as the file it is.
+  it("serves an agent a finding in a file holding secrets, named by a Windows short name, by rule and place only", async ({ skip }) => {
+    skip(process.platform !== "win32", "only Windows gives a file or folder a short name");
+    mkdirSync(join(parent, ".aws"));
+    writeFileSync(join(parent, ".aws", "config.py"), "KEY = 'hunter2'\n");
+    writeFileSync(join(parent, "web", "wp-config.php"), "<?php $key = 'hunter2';\n");
+    const folder = basename(shortSpelling(join(parent, ".aws")) ?? ".aws");
+    const file = basename(shortSpelling(join(parent, "web", "wp-config.php")) ?? "wp-config.php");
+    if (folder === ".aws" || file === "wp-config.php") return skip("this volume makes no short names");
+    const auditId = auditFinding([`${folder}/config.py`, `web/${file}`]);
+    const agent = { [`${folder}/config.py`]: "withheld", [`web/${file}`]: "withheld" };
+    expect(await findingViews(auditId, from(parent))).toEqual([agent, agent, agent]);
+    const person = { [`${folder}/config.py`]: "whole", [`web/${file}`]: "whole" };
+    expect(await findingViews(auditId, undefined)).toEqual([person, person, person]);
   });
 
   it("reports where each rule's on and mode come from, for this worktree and for the repository (the worked example)", async () => {
