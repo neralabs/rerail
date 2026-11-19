@@ -1222,17 +1222,26 @@ impl LoweredWave {
             let released = false;
             if left <= 0.0 || !released {
                 let spent = t0.elapsed().as_secs_f64();
-                #[cfg(target_os = "macos")]
-                eprintln!(
-                    "rerail: a one-tape matcher wave found no room after {waits} waits, {spent:.3} s ({}); the device: {}",
-                    if spent >= WAVE_ROOM_PATIENCE { "its patience" } else { "nothing held by threads that go on" },
-                    rerail_accel::gpu::shared::describe()
-                );
+                crate::code_rule_dsl::logic::profile::decision("a one-tape matcher wave found no room", || {
+                    format!("after {waits} waits, {spent:.3} s ({})", if spent >= WAVE_ROOM_PATIENCE { "its patience" } else { "nothing held by threads that go on" })
+                });
                 break;
             }
             waits += 1;
             crate::code_rule_dsl::prof::count("wave.waited_for_room", 1);
             found = run();
+        }
+        // Still past the device's room at one tape: a capacity refusal is replanned, as a stratum's is (0334), and
+        // the tape's roots are found on the cores, counted and named. A Metal failure of any other kind still stops
+        // the run (0382 §6). The room is held by the device joins and the row blocks' slabs (0342), which fill the
+        // budget whatever it is; the residency's slab for a document not resident is refused (Q180).
+        if tapes.len() == 1 && matches!(found, Err(Error::BackendCapacity)) {
+            crate::code_rule_dsl::prof::count("wave.tape_on_cpu", 1);
+            #[cfg(target_os = "macos")]
+            crate::code_rule_dsl::logic::profile::decision("a matcher wave's tape past the device's room, its roots found on the cores (0334)", || {
+                format!("{} nodes; the device: {}", tapes[0].transducer_len(), rerail_accel::gpu::shared::describe())
+            });
+            return self.roots_batch_budgeted(Backend::Cpu, tapes, active, WorkBudget::current());
         }
         match found {
             Err(Error::BackendCapacity | Error::BackendLaunchLimit) if tapes.len() > 1 => {
