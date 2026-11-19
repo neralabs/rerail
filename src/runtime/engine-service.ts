@@ -992,6 +992,26 @@ export function engineWorktreeWalks(): RepositoryWorktreeWalks {
   return new RepositoryWorktreeWalks({ treeWatch });
 }
 
+/**
+ * Routes a hook's event and writes its answer to `response`. Any event but a session's end is answered in its session's
+ * lane, so the steers an answer its hook no longer waited for took are the session's again before its next event runs
+ * (`routeEngineEvent`). A session's end is answered once the service has let go of the session (`afterSessionEnd`), as
+ * the hook that ends it may read what that left: there is no later event of the session to carry a steer.
+ */
+async function answerEngineEvent(
+  routed: { event: AdapterEvent; configuration: EngineRuntimeConfiguration | undefined; options: EngineServiceOptions; routing: EngineRoutingState },
+  response: ServerResponse,
+): Promise<void> {
+  const { event, configuration, options, routing } = routed;
+  const answer: EngineAnswer = async deliveries =>
+    await answered(response, encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
+  if (event.kind !== "session-end") {
+    await routeEngineEvent(event, configuration, options, routing, answer);
+    return;
+  }
+  await answer(await routeEngineEvent(event, configuration, options, routing));
+}
+
 /** Answers the challenge a hook sends to learn the engine holds the daemon's token (`ENGINE_PROOF_PATH`); false for any other request. */
 function answeredProof(incoming: IncomingMessage, response: ServerResponse, accessToken: string | undefined): boolean {
   if (incoming.method !== "POST" || incoming.url !== ENGINE_PROOF_PATH || accessToken === undefined) return false;
@@ -1057,8 +1077,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     if (answeredProof(incoming, response, options.accessToken) || refusedEventRequest(incoming, response, options.accessToken)) return;
     try {
       const { event, configuration } = parseEngineRequest(JSON.parse(await engineRequestBody(incoming)));
-      await routeEngineEvent(event, configuration, options, routing, async deliveries =>
-        await answered(response, encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] })));
+      await answerEngineEvent({ event, configuration, options, routing }, response);
     } catch (error) {
       response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }

@@ -59,6 +59,18 @@ describe("engine service answers a hook no longer waits for", () => {
     expect({ steer: received.split(STEER).length - 1, other: received.split(OTHER_STEER).length - 1 }).toEqual({ steer: 1, other: 1 });
     expect(await ingestEngineEvent(service.engine, prompt("other-2", OTHER))).toEqual([]);
   }, 20_000);
+
+  it("answers a session's end once the service has let go of the session, as before", async () => {
+    const service = await checkingService({ idleRuntimeMs: 0 });
+    const responses = serverResponses(1);
+    const ending = ingestEngineEvent(service.engine, { kind: "session-end", eventId: "end", sessionId: SESSION, session: { host: "claude-code", sessionId: SESSION, cwd: service.root } });
+    const [response] = await responses;
+    if (response === undefined) throw new Error("the server read no request");
+    // What the service holds when the answer has been handed to the connection: the session's runtime is gone.
+    const openWhenAnswered = new Promise<number>(done => response.once("finish", () => done(service.openRuntimes())));
+    await ending;
+    expect(await openWhenAnswered).toBe(0);
+  }, 20_000);
 });
 
 function turnEnd(eventId: string, cwd: string): AdapterEvent {
@@ -146,9 +158,10 @@ function hook(socketPath: string, event: AdapterEvent): { answer: Promise<readon
  * An engine service in a folder of its own with the Claude Code session `gone` started and its evaluator open. The
  * session's edit checks hold until `finishCheck`, and the first that ends then steers `STEER`: `checking` resolves
  * once a boundary waits for them, `steered` once the steer is asked for. `start` starts another session there, and
- * `steer` asks for a steer in a session as its evaluator would.
+ * `steer` asks for a steer in a session as its evaluator would. `options.idleRuntimeMs` 0 closes a runtime as its last
+ * session ends.
  */
-async function checkingService(): Promise<{
+async function checkingService(options: { idleRuntimeMs?: number } = {}): Promise<{
   root: string;
   socketPath: string;
   engine: { socketPath: string };
@@ -157,6 +170,7 @@ async function checkingService(): Promise<{
   finishCheck: () => void;
   start: (sessionId: string) => Promise<void>;
   steer: (sessionId: string, content: string) => Promise<void>;
+  openRuntimes: () => number;
 }> {
   const root = await mkdtemp(join(tmpdir(), "rerail-unheard-"));
   const socketPath = testEngineEndpoint(root);
@@ -178,6 +192,7 @@ async function checkingService(): Promise<{
     storageRoot: join(root, "state"),
     databasePath,
     embedder: testEmbedder,
+    ...options,
     createAuditor: ({ steerDelivery }) => ({
       openWorkspace: async sessionId => {
         delivery = steerDelivery;
@@ -210,6 +225,7 @@ async function checkingService(): Promise<{
   await start(SESSION);
   return {
     root, socketPath, engine: { socketPath }, checking: checking.promise, steered: steered.promise, finishCheck: () => check.resolve(), start,
+    openRuntimes: () => service.openRuntimes(),
     steer: async (sessionId, content) => {
       if (delivery === undefined) throw new Error("no evaluator has opened");
       await delivery.requestSteer(sessionId, "steer", content, { revision: 0, scope: [], background: true });
