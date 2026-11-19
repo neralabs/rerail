@@ -1,5 +1,5 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
@@ -215,25 +215,42 @@ function ownConnection(ws: Workspace, github: GithubClient): { service: MergeAss
 const SQLITE_DRIVER = createRequire(import.meta.url).resolve("better-sqlite3");
 
 /**
- * How long {@link holdWriteLock}'s process holds the write lock when it is not told to give it back: well within the
- * five seconds a Rerail connection waits for a lock, so a write that waits for the lock gets it.
+ * The longest {@link holdWriteLock}'s process holds the write lock: its bound, so a test that dies leaves no holder.
+ * It is within the five seconds a Rerail connection waits for a lock, so a release that waits for the lock, which
+ * holds the test's thread and with it any file the test would write, gets the lock once the bound is over.
  */
 const LOCK_HELD_MS = 2_000;
 
+/** A process holding a database's write lock ({@link holdWriteLock}). */
+interface LockHolder {
+  readonly child: ChildProcess;
+  /** Resolves once the process holds the lock. */
+  readonly held: Promise<void>;
+  /** Writes the file that tells the process to give the lock back; resolves once it has exited. */
+  readonly release: () => Promise<void>;
+}
+
 /**
- * Another process holding the write lock of the database at `path`. Answers once it holds it, with `release`, which
- * tells it to give the lock back and resolves once it has exited; untold, it gives it back after {@link LOCK_HELD_MS}.
+ * Another process holding the write lock of the database at `path` from its start. It gives the lock back when the
+ * test writes a file in a folder of its own under `folder` ({@link LockHolder.release}), when it is ended, or once
+ * {@link LOCK_HELD_MS} is over. It writes nothing on its standard output, so it can stand in for a Git read.
  */
-async function holdWriteLock(path: string): Promise<{ release: () => Promise<void> }> {
+function holdWriteLock(path: string, folder: string): LockHolder {
+  const signals = join(folder, "write-lock");
+  mkdirSync(signals, { recursive: true });
+  const released = join(signals, "released");
   const script = [
-    "const database = new (require(process.argv[1]))(process.argv[2]);",
+    "const { existsSync, watch } = require(\"node:fs\");",
+    "const [driver, path, folder, released, boundMs] = process.argv.slice(1);",
+    "const database = new (require(driver))(path);",
     "database.exec(\"BEGIN IMMEDIATE\");",
     "const end = () => { database.exec(\"ROLLBACK\"); database.close(); process.exit(0); };",
-    "process.stdin.once(\"data\", end);",
-    "setTimeout(end, Number(process.argv[3]));",
-    "process.stdout.write(\"held\\n\");",
+    "watch(folder, () => { if (existsSync(released)) end(); });",
+    "if (existsSync(released)) end();",
+    "setTimeout(end, Number(boundMs));",
+    "process.stderr.write(\"held\\n\");",
   ].join(" ");
-  const child = actualSpawn(process.execPath, ["-e", script, SQLITE_DRIVER, path, String(LOCK_HELD_MS)], { stdio: ["pipe", "pipe", "inherit"] });
+  const child = actualSpawn(process.execPath, ["-e", script, SQLITE_DRIVER, path, signals, released, String(LOCK_HELD_MS)], { stdio: ["pipe", "pipe", "pipe"] });
   const exited = new Promise<void>(done => child.once("exit", () => done()));
   // The workspace's folder goes after the test: Windows refuses to remove a database a process holds.
   onTestFinished(async () => {
@@ -241,13 +258,19 @@ async function holdWriteLock(path: string): Promise<{ release: () => Promise<voi
     await exited;
   });
   child.stdin.on("error", () => undefined);
-  await new Promise<void>((held, failed) => {
-    child.stdout.once("data", () => held());
-    child.once("exit", code => failed(new Error(`The process holding the lock exited with ${String(code)} before it held it.`)));
+  let said = "";
+  const held = new Promise<void>((resolveHeld, failed) => {
+    child.stderr.on("data", (chunk: Buffer) => {
+      said += String(chunk);
+      if (said.includes("held\n")) resolveHeld();
+    });
+    child.once("exit", code => failed(new Error(`The process holding the lock exited with ${String(code)} before it held it: ${said}`)));
   });
   return {
+    child,
+    held,
     release: async () => {
-      if (running(child)) child.stdin.end("release\n");
+      if (running(child)) writeFileSync(released, "");
       await exited;
     },
   };
@@ -541,6 +564,23 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     for (const sequence of events.values()) expect(sequence).toEqual(["detected", "closed", "detected"]);
   });
 
+  it("judges a conflict by its last kept event: one stopped scan found it gone and the next found it again, so a pass that finds it still open hands the kept `closed` then `detected`", async () => {
+    const ws = await workspace();
+    const heard = await loggedHook(ws);
+    await conflictsStored(ws);
+    peersElsewhere(ws);
+    await scanEndingWithinStop(ws, "--name-only", []);
+    peersBack(ws);
+    await scanEndingWithinStop(ws, "--name-only", []);
+    expect(await openConflicts(ws)).toBe(PEERS);
+
+    await nextPass(ws, []);
+
+    const events = byConflict(heard());
+    expect({ conflicts: events.size, open: await openConflicts(ws), kept: keptRows(ws) }).toEqual({ conflicts: PEERS, open: PEERS, kept: 0 });
+    for (const sequence of events.values()) expect(sequence).toEqual(["detected", "closed", "detected"]);
+  });
+
   it.each([
     ["new", "gone", peersElsewhere],
     ["gone", "open again", peersBack],
@@ -625,10 +665,12 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     github.onHeld = () => asked.resolve();
     const scan = service.openSession(ws.repo, "claude-code", "session-1");
     await asked.promise;
-    const holder = await holdWriteLock(ws.databasePath);
+    const holder = holdWriteLock(ws.databasePath, ws.folder);
+    await holder.held;
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    // As `DatabaseApiStores.close()` does: the stop, then the database closed in the same call. A release that waited
-    // for the lock would get it once the other process gives it back by itself, and remove the mark.
+    // As `DatabaseApiStores.close()` does: the stop, then the database closed in the same call. The other process gives
+    // the lock back only once the test writes its file, after the close. A release that waited for the lock would hold
+    // this thread until the other process's bound is over, then get the lock and remove the mark.
     const stopped = service.stop(0);
     const busyTimeoutAfter: unknown = database.$client.pragma("busy_timeout", { simple: true });
     close();
@@ -644,25 +686,37 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
   });
 
   it("gives up the mark of a scan still running when a stop's wait is over once another process's write lock frees, as before", async () => {
-    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    const ws = await workspace();
     addPeers(ws);
     await ws.service().setEnabled(ws.repo, true);
-    const github = new HeldGithub();
-    const { service, close } = ownConnection(ws, github);
-    const asked = Promise.withResolvers<void>();
-    github.onHeld = () => asked.resolve();
-    const scan = service.openSession(ws.repo, "claude-code", "session-1");
-    await asked.promise;
-    const holder = await holdWriteLock(ws.databasePath);
-    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    // The scan still waits for `gh` when the stop's wait is over, and the other process gives the lock back by itself.
-    await service.stop(10);
-    const written = stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("Merge Assist"));
-    stderr.mockRestore();
+    const { service, close } = ownConnection(ws, new FakeGithub());
+    // In place of the scan's first comparing read runs another process holding the write lock. Once the stop's wait is
+    // over, the stop ends every read still running, this one with it, right before it gives up the scan's mark on this
+    // thread: the lock frees while that release waits for it, and a release that did not wait would meet it held.
+    const holding = Promise.withResolvers<LockHolder>();
+    let holder: LockHolder | undefined;
+    vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
+      if (holder !== undefined || !commandLine(args).includes("--name-only")) return actualSpawn(...args);
+      holder = holdWriteLock(ws.databasePath, ws.folder);
+      holding.resolve(holder);
+      return holder.child;
+    });
+    let written: string[] = [];
+    try {
+      const scan = service.openSession(ws.repo, "claude-code", "session-1");
+      await (await holding.promise).held;
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        await service.stop(10);
+      } finally {
+        written = stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("Merge Assist"));
+        stderr.mockRestore();
+      }
+      await scan;
+    } finally {
+      vi.mocked(spawn).mockImplementation(actualSpawn);
+    }
     close();
-    await holder.release();
-    github.release();
-    await scan;
 
     expect(written).toEqual([]);
     expect(await stored(ws)).toEqual({ lastScan: null, scanning: false, conflicts: [] });
