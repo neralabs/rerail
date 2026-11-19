@@ -1839,6 +1839,63 @@ names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), kind
     (dir, run)
 }
 
+/// Decision 0431 R7's program: a cross-file rule (`refers`) joins an annotation's identifier (a node of its tape value,
+/// `guest_of`) in one file with a class of that name in another, and `shown` reads that node's facts across files:
+/// its text, and its place in its file through the string (`guest_place`).
+const CROSS_FILE_VALUES: &str = r#"
+.decl ann_node(m: node, x: symbol)
+ann_node(m, x) :- string_annotation(n), parsed(n, "annotation", _), guest_of(m, n), kind(m, "identifier"), text(m, x).
+.decl cls(c: node, x: symbol)
+cls(c, x) :- kind(c, "class_definition"), field(c, "name", i), text(i, x).
+.decl refers(m: node, c: node)
+refers(m, c) :- ann_node(m, x), cls(c, x).
+.decl shown(x: symbol, p: symbol, l: number)
+shown(x, p, l) :- refers(m, c), text(m, x), guest_place(m, _, l, _), docof(c, d), doc(d, p, _).
+.output shown
+"#;
+
+/// A run of `CROSS_FILE_VALUES` over `ws` in the store and output of `dir`: its report and `shown`'s rows.
+fn cross_file_values_run(dir: &std::path::Path) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rr");
+    std::fs::write(&rule, CROSS_FILE_VALUES).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
+    (report, rows)
+}
+
+/// Decision 0431 R7: a file read from the memo has its tape values for a cross-file rule. `a.py` is not edited, so
+/// the second run reads it from the memo; its annotation's node, which `shown` reads across files, is still there,
+/// and the rows are a fresh run's.
+#[test]
+fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
+    let files = [("a.py", "x: \"Foo\" = 1\n"), ("b.py", "class Foo:\n    pass\n")];
+    let make = |name: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("ws")).unwrap();
+        for (path, text) in files {
+            std::fs::write(dir.join("ws").join(path), text).unwrap();
+        }
+        dir
+    };
+    let dir = make("r7-values");
+    let (_, first) = cross_file_values_run(&dir);
+    assert_eq!(first, [["Foo", "b.py", "1"]].map(|r| r.map(str::to_owned).to_vec()).to_vec(), "a full run's rows");
+    std::fs::write(dir.join("ws/b.py"), "# an edit\nclass Foo:\n    pass\n").unwrap();
+    let (edited, rows) = cross_file_values_run(&dir);
+    assert_eq!(edited.memo.0, 1, "a.py is read from the memo: {:?}", edited.memo);
+    assert_eq!(edited.guest_parses, 0, "no text is parsed: {}", edited.guest_parses);
+    let fresh = make("r7-values-fresh");
+    std::fs::write(fresh.join("ws/b.py"), "# an edit\nclass Foo:\n    pass\n").unwrap();
+    let (_, want) = cross_file_values_run(&fresh);
+    assert_eq!(rows, want, "a.py's tape value, read from the memo, is a fresh run's");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fresh);
+}
+
 /// Decision 0431 R5's run: `program` (`.rr`, with its includes) over `files` in a store of its own, giving the report
 /// and the rows of `output`, as shown.
 fn batch_run(name: &str, files: &[(&str, &str)], program: &str, output: &str) -> (super::Report, Vec<Vec<String>>) {
@@ -1937,3 +1994,5 @@ fn an_edited_rule_parses_no_text_the_last_run_parsed() {
     assert_eq!(run(", x != \"r6\"").guest_parses, 0, "the annotations' tapes are the last run's");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+

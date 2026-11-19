@@ -123,7 +123,7 @@ code may be named by which rules asked for it, or in what order.
 | R4 | No string is parsed unless a rule asks for it | `a_string_no_rule_asks_for_is_not_parsed` |
 | R5 | The batch is built once a chunk and grows by the rest (§6; `Report::batch_grown` counts the documents added): a file's programs, tape values, and the rows read are a rebuilt batch's | `a_files_programs_build_no_second_batch`, `tape_values_build_no_second_batch` |
 | R6 | A text a run parsed is not parsed again: after an edit elsewhere in its file, in a new file, after a rule's edit (`Report::guest_parses`) | `an_edit_elsewhere_parses_no_text_the_last_run_parsed`, `a_new_file_with_a_text_parsed_before_parses_nothing`, `an_edited_rule_parses_no_text_the_last_run_parsed`; guard `equal_texts_are_parsed_once_a_run` |
-| R7 | A file read from the memo has its programs and tape values for a cross-file rule | written with step 4 |
+| R7 | A file read from the memo has its programs and tape values for a cross-file rule: a value's rows are base rows of each file that asked for it (`owners`, `askers`), kept in its entry and restored with it | `a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule` |
 | R8 | CPU and Metal give the same rows, the device reading the same tapes | the Metal path's parity tests, with both kinds |
 | R9 | A finding placed at a tape value's node is refused: the lowering derives `rr_unplaced(clause)`, and the run fails naming the clauses | `a_finding_at_a_tape_values_node_is_refused` |
 
