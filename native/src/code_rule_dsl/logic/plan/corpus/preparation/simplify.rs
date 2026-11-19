@@ -2555,8 +2555,11 @@ impl ProgramPass for ClimbsAsAxes {
     }
 }
 
-/// `front::subsume_requests`: each request rule (`Program::asked_by`) whose body holds every literal of another rule of
-/// its relation with the same head, dropped; the rule kept takes the dropped one's readers into its gate. How many.
+/// Drops each request rule (the program's `asked_by`) whose body holds every literal of another rule of its relation
+/// with the same head: that one derives all it does. The request kept whole for a reader that asks for all, beside the
+/// one its other readers' asks narrow (decision 0291, `rr::lower`'s `demand_of`), where both are reached. The rule
+/// kept takes the dropped one's readers into its gate, so it is kept wherever the dropped one would have been. Run by
+/// `simplify`, before relations merge, between the prunes that keep the reached ones. How many were dropped.
 #[derive(Default)]
 pub struct SubsumeRequests(pub usize);
 

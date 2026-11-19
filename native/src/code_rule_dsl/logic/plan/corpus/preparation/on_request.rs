@@ -668,7 +668,7 @@ impl ProgramPass for SourcesOnRequest {
                     // Narrowed by what the reader's own readers ask of it (decision 0291): where `n` is a column of the
                     // reader's head that every rule reading it binds, the request joins those rules' asks.
                     // The request kept whole for the readers that ask for all, each its gate: with the narrowed one, which
-                    // it subsumes where both are reached (`front::subsume_requests`).
+                    // it subsumes where both are reached (`simplify::SubsumeRequests`).
                     let mut whole: Option<(New, BTreeSet<String>)> = None;
                     // The narrowed request serves the reader's readers that ask (with none of them reached it asks for
                     // nothing); unnarrowed, it serves the reader.

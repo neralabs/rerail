@@ -256,7 +256,7 @@ pub(in crate::code_rule_dsl) struct Part<'v> {
     /// Whether the part's program has gates (it is then not maintained).
     pub(in crate::code_rule_dsl) gates: bool,
     /// The part's natives (each relation and what it reads) and answers (each request and what it produces), for
-    /// `together`'s check of its sets (`front::apart`).
+    /// `together`'s check of its sets (`front::apart_of_graph`).
     pub(in crate::code_rule_dsl) natives: Vec<(String, Vec<String>)>,
     pub(in crate::code_rule_dsl) answers: Vec<(String, Vec<String>)>,
     pub(in crate::code_rule_dsl) domains: lower::Domains,
@@ -1145,7 +1145,7 @@ fn together_ir(src: &Part<'_>, b: &mut Builder<'_>, rules: &mut Vec<Ir>, groups:
         }
         sets.extend(by_level.into_values().filter(|s| s.len() > 1).map(|s| (g, s)));
     }
-    // Only sets that are one component each as the strata are made (`front::apart`, over the rules as written).
+    // Only sets that are one component each as the strata are made (`front::apart_of_graph`, over the rules as written).
     let apart: BTreeSet<usize> = {
         let mut names: Vec<&str> = heads.iter().map(String::as_str).collect();
         for (_, produced) in &src.answers {

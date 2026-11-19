@@ -78,7 +78,7 @@ pub fn components(v: &Version, about: &About) -> (Vec<RelId>, Edges, Vec<(RelId,
     (derived, Edges::of(edges), aggs)
 }
 
-/// The dependency edges by name, as `front::strata` gives them: each derived relation's dependencies among the derived
+/// The dependency edges by name, as `analyses::strata` gives them: each derived relation's dependencies among the derived
 /// relations, with whether each is negative.
 pub fn edges_by_name(v: &Version, about: &About) -> crate::code_rule_dsl::logic::front::Edges {
     let (_, edges, _) = components(v, about);
@@ -89,7 +89,7 @@ pub fn edges_by_name(v: &Version, about: &About) -> crate::code_rule_dsl::logic:
     out
 }
 
-/// The components as `front::components_of` makes them, in its order: the relations numbered in the order of their
+/// The components by name, dependencies first (`analyses::strata` without its edges), in the tree's order: the relations numbered in the order of their
 /// names, each set of `together` (a maintained program's, `body::Maint`) one component where it can be, and the
 /// tree's error where a negation closes a cycle. For a reader whose output follows the components' order (the
 /// composed query lists its definitions in it); `strata` gives them in an order of ids.

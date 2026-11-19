@@ -320,7 +320,7 @@ fn print_written(v: &Version) -> Result<String, Error> {
     let tapes = ProgramFields::tapes(v);
     let inputs = v.input_names();
     let mut lattices = BTreeSet::new();
-    // The tree axes' relations are made again from `inside(n, a, set)` and `has(a, n, set)` (`front::finish`).
+    // The tree axes' relations are made again from `inside(n, a, set)` and `has(a, n, set)` (`lowering_tail::DeclareAxes`).
     let made = |rel: &str| axis(rel).is_some_and(|(set, _)| p.kindsets.contains_key(set));
     for name in v.declared_names() {
         if made(&name) {

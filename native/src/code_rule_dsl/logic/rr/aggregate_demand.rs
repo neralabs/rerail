@@ -63,7 +63,7 @@ impl Reach {
     }
 }
 
-/// Whether `start` depends on `target` through `edges` (`front::strata`'s: a relation to those it reads).
+/// Whether `start` depends on `target` through `edges` (`analyses::strata`'s: a relation to those it reads).
 pub fn depends(edges: &front::Edges, start: &str, target: &str) -> bool {
     let mut todo = vec![start];
     let mut seen = BTreeSet::new();

@@ -1007,7 +1007,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
 
 /// The alias the library linked from modules `keys` is kept under.
 /// The values of the switches that change lowering (`plan::corpus::COMBINING`: `RERAIL_NODE_SOURCES` in
-/// `sources_on_request`, `RERAIL_ORDER_RAW` and `RERAIL_NODE_IDS` in `front::finish`'s `order_nodes`), for an image's
+/// `sources_on_request`, `RERAIL_ORDER_RAW` and `RERAIL_NODE_IDS` in `lowering_tail::OrderNodes`), for an image's
 /// key: an image lowered under one value is not another's. Only those set: an unset switch keeps the key every run
 /// has had, and the engine's shipped images (decision 0264) with it.
 fn switched(bytes: &mut Vec<u8>) {
@@ -1559,13 +1559,13 @@ pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Resul
 }
 
 /// `statements` less the included files' clauses that nothing in the program reaches. Of the 44 data-layer
-/// policies' rules, 76% were lowered (with the libraries' whole) and then pruned (`front::prune`): reading a policy
+/// policies' rules, 76% were lowered (with the libraries' whole) and then pruned (`preparation::Prune`): reading a policy
 /// was the largest part of a batch's setup (`lower_files`, 16% of the main thread). Kept whole: the file itself,
 /// `core.rr` and the engine's files (lowering reads their relations by name), and every item but a clause. A clause
 /// of another file is kept when one of its heads is reached: named by the file itself (each identifier of each of
 /// its items, so none is missed), by another file's output, violation or setting, by the engine (`LIBRARY_DERIVED`),
 /// by its own body when that makes a request (`asks`), or read by a kept clause. Every clause for a relation is kept with any, so a library relation is the same in each
-/// program that reaches it (decision 0091). `front::prune` of the program lowered from these is the same as of the whole
+/// program that reaches it (decision 0091). `preparation::Prune` of the program lowered from these is the same as of the whole
 /// (`dropping_unreached_clauses_prunes_to_the_same_program`).
 pub fn unreached_dropped(own: &Path, statements: Files) -> Files {
     reached_statements(own, &statements.iter().map(|(p, s)| (p, s.iter().collect())).collect::<Vec<_>>())

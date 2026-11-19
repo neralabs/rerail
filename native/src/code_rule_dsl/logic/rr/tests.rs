@@ -3450,7 +3450,7 @@ fn lowering_is_idempotent_other_packs() {
 
 /// `unreached_dropped`: an included file's clauses that nothing reaches are dropped before they are checked and
 /// lowered. For every `.rr` program under `dirs` that reads (the data layer's policies, and the packs', a test for
-/// each group within the time a test may take), `front::prune` of the program lowered from the rest is the program lowered whole, pruned: the same rules (each helper of the lowering's, numbered as it is met,
+/// each group within the time a test may take), `preparation::Prune` of the program lowered from the rest is the program lowered whole, pruned: the same rules (each helper of the lowering's, numbered as it is met,
 /// as many), natives and outputs, the same inputs read, and the same declarations of the relations those rules name.
 fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usize)) -> usize {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
@@ -4007,9 +4007,9 @@ fn aggregate_demand_is_placed_on_the_version() {
     assert!(s.iter().all(|x| x.contains("!") && !x.contains("count")), "a count of zero is an anti-join: {s:?}");
 }
 
-/// `front::finish`'s rewrites run on a modular text's version (decision 0281's path, step 7b): two nodes compared
-/// by their preorder keys (`node_order`), a `max` over nodes taken through a helper (`rr_ordered0`), as the tree's
-/// `order_nodes` makes them, and a tree axis read declared an input (`declare_axes`); a debug build checks the
+/// The lowering tail's node rewrites run on a modular text's version (decision 0281's path, step 7b): two nodes compared
+/// by their preorder keys (`node_order`), a `max` over nodes taken through a helper (`rr_ordered0`), as
+/// `lowering_tail::OrderNodes` makes them, and a tree axis read declared an input (`lowering_tail::DeclareAxes`); a debug build checks the
 /// image against the tree's (`link_seeded_version`).
 #[test]
 fn finishs_rewrites_run_on_the_version() {
@@ -4036,7 +4036,7 @@ fn finishs_rewrites_run_on_the_version() {
     assert!(v.input_names().iter().any(|i| i == axis) && v.declares(axis), "the axis {axis} an input: {:?}", v.input_names());
 }
 
-/// `whole()`'s last passes before `front::finish` run on a modular text's version (decision 0281's path, step 7b): a
+/// `whole()`'s last passes before `front::finish_checks_on` run on a modular text's version (decision 0281's path, step 7b): a
 /// nullary relation is a set of the unit (a column, a `1` in its atoms), the `.scope` settings set the globs, and a
 /// reader of `value` asks for it, as the tree's `lower::whole_back` makes them; a debug build checks the image against the tree's (`link_seeded_version`).
 #[test]
@@ -4194,7 +4194,7 @@ fn three_valued_relations_are_written_on_the_version() {
 
 /// A modular text's module is linked onto its scope's version and checked declared there (decision 0281's path, step
 /// 7b): a rule reading a relation no one declares is refused, and so is one reading a library relation with other
-/// columns than it declares, as the tree's `front::declared` refuses them; a rule reading the library's is linked.
+/// columns than it declares, as `lowering_tail::Declared` refuses them; a rule reading the library's is linked.
 #[test]
 fn a_module_is_linked_and_checked_declared_on_the_version() {
     let lower = |body: &str| {

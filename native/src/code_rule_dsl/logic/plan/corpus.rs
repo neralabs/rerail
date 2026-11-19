@@ -90,7 +90,7 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_REQUESTS",
     "RERAIL_SCOPE_GUARDS",
     // The `.rr` lowering: source attributes answered eagerly (`sources_on_request`), node ids compared raw
-    // (`front::finish`'s `order_nodes`).
+    // (`lowering_tail::OrderNodes`).
     "RERAIL_NODE_SOURCES",
     "RERAIL_ORDER_RAW",
     // Node ids by definition or in preorder (`syntax::definition_ids`, read by `order_nodes`).
@@ -687,7 +687,7 @@ fn embed_slice(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> 
         return Ok(None);
     }
     // A request rule (an attribute's, `Program::asked_by`, decision 0174) is taken only once one of the relations
-    // whose readers it serves is in the slice, as `front::prune` keeps it. A request relation is one for the whole
+    // whose readers it serves is in the slice, as `preparation::Prune` keeps it. A request relation is one for the whole
     // program (`rr_value_req`: every reader's request, never inlined since 0291), so the slice, following reads,
     // took every reader's request and what its body reads: 584 rules where 488 were (decision 0331).
     let asked = v.asked();
@@ -1659,7 +1659,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
                 if let Some(library) = in_scope && let Some(k) = *scope_of {
                     let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
                     // Its library's relations are the library's, declared there, not in the program: it is handed the
-                    // run's rows (0249) but not checked for its own declarations (`front::declared`).
+                    // run's rows (0249) but not checked for its own declarations (`lowering_tail::Declared`).
                     return P::lowered_in(read, text, library, &scoped[k], images.as_deref(), found, extra);
                 }
                 return P::of_version(given_version(read.lower_version(!own_only)?)?);
@@ -4257,7 +4257,7 @@ fn run_observed(
         let p = head;
         let not_of_documents = |rel: &str| pf.derives(rel) || pf.facts(rel).is_some() || pf.native(rel).is_some() || phased.contains_key(rel);
         let needed = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::analyses::Needed>(&prepared_placed.v).map_err(Error::Plan)?;
-        // The outputs by name too, as `front::needed` has its roots (one no relation names is still read).
+        // The outputs by name too, as `analyses::needed` has its roots (one no relation names is still read).
         let needs: BTreeSet<&str> = needed.0.iter().map(|r| prepared_placed.v.rel_name(r)).chain(pf.outputs()).collect();
         let why: Option<String> = if t.is_some() {
             Some("T's facts".into())

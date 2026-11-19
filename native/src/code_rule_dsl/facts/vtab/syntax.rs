@@ -1654,7 +1654,7 @@ pub enum View {
     Depth,
     /// `node_order(n, k)`: the node's place in preorder, `document << 32 | its order key`: by definition, its granule
     /// run's rank and its index in the granule (`granules::order`, which an edit elsewhere leaves alone); under
-    /// `RERAIL_NODE_IDS=preorder`, its preorder index. Rules that order nodes read it (`front::order_nodes`).
+    /// `RERAIL_NODE_IDS=preorder`, its preorder index. Rules that order nodes read it (`lowering_tail::OrderNodes`).
     Order,
     /// `core.rr`'s place of a node or span (`loc`): `line(n, l)`, `end_line(n, l)`, `col(n, c)`, `docof(n, d)`,
     /// read from the document's lines (`core_rr::Lines`), rows laid out over `Projected::locs`. A batch that makes

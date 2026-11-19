@@ -104,7 +104,7 @@ pub fn accepts(p: &Placed) -> Result<bool> {
     Ok(true)
 }
 
-/// What `roots` read, directly or through rules or natives, the roots included (`front::needed`), over `f`'s version
+/// What `roots` read, directly or through rules or natives, the roots included (`analyses::needed`), over `f`'s version
 /// (`analyses::needed`).
 pub(super) fn needed<'a>(f: Fields<'_>, roots: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
     let mut out = BTreeSet::new();

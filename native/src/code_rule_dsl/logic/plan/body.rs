@@ -2,10 +2,9 @@
 //! position, and each literal's variables as a set of slots. The planner plans a rule, not a (head, body) pair, and
 //! its steps name the rule's literals by position (`Step::at`), as every other reader of a plan does.
 //!
-//! Each reading here is the tree's (`front::Literal::vars`, `plan::ready`, `front::cmp_binds`, `plan::is_join`, the
-//! digests and the text), stated over handles, and checked against it (`tests`): a plan searched over a `Body` is the
-//! plan the tree's search made, and its keys (`Body::digest`, `Body::observed_key`) are the tree's keys.
-use super::super::front::{Program, Rule};
+//! Each reading here was the tree's (`plan::ready`, `plan::is_join`, the digests and the text), stated over handles:
+//! a plan searched over a `Body` is the plan the tree's search made, and its keys (`Body::digest`,
+//! `Body::observed_key`) are the tree's keys (decision 0276).
 use super::super::program_image::{AggRef, AtomRef, Builder, CmpOp, Lit, LitRef, RelId, RuleId, RuleRef, Slot, TermRef, Version};
 use super::{Constant, Error, Result};
 use std::cell::OnceCell;
@@ -531,8 +530,7 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
 
 /// The versions of the programs whose rules a run plans, and a rule of one named by its key (`RuleKey`: the version's
 /// place and the rule's place in the program's rules). The run's program is version 0 (`of_placed`), and a maintained
-/// form a version of its own (`push`). A caller that holds a program as a tree (`with`) finds a rule's key by its
-/// address (`key`), once, where its list is made. A program is added once it is final: its rules do not move after.
+/// form a version of its own (`push`). A program is added once it is final: its rules do not move after.
 #[derive(Clone, Default)]
 pub struct Versions(Vec<(usize, usize, Placed)>, Vec<AgainAt>);
 
@@ -565,8 +563,8 @@ pub struct Placed {
 }
 
 /// A maintained program's parts beside its version (decision 0215): each stratum that may be derived again
-/// (`front::Again`), its rules and deltas rules of `v`, an overlay of the program's version, and the sets of relations
-/// run as one component (`front::Program::together`). Every relation and rule is `v`'s.
+/// (`AgainRef`), its rules and deltas rules of `v`, an overlay of the program's version, and the sets of relations
+/// run as one component (`together`). Every relation and rule is `v`'s.
 #[derive(Clone)]
 pub struct Maint {
     pub v: Arc<Version>,
@@ -586,7 +584,7 @@ pub struct Group {
     pub olds: Vec<String>,
 }
 
-/// A stratum derived again (`front::Again`): its relations, those its maintained form makes, its rules over the
+/// A stratum derived again: its relations, those its maintained form makes, its rules over the
 /// current inputs and its deltas against its old rows, the input deltas it reads and its old rows.
 #[derive(Clone, Debug)]
 pub struct AgainRef {
@@ -671,82 +669,9 @@ impl Maint {
         let together = together.iter().map(|s| s.iter().map(|n| rel(n)).collect::<Result<Vec<RelId>>>()).collect::<Result<Vec<_>>>()?;
         Ok(Maint { v, again, together })
     }
-    /// The parts as the tree's (`front::Again`, `Program::together`): for a caller that still reads a tree (the
-    /// session's maintained part, until t36 item 7 step 9).
-    pub fn to_tree(&self, lists: &super::super::front::Lists) -> (Vec<super::super::front::Again>, Vec<std::collections::BTreeSet<String>>) {
-        let mut tree = super::super::program_image::Tree::new(&self.v, lists);
-        let names = |rels: &[RelId]| -> Vec<String> { rels.iter().map(|&r| self.v.rel_name(r).to_owned()).collect() };
-        let again = self
-            .again
-            .iter()
-            .map(|g| super::super::front::Again {
-                scc: names(&g.scc).into_iter().collect(),
-                owned: names(&g.owned).into_iter().collect(),
-                rules: g.rules.iter().map(|&id| tree.rule(self.v.rule(id).expect("a maintained rule"))).collect(),
-                deltas: g.deltas.iter().map(|&id| tree.rule(self.v.rule(id).expect("a maintained rule"))).collect(),
-                reads: names(&g.reads).into_iter().collect(),
-                olds: names(&g.olds).into_iter().collect(),
-            })
-            .collect();
-        (again, self.together.iter().map(|t| names(t).into_iter().collect()).collect())
-    }
-    /// `prog`'s `again` and `together`, over `parent`, its version.
-    fn of(parent: &Arc<Version>, prog: &Program) -> Result<Maint> {
-        let mut b = Builder::on(parent);
-        let names = |set: &mut dyn Iterator<Item = &str>, b: &mut Builder<'_>| -> Vec<String> {
-            set.map(|n| {
-                b.rel(n);
-                n.to_owned()
-            })
-            .collect()
-        };
-        let mut groups = Vec::with_capacity(prog.again.len());
-        let mut added = Vec::new();
-        for g in &prog.again {
-            let rules = g.rules.iter().map(|r| b.add(r)).collect::<std::result::Result<Vec<_>, _>>().map_err(Error::Plan)?;
-            let deltas = g.deltas.iter().map(|r| b.add(r)).collect::<std::result::Result<Vec<_>, _>>().map_err(Error::Plan)?;
-            added.extend(rules.iter().chain(&deltas).copied());
-            let sets = [
-                names(&mut g.scc.iter().map(String::as_str), &mut b),
-                names(&mut g.owned.iter().map(String::as_str), &mut b),
-                names(&mut g.reads.iter().map(String::as_str), &mut b),
-                names(&mut g.olds.iter().map(String::as_str), &mut b),
-            ];
-            groups.push((rules, deltas, sets));
-        }
-        let together: Vec<Vec<String>> = prog.together.iter().map(|s| names(&mut s.iter().map(String::as_str), &mut b)).collect();
-        let (v, made) = b.finish().map_err(Error::Plan)?;
-        let order = super::keeps::inline::renumbered(parent, &[], &added, made);
-        let id = |r: RuleId| order.as_ref().map_or(r, |o| o[&r]);
-        let rel = |n: &str| v.rel(n).ok_or_else(|| Error::Plan(format!("a maintained program's relation {n} has no id")));
-        let rels = |ns: &[String]| ns.iter().map(|n| rel(n)).collect::<Result<Vec<RelId>>>();
-        let again = groups
-            .iter()
-            .map(|(rules, deltas, [scc, owned, reads, olds])| {
-                Ok(AgainRef { scc: rels(scc)?, owned: rels(owned)?, rules: rules.iter().map(|&r| id(r)).collect(), deltas: deltas.iter().map(|&r| id(r)).collect(), reads: rels(reads)?, olds: rels(olds)? })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let together = together.iter().map(|s| rels(s)).collect::<Result<Vec<_>>>()?;
-        Ok(Maint { v, again, together })
-    }
 }
 
 impl Placed {
-    /// `rules` made into a version of their own, in order.
-    pub fn made(rules: &[Rule]) -> Result<Placed> {
-        Ok(Placed { v: made(rules)?, ids: None, whole: false, maint: None, fields: Default::default(), positions: Default::default() })
-    }
-    /// `prog`'s image (decision 0173): its rules in order, and its declarations, facts, inputs, outputs and other
-    /// fields (`About`), which the passes read beside the rules; and a maintained program's parts beside it
-    /// (`maint`, decision 0215).
-    pub fn of_program(prog: &Program) -> Result<Placed> {
-        // A program the image has no form for (a comparison it does not know) is made of its rules alone.
-        let Ok(v) = Builder::of_program_less_maintenance(prog).and_then(|b| b.finish()).map(|(v, _)| v) else {
-            return Placed::made(&prog.rules);
-        };
-        let maint = if prog.again.is_empty() && prog.together.is_empty() { None } else { Some(Arc::new(Maint::of(&v, prog)?)) };
-        Ok(Placed { v, ids: None, whole: true, maint, fields: Default::default(), positions: Default::default() })
-    }
     /// The run's version of the program whose image this is (t36 item 7, step 2): normalized for the SQL kernel
     /// (`passes::normalize`, a derivation), with its stated facts apart where `apart` (`passes::stated_apart`, an
     /// overlay), as `plan::run` normalizes the program. Also the relations given a presence column (the sentinels),
@@ -762,22 +687,12 @@ impl Placed {
         let stated = stated.iter().map(|&(r, s)| (v.rel_name(r).to_owned(), v.rel_name(s).to_owned())).collect();
         Ok(Normalized { placed: Placed { v, ids: None, whole: true, maint: self.maint.clone(), fields: Default::default(), positions: Default::default() }, sentinels, stated })
     }
-    /// The program this version is, as the tree: its rules in the program's order, and a maintained program's parts
-    /// (`Maint`). For a reader that still reads a tree: the program digests (decision 0173, step 6), the stored text,
-    /// the measurement aids.
-    pub fn program(&self, lists: &super::super::front::Lists) -> Result<Program> {
-        let mut prog = super::super::program_image::Tree::new(&self.v, lists).program_of(self.order().into_iter().map(|id| self.v.rule(id).expect("a rule of its version"))).map_err(Error::Plan)?;
-        if let Some(m) = &self.maint {
-            (prog.again, prog.together) = m.to_tree(lists);
-        }
-        Ok(prog)
-    }
     /// A maintained form, a derivation of the run's version (decision 0241): its rules `v`'s in order, its fields
     /// its own, and its maintenance's parts beside it.
     pub fn derived(v: Arc<Version>, maint: Option<Arc<Maint>>) -> Placed {
         Placed { v, ids: None, whole: true, maint, fields: Default::default(), positions: Default::default() }
     }
-    /// Its components, dependencies first, in the tree's order (`front::components_of`), its maintained program's
+    /// Its components, dependencies first, in the tree's order (`analyses::components_by_name`), its maintained program's
     /// sets run together.
     pub fn components(&self) -> Result<Arc<super::super::program_image::analyses::Components>> {
         use super::super::program_image::analyses::Components;
@@ -789,7 +704,7 @@ impl Placed {
         }
         Ok(Arc::new(Components(super::super::program_image::analyses::components_by_name(f.v, f.about, &together)?)))
     }
-    /// The sets its maintained program runs as one component (`Program::together`, `Maint`), by name.
+    /// The sets its maintained program runs as one component (`Maint::together`), by name.
     pub fn together(&self) -> Vec<std::collections::BTreeSet<String>> {
         self.maint.as_ref().map_or_else(Vec::new, |m| m.together.iter().map(|s| s.iter().map(|&r| m.v.rel_name(r).to_owned()).collect()).collect())
     }
@@ -891,16 +806,6 @@ impl RuleKey {
 }
 
 impl Versions {
-    /// The version of `prog` alone, the run's version 0 (rule numbers are its ids).
-    pub fn of(prog: &Program) -> Result<Versions> {
-        Ok(Versions::with(prog, Placed::made(&prog.rules)?))
-    }
-    /// `prog`'s version as a pass left it (`placed`), the run's version 0, taken as it is: no rule is encoded.
-    pub fn with(prog: &Program, placed: Placed) -> Versions {
-        let rules = &prog.rules;
-        let start = rules.as_ptr() as usize;
-        Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), placed)], Vec::new())
-    }
     /// `placed` alone, the run's version 0, for a caller that holds no tree (the composed path's edited versions): no
     /// rule or program is found by its address.
     pub fn of_placed(placed: Placed) -> Versions {
@@ -949,21 +854,11 @@ impl Versions {
         let at = Arc::as_ptr(maint) as usize;
         self.1.iter().find(|e| e.maint == at && e.group == g && e.deltas == deltas).map(|e| e.at)
     }
-    /// `r`'s key, a rule of a program the run holds.
-    pub fn key(&self, r: &Rule) -> Option<RuleKey> {
-        let at = r as *const Rule as usize;
-        let v = self.0.iter().position(|e| e.0 <= at && at < e.1)?;
-        Some(RuleKey { v: v as u32, id: ((at - self.0[v].0) / std::mem::size_of::<Rule>()) as u32 })
-    }
-    /// `r`'s key, or an error naming it (a rule of no program the run holds).
-    pub fn key_of(&self, r: &Rule) -> Result<RuleKey> {
-        self.key(r).ok_or_else(|| Error::Plan(format!("{} :- …: a rule of no program the run holds", r.head)))
-    }
     /// The fields of the run's `k`-th version (the program's is 0), read once: `None` where it is rules alone.
     pub fn fields(&self, k: usize) -> Option<super::fields::Fields<'_>> {
         self.0.get(k).and_then(|e| super::fields::Fields::of(&e.2))
     }
-    /// The fields of the run's `k`-th version, a whole program's (the run's, a maintained form: `with`, `add`).
+    /// The fields of the run's `k`-th version, a whole program's (the run's, a maintained form: `of_placed`, `push`).
     pub fn whole(&self, k: usize) -> super::fields::Fields<'_> {
         self.fields(k).unwrap_or_else(|| panic!("the run's version {k} is its rules alone"))
     }
@@ -987,35 +882,9 @@ impl Versions {
         let (v, rule) = self.rule_at(k);
         v.rel_name(rule.head().rel())
     }
-    /// The keys of `rules`, rules of programs the run holds, found by their addresses: for a caller that holds a
-    /// list of trees, once, where its list is made (t36 item 7: until the callers pass versions, step 9).
-    pub fn keys_of(&self, rules: &[&Rule]) -> Result<Vec<RuleKey>> {
-        rules.iter().map(|r| self.key_of(r)).collect()
-    }
-    /// Rule `r`, a tree of a program the run holds, as the planner reads it: found by its address, for a caller
-    /// that holds the tree (the tests).
-    pub fn body(&self, r: &Rule) -> Result<Body<'_>> {
-        Ok(self.at(self.key_of(r)?))
-    }
 }
 
-/// Rules made for planning alone (a rule's body less its recursive atom, a factored part, a view's atom), each a rule
-/// of its own version, read as the planner reads any rule. The made rules are trees until their readers read handles
-/// (t36 items 3 and 4); each is encoded as it is, so its literals keep their places.
-pub fn made(rules: &[Rule]) -> Result<Arc<Version>> {
-    let mut b = Builder::base();
-    for r in rules {
-        b.add(r).map_err(Error::Plan)?;
-    }
-    Ok(b.finish().map_err(Error::Plan)?.0)
-}
-
-/// Rule `k` of a version `made` made, as the planner reads it.
+/// Rule `k` of version `v`, as the planner reads it.
 pub fn nth(v: &Version, k: usize) -> Body<'_> {
     Body::of(v, v.rule(RuleId(k as u32)).expect("a made rule"))
-}
-
-/// `rule` alone, a version of its own (a rule of no program the run holds: a copy a pass prices before it makes it).
-pub fn alone(rule: &Rule) -> Result<Arc<Version>> {
-    made(std::slice::from_ref(rule))
 }

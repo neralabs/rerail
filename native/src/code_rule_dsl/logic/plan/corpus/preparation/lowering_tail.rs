@@ -1,6 +1,6 @@
 //! The lowering's whole-program half on the version (decision 0281's path, step 7b; 0246 §1, "whole program, at
-//! link time"): the findings' rules, core's declarations, projections, kind sets, boolean relations, `front::finish`'s
-//! rewrites and checks, aggregate demand, removing repeated rules and literals, and widening cyclic contexts. Every
+//! link time"): the findings' rules, core's declarations, projections, kind sets, boolean relations, the rewrites and checks
+//! of `front::finish_checks_on`, aggregate demand, removing repeated rules and literals, and widening cyclic contexts. Every
 //! text runs them (`rr::link_library_versions`, `rr::link_seeded_version`); their tree forms went with the tree's
 //! lowering (decision 0276 step 5).
 
@@ -708,10 +708,15 @@ fn declare_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
     }
 }
 
-/// `front::order_nodes` on the version (see there): under node ids per definition, two nodes compared by their
-/// preorder keys (`node_order`), and a `min`/`max` over nodes taken over the keys through a helper
-/// (`rr_ordered<k>`, written after the program's rules, as the tree pushes it). Fresh variables are numbered over
-/// the program in rule order, as the tree's are.
+/// Rules that order nodes, under node ids per definition (decision 0094 §2). An id follows preorder only inside its
+/// granule, so a comparison of two nodes (`b < n`: a binding before a use) and a `min`/`max` over nodes read the
+/// nodes' preorder keys instead (`node_order`): the order preorder ids gave, so the rule means what it did.
+/// - `x < y`, both nodes: `node_order(x, kx), node_order(y, ky), kx < ky` (`<=`, `>`, `>=` likewise);
+/// - `v = max x : { r(…x…) }`, `x` a node: `kv = max k : { r_ord(…x…, k) }, node_order(v, kv)`, where
+///   `r_ord(…x…, k) :- r(…x…), node_order(x, k)`: a helper `rr_ordered<k>`, written after the program's rules.
+///
+/// A variable is a node when a column it fills is declared `node`: in the head or any atom of the body. Fresh
+/// variables are numbered over the program in rule order.
 pub struct OrderNodes;
 
 /// What a literal of a rule becomes.
@@ -901,8 +906,8 @@ impl ProgramPass for OrderNodes {
     }
 }
 
-/// `front::declare_axes` on the version: each tree axis a rule reads (an aggregate's atom included) that the program
-/// does not declare, declared `(n: node, a: node)` and an input, in the order the rules first read them.
+/// The tree axes' relations a rule reads (an aggregate's atom included) and the program does not declare, declared
+/// `(n: node, a: node)` and inputs, in the order the rules first read them: the transducer makes them.
 pub struct DeclareAxes;
 
 impl ProgramPass for DeclareAxes {
@@ -1580,8 +1585,11 @@ impl ProgramPass for AppendModule {
     }
 }
 
-/// `front::declared` on the version: every relation a rule reads is declared, and each atom has the columns its
-/// relation declares (`front::read_declared`, `front::columns_declared`).
+/// A program to run reads only relations it declares or the transducer makes: else an error, as in Soufflé, not a
+/// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.) Every relation
+/// a rule reads is declared (`front::read_declared`), and each atom has the columns its relation declares
+/// (`front::columns_declared`). `match_all` and `match_group` over a span are built-ins: the text columns make each
+/// regex's relation (`strings`).
 pub struct Declared;
 
 impl ProgramPass for Declared {

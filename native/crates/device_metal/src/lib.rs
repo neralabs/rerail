@@ -277,7 +277,7 @@ pub mod code_rule_dsl {
                 use std::collections::{BTreeMap, BTreeSet};
             }
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, strata};
+            use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds};
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::native::TOP;
             #[allow(unused_imports)]

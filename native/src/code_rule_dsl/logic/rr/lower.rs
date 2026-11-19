@@ -1388,7 +1388,7 @@ impl Seeds {
 
 /// `whole` but the lowerer's analyses, with what the lowerer knows of the program
 /// (`Lowered`): what `three_valued`, `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`,
-/// `unit`, `whole_back`, `front::finish` and the tail (aggregate demand, `unit`,
+/// `unit`, `whole_back`, `front::finish_checks_on` and the tail (aggregate demand, `unit`,
 /// `sets`, `widen_cyclic_contexts`) make of it `rr::link_seeded_version` makes on the version.
 fn whole_front(mut l: Lowerer) -> Result<Lowered, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
@@ -2291,7 +2291,7 @@ impl Lowerer {
                     self.world_demand(demand, args)?;
                 }
                 // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
-                // variables (`front::finish`'s computed-term check).
+                // variables (`front::finish_checks_on`'s computed-term check).
                 let mut atom = self.atom(rel, args, *neg)?;
                 let mut out = Vec::new();
                 if let Literal::Atom(a) = &mut atom {

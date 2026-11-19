@@ -1,7 +1,7 @@
 //! Requests answered inside the fixpoint (decision 0065 §2a).
 //!
 //! A program's `answers` name request relations (`rr_dir_req`, `load`, …) and what an answer adds rows to
-//! (`dir_entry`, `loaded`, a loaded document's per-file rows). `front::strata` counts each produced relation as
+//! (`dir_entry`, `loaded`, a loaded document's per-file rows). `analyses::strata` counts each produced relation as
 //! reading its request, so a request that depends on its own answers is one recursive component with them, and the
 //! native fixpoint pauses for the runner to answer (`setfix`'s `request` and `produced`).
 //!

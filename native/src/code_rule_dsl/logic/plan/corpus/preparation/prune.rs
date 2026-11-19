@@ -1,4 +1,4 @@
-//! `front::prune` on the version (decision 0281's path, step 6d): the rules of relations no output reads, directly
+//! T's `prune` on the version (decision 0281's path, step 6d): the rules of relations no output reads, directly
 //! or through other rules, dropped, and the request rules none of whose readers is read (decision 0174). The record
 //! of each request's readers follows the rules kept; a native nothing reads is dropped with them. Facts stay.
 

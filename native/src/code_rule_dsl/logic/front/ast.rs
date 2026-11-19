@@ -438,7 +438,7 @@ impl Program {
     /// Replaces the rules, each with the places in the old `rules` it came from, and carries the request record
     /// (`asked_by`) across: a request rule serves the readers of the rules it came from, together, and one that
     /// came from none (or from a rule the record did not cover) its own relation, which keeps it wherever its
-    /// relation is needed (`front::prune`). A pass that rewrites, splits, merges or drops request rules states their
+    /// relation is needed (`preparation::Prune`). A pass that rewrites, splits, merges or drops request rules states their
     /// sources here, and the record holds through it.
     pub fn set_rules_from(&mut self, rules: Vec<(Rule, Vec<usize>)>) {
         let carry = self.carry();

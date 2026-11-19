@@ -9731,8 +9731,8 @@ impl Leaves {
     pub fn of_placed(placed: body::Placed) -> Leaves {
         Leaves { placed }
     }
-    /// `identities` of the program, each stratum's rules found by their heads in the version (`front::rules_by_stratum`'s
-    /// order, the program's).
+    /// `identities` of the program, each stratum's rules found by their heads in the version (the order of each stratum's
+    /// rules in the program).
     pub fn identities_by_heads(&self, sccs: &[BTreeSet<String>]) -> Result<HashMap<String, [u8; 32]>> {
         let p = &self.placed;
         let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();

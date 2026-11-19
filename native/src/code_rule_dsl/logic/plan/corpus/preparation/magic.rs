@@ -18,7 +18,7 @@
 //! Each rule's literals are its own handles; what the transformation adds to a rule is its guard
 //! (`magic_<r>_<ad>(…)`), a computed head term's binding (`_m<n> = @f(…)`) and `magic_true(0)`. The variables are a
 //! rule's slots, a binding's fresh variable after them. Each program the trials make is a dependency graph, not a
-//! program: what `front::strata` reads of one.
+//! program: what `analyses::strata` reads of one.
 
 use crate::code_rule_dsl::logic::front::{Edges, Error, tarjan};
 use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
@@ -471,7 +471,7 @@ impl<'v> Ctx<'v, '_> {
     }
 }
 
-/// A trial's program's dependency graph, stratified (`front::strata`): its components, dependencies first, and its
+/// A trial's program's dependency graph, stratified (`analyses::strata`): its components, dependencies first, and its
 /// edges by name.
 fn strata(v: &Version, about: &About, rules: &[Made<'_>]) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
     let head_of = |m: &Made<'_>| -> String { m.head.as_ref().map_or_else(|| v.rel_name(m.rule.head().rel()).to_owned(), |(rel, _)| rel.clone()) };

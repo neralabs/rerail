@@ -412,7 +412,7 @@ impl<'a> Reads<'a> {
 }
 
 /// The strata of `prog` that `kept` (of program `key`) lets a run skip, given its inputs' digests.
-/// `sccs`: `prog`'s strata (`front::strata`), computed once by the caller for every pass over the program.
+/// `sccs`: `prog`'s strata (`analyses::strata`), computed once by the caller for every pass over the program.
 pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog: &Placed, sccs: &[BTreeSet<String>], inputs: &HashMap<String, u64>) -> Result<Cut> {
     let kept = kept.filter(|k| k.key == key);
     let mut changed: Vec<String> = inputs.iter().filter(|(rel, d)| kept.and_then(|k| k.inputs.get(*rel)) != Some(*d)).map(|(rel, _)| rel.clone()).collect();

@@ -28,7 +28,7 @@ pub mod code_rule_dsl {
         pub mod plan {
             pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, strata};
+            use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds};
             #[allow(unused_imports)]
             use std::sync::Arc;
             #[allow(unused_imports)]
