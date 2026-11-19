@@ -1140,8 +1140,21 @@ stands on:
   (the device layer is below the UKL preprocessor), compiled at a queue root's first fill, writes the pattern's
   words; a pattern of 1 or 2 bytes is widened to a word, and one of no whole words is written from the host.
 - On Metal, the CPU and OpenCL, the 409 targeted tests (the anchor tests with them) pass but for the pack-data two
-  and, on the CPU and OpenCL, the block programs' test (C's last file). Three slow tests time out at 240 s at a
-  load average of 55 to 74 and pass alone.
+  and, on the CPU and OpenCL, the block programs' test. Three slow tests time out at 240 s at a load average of 55
+  to 74 and pass alone.
+
+**C: accel's gpu lane on every backend (2026-11-19).**
+- **What C still holds**, counted: the block programs (`block_program.rs` and its three `.metal` files,
+  `block_serial.rs`), the joins (the engine's `metal_join.rs` and `metal_rows.rs`, accel's `join.rs` and `tile.rs`),
+  and accel's lane, below.
+- **accel's lane** (`accel/src/gpu/mod.rs`): the bit product, the count table and the closure are UKL
+  (`relational.uglykl`); its scans and histogram are the UKL library's (`rerail_gpu::library`), whose histogram
+  step 5 measured no slower than the lane's (so its speed gate goes with the lane's own `hist`); the zero fill is
+  the queue's. A submission is enqueued on the device layer's queue, stage by stage, as it was encoded with a
+  barrier between stages; a page-aligned column is wrapped in place (`wrap_host_memory`). So the lane runs on the
+  process's device whatever its backend; programs and joins on it stay Metal's (`can`) until they are UKL.
+- Its 23 tests pass on Metal; on the CPU and OpenCL all but accel's two column-statistics tests, which run
+  `join.rs`'s kernels.
 
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's

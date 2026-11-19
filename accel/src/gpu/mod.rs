@@ -1,12 +1,11 @@
-//! The gpu lane (decision 0098 §5, 0095 §3): the four kernels in Metal compute, a batch as **one command buffer**.
+//! The gpu lane (decision 0098 §5, 0095 §3): the four kernels in UKL (decision 0440 step C) on the process's
+//! device, whatever its backend, a batch as **one submission** on the device's queue.
 //!
-//! A submission plans each launch as a list of **stages**: dispatches that read only the launch's inputs and what
-//! its earlier stages wrote. All launches' stage 0 dispatches are encoded first, then one memory barrier over the
-//! buffers they wrote, then every launch's stage 1, and so on, in one concurrent compute encoder. So independent
-//! launches overlap on the device, a barrier stands only where a later dispatch reads an earlier one's output, and
-//! the host waits once.
+//! A submission plans each launch as a list of **stages**: launches that read only the launch's inputs and what
+//! its earlier stages wrote. All launches' stage 0 launches are enqueued first, then every launch's stage 1, and so
+//! on; the queue runs its work in order, and the host waits once.
 //!
-//! The kernels (`*.metal`, compiled once per process):
+//! The kernels (`relational.uglykl`, compiled once per process, and the UKL library's scans and histogram):
 //!
 //! - **bit product**: 64 × 64 output tiles, AND and popcount on the threads (the spikes' W1/W5 bit gram). With
 //!   thresholds, each tile writes its pairs as mask bits; a scan of the mask words' popcounts gives each word its
@@ -26,8 +25,7 @@
 use crate::exec::Backend;
 use crate::kernel::{Bits, JoinBy, Kernel, Output};
 use crate::lanes::Lane;
-use metal::{Buffer, CommandQueue, ComputePipelineState, Device, MTLDispatchType, MTLResourceOptions, MTLSize};
-use objc::{msg_send, sel, sel_impl};
+use rerail_device::device::{Buffer, ComputeFunction, ComputeQueue};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
@@ -37,12 +35,12 @@ pub mod shared;
 pub mod space;
 pub mod tile;
 
-const SOURCE: &str = concat!(include_str!("common.metal"), include_str!("bits.metal"), include_str!("table.metal"), include_str!("closure.metal"));
+/// The lane's own kernels (UKL, decision 0440 step C); the scans, the histogram and the zero fill are the UKL
+/// library's (`rerail_gpu::library`, a queue's fill).
+const SOURCE: &str = include_str!("relational.uglykl");
 
 /// Threads per threadgroup of every kernel (the bit product's as 16 × 16).
 const TG: u64 = 256;
-/// Elements per threadgroup of the device-wide scan (common.metal's `SCAN_BLOCK`).
-const SCAN_BLOCK: u64 = 1024;
 /// Pairs a first pass writes at most before the exact rerun (2 MB). A larger first buffer is not free: with 32 MB,
 /// a submission's wall time grew by about 50 ms (the pages' preparation), more than a second command buffer's
 /// round trip (0.2 to 1.5 ms).
@@ -50,47 +48,36 @@ const PAIRS_CAP: u64 = 1 << 18;
 
 #[derive(Clone, Copy, Debug)]
 enum Pipe {
-    ScanBlock,
-    ScanAdd,
-    Zero,
     BpTile,
     BpScatter,
     CtCount,
     CtScatter,
-    Hist,
     ClInit,
     ClLevel,
     ClGather,
 }
 
-const PIPES: [&str; 11] = ["scan_block", "scan_add", "zero_u32", "bp_tile", "bp_scatter", "ct_count", "ct_scatter", "hist", "cl_init", "cl_level", "cl_gather"];
+const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_level", "cl_gather"];
 
-/// The device, its queue and the compiled kernels: once per process.
+/// The process's device in the device layer and the compiled kernels: once per process, on any backend.
 struct Gpu {
-    device: Device,
-    queue: CommandQueue,
-    pipes: Vec<ComputePipelineState>,
+    layer: &'static shared::Layer,
+    functions: Vec<Arc<ComputeFunction>>,
     page: usize,
     max_buffer: u64,
 }
 
 impl Gpu {
     fn new() -> Result<Gpu, String> {
-        objc::rc::autoreleasepool(|| {
-            // The device and queue every relational submission shares (decision 0100 §2).
-            let shared = shared::get().ok_or("no Metal device")?;
-            let device = shared.device.clone();
-            let mut pipes = Vec::with_capacity(PIPES.len());
-            for name in PIPES {
-                // Through the store of compiled kernels (decision 0395); one that does not compile is fatal.
-                let p = kernels::pipeline_fixed(SOURCE, name, None);
-                if p.max_total_threads_per_threadgroup() < TG {
-                    return Err(format!("gpu lane: {name} runs {} threads a threadgroup, not {TG}", p.max_total_threads_per_threadgroup()));
-                }
-                pipes.push(p);
-            }
-            Ok(Gpu { device, queue: shared.queue.clone(), pipes, page: shared.page, max_buffer: shared.max_buffer })
-        })
+        // The device and queue every relational submission shares (decision 0100 §2).
+        let layer = shared::layer().ok_or("no device")?;
+        if layer.device.max_threadgroup() < TG as u32 {
+            return Err(format!("gpu lane: the device runs {} threads a threadgroup, not {TG}", layer.device.max_threadgroup()));
+        }
+        // Through the store of compiled kernels (decision 0395); one that does not compile is fatal.
+        let functions = PIPES.iter().map(|name| kernels::function_fixed(SOURCE, name, None)).collect();
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
+        Ok(Gpu { layer, functions, page, max_buffer: layer.max_buffer })
     }
 }
 
@@ -168,11 +155,15 @@ impl Backend for GpuBackend {
                 let (n, words) = (*n as u64, (*n as u64).div_ceil(64).max(1));
                 off.len() as u64 == n + 1 && u32ok(n * words * 2) && fits(n * words * 8)
             }
-            Kernel::Program(p) => p.0.per_unit(crate::lanes::Lane::Gpu).is_some(),
+            // Programs and joins run kernels still Metal's (decision 0440 step C): on Metal alone until they are UKL.
+            Kernel::Program(p) => shared::get().is_some() && p.0.per_unit(crate::lanes::Lane::Gpu).is_some(),
             Kernel::Join { left, right, by, .. } => {
                 let Ok((nl, nr)) = Kernel::join_shape(left, right) else {
                     return false;
                 };
+                if shared::get().is_none() {
+                    return false;
+                }
                 // The pairs' space (two a left row to start) and the columns at 64 bits.
                 let shape = fits(nl as u64 * 16) && fits(nr as u64 * 8) && (nl as u64) < (u32::MAX as u64) / 2;
                 shape && (*by == JoinBy::Probe || left.len() <= 3)
@@ -339,107 +330,80 @@ impl crate::exec::Pending for Running {
 impl GpuBackend {
     /// Runs `ks` as one submission, with what it took on the device.
     pub fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Stats), String> {
-        objc::rc::autoreleasepool(|| {
-            let mut plan = Planner { gpu: self.gpu, inputs: HashMap::new(), leases: Default::default() };
-            let t = std::time::Instant::now();
-            let jobs: Vec<Job> = crate::score::phase("upload", || ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>())?;
-            let mut stats = Stats { encode: t.elapsed().as_secs_f64(), ..Stats::default() };
-            self.execute(jobs.iter().map(|j| j.stages.as_slice()), &mut stats)?;
-            // Pairs that outgrew their first buffer: their scatter again, into the exact size.
-            let mut rerun: Vec<Dispatch> = Vec::new();
-            let mut exact: HashMap<usize, (Buffer, u64)> = HashMap::new();
-            for (i, j) in jobs.iter().enumerate() {
-                if let Read::Pairs { total, cap, rescatter, .. } = &j.read {
-                    let t = read::<u32>(total, 1)[0] as u64;
-                    if t > *cap {
-                        if t * 8 > self.gpu.max_buffer {
-                            return Err(format!("launch {i}: {t} pairs do not fit a buffer"));
-                        }
-                        let buf = plan.alloc(t * 8);
-                        let (d, bi, ci) = rescatter;
-                        let mut d = d.clone();
-                        d.set(*bi, Bind::Buf(buf.clone()));
-                        d.set(*ci, Bind::U32(t as u32));
-                        rerun.push(d);
-                        exact.insert(i, (buf, t));
+        let mut plan = Planner { gpu: self.gpu, inputs: HashMap::new(), leases: Default::default() };
+        let t = std::time::Instant::now();
+        let jobs: Vec<Job> = crate::score::phase("upload", || ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>())?;
+        let mut stats = Stats { encode: t.elapsed().as_secs_f64(), ..Stats::default() };
+        self.execute(jobs.iter().map(|j| j.stages.as_slice()), &mut stats)?;
+        // Pairs that outgrew their first buffer: their scatter again, into the exact size.
+        let mut rerun: Vec<Step> = Vec::new();
+        let mut exact: HashMap<usize, (Buffer, u64)> = HashMap::new();
+        for (i, j) in jobs.iter().enumerate() {
+            if let Read::Pairs { total, cap, rescatter, .. } = &j.read {
+                let t = total.read() as u64;
+                if t > *cap {
+                    if t * 8 > self.gpu.max_buffer {
+                        return Err(format!("launch {i}: {t} pairs do not fit a buffer"));
                     }
+                    let buf = plan.alloc(t * 8);
+                    let mut d = rescatter.dispatch.clone();
+                    d.set("pairs", Bind::Buf(buf.clone()));
+                    d.set("args", Bind::Bytes((rescatter.args)(t as u32)));
+                    rerun.push(Step::Kernel(d));
+                    exact.insert(i, (buf, t));
                 }
             }
-            if !rerun.is_empty() {
-                let stage = [Stage { ds: rerun, writes: Vec::new() }];
-                self.execute(std::iter::once(&stage[..]), &mut stats)?;
-            }
-            let _read = ReadPhase(crate::score::thread_cpu(), std::time::Instant::now());
-            let t = std::time::Instant::now();
-            let mut outs = Vec::with_capacity(jobs.len());
-            for (i, j) in jobs.into_iter().enumerate() {
-                if let Some(bad) = &j.bad {
-                    if read::<u32>(bad, 1)[0] != 0 {
-                        return Err(format!("launch {i} ({}): a code is not below the width", ks[i].form().name()));
-                    }
+        }
+        if !rerun.is_empty() {
+            let stage = [Stage { steps: rerun }];
+            self.execute(std::iter::once(&stage[..]), &mut stats)?;
+        }
+        let _read = ReadPhase(crate::score::thread_cpu(), std::time::Instant::now());
+        let t = std::time::Instant::now();
+        let mut outs = Vec::with_capacity(jobs.len());
+        for (i, j) in jobs.into_iter().enumerate() {
+            if let Some(bad) = &j.bad {
+                if read::<u32>(bad, 1)[0] != 0 {
+                    return Err(format!("launch {i} ({}): a code is not below the width", ks[i].form().name()));
                 }
-                outs.push(match j.read {
-                    Read::Ready(o) => o,
-                    Read::Counts { rows, cols, buf } => Output::Counts { rows, cols, data: read::<u32>(&buf, rows * cols) },
-                    Read::PerRow { n, buf } => Output::PerRow(read::<u32>(&buf, n)),
-                    Read::Bits { rows, words, buf } => Output::Bits(Bits::new(rows, words, read::<u64>(&buf, rows * words))),
-                    Read::Pairs { total, buf, .. } => {
-                        let t = read::<u32>(&total, 1)[0] as usize;
-                        let buf = exact.remove(&i).map_or(buf, |(b, _)| b);
-                        Output::Pairs(read::<(u32, u32)>(&buf, t))
-                    }
-                });
             }
-            stats.decode = t.elapsed().as_secs_f64();
-            Ok((outs, stats))
-        })
+            outs.push(match j.read {
+                Read::Ready(o) => o,
+                Read::Counts { rows, cols, buf } => Output::Counts { rows, cols, data: read::<u32>(&buf, rows * cols) },
+                Read::PerRow { n, buf } => Output::PerRow(read::<u32>(&buf, n)),
+                Read::Bits { rows, words, buf } => Output::Bits(Bits::new(rows, words, read::<u64>(&buf, rows * words))),
+                Read::Pairs { total, buf, .. } => {
+                    let t = total.read() as usize;
+                    let buf = exact.remove(&i).map_or(buf, |(b, _)| b);
+                    Output::Pairs(read::<(u32, u32)>(&buf, t))
+                }
+            });
+        }
+        stats.decode = t.elapsed().as_secs_f64();
+        Ok((outs, stats))
     }
 
-    /// One command buffer: every job's stage `s`, then a barrier over what stage `s` wrote, then stage `s + 1`.
-    #[allow(unexpected_cfgs)] // `msg_send!` expands to a `cargo-clippy` cfg check.
+    /// One submission on the device's queue: every job's stage `s`, then stage `s + 1`. The queue runs its work in
+    /// order, so each stage reads what the stages before it wrote (a stage boundary is counted as a barrier).
     fn execute<'a>(&self, jobs: impl Iterator<Item = &'a [Stage]> + Clone, stats: &mut Stats) -> Result<(), String> {
         let gpu = self.gpu;
         let (c0, t0) = (crate::score::thread_cpu(), std::time::Instant::now());
-        let cb = gpu.queue.new_command_buffer();
-        let enc = cb.compute_command_encoder_with_dispatch_type(MTLDispatchType::Concurrent);
+        let mut q = ComputeQueue::new(gpu.layer.queue);
         let depth = jobs.clone().map(|j| j.len()).max().unwrap_or(0);
-        let mut written: Vec<&Buffer> = Vec::new();
         for s in 0..depth {
-            if !written.is_empty() {
-                let rs: Vec<&metal::ResourceRef> = written.iter().map(|b| -> &metal::ResourceRef { b }).collect();
-                enc.memory_barrier_with_resources(&rs);
+            if s > 0 {
                 stats.barriers += 1;
-                written.clear();
             }
             for stage in jobs.clone().filter_map(|j| j.get(s)) {
-                for d in &stage.ds {
-                    if d.groups.width * d.groups.height * d.groups.depth == 0 {
-                        continue;
-                    }
-                    enc.set_compute_pipeline_state(&gpu.pipes[d.pipe as usize]);
-                    for (i, b) in &d.binds {
-                        match b {
-                            Bind::Buf(buf) => enc.set_buffer(*i, Some(buf), 0),
-                            Bind::U32(v) => enc.set_bytes(*i, 4, (v as *const u32).cast()),
-                        }
-                    }
-                    enc.dispatch_thread_groups(d.groups, d.threads);
-                    stats.dispatches += 1;
+                for step in &stage.steps {
+                    stats.dispatches += step.enqueue(gpu, &q)?;
                 }
-                written.extend(stage.writes.iter());
             }
         }
-        enc.end_encoding();
         crate::score::add("encode", crate::score::thread_cpu() - c0, t0.elapsed().as_secs_f64());
-        crate::score::phase("gpu commit", || cb.commit());
-        let committed = join::host_clock();
-        crate::score::phase("gpu wait", || cb.wait_until_completed());
-        join::add_timeline(cb, committed, join::host_clock());
-        if cb.status() != metal::MTLCommandBufferStatus::Completed {
-            return Err(format!("the command buffer ended {:?}", cb.status()));
-        }
-        let (start, end): (f64, f64) = unsafe { (msg_send![cb, GPUStartTime], msg_send![cb, GPUEndTime]) };
-        stats.device += (end - start).max(0.0);
+        let event = crate::score::phase("gpu commit", || q.flush());
+        crate::score::phase("gpu wait", || event.await_()).map_err(|e| format!("the submission failed: {e}"))?;
+        stats.device += event.gpu_seconds();
         stats.command_buffers += 1;
         Ok(())
     }
@@ -454,59 +418,165 @@ impl Drop for ReadPhase {
     }
 }
 
-// The device writes pairs as `uint2`; `(u32, u32)` must have that layout for `read` to copy them as they are.
+// The device writes pairs as two u32s; `(u32, u32)` must have that layout for `read` to copy them as they are.
 const _: () = assert!(size_of::<(u32, u32)>() == 8 && std::mem::offset_of!((u32, u32), 0) == 0 && std::mem::offset_of!((u32, u32), 1) == 4);
 
-/// `n` values from the start of a shared buffer.
+/// `n` values from the start of a buffer the host shares.
 fn read<T: Copy>(buf: &Buffer, n: usize) -> Vec<T> {
     if n == 0 {
         return Vec::new();
     }
     assert!(buf.length() as usize >= n * size_of::<T>(), "gpu lane: reading past a buffer");
-    // SAFETY: a shared buffer the device finished writing (the command buffer completed); `n` values fit it.
+    // copy: not block data (a kernel's output, handed to the caller as its own)
+    // SAFETY: a buffer the device finished writing (the submission completed); `n` values fit it.
     unsafe { std::slice::from_raw_parts(buf.contents() as *const T, n) }.to_vec()
+}
+
+/// A `#[repr(C)]` value's bytes, as a kernel's `ARGS` row takes them.
+fn bytes_of<T: Copy>(v: &T) -> Vec<u8> {
+    // SAFETY: the value's bytes; the structs passed have no padding.
+    unsafe { std::slice::from_raw_parts((v as *const T).cast::<u8>(), size_of::<T>()) }.to_vec()
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct BitProductArgs {
+    n: u32,
+    m: u32,
+    kw: u32,
+    mode: u32,
+    mw: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ScatterArgs {
+    cap: u32,
+    mw: u32,
+    nw: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ClosureArgs {
+    n: u32,
+    words: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct LevelArgs {
+    lo: u32,
+    hi: u32,
+    words: u32,
 }
 
 #[derive(Clone)]
 enum Bind {
     Buf(Buffer),
-    U32(u32),
+    Bytes(Vec<u8>),
 }
 
+/// One launch of the lane's kernels: its rows by name, `groups` threadgroups of `threads`.
 #[derive(Clone)]
 struct Dispatch {
     pipe: Pipe,
-    binds: Vec<(u64, Bind)>,
-    groups: MTLSize,
-    threads: MTLSize,
+    binds: Vec<(&'static str, Bind)>,
+    groups: [u64; 3],
+    threads: [u64; 3],
 }
 
 impl Dispatch {
-    fn new(pipe: Pipe, binds: Vec<Bind>, groups: u64) -> Self {
-        Dispatch { pipe, binds: binds.into_iter().enumerate().map(|(i, b)| (i as u64, b)).collect(), groups: MTLSize::new(groups, 1, 1), threads: MTLSize::new(TG, 1, 1) }
+    fn new(pipe: Pipe, binds: Vec<(&'static str, Bind)>, groups: u64) -> Self {
+        Dispatch { pipe, binds, groups: [groups, 1, 1], threads: [TG, 1, 1] }
     }
 
     /// One thread per element of `n`.
-    fn per(pipe: Pipe, binds: Vec<Bind>, n: u64) -> Self {
+    fn per(pipe: Pipe, binds: Vec<(&'static str, Bind)>, n: u64) -> Self {
         Dispatch::new(pipe, binds, n.div_ceil(TG))
     }
 
-    fn set(&mut self, index: u64, b: Bind) {
-        let slot = self.binds.iter_mut().find(|(i, _)| *i == index).expect("a bound index");
+    fn set(&mut self, name: &str, b: Bind) {
+        let slot = self.binds.iter_mut().find(|(n, _)| *n == name).expect("a bound row");
         slot.1 = b;
     }
 }
 
-/// Dispatches that may run together, and the buffers they write (for the barrier before the next stage).
+/// One step of a stage: a launch of the lane's kernels, or of the UKL library's.
+#[derive(Clone)]
+enum Step {
+    Kernel(Dispatch),
+    /// `output[..=n]`: the exclusive scan of `input[..n]` (of its words' popcounts when `pop`), the total last.
+    Scan { input: Buffer, output: Buffer, n: u32, pop: bool },
+    /// `H[p * width + c]`: partition `p`'s codes equal to `c`; `bad` set by a code at or above `width`.
+    Histogram { codes: Buffer, offsets: Buffer, parts: u32, width: u32, h: Buffer, bad: Buffer },
+    /// `words` zero u32s from the buffer's start.
+    Zero { buf: Buffer, words: usize },
+}
+
+impl Step {
+    /// Enqueued on `q`: the launches it took.
+    fn enqueue(&self, gpu: &Gpu, q: &ComputeQueue) -> Result<usize, String> {
+        match self {
+            Step::Kernel(d) => {
+                if d.groups.iter().product::<u64>() == 0 {
+                    return Ok(0);
+                }
+                let mut l = rerail_gpu::kernels::launch(q, &gpu.functions[d.pipe as usize]);
+                for (name, b) in &d.binds {
+                    l = match b {
+                        Bind::Buf(b) => l.buffer(name, b),
+                        Bind::Bytes(v) => l.bytes(name, v),
+                    };
+                }
+                l.run(&d.groups, &d.threads).map_err(|e| format!("{:?}: {e}", d.pipe))?;
+                Ok(1)
+            }
+            Step::Scan { input, output, n, pop } => {
+                if *pop {
+                    rerail_gpu::library::scan_exclusive_popcount_u32(q, input, output, *n)?;
+                } else {
+                    rerail_gpu::library::scan_exclusive_u32(q, input, output, *n)?;
+                }
+                Ok(1)
+            }
+            Step::Histogram { codes, offsets, parts, width, h, bad } => {
+                rerail_gpu::library::histogram::<u16>(q, codes, offsets, *parts, *width, h, bad)?;
+                Ok(1)
+            }
+            Step::Zero { buf, words } => {
+                q.enqueue_fill_array(buf, &0u32, 0, Some(*words));
+                Ok(1)
+            }
+        }
+    }
+}
+
+/// Steps that may run together.
 struct Stage {
-    ds: Vec<Dispatch>,
-    writes: Vec<Buffer>,
+    steps: Vec<Step>,
 }
 
 impl Stage {
-    fn one(d: Dispatch, writes: &[&Buffer]) -> Self {
-        Stage { ds: vec![d], writes: writes.iter().map(|b| (*b).clone()).collect() }
+    fn one(step: Step) -> Self {
+        Stage { steps: vec![step] }
     }
+}
+
+/// A u32 the device writes at word `at` of `buf` (a scan's total).
+struct Word {
+    buf: Buffer,
+    at: usize,
+}
+
+impl Word {
+    fn read(&self) -> u32 {
+        read::<u32>(&self.buf, self.at + 1)[self.at]
+    }
+}
+
+/// A pairs output's scatter, to run again into a buffer of the exact size: its dispatch, and its `args` for a
+/// capacity.
+struct Rescatter {
+    dispatch: Dispatch,
+    args: Box<dyn Fn(u32) -> Vec<u8>>,
 }
 
 /// How a launch's output is read back after the wait.
@@ -515,9 +585,8 @@ enum Read {
     Counts { rows: usize, cols: usize, buf: Buffer },
     PerRow { n: usize, buf: Buffer },
     Bits { rows: usize, words: usize, buf: Buffer },
-    /// `total` holds the pairs' count; `buf` the first `cap` of them. `rescatter` is the scatter, with the indexes
-    /// of its pairs buffer and its capacity.
-    Pairs { total: Buffer, buf: Buffer, cap: u64, rescatter: (Dispatch, u64, u64) },
+    /// `total` holds the pairs' count; `buf` the first `cap` of them.
+    Pairs { total: Word, buf: Buffer, cap: u64, rescatter: Rescatter },
 }
 
 struct Job {
@@ -537,8 +606,8 @@ impl Job {
 struct Planner {
     gpu: &'static Gpu,
     inputs: HashMap<(usize, usize), Buffer>,
-    /// The pooled buffers the submission's jobs use, returned once its command buffers have completed and its
-    /// outputs are read (when the planner drops).
+    /// The pooled buffers the submission's jobs use, returned once its work has completed and its outputs are
+    /// read (when the planner drops).
     leases: std::cell::RefCell<Vec<shared::Pooled>>,
 }
 
@@ -550,7 +619,7 @@ impl Planner {
     /// A zeroed buffer of the pool (the kernels count into some, and read a new buffer as zero).
     fn alloc(&self, bytes: u64) -> Buffer {
         let lease = shared::lease_zeroed(bytes.max(16) as usize).unwrap_or_else(|e| panic!("gpu lane: {e}"));
-        let b = lease.buffer().clone();
+        let b = lease.device_buffer().clone();
         self.leases.borrow_mut().push(lease);
         b
     }
@@ -563,11 +632,12 @@ impl Planner {
         if let Some(b) = self.inputs.get(&(ptr, bytes)) {
             return b.clone();
         }
-        let b = if bytes != 0 && ptr % self.gpu.page == 0 && bytes % self.gpu.page == 0 {
-            self.gpu.device.new_buffer_with_bytes_no_copy(ptr as *const _, bytes as u64, MTLResourceOptions::StorageModeShared, None)
-        } else {
-            self.upload(data)
-        };
+        let wrapped = (bytes != 0 && ptr % self.gpu.page == 0 && bytes % self.gpu.page == 0)
+            // SAFETY: the caller's column, which outlives the submission (the planner's work is awaited before it
+            // returns), read and never written by the kernels.
+            .then(|| unsafe { rerail_device::device::wrap_host_memory(self.gpu.layer.device, ptr as *mut u8, bytes) }.ok())
+            .flatten();
+        let b = wrapped.unwrap_or_else(|| self.upload(data));
         self.inputs.insert((ptr, bytes), b.clone());
         b
     }
@@ -579,26 +649,20 @@ impl Planner {
             return self.alloc(16);
         }
         let lease = shared::lease(bytes).unwrap_or_else(|e| panic!("gpu lane: {e}"));
+        // copy: not block data (a caller's column, not page-aligned, which the device cannot wrap in place)
         // SAFETY: the lease is the planner's alone and at least `bytes` long; no command uses it yet.
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr().cast::<u8>(), lease.host(), bytes) };
-        let b = lease.buffer().clone();
+        let b = lease.device_buffer().clone();
         self.leases.borrow_mut().push(lease);
         b
     }
 
-    /// The device-wide exclusive scan of `n` u32 (their popcounts when `pop`): stages appended to `st`. Returns the
-    /// scanned values and a buffer whose first u32 is the total.
-    fn scan(&self, st: &mut Vec<Stage>, input: &Buffer, n: u64, pop: bool) -> (Buffer, Buffer) {
-        let blocks = n.div_ceil(SCAN_BLOCK).max(1);
-        let (ex, sums) = (self.alloc(n * 4), self.alloc(blocks * 4));
-        let d = Dispatch::new(Pipe::ScanBlock, vec![Bind::Buf(input.clone()), Bind::Buf(ex.clone()), Bind::Buf(sums.clone()), Bind::U32(n as u32), Bind::U32(pop as u32)], blocks);
-        st.push(Stage::one(d, &[&ex, &sums]));
-        if blocks == 1 {
-            return (ex, sums);
-        }
-        let (prefix, total) = self.scan(st, &sums, blocks, false);
-        st.push(Stage::one(Dispatch::per(Pipe::ScanAdd, vec![Bind::Buf(ex.clone()), Bind::Buf(prefix), Bind::U32(n as u32)], n), &[&ex]));
-        (ex, total)
+    /// The exclusive scan of `n` u32 (their popcounts when `pop`), the UKL library's: a stage appended to `st`.
+    /// Returns the scanned values, the total at word `n`.
+    fn scan(&self, st: &mut Vec<Stage>, input: &Buffer, n: u64, pop: bool) -> (Buffer, Word) {
+        let ex = self.alloc((n + 1) * 4);
+        st.push(Stage::one(Step::Scan { input: input.clone(), output: ex.clone(), n: n as u32, pop }));
+        (ex.clone(), Word { buf: ex, at: n as usize })
     }
 
     fn offsets(off: &[u32], len: usize, what: &str) -> Result<(), String> {
@@ -629,34 +693,28 @@ impl Planner {
             }));
         }
         let (ba, bb) = (self.input(&a.data), self.input(&b.data));
-        let mut d = Dispatch::new(Pipe::BpTile, Vec::new(), 0);
-        d.groups = MTLSize::new(m.div_ceil(64), n.div_ceil(64), 1);
-        d.threads = MTLSize::new(16, 16, 1);
         let dummy = self.alloc(16);
         let mw = m.div_ceil(32);
-        let bind = |c: &Buffer, mask: &Buffer, minb: &Buffer, mode: u32| {
-            vec![Bind::Buf(ba.clone()), Bind::Buf(bb.clone()), Bind::Buf(c.clone()), Bind::Buf(mask.clone()), Bind::Buf(minb.clone()), Bind::U32(u(a.rows)), Bind::U32(u(b.rows)), Bind::U32(kw as u32), Bind::U32(mode), Bind::U32(mw as u32)]
-                .into_iter()
-                .enumerate()
-                .map(|(i, b)| (i as u64, b))
-                .collect()
+        let tile = |c: &Buffer, mask: &Buffer, minb: &Buffer, mode: u32| {
+            let args = BitProductArgs { n: u(a.rows), m: u(b.rows), kw: kw as u32, mode, mw: mw as u32 };
+            let binds = vec![("A", Bind::Buf(ba.clone())), ("B", Bind::Buf(bb.clone())), ("C", Bind::Buf(c.clone())), ("mask", Bind::Buf(mask.clone())), ("minv", Bind::Buf(minb.clone())), ("args", Bind::Bytes(bytes_of(&args)))];
+            Step::Kernel(Dispatch { pipe: Pipe::BpTile, binds, groups: [m.div_ceil(64), n.div_ceil(64), 1], threads: [16, 16, 1] })
         };
         let Some(min) = min else {
             let c = self.alloc(n * m * 4);
-            d.binds = bind(&c, &dummy, &dummy, 0);
-            return Ok(Job { stages: vec![Stage::one(d, &[&c])], read: Read::Counts { rows: a.rows, cols: b.rows, buf: c }, bad: None });
+            return Ok(Job { stages: vec![Stage::one(tile(&c, &dummy, &dummy, 0))], read: Read::Counts { rows: a.rows, cols: b.rows, buf: c }, bad: None });
         };
         let nw = n * mw;
         let mask = self.alloc(nw * 4);
         let minb = self.input(min);
-        d.binds = bind(&dummy, &mask, &minb, 1);
-        let mut st = vec![Stage::one(d, &[&mask])];
+        let mut st = vec![Stage::one(tile(&dummy, &mask, &minb, 1))];
         let (ex, total) = self.scan(&mut st, &mask, nw, true);
         let cap = (n * m).min(PAIRS_CAP);
         let pairs = self.alloc(cap * 8);
-        let scatter = Dispatch::per(Pipe::BpScatter, vec![Bind::Buf(mask.clone()), Bind::Buf(ex), Bind::Buf(pairs.clone()), Bind::U32(cap as u32), Bind::U32(mw as u32), Bind::U32(nw as u32)], nw);
-        st.push(Stage::one(scatter.clone(), &[&pairs]));
-        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: (scatter, 2, 3) }, bad: None })
+        let args = move |cap: u32| bytes_of(&ScatterArgs { cap, mw: mw as u32, nw: nw as u32 });
+        let scatter = Dispatch::per(Pipe::BpScatter, vec![("mask", Bind::Buf(mask.clone())), ("ex", Bind::Buf(ex)), ("pairs", Bind::Buf(pairs.clone())), ("args", Bind::Bytes(args(cap as u32)))], nw);
+        st.push(Stage::one(Step::Kernel(scatter.clone())));
+        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None })
     }
 
     fn count_table(&mut self, loff: &[u32], left: &[u16], roff: &[u32], right: &[u16], emit: bool) -> Result<Job, String> {
@@ -672,8 +730,8 @@ impl Planner {
         let nl = left.len() as u64;
         let (bl, br, blo, bro) = (self.input(left), self.input(right), self.input(loff), self.input(roff));
         let counts = self.alloc(nl * 4);
-        let count = Dispatch::new(Pipe::CtCount, vec![Bind::Buf(bl.clone()), Bind::Buf(br.clone()), Bind::Buf(blo.clone()), Bind::Buf(bro.clone()), Bind::Buf(counts.clone())], nparts);
-        let mut st = vec![Stage::one(count, &[&counts])];
+        let count = Dispatch::new(Pipe::CtCount, vec![("left", Bind::Buf(bl.clone())), ("right", Bind::Buf(br.clone())), ("loff", Bind::Buf(blo.clone())), ("roff", Bind::Buf(bro.clone())), ("counts", Bind::Buf(counts.clone()))], nparts);
+        let mut st = vec![Stage::one(Step::Kernel(count))];
         if !emit {
             return Ok(Job { stages: st, read: Read::PerRow { n: left.len(), buf: counts }, bad: None });
         }
@@ -681,13 +739,14 @@ impl Planner {
         let bound: u64 = loff.windows(2).zip(roff.windows(2)).map(|(l, r)| (l[1] - l[0]) as u64 * (r[1] - r[0]) as u64).sum();
         let cap = bound.min(PAIRS_CAP);
         let pairs = self.alloc(cap * 8);
+        let args = |cap: u32| cap.to_ne_bytes().to_vec();
         let scatter = Dispatch::new(
             Pipe::CtScatter,
-            vec![Bind::Buf(bl), Bind::Buf(br), Bind::Buf(blo), Bind::Buf(bro), Bind::Buf(counts), Bind::Buf(ex), Bind::Buf(pairs.clone()), Bind::U32(cap as u32)],
+            vec![("left", Bind::Buf(bl)), ("right", Bind::Buf(br)), ("loff", Bind::Buf(blo)), ("roff", Bind::Buf(bro)), ("counts", Bind::Buf(counts)), ("ex", Bind::Buf(ex)), ("pairs", Bind::Buf(pairs.clone())), ("args", Bind::Bytes(args(cap as u32)))],
             nparts,
         );
-        st.push(Stage::one(scatter.clone(), &[&pairs]));
-        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: (scatter, 6, 7) }, bad: None })
+        st.push(Stage::one(Step::Kernel(scatter.clone())));
+        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None })
     }
 
     fn histogram(&mut self, off: &[u32], codes: &[u16], width: u32) -> Result<Job, String> {
@@ -700,8 +759,8 @@ impl Planner {
         let (bc, bo) = (self.input(codes), self.input(off));
         let h = self.alloc(nparts as u64 * width as u64 * 4);
         let bad = self.upload(&[0u32; 4]);
-        let d = Dispatch::new(Pipe::Hist, vec![Bind::Buf(bc), Bind::Buf(bo), Bind::Buf(h.clone()), Bind::U32(width), Bind::Buf(bad.clone())], nparts as u64);
-        Ok(Job { stages: vec![Stage::one(d, &[&h, &bad])], read: Read::Counts { rows: nparts, cols: width as usize, buf: h }, bad: Some(bad) })
+        let step = Step::Histogram { codes: bc, offsets: bo, parts: nparts as u32, width, h: h.clone(), bad: bad.clone() };
+        Ok(Job { stages: vec![Stage::one(step)], read: Read::Counts { rows: nparts, cols: width as usize, buf: h }, bad: Some(bad) })
     }
 
     fn closure(&mut self, n: u32, off: &[u32], dst: &[u32]) -> Result<Job, String> {
@@ -772,94 +831,23 @@ impl Planner {
         let row32 = (ncomp * words * 2) as u64;
         let r = self.alloc(row32 * 4);
         let out = self.alloc((nu * words * 8) as u64);
-        let w = Bind::U32(words as u32);
+        let args = Bind::Bytes(bytes_of(&ClosureArgs { n, words: words as u32 }));
         let mut st = vec![
-            Stage::one(Dispatch::per(Pipe::Zero, vec![Bind::Buf(r.clone()), Bind::U32(row32 as u32)], row32), &[&r]),
-            Stage::one(Dispatch::per(Pipe::ClInit, vec![Bind::Buf(boff), Bind::Buf(bdst), Bind::Buf(bcomp.clone()), Bind::Buf(bcyc), Bind::Buf(r.clone()), Bind::U32(n), w.clone()], n as u64), &[&r]),
+            Stage::one(Step::Zero { buf: r.clone(), words: row32 as usize }),
+            Stage::one(Step::Kernel(Dispatch::per(Pipe::ClInit, vec![("off", Bind::Buf(boff)), ("dst", Bind::Buf(bdst)), ("comp", Bind::Buf(bcomp.clone())), ("cyclic", Bind::Buf(bcyc)), ("R", Bind::Buf(r.clone())), ("args", args.clone())], n as u64))),
         ];
         // Level 0 has no successors: its rows are final after the init.
         for l in 1..levels {
             let (lo, hi) = (lstart[l], lstart[l + 1]);
-            let d = Dispatch::new(Pipe::ClLevel, vec![Bind::Buf(r.clone()), Bind::Buf(border.clone()), Bind::Buf(bsoff.clone()), Bind::Buf(bsdst.clone()), Bind::U32(lo), Bind::U32(hi), w.clone()], ((hi - lo) as u64).div_ceil(TG / 32));
-            st.push(Stage::one(d, &[&r]));
+            let level = Bind::Bytes(bytes_of(&LevelArgs { lo, hi, words: words as u32 }));
+            let d = Dispatch::new(Pipe::ClLevel, vec![("R", Bind::Buf(r.clone())), ("order", Bind::Buf(border.clone())), ("soff", Bind::Buf(bsoff.clone())), ("sdst", Bind::Buf(bsdst.clone())), ("args", level)], ((hi - lo) as u64).div_ceil(TG / 32));
+            st.push(Stage::one(Step::Kernel(d)));
         }
         let total = (nu * words) as u64;
-        st.push(Stage::one(Dispatch::per(Pipe::ClGather, vec![Bind::Buf(r), Bind::Buf(bcomp), Bind::Buf(out.clone()), Bind::U32(n), w], total), &[&out]));
+        st.push(Stage::one(Step::Kernel(Dispatch::per(Pipe::ClGather, vec![("R", Bind::Buf(r)), ("comp", Bind::Buf(bcomp)), ("out", Bind::Buf(out.clone())), ("args", args)], total))));
         Ok(Job { stages: st, read: Read::Bits { rows: nu, words, buf: out }, bad: None })
     }
 }
 
 #[cfg(test)]
 mod tests;
-
-/// Decision 0440 step 5's speed gate for the histogram: the UKL library's (`rerail_gpu::library::histogram`) against
-/// this lane's `hist`, on the same buffers: GPU time of the command buffer, warmed, the median of nine runs taken in
-/// turn. A measurement: `--ignored`.
-#[cfg(test)]
-mod library_speed {
-    use super::*;
-    use rerail_gpu::device::ComputeQueue;
-    use rerail_gpu::kernels::{alloc, buffer_of};
-
-    fn median(mut v: Vec<f64>) -> f64 {
-        v.sort_by(f64::total_cmp);
-        v[v.len() / 2]
-    }
-
-    #[test]
-    #[ignore = "a measurement"]
-    fn the_library_histogram_is_no_slower_than_the_lane() {
-        let lane = gpu().expect("a Metal device");
-        let shared = rerail_gpu::shared::get().expect("a Metal device");
-        let mut x = 0x2545_f491_4f6c_dd1du64;
-        let (parts, per) = (1024usize, 4096usize);
-        for width in [1000u32, 5000] {
-            let codes: Vec<u16> = (0..parts * per)
-                .map(|_| {
-                    x ^= x << 13;
-                    x ^= x >> 7;
-                    x ^= x << 17;
-                    (x % width as u64) as u16
-                })
-                .collect();
-            let offsets: Vec<u32> = (0..=parts).map(|p| (p * per) as u32).collect();
-            let (cb, ob) = (buffer_of(&codes).unwrap(), buffer_of(&offsets).unwrap());
-            let (h, bad) = (alloc::<u32>(parts * width as usize).unwrap(), buffer_of(&[0u32; 4]).unwrap());
-            let run_lane = || {
-                let command = lane.queue.new_command_buffer().to_owned();
-                let enc = command.new_compute_command_encoder();
-                enc.set_compute_pipeline_state(&lane.pipes[Pipe::Hist as usize]);
-                for (i, b) in [&cb, &ob, &h].into_iter().enumerate() {
-                    enc.set_buffer(i as u64, Some(b.metal().expect("a Metal buffer")), 0);
-                }
-                enc.set_bytes(3, 4, (&width as *const u32).cast());
-                enc.set_buffer(4, Some(bad.metal().expect("a Metal buffer")), 0);
-                enc.dispatch_thread_groups(MTLSize::new(parts as u64, 1, 1), MTLSize::new(TG, 1, 1));
-                enc.end_encoding();
-                command.commit();
-                command.wait_until_completed();
-                let (s, e): (f64, f64) = unsafe { (objc::msg_send![&*command, GPUStartTime], objc::msg_send![&*command, GPUEndTime]) };
-                e - s
-            };
-            let run_lib = || {
-                let mut q = ComputeQueue::new(&shared.queue);
-                rerail_gpu::library::histogram::<u16>(&q, &cb, &ob, parts as u32, width, &h, &bad).unwrap();
-                let e = q.flush();
-                e.await_().unwrap();
-                e.gpu_seconds()
-            };
-            for _ in 0..3 {
-                run_lane();
-                run_lib();
-            }
-            let (mut a, mut b) = (Vec::new(), Vec::new());
-            for _ in 0..9 {
-                a.push(run_lane());
-                b.push(run_lib());
-            }
-            let (a, b) = (median(a) * 1e3, median(b) * 1e3);
-            eprintln!("histogram of 4M u16 codes, width {width}, 1024 partitions: lane {a:.3} ms, UKL library {b:.3} ms ({:.2}x)", b / a);
-            assert!(b <= a * 1.1, "the library's histogram is slower than the lane's");
-        }
-    }
-}
