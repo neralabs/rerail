@@ -563,7 +563,6 @@ fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
 /// decision 0201 §5 and §6, ruff-ruf013-implicit-optional found none of its 33 keys on the ruff fixtures, so he
 /// reverted them; the hub's own 0201 must keep its findings.
 #[test]
-#[ignore = "RUF013 finds nothing on the hub (PR #508 adfb49fac): Q247"]
 fn ruff_ruf013_finds_an_implicit_optional() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("ruf013");
     std::fs::create_dir_all(&dir).unwrap();

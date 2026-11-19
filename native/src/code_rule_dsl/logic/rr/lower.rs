@@ -3799,14 +3799,20 @@ impl Lowerer {
             return Ok(context);
         }
         // A left-out group's tests of the requested keys alone stay: they introduce no witness cross product, and
-        // without them annotation demand asks to parse every type expression.
-        let membership = |l: &Lit| match l {
-            Lit::Atom { args, neg, .. } => {
-                body_vars(std::slice::from_ref(l)).is_subset(&asked)
-                    && (*neg || args.iter().all(|a| matches!(a, STerm::Var(_) | STerm::Str(_) | STerm::Num(_) | STerm::Float(_))))
+        // without them annotation demand asks to parse every type expression. So does a disjunction of such tests
+        // (`(kind(s, "string") ; kind(s, "concatenated_string"))`): left out, RUF013's `allows` asked to parse every
+        // annotation, `parsed` held of `int`, and `shown`'s `!parsed` refused every finding (Q247).
+        fn membership(l: &Lit, asked: &BTreeSet<String>) -> bool {
+            match l {
+                Lit::Atom { args, neg, .. } => {
+                    body_vars(std::slice::from_ref(l)).is_subset(asked)
+                        && (*neg || args.iter().all(|a| matches!(a, STerm::Var(_) | STerm::Str(_) | STerm::Num(_) | STerm::Float(_))))
+                }
+                Lit::Group { alts, neg: false } => !alts.is_empty() && alts.iter().all(|alt| !alt.is_empty() && alt.iter().all(|l| membership(l, asked))),
+                _ => false,
             }
-            _ => false,
-        };
+        }
+        let membership = |l: &Lit| membership(l, &asked);
         let mut members: BTreeMap<usize, Vec<Lit>> = BTreeMap::new();
         for (l, g) in context.iter().zip(&groups) {
             if !whole.contains(g) && !left.contains(g) {

@@ -5207,6 +5207,13 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   Tim reverted his ports of 0201 §5 and §6 because with them RUF013 found none of its 33 keys; the hub has its own
   0201. First check the sample against the pack's own fixtures (`check-ruff-ruf013-implicit-optional.py`).
 - **Done when**: the cause is found and the test passes, unignored.
+- **Done** (2026-11-18, branch `pr508-fixes-as-tests`): not the 0201 ports, which the hub keeps. A guest request's
+  context (`Lowerer::context`'s narrowing) kept a left-out group's single-atom tests of the asked variables but not
+  a disjunction of them: `allows`'s `(kind(s, "string") ; kind(s, "concatenated_string"))` was dropped, so
+  `rr_embed_req` asked to parse every annotation, `parsed(m, "annotation", _)` held of `int`, and `shown`'s
+  `!parsed` refused every finding. A plain group of membership tests is one now. The test passes on the M3,
+  unignored; the production contracts, the RIR dumps and `library_modules_link_to_the_lowering_of_them_together` pass
+  (the last at 155 s without the change and 185 s with it, one build, the M3 at load 138).
 
 ### Q248. (PR #508, t47) Tests that wait on code or data
 
@@ -5218,8 +5225,8 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - Windows, Linux and x86-64 (12 commits, t47's portability class) come last, with the Windows work.
 - Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f: `rules test` on a `.rr` file; ed1872a09: `--delete-data`)
   are ported into `test/cli/` with their fixes.
-- `compile_matcher_tests::ast_pattern_captures_are_pinned` and `ast_pattern_verdicts_reuse_their_bindings` read
-  `pyflakes/F601.py`, an upstream fixture the farm's checkout lacks, like the slice test's.
+- `compile_matcher_tests::ast_pattern_captures_are_pinned` and `ast_pattern_verdicts_reuse_their_bindings` read six
+  Ruff fixtures the farm's checkout lacks: restored from 236fc98d2~1 and sent with the job (`--tree`), both pass.
 
 ### Q249. The typing oracles' node products are unbounded at the hub tip
 
