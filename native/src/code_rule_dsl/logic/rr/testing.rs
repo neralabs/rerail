@@ -568,8 +568,17 @@ pub fn may_hold_tests(text: &str) -> bool {
     text.lines().any(|l| l.trim_start().starts_with(".test "))
 }
 
-/// Each test of each `.rerail` file under `paths` whose `<file>::<name>` contains `filter`: `[{file, test, line, status:
-/// "pass" | "fail", failures, findings}]`.
+/// The files `report` reads: each path named outright, tests or none, so one that is not there or does not parse is an
+/// error; and each of a directory's `.rerail` files that may hold a test.
+fn files_to_read(paths: &[PathBuf]) -> Vec<PathBuf> {
+    rule_files(paths)
+        .into_iter()
+        .filter(|file| paths.contains(file) || std::fs::read_to_string(file).is_ok_and(|t| may_hold_tests(&t)))
+        .collect()
+}
+
+/// Each test of each `.rerail` file under `paths` (`files_to_read`) whose `<file>::<name>` contains `filter`: `[{file,
+/// test, line, status: "pass" | "fail", failures, findings}]`.
 pub fn report(paths: &[PathBuf], filter: Option<&str>) -> Result<serde_json::Value, String> {
     // The runs' directories, removed when the report is made.
     struct Work(PathBuf);
@@ -584,27 +593,29 @@ pub fn report(paths: &[PathBuf], filter: Option<&str>) -> Result<serde_json::Val
     let _store = (cfg!(not(any(test, feature = "test-hooks"))) && std::env::var_os("RERAIL_TAPE_CACHE").is_none())
         .then(|| crate::code_rule_dsl::logic::plan::corpus::use_store(testing_store()));
     let mut rows = Vec::new();
-    for (k, file) in rule_files(paths).into_iter().enumerate() {
-        if !std::fs::read_to_string(&file).is_ok_and(|t| may_hold_tests(&t)) {
-            continue;
-        }
+    for (k, file) in files_to_read(paths).into_iter().enumerate() {
         for (j, test) in tests(&file)?.into_iter().enumerate() {
             let id = format!("{}::{}", file.display(), test.name);
             if filter.is_some_and(|f| !id.contains(f)) {
                 continue;
             }
-            let (failures, findings) = match run(&file, &test, &work.0.join(format!("{k}-{j}"))) {
-                Ok(outcome) => (outcome.failures, outcome.findings),
-                Err(e) => (vec![e], Vec::new()),
-            };
-            rows.push(serde_json::json!({
-                "file": file, "test": test.name, "line": test.line,
-                "status": if failures.is_empty() { "pass" } else { "fail" },
-                "failures": failures, "findings": findings,
-            }));
+            rows.push(row(&file, test, &work.0.join(format!("{k}-{j}"))));
         }
     }
     Ok(serde_json::Value::Array(rows))
+}
+
+/// `report`'s row for one test of `file`, run in `work`: a run that could not be made is the test's one failure.
+fn row(file: &Path, test: Test, work: &Path) -> serde_json::Value {
+    let (failures, findings) = match run(file, &test, work) {
+        Ok(outcome) => (outcome.failures, outcome.findings),
+        Err(e) => (vec![e], Vec::new()),
+    };
+    serde_json::json!({
+        "file": file, "test": test.name, "line": test.line,
+        "status": if failures.is_empty() { "pass" } else { "fail" },
+        "failures": failures, "findings": findings,
+    })
 }
 
 /// Testing mode's store, one per build of the engine, kept between runs: `$TMPDIR/rerail-test-rr-stores/<build>.sqlite`.
