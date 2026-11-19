@@ -314,12 +314,6 @@ fn validate_relation<'a>(
     Ok(field)
 }
 
-/// Whether `kind` resolves to a grammar supertype (`expression`, `statement`, ...), which tree-sitter
-/// never assigns to a node.
-fn is_supertype(kind: &str, language: GrammarDialect) -> bool {
-    language.kind_is_supertype(language.kind_to_id(kind))
-}
-
 /// In Python and PHP patterns, a leaf that ast-grep's preprocessing turned into the expando
 /// character but that is not a metavariable (`$At` becomes the identifier `µAt`), spelled back
 /// with `$`. `source` is the pattern as written: a leaf spelled with the expando there (`µfoo`, a
@@ -454,12 +448,14 @@ pub fn compile_ast_rule(
     }
     if let Some(kind) = rule.get("kind").and_then(Value::as_str) {
         terms.push(match KindMatcher::try_new(kind, language) {
-            // A supertype names a symbol no node carries, so ast-grep's kind test never matches
-            // it: it matches the nodes the parser reported as its members (the tape's).
-            Ok(_) if is_supertype(kind, language) => AstMatcher::Supertype(
-                crate::code_rule_dsl::matcher::Supertype::new(language.kind_to_id(kind), language),
-            ),
+            // Its ids found once: a lookup by name walks the grammar's symbols.
             Ok(matcher) => match language.kinds().kind_ids(kind).as_slice() {
+                // A supertype (`expression`, `statement`, ...) names a symbol no node carries, so
+                // ast-grep's kind test never matches it: it matches the nodes the parser reported
+                // as its members (the tape's).
+                &[id] if language.kind_is_supertype(id) => AstMatcher::Supertype(
+                    crate::code_rule_dsl::matcher::Supertype::new(id, language),
+                ),
                 [_] => AstMatcher::Kind(matcher),
                 ids => AstMatcher::Any(
                     ids.iter()

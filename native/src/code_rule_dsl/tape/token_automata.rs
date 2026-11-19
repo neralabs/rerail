@@ -516,7 +516,7 @@ pub(crate) fn build(json: &str) -> Result<Built, String> {
 // ---------------------------------------------------------------------------------------------
 // The built automata as bytes: little-endian `u32`s, maps in their keys' order.
 
-const FORMAT: u32 = 0x7461_0001;
+const FORMAT: u32 = 0x7461_0003;
 
 struct Writer(Vec<u8>);
 
@@ -546,6 +546,8 @@ impl Writer {
     }
 }
 
+/// The automata as bytes: the grammar's texts, then per kind its symbol and its automaton, which its length
+/// precedes, so the kinds are indexed without reading one (`index`).
 pub(crate) fn encode(built: &Built) -> Vec<u8> {
     let mut w = Writer(Vec::new());
     w.u(FORMAT);
@@ -555,37 +557,40 @@ pub(crate) fn encode(built: &Built) -> Vec<u8> {
     w.n(built.kinds.len());
     for (sym, automaton) in &built.kinds {
         w.u(*sym);
-        w.n(automaton.moves.len());
+        let mut a = Writer(Vec::new());
+        a.n(automaton.moves.len());
         for (moves, accepting) in automaton.moves.iter().zip(&automaton.accepting) {
-            w.u(u32::from(*accepting));
+            a.u(u32::from(*accepting));
             let moves: BTreeMap<&Label, &u32> = moves.iter().collect();
-            w.n(moves.len());
+            a.n(moves.len());
             for (label, to) in moves {
-                w.label(label);
-                w.u(*to);
+                a.label(label);
+                a.u(*to);
             }
         }
         let to: BTreeMap<&(u32, Label), &Box<[Label]>> = automaton.implied.to.iter().collect();
-        w.n(to.len());
+        a.n(to.len());
         for ((from, label), word) in to {
-            w.u(*from);
-            w.label(label);
-            w.word(word);
+            a.u(*from);
+            a.label(label);
+            a.word(word);
         }
         for end in &automaton.implied.end {
             match end {
                 Some(word) => {
-                    w.u(1);
-                    w.word(word);
+                    a.u(1);
+                    a.word(word);
                 }
-                None => w.u(0),
+                None => a.u(0),
             }
         }
         let kept: BTreeSet<&Label> = automaton.kept.iter().collect();
-        w.n(kept.len());
-        kept.into_iter().for_each(|label| w.label(label));
-        w.n(automaton.fields.len());
-        automaton.fields.iter().for_each(|field| w.u(*field));
+        a.n(kept.len());
+        kept.into_iter().for_each(|label| a.label(label));
+        a.n(automaton.fields.len());
+        automaton.fields.iter().for_each(|field| a.u(*field));
+        w.n(a.0.len());
+        w.0.extend(a.0);
     }
     w.0
 }
@@ -636,36 +641,7 @@ impl<'b> Reader<'b> {
         self.0 = self.0.get(n..)?;
         Some(())
     }
-    /// Past a word (`word`), unread.
-    fn skip_word(&mut self) -> Option<()> {
-        let n = self.n()?;
-        self.skip(n.checked_mul(LABEL_BYTES)?)
-    }
-    /// Past a kind's automaton (`automaton`), unread: the bytes it lies in.
-    fn skip_automaton(&mut self) -> Option<&'b [u8]> {
-        let start = self.0;
-        let states = self.n()?;
-        for _ in 0..states {
-            self.u()?;
-            let n = self.n()?;
-            self.skip(n.checked_mul(LABEL_BYTES + 4)?)?;
-        }
-        for _ in 0..self.n()? {
-            self.skip(4 + LABEL_BYTES)?;
-            self.skip_word()?;
-        }
-        for _ in 0..states {
-            if self.u()? != 0 {
-                self.skip_word()?;
-            }
-        }
-        let kept = self.n()?;
-        self.skip(kept.checked_mul(LABEL_BYTES)?)?;
-        let fields = self.n()?;
-        self.skip(fields.checked_mul(4)?)?;
-        Some(&start[..start.len() - self.0.len()])
-    }
-    /// A kind's automaton, as `encode` wrote it after its symbol.
+    /// A kind's automaton, as `encode` wrote it after its length.
     fn automaton(&mut self) -> Option<Automaton> {
         let states = self.n()?;
         let (mut moves, mut accepting) = (Vec::with_capacity(states), Vec::with_capacity(states));
@@ -693,9 +669,6 @@ impl<'b> Reader<'b> {
     }
 }
 
-/// A label's bytes (`Writer::label`): token, name and field.
-const LABEL_BYTES: usize = 12;
-
 /// What `encode` wrote, each kind's automaton left in its bytes (`decode_automaton` reads it): a grammar holds
 /// hundreds of kinds, and a process reads a few of them (a rule's patterns, a file's kinds). Its names are read
 /// where they lie, not copied.
@@ -720,7 +693,9 @@ pub(crate) fn index(bytes: &[u8]) -> Option<Index<'_>> {
     let mut kinds = Vec::with_capacity(count.min(1 << 16));
     for _ in 0..count {
         let sym = r.u()?;
-        kinds.push((sym, r.skip_automaton()?));
+        let n = r.n()?;
+        kinds.push((sym, r.0.get(..n)?));
+        r.skip(n)?;
     }
     r.0.is_empty().then_some(Index { texts, kinds, unsupported, extras })
 }

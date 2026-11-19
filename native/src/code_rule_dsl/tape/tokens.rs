@@ -67,8 +67,6 @@ pub struct TokenGrammar {
     pub(in crate::code_rule_dsl) unsupported: BTreeSet<String>,
     /// The grammar's extras (comments and the like): in no automaton, anywhere among children.
     extras: BTreeSet<String>,
-    /// Every token text and field name, sorted ([`Self::intern`]).
-    interned: Vec<&'static str>,
 }
 
 /// A kind's automaton, read from the bytes the build wrote when a walk first needs it (`TokenGrammar::automaton`):
@@ -136,11 +134,7 @@ impl TokenGrammar {
             .collect();
         let kind_sym = (0..language.node_kind_count() as u16)
             .map(|id| language.node_kind_for_id(id).and_then(|name| names.get(name).copied())).collect();
-        let mut interned = texts.clone();
-        interned.push("");
-        interned.sort_unstable();
-        interned.dedup();
-        Self { names, texts, kinds, field_sym, kind_sym, unsupported, extras, interned }
+        Self { names, texts, kinds, field_sym, kind_sym, unsupported, extras }
     }
 
     pub fn kind_count(&self) -> usize {
@@ -471,10 +465,7 @@ impl TokenGrammar {
     /// `text` (a token text or field name of this grammar) for the life of the process: the
     /// grammar is built once per dialect and never dropped.
     pub fn intern(&self, text: &str) -> &'static str {
-        match self.interned.binary_search_by(|known| (*known).cmp(text)) {
-            Ok(at) => self.interned[at],
-            Err(_) => "",
-        }
+        self.names.get_key_value(text).map_or("", |(&text, _)| text)
     }
 
     /// A dialect's automata, built once per process from its `grammar.json`; `None` where there
