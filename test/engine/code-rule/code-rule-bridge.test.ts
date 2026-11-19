@@ -1556,6 +1556,41 @@ describe("CodeRuleBridge", () => {
     expect(edits()).toHaveLength(3);
   });
 
+  // A walk that cannot read a file (on Windows another program may hold it open: EBUSY) keeps neither its stamp nor its
+  // digest. A later walk that reads the file while a command runs has no stamp to compare the file's times with, so
+  // those times date what it reads, as for any file: a change made before the running command began is checked at that
+  // walk, and taken as the session's when one of its calls made it.
+  it("checks a file a walk could not read at the next walk that reads it, while a command runs that began after the file last changed", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 2\n");
+    await bridge.finish("write-1");
+    // Another program holds the file as the next walk opens it.
+    discovery.opens.set(path, [async () => { throw Object.assign(new Error(`EBUSY: resource busy or locked, open '${path}'`), { code: "EBUSY" }); }]);
+    await bridge.checkpoint("turn");
+
+    await bridge.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await writeFile(path, "x = 3\n");
+    await awaitClockAfter(path);
+    await bridge.begin("shell-2", "Bash", { command: "sleep 60" });
+    await bridge.finish("shell-1");
+    const edits = () => auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, readError }) => ({ generatedText, readError }));
+    expect(edits()).toEqual([
+      { generatedText: "x = 2\n" },
+      { readError: expect.stringContaining("EBUSY") },
+      { generatedText: "x = 3\n" },
+    ]);
+    await bridge.finish("shell-2");
+    expect(edits()).toHaveLength(3);
+  });
+
   it("delivers committed full-file snapshots in deterministic batches", async () => {
     const root = await workspace();
     await writeFile(join(root, "src", "a.py"), "before\n");
