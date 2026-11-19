@@ -47,11 +47,10 @@ runs:
         NAME: ${{ steps.hash.outputs.name }}
         REF: ${{ inputs.ref }}
         OWN: ${{ github.head_ref || github.ref_name }}
+      # A push, schedule or dispatch on `ref`, or any earlier run of this pull request's own branch, in this repository
+      # (scripts/check/ci/trusted-artifact.mjs); never a pull request whose head branch is named `ref`.
       run: |
-        runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=50" --jq '.artifacts[]
-          | select(.expired == false and .workflow_run.head_repository_id == .workflow_run.repository_id)
-          | "\(.workflow_run.head_branch) \(.workflow_run.id)"' || true)"
-        run_id="$(awk -v ref="$REF" -v own="$OWN" '$1 == ref || $1 == own { print $2; exit }' <<< "$runs")"
+        read -r _ run_id <<< "$(node scripts/check/ci/trusted-artifact.mjs "$NAME" "$REF" "$OWN")" || true
         if [ -n "$run_id" ]; then echo "$NAME from run $run_id"; else echo "No $NAME on $REF or $OWN: building"; fi
         echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
 

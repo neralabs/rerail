@@ -17,7 +17,7 @@ on:
         description: The branch whose saved cargo targets, compile caches and engines this run starts from.
         default: main
       save-warm:
-        description: Save this run's cargo targets and compile caches, as a push to main does.
+        description: Save this run's cargo targets and compile caches, as a push to main does (on main, only when warm-ref is main).
         type: boolean
         default: false
 
@@ -27,10 +27,11 @@ permissions:
 # Warm starts: the engine builds and Rust jobs start from the cargo targets and compile caches the latest push to main
 # saved as artifacts (.github/actions/cargo-target, .github/actions/rust-compile-cache), and every engine build reuses
 # an engine built from the same inputs (.github/actions/engine-artifact). Only pushes to main save the targets and
-# caches, unless a manual run asks to (`save-warm`).
+# caches, unless a manual run asks to (`save-warm`). A manual run on main saves only what it started from main's own:
+# what it saves is main's for every later run, so another branch's targets and caches never become main's.
 env:
   WARM_REF: ${{ inputs.warm-ref || 'main' }}
-  SAVE_WARM: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.save-warm) }}
+  SAVE_WARM: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.save-warm && (github.ref != 'refs/heads/main' || (inputs.warm-ref || 'main') == 'main')) }}
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -232,6 +233,7 @@ jobs:
               - 'native/**'
               - 'accel/**'
               - 'forest/**'
+              - 'tools/bitlex/**'
               - 'conformance/**'
               - 'fixtures/**'
               - 'packs/**'
@@ -304,12 +306,14 @@ jobs:
               - 'rust-toolchain.toml'
               - '.cargo/**'
               - '.gitattributes'
-            # The native engine the build job makes: its crates (native/crates/, and the accelerators' accel/ and
-            # forest/ it depends on), and the language registry its build.rs reads.
+            # The native engine the build job makes: its crates (native/crates/, and the accel/, forest/ and
+            # tools/bitlex/ it depends on: engine-inputs.mjs reads them from the manifests), and the language registry
+            # its build.rs reads.
             engine: &engine
               - 'native/**'
               - 'accel/**'
               - 'forest/**'
+              - 'tools/bitlex/**'
               - 'languages/**'
             # The package the build job makes and the daemon runs from source: every source file (tsc compiles all of
             # src/), the page, the bundled model, the hosts' hooks, skills and plugin manifests, the build scripts.
@@ -1096,14 +1100,17 @@ jobs:
       # The pack validation's check 4 leaves scoring the fixtures to the conformance check (the conformance and tools jobs
       # below), which scores the same fixtures through the same runner and fails on the same failures, so they are scored
       # once (test/engine/catalog/packs.test.ts). The pack publish gate (release-packs.yml) still scores them itself.
-      # TESTS: the selected files' paths, read into words (none holds a space); empty runs every file.
+      # TESTS: the selected files' paths, read into words (none holds a space); empty runs every file. A shard may find
+      # none of a few selected files (--passWithNoTests); a run of every file that finds none fails.
       - name: Unit tests
         env:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
           TESTS: ${{ needs.select-tests.outputs.unit-tests }}
+          UNIT: ${{ needs.select-tests.outputs.unit }}
         run: |
           read -ra tests <<< "$TESTS"
-          npm test -- --passWithNoTests --shard=${{ matrix.shard }}/${{ strategy.job-total }} "${tests[@]}"
+          some=(); if [ "$UNIT" = some ]; then some=(--passWithNoTests); fi
+          npm test -- "${some[@]}" --shard=${{ matrix.shard }}/${{ strategy.job-total }} "${tests[@]}"
 
       # Every statement, branch and function of reading a repository's own lint config is run by its tests, file by
       # file (package.json `test:coverage:lint-config`). Once, on the first shard, which the split gives that much less
@@ -1353,7 +1360,7 @@ jobs:
       # the tests expect the temporary folder's path as given, so 42 of them fail on the spelling alone.
       # The test files select-tests chose (TESTS: their paths, read into words; empty runs every file), or none when it
       # chose only the hook test below. vitest's own shim, from bash, starts node directly: npm's cmd.exe would cut the list
-      # at 8,191 characters, CreateProcess takes 32,767.
+      # at 8,191 characters, CreateProcess takes 32,767. As on Linux, only a shard of a few selected files may find none.
       - name: Unit tests
         if: needs.select-tests.outputs.unit != 'none'
         env:
@@ -1361,9 +1368,11 @@ jobs:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
           TESTS: ${{ needs.select-tests.outputs.unit-tests }}
+          UNIT: ${{ needs.select-tests.outputs.unit }}
         run: |
           read -ra tests <<< "$TESTS"
-          node_modules/.bin/vitest run --dir test --passWithNoTests --shard=${{ matrix.shard }}/${{ strategy.job-total }} "${tests[@]}"
+          some=(); if [ "$UNIT" = some ]; then some=(--passWithNoTests); fi
+          node_modules/.bin/vitest run --dir test "${some[@]}" --shard=${{ matrix.shard }}/${{ strategy.job-total }} "${tests[@]}"
 
       # The integration job runs on Linux only. This file replays a Claude Code session through the built hook as
       # Claude Code runs it on Windows (dist/harness/hook-launcher.js), against a daemon of this build, including a

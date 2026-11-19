@@ -2,8 +2,9 @@ name: Rust compile cache
 description: >-
   Puts every rustc compile of the job, and every C and C++ compile a build script makes through the `cc` crate, through
   sccache with a store on the runner's disk, keyed on each compile's inputs (sources, flags, dependencies, compiler).
-  The store starts from the newest one a run on main saved as an artifact (`./.github/actions/rust-compile-cache/save`),
-  when one exists: a crate main compiled the same way is fetched, not compiled. Without one the job compiles cold; it
+  The store starts from the newest one a push, schedule or dispatch on main saved as an artifact
+  (`./.github/actions/rust-compile-cache/save`; never a pull request's, whatever its head branch is named), when one
+  exists: a crate main compiled the same way is fetched, not compiled. Without one the job compiles cold; it
   never fails for want of it. The Actions cache is not used. cc-rs wraps its C and C++ compiler in RUSTC_WRAPPER when
   that is sccache, so CC and CXX stay as they are. Use it after the Rust toolchain's set-up and before the first cargo
   or napi command; the job needs `actions: read` to find main's store. Its post-job step prints the hit statistics.
@@ -69,9 +70,10 @@ runs:
         echo "dir=$dir" >> "$GITHUB_OUTPUT"
         echo "artifact=rust-compile-cache-$RUNNER_OS-$RUNNER_ARCH-$NAME" >> "$GITHUB_OUTPUT"
 
-    # The newest unexpired artifact of that name from a run on main (this repository's: a fork's branch may be named
-    # main too). Any failure leaves the store empty.
-    - name: Start from main's store
+    # The newest unexpired artifact of that name from a push, schedule or dispatch on `ref` in this repository
+    # (scripts/check/ci/trusted-artifact.mjs): a pull request whose head branch is named main is never read, so what
+    # its workflow uploads never reaches a release. Any failure leaves the store empty.
+    - name: Start from the branch's store
       if: inputs.warm == 'true'
       shell: bash
       env:
@@ -80,12 +82,11 @@ runs:
         ARTIFACT: ${{ steps.env.outputs.artifact }}
         DIR: ${{ steps.env.outputs.dir }}
       run: |
-        id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$ARTIFACT&per_page=30" \
-          --jq '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == $ENV.REF and .workflow_run.head_repository_id == .workflow_run.repository_id)][0].id // empty' || true)
+        read -r id _ <<< "$(node scripts/check/ci/trusted-artifact.mjs "$ARTIFACT" "$REF")" || true
         if [ -z "$id" ]; then echo "No store from $REF: compiling cold."; exit 0; fi
         if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/sccache.zip" \
           && { unzip -q -o "$RUNNER_TEMP/sccache.zip" -d "$DIR" || 7z x -y -o"$DIR" "$RUNNER_TEMP/sccache.zip" > /dev/null; }; then
-          echo "Store from main's artifact $id: $(du -sh "$DIR" | cut -f1)."
+          echo "Store from $REF's artifact $id: $(du -sh "$DIR" | cut -f1)."
         else
           echo "::warning::rust-compile-cache: $REF's store $id did not download; compiling cold."
           rm -rf "$DIR" && mkdir -p "$DIR"
