@@ -68,7 +68,8 @@ It can still report the recorded ID for an absent final entry, including a commi
 Revision navigation and object facts use the recorded Git objects, as with `git --no-replace-objects`.
 To select a replacement explicitly, request its `refs/replace/<original-id>` ref.
 Message searches report unreadable parent links on standard error and continue through readable history.
-Global searches also skip unreadable starting refs. If the readable history has no match, the search reports its read failure.
+Global searches also skip unreadable starting refs, including a loose ref whose contents Git cannot parse.
+If the readable history has no match, the search reports its read failure.
 
 ## Relations
 

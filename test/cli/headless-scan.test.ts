@@ -907,6 +907,25 @@ Broken(@place("git", 1), o) :- git_object_error(_, o, "unreadable").
     expect(() => open(":/unmatched")).toThrow(missing);
   });
 
+  it("matches Git on readable history when enumerating another loose ref fails", async () => {
+    const root = checkout();
+    writeFileSync(join(root, ".git/refs/heads/aaa-broken"), "invalid ref bytes\n");
+    const expected = git(root, "rev-parse", "--verify", ":/seed");
+    const open = (expression: string) => new (loadNativeBinding().GitRevisionSource)(root, expression, "ref-errors");
+    expect(open(":/seed").commit).toBe(expected);
+    expect(() => open(":/absent")).toThrow(/ref|reference/iu);
+    const policy = join(root, "ref-errors.rr");
+    writeFileSync(policy, `#include "git.rr"
+.policy "ref-errors" revision 1
+.violation Found(at: span, oid: symbol) "{oid}"
+git_revision_request(r, ":/seed") :- git_root_repo(r).
+Found(@place("git", 1), oid) :- git_revision(_, ":/seed", oid).
+`);
+    const report = await scan(root, { revision: expected, analysisScope: "ref-errors", rr: [policy] });
+    expect(report.status).toBe("completed");
+    expect(report.violations.map(v => v.message)).toEqual([expected]);
+  });
+
   it("reports distinct revision error facts for missing names, wrong kinds and corruption", async () => {
     const root = checkout();
     const blob = git(root, "rev-parse", "HEAD:a.py");

@@ -491,30 +491,40 @@ impl delegate::Navigate for Revision<'_> {
                 revision.matching_commit(vec![commit], pattern, &matcher, negated)
             });
         }
-        let references = self.repo.references()?;
         let mut tips = Vec::new();
         let mut first_error = None;
         let mut tip_ids = HashSet::new();
-        for reference in references.all()? {
-            let mut reference = reference?;
-            let name = reference.name().to_owned();
-            let result = reference.follow_to_object().and_then(|id| {
-                let id = id.detach();
-                if tip_ids.insert(id) { self.peel(id, None).map(Some) } else { Ok(None) }
-            });
-            let object = match result {
-                Ok(Some(object)) => object,
-                Ok(None) => continue,
-                Err(error) => {
-                    let error = self.read_failure.borrow_mut().take().unwrap_or(error);
-                    eprintln!("Git message search skipped {name}: {}", failure_detail(&error));
-                    first_error.get_or_insert(error);
-                    continue;
+        let mut collect_refs = || -> Result<()> {
+            let references = self.repo.references()?;
+            for entry in references.all()? {
+                let mut reference = match entry {
+                    Ok(reference) => reference,
+                    Err(error) => {
+                        eprintln!("Git message search skipped an unreadable ref: {error}");
+                        first_error.get_or_insert_with(|| lookup_error("invalid-revision", error));
+                        continue;
+                    }
+                };
+                let name = reference.name().to_owned();
+                let result = reference.follow_to_object().and_then(|id| {
+                    let id = id.detach();
+                    if tip_ids.insert(id) { self.peel(id, None).map(Some) } else { Ok(None) }
+                });
+                match result {
+                    Ok(Some(object)) if object.kind == Kind::Commit => tips.push(object.into_commit()),
+                    Ok(_) => {}
+                    Err(error) => {
+                        let error = self.read_failure.borrow_mut().take().unwrap_or(error);
+                        eprintln!("Git message search skipped {name}: {}", failure_detail(&error));
+                        first_error.get_or_insert(error);
+                    }
                 }
-            };
-            if object.kind == Kind::Commit {
-                tips.push(object.into_commit());
             }
+            Ok(())
+        };
+        if let Err(error) = collect_refs() {
+            eprintln!("Git message search could not enumerate refs: {}", failure_detail(&error));
+            first_error.get_or_insert(error);
         }
         match self.repo.head().and_then(|head| head.id().map(gix::Id::detach)
             .filter(|id| tip_ids.insert(*id)).map(|id| self.peel(id, None)).transpose()) {
