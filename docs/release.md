@@ -194,10 +194,14 @@ before merging the Release pull request. Otherwise the release compiles more of 
 <details>
 <summary>How the stores are used</summary>
 
-- A release's builds start from the newest store a run on `main` saved for the target, and compile cold without one.
-  Nothing but `release-cache.yml` saves a store, and no build uses the Actions cache.
+- A release's builds start from the newest store a push, schedule or manual dispatch on `main` in this repository saved
+  for the target (`scripts/check/ci/trusted-artifact.mjs`), and compile cold without one. A pull request's run is never
+  read, even one whose head branch is named `main`. Nothing but `release-cache.yml` saves a store, and no build uses
+  the Actions cache.
 - On `main` it runs nightly (a store's artifact expires after 7 days) and after changes to those files. Each target
-  starts from the newest store, builds, and saves the store again.
+  starts from the newest store, builds, and saves the store again, so a store carries objects compiled by earlier
+  runs on `main`. sccache keys each object by its compile's inputs (sources, flags, dependencies, compiler), so a
+  carried object is reused only for the same compile, and the least recently used ones leave the store first.
 
 </details>
 

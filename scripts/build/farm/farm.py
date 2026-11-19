@@ -53,7 +53,10 @@ COMPILE_SECONDS = 900
 # What a crate's build reads as a path must be hashed as it is, not with its checkout stripped. Not
 # RERAIL_FIXTURES_DIR: the tests read it as they run, and as they compile only to embed a fixture's
 # text (`oracle!`, native/src/code_rule_dsl/fixtures.rs), which the key holds; hashed as it is, it made
-# every test binary of every checkout its own (scripts/check/ci/path-free-builds.mjs keeps it so).
+# every test binary of every checkout its own (scripts/check/ci/path-free-builds.mjs keeps it so). A
+# hit from another checkout names this checkout's fixtures in its dep-info: sccache writes the
+# dep-info from its own `--emit=dep-info` run of this compile, never from the cache (upstream 81c2834,
+# in build-sccache's BASE), so cargo watches the files this checkout embeds.
 VERBATIM = "CARGO_MANIFEST_DIR,CARGO_MANIFEST_PATH,RERAIL_ORACLES_DIR"
 # Where cargo keeps the crates it downloads: the same files at the same paths on every machine.
 IN_PLACE = (os.path.join(HOME, ".cargo/registry/src"), os.path.join(HOME, ".cargo/git/checkouts"))
@@ -289,13 +292,21 @@ def fresh_inode(path):
     """Replaces the program at `path` with a copy of itself, in a file of its own. The farm's sccache
     writes a hit's files while its other threads start compilers, each of which holds the file open
     until it execs: cargo running the program then fails with "Text file busy" (ETXTBSY; twice in an
-    hour on the build boxes, 2026-11-18). The copy is a file only this process wrote and closed."""
+    hour on the build boxes, 2026-11-18). The copy is a file only this process wrote and closed. A
+    copy that fails (a full disk, a refused write) keeps the program as the compile wrote it: the
+    compile succeeded, and only this bookkeeping did not."""
     tmp = f"{path}.farm-{os.getpid()}"
     try:
         shutil.copy2(path, tmp)
         os.replace(tmp, path)
     except FileNotFoundError:
         pass  # no program: the compile failed, or wrote none
+    except OSError as e:
+        log(f"fresh_inode: {path} kept as written: {e}")
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def same_in_every_checkout(args, out_dir, crate):
@@ -704,9 +715,10 @@ def wrapper(rustc, args):
         env.pop(k, None)
     sccache_env(env)
     # A program cargo runs (a build script, a binary, a test harness) gets a file of its own on Linux
-    # (`fresh_inode`); macOS has no "Text file busy".
+    # (`fresh_inode`); macOS has no "Text file busy". The compile keeps cargo's jobserver descriptors
+    # (`CARGO_MAKEFLAGS` names them), as the exec below does.
     if sys.platform != "darwin" and "bin" in linked_types(args) and out_dir:
-        code = subprocess.run([SCCACHE, shim(rustc)] + args, env=env).returncode
+        code = subprocess.run([SCCACHE, shim(rustc)] + args, env=env, close_fds=False).returncode
         if code == 0:
             fresh_inode(os.path.join(out_dir, crate + (codegen(args, "extra-filename") or "")))
         sys.exit(code)

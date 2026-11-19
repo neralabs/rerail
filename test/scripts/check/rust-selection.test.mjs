@@ -135,6 +135,25 @@ it("a data file selects the crates naming it, its directory or its root, and eve
   write({ "native/crates/low/src/lib.rs": "", "native/crates/other/src/lib.rs": "" });
 });
 
+it("a crate joining its directory up to the repository root reads every data root; one naming a subdirectory does not", () => {
+  const meta = metadata();
+  const walk = (up) => `fn corpus() { let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("${up}"); }\n`;
+  write({
+    "native/crates/low/src/lib.rs": walk("../../.."),
+    "native/crates/other/src/lib.rs": 'fn f() { root.join("../../../packs/python"); root.join("../.."); }\n',
+  });
+  expect([...dataMentions(walk("../../.."))[".."]]).toEqual(["../../.."]);
+  expect([...dataMentions('concat!(env!("CARGO_MANIFEST_DIR"), "/../..")')[".."]]).toEqual(["../.."]);
+  for (const path of ["packs/complexity/rules/x.rerail", "docs/rule-syntax/examples/x.rerail", "fixtures/php/a.php"]) {
+    expect(select(root, meta, [path]).packages, path).toEqual(["low", "mid", "rerail-engine"]);
+  }
+  expect(select(root, meta, ["packs/python/rules/x.rerail"]).packages).toEqual(["low", "mid", "other", "rerail-engine"]);
+  // `../..` from native/crates/low reaches native/, not the root.
+  write({ "native/crates/low/src/lib.rs": walk("../..") });
+  expect(select(root, meta, ["packs/complexity/rules/x.rerail"]).packages).toEqual([]);
+  write({ "native/crates/low/src/lib.rs": "", "native/crates/other/src/lib.rs": "" });
+});
+
 it("package.json reaches the crates through napi's configuration and the scripts that run cargo", () => {
   const json = (scripts, extra = {}) => JSON.stringify({ scripts, dependencies: extra, napi: { binaryName: "e" } });
   expect(cargoInputs(json({ "test:native": "cargo test", lint: "eslint" }, { a: "1" }))).toBe(cargoInputs(json({ "test:native": "cargo test", lint: "biome" }, { a: "2" })));

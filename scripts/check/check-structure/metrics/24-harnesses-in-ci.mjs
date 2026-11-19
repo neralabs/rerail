@@ -75,10 +75,7 @@ export function analyse(repo) {
   function runCommand(cwd, tokens, stack) {
     let [program, ...args] = tokens;
     if (program === "npx" || program === "exec") [program, ...args] = args;
-    if (program?.startsWith("/") && INTERPRETERS.has(basename(program))) program = basename(program);
-    // The package's own bin (`node_modules/.bin/vitest`) runs as its name does.
-    if (program?.startsWith("node_modules/.bin/")) program = basename(program);
-    return program === undefined ? [] : runProgram(cwd, program, args, stack);
+    return program === undefined ? [] : runProgram(cwd, programName(program), args, stack);
   }
 
   function runProgram(cwd, program, args, stack) {
@@ -147,24 +144,10 @@ export function analyse(repo) {
 
   function vitest(cwd, args) {
     const record = { kind: "vitest", pkg: cwd, dir: null, config: null, filters: [] };
-    const valued = new Set(["--dir", "--config", "-c", "--root", "-r", "--project", "--shard", "--reporter", "--pool"]);
     for (let i = 0; i < args.length; i += 1) {
-      const arg = args[i];
-      const [flag, inline] = arg.includes("=") ? [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)] : [arg, null];
-      if (valued.has(flag)) {
-        const value = inline ?? args[(i += 1)];
-        if (flag === "--dir" || flag === "--root" || flag === "-r") record.dir = join(cwd, value);
-        if (flag === "--config" || flag === "-c") record.config = join(cwd, value);
-      } else if (arg === "run" || arg === "watch" || arg.startsWith("-")) {
-        continue;
-      } else if (arg.includes("$")) {
-        // A filter the step chooses as it runs (a change's selected tests: scripts/check/ci/test-selection.mjs) may be
-        // none, which runs every file.
-        record.filters = null;
-        break;
-      } else {
-        record.filters.push(arg);
-      }
+      const [flag, inline] = splitFlag(args[i]);
+      if (VITEST_VALUED.has(flag)) setVitestPath(record, cwd, flag, inline ?? args[(i += 1)]);
+      else if (!addVitestFilter(record, args[i])) break;
     }
     return record;
   }
@@ -197,6 +180,50 @@ export function analyse(repo) {
   return { reached, harnessScripts };
 }
 
+/**
+ * The name a program runs as: an interpreter named by its absolute path (`/usr/bin/python3`) and the package's own
+ * bin (`node_modules/.bin/vitest`) run as their names do.
+ */
+function programName(program) {
+  if (program.startsWith("/") && INTERPRETERS.has(basename(program))) return basename(program);
+  if (program.startsWith("node_modules/.bin/")) return basename(program);
+  return program;
+}
+
+/** A command-line argument split into its flag and the value it holds inline (`--dir=x`), or null. */
+function splitFlag(arg) {
+  const equals = arg.indexOf("=");
+  return equals >= 0 ? [arg.slice(0, equals), arg.slice(equals + 1)] : [arg, null];
+}
+
+/** The vitest flags that take a value. */
+const VITEST_VALUED = new Set(["--dir", "--config", "-c", "--root", "-r", "--project", "--shard", "--reporter", "--pool"]);
+
+/** The vitest flags that name a path, and the field of the run record each sets. */
+const VITEST_PATHS = new Map([["--dir", "dir"], ["--root", "dir"], ["-r", "dir"], ["--config", "config"], ["-c", "config"]]);
+
+/** Sets the record's directory or config when `flag` names one, relative to `cwd`. */
+function setVitestPath(record, cwd, flag, value) {
+  const field = VITEST_PATHS.get(flag);
+  if (field !== undefined) record[field] = join(cwd, value);
+}
+
+/**
+ * Adds `arg` to the vitest record's filters when it is one; returns false when it is a filter the shell expands, after
+ * which the record runs every file.
+ */
+function addVitestFilter(record, arg) {
+  if (arg === "run" || arg === "watch" || arg.startsWith("-")) return true;
+  if (arg.includes("$")) {
+    // A filter the step chooses as it runs (a change's selected tests: scripts/check/ci/test-selection.mjs) may be
+    // none, which runs every file.
+    record.filters = null;
+    return false;
+  }
+  record.filters.push(arg);
+  return true;
+}
+
 function vitestExcludes(repo, pkg) {
   for (const name of ["vitest.config.ts", "vitest.config.mts", "vitest.config.js", "vitest.config.mjs"]) {
     const text = repo.text(join(pkg, name));
@@ -208,20 +235,36 @@ function vitestExcludes(repo, pkg) {
   return [];
 }
 
+/** Whether the path is a script test file vitest collects. */
+function isVitestFile(path) {
+  return /\.(test|spec)\.[cm]?[jt]sx?$/.test(path);
+}
+
+/** Whether `path` is under `dir`; the repository's root ("") holds every path. */
+function isUnder(dir, path) {
+  return dir === "" || path.startsWith(`${dir}/`);
+}
+
+/** Whether a vitest run's filters select the file at `relative`: none given, or one the shell expands, selects every file. */
+function matchesFilters(filters, relative) {
+  return filters === null || filters.length === 0 || filters.some((filter) => relative.includes(filter));
+}
+
+/** Whether the vitest run `record`, collecting under `root` minus `excludes`, runs the test file `path`. */
+function vitestRunsFile(record, root, excludes, path) {
+  if (!isVitestFile(path) || !isUnder(root, path) || !isUnder(record.pkg, path)) return false;
+  const relative = record.pkg === "" ? path : path.slice(record.pkg.length + 1);
+  if (excludes.some((exclude) => exclude.test(relative))) return false;
+  return matchesFilters(record.filters, relative);
+}
+
 /** The tracked test files a run record executes. */
 export function filesRun(repo, record, testFiles) {
   if (record.kind === "file") return testFiles.includes(record.path) ? [record.path] : [];
   if (record.kind === "tests") return testFiles.filter((path) => path === record.path || path.startsWith(`${record.path}/`));
   const root = record.dir ?? (record.config ? dirname(record.config) : record.pkg);
   const excludes = vitestExcludes(repo, record.pkg);
-  return testFiles.filter((path) => {
-    if (!/\.(test|spec)\.[cm]?[jt]sx?$/.test(path)) return false;
-    if (root !== "" && !path.startsWith(`${root}/`)) return false;
-    const relative = record.pkg === "" ? path : path.slice(record.pkg.length + 1);
-    if (record.pkg !== "" && !path.startsWith(`${record.pkg}/`)) return false;
-    if (excludes.some((exclude) => exclude.test(relative))) return false;
-    return record.filters === null || record.filters.length === 0 || record.filters.some((filter) => relative.includes(filter));
-  });
+  return testFiles.filter((path) => vitestRunsFile(record, root, excludes, path));
 }
 
 export function check(repo) {

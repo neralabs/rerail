@@ -29,13 +29,18 @@ fn main() {
         .file(&shim)
         .warnings(false);
     println!("cargo:rerun-if-env-changed=TARGET_SYSROOT");
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
-        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu")
-        && let Some(sysroot) = std::env::var_os("TARGET_SYSROOT").filter(|sysroot| !sysroot.is_empty())
-    {
+    if let Some(sysroot) = linux_gnu_sysroot() {
         for_sysroot(&mut build, sysroot);
     }
     build.compile("rerail_simdjson");
+}
+
+/// `TARGET_SYSROOT`, when it is set (and not empty) and the target is Linux with glibc: the one target `for_sysroot` is for.
+fn linux_gnu_sysroot() -> Option<OsString> {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") || std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("gnu") {
+        return None;
+    }
+    std::env::var_os("TARGET_SYSROOT").filter(|sysroot| !sysroot.is_empty())
 }
 
 /// The released Linux engine (`napi build --use-napi-cross`, package.yml) links against the sysroot of napi-rs's cross

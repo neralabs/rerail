@@ -1,10 +1,16 @@
 // scripts/check/ci/test-selection.mjs: which unit test files a change can affect, and the shards that run them.
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { engineSources, isEngineInput } from "../../../scripts/check/ci/engine-inputs.mjs";
 import { affected, namedPaths, names, outputs, seen, shards, stringLiterals } from "../../../scripts/check/ci/test-selection.mjs";
+
+const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
 const literals = (text) => stringLiterals(ts, "x.ts", text);
 const named = (file, text, top = ["packs", "native", "src", "test", ".rerail"]) => namedPaths(file, literals(text), new Set(top));
+// The engine's inputs as engine-inputs.mjs's `engineSources` gives them: its crates' directories and the files it embeds.
+const SOURCES = { dirs: ["native/", "accel/", "forest/", "languages/", "tools/bitlex/"], paths: new Set(["docs/rule-syntax/lib/core.rerail"]) };
 
 describe("the paths a file names", () => {
   it("are its string literals, less the modules it imports", () => {
@@ -16,6 +22,11 @@ describe("the paths a file names", () => {
       'const p = join(root, "packs", `python/${name}`);',
     ].join("\n");
     expect(literals(text)).toEqual(["packs", "python/", ""]);
+  });
+
+  it("keep a path given to node:path's resolve, and drop a module given to require's or import.meta's", () => {
+    const text = ['resolve("scripts/x.mjs");', 'path.resolve("scripts/y.mjs");', 'require.resolve("y");', 'import.meta.resolve("z");'].join("\n");
+    expect(literals(text)).toEqual(["scripts/x.mjs", "scripts/y.mjs"]);
   });
 
   it("read from the root and, for ./ and ../, from the file's directory; one word only as a top-level entry", () => {
@@ -34,8 +45,22 @@ describe("the paths a file names", () => {
 
 describe("what the tests see of a change", () => {
   it("is the addon for the engine's inputs and dist/ for src/", () => {
-    expect(seen(["native/src/lib.rs", "src/cli/cli.ts"]).sort()).toEqual(["dist/cli/cli.js", "native/rerail_engine.node", "native/src/lib.rs", "src/cli/cli.ts"]);
-    expect(seen(["Cargo.lock"])).toContain("native/rerail_engine.node");
+    expect(seen(["native/src/lib.rs", "src/cli/cli.ts"], SOURCES).sort()).toEqual(["dist/cli/cli.js", "native/rerail_engine.node", "native/src/lib.rs", "src/cli/cli.ts"]);
+    expect(seen(["Cargo.lock"], SOURCES)).toContain("native/rerail_engine.node");
+  });
+
+  it("is the addon for a crate the engine reaches and a file it embeds outside native/, not for the rest", () => {
+    expect(seen(["tools/bitlex/src/lib.rs"], SOURCES)).toContain("native/rerail_engine.node");
+    expect(seen(["docs/rule-syntax/lib/core.rerail"], SOURCES)).toContain("native/rerail_engine.node");
+    expect(seen(["src/engine/native.ts"], SOURCES)).not.toContain("native/rerail_engine.node");
+    expect(seen(["docs/rule-syntax/README.md"], SOURCES)).not.toContain("native/rerail_engine.node");
+  });
+
+  it("takes the engine's inputs from engine-inputs.mjs", () => {
+    const sources = engineSources(ROOT);
+    expect(isEngineInput("tools/bitlex/Cargo.toml", sources)).toBe(true);
+    expect(isEngineInput("docs/rule-syntax/lib/core.rerail", sources)).toBe(true);
+    expect(isEngineInput("src/cli/index.ts", sources)).toBe(false);
   });
 });
 
@@ -51,11 +76,12 @@ describe("affected", () => {
   const tests = [...closure.keys()];
 
   it("selects the tests whose closure holds the change, or names it", () => {
-    expect(affected(tests, graph, ["src/lib.ts"])).toEqual(["test/a.test.ts"]);
-    expect(affected(tests, graph, ["native/src/x.rs"])).toEqual(["test/b.test.ts"]);
-    expect(affected(tests, graph, ["accel/src/y.rs"])).toEqual(["test/b.test.ts"]);
-    expect(affected(tests, graph, ["scripts/helper.mjs"])).toEqual(["test/c.test.ts"]);
-    expect(affected(tests, graph, ["docs/readme.md"])).toEqual([]);
+    expect(affected(tests, graph, ["src/lib.ts"], SOURCES)).toEqual(["test/a.test.ts"]);
+    expect(affected(tests, graph, ["native/src/x.rs"], SOURCES)).toEqual(["test/b.test.ts"]);
+    expect(affected(tests, graph, ["accel/src/y.rs"], SOURCES)).toEqual(["test/b.test.ts"]);
+    expect(affected(tests, graph, ["tools/bitlex/src/z.rs"], SOURCES)).toEqual(["test/b.test.ts"]);
+    expect(affected(tests, graph, ["scripts/helper.mjs"], SOURCES)).toEqual(["test/c.test.ts"]);
+    expect(affected(tests, graph, ["docs/readme.md"], SOURCES)).toEqual([]);
   });
 });
 

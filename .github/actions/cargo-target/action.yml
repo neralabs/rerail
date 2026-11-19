@@ -32,10 +32,10 @@ runs:
         GH_TOKEN: ${{ github.token }}
         NAME: ${{ inputs.name }}
         REF: ${{ inputs.ref }}
+      # A push, schedule or dispatch on the branch in this repository (scripts/check/ci/trusted-artifact.mjs), never a
+      # pull request whose head branch has that name.
       run: |
-        run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=50" --jq '
-          [.artifacts[] | select(.expired == false and .workflow_run.head_branch == $ENV.REF
-            and .workflow_run.head_repository_id == .workflow_run.repository_id)][0].workflow_run.id // empty' || true)"
+        read -r _ run_id <<< "$(node scripts/check/ci/trusted-artifact.mjs "$NAME" "$REF")" || true
         if [ -z "$run_id" ]; then echo "No $NAME from $REF: a cold build"; fi
         echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
 
