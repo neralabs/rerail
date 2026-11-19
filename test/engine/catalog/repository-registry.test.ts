@@ -88,6 +88,44 @@ describe("the repository registry", () => {
     expect(recordCheckout(database, second).repositoryKey).toBe("remote:github.com/acme/web");
   });
 
+  it("uses one clone ID for a bare repository and linked checkout in either discovery order", async () => {
+    const root = await temporary("rerail-registry-bare-");
+    const database = open(join(root, "rerail.sqlite")), source = gitRepository(join(root, "source"));
+    for (const first of ["bare", "linked"] as const) {
+      const bare = join(root, first + ".git"), linked = join(root, first + "-linked");
+      git(root, "clone", "--bare", source, bare);
+      git(bare, "worktree", "add", "--detach", linked, "HEAD");
+      const [a, b] = first === "bare" ? [bare, linked] : [linked, bare];
+      const one = recordCheckout(database, a), two = recordCheckout(database, b);
+      expect(two.cloneId).toBe(one.cloneId);
+      expect(two.repositoryKey).toBe(one.repositoryKey);
+      expect(repositoryIdentityLocation(bare)).toMatchObject({ workspaceRoot: bare, git: true, main: true, identityPath: join(bare, "rerail-repository-id") });
+      expect(existsSync(join(bare, ".rerail", "repository-id"))).toBe(false);
+    }
+  });
+
+  it("adopts the earlier bare ID and preserves bare checkout settings when a linked ID already exists", async () => {
+    const root = await temporary("rerail-registry-older-bare-");
+    const database = open(join(root, "rerail.sqlite")), source = gitRepository(join(root, "source"));
+    for (const existing of [false, true]) {
+      const bare = join(root, String(existing) + ".git"), linked = join(root, "linked-" + existing);
+      // Earlier releases treated the bare path as a non-Git folder.
+      mkdirSync(bare);
+      const old = recordCheckout(database, bare);
+      checkoutSetting(database, bare);
+      git(root, "init", "--bare", bare);
+      git(bare, "fetch", source, "HEAD:refs/heads/main");
+      git(bare, "worktree", "add", "--detach", linked, "refs/heads/main");
+      if (existing) writeFileSync(join(bare, "rerail-repository-id"), "git:previous-linked-id\n");
+      const worktree = recordCheckout(database, linked);
+      expect(worktree.cloneId).toBe(existing ? "git:previous-linked-id" : old.cloneId);
+      const upgraded = recordCheckout(database, bare);
+      expect(upgraded.cloneId).toBe(worktree.cloneId);
+      expect(upgraded.repositoryKey).toBe(worktree.repositoryKey);
+      expect(settingOwners(database)).toContainEqual({ owner_kind: "checkout", owner_id: bare });
+    }
+  });
+
   it("keys a clone without an origin and with several remotes by its clone id", async () => {
     const root = await temporary("rerail-registry-remotes-");
     const database = open(join(root, "rerail.sqlite"));

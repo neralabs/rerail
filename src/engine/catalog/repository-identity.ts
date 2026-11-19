@@ -41,7 +41,14 @@ function nonGitLocation(requested: string): RepositoryIdentityLocation {
 export function repositoryIdentityLocation(workspace: string): RepositoryIdentityLocation {
   const requested = resolve(workspace);
   const result = locateInGit(requested);
-  return result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
+  if (result?.status === 0) return gitLocation(requested, result.stdout);
+  if (result !== undefined && gitText(requested, ["rev-parse", "--is-bare-repository"]) === "true") {
+    const common = runGit(requested, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    if (common.status !== 0) throw new Error(`could not resolve Git common directory for ${requested}`);
+    const root = resolve(common.stdout.replace(/\n$/u, ""));
+    return { git: true, workspaceRoot: root, identityPath: join(root, "rerail-repository-id"), main: true };
+  }
+  return nonGitLocation(requested);
 }
 
 /** Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed. */
@@ -197,6 +204,16 @@ export function readCloneIdAt(identityPath: string): string | undefined {
   }
 }
 
+/** Earlier bare scans recorded a non-Git folder identity in the bare repository itself. */
+export function legacyBareCloneId(location: RepositoryIdentityLocation): string | undefined {
+  if (!location.git) return undefined;
+  const common = dirname(location.identityPath);
+  const directory = join(common, ".rerail");
+  if (!lstatSync(directory, { throwIfNoEntry: false })?.isDirectory()) return undefined;
+  if (gitText(common, ["rev-parse", "--is-bare-repository"]) !== "true") return undefined;
+  return readIdentityFile(join(directory, "repository-id"));
+}
+
 /** Publish complete identity bytes with an atomic no-clobber link. */
 function readOrCreateIdentity(identityPath: string, candidate: string): string {
   const existing = readIdentityFile(identityPath);
@@ -227,8 +244,11 @@ function readOrCreateIdentity(identityPath: string, candidate: string): string {
 export function resolveCloneId(workspace: string): { cloneId: string; location: RepositoryIdentityLocation } {
   const location = repositoryIdentityLocation(workspace);
   if (location.git) {
+    const existing = readIdentityFile(location.identityPath);
+    if (existing !== undefined) return { cloneId: existing, location };
     const legacyId = gitText(location.workspaceRoot, ["config", "--local", "--get", "rerail.repository-id"]) ?? "";
-    return { cloneId: readOrCreateIdentity(location.identityPath, CLONE_ID.test(legacyId) ? legacyId : `git:${randomUUID()}`), location };
+    const candidate = legacyBareCloneId(location) ?? (CLONE_ID.test(legacyId) ? legacyId : `git:${randomUUID()}`);
+    return { cloneId: readOrCreateIdentity(location.identityPath, candidate), location };
   }
   const directory = dirname(location.identityPath);
   // Created first, so two processes recording the same folder at once both succeed; whichever made it, it must be a

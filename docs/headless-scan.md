@@ -14,6 +14,8 @@
 
 The scan runs without a daemon or session. It builds its scan configuration and reads rule output in memory.
 A checkout new to Rerail gets a clone ID in `<git common dir>/rerail-repository-id`, as it does with `rerail start`.
+A bare repository and its linked worktrees share this ID. Earlier versions could also write an ID under `<bare repo>/.rerail`.
+On upgrade, Rerail keeps the common ID when it exists. Otherwise it adopts the earlier bare ID.
 The scan can retain analysis results in the content cache beside the Rerail home database.
 
 </details>

@@ -12,6 +12,7 @@ import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
+  legacyBareCloneId,
   normalizeRemoteAddress,
   readCloneIdAt,
   readRemoteAddress,
@@ -118,6 +119,11 @@ function recordCheckoutRow(
   if (existing?.cloneId === cloneId) {
     tx.update(checkouts).set({ lastSeenAt: now }).where(eq(checkouts.checkoutPath, checkoutPath)).run();
     return contextOf(location, checkoutPath, existing.repositoryKey, cloneId);
+  }
+  if (existing && location.main && location.workspaceRoot === dirname(location.identityPath) && existing.cloneId === legacyBareCloneId(location)) {
+    const repositoryKey = cloneRepository(tx, cloneId) ?? existing.repositoryKey;
+    tx.update(checkouts).set({ cloneId, repositoryKey, lastSeenAt: now }).where(eq(checkouts.checkoutPath, checkoutPath)).run();
+    return contextOf(location, checkoutPath, repositoryKey, cloneId);
   }
   if (existing !== undefined) {
     deleteCheckoutSettings(tx, [checkoutPath]);
