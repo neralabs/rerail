@@ -46,6 +46,7 @@ pub use prefilter::TapePrefilter;
 mod private_files;
 mod publication;
 mod read_cache;
+mod archive;
 mod reclamation;
 pub use reclamation::Ageing;
 pub mod record;

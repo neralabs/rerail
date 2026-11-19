@@ -444,6 +444,11 @@ overlay are then aged, not dropped (decision 0450 step 3). They are kept while t
 ended after it hold together at most 384 MiB, and for at most 30 days, the oldest released first.
 A workspace registered again over its root is live again; its old overlay goes.
 
+What only aged owners hold is archived by upkeep after collection (decision 0450 step 4): each
+source or tape is compressed into one zstd frame in `object_archive`, and its row's `seg` becomes
+-2. Compaction then frees its bytes from its segment. A reader that meets an archived row places it
+back in a new segment first, then reads it there.
+
 <details>
 <summary>Capacity thresholds</summary>
 

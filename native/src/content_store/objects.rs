@@ -5,6 +5,7 @@
 use crate::content_store::connection::Cached as _;
 use super::rows::{generation, hash_params, intern_hash};
 use super::object_segments::{ObjectFrame, Placing, object_dir, row_frame};
+use super::reclamation::{OBJECT_SOURCE, OBJECT_TAPE};
 use super::segments::Place;
 use super::segments::SegmentMaps;
 use super::{
@@ -51,32 +52,39 @@ impl ContentStore {
              CAST(json_extract(value,'$[3]') AS INTEGER) lane1, CAST(json_extract(value,'$[4]') AS INTEGER) lane2, \
              CAST(json_extract(value,'$[5]') AS INTEGER) lane3 FROM json_each(?1)) \
              SELECT i.at,t.grammar_id,t.raw_length,s.raw_length,\
-             sh.algorithm_id,sh.lane0,sh.lane1,sh.lane2,sh.lane3,t.seg,t.seg_at,t.seg_len,s.seg,s.seg_at,s.seg_len \
+             sh.algorithm_id,sh.lane0,sh.lane1,sh.lane2,sh.lane3,t.seg,t.seg_at,t.seg_len,s.seg,s.seg_at,s.seg_len,t.tape_id,s.source_id \
              FROM input i CROSS JOIN hashes th INDEXED BY hashes_by_prefix ON th.algorithm_id=i.algorithm AND th.lane0=i.lane0 \
              AND th.lane1=i.lane1 AND th.lane2=i.lane2 AND th.lane3=i.lane3 \
              JOIN tape_objects t ON t.canonical_hash_id=th.hash_id \
              JOIN source_objects s ON s.source_id=t.source_id JOIN hashes sh ON sh.hash_id=s.canonical_hash_id",
         )?;
         let mut out = (0..tapes.len()).map(|_| None).collect::<Vec<_>>();
-        type Row = (i64, i64, usize, usize, [u8; 32], [i64; 3], [i64; 3]);
+        type Row = ((i64, i64, usize, usize, [u8; 32], [i64; 3], [i64; 3]), [i64; 2]);
         let rows: Vec<Row> = statement
             .query_map([encoded], |row| {
                 let length = |at: usize| row.get::<_, i64>(at).map(|length| usize::try_from(length).unwrap_or(usize::MAX));
                 Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get(1)?,
-                    length(2)?,
-                    length(3)?,
-                    HashKey { algorithm: row.get(4)?, lanes: [row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?] }.sha256_bytes().unwrap_or_default(),
-                    [row.get(9)?, row.get(10)?, row.get(11)?],
-                    [row.get(12)?, row.get(13)?, row.get(14)?],
+                    (
+                        row.get::<_, i64>(0)?,
+                        row.get(1)?,
+                        length(2)?,
+                        length(3)?,
+                        HashKey { algorithm: row.get(4)?, lanes: [row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?] }.sha256_bytes().unwrap_or_default(),
+                        [row.get(9)?, row.get(10)?, row.get(11)?],
+                        [row.get(12)?, row.get(13)?, row.get(14)?],
+                    ),
+                    [row.get(15)?, row.get(16)?],
                 ))
             })?
             .collect::<Result<_, _>>()?;
         drop(statement);
         drop(connection);
+        let archived = rows.iter().flat_map(|((.., t, s), [tape, source])| [(OBJECT_TAPE, *tape, t[0]), (OBJECT_SOURCE, *source, s[0])]);
+        if self.placed_again(archived)? {
+            return self.resident_frames(tapes);
+        }
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
-        for (at, grammar_id, tape_length, source_length, source_sha256, t, s) in rows {
+        for ((at, grammar_id, tape_length, source_length, source_sha256, t, s), _) in rows {
             let (Some(tape_frame), Some(source_frame)) = (row_frame(&mut maps, t[0], t[1], t[2]), row_frame(&mut maps, s[0], s[1], s[2])) else { continue };
             if let Some(slot) = usize::try_from(at).ok().and_then(|at| out.get_mut(at)) {
                 *slot = Some(ResidentFrames { grammar_id, tape_length, tape_frame, source_length, source_frame, source_sha256 });
@@ -119,19 +127,22 @@ impl ContentStore {
         let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
-            "SELECT j.key, t.raw_length, t.seg, t.seg_at, t.seg_len FROM json_each(?1) j JOIN tape_objects t \
+            "SELECT j.key, t.raw_length, t.seg, t.seg_at, t.seg_len, t.tape_id FROM json_each(?1) j JOIN tape_objects t \
              ON t.source_id=j.value AND t.grammar_id=?2 AND t.grammar_version=?3 AND t.tape_format_version=?4",
         )?;
-        type Row = (i64, i64, [i64; 3]);
+        type Row = (i64, i64, [i64; 3], i64);
         let rows: Vec<Row> = statement
             .query_map(params![list, grammar_id, grammar_version, tape_format_version], |row| {
-                Ok((row.get(0)?, row.get(1)?, [row.get(2)?, row.get(3)?, row.get(4)?]))
+                Ok((row.get(0)?, row.get(1)?, [row.get(2)?, row.get(3)?, row.get(4)?], row.get(5)?))
             })?
             .collect::<Result<_, _>>()?;
         drop(statement);
         drop(connection);
+        if self.placed_again(rows.iter().map(|&(_, _, [seg, ..], tape)| (OBJECT_TAPE, tape, seg)))? {
+            return self.tape_frames_for(sources, grammar_id, grammar_version, tape_format_version);
+        }
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
-        for (at, raw_length, [seg, seg_at, seg_len]) in rows {
+        for (at, raw_length, [seg, seg_at, seg_len], _) in rows {
             // A tape whose segment is gone is a miss: parsed again.
             if let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) {
                 out[at as usize] = Some(TapeFrame { raw_length, frame });
@@ -150,11 +161,11 @@ impl ContentStore {
         let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
-            "SELECT t.source_id, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, t.raw_length, t.seg, t.seg_at, t.seg_len \
+            "SELECT t.source_id, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, t.raw_length, t.seg, t.seg_at, t.seg_len, t.tape_id \
              FROM json_each(?1) j JOIN tape_objects t ON t.source_id=j.value AND t.grammar_id=?2 AND t.grammar_version=?3 AND t.tape_format_version=?4 \
              JOIN source_objects s ON s.source_id=t.source_id JOIN hashes h ON h.hash_id=s.canonical_hash_id",
         )?;
-        type Row = (SourceId, HashKey, i64, [i64; 3]);
+        type Row = (SourceId, HashKey, i64, [i64; 3], i64);
         let rows: Vec<Row> = statement
             .query_map(params![list, grammar_id, grammar_version, tape_format_version], |row| {
                 Ok((
@@ -162,14 +173,18 @@ impl ContentStore {
                     HashKey { algorithm: row.get(1)?, lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?] },
                     row.get(6)?,
                     [row.get(7)?, row.get(8)?, row.get(9)?],
+                    row.get(10)?,
                 ))
             })?
             .collect::<Result<_, _>>()?;
         drop(statement);
         drop(connection);
+        if self.placed_again(rows.iter().map(|&(_, _, _, [seg, ..], tape)| (OBJECT_TAPE, tape, seg)))? {
+            return self.tape_frames_with_hashes(sources, grammar_id, grammar_version, tape_format_version);
+        }
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         let mut out = Vec::new();
-        for (source, hash, raw_length, [seg, seg_at, seg_len]) in rows {
+        for (source, hash, raw_length, [seg, seg_at, seg_len], _) in rows {
             // A tape whose segment is gone is a miss: parsed again.
             if let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) {
                 out.push((source, hash, TapeFrame { raw_length, frame }));
@@ -412,6 +427,9 @@ impl ContentStore {
             |row| Ok((row.get(0)?, HashKey { algorithm: row.get(1)?, lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?] }, [row.get(6)?, row.get(7)?, row.get(8)?])),
         )?;
         drop(connection);
+        if self.placed_again([(OBJECT_SOURCE, source_id.0, seg)])? {
+            return self.get_source(source_id);
+        }
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) else {
             return Err(StoreError::Corrupt("a source's segment is not there".to_owned()));
@@ -477,6 +495,9 @@ impl ContentStore {
                 }
                 frames
             };
+            if self.placed_again(frames.iter().map(|&(id, _, _, [seg, ..])| (OBJECT_SOURCE, id.0, seg)))? {
+                return self.get_sources_by_hash_bulk(requests, max_bytes);
+            }
             let mut maps = SegmentMaps::new(object_dir(&self.database_path));
             for (id, length, hash, [seg, seg_at, seg_len]) in frames {
                 if expected[&id] != hash {
@@ -696,6 +717,13 @@ impl ContentStore {
                 })?
                 .collect::<Result<Vec<_>, _>>()?
         };
+        let kind = match objects {
+            BulkObjects::Tapes => OBJECT_TAPE,
+            BulkObjects::Sources => OBJECT_SOURCE,
+        };
+        if self.placed_again(rows.iter().map(|&(id, _, [seg, ..])| (kind, id, seg)))? {
+            return self.objects_bulk(ids, objects);
+        }
         // Read in their segments, in place, outside the database connection: each one's length checked; a row whose
         // segment is gone is a miss.
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
@@ -738,6 +766,9 @@ impl ContentStore {
             },
         )?;
         drop(connection);
+        if self.placed_again([(OBJECT_TAPE, tape_id.0, seg)])? {
+            return self.get_tape(tape_id);
+        }
         let raw_length = usize::try_from(raw_length)
             .map_err(|_| StoreError::Corrupt("tape length does not fit memory".to_owned()))?;
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
@@ -885,7 +916,7 @@ fn put_source_prepared_tx(
         .prepare_cached(
             "INSERT INTO source_objects(canonical_hash_id,raw_length,codec_id,frame,created_generation,seg,seg_at,seg_len) \
              VALUES (?1,?2,?3,x'',?4,?5,?6,?7) ON CONFLICT(canonical_hash_id) DO UPDATE SET seg=excluded.seg, \
-             seg_at=excluded.seg_at, seg_len=excluded.seg_len WHERE source_objects.seg = -1",
+             seg_at=excluded.seg_at, seg_len=excluded.seg_len WHERE source_objects.seg < 0",
         )?
         .execute(params![
             canonical_hash_id,
@@ -1025,7 +1056,7 @@ fn put_tape_prepared_tx(
             "INSERT INTO tape_objects(source_id,canonical_hash_id,grammar_id,grammar_version,tape_format_version,codec_id,raw_length,frame,created_generation,seg,seg_at,seg_len) \
              VALUES (?1,?2,?3,?4,?5,?6,?7,x'',?8,?9,?10,?11) \
              ON CONFLICT(source_id,grammar_id,grammar_version,tape_format_version) DO UPDATE SET seg=excluded.seg, \
-             seg_at=excluded.seg_at, seg_len=excluded.seg_len WHERE tape_objects.seg = -1",
+             seg_at=excluded.seg_at, seg_len=excluded.seg_len WHERE tape_objects.seg < 0",
         )?
         .execute(params![
             source_id.0,

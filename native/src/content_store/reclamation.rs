@@ -264,7 +264,7 @@ impl ContentStore {
         )?;
         // A workspace's store session ends when its lease does (decision 0450 §2), with the bytes its snapshot and
         // overlay hold; its data is aged, not released at once.
-        execute_collect(
+        let mut ended = execute_collect(
             &transaction,
             "UPDATE store_sessions SET ended=w.lease_until, aged_bytes=\
              coalesce((SELECT sum(o.seg_len) FROM snapshot_files f JOIN source_objects o ON o.source_id=f.source_id WHERE f.snapshot_id=w.snapshot_id),0)\
@@ -276,7 +276,7 @@ impl ContentStore {
             [SESSION_WORKSPACE],
         )?;
         // A pin owner's session ends when its last source or tape pin lapses, with the bytes they hold.
-        execute_collect(
+        ended += execute_collect(
             &transaction,
             "UPDATE store_sessions SET ended=coalesce((SELECT max(p.lease_until) FROM object_pins p WHERE p.owner_string_id=store_sessions.key),?2), \
              aged_bytes=coalesce((SELECT sum(o.seg_len) FROM object_pins p JOIN source_objects o ON o.source_id=p.object_id \
@@ -287,6 +287,10 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.owner_string_id=store_sessions.key AND p.lease_until>=?2)",
             params![SESSION_PINS, now, OBJECT_SOURCE, OBJECT_TAPE],
         )?;
+        if ended > 0 {
+            // What they hold may be archived (decision 0450 step 4).
+            execute_collect(&transaction, "UPDATE corpus_state SET archive_due=1 WHERE singleton=1", [])?;
+        }
         // An ended workspace is released (state 3) once it ended `backstop` ago, or once the sessions that ended after
         // it hold the budget; one with no session (a store of an older binary) at once.
         let ageing = self.session_ageing.get();

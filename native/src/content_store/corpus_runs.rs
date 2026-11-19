@@ -816,6 +816,8 @@ impl ContentStore {
             tx.execute_cached("UPDATE corpus_decided SET run=(SELECT run FROM corpus_state WHERE singleton=1), time=?1 WHERE singleton=1", [now])?;
             // Collection stays due until a pass finds nothing (`collect_corpus_pass`), unless a new manifest came first.
             tx.execute_cached("UPDATE corpus_state SET due=2, history_bytes=?1 WHERE singleton=1 AND due<=1", [decided.history as i64])?;
+            // What it left aged may be archived (decision 0450 step 4).
+            tx.execute_cached("UPDATE corpus_state SET archive_due=1 WHERE singleton=1", [])?;
             Ok(CorpusKept { manifests: decided.kept.len(), evicted: evicted.len(), protected_bytes: decided.protected, history_bytes: decided.history, unlived: unlive.len() })
         })
     }
@@ -1070,7 +1072,7 @@ fn encode_ids(ids: &[i64]) -> Vec<u8> {
     out
 }
 
-fn decode_ids(bytes: &[u8]) -> StoreResult<Vec<i64>> {
+pub(super) fn decode_ids(bytes: &[u8]) -> StoreResult<Vec<i64>> {
     let mut out = Vec::new();
     let (mut last, mut d, mut shift) = (0i64, 0u64, 0u32);
     for &b in bytes {

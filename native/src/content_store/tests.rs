@@ -1697,6 +1697,43 @@ fn an_ended_workspace_is_aged_and_released_oldest_first() {
     assert!(!held(second));
 }
 
+/// An ended workspace's source and tape are archived (decision 0450 step 4): their bytes compressed into rows and the
+/// segments' bytes freed by compaction. Read again, each is placed back in a segment and read there. A live owner's
+/// object is not archived.
+#[test]
+fn aged_objects_are_archived_and_placed_back_in_a_segment_when_read() {
+    let (_path, store) = store("archive");
+    // Aged, never released.
+    store.set_session_ageing(super::Ageing { bytes: 1 << 40, backstop_secs: 1 << 40 });
+    let snapshot = store
+        .put_snapshot(published_tree(&store, HashKey::git_sha1([80; 20])), 1, HashKey::sha256(b"grammar"), 1)
+        .unwrap();
+    let (text, tape_bytes) = (b"x = 1\n".repeat(200), b"tape ".repeat(200));
+    let source = store.put_source(&text, &[]).unwrap();
+    let tape = store.put_tape(source, 1, 1, 1, &tape_bytes).unwrap();
+    store.put_snapshot_file(snapshot, "a.py", source, Some(tape)).unwrap();
+    let live = store.put_source(b"live", &[]).unwrap();
+    store.pin_source(live, "live", 10_000).unwrap();
+    store.open_workspace("/archive", "repo", "owner", snapshot, 1, 100).unwrap();
+    store.collect(200, 100).unwrap();
+    assert!(store.archive_due().unwrap(), "the workspace's end makes an archive due");
+    assert_eq!(store.archive_aged(200, 16).unwrap(), 2, "its source and tape, not the live pin's");
+    assert_eq!(store.archive_aged(200, 16).unwrap(), 0);
+    assert!(!store.archive_due().unwrap(), "a pass that archives nothing clears it");
+    let seg = |sql: &str, id: i64| -> i64 { store.connection.lock().unwrap().query_row(sql, [id], |r| r.get(0)).unwrap() };
+    let source_seg = |id| seg("SELECT seg FROM source_objects WHERE source_id=?1", id);
+    let tape_seg = |id| seg("SELECT seg FROM tape_objects WHERE tape_id=?1", id);
+    assert_eq!((source_seg(source.0), tape_seg(tape.0)), (super::archive::ARCHIVED, super::archive::ARCHIVED));
+    assert!(source_seg(live.0) > 0);
+    assert!(store.compact_object_segments(0).unwrap() > 0, "the archived bytes are freed from their segments");
+    assert_eq!(store.get_source(source).unwrap(), text, "read again, placed back");
+    assert!(source_seg(source.0) > 0);
+    assert_eq!(&**store.get_tape(tape).unwrap(), &tape_bytes[..]);
+    assert!(tape_seg(tape.0) > 0);
+    let archived: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM object_archive", [], |r| r.get(0)).unwrap();
+    assert_eq!(archived, 0);
+}
+
 #[test]
 fn collection_keeps_shared_objects_until_the_last_workspace_retires() {
     let (_path, store) = store("collection");

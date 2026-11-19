@@ -1,7 +1,7 @@
 # 0450: Sessions keep their latest data live in segments; the rest ages out, and may be kept compressed
 
 Status: decided by the user (2026-11-19): items 1–4 of §1, §2 (two sessions, how a store session ends, and its
-shape: "go ahead with 0450"). Step 2 built (floor 8); step 3 built (slices A–C). §3 (the cross-file memo): its history traced; its removal
+shape: "go ahead with 0450"). Step 2 built (floor 8); steps 3 and 4 built. §3 (the cross-file memo): its history traced; its removal
 decided by the user (2026-11-19, "go ahead with that split") and done. Follows 0295 (segments and the archive), 0053 (collection),
 0353 (blocks are never copied) and the store's floor 7 (0295 step 5: no source or tape in a row).
 
@@ -179,16 +179,22 @@ it: the `cross_rows` store" and 0083's "the mechanism stays for any program that
      the user sets others (§2 left the marks open).
 4. The archive: aged data moved to zstd rows by upkeep, segments rewritten (§1 item 2), and placed again in a segment
    when read (§1 item 3).
-   Planned:
+   **Built (2026-11-19, `content_store/archive.rs`):**
    - **What is archived:** a source or tape in a segment that no session's latest data names: no live workspace's
-     snapshot or overlay, no live pin, no `file_documents` row, no protected corpus run (`corpus_live.latest`,
-     written by the keep decision). Results and pages are not archived: they are computed again, and compaction drops
-     them with their segment.
-   - **How:** an upkeep job (`Archive`, idle work) takes a batch, compresses each object to a zstd frame outside the
-     write transaction, then in one transaction writes `object_archive(kind, id, frame)` and marks the row `seg` -2
-     where it is unchanged. Compaction, which copies only rows in a segment, then drops the bytes (§1 item 2).
-   - **Read again:** a reader that meets `seg` -2 places the objects back first, in bulk: decompressed into one
-     segment (`Placing`), the rows pointed at it and their archive rows removed in one transaction, then read in place
-     (§1 item 3). A put of an archived object places the caller's bytes, as for one marked absent (-1). A reader that
-     cannot place (none so far) treats it as absent.
-   - **Collection** deletes an object's archive row with the object.
+     snapshot or overlay, no live pin, no `file_documents` row (tapes), and not a source of a corpus lane's latest run
+     (its live session's `latest` manifest, or a run recorded since the last keep decision). It must also have an aged
+     holder: an ended workspace, a lapsed owner's pin, or a kept corpus run (`corpus_live`). Garbage is left to
+     collection. The latest data is the latest run, not 0053's two protected runs: the user's rule (§1 item 1).
+     Results and pages are not archived: they are computed again, and compaction drops them with their segment.
+   - **How:** the store's `Collect` upkeep job, after collection, while `corpus_state.archive_due` is set (a session's
+     end in collection, or a keep decision, sets it; a pass that archives nothing clears it). A pass takes up to 256
+     sources and 256 tapes, compresses each into one zstd frame outside the write transaction, then, in one
+     transaction, marks each row `seg` -2 where it is unchanged and writes `object_archive(kind, id, frame)`. Its
+     `seg_len` stays its length. Compaction copies only rows in a segment, so it then frees their bytes (§1 item 2).
+   - **Read again:** every reader of sources and tapes by id or digest (`resident_frames`, `tape_frames_for`,
+     `tape_frames_with_hashes`, `get_source`, `get_sources_by_hash_bulk`, `objects_bulk`, `get_tape`) places the
+     archived rows it met back first (`placed_again`). Their frames are decompressed into one new segment (`Placing`),
+     and in one transaction the rows are pointed at it and their archive rows removed. Then the reader reads again, in
+     place (§1 item 3). A put of an archived object places the caller's bytes (`seg < 0`, as for an absent one).
+   - **Archive rows** whose object went or was placed again are removed at the start of each archive pass.
+   - Test: `aged_objects_are_archived_and_placed_back_in_a_segment_when_read`.

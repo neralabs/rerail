@@ -396,9 +396,20 @@ CREATE TABLE IF NOT EXISTS corpus_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     run INTEGER NOT NULL,
     history_bytes INTEGER NOT NULL,
-    due INTEGER NOT NULL
+    due INTEGER NOT NULL,
+    archive_due INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 INSERT OR IGNORE INTO corpus_state(singleton, run, history_bytes, due) VALUES (1, 0, 0, 0);
+-- The archive (decision 0450 step 4, `archive.rs`): an aged source's or tape's bytes as one zstd frame, its row's `seg`
+-- -2 (its `seg_len` its length). `kind` is `object_pins`' object kind (1 a tape, 2 a source). Placed back in a segment
+-- when read again. `corpus_state.archive_due`: set when a session ends or a keep decision is made, cleared by a pass
+-- that archives nothing.
+CREATE TABLE IF NOT EXISTS object_archive (
+    kind INTEGER NOT NULL,
+    id INTEGER NOT NULL,
+    frame BLOB NOT NULL,
+    PRIMARY KEY (kind, id)
+) STRICT, WITHOUT ROWID;
 -- The last keep decision: the run counter and unix second it was made at. A new manifest makes a decision due, but
 -- a pass makes one only when it can change something (`CorpusPolicy`): a root past its protected runs since, or
 -- enough runs or seconds since. A new root's first runs are protected, so a run of fresh roots decides rarely.
@@ -867,6 +878,7 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
+    ("corpus_state", "archive_due", "INTEGER NOT NULL DEFAULT 0"),
     ("corpus_manifests", "policy", "BLOB CHECK(policy IS NULL OR length(policy) = 32)"),
     ("memo_entries", "over_pack", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_at", "INTEGER NOT NULL DEFAULT 0"),
