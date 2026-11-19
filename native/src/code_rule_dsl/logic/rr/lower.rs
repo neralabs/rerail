@@ -2119,24 +2119,6 @@ impl Lowerer {
         self.open.0 = Some(Sink::Rule(o, Some(unset), None));
     }
 
-    /// A rule of fixed shape the walk makes (a helper's, a demand's), head `rel(args)` and `body` written term by term;
-    /// once, when `once` (a demand: left out when written before). Nothing in a replay, whose deciding walk wrote it.
-    pub(super) fn fixed_rule(&mut self, rel: &str, args: &[Term], body: &[Literal], once: bool) {
-        if self.replay.is_some() {
-            return;
-        }
-        let mut o = self.prog.open_rule();
-        self.prog.put_head(&mut o, rel, &ts(args));
-        for l in body {
-            if let Err(e) = put_literal(&mut self.prog, &mut o, l) {
-                self.prog.abandon_rule(o);
-                self.out.error.get_or_insert(e);
-                return;
-            }
-        }
-        self.out.close(&mut self.prog, o, once);
-    }
-
     /// `fixed_rule` of head `rel(args)`, its body written by `body` (`emit_atom`, …). Nothing in a replay.
     fn fixed_rule_with(&mut self, rel: &str, args: &[Tm], once: bool, body: impl FnOnce(&mut Self) -> Result<(), Error>) {
         if self.replay.is_some() {
@@ -2185,7 +2167,23 @@ impl Lowerer {
     /// Term `t` of the clause, a builder term (`term`).
     fn term_tm(&mut self, t: &At) -> Result<Tm, Error> {
         let t = self.term(t)?;
-        Ok(self.tm(&t))
+        Ok(self.tm_of(&t))
+    }
+
+    /// Term `t` of the builder, its texts interned there (`Tm`).
+    fn tm_of(&mut self, t: &Term) -> Tm {
+        match t {
+            Term::Var(v) => Tm::VarAtom(self.prog.atom(v)),
+            Term::Wild => Tm::Wild,
+            Term::Int(i) => Tm::Int(*i),
+            Term::Str(s) => Tm::StrAtom(self.prog.atom(s)),
+            Term::Top => Tm::Top,
+            Term::Call(f, args) => {
+                let f = self.prog.atom(f);
+                Tm::CallAtom(f, args.iter().map(|a| self.tm_of(a)).collect())
+            }
+            Term::Branded(b) => Tm::Branded(*b),
+        }
     }
 
     /// The whole-string regex of a pattern computed in a rule, `p`: `^(?:p)$` made as the row's pattern is
@@ -2371,7 +2369,7 @@ impl Lowerer {
     /// position `start` to `end` (`decide_conjunction`): each replays the conjunction into the open rule. Nothing in
     /// a replay, whose deciding walk wrote them. What their literals say of their variables (`Scan`).
     #[allow(clippy::too_many_arguments)]
-    fn write_combinations(&mut self, decided: (usize, usize, usize), rel: &str, args: &[Tm], prefix: &[Literal], lits: &[LitAt], context: &BTreeSet<String>) -> Result<Scan, Error> {
+    fn write_combinations(&mut self, decided: (usize, usize, usize), rel: &str, args: &[Tm], prefix: &[(String, Vec<Tm>)], lits: &[LitAt], context: &BTreeSet<String>) -> Result<Scan, Error> {
         self.write_alternatives(decided, rel, args, prefix, false, |me, k| me.conjunction_put(lits, context, k))
     }
 
@@ -2379,7 +2377,7 @@ impl Lowerer {
     /// told to (`f`), decided from log position `start` to `end` (`decide`): each replays it into the open rule.
     /// With `unset`, each rule's `unset(x)` bind the empty value, as in a rule's own body (an aggregate's helper).
     /// Nothing in a replay, whose deciding walk wrote them. What their literals say of their variables (`Scan`).
-    fn write_alternatives(&mut self, (start, n, end): (usize, usize, usize), rel: &str, args: &[Tm], prefix: &[Literal], unset: bool, mut f: impl FnMut(&mut Self, usize) -> Result<usize, Error>) -> Result<Scan, Error> {
+    fn write_alternatives(&mut self, (start, n, end): (usize, usize, usize), rel: &str, args: &[Tm], prefix: &[(String, Vec<Tm>)], unset: bool, mut f: impl FnMut(&mut Self, usize) -> Result<usize, Error>) -> Result<Scan, Error> {
         if self.replay.is_some() {
             return Ok(Scan::default());
         }
@@ -2390,7 +2388,7 @@ impl Lowerer {
         for k in 0..n {
             if unset {
                 // The empty value's variables, of the combination's literals: a scan of them, then their rule.
-                let vars = self.scan_alternative(start, |me| f(me, k)).and_then(|s| s.unset_vars).and_then(|v| unset_vars(prefix).map(|p| v.into_iter().chain(p).collect()));
+                let vars = self.scan_alternative(start, |me| f(me, k)).and_then(|s| s.unset_vars);
                 match vars {
                     Ok(vars) => self.begin_rule(rel, args.to_vec(), vars),
                     Err(e) => {
@@ -2402,7 +2400,7 @@ impl Lowerer {
                 self.begin_helper_rule(rel, args);
             }
             self.replay = Some(start);
-            r = prefix.iter().try_for_each(|l| self.emit(l.clone())).and_then(|()| f(self, k).map(|_| ()));
+            r = prefix.iter().try_for_each(|(rel, args)| self.emit_atom(rel, args.clone(), false, false)).and_then(|()| f(self, k).map(|_| ()));
             debug_assert!(r.is_err() || self.replay == Some(end), "a combination replays its conjunction's names");
             if r.is_err() {
                 self.drop_rule();
@@ -2418,45 +2416,6 @@ impl Lowerer {
         self.open.0 = sink;
         self.off = off;
         r.map(|()| made)
-    }
-
-    /// Literal `l` of the open rule, as the term-level writes below (a bridge while the walk still makes literals).
-    fn emit(&mut self, l: Literal) -> Result<(), Error> {
-        if self.off || self.open.0.is_none() && self.scan.is_none() {
-            return Ok(());
-        }
-        match l {
-            Literal::Atom(a) => {
-                let args = a.args.iter().map(|t| self.tm(t)).collect();
-                self.emit_atom(&a.rel, args, a.neg, a.gated)
-            }
-            Literal::Cmp { l, op, r } => {
-                let (l, r) = (self.tm(&l), self.tm(&r));
-                self.emit_cmp(l, op, r)
-            }
-            Literal::Agg { var, op, over, atom } => {
-                let args = atom.args.iter().map(|t| self.tm(t)).collect();
-                self.emit_agg(&var, &op, over.as_deref(), &atom.rel, args)
-            }
-            Literal::Nearest { n, a, kindset } => self.emit_nearest(&n, &a, &kindset),
-            Literal::Ast { document, node, matcher, captures } => self.emit_ast(&document, &node, &matcher, &captures),
-        }
-    }
-
-    /// Term `t` of the builder, its texts interned there (`Tm`).
-    fn tm(&mut self, t: &Term) -> Tm {
-        match t {
-            Term::Var(v) => Tm::VarAtom(self.prog.atom(v)),
-            Term::Wild => Tm::Wild,
-            Term::Int(i) => Tm::Int(*i),
-            Term::Str(s) => Tm::StrAtom(self.prog.atom(s)),
-            Term::Top => Tm::Top,
-            Term::Call(f, args) => {
-                let f = self.prog.atom(f);
-                Tm::CallAtom(f, args.iter().map(|a| self.tm(a)).collect())
-            }
-            Term::Branded(b) => Tm::Branded(*b),
-        }
     }
 
     /// Runs `f` with the open rule's variables `unset(x)` binds empty (`None`: a helper's rule, which writes
@@ -2753,10 +2712,9 @@ impl Lowerer {
     /// Helper `name(vars)` of stem `stem`: a rule per combination of conjunction `lits` (decided as `decided`,
     /// `decide_conjunction`), its columns typed by what its rules say (`Scan`); merged at the walk's end into an
     /// equal one made before (`merge_helpers`). Its head's arguments.
-    fn helper_of(&mut self, name: &str, stem: &str, vars: &[String], decided: (usize, usize, usize), lits: &[LitAt], context: &BTreeSet<String>) -> Result<Vec<Term>, Error> {
-        let args: Vec<Term> = vars.iter().map(|c| Term::Var(c.clone().into())).collect();
-        let head: Vec<Tm> = vars.iter().map(|c| self.var_tm(c)).collect();
-        let scan = self.write_combinations(decided, name, &head, &[], lits, context)?;
+    fn helper_of(&mut self, name: &str, stem: &str, vars: &[String], decided: (usize, usize, usize), lits: &[LitAt], context: &BTreeSet<String>) -> Result<Vec<Tm>, Error> {
+        let args: Vec<Tm> = vars.iter().map(|c| self.var_tm(c)).collect();
+        let scan = self.write_combinations(decided, name, &args, &[], lits, context)?;
         if self.replay.is_none() {
             self.prog.declare_cols(name, vars.iter().map(|c| (c.clone(), scan.type_of(c))));
             self.once.push((name.to_owned(), stem.to_owned(), decided.1));
@@ -3186,8 +3144,8 @@ impl Lowerer {
         };
         match self.lit(lit) {
             L::Group { alts, neg: false } => {
-                if let Some(set) = self.test_set(&alts, false)? {
-                    return one(self, &mut |me| set.iter().try_for_each(|l| me.emit(l.clone())));
+                if let Some(n) = self.test_set(&alts, false, pick)? {
+                    return Ok(n);
                 }
                 // `(a ; b)`: each alternative's combinations, in turn.
                 let mut offset = 0;
@@ -3198,11 +3156,8 @@ impl Lowerer {
                 Ok(offset)
             }
             L::Group { alts, neg: true } => {
-                if let Some(mut set) = self.test_set(&alts, true)? {
-                    if let Some(Literal::Cmp { r, .. }) = set.last_mut() {
-                        *r = Term::Int(0);
-                    }
-                    return one(self, &mut |me| set.iter().try_for_each(|l| me.emit(l.clone())));
+                if let Some(n) = self.test_set(&alts, true, pick)? {
+                    return Ok(n);
                 }
                 // `!(a, b)`: no row of the conjunction, through a helper relation of the variables it shares with the
                 // rule; `!(a ; b)` is `!a, !b`.
@@ -3210,7 +3165,7 @@ impl Lowerer {
                 for alt in &alts {
                     out.push(self.negated_conjunction(alt, outer)?);
                 }
-                one(self, &mut |me| out.iter().try_for_each(|l| me.emit(l.clone())))
+                one(self, &mut |me| out.iter().try_for_each(|(rel, args)| me.emit_atom(rel, args.clone(), true, false)))
             }
             L::Pattern { subject, pattern, selector, neg } => one(self, &mut |me| me.pattern(&subject, &pattern, selector.as_deref(), neg)),
             L::Atom { rel, args, neg } if matches!(rel.as_str(), "nearest" | "inside" | "has" | "within_stop") && args.len() == 3 && self.node_set(&args[2]).is_some() => self.node_axis(&rel, &args, neg, outer, pick),
@@ -3255,8 +3210,8 @@ impl Lowerer {
     /// Atom `rel(args)` (negated: `neg`), and the demands it makes.
     fn atom_literal(&mut self, rel: &str, args: &[At], neg: bool) -> Result<(), Error> {
         // core.rr's tree arithmetic (`earlier`, `precedes`, …) as the relations the engine has (`core`).
-        if let Some(literals) = self.rewrite(rel, args, neg)? {
-            return literals.into_iter().try_for_each(|l| self.emit(l));
+        if self.rewrite(rel, args, neg)? {
+            return Ok(());
         }
         if !neg && matches!(rel, "parsed" | "sub_tape") {
             self.embed_demand(args)?;
@@ -3425,19 +3380,24 @@ impl Lowerer {
         }
         let ctx = ctx.transpose()?;
         self.prog.declare_cols(req, given.iter().enumerate().map(|(i, (_, ty))| (format!("c{i}"), (*ty).to_owned())));
-        let args: Vec<Term> = given
+        let args: Vec<Tm> = given
             .iter()
             .map(|(t, _)| match self.tv(t) {
-                T::Var(v) => Term::Var(v.into()),
-                T::Str(s) => Term::Str(s.into()),
+                T::Var(v) => self.var_tm(&v),
+                T::Str(s) => self.str_tm(&s),
                 _ => unreachable!("checked above"),
             })
             .collect();
-        let mut body: Vec<Literal> = ctx.into_iter().map(Literal::Atom).collect();
-        if every_chunk {
-            body.push(Literal::Atom(Atom { rel: "doc".into(), args: [Term::Var("rr_demand_doc".into()), Term::Wild, Term::Wild].into(), neg: false, gated: false }));
-        }
-        self.fixed_rule(req, &args, &body, true);
+        self.fixed_rule_with(req, &args, true, |me| {
+            if let Some((rel, args)) = ctx {
+                me.emit_atom(&rel, args, false, false)?;
+            }
+            if every_chunk {
+                let doc = vec![me.var_tm("rr_demand_doc"), Tm::Wild, Tm::Wild];
+                me.emit_atom("doc", doc, false, false)?;
+            }
+            Ok(())
+        });
         Ok(())
     }
 
@@ -3495,8 +3455,9 @@ impl Lowerer {
         });
         let ctx = if binds { Some(self.context(std::slice::from_ref(s))) } else { None };
         self.siblings = saved;
-        let Some(ctx) = ctx.transpose()? else { return Ok(()) };
-        self.fixed_rule(demand, &[Term::Var(s.clone().into())], &[Literal::Atom(ctx)], true);
+        let Some((rel, args)) = ctx.transpose()? else { return Ok(()) };
+        let head = [self.var_tm(s)];
+        self.fixed_rule_with(demand, &head, true, |me| me.emit_atom(&rel, args, false, false));
         Ok(())
     }
 
@@ -3581,7 +3542,7 @@ impl Lowerer {
     /// `!(l, …)`: a helper relation of the conjunction, over the variables it shares with the rule (an aggregate's
     /// inside it too: `shared_vars`), bound inside it by a context relation where the conjunction only tests them,
     /// negated. A variable only the conjunction has is its own (Soufflé's scoping).
-    fn negated_conjunction(&mut self, lits: &[LitAt], outer: &BTreeSet<String>) -> Result<Literal, Error> {
+    fn negated_conjunction(&mut self, lits: &[LitAt], outer: &BTreeSet<String>) -> Result<(String, Vec<Tm>), Error> {
         let shared: Vec<String> = self.shared_vars(lits).into_iter().filter(|v| outer.contains(v)).collect();
         let bound: BTreeSet<String> = self.body_vars(&lits.iter().filter(|l| self.binds_columns(l)).cloned().collect::<Vec<_>>());
         let needed: Vec<String> = shared.iter().filter(|v| !bound.contains(*v)).cloned().collect();
@@ -3589,12 +3550,11 @@ impl Lowerer {
         let context: BTreeSet<String> = shared.iter().cloned().collect();
         let decided = self.decide_conjunction(lits, &context)?;
         self.siblings = siblings.clone();
-        let prefix = if needed.is_empty() { Vec::new() } else { vec![Literal::Atom(self.context(&needed)?)] };
+        let prefix = if needed.is_empty() { Vec::new() } else { vec![self.context(&needed)?] };
         self.siblings = siblings.clone();
         // `rr_not<k>(shared)` of the bodies, negated; `rr_not<k>(0)` when nothing is shared.
         let name = self.fresh("not");
-        let args: Vec<Term> = if shared.is_empty() { vec![Term::Int(0)] } else { shared.iter().map(|c| Term::Var(c.clone().into())).collect() };
-        let head: Vec<Tm> = args.iter().map(|t| self.tm(t)).collect();
+        let head: Vec<Tm> = if shared.is_empty() { vec![Tm::Int(0)] } else { shared.iter().map(|c| self.var_tm(c)).collect() };
         let scan = self.write_combinations(decided, &name, &head, &prefix, lits, &context);
         self.siblings = siblings;
         let scan = scan?;
@@ -3602,7 +3562,7 @@ impl Lowerer {
             let cols: Vec<(String, String)> = if shared.is_empty() { vec![("unit".to_owned(), "int".to_owned())] } else { shared.iter().map(|c| (c.clone(), scan.type_of(c))).collect() };
             self.prog.declare_cols(&name, cols);
         }
-        Ok(Literal::Atom(Atom { rel: name.into(), args: args.into(), neg: true, gated: false }))
+        Ok((name, head))
     }
 
     /// A helper relation `rr_not<k>(shared)` of the bodies, negated; `rr_not<k>(0)` when nothing is shared.
@@ -3630,14 +3590,29 @@ impl Lowerer {
         if self.prog.declares(&name) {
             return name;
         }
-        let v = |s: &str| Term::Var(s.to_owned().into());
-        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg, gated: false });
-        let cmp = |l: &str, r: &str| Literal::Cmp { l: v(l), op: "<", r: v(r) };
-        let member = match (self.tv(set), self.node_set(set)) {
-            (_, Some(nodes)) => vec![atom(&nodes, vec![v("s")], false)],
-            (T::Str(k), _) => vec![atom("kind", vec![v("s"), Term::Str(k.into())], false)],
-            (T::Var(kinds), _) => vec![atom("kind", vec![v("s"), v("sk")], false), atom(&kinds, vec![v("sk")], false)],
-            _ => vec![],
+        // `rel(args)`, each a variable or (`_`) a wildcard.
+        let atom = |me: &mut Self, rel: &str, args: &[&str], neg: bool| {
+            let args: Vec<Tm> = args.iter().map(|a| if *a == "_" { Tm::Wild } else { me.var_tm(a) }).collect();
+            me.emit_atom(rel, args, neg, false)
+        };
+        let cmp = |me: &mut Self, l: &str, op: &'static str, r: &str| {
+            let (l, r) = (me.var_tm(l), me.var_tm(r));
+            me.emit_cmp(l, op, r)
+        };
+        let set_tv = self.tv(set);
+        let nodes = self.node_set(set);
+        // s is in S.
+        let member = |me: &mut Self| match (&set_tv, &nodes) {
+            (_, Some(nodes)) => atom(me, nodes, &["s"], false),
+            (T::Str(k), _) => {
+                let args = vec![me.var_tm("s"), me.str_tm(k)];
+                me.emit_atom("kind", args, false, false)
+            }
+            (T::Var(kinds), _) => {
+                atom(me, "kind", &["s", "sk"], false)?;
+                atom(me, kinds, &["sk"], false)
+            }
+            _ => Ok(()),
         };
         // after(a, k): a later sibling of a at index k is in S; first(a, j): the first such.
         let after = format!("{RESERVED}prec_after_{label}");
@@ -3646,20 +3621,36 @@ impl Lowerer {
         self.prog.declare_cols(&after, node_int.iter().map(|(c, t)| (c.to_string(), t.to_string())));
         self.prog.declare_cols(&first, node_int.iter().map(|(c, t)| (c.to_string(), t.to_string())));
         self.prog.declare_cols(&name, [("a", "node"), ("b", "node")]);
-        let head = |rel: &str, args: Vec<Term>| Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false };
-        let mut body = vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("s"), v("k")], false), cmp("i", "k")];
-        body.extend(member);
-        self.fixed_rule(&after, &[v("a"), v("k")], &body, false);
-        let least = [atom(&after, vec![v("a"), Term::Wild], false), Literal::Agg { var: "j".to_owned(), op: AggOp::Min, over: Some("k".to_owned()), atom: head(&after, vec![v("a"), v("k")]) }];
-        self.fixed_rule(&first, &[v("a"), v("j")], &least, false);
-        let pair = || vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("b"), v("l")], false), cmp("i", "l")];
-        let mut none = pair();
-        none.push(atom(&after, vec![v("a"), Term::Wild], true));
-        self.fixed_rule(&name, &[v("a"), v("b")], &none, false);
-        let mut upto = pair();
-        upto.push(atom(&first, vec![v("a"), v("j")], false));
-        upto.push(Literal::Cmp { l: v("l"), op: "<=", r: v("j") });
-        self.fixed_rule(&name, &[v("a"), v("b")], &upto, false);
+        let vars = |me: &mut Self, vs: &[&str]| vs.iter().map(|v| me.var_tm(v)).collect::<Vec<_>>();
+        let head = vars(self, &["a", "k"]);
+        self.fixed_rule_with(&after, &head, false, |me| {
+            atom(me, "child", &["p", "a", "i"], false)?;
+            atom(me, "child", &["p", "s", "k"], false)?;
+            cmp(me, "i", "<", "k")?;
+            member(me)
+        });
+        let head = vars(self, &["a", "j"]);
+        self.fixed_rule_with(&first, &head, false, |me| {
+            atom(me, &after, &["a", "_"], false)?;
+            let args = vars(me, &["a", "k"]);
+            me.emit_agg("j", &AggOp::Min, Some("k"), &after, args)
+        });
+        // a and b children of one parent, a first.
+        let pair = |me: &mut Self| {
+            atom(me, "child", &["p", "a", "i"], false)?;
+            atom(me, "child", &["p", "b", "l"], false)?;
+            cmp(me, "i", "<", "l")
+        };
+        let head = vars(self, &["a", "b"]);
+        self.fixed_rule_with(&name, &head, false, |me| {
+            pair(me)?;
+            atom(me, &after, &["a", "_"], true)
+        });
+        self.fixed_rule_with(&name, &head, false, |me| {
+            pair(me)?;
+            atom(me, &first, &["a", "j"], false)?;
+            cmp(me, "l", "<=", "j")
+        });
         name
     }
 
@@ -3683,35 +3674,44 @@ impl Lowerer {
     /// A climb up the tree from the nodes `seed` gives (in its variable `x`): `rr_up<k>(n, a)` for each strict
     /// ancestor a of n, up to and including the first node of `stop` where one is given. Its work is each seed's
     /// path up (to the stop), from the tape's parent column.
-    fn climb(&mut self, seed: Vec<Literal>, x: &str, stop: Option<&str>) -> String {
+    fn climb(&mut self, seed: (String, Vec<Tm>), x: &str, stop: Option<&str>) -> String {
         self.need_tape();
         let rel = self.fresh("up");
         self.prog.declare_cols(&rel, [("n", "node"), ("a", "node")]);
-        let v = |s: &str| Term::Var(s.to_owned().into());
-        let atom = |r: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: r.to_owned().into(), args: args.into(), neg, gated: false });
-        let up = |p: &str, q: &str| atom("tape", vec![v(p), v(q), Term::Wild, Term::Wild], false);
-        let real = |q: &str| Literal::Cmp { l: v(q), op: ">=", r: Term::Int(0) };
-        let mut first = seed;
-        first.extend([up(x, "rr_p"), real("rr_p")]);
-        self.fixed_rule(&rel, &[v(x), v("rr_p")], &first, false);
-        let mut next = vec![atom(&rel, vec![v("rr_n"), v("rr_p")], false)];
-        if let Some(stop) = stop {
-            next.push(atom(stop, vec![v("rr_p")], true));
-        }
-        next.extend([up("rr_p", "rr_q"), real("rr_q")]);
-        self.fixed_rule(&rel, &[v("rr_n"), v("rr_q")], &next, false);
+        // p's parent q, a node.
+        let up = |me: &mut Self, p: &str, q: &str| {
+            let args = vec![me.var_tm(p), me.var_tm(q), Tm::Wild, Tm::Wild];
+            me.emit_atom("tape", args, false, false)?;
+            let q = me.var_tm(q);
+            me.emit_cmp(q, ">=", Tm::Int(0))
+        };
+        let head = [self.var_tm(x), self.var_tm("rr_p")];
+        self.fixed_rule_with(&rel, &head, false, |me| {
+            me.emit_atom(&seed.0, seed.1, false, false)?;
+            up(me, x, "rr_p")
+        });
+        let head = [self.var_tm("rr_n"), self.var_tm("rr_q")];
+        self.fixed_rule_with(&rel, &head, false, |me| {
+            let args = vec![me.var_tm("rr_n"), me.var_tm("rr_p")];
+            me.emit_atom(&rel, args, false, false)?;
+            if let Some(stop) = stop {
+                let args = vec![me.var_tm("rr_p")];
+                me.emit_atom(stop, args, true, false)?;
+            }
+            up(me, "rr_p", "rr_q")
+        });
         rel
     }
 
     /// The nodes a climb starts from: the values the rule gives `n` (`context`), or every node.
-    fn climb_seed(&mut self, n: &str) -> Result<Vec<Literal>, Error> {
+    fn climb_seed(&mut self, n: &str) -> Result<(String, Vec<Tm>), Error> {
         if self.bound_beside(n) {
             let siblings = self.siblings.clone();
             let ctx = self.context(&[n.to_owned()]);
             self.siblings = siblings;
-            return Ok(vec![Literal::Atom(ctx?)]);
+            return ctx;
         }
-        Ok(vec![Literal::Atom(Atom { rel: "node".into(), args: [Term::Wild, Term::Var(n.to_owned().into()), Term::Wild, Term::Wild, Term::Wild].into(), neg: false, gated: false })])
+        Ok(("node".to_owned(), vec![Tm::Wild, self.var_tm(n), Tm::Wild, Tm::Wild, Tm::Wild]))
     }
 
     /// The axes over a set of nodes S (`core.rr`: a set may be a relation of nodes), as climbs up the tree:
@@ -3742,10 +3742,9 @@ impl Lowerer {
     /// A node axis over a set of nodes, positive, writing its alternative `pick` (`alt`): its count.
     fn node_axis_put(&mut self, rel: &str, args: &[At], pick: usize) -> Result<usize, Error> {
         let set = self.node_set(&args[2]).expect("a node set");
-        let atom = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.to_owned().into(), args: args.into(), neg: false, gated: false });
         // `rel(vars)`, written.
         let put = |me: &mut Self, r: &str, vars: &[&str]| {
-            let args = vars.iter().map(|v| me.var_tm(v)).collect();
+            let args: Vec<Tm> = vars.iter().map(|v| me.var_tm(v)).collect();
             me.emit_atom(r, args, false, false)
         };
         let named = |me: &mut Self, t: &At| -> Result<String, Error> {
@@ -3756,7 +3755,6 @@ impl Lowerer {
             }
         };
         let (first, second) = (named(self, &args[0])?, named(self, &args[1])?);
-        let v = |s: &str| Term::Var(s.to_owned().into());
         match rel {
             "inside" | "nearest" => {
                 let (n, a) = (first, second);
@@ -3770,7 +3768,8 @@ impl Lowerer {
             }
             "has" => {
                 let (a, n) = (first, second);
-                let up = self.climb(vec![atom(&set, vec![v(&n)])], &n, None);
+                let seed = (set.clone(), vec![self.var_tm(&n)]);
+                let up = self.climb(seed, &n, None);
                 self.alt(0, pick, |me| put(me, &up, &[&n, &a]))?;
                 Ok(1)
             }
@@ -3904,15 +3903,20 @@ impl Lowerer {
             cols.extend(["ordinal", "start", "end"].map(|c| (c.to_owned(), "int".to_owned())));
         }
         self.prog.declare_cols(&name, cols.iter().map(|(c, t)| (c.to_string(), t.to_string())));
-        let x = |n: &str| Term::Var(n.to_owned().into());
-        let mut body = vec![Literal::Atom(Atom { rel: input.to_owned().into(), args: [x("s")].into(), neg: false, gated: false })];
-        body.extend(gs.iter().map(|g| Literal::Cmp { l: x(&format!("g_{g}")), op: "=", r: x("s") }));
-        let mut head_args: Vec<_> = std::iter::once(x("s")).chain(gs.iter().map(|g| x(&format!("g_{g}")))).collect();
+        let mut head_args: Vec<Tm> = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|v| self.var_tm(&v)).collect();
         if positions {
             // The native producer replaces these seed values. They establish dependency and numeric types.
-            head_args.extend([Term::Int(0), Term::Int(0), Term::Int(0)]);
+            head_args.extend([Tm::Int(0), Tm::Int(0), Tm::Int(0)]);
         }
-        self.fixed_rule(name, &head_args, &body, false);
+        self.fixed_rule_with(name, &head_args, false, |me| {
+            let s = me.var_tm("s");
+            me.emit_atom(input, vec![s.clone()], false, false)?;
+            for g in gs {
+                let g = me.var_tm(&format!("g_{g}"));
+                me.emit_cmp(g, "=", s.clone())?;
+            }
+            Ok(())
+        });
         self.prog.set_native(&name, Native::MatchAll { input: input.to_owned(), pattern: re.to_owned(), groups: gs.to_vec(), positions });
     }
 
@@ -4049,7 +4053,7 @@ impl Lowerer {
         self.siblings = saved;
         let ctx = ctx?;
         let name = self.fresh("mall");
-        self.match_all_native(&name, &ctx.rel, re, &gs, !positions.is_empty());
+        self.match_all_native(&name, &ctx.0, re, &gs, !positions.is_empty());
         let mut args: Vec<Tm> = std::iter::once(v).chain(&gs).map(|g| self.var_tm(g)).collect();
         for p in positions {
             args.push(self.term_tm(p)?);
@@ -4217,7 +4221,7 @@ impl Lowerer {
 
     /// `(glob("a", s) ; glob("b", s))` as one test of the set, and `(s = "a" ; s = "b")` as one membership. `neg`: the
     /// disjunction is negated.
-    fn test_set(&mut self, alts: &[Vec<LitAt>], neg: bool) -> Result<Option<Vec<Literal>>, Error> {
+    fn test_set(&mut self, alts: &[Vec<LitAt>], neg: bool, pick: usize) -> Result<Option<usize>, Error> {
         if alts.len() < 2 || alts.iter().any(|a| a.len() != 1) {
             return Ok(None);
         }
@@ -4238,18 +4242,26 @@ impl Lowerer {
             && tests.iter().all(|(op, s, _)| *op == tests[0].0 && self.same(s, &tests[0].1))
         {
             // On a node or span, the tests are of its text, as one test's are (`text_test`).
-            let mut out = Vec::new();
+            let mut text = None;
             let s = match self.tv(&tests[0].1) {
                 T::Var(v) if self.span_container(&v).is_some() || self.node_typed(&v) => {
                     let t = self.fresh("text");
-                    out.push(Literal::Atom(Atom { rel: "text".into(), args: [Term::Var(v.into()), Term::Var(t.clone().into())].into(), neg: false, gated: false }));
-                    Term::Var(t.into())
+                    let t = self.var_tm(&t);
+                    text = Some(vec![self.var_tm(&v), t.clone()]);
+                    t
                 }
-                _ => self.term(&tests[0].1)?,
+                _ => self.term_tm(&tests[0].1)?,
             };
-            let set = Term::Call(SET.to_owned().into(), tests.iter().map(|(_, _, p)| Term::Str(p.clone().into())).collect());
-            out.push(Literal::Cmp { l: Term::Call(tests[0].0.to_owned().into(), [s, set].into()), op: "=", r: Term::Int(1) });
-            return Ok(Some(out));
+            let patterns: Vec<Tm> = tests.iter().map(|(_, _, p)| self.str_tm(p)).collect();
+            let set = Tm::CallAtom(self.prog.atom(SET), patterns);
+            let test = Tm::CallAtom(self.prog.atom(tests[0].0), vec![s, set]);
+            self.alt(0, pick, |me| {
+                if let Some(text) = text {
+                    me.emit_atom("text", text, false, false)?;
+                }
+                me.emit_cmp(test, "=", Tm::Int(if neg { 0 } else { 1 }))
+            })?;
+            return Ok(Some(1));
         }
         let members: Option<Vec<(String, String)>> = alts
             .iter()
@@ -4267,8 +4279,11 @@ impl Lowerer {
             && members.iter().all(|(x, _)| *x == members[0].0)
             && (neg || self.bound_beside(&members[0].0))
         {
-            let set = Term::Call(SET.to_owned().into(), members.iter().map(|(_, c)| Term::Str(c.clone().into())).collect());
-            return Ok(Some(vec![Literal::Cmp { l: Term::Call("equals".into(), [Term::Var(members[0].0.clone().into()), set].into()), op: "=", r: Term::Int(1) }]));
+            let items: Vec<Tm> = members.iter().map(|(_, c)| self.str_tm(c)).collect();
+            let set = Tm::CallAtom(self.prog.atom(SET), items);
+            let test = Tm::CallAtom(self.prog.atom("equals"), vec![self.var_tm(&members[0].0), set]);
+            self.alt(0, pick, |me| me.emit_cmp(test, "=", Tm::Int(if neg { 0 } else { 1 })))?;
+            return Ok(Some(1));
         }
         Ok(None)
     }
@@ -4607,7 +4622,7 @@ impl Lowerer {
 
     /// A relation of `vars`' values in the rule: the literals beside the one being lowered (`siblings`; their
     /// atoms and comparisons), projected on `vars`. It binds, inside a helper rule, variables its body only tests.
-    fn context(&mut self, vars: &[String]) -> Result<Atom, Error> {
+    fn context(&mut self, vars: &[String]) -> Result<(String, Vec<Tm>), Error> {
         let siblings = std::mem::take(&mut self.siblings);
         let context = |aggregates: bool| -> Vec<LitAt> {
             siblings
@@ -4736,7 +4751,7 @@ impl Lowerer {
         let asked: BTreeSet<String> = vars.iter().cloned().collect();
         let decided = self.decide_conjunction(&context, &asked)?;
         let args = self.helper_of(&ctx, "ctx", vars, decided, &context, &asked)?;
-        Ok(Atom { rel: ctx.into(), args: args.into(), neg: false, gated: false })
+        Ok((ctx, args))
     }
 
     /// `context` without a `text(v, t)` whose node `v` nothing else in it binds: a text is read of a bound node
@@ -5230,7 +5245,7 @@ impl Lowerer {
             let ctx = self.context(&shared);
             self.siblings = siblings;
             self.span_context = false;
-            prefix.push(Literal::Atom(ctx?));
+            prefix.push(ctx?);
         }
         let args: Vec<Tm> = cols.iter().map(|c| self.var_tm(c)).collect();
         // The empty value inside the body is the constant, as in a rule's own body.
@@ -5245,7 +5260,7 @@ impl Lowerer {
             self.once.push((name.clone(), stem, decided.1));
         }
         // The helper keeps every column (`count` counts distinct rows), but only the rule's variables group it.
-        let args = cols.iter().map(|c| if outer.contains(c) || own(c) { self.var_tm(c) } else { Tm::Wild }).collect();
+        let args: Vec<Tm> = cols.iter().map(|c| if outer.contains(c) || own(c) { self.var_tm(c) } else { Tm::Wild }).collect();
         self.emit_agg(var, &op, over.as_deref(), &name, args)
     }
 
@@ -5396,35 +5411,6 @@ pub(super) fn float_key(f: f64) -> i64 {
 /// Each `unset(x)` is taken out and `x` replaced by it in the rule; `!unset(x)` is `x != -1`. Its text is "":
 /// `text(x, t)` of it is `t = ""` (O77). (A `@place` with no valid line is `unset` too: `PLACE`.)
 pub(super) const UNSET: i64 = -1;
-
-/// The variables a body's `unset(x)` bind to the empty value.
-fn unset_vars(body: &[Literal]) -> Result<BTreeSet<String>, Error> {
-    let mut vars = BTreeSet::new();
-    for l in body {
-        if let Literal::Atom(a) = l
-            && a.rel == "unset"
-            && !a.neg
-        {
-            match a.args.as_slice() {
-                [Term::Var(v)] => {
-                    vars.insert(v.to_string());
-                }
-                [Term::Wild] => {}
-                _ => return not_yet("`unset` of a value"),
-            }
-        }
-    }
-    Ok(vars)
-}
-
-/// `t` with each of `vars` the empty value.
-fn unset_term(t: &mut Term, vars: &BTreeSet<String>) {
-    match t {
-        Term::Var(v) if vars.contains(v.as_str()) => *t = Term::Int(UNSET),
-        Term::Call(_, args) => args.iter_mut().for_each(|a| unset_term(a, vars)),
-        _ => {}
-    }
-}
 
 /// `re` with each named group made non-capturing (`(?P<x>…)`, `(?<x>…)` → `(?:…)`): what a test that binds nothing
 /// reads. Escapes and character classes are passed over.

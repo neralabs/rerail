@@ -28,7 +28,8 @@ use std::sync::LazyLock;
 
 use super::At;
 use super::{Lowerer, ty};
-use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Term, is_axis};
+use super::Tm;
+use crate::code_rule_dsl::logic::front::{Error, is_axis};
 
 const CORE: &str = include_str!("../../../../../../docs/rule-syntax/lib/core.rr");
 
@@ -54,53 +55,45 @@ pub fn is_core(rel: &str) -> bool {
     DECLS.contains_key(rel)
 }
 
-fn atom(rel: &str, args: Vec<Term>, neg: bool) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg, gated: false })
-}
-
-fn var(v: &str) -> Term {
-    Term::Var(v.to_owned().into())
-}
-
-fn less(l: &str, r: &str) -> Literal {
-    Literal::Cmp { l: var(l), op: "<", r: var(r) }
-}
-
-/// A rewritten relation of several literals: its parameters, and its body over them and variables of its own.
-fn definition(rel: &str) -> (&'static [&'static str], Vec<Literal>) {
-    let w = || Term::Wild;
+/// A rewritten relation of several literals: its parameters, and its own variables in order of name (the order their
+/// fresh names are made in).
+fn shape(rel: &str) -> (&'static [&'static str], &'static [&'static str]) {
     match rel {
-        "next_sibling" => (
-            &["a", "b"],
-            vec![
-                atom("child", vec![var("p"), var("a"), var("i")], false),
-                Literal::Cmp { l: var("j"), op: "=", r: Term::Call("add".into(), [var("i"), Term::Int(1)].into()) },
-                atom("child", vec![var("p"), var("b"), var("j")], false),
-            ],
-        ),
-        "precedes" => (
-            &["a", "b"],
-            vec![atom("child", vec![var("p"), var("a"), var("i")], false), atom("child", vec![var("p"), var("b"), var("j")], false), less("i", "j")],
-        ),
-        "earlier" => (
-            &["m", "n"],
-            vec![
-                atom("node", vec![var("d"), var("m"), w(), w(), w()], false),
-                atom("visit_index", vec![var("m"), var("i")], false),
-                atom("node", vec![var("d"), var("n"), w(), w(), w()], false),
-                atom("visit_index", vec![var("n"), var("j")], false),
-                less("i", "j"),
-            ],
-        ),
+        "next_sibling" | "precedes" => (&["a", "b"][..], &["i", "j", "p"][..]),
+        "earlier" => (&["m", "n"][..], &["d", "i", "j"][..]),
         other => unreachable!("{other} has no definition"),
     }
 }
 
-fn substitute(t: &Term, map: &BTreeMap<String, Term>) -> Term {
-    match t {
-        Term::Var(v) => map.get(v.as_str()).cloned().unwrap_or_else(|| t.clone()),
-        Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| substitute(a, map)).collect()),
-        t => t.clone(),
+/// Variable `n`'s term in `v`.
+fn term_of(v: &[(&str, Tm)], n: &str) -> Tm {
+    v.iter().find(|(m, _)| *m == n).map(|(_, t)| t.clone()).expect("a variable of the definition")
+}
+
+/// Writes the body of rewritten relation `rel` (`emit_atom`, `emit_cmp`), each variable as `v` gives it.
+fn write_definition(me: &mut Lowerer, rel: &str, v: &[(&str, Tm)]) -> Result<(), Error> {
+    let x = |n: &str| term_of(v, n);
+    let w = || Tm::Wild;
+    match rel {
+        "next_sibling" => {
+            me.emit_atom("child", vec![x("p"), x("a"), x("i")], false, false)?;
+            let next = Tm::CallAtom(me.prog.atom("add"), vec![x("i"), Tm::Int(1)]);
+            me.emit_cmp(x("j"), "=", next)?;
+            me.emit_atom("child", vec![x("p"), x("b"), x("j")], false, false)
+        }
+        "precedes" => {
+            me.emit_atom("child", vec![x("p"), x("a"), x("i")], false, false)?;
+            me.emit_atom("child", vec![x("p"), x("b"), x("j")], false, false)?;
+            me.emit_cmp(x("i"), "<", x("j"))
+        }
+        "earlier" => {
+            me.emit_atom("node", vec![x("d"), x("m"), w(), w(), w()], false, false)?;
+            me.emit_atom("visit_index", vec![x("m"), x("i")], false, false)?;
+            me.emit_atom("node", vec![x("d"), x("n"), w(), w(), w()], false, false)?;
+            me.emit_atom("visit_index", vec![x("n"), x("j")], false, false)?;
+            me.emit_cmp(x("i"), "<", x("j"))
+        }
+        other => unreachable!("{other} has no definition"),
     }
 }
 
@@ -110,44 +103,51 @@ impl Lowerer {
         REWRITTEN.contains(&rel) && !self.derived.contains(rel)
     }
 
-    /// `rel(args)` (negated: `neg`) as the literals the engine reads, where `rewritten(rel)`.
-    pub(super) fn rewrite(&mut self, rel: &str, args: &[At], neg: bool) -> Result<Option<Vec<Literal>>, Error> {
+    /// `rel(args)` (negated: `neg`) written as the literals the engine reads, where `rewritten(rel)`: whether it is.
+    pub(super) fn rewrite(&mut self, rel: &str, args: &[At], neg: bool) -> Result<bool, Error> {
         if !self.rewritten(rel) {
-            return Ok(None);
+            return Ok(false);
         }
         let arity = DECLS[rel].len();
         if args.len() != arity {
             return Err(Error::Syntax(format!("{rel} takes {arity} arguments (core.rr), not {}", args.len())));
         }
-        let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
-        Ok(Some(match rel {
-            _ if !neg => {
-                let (params, body) = definition(rel);
-                let mut map = BTreeMap::new();
-                for (p, a) in params.iter().zip(&args) {
-                    let a = if *a == Term::Wild { Term::Var(self.fresh(rel).into()) } else { a.clone() };
-                    map.insert((*p).to_owned(), a);
-                }
-                let mut own = BTreeSet::new();
-                body.iter().for_each(|l| literal_vars(l, &mut own));
-                for v in own {
-                    map.entry(v).or_insert_with(|| Term::Var(self.fresh(rel).into()));
-                }
-                body.iter().map(|l| substitute_literal(l, &map)).collect()
-            }
-            _ => vec![atom(&self.helper(rel), args, true)],
-        }))
+        let args = args.iter().map(|a| self.term_tm(a)).collect::<Result<Vec<_>, _>>()?;
+        if neg {
+            let helper = self.helper(rel);
+            self.emit_atom(&helper, args, true, false)?;
+            return Ok(true);
+        }
+        let (params, own) = shape(rel);
+        let mut map: Vec<(&str, Tm)> = Vec::new();
+        for (p, a) in params.iter().zip(args) {
+            let a = if a == Tm::Wild {
+                let v = self.fresh(rel);
+                self.var_tm(&v)
+            } else {
+                a
+            };
+            map.push((p, a));
+        }
+        for v in own {
+            let fresh = self.fresh(rel);
+            let t = self.var_tm(&fresh);
+            map.push((v, t));
+        }
+        write_definition(self, rel, &map)?;
+        Ok(true)
     }
 
     /// The relation of a rewritten relation's rows, `rr_core_<rel>`, made on its first use.
     fn helper(&mut self, rel: &str) -> String {
         let name = format!("rr_core_{rel}");
         if !self.prog.declares(&name) {
-            let (params, body) = definition(rel);
+            let (params, own) = shape(rel);
             let cols: Vec<(&str, &str)> = DECLS[rel].iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
             self.prog.declare(&name, &cols);
-            let args: Vec<Term> = params.iter().map(|p| var(p)).collect();
-            self.fixed_rule(&name, &args, &body, false);
+            let map: Vec<(&str, Tm)> = params.iter().chain(own).map(|v| (*v, self.var_tm(v))).collect();
+            let args: Vec<Tm> = params.iter().map(|p| term_of(&map, p)).collect();
+            self.fixed_rule_with(&name, &args, false, |me| write_definition(me, rel, &map));
         }
         name
     }
@@ -212,33 +212,4 @@ pub fn drop_unread_core(v: &std::sync::Arc<crate::code_rule_dsl::logic::program_
     let inputs: Vec<String> = v.input_names().into_iter().filter(|i| !unused.contains(i)).collect();
     b.set_inputs(&inputs);
     Ok(b.finish()?.0)
-}
-
-fn term_vars(t: &Term, out: &mut BTreeSet<String>) {
-    match t {
-        Term::Var(v) => {
-            out.insert(v.to_string());
-        }
-        Term::Call(_, args) => args.iter().for_each(|a| term_vars(a, out)),
-        _ => {}
-    }
-}
-
-fn literal_vars(l: &Literal, out: &mut BTreeSet<String>) {
-    match l {
-        Literal::Atom(a) => a.args.iter().for_each(|t| term_vars(t, out)),
-        Literal::Cmp { l, r, .. } => {
-            term_vars(l, out);
-            term_vars(r, out);
-        }
-        _ => unreachable!("a definition has atoms and comparisons"),
-    }
-}
-
-fn substitute_literal(l: &Literal, map: &BTreeMap<String, Term>) -> Literal {
-    match l {
-        Literal::Atom(a) => Literal::Atom(Atom { args: a.args.iter().map(|t| substitute(t, map)).collect(), ..a.clone() }),
-        Literal::Cmp { l, op, r } => Literal::Cmp { l: substitute(l, map), op, r: substitute(r, map) },
-        _ => unreachable!("a definition has atoms and comparisons"),
-    }
 }
