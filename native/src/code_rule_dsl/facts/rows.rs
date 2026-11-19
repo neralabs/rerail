@@ -1053,6 +1053,15 @@ impl InBlock {
     /// `own_index`, its buckets sized for `keys` distinct keys (`Relation::try_reserve_index_buckets`), when it is
     /// built now.
     pub fn own_index_for(&self, cols: &[u16], keys: usize) -> Option<usize> {
+        self.own_index_if(cols, keys, true)
+    }
+
+    /// The relation's own index on `cols` over its rows, if one is built (by the device or a probe): none is built.
+    pub fn found_index(&self, cols: &[u16]) -> Option<usize> {
+        self.own_index_if(cols, self.rows as usize, false)
+    }
+
+    fn own_index_if(&self, cols: &[u16], keys: usize, build: bool) -> Option<usize> {
         let r = self.relation();
         if self.dead != 0 || r.base_rows != 0 || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
             return None;
@@ -1060,6 +1069,9 @@ impl InBlock {
         let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(i) = r.find_index(cols, self.rows) {
             return Some(i);
+        }
+        if !build {
+            return None;
         }
         // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
         let room = unsafe { r.try_reserve_index_buckets(&self.facts.block, cols, self.rows, keys) }?;
@@ -1266,6 +1278,18 @@ impl Rows {
             }
         };
         Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: at, part: Some(one.clone()) })
+    }
+
+    /// `in_block`, never merging parts: `None` where the rows are in several parts not merged yet. A reader that can
+    /// do without the block (the CPU's probes) asks for this, so it makes no copy.
+    pub fn in_one_block(&self) -> Option<InBlock> {
+        let one = match (&self.segs[..], &self.tail) {
+            ([], Some(t)) if self.from == 0 => t,
+            ([(0, p)], None) => p,
+            ([], None) => return None,
+            _ => self.merged.get()?,
+        };
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0, part: Some(one.clone()) })
     }
 
     /// The rows as one relation: the one part, or every part merged into one (made once and kept).

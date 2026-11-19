@@ -340,3 +340,35 @@ that size came from the cache's first use, a 16z block decoded, and nothing else
   65-96 uploads, 5.3-7.9 MB in about 88 ms. The count is now the same in every run; before, what a thread's cache
   held decided it, by the threads' timing (R6). These uploads are 0353 row 5's copies and go with its steps.
 
+## Built (2026-11-19, step 5a: a relation's probes by its block's index)
+
+- **A derived relation is probed by its block's own index** (R2): `InRel::index` takes an index already built in the
+  relation's block first (by the device, or an earlier probe: `InBlock::found_index`), then a kept chain (an order
+  its waves made, which costs nothing), and otherwise builds one there (`InBlock::own_index`), not an order or a
+  table of its own. The device's `find_index` finds what the CPU built, and the reverse. A relation with dead rows
+  is indexed over its rows, dead ones too, as the device indexes it (`DevRel::dead`); every reader skips them by the
+  dead bits, and checks each candidate's key, as a bucket holds other keys.
+- Rows in several parts not yet merged are not merged for this (`Rows::in_one_block`): such a relation keeps its
+  order, as before, so no copy is added.
+- `probe_size` stays exact for a bucket (decision 0247): it counts the candidates whose key is the probe's.
+- Decision 0294's scan in the next step's key order applies where that step has an order: a component relation's
+  waves. An input's probes go to a hash index, for which no scan is sorted. The cut test now probes `path`'s delta.
+- Not yet: the orders (`chains`, `sorted`, `Index`'s runs) are still a directory on the heap over arrays in the
+  block, and `dead` is still a vector; the map of `Csr`s too.
+- Tests (`setfix::block_index_tests`): `a_cpu_probe_builds_its_index_in_the_relations_block`,
+  `a_cpu_probe_reads_the_index_the_device_built`, `a_probe_skips_the_dead_rows_of_the_blocks_index`,
+  `a_relations_index_holds_no_table_of_its_own`. setfix's 75 CPU tests pass (on a Linux build), and the 25 device
+  tests on Metal.
+- Found on the way: the Linux build had been broken since 0435 step 1 (19fba5eb2a). `rerail-blocks` was a macOS
+  dependency of `rerail-accel` and `rerail-facts`, and `Source::in_block` macOS only, though the CPU reads them on
+  every target. They are on every target now.
+- hogql cold, profiling builds, format 15, load 18-27, three pairs each interleaved with step 3's build (04a2cf4cc),
+  1,629 findings in every run:
+
+  | | Instructions | Against (step 3) | Peak | Against |
+  |---|---|---|---|---|
+  | CPU | 83.2-83.4 B | 84.0-84.7 B | 410-417 MB | 413-431 MB |
+  | Metal | 77.6-77.9 B | 77.4-79.4 B | 1,477-1,484 MB | 1,451-1,490 MB |
+
+  On Metal the device finds more of its indexes built: 215-248 a run against 189-229.
+

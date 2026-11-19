@@ -87,6 +87,8 @@ mod inputs_tests;
 mod blocks_compare_tests;
 #[cfg(test)]
 mod verdict_tests;
+#[cfg(test)]
+mod block_index_tests;
 use spec::{Arg, ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
 pub mod table;
@@ -5260,6 +5262,10 @@ impl InRel {
         } else if !ix.composite && ix.sorted && let Some(v) = &self.view {
             let (c, k) = (v.cols[ix.cols[ix.lead]], ikey[ix.lead]);
             v.src.sorted_range(c, k).map_or_else(|| v.src.sorted_rows(c, k).map_or(0, |r| r.len()), |r| r.len()) as f64
+        } else if !ix.exact() {
+            // A bucket of the block's index holds other keys too: the key's own rows among it (decision 0247: exact
+            // where the index holds the key's columns alone).
+            ix.get(self, ikey).iter().filter(|&&id| icols.iter().zip(ikey).all(|(&c, &v)| self.at(id as usize).at(c) == v)).count() as f64
         } else if !ix.composite && !ix.source || self.view.is_none() {
             ix.get(self, ikey).len() as f64
         } else {
@@ -5722,6 +5728,18 @@ impl InRel {
         }
         Some(out)
     }
+    /// Its rows' index on `cols` in their block (decision 0450 step 5, R2): the one the device finds and builds, over
+    /// every row, dead ones too (a reader skips them by its dead bits, as the device reads a delta's). Built now when
+    /// `build` and none is; `None` for a view, rows in several parts, or a block with no room for it.
+    fn block_index(&self, cols: &[usize], build: bool) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
+        if self.view.is_some() || self.k == 0 || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
+            return None;
+        }
+        let ib = self.rows.in_one_block().filter(|b| b.rows as usize == self.n)?;
+        let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+        let i = if build { ib.own_index(&key) } else { ib.found_index(&key) }?;
+        Some((ib, i))
+    }
     fn index(&self, cols: &[usize]) -> Arc<Csr> {
         let mask = cols.iter().fold(0u64, |m, &c| m | 1 << c);
         let mut idx = self.idx.lock().unwrap();
@@ -5733,6 +5751,9 @@ impl InRel {
             let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None };
             let m = if cols.is_empty() {
                 empty(false, false)
+            } else if let Some(b) = self.block_index(cols, false) {
+                // An index in the relation's block, which the device or an earlier probe built (decision 0450 R2).
+                Csr { block: Some(b), ..empty(false, false) }
             } else if let Some(i) = self.chains.iter().position(|ix| ix.answers(cols)) {
                 Csr { chain: Some(i), ..empty(false, false) }
             } else if let Some(lead) = self.keyed.as_ref().and_then(|ky| cols.iter().position(|&x| x == ky.col)) {
@@ -5766,7 +5787,11 @@ impl InRel {
                 // 0: prints (the default), 1: `off`, 2: `hash`.
                 static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
                 let mode = *MODE.get_or_init(|| match std::env::var("RERAIL_KEY_PRINTS").as_deref() { Ok("off") => 1, Ok("hash") => 2, _ => 0 });
-                if self.view.is_none() && mode != 2 {
+                if let Some(b) = self.block_index(cols, true).filter(|_| mode == 0) {
+                    // A derived relation's rows in their block: its index built there, the one the device finds
+                    // (decision 0450 step 5), not an order or table of its own.
+                    Csr { block: Some(b), ..empty(false, false) }
+                } else if self.view.is_none() && mode != 2 {
                     // A derived relation's rows are its own: a sorted order on the key columns (dead rows are in
                     // it, as in a kept chain; readers skip them). Its probes give whole keys, so it keeps a print a
                     // row and a probe reads prints, not rows (`runs::print_span`).
