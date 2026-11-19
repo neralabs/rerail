@@ -124,11 +124,14 @@ pub(in crate::code_rule_dsl) struct Files {
 
 impl Files {
     /// For `prog`, over the corpus's `paths`; `None` where `prog` reads neither relation.
-    pub(in crate::code_rule_dsl) fn new(prog: &Program, read: &BTreeSet<String>, paths: &[String], retained: bool) -> Result<Option<Self>> {
+    pub(in crate::code_rule_dsl) fn new(prog: &Program, read: &BTreeSet<String>, paths: &[String], markers: Option<&HashMap<String, bool>>, retained: bool) -> Result<Option<Self>> {
         if !RELATIONS.iter().any(|r| read.contains(*r)) {
             return Ok(None);
         }
-        let packages = paths.iter().filter_map(|p| package_marker_directory(p)).map(str::to_owned).collect();
+        let packages = match markers {
+            Some(markers) => markers.iter().filter(|(_, present)| **present).map(|(path, _)| path.clone()).collect(),
+            None => paths.iter().filter_map(|p| package_marker_directory(p)).map(str::to_owned).collect(),
+        };
         Ok(Some(Files { config: Config::of(prog)?, packages, files: Mutex::new(Vec::new()), retained }))
     }
 
@@ -232,11 +235,11 @@ fn columns(names: &[&str]) -> Vec<String> {
 }
 
 /// Python's reference graph, made where a program of Python files reads it (`corpus::install_cross_file`).
-pub(in crate::code_rule_dsl) fn make(label: &str, prog: &Program, read: &BTreeSet<String>, paths: &[String], retained: bool) -> Result<Option<Box<dyn super::CrossFileRelations>>> {
+pub(in crate::code_rule_dsl) fn make(label: &str, prog: &Program, read: &BTreeSet<String>, paths: &[String], markers: Option<&HashMap<String, bool>>, retained: bool) -> Result<Option<Box<dyn super::CrossFileRelations>>> {
     if label != "python" {
         return Ok(None);
     }
-    Ok(Files::new(prog, read, paths, retained)?.map(|files| Box::new(files) as Box<dyn super::CrossFileRelations>))
+    Ok(Files::new(prog, read, paths, markers, retained)?.map(|files| Box::new(files) as Box<dyn super::CrossFileRelations>))
 }
 
 impl super::CrossFileRelations for Files {

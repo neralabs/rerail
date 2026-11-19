@@ -524,6 +524,7 @@ pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String,
     let Ok(declared) = artifacts(&program.settings) else { return false };
     consulted.iter().all(|(what, path, digest)| {
         let now = match what.as_str() {
+            "package_marker" => crate::git_workspace::snapshot::is_file(root.join(path).join("__init__.py")).to_string(),
             "input" => of_result(&read_repository_file(root, path)),
             "input_dir" => listing(root, path),
             "artifact" => {

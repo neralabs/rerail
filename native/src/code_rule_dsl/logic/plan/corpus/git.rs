@@ -408,7 +408,17 @@ pub(super) fn still(root: &Path, previous: &str) -> bool {
 /// An output whose dependencies are entirely Git inputs and ordinary rules
 /// can run before any source inventory is available.
 pub(super) fn metadata_only(program: &Program) -> bool {
-    let needed = super::front::needed(program, program.outputs.clone());
+    let mut roots = program.outputs.clone();
+    let needed = loop {
+        let needed = super::front::needed(program, roots.clone());
+        // A world answer also reads the rules that produced its request.
+        let requests: Vec<_> = [("git_revision_of", REVISION), ("git_object_of", OBJECT),
+            ("git_inventory_child_of", INVENTORY_CHILD), ("git_inventory_trail_of", INVENTORY_TRAIL)]
+            .into_iter().filter(|(answer, request)| needed.contains(*answer) && !needed.contains(*request))
+            .map(|(_, request)| request.to_owned()).collect();
+        if requests.is_empty() { break needed; }
+        roots.extend(requests);
+    };
     if !needed.iter().any(|rel| INPUTS.contains(&rel.as_str())) {
         return false;
     }

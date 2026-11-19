@@ -56,7 +56,7 @@ pub trait CrossFileRelations: Send + Sync {
 }
 
 /// What makes a program's cross-file relations over the files at `paths` of the dialect `label`, where it reads them.
-pub(crate) type MakeCrossFile = fn(&str, &crate::code_rule_dsl::logic::front::Program, &BTreeSet<String>, &[String], bool) -> Result<Option<Box<dyn CrossFileRelations>>>;
+pub(crate) type MakeCrossFile = fn(&str, &crate::code_rule_dsl::logic::front::Program, &BTreeSet<String>, &[String], Option<&HashMap<String, bool>>, bool) -> Result<Option<Box<dyn CrossFileRelations>>>;
 
 static CROSS_FILE: std::sync::OnceLock<MakeCrossFile> = std::sync::OnceLock::new();
 
@@ -355,7 +355,7 @@ pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Op
 /// `env` facts (the world's roots). A function of the texts and the rule files they read: the whole-run cutoff's
 /// record keeps it beside the run's (decision 0275), so its check does not combine the program again to read them.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Summary(front::Program);
+pub(crate) struct Summary(front::Program, bool);
 
 impl Summary {
     /// The summary of the program `programs` combine to, as `changes` combines them (the root's settings in each).
@@ -372,7 +372,7 @@ impl Summary {
             doc_scopes: prog.doc_scopes.clone(),
             text_globs: prog.text_globs.clone(),
             ..front::Program::default()
-        })
+        }, git::metadata_only(prog))
     }
 
     /// Its bytes: the parts as JSON.
@@ -386,6 +386,7 @@ impl Summary {
         }).collect()).collect();
         let parts = serde_json::json!({
             "declared_ret": p.decls.contains_key("declared_ret"),
+            "git_metadata_only": self.1,
             "env": env,
             "settings": p.settings,
             "policies": p.policies,
@@ -420,7 +421,7 @@ impl Summary {
         p.policies = serde_json::from_value(v["policies"].clone()).ok()?;
         p.doc_scopes = serde_json::from_value(v["doc_scopes"].clone()).ok()?;
         p.text_globs = serde_json::from_value(v["text_globs"].clone()).ok()?;
-        Some(Summary(p))
+        Some(Summary(p, v["git_metadata_only"].as_bool()?))
     }
 }
 
@@ -455,9 +456,9 @@ fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&fron
         trace(format!("not comparable: input files {}, {} consulted", options.get("inputFiles").is_some(), consulted.len()));
         return Ok(None);
     }
-    let prog = match summary {
-        Some(Summary(prog)) => prog,
-        None => Summary::from_program(&combined_with_settings(programs, graphs, read, root, options)?).0,
+    let Summary(prog, metadata_only) = match summary {
+        Some(summary) => summary,
+        None => Summary::from_program(&combined_with_settings(programs, graphs, read, root, options)?),
     };
     // A program reading earlier phases is comparable: its record names every phase's program and what each phase
     // consulted (`reuse::record`, O-cutoff-phases).
@@ -466,9 +467,13 @@ fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&fron
         return Ok(None);
     }
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
-    let found = scoped(corpus_files(root)?, &prog, options);
-    let label = corpus_language(language.as_deref(), typing, &found);
-    let files = if none_named { Default::default() } else { found.of(label) };
+    let files = if none_named || metadata_only && crate::git_workspace::snapshot::contains(root) {
+        Vec::new()
+    } else {
+        let found = scoped(corpus_files(root)?, &prog, options);
+        let label = corpus_language(language.as_deref(), typing, &found);
+        found.of(label)
+    };
     let docs: Vec<&(String, String, String)> = consulted.iter().filter(|c| c.0 == "doc").collect();
     // The workspace's documents are listed by their path from the root; a library document a phase loaded is named
     // by its absolute path, and is checked by its digest below, as every document is (O-cutoff-phases).
@@ -479,7 +484,7 @@ fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&fron
     }
     // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
     let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
-    const READERS: [&str; 7] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index", "git_root_repo"];
+    const READERS: [&str; 8] = ["package_marker", "input", "input_dir", "artifact", "base", "git_rev", "git_index", "git_root_repo"];
     let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
     let mut world = world::World::new(root, &prog);
     let moved = world.changed(&requests);
@@ -3042,6 +3047,7 @@ fn run_observed(
     let mut listing: Option<(Vec<String>, &'static str)> = None;
     let mut phase_one_run = None;
     let mut source_checks = Vec::new();
+    let mut package_markers = HashMap::new();
     // The source texts the digests read (decision 0300): this run's builder takes them, and phase 1's, handed them,
     // borrows them.
     let own_sources = texts::Sources::default();
@@ -3068,7 +3074,7 @@ fn run_observed(
             // The observer's facts: each source file of the run's grammar, its module, and its content's digest (read
             // only where the observer cannot vouch for it).
             // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
-            let renamed = package_root_modules(root, &files);
+            let renamed = package_root_modules(root, &files, &mut package_markers);
             // The run's one read of each (decision 0300): the bytes are held for phase 1's and this run's builders.
             let digests = world::bytes_digests_held(&of_label.iter().map(|p| root.join(p)).collect::<Vec<_>>(), Some(&own_sources));
             let stated: Vec<(String, String, String, String)> = of_label
@@ -3250,7 +3256,7 @@ fn run_observed(
     // keyed by these names too (below).
     let renamed_modules: BTreeMap<String, String> = if t.is_none() {
         let tree: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !given_modules.contains_key(p)).collect();
-        package_root_modules(root, &tree)
+        package_root_modules(root, &tree, &mut package_markers)
     } else {
         BTreeMap::new()
     };
@@ -3958,7 +3964,19 @@ fn run_observed(
     });
     // The reference graph's relations, for a program that reads them: its files are summarized as the chunks are
     // built, and linked once they all are (`references`). W's graph is Python's.
-    let references = match CROSS_FILE.get() { Some(make) => make(label, &prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(root, p, label)).collect::<Vec<_>>(), tapes.is_some() && crate::git_workspace::snapshot::contains(root))?, None => None };
+    let revision = crate::git_workspace::snapshot::contains(root);
+    if revision {
+        consulted.extend(package_markers.iter().map(|(directory, present)| {
+            ("package_marker".to_owned(), directory.clone(), present.to_string())
+        }));
+    }
+    let references = match CROSS_FILE.get() {
+        Some(make) => {
+            let paths = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(root, p, label)).collect::<Vec<_>>();
+            make(label, &prog, &read, &paths, revision.then_some(&package_markers), revision && tapes.is_some())?
+        }
+        None => None,
+    };
     let part_of = |version| lowered.with_version(version);
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
@@ -10613,8 +10631,7 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
 /// hosts send). Below a source root the two differ: `src/shop/base.py` is `shop.base`, which `from shop.base import
 /// Base` names, not `src.shop.base`. A file in no package (a script, or a folder of the root without `__init__.py`)
 /// keeps its path's name, as does one whose names keep a dot.
-pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[String]) -> BTreeMap<String, String> {
-    let mut packages: HashMap<String, bool> = HashMap::new();
+fn package_root_modules(root: &Path, paths: &[String], packages: &mut HashMap<String, bool>) -> BTreeMap<String, String> {
     let mut is_package = |dir: &str| *packages.entry(dir.to_owned()).or_insert_with(|| crate::git_workspace::snapshot::is_file(root.join(dir).join("__init__.py")));
     let mut out = BTreeMap::new();
     for p in paths.iter().filter(|p| p.ends_with(".py") || p.ends_with(".pyi")) {
@@ -10625,6 +10642,7 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
         while top > 0 && is_package(&segments[..top].join("/")) {
             top -= 1;
         }
+        if top == 0 { is_package(""); }
         if top == segments.len() || top == 0 {
             // In no package, or the root's own folders are packages up to the tree's root: the path's name.
             continue;

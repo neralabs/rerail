@@ -139,6 +139,8 @@ A blob-only key is also insufficient because one blob can appear at different su
 The selected grammar and effective parser profile are separate outputs.
 A mode change can alter parsing without changing the language label.
 Configuration that affects later name resolution alone does not enter the parse key.
+Python module names depend on the presence of package markers in the selected tree.
+The marker lookup can read paths outside the scan path selection.
 
 ### 4.1 Suffix selection example
 

@@ -226,6 +226,43 @@ Message(@place("commit", 1), subject) :- git_source_commit(r,c), git_subject(r,c
     const configured = await scan(root, { revision: missingRoot, analysisScope: "message" });
     expect(configured.status, JSON.stringify(configured.failures)).toBe("completed");
     expect(configured.violations.map(finding => finding.message)).toEqual(["message with no tree"]);
+    writeFileSync(policy, `
+#include "git.rr"
+.policy "resolve-head" revision 1
+git_revision_request(r, "HEAD") :- git_root_repo(r).
+.violation Resolved(at: span, oid: symbol) "{oid}"
+Resolved(@place("commit", 1), oid) :- git_revision(_, "HEAD", oid).
+`);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await scan(root, { revision: missingRoot, analysisScope: "resolve", rr: [policy] });
+      expect(result.status, JSON.stringify(result.failures)).toBe("completed");
+      expect(result.violations.map(finding => finding.message)).toEqual([git(root, "rev-parse", "HEAD")]);
+    }
+  });
+
+  it("resolves relative imports using package markers outside the selected revision paths", async () => {
+    const root = checkout();
+    mkdirSync(join(root, "pkg"));
+    const paths = ["pkg/a.py", "pkg/b.py"];
+    writeFileSync(join(root, paths[0]!), "from .b import helper\ndef caller():\n    helper()\n");
+    writeFileSync(join(root, paths[1]!), "def helper():\n    pass\n");
+    git(root, "add", "--", ...paths);
+    git(root, "commit", "-qm", "loose modules");
+    writeFileSync(join(root, "pkg/__init__.py"), "");
+    git(root, "add", "pkg/__init__.py");
+    git(root, "commit", "-qm", "package marker");
+    const policy = join(root, "links.rr");
+    writeFileSync(policy, `#include "core.rr"
+.policy "links" revision 1
+.language python
+.violation Edge(at: node, via: symbol) "{via}"
+Edge(n, via) :- reference_edge(n, _, via).
+`);
+    for (const [revision, expected] of [["HEAD", ["pkg/a.py"]], ["HEAD~1", []], ["HEAD", ["pkg/a.py"]]] as const) {
+      const result = await scan(root, { revision, paths, analysisScope: "package", rr: [policy] });
+      expect(result.status, JSON.stringify(result.failures)).toBe("completed");
+      expect(result.violations.map(finding => finding.path)).toEqual(expected);
+    }
   });
 
   it("skips unavailable Git subtrees excluded by ignore rules or paths", async () => {
