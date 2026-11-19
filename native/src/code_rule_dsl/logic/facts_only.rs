@@ -296,11 +296,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
     // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
-    // This thread's zstd contexts by dictionary (RER-131): open things, not results.
-    ("content_store/compression.rs", "DECODERS"),
-    ("content_store/compression.rs", "DICT_ENCODERS"),
-    // The language tags the store's dictionaries are chosen by (RER-131): set once as the library loads.
-    ("content_store/compression.rs", "LANGUAGE_TAGS"),
+    // This thread's zstd decompression context (RER-131): an open thing, not a result.
+    ("content_store/compression.rs", "DECODER"),
     // The store handles open in this process, by path (RER-131): a registry of open things.
     ("content_store/connection.rs", "HANDLES"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),

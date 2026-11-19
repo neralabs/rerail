@@ -556,9 +556,8 @@ pub fn evaluate_file(
 ) -> Result<Metrics> {
     let mut metrics = Metrics {
         files: 1,
-        avoided_tape_decompressions: usize::from(file.selector_skipped),
-        tape_cache_hits: usize::from(file.tape_cache_hit),
-        tape_decompressions: usize::from(file.tape_decompressed),
+        avoided_tape_reads: usize::from(file.selector_skipped),
+        tapes_from_store: usize::from(file.tape_from_store),
         restored_local_results: file.restored_local_results,
         ..Metrics::default()
     };

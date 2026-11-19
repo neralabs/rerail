@@ -672,8 +672,8 @@ impl ContentStore {
             let mut live = HashSet::new();
             {
                 let mut rows = tx.prepare(
-                    "SELECT l.source_id, l.grammar_version, l.tape_format, coalesce(CASE WHEN s.seg != 0 THEN s.seg_len ELSE length(s.frame) END, 0), \
-                     coalesce((SELECT CASE WHEN t.seg != 0 THEN t.seg_len ELSE length(t.frame) END FROM tape_objects t WHERE t.source_id=l.source_id \
+                    "SELECT l.source_id, l.grammar_version, l.tape_format, coalesce(s.seg_len, 0), \
+                     coalesce((SELECT t.seg_len FROM tape_objects t WHERE t.source_id=l.source_id \
                                AND t.grammar_version=l.grammar_version AND t.tape_format_version=l.tape_format), 0) \
                      FROM corpus_live l LEFT JOIN source_objects s ON s.source_id=l.source_id",
                 )?;

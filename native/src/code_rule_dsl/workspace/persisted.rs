@@ -401,7 +401,7 @@ pub(super) fn restore_persisted_file(
 fn presence_selects(store: &crate::content_store::ContentStore, source: crate::content_store::SourceId, grammar_id: i64, file: &FileState, code_rules: &[Arc<CompiledCodeRule>]) -> Option<bool> {
     let frames = store.tape_frames_for(&[source], grammar_id, grammar_version(), i64::from(tape::formats::stored_version())).ok()?;
     let frame = frames.into_iter().next()??;
-    let presence = tape::stored_presence(frame.in_place()?, u8::try_from(grammar_id).ok()?)?;
+    let presence = tape::stored_presence(frame.in_place(), u8::try_from(grammar_id).ok()?)?;
     let has = |kind: u16| presence.has_kind(u32::MAX, kind);
     if has(tape::ERROR_CODE) {
         return Some(false);

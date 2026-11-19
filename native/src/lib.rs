@@ -118,11 +118,6 @@ pub(crate) fn install_store_functions() {
         code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
         code_rule_dsl::install_devices();
         code_rule_dsl::install_languages();
-        content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
-        // A format 16 or 16z tape is stored as it is, its home's bytes: loaded as stored, read in place (16z a block
-        // at a time, decision 0353 step 4b), its presence read in the stored frame (0434 §4). Format 15 alone is
-        // zstd's at rest.
-        content_store::set_tapes_kept_as_is(|bytes| bytes.starts_with(rerail_tape_format::f16::MAGIC16) || bytes.starts_with(rerail_tape_format::f16::MAGIC16Z));
         content_store::set_connection_functions(|db| {
             code_rule_dsl::text::install(db)?;
             code_rule_dsl::prefilter::tapes::install(db)

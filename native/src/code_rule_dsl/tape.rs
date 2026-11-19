@@ -31,11 +31,6 @@ pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE,
 pub use rerail_tape_format::CODE_EXTRA;
 /// Format 16's writer and tables, for the parsers the engine's crates compile (JSON's kernels: `encode_16`).
 pub use rerail_tape_format::f16;
-/// The language tag (`language::tape_tag`) a stored tape image names in its header, if `bytes`
-/// starts like one (any format version): the store picks a frame's dictionary by it.
-pub fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
-    (bytes.len() > header::LANGUAGE && bytes.starts_with(&TAPE_MAGIC[..6])).then(|| bytes[header::LANGUAGE])
-}
 pub const NONE: u32 = u32::MAX;
 pub const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
 

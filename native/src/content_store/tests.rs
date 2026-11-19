@@ -1,5 +1,4 @@
 use super::publication::{AFTER_PUBLICATION_READ_HOOK, BEFORE_RELATIONSHIP_WRITE_HOOK};
-use super::read_cache::CacheKey;
 use super::reclamation::{
     EXECUTED_COLLECT_SQL, STORE_ABSOLUTE_LIMIT, STORE_HARD_LIMIT, STORE_SOFT_LIMIT, capacity_state,
 };
@@ -12,6 +11,8 @@ use rusqlite::params;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::Cursor;
+use std::time::Duration;
+use super::object_segments::CODEC_RAW;
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
@@ -40,8 +41,8 @@ fn a_test_store_leaves_no_files_behind() {
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        // The database, its WAL and its shared-memory file.
-        assert_eq!(files.len(), 3, "{files:?}");
+        // The database, its WAL and its shared-memory file, and the segments the source is in.
+        assert_eq!(files.len(), 4, "{files:?}");
         folder
     };
     // Windows cannot remove a file this process holds open, so there the folder stays when the
@@ -293,8 +294,8 @@ fn bulk_sources_preserve_hashes_bounds_duplicates_and_typed_query_batches() {
     assert_eq!(warm, sources);
     assert_eq!(
         executed.load(Ordering::Relaxed),
-        3,
-        "warm immutable source frames need no SQL"
+        6,
+        "a read again reads the rows again: the store keeps no copies, the bytes are in their segments"
     );
     assert!(store.get_sources_by_hash_bulk(&requests, 1).is_err());
     assert!(
@@ -314,7 +315,7 @@ fn bulk_sources_preserve_hashes_bounds_duplicates_and_typed_query_batches() {
 }
 
 #[test]
-fn bulk_tapes_validate_frames_deduplicate_and_preserve_cache_status() {
+fn bulk_tapes_validate_frames_and_deduplicate() {
     let (_path, store) = store("bulk-tapes");
     let source = store.put_source(b"source", &[]).unwrap();
     let first = store.put_tape(source, 1, 1, 1, b"first tape").unwrap();
@@ -323,10 +324,8 @@ fn bulk_tapes_validate_frames_deduplicate_and_preserve_cache_status() {
         .get_tapes_bulk(&[first, second, first, TapeId(i64::MAX)])
         .unwrap();
     assert_eq!(loaded.len(), 2);
-    assert_eq!(&**loaded[&first].0, b"first tape");
-    assert_eq!(&**loaded[&second].0, b"second tape");
-    let cached = store.get_tapes_bulk(&[first, second]).unwrap();
-    assert!(cached.values().all(|(_, hit)| *hit));
+    assert_eq!(&**loaded[&first], b"first tape");
+    assert_eq!(&**loaded[&second], b"second tape");
     assert!(store.get_tapes_bulk(&[]).unwrap().is_empty());
 }
 
@@ -472,7 +471,6 @@ fn release_memory_drops_process_local_read_caches() {
     assert_eq!(&*store.get_source(source).unwrap(), b"source");
     assert_eq!(&**store.get_tape(tape).unwrap(), b"tape");
     store.release_memory().unwrap();
-    assert!(store.decompressed_cache.lock().unwrap().is_empty());
     assert!(store.local_result_cache.lock().unwrap().is_empty());
 }
 
@@ -512,11 +510,6 @@ fn source_and_tape_objects_deduplicate_and_round_trip() {
         tape
     );
     assert_eq!(&**store.get_tape(tape).unwrap(), b"compact tape");
-    {
-        let cache = store.decompressed_cache.lock().unwrap();
-        assert!(cache.contains(CacheKey::Source(HashKey::sha256(b"print('hello')\n"))));
-        assert!(cache.contains(CacheKey::Tape(HashKey::tape_identity(HashKey::sha256(b"print('hello')\n"), b"compact tape"))));
-    }
     // Another source with the same tape bytes (a named-only tape holds no text) has its own tape.
     let other = store.put_source(b"print('world')\n", &[]).unwrap();
     let other_tape = store.put_tape(other, 1, 45, 1, b"compact tape").unwrap();
@@ -524,30 +517,19 @@ fn source_and_tape_objects_deduplicate_and_round_trip() {
     assert_eq!(store.tape_by_source(other, 1, 45, 1).unwrap(), Some(other_tape));
     {
         let connection = store.connection.lock().unwrap();
-        let source_frame: (i64, Vec<u8>) = connection
-            .query_row(
-                "SELECT codec_id,frame FROM source_objects WHERE source_id=?1",
-                [first.0],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        let tape_frame: (i64, Vec<u8>) = connection
-            .query_row(
-                "SELECT codec_id,frame FROM tape_objects WHERE tape_id=?1",
-                [tape.0],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(source_frame.0, CODEC_ZSTD);
-        assert_eq!(tape_frame.0, CODEC_ZSTD);
-        assert_eq!(
-            zstd::stream::decode_all(Cursor::new(source_frame.1)).unwrap(),
-            b"print('hello')\n"
-        );
-        assert_eq!(
-            zstd::stream::decode_all(Cursor::new(tape_frame.1)).unwrap(),
-            b"compact tape"
-        );
+        // No row holds an object's bytes: each names its range in a segment, raw (floor 7).
+        for (table, id, len) in [("source_objects", first.0, 15), ("tape_objects", tape.0, 12)] {
+            let key = if table == "source_objects" { "source_id" } else { "tape_id" };
+            let (codec, frame, seg, seg_len): (i64, Vec<u8>, i64, i64) = connection
+                .query_row(
+                    &format!("SELECT codec_id,frame,seg,seg_len FROM {table} WHERE {key}=?1"),
+                    [id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap();
+            assert_eq!((codec, frame.len(), seg_len), (CODEC_RAW, 0, len), "{table}");
+            assert!(seg > 0, "{table}: in a segment");
+        }
     }
     assert!(matches!(
         store.put_tape(first, 1, 45, 1, b"different tape"),
@@ -707,8 +689,8 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
     assert_eq!(result.reconciliation_passes, 2);
     assert!(result.data_statements <= 20);
     assert!(result.max_data_statements_per_pass <= 10);
-    assert_eq!(result.compressed_sources, 2);
-    assert_eq!(result.compressed_tapes, 1);
+    assert_eq!(result.written_sources, 2);
+    assert_eq!(result.written_tapes, 1);
     assert_eq!(result.files.len(), 2);
     assert_eq!(
         store.get_source(result.files[0].source).unwrap(),
@@ -729,23 +711,21 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
     assert_eq!(reused.reused_tapes, 1);
     assert_eq!(reused.reconciliation_passes, 1);
     assert!(reused.max_data_statements_per_pass <= 10);
-    assert_eq!(reused.compressed_sources, 0);
-    assert_eq!(reused.compressed_tapes, 0);
-    let (codec, frame): (i64, Vec<u8>) = store
+    assert_eq!(reused.written_sources, 0);
+    assert_eq!(reused.written_tapes, 0);
+    // Each object is in a segment, as it is: no row holds its bytes (floor 7).
+    let (codec, frame, seg, seg_len): (i64, Vec<u8>, i64, i64) = store
         .connection
         .lock()
         .unwrap()
         .query_row(
-            "SELECT codec_id,frame FROM source_objects WHERE source_id=?1",
+            "SELECT codec_id,frame,seg,seg_len FROM source_objects WHERE source_id=?1",
             [result.files[0].source.0],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .unwrap();
-    assert_eq!(codec, CODEC_ZSTD);
-    assert_eq!(
-        zstd::stream::decode_all(Cursor::new(frame)).unwrap(),
-        b"x = 2\n"
-    );
+    assert_eq!((codec, frame.len(), seg_len), (CODEC_RAW, 0, 6));
+    assert!(seg > 0);
 }
 
 #[test]
@@ -1669,27 +1649,30 @@ fn collection_keeps_shared_objects_until_the_last_workspace_retires() {
 }
 
 #[test]
-fn corrupt_zstandard_frames_fail_closed() {
-    let (_path, store) = store("corrupt-frames");
+fn objects_whose_rows_disagree_with_their_segments_fail_closed() {
+    let (_path, store) = store("corrupt-places");
     let source = store.put_source(b"source", &[]).unwrap();
     let tape = store.put_tape(source, 1, 1, 1, b"tape").unwrap();
     {
+        // A range of other bytes than the row's length and hash.
         let connection = store.connection.lock().unwrap();
         connection
-            .execute(
-                "UPDATE source_objects SET frame=x'000102' WHERE source_id=?1",
-                [source.0],
-            )
+            .execute("UPDATE source_objects SET seg_len=seg_len-1 WHERE source_id=?1", [source.0])
             .unwrap();
         connection
-            .execute(
-                "UPDATE tape_objects SET frame=x'000102' WHERE tape_id=?1",
-                [tape.0],
-            )
+            .execute("UPDATE tape_objects SET seg_len=seg_len-1 WHERE tape_id=?1", [tape.0])
             .unwrap();
     }
     assert!(store.get_source(source).is_err());
     assert!(store.get_tape(tape).is_err());
+    {
+        // A segment that is not registered: no bytes there.
+        let connection = store.connection.lock().unwrap();
+        connection
+            .execute("UPDATE source_objects SET seg=seg+1000, seg_len=seg_len+1 WHERE source_id=?1", [source.0])
+            .unwrap();
+    }
+    assert!(store.get_source(source).is_err());
 }
 
 #[test]
@@ -2705,7 +2688,7 @@ fn derived_documents_live_and_die_with_their_primary_tape() {
                 .get_tapes_bulk(&[primary, derived_tape])
                 .unwrap()
                 .into_iter()
-                .map(|(tape, (bytes, _))| (tape, bytes.to_vec()))
+                .map(|(tape, bytes)| (tape, bytes.to_vec()))
                 .collect::<HashMap<_, _>>(),
             store.get_sources_bulk(&[derived_source]).unwrap().len(),
         )

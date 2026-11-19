@@ -11,7 +11,6 @@ use super::{
 };
 use rusqlite::{Connection, OptionalExtension, Params, TransactionBehavior, params};
 use std::fs;
-use std::time::Instant;
 
 const OBJECT_TAPE: i64 = 1;
 const OBJECT_SOURCE: i64 = 2;
@@ -176,10 +175,6 @@ impl ContentStore {
             Ok(()) | Err(StoreError::Busy) => {}
             Err(error) => return Err(error),
         }
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .clear();
         self.local_result_cache
             .lock()
             .expect("local result cache mutex poisoned")
@@ -189,10 +184,6 @@ impl ContentStore {
 
     /// One attempt at `collect_held`'s transaction: run again whole if it finds the store busy.
     fn collect_held_once(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .expire(Instant::now());
         let limit = i64::try_from(batch)
             .map_err(|_| StoreError::Invalid("collection batch exceeds i64".to_owned()))?;
         let entry_budget = GIT_TREE_BATCH_ENTRIES as i64;

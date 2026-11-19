@@ -248,10 +248,10 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
             store.put_tape(source_id, i64::from(language::tape_tag(*lang).unwrap()), 1, i64::from(format.store_version()), &bytes).unwrap();
             digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         }
-        // A format 16 or 16z tape is stored as it is (a load is its bytes, read in place; 16z decodes none of its
-        // blocks), its presence with it; format 15 in zstd frames.
-        let codecs: Vec<i64> = rusqlite::Connection::open(&path).unwrap().prepare("SELECT codec_id FROM tape_objects").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
-        assert!(!codecs.is_empty() && codecs.iter().all(|&c| c == i64::from(format == Format::F15)), "{format:?} stored with codecs {codecs:?}");
+        // Every tape is stored as it is, in a segment (a load is its bytes, read in place; 16z decodes none of its
+        // blocks), its presence with it: no row holds its bytes, whatever its format.
+        let rows: Vec<(i64, i64, i64)> = rusqlite::Connection::open(&path).unwrap().prepare("SELECT codec_id, seg, length(frame) FROM tape_objects").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+        assert!(!rows.is_empty() && rows.iter().all(|&(codec, seg, frame)| codec == 0 && seg > 0 && frame == 0), "{format:?} stored as {rows:?}");
         let table = DocTable::one_block(admit(&store, &digests, &grammar).unwrap()).unwrap();
         let expected_format = match format {
             Format::F15 => 15,

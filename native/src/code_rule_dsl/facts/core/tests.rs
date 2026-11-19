@@ -163,7 +163,7 @@ fn a_stored_tape_holds_the_presence_its_writer_made() {
         let (gv, fv) = (grammar_version(), i64::from(tape::formats::stored_version()));
         let source = cache.source_by_hash(crate::content_store::HashKey::sha256(file.source().as_bytes())).unwrap().expect("the source, stored");
         let frame = cache.tape_frames_for(&[source], tag, gv, fv).unwrap().remove(0).expect("the tape, stored");
-        let bytes = frame.in_place().unwrap_or_else(|| panic!("{at}: the frame is the tape's bytes as they are"));
+        let bytes = frame.in_place();
         let stored = tape::stored_presence(bytes, tag as u8).unwrap_or_else(|| panic!("{at}: the presence, stored"));
         let (_, doc) = build_in_wave_with_tape(&file, &cache, None, Some(&frame), false, true).unwrap();
         let doc = doc.expect("the tape, read from the store");

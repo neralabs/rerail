@@ -14,7 +14,6 @@ pub use compression::{decompress, decompress_chunks, decompress_head, decompress
 mod collection_guard;
 pub use collection_guard::CollectionLease;
 mod connection;
-pub use compression::{set_language_tags, set_tapes_kept_as_is};
 pub use connection::set_connection_functions;
 mod corpus_runs;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
@@ -31,7 +30,7 @@ mod facts_memo;
 mod objects;
 pub mod journal;
 pub mod observe;
-pub use objects::{ResidentFrames, SourceAndTapeFrames, TapeFrame};
+pub use objects::{ResidentFrames, TapeFrame};
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
 #[cfg(any(test, feature = "test-hooks"))]
@@ -94,7 +93,6 @@ pub use connection::{
 pub use snapshots::AFTER_GIT_TREE_TRANSACTION;
 
 use connection::{ThreadConnection, retry_busy};
-use read_cache::{CachedBacking, DecompressedReadCache};
 use results::LocalResultCache;
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest as _, Sha256};
@@ -104,7 +102,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
 const HASH_SHA256: i64 = 1;
 const HASH_GIT_SHA1: i64 = 2;
@@ -124,7 +121,6 @@ const MAX_PUBLICATION_BATCH: usize = 64;
 /// Largest `collect` batch: the per-statement row limit of one collection transaction.
 pub const MAX_COLLECTION_BATCH: usize = 256;
 const DEFAULT_READ_CACHE_BYTES: usize = 32 * 1024 * 1024;
-const DEFAULT_DECOMPRESSED_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -391,9 +387,9 @@ pub struct UnindexedTape {
     /// The workspace's grammar id (`workspace::grammar_id`, or a derived document's
     /// `workspace::document_grammar_id`).
     pub grammar: i64,
-    pub source: Vec<u8>,
-    /// The decoded tape image.
-    pub image: Vec<u8>,
+    /// The source and the tape, read in place in their segments.
+    pub source: ObjectBytes,
+    pub image: ObjectBytes,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -552,8 +548,8 @@ pub struct PublicationResult {
     pub reconciliation_passes: usize,
     pub reused_sources: usize,
     pub reused_tapes: usize,
-    pub compressed_sources: usize,
-    pub compressed_tapes: usize,
+    pub written_sources: usize,
+    pub written_tapes: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -632,8 +628,9 @@ pub struct CollectionReport {
     pub sources: usize,
 }
 
+/// A stored source's or tape's bytes, read in place in their segment (`read_cache`).
 pub struct CachedBytes {
-    backing: CachedBacking,
+    bytes: SegmentBytes,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -654,7 +651,6 @@ pub struct ContentStore {
     database_path: PathBuf,
     connection: ThreadConnection,
     compression_level: i32,
-    decompressed_cache: Mutex<DecompressedReadCache>,
     local_result_cache: Mutex<LocalResultCache>,
     /// Facts plan sets by digest (immutable once written: `facts_memo`).
     facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
@@ -724,7 +720,6 @@ impl ContentStore {
             database_path: self.database_path.clone(),
             connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity()),
             compression_level: self.compression_level,
-            decompressed_cache: Mutex::new(DecompressedReadCache::new(DEFAULT_READ_CACHE_BYTES, DEFAULT_DECOMPRESSED_CACHE_TTL)),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms: std::sync::Arc::clone(&self.atoms),
@@ -780,10 +775,6 @@ impl ContentStore {
             database_path: path.to_path_buf(),
             connection: ThreadConnection::new(path.to_path_buf(), identity),
             compression_level: DEFAULT_COMPRESSION_LEVEL,
-            decompressed_cache: Mutex::new(DecompressedReadCache::new(
-                DEFAULT_READ_CACHE_BYTES,
-                DEFAULT_DECOMPRESSED_CACHE_TTL,
-            )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             // A store created again at its path, by this process or another, has atoms of its own.
@@ -808,10 +799,6 @@ impl ContentStore {
     /// resident documents: an active apply benefits from the caches, while an inactive one should
     /// not retain an arena or SQLite page cache. Connections reopen on the next read.
     pub fn release_memory(&self) -> StoreResult<()> {
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .clear();
         self.local_result_cache
             .lock()
             .expect("local result cache mutex poisoned")

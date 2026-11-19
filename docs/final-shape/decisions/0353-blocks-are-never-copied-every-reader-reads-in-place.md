@@ -523,10 +523,10 @@ Each step ends with:
          when the batch's directory goes, the statistics mode's with `RERAIL_ZCACHE_STATS=1`.
        - A 16z tape is stored as it is (2026-11-18, the user: "the 16z format is designed to be able to decompress
          blocks, not tapes. I don't want to pay for a full tape decompression, just blocks."): its frame in the
-         store is its bytes (`CODEC_RAW` inline, as in a segment), never a zstd frame of the whole tape
-         (`compress_tape`, for a tape the engine keeps as it is: `set_tapes_kept_as_is`, MAGIC16Z). A load is
-         then the exact bytes, and a reader decodes only the blocks it reads. The other formats keep zstd frames.
-         Check: `the_device_reads_every_format_as_the_document_does` reads each tape's codec in the store.
+         store is its bytes, never a zstd frame of the whole tape. A load is then the exact bytes, and a reader
+         decodes only the blocks it reads. Since 2026-11-19 every tape and source, of every format, is stored as it
+         is in a segment, and no row holds bytes (0295 step 5, floor 7). Check:
+         `the_device_reads_every_format_as_the_document_does` reads each tape's row in the store.
        - The transducer's kernels (done 2026-11-18): the residency places a 16z tape as stored (`place`: its bytes
          as the store holds them, no decompression since a 16z tape's frame is raw), its `DocView` the tape's 16z view with its columns
          where the tape lies in the document. A batch's table (`DocTable`) makes one cache for its 16z documents

@@ -23,16 +23,18 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 6;
+pub(super) const SCHEMA_VERSION: i64 = 7;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v6.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 6: the atoms are blocks in files beside the store (decision 0401:
+pub const STORE_FILE_NAME: &str = "content-v7.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 7: every source and tape is in a segment, as it is, and no row holds
+/// an object's bytes (decision 0295 step 5, 2026-11-19), which an older binary would read as an empty or corrupt
+/// frame; 6: the atoms are blocks in files beside the store (decision 0401:
 /// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
 /// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
 /// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 6;
+const STORE_FILE_FLOOR: i64 = 7;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -95,9 +97,9 @@ CREATE TABLE IF NOT EXISTS tape_objects (
     seg_len INTEGER NOT NULL DEFAULT 0,
     UNIQUE (source_id, grammar_id, grammar_version, tape_format_version)
 ) STRICT;
--- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): a
--- row of codec 0 names its range (`seg`, `seg_at`, `seg_len`) and holds no frame; `seg` 0 is a row whose bytes are its
--- `frame` (zstd), and -1 one whose segment went missing (absent until stored again).
+-- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): every
+-- row is of codec 0, names its range (`seg`, `seg_at`, `seg_len`) and holds no frame (floor 7: `frame` is always
+-- empty); `seg` -1 is a row whose segment went missing (absent until stored again).
 CREATE TABLE IF NOT EXISTS object_segments(seg INTEGER PRIMARY KEY);
 CREATE INDEX IF NOT EXISTS tape_objects_by_hash ON tape_objects(canonical_hash_id);
 -- The documents a file derives from its own (an embedded program, a generated one), keyed by the

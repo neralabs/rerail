@@ -4769,3 +4769,24 @@ native join it falls back to the planner's whole-rule order.
   range (step 6b: every canonical entry records its order, `Packed::leads`, K-R10). K-R11.
 - **Open**: merge joins over two sorted relations; an order a rule's plan makes without a declaration (a scan of
   a sorted relation emitting in its order); which ep2 relations to declare sorted, by their probes.
+
+### Q270. No inline rows: every source and tape is in a segment, uncompressed — done 2026-11-19
+
+- **Ask** (the user, 2026-11-19): "why do we have inline sql rows? In which circumstances are they used? We should not
+  have them anymore".
+- **Why they existed**: 0295 step 5 placed a run's gathered files in segments, but left zstd rows (`seg` 0) for
+  writes outside a run's waves (`put_source`, `put_tape`, `put_source_and_tape`, overlay publication, snapshot
+  publication), for rows written before, and for a gather that found no room on disk.
+- **Done**: `Placing` (object_segments.rs) writes one segment of a write's objects before its transaction, numbers
+  it in the transaction and names the file after commit; every writer uses it (publication's pass rows carry `seg`
+  0 as "this pass's segment", resolved in its SQL). A gather with no room is dropped. `compress_source`,
+  `compress_tape`, the dictionaries' use, `set_tapes_kept_as_is`, the language-tag hooks and the decompressed read
+  cache are gone; the bulk reads lose their cache-hit flag, and a file's two flags (`tape_cache_hit`,
+  `tape_decompressed`) are one, `tape_from_store` (metrics: `tapesFromStore`, `avoidedTapeReads`,
+  `writtenSources`, `writtenTapes`). Floor 7, `content-v7.sqlite`.
+- **Verified** (M3, the M1 Max unreachable): `rerail-store`'s library tests (219, all but the host-journal
+  `observe::tests` and the git discovery test, which need the host's file journal and a `.git` the farm's copy
+  lacks); the engine's residency, presence, stored-document, storage and snapshot/publication tests (74), the tape
+  cache's corpus test.
+- **Open**: results, relationships, the facts memo and tree pages keep zstd rows (not sources or tapes); the user
+  decides whether they go to segments too.

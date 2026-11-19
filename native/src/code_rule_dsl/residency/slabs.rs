@@ -106,18 +106,13 @@ fn planned(head: &[u8], tape: usize, source: usize, lines: usize) -> Result<Plan
 }
 
 fn plan(frames: &crate::content_store::ResidentFrames) -> Result<Plan, Error> {
-    let head = frames.tape_frame.head(resident::HEADER_LEN.min(frames.tape_length))
-        .map_err(|error| invalid(format!("tape frame header: {error}")))?;
-    let stored = resident::stored(&head).map_err(invalid)?;
+    let head = frames.tape_frame.head(resident::HEADER_LEN.min(frames.tape_length));
+    let stored = resident::stored(head).map_err(invalid)?;
     let mut lines = 0usize;
     if stored == resident::Stored::F15 {
-        lines = 1;
-        frames.source_frame.chunks(|chunk| {
-            lines += chunk.iter().filter(|&&byte| byte == b'\n').count();
-        })
-        .map_err(|error| invalid(format!("source frame: {error}")))?;
+        lines = 1 + frames.source_frame.segment().bytes().iter().filter(|&&byte| byte == b'\n').count();
     }
-    planned(&head, frames.tape_length, frames.source_length, lines)
+    planned(head, frames.tape_length, frames.source_length, lines)
 }
 
 /// The documents of the tapes `digests` (SHA-256), resident, in order: hits from the residency,

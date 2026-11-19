@@ -4644,7 +4644,7 @@ fn derived_documents_restored_from_the_store_evaluate_as_a_fresh_parse() {
     for path in ["src/Counter.vue", "views/sum.blade.php"] {
         let file = &state.files[path];
         assert!(
-            !file.selector_skipped && (file.tape_cache_hit || file.tape_decompressed),
+            !file.selector_skipped && file.tape_from_store,
             "{path} read its stored documents"
         );
     }
@@ -4704,7 +4704,7 @@ fn a_stored_tape_missing_a_derived_tape_is_parsed_again() {
         let state = restored.state.lock().unwrap();
         let file = &state.files["src/Counter.vue"];
         assert!(
-            !file.tape_cache_hit && !file.tape_decompressed,
+            !file.tape_from_store,
             "the file was parsed, not restored in part"
         );
     }
