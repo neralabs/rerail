@@ -191,6 +191,9 @@ enum Logged {
     /// A conjunction's literals' counts of alternatives, and whether each is outlined (`conjunction_put`): a replay
     /// reads them before it lowers the literals, to split its combination into each one's pick.
     Counts(Vec<(usize, bool)>),
+    /// What a lowering made once a program logged, which a replay skips: it reads none of it again
+    /// (`within_stop_relation`).
+    Skip(usize),
 }
 
 /// What the literals a helper's rules are written with say of their variables, in the order written (decision 0276
@@ -2031,6 +2034,24 @@ impl Lowerer {
         self.open.0 = Some(Sink::Rule(o, Some(unset), None));
     }
 
+    /// A rule of fixed shape the walk makes (a helper's, a demand's), head `rel(args)` and `body` written term by term;
+    /// once, when `once` (a demand: left out when written before). Nothing in a replay, whose deciding walk wrote it.
+    fn fixed_rule(&mut self, rel: &str, args: &[Term], body: &[Literal], once: bool) {
+        if self.replay.is_some() {
+            return;
+        }
+        let mut o = self.prog.open_rule();
+        self.prog.put_head(&mut o, rel, &ts(args));
+        for l in body {
+            if let Err(e) = put_literal(&mut self.prog, &mut o, l) {
+                self.prog.abandon_rule(o);
+                self.out.error.get_or_insert(e);
+                return;
+            }
+        }
+        self.out.close(&mut self.prog, o, once);
+    }
+
     /// Opens a helper's rule, head `rel(args)`: its `unset(x)` literals are written as they are (only a rule's own
     /// body binds the empty value).
     fn begin_helper_rule(&mut self, rel: &str, args: &[Term]) {
@@ -2111,10 +2132,16 @@ impl Lowerer {
     /// Decides conjunction `lits`, writing nothing: where its log begins and ends, and its count of combinations
     /// (`write_combinations` writes them).
     fn decide_conjunction(&mut self, lits: &[LitAt], context: &BTreeSet<String>) -> Result<(usize, usize, usize), Error> {
+        self.decide(|me, k| me.conjunction_put(lits, context, k))
+    }
+
+    /// Decides a lowering that writes the alternative it is told to (`f(me, pick)`, its count), writing nothing:
+    /// where its log begins and ends, and its count (`write_alternatives` writes them).
+    fn decide(&mut self, f: impl FnOnce(&mut Self, usize) -> Result<usize, Error>) -> Result<(usize, usize, usize), Error> {
         let start = self.position();
         let sink = self.open.0.take();
         let off = std::mem::replace(&mut self.off, true);
-        let n = self.conjunction_put(lits, context, usize::MAX);
+        let n = f(self, usize::MAX);
         self.open.0 = sink;
         self.off = off;
         Ok((start, n?, self.position()))
@@ -2125,13 +2152,14 @@ impl Lowerer {
     /// a replay, whose deciding walk wrote them. What their literals say of their variables (`Scan`).
     #[allow(clippy::too_many_arguments)]
     fn write_combinations(&mut self, decided: (usize, usize, usize), rel: &str, args: &[Term], prefix: &[Literal], lits: &[LitAt], context: &BTreeSet<String>) -> Result<Scan, Error> {
-        self.write_combinations_as(decided, rel, args, prefix, lits, context, false)
+        self.write_alternatives(decided, rel, args, prefix, false, |me, k| me.conjunction_put(lits, context, k))
     }
 
-    /// `write_combinations`; with `unset`, each rule's `unset(x)` bind the empty value, as in a rule's own body (an
-    /// aggregate's helper).
-    #[allow(clippy::too_many_arguments)]
-    fn write_combinations_as(&mut self, (start, n, end): (usize, usize, usize), rel: &str, args: &[Term], prefix: &[Literal], lits: &[LitAt], context: &BTreeSet<String>, unset: bool) -> Result<Scan, Error> {
+    /// A rule `rel(args) :- prefix, a` for each of the `n` alternatives a of a lowering that writes the one it is
+    /// told to (`f`), decided from log position `start` to `end` (`decide`): each replays it into the open rule.
+    /// With `unset`, each rule's `unset(x)` bind the empty value, as in a rule's own body (an aggregate's helper).
+    /// Nothing in a replay, whose deciding walk wrote them. What their literals say of their variables (`Scan`).
+    fn write_alternatives(&mut self, (start, n, end): (usize, usize, usize), rel: &str, args: &[Term], prefix: &[Literal], unset: bool, mut f: impl FnMut(&mut Self, usize) -> Result<usize, Error>) -> Result<Scan, Error> {
         if self.replay.is_some() {
             return Ok(Scan::default());
         }
@@ -2142,7 +2170,7 @@ impl Lowerer {
         for k in 0..n {
             if unset {
                 // The empty value's variables, of the combination's literals (a bridge until a scan of them alone).
-                let chosen = self.body_of(start, |me| me.conjunction_put(lits, context, k));
+                let chosen = self.body_of(start, |me| f(me, k));
                 let chosen = match chosen.and_then(|(_, c)| unset_vars(&c).map(|u| (c, u))) {
                     Ok(c) => c,
                     Err(e) => {
@@ -2172,7 +2200,7 @@ impl Lowerer {
             }
             self.replay = Some(start);
             self.begin_helper_rule(rel, args);
-            r = prefix.iter().try_for_each(|l| self.emit(l.clone())).and_then(|()| self.conjunction_put(lits, context, k).map(|_| ()));
+            r = prefix.iter().try_for_each(|l| self.emit(l.clone())).and_then(|()| f(self, k).map(|_| ()));
             debug_assert!(r.is_err() || self.replay == Some(end), "a combination replays its conjunction's names");
             if r.is_err() {
                 self.drop_rule();
@@ -2352,23 +2380,11 @@ impl Lowerer {
         }
     }
 
-    /// A helper relation named `name` (a `fresh` one of `stem`), with these columns and rules, merged at the walk's
-    /// end into one made before with the same stem, columns and rules (`merge_helpers`). Each occurrence made its
-    /// own: the two contexts of a rule's two aggregates over the same variables were `rr_ctx7` and `rr_ctx8` in most
-    /// of dl1's 44 policies, and `congruence` merged them back after lowering (decision 0225 §6). An aggregate's
-    /// helper, which demand narrows by its readers, has its readers' heads in its stem (`aggregate`).
-    fn helper_once(&mut self, name: String, stem: &str, cols: Vec<(String, String)>, rules: Vec<(Vec<Term>, Vec<Literal>)>) -> String {
-        if self.replay.is_some() {
-            return name;
-        }
-        self.prog.declare_cols(&name, cols);
-        self.once.push((name.clone(), stem.to_owned(), rules.len()));
-        for (args, body) in rules {
-            self.write(Rule { head: Atom { rel: name.clone().into(), args: args.into(), neg: false, gated: false }, body: body.into() });
-        }
-        name
-    }
-
+    /// A helper relation is merged at the walk's end into one made before with the same stem, columns and rules
+    /// (`merge_helpers`). Each occurrence made its own: the two contexts of a rule's two aggregates over the same
+    /// variables were `rr_ctx7` and `rr_ctx8` in most of dl1's 44 policies, and `congruence` merged them back after
+    /// lowering (decision 0225 §6). An aggregate's helper, which demand narrows by its readers, has its readers' heads
+    /// in its stem (`aggregate`).
     /// Helper `name(vars)` of stem `stem`: a rule per combination of conjunction `lits` (decided as `decided`,
     /// `decide_conjunction`), its columns typed by what its rules say (`Scan`); merged at the walk's end into an
     /// equal one made before (`merge_helpers`). Its head's arguments.
@@ -2629,13 +2645,7 @@ impl Lowerer {
         Ok((heads, n))
     }
 
-    /// A conjunction's alternatives (one per choice in its disjunctions).
-    /// `context`: the variables used outside the conjunction.
-    fn conjunction(&mut self, lits: &[LitAt], context: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
-        Ok(self.alts_of(|me, k| me.conjunction_put(lits, context, k))?.into_iter().map(merge_negated_tests).collect())
-    }
-
-    /// A conjunction, writing its combination `k` (one alternative of each literal, the first literal's the most
+    /// A conjunction (`context`: the variables used outside it), writing its combination `k` (one alternative of each literal, the first literal's the most
     /// significant; none past its count): its count of combinations. A literal of many is outlined past OUTLINE_PAST
     /// (decision 0276 A3.4: its literals' counts are logged for a replay to split `k` by).
     fn conjunction_put(&mut self, lits: &[LitAt], context: &BTreeSet<String>, k: usize) -> Result<usize, Error> {
@@ -2835,10 +2845,7 @@ impl Lowerer {
                 self.put_alts(vec![out], pick)
             }
             L::Pattern { subject, pattern, selector, neg } => one(self, &mut |me| me.pattern(&subject, &pattern, selector.as_deref(), neg)),
-            L::Atom { rel, args, neg } if matches!(rel.as_str(), "nearest" | "inside" | "has" | "within_stop") && args.len() == 3 && self.node_set(&args[2]).is_some() => {
-                let alts = self.node_axis(&rel, &args, neg, outer)?;
-                self.put_alts(alts, pick)
-            }
+            L::Atom { rel, args, neg } if matches!(rel.as_str(), "nearest" | "inside" | "has" | "within_stop") && args.len() == 3 && self.node_set(&args[2]).is_some() => self.node_axis(&rel, &args, neg, outer, pick),
             L::Atom { rel, args, neg } if matches!(rel.as_str(), "within" | "within_stop") => self.within_put(&rel, &args, neg, pick),
             L::Atom { rel, args, neg } if rel == "split_dot" => self.split_dot(&args, neg, pick),
             // `match_all("re", sp, m)` (three arguments: each match in span sp, a span m, as the linter's regex finds
@@ -3070,13 +3077,11 @@ impl Lowerer {
                 _ => unreachable!("checked above"),
             })
             .collect();
-        let head = Atom { rel: req.to_owned().into(), args: args.into(), neg: false, gated: false };
         let mut body: Vec<Literal> = ctx.into_iter().map(Literal::Atom).collect();
         if every_chunk {
             body.push(Literal::Atom(Atom { rel: "doc".into(), args: [Term::Var("rr_demand_doc".into()), Term::Wild, Term::Wild].into(), neg: false, gated: false }));
         }
-        let rule = Rule { head, body: body.into() };
-        self.write_once(rule);
+        self.fixed_rule(req, &args, &body, true);
         Ok(())
     }
 
@@ -3089,7 +3094,6 @@ impl Lowerer {
             return Ok(());
         }
         let Some(key) = args.first() else { return Ok(()) };
-        let head = |key: Term| Atom { rel: demand.to_owned().into(), args: [key].into(), neg: false, gated: false };
         self.prog.declare_cols(demand, [("k", "sym")]);
         let s = match self.tv(key) {
             // A constant key is a fact, as the reader takes a bodiless clause: printed and read back, it is the same.
@@ -3136,8 +3140,7 @@ impl Lowerer {
         let ctx = if binds { Some(self.context(std::slice::from_ref(s))) } else { None };
         self.siblings = saved;
         let Some(ctx) = ctx.transpose()? else { return Ok(()) };
-        let rule = Rule { head: head(Term::Var(s.clone().into())), body: [Literal::Atom(ctx)].into() };
-        self.write_once(rule);
+        self.fixed_rule(demand, &[Term::Var(s.clone().into())], &[Literal::Atom(ctx)], true);
         Ok(())
     }
 
@@ -3200,14 +3203,23 @@ impl Lowerer {
         let (cols, args): (Vec<(String, String)>, Vec<Term>) = if shared.is_empty() {
             (vec![("unit".to_owned(), "int".to_owned())], vec![Term::Int(0)])
         } else {
-            (shared.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).collect(), shared.iter().map(|c| Term::Var(c.clone().into())).collect())
+            let scan = self.scan_of(bodies.iter().flatten());
+            (shared.iter().map(|c| (c.clone(), scan.type_of(c))).collect(), shared.iter().map(|c| Term::Var(c.clone().into())).collect())
         };
         self.prog.declare_cols(&name, cols.iter().map(|(c, t)| (c.to_string(), t.to_string())));
-        let head = Atom { rel: name.into(), args: args.into(), neg: false, gated: false };
-        for body in bodies {
-            self.write(Rule { head: head.clone(), body: body.into() });
+        for body in &bodies {
+            self.fixed_rule(&name, &args, body, false);
         }
-        Ok(Literal::Atom(Atom { neg: true, ..head }))
+        Ok(Literal::Atom(Atom { rel: name.into(), args: args.into(), neg: true, gated: false }))
+    }
+
+    /// What `lits` say of their variables, in order (`Scan`).
+    fn scan_of<'a>(&mut self, lits: impl IntoIterator<Item = &'a Literal>) -> Scan {
+        let outer = self.scan.replace(Scan::default());
+        for l in lits {
+            self.scan_literal(l);
+        }
+        std::mem::replace(&mut self.scan, outer).expect("the scan")
     }
 
     /// `precedes_stop(a, b, S)` as a relation `rr_prec_<S>(a, b)`: a and b are children of one parent, a first,
@@ -3240,22 +3252,17 @@ impl Lowerer {
         let head = |rel: &str, args: Vec<Term>| Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false };
         let mut body = vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("s"), v("k")], false), cmp("i", "k")];
         body.extend(member);
-        self.write(Rule { head: head(&after, vec![v("a"), v("k")]), body: body.into() });
-        self.write(Rule {
-            head: head(&first, vec![v("a"), v("j")]),
-            body: vec![
-                atom(&after, vec![v("a"), Term::Wild], false),
-                Literal::Agg { var: "j".to_owned(), op: AggOp::Min, over: Some("k".to_owned()), atom: head(&after, vec![v("a"), v("k")]) },
-            ].into(),
-        });
+        self.fixed_rule(&after, &[v("a"), v("k")], &body, false);
+        let least = [atom(&after, vec![v("a"), Term::Wild], false), Literal::Agg { var: "j".to_owned(), op: AggOp::Min, over: Some("k".to_owned()), atom: head(&after, vec![v("a"), v("k")]) }];
+        self.fixed_rule(&first, &[v("a"), v("j")], &least, false);
         let pair = || vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("b"), v("l")], false), cmp("i", "l")];
         let mut none = pair();
         none.push(atom(&after, vec![v("a"), Term::Wild], true));
-        self.write(Rule { head: head(&name, vec![v("a"), v("b")]), body: none.into() });
+        self.fixed_rule(&name, &[v("a"), v("b")], &none, false);
         let mut upto = pair();
         upto.push(atom(&first, vec![v("a"), v("j")], false));
         upto.push(Literal::Cmp { l: v("l"), op: "<=", r: v("j") });
-        self.write(Rule { head: head(&name, vec![v("a"), v("b")]), body: upto.into() });
+        self.fixed_rule(&name, &[v("a"), v("b")], &upto, false);
         name
     }
 
@@ -3289,13 +3296,13 @@ impl Lowerer {
         let real = |q: &str| Literal::Cmp { l: v(q), op: ">=", r: Term::Int(0) };
         let mut first = seed;
         first.extend([up(x, "rr_p"), real("rr_p")]);
-        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v(x), v("rr_p")].into(), neg: false, gated: false }, body: first.into() });
+        self.fixed_rule(&rel, &[v(x), v("rr_p")], &first, false);
         let mut next = vec![atom(&rel, vec![v("rr_n"), v("rr_p")], false)];
         if let Some(stop) = stop {
             next.push(atom(stop, vec![v("rr_p")], true));
         }
         next.extend([up("rr_p", "rr_q"), real("rr_q")]);
-        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v("rr_n"), v("rr_q")].into(), neg: false, gated: false }, body: next.into() });
+        self.fixed_rule(&rel, &[v("rr_n"), v("rr_q")], &next, false);
         rel
     }
 
@@ -3317,7 +3324,27 @@ impl Lowerer {
     /// - `within_stop(n, a, S)`: n is below a, and the climb from n meets no node of S before a.
     ///
     /// Negated, each is a helper relation (`negate`).
-    fn node_axis(&mut self, rel: &str, args: &[At], neg: bool, outer: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
+    fn node_axis(&mut self, rel: &str, args: &[At], neg: bool, outer: &BTreeSet<String>, pick: usize) -> Result<usize, Error> {
+        if !neg {
+            return self.node_axis_put(rel, args, pick);
+        }
+        // Negated: a helper relation of its alternatives, over the named ends the rule shares.
+        let shared: Vec<String> = args[..2].iter().filter_map(|t| if let T::Var(v) = self.tv(t) { Some(v) } else { None }).filter(|x| outer.contains(x)).collect();
+        let decided = self.decide(|me, p| me.node_axis_put(rel, args, p))?;
+        let name = self.fresh("not");
+        let head: Vec<Term> = if shared.is_empty() { vec![Term::Int(0)] } else { shared.iter().map(|c| Term::Var(c.clone().into())).collect() };
+        let scan = self.write_alternatives(decided, &name, &head, &[], false, |me, p| me.node_axis_put(rel, args, p))?;
+        if self.replay.is_none() {
+            let cols: Vec<(String, String)> = if shared.is_empty() { vec![("unit".to_owned(), "int".to_owned())] } else { shared.iter().map(|c| (c.clone(), scan.type_of(c))).collect() };
+            self.prog.declare_cols(&name, cols);
+        }
+        let not = Literal::Atom(Atom { rel: name.into(), args: head.into(), neg: true, gated: false });
+        self.alt(0, pick, |me| me.emit(not))?;
+        Ok(1)
+    }
+
+    /// A node axis over a set of nodes, positive, writing its alternative `pick` (`alt`): its count.
+    fn node_axis_put(&mut self, rel: &str, args: &[At], pick: usize) -> Result<usize, Error> {
         let set = self.node_set(&args[2]).expect("a node set");
         let atom = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.to_owned().into(), args: args.into(), neg: false, gated: false });
         let named = |me: &mut Self, t: &At| -> Result<String, Error> {
@@ -3329,43 +3356,45 @@ impl Lowerer {
         };
         let (first, second) = (named(self, &args[0])?, named(self, &args[1])?);
         let v = |s: &str| Term::Var(s.to_owned().into());
-        let positive = match rel {
+        match rel {
             "inside" | "nearest" => {
-                let (n, a) = (first.clone(), second.clone());
+                let (n, a) = (first, second);
                 let seed = self.climb_seed(&n)?;
                 let up = self.climb(seed, &n, (rel == "nearest").then_some(set.as_str()));
-                vec![vec![atom(&up, vec![v(&n), v(&a)]), atom(&set, vec![v(&a)])]]
+                self.alt(0, pick, |me| {
+                    me.emit(atom(&up, vec![v(&n), v(&a)]))?;
+                    me.emit(atom(&set, vec![v(&a)]))
+                })?;
+                Ok(1)
             }
             "has" => {
-                let (a, n) = (first.clone(), second.clone());
+                let (a, n) = (first, second);
                 let up = self.climb(vec![atom(&set, vec![v(&n)])], &n, None);
-                vec![vec![atom(&up, vec![v(&n), v(&a)])]]
+                self.alt(0, pick, |me| me.emit(atom(&up, vec![v(&n), v(&a)])))?;
+                Ok(1)
             }
             _ => {
-                let (n, a) = (first.clone(), second.clone());
-                let below = self.within("within", &[At::Var(n.clone()), At::Var(a.clone())], false)?;
+                let (n, a) = (first, second);
+                let below = [At::Var(n.clone()), At::Var(a.clone())];
                 let seed = self.climb_seed(&n)?;
                 let up = self.climb(seed, &n, Some(&set));
                 let s = self.fresh("stop");
                 let hit = vec![atom(&up, vec![v(&n), v(&s)]), atom(&set, vec![v(&s)])];
                 let none = self.negate(vec![hit.clone()], std::slice::from_ref(&n))?;
-                let mut out = Vec::new();
                 // The nearest stop is a, or a is below it: by the tree, not by comparing ids (ids follow preorder only
-                // inside a granule, decision 0094 §2).
+                // inside a granule, decision 0094 §2). n is below a in each (`within`, one alternative).
                 let above = atom(crate::code_rule_dsl::facts::vtab::syntax::WITHIN, vec![v(&a), v(&s)]);
-                for b in below {
-                    out.push(b.iter().cloned().chain([none.clone()]).collect());
-                    out.push(b.iter().cloned().chain(hit.iter().cloned()).chain([Literal::Cmp { l: v(&s), op: "=", r: v(&a) }]).collect());
-                    out.push(b.into_iter().chain(hit.iter().cloned()).chain([above.clone()]).collect());
+                let at_a = Literal::Cmp { l: v(&s), op: "=", r: v(&a) };
+                let ends: [Vec<Literal>; 3] = [vec![none], hit.iter().cloned().chain([at_a]).collect(), hit.into_iter().chain([above]).collect()];
+                for (i, end) in ends.into_iter().enumerate() {
+                    self.alt(i, pick, |me| {
+                        me.within_put("within", &below, false, 0)?;
+                        end.into_iter().try_for_each(|l| me.emit(l))
+                    })?;
                 }
-                out
+                Ok(3)
             }
-        };
-        if !neg {
-            return Ok(positive);
         }
-        let shared: Vec<String> = [&first, &second].into_iter().filter(|x| outer.contains(*x)).cloned().collect();
-        Ok(vec![vec![self.negate(positive, &shared)?]])
     }
 
     /// `within(n, a)`: n is strictly below a, the engine's relation read off the tree (decision 0050): a's
@@ -3374,11 +3403,7 @@ impl Lowerer {
     /// no node of `stop` strictly between them. The ancestors of n are ordered by id, so that is: n has no
     /// ancestor in `stop`, or its nearest one is a or above it. Negated (a named): n is not below a, or it is with
     /// its nearest ancestor in `stop` below a.
-    fn within(&mut self, rel: &str, args: &[At], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
-        self.alts_of(|me, pick| me.within_put(rel, args, neg, pick))
-    }
-
-    /// `within`, writing alternative `pick` (`alt`): its count of alternatives.
+    /// Writing alternative `pick` (`alt`): its count of alternatives.
     fn within_put(&mut self, rel: &str, args: &[At], neg: bool, pick: usize) -> Result<usize, Error> {
         let (n, a, stop) = match args {
             [n, a] if rel == "within" => (n, a, None),
@@ -3441,15 +3466,22 @@ impl Lowerer {
             _ => "set".to_owned(),
         };
         let name = format!("{RESERVED}wstop_{label}");
-        if self.prog.declares(&name) {
+        // Made once a program: a replay skips what making it logged.
+        if let Some(at) = self.replay {
+            let Some(Logged::Skip(len)) = self.log.get(at) else { panic!("a replay skips a relation made once") };
+            self.replay = Some(at + 1 + len);
             return Ok(name);
         }
-        let bodies = self.within("within_stop", &[At::Var("n".to_owned()), At::Var("a".to_owned()), stop.clone()], false)?;
-        self.prog.declare_cols(&name, [("n", "node"), ("a", "node")]);
-        let head = Atom { rel: name.as_str().into(), args: [Term::Var("n".into()), Term::Var("a".into())].into(), neg: false, gated: false };
-        for body in bodies {
-            self.write(Rule { head: head.clone(), body: body.into() });
+        let slot = self.log.len();
+        self.log.push(Logged::Skip(0));
+        if !self.prog.declares(&name) {
+            let args = [At::Var("n".to_owned()), At::Var("a".to_owned()), stop.clone()];
+            let decided = self.decide(|me, p| me.within_put("within_stop", &args, false, p))?;
+            self.prog.declare_cols(&name, [("n", "node"), ("a", "node")]);
+            let head = [Term::Var("n".into()), Term::Var("a".into())];
+            self.write_alternatives(decided, &name, &head, &[], false, |me, p| me.within_put("within_stop", &args, false, p))?;
         }
+        self.log[slot] = Logged::Skip(self.log.len() - slot - 1);
         Ok(name)
     }
 
@@ -3470,7 +3502,7 @@ impl Lowerer {
             // The native producer replaces these seed values. They establish dependency and numeric types.
             head_args.extend([Term::Int(0), Term::Int(0), Term::Int(0)]);
         }
-        self.write(Rule { head: Atom { rel: name.to_owned().into(), args: head_args.into(), neg: false, gated: false }, body: body.into() });
+        self.fixed_rule(name, &head_args, &body, false);
         self.prog.set_native(&name, Native::MatchAll { input: input.to_owned(), pattern: re.to_owned(), groups: gs.to_vec(), positions });
     }
 
@@ -4757,7 +4789,7 @@ impl Lowerer {
         }
         let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone().into())).collect();
         // The empty value inside the body is the constant, as in a rule's own body.
-        let scan = self.write_combinations_as(decided, &name, &args, &prefix, body, outer, true)?;
+        let scan = self.write_alternatives(decided, &name, &args, &prefix, true, |me, k| me.conjunction_put(body, outer, k))?;
         // Shared only by the clauses of the same heads: aggregate demand narrows a helper by its readers' contexts
         // (`rr_demand_agg_…`), so one shared with a reader the program does not reach (`body_len`'s count beside
         // `catch_all_body`'s in b110) was computed for that reader's rows too. A relation's clauses are reached, and

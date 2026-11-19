@@ -1241,6 +1241,23 @@ fn axes_refuse_by_name() {
 /// such helper per alternative; a shared variable the conjunction only tests is bound in the helper by the rule's
 /// other literals; a conjunction sharing none has one constant column. Printed, the program reads back as itself.
 #[test]
+fn many_within_stops_read_their_sets_relation() {
+    // Five `within_stop`s of two alternatives each: past 16 combinations the fifth reads `rr_wstop_<S>`, made once
+    // for both clauses.
+    let clause = |h: &str| format!("{h}(n, a) :- e(n, a), within_stop(n, a, \"x\"), within_stop(n, a, \"y\"), within_stop(n, a, \"z\"), within_stop(n, a, \"u\"), within_stop(n, a, \"v\").\n");
+    let text = format!(".decl e(n: node, a: node)\n.input e\n.decl r(n: node, a: node)\n.decl q(n: node, a: node)\n{}{}", clause("r"), clause("q"));
+    let p = parse(&text).unwrap();
+    for h in ["r", "q"] {
+        let rules = shown(&p, |r| r == h);
+        assert_eq!(rules.len(), 16, "{rules:#?}");
+        assert!(rules.iter().all(|r| r.ends_with("rr_wstop_v($n, $a)")), "{rules:#?}");
+    }
+    assert_eq!(shown(&p, |r| r == "rr_wstop_v").len(), 2);
+    let printed = print_version(&p).and_then(|text| parse(&text)).unwrap();
+    assert_eq!(difference(&p, &printed), None);
+}
+
+#[test]
 fn equal_helpers_of_one_walk_are_one() {
     // Two aggregates that only test `x` each need a context of x: the same rule, so one relation (`merge_helpers`).
     let p = parse(concat!(
