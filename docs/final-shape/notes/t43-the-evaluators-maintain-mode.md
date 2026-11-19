@@ -755,3 +755,47 @@ ignored with its reason until the reads bind the kept blocks (0401 step 7, on th
 O125 kept, M1 Max (loaded, 10-15): 01 171.7 G, 02 154.9, 03 209.9, 04 143.2, 05 320.9, 06 160.6, 07 173.6, 08 229.7,
 findings equal to cold at every step. Step 05's matching went from 1.60 s to 0.96 s.
 
+## Step 20: a session's base relations, patched by owner
+
+At 2,410 files a session's 2-file edit took 54-59 s (M1 Max). Profiled, 21 s of it was the cross part's base
+relations made again, whole, at every edit:
+
+| Work, step 01 | CPU |
+|---|---|
+| the keeper's counted rows copied out (`columns_each`) | 1.4 s |
+| those copied again into a block (`Held::new`) and bound | 6.1 s |
+| each digested whole, to find the last run's source (`kept_source`) | 4.9 s |
+| the semi-joins' rows measured | 2.1 s |
+| each base input's index built again over every row (34) | 6.7 s |
+
+A digest that changed (every tree relation, at any edit) found no last source, so every index was built again.
+The kept route (a new process, decision 0117 step 2) had already removed this: a kept input is its kept rows with
+its changed owners' rows laid over it (`retain::Layered`), read in place through the kept rows' index, its digest,
+documents and delta from the changed owners alone (`patch_owners`). A session never took it.
+
+Now it does. Each base relation that is not a semi-join's (whose rows follow the exports) is its last run's source
+patched by the changed files' entries, old and new (`input_delta::changed`, the session memo), through the same
+`patch_owners`. Its owners' ranges are found once, by one pass over the session's first source
+(`retain::session_ranges`); after that the source is a `Layered` and its ranges are its own (`ranges_now`). A
+second edit is laid over the same kept rows (`Layered::then`), not over the first edit's layer, so a session reads
+one layer however long it runs; the rows of owners an earlier edit changed are carried into the new appended
+block. The keeper's counted rows are no longer copied out for a patched relation. `RERAIL_SESSION_LAYERED=off`
+rebuilds them as before.
+
+Measured on the M1 Max:
+
+| Files | Step | Before | Now |
+|---|---|---|---|
+| 2,410 | 01 | 54-59 s | 44.3 s |
+| 2,410 | 02 | 65 s (M3) | 58.8 s |
+| 2,410 | 03 | 55 s (M3) | 45.9 s |
+
+At step 01 the base relations' part is 0.5 s (from 14.9 s), and the base inputs' indexes 0.6 s (from 6.7 s).
+At step 03, after three patched edits, the session's findings equal a cold run's (4,343 G). O125's session equals
+cold at every step, its CPU unchanged (its edits are of a few files over four documents'
+worth of tree).
+
+What a 2,410-file edit still costs, at step 03: `rr_agg37` and its demand stratum derived again where the mode is
+priced above a derive (§4's second clause; 98,707 against 70,337 and 252,165 against 247,433, with deltas about
+0.1% of the rows read), 16 s together with its pair statistics; a probe of a derived input's order, 4.1 s; the view
+`kind`'s rows, 2.0 s; the semi-joins' rows measured, 1.9 s.

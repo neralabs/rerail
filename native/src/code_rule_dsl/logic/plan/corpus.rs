@@ -6230,7 +6230,7 @@ fn run_observed(
         stored_bound: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>,
         totals_add: Vec<(String, usize, Vec<(String, i64, i64, i64, i64)>)>,
         export_rows: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>,
-        mentioned: std::collections::HashSet<i64>,
+        mentioned: rustc_hash::FxHashSet<i64>,
         /// The slice's request lines of each round, for the entries (`memo::GUESTS`).
         slice_rounds: Vec<BTreeMap<String, Arc<output::Rows>>>,
     }
@@ -6253,7 +6253,7 @@ fn run_observed(
         Hand(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>),
         Finish(Ctx, Evaluated),
     }
-    fn mention(mentioned: &mut std::collections::HashSet<i64>, rows: &dyn crate::code_rule_dsl::facts::vtab::Source) {
+    fn mention(mentioned: &mut rustc_hash::FxHashSet<i64>, rows: &dyn crate::code_rule_dsl::facts::vtab::Source) {
         let width = rows.columns().len();
         for r in 0..rows.len() {
             mentioned.extend((0..width).map(|c| rows.value(r, c)));
@@ -6477,7 +6477,7 @@ fn run_observed(
         }
         // A semi-join's relation is taken after the run, the rows of the nodes the exports hold (`semijoin`).
         let deferring = stored_bound.iter().any(|(r, _)| semijoin.contains(r));
-        let mut mentioned: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let mut mentioned: rustc_hash::FxHashSet<i64> = rustc_hash::FxHashSet::default();
         let coned: Option<Arc<lower::Lowered>> = cone.as_ref().map(|wanted| {
             Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted))))
         });
@@ -6811,7 +6811,7 @@ fn run_observed(
         let mut deferred: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(usize, usize)>)> = Vec::new();
         // The values the held base relations' columns hold, of the relations kept whole: a measure's key is kept for
         // these nodes too (`measure_keys`), as a candidate's node may be one (`child`'s child, a walk down).
-        let mut held_nodes: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let mut held_nodes: rustc_hash::FxHashSet<i64> = rustc_hash::FxHashSet::default();
         for (rel, source) in stored_bound {
             let Some((_, names)) = stored.iter().find(|(r, _)| *r == rel) else { continue };
             let have = source.columns();
@@ -8434,6 +8434,114 @@ fn run_observed(
                 }
             }
         }
+        // A session's base relations after an edit, as the kept route's are (decision 0117 step 2): each its last run's
+        // source with the changed files' owners' rows laid over it (`retain::Layered`, one layer over the session's
+        // first source however many edits), read in place with its indexes; its digest, documents and delta from the
+        // changed owners alone (`patch_owners`). Rebuilt from every file's rows, each was copied, digested, measured
+        // and indexed whole at every edit: 21 s of a 2,410-file edit's 54 s. Not a semi-join's relation, whose rows
+        // follow what the exports mention. `RERAIL_SESSION_LAYERED=off` rebuilds them.
+        if kept_hits.is_empty()
+            && std::env::var("RERAIL_SESSION_LAYERED").map_or(true, |v| v != "off")
+            && let (Some(held_session), Some(parts)) = (session.as_ref(), parts.as_deref())
+        {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "a session's base relations, patched by owner".into());
+            let laid: std::result::Result<(usize, usize, usize), String> = (|| {
+                let maintained = match early_maintained.take() {
+                    Some(m) => m,
+                    None => maintained_cross_of(shared_maintained, &cross).map_err(|e| e.to_string())?,
+                };
+                let (_, binds) = retain::keys(&prepared_key, maintained.digest().map_err(|e| e.to_string())?);
+                let placed = maintained.placed().map_err(|e| e.to_string())?;
+                let prog = &placed;
+                let part = parts.get(&binds).ok_or("no kept part of this cross program")?;
+                let was = part.docs(&memo_whole).ok_or("the kept part holds no documents of this program")?;
+                let changes = input_delta::changed(was, &run_docs_held.lock().expect("the run's documents"), &held_session.memo, &memo_plan.id).ok_or("a changed document's entry is not in the memo")?;
+                let atoms = store.atoms_handle();
+                let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
+                let (mut patched, mut same, mut skipped) = (0usize, 0usize, 0usize);
+                for (rel, names_held) in &stored {
+                    if semijoin.contains(rel) || !matches!(memo::owner(rel), memo::Owner::Node(_)) {
+                        skipped += 1;
+                        continue;
+                    }
+                    let (Some(last), Some((have, _))) = (part.input_source(rel), base_rows.get(rel)) else {
+                        skipped += 1;
+                        continue;
+                    };
+                    if last.columns() != *have {
+                        skipped += 1;
+                        continue;
+                    }
+                    let width = have.len();
+                    let g = retain::group_col(prog, &split.locations, rel);
+                    let cells = retain::cells_of(&atoms, prog, &maintained.domains, rel, width);
+                    let Some(ranges) = retain::session_ranges(last, g) else {
+                        skipped += 1;
+                        continue;
+                    };
+                    let docs = match part.input_docs(rel) {
+                        Some(d) => Arc::clone(d),
+                        None => {
+                            let _d = crate::code_rule_dsl::logic::profile::span(|| format!("a session input's documents, digested once ({} rows)", last.len()));
+                            Arc::new(retain::docs_of(last.as_ref(), g, &cells))
+                        }
+                    };
+                    if part.input_digest(rel).is_some_and(|d| d != retain::digest_of_docs(&docs)) {
+                        skipped += 1;
+                        continue;
+                    }
+                    // Each changed file's rows, old and new, as the bound columns (an unheld one reads as 0).
+                    let all = super::super::sql::select::input_columns(rel).ok_or_else(|| format!("no columns for {rel}"))?;
+                    let key = memo::base_key(rel);
+                    let rows_of = |e: &memo::Entry| -> Vec<Vec<i64>> {
+                        let Some((w, flat)) = e.rows.get(&key) else { return Vec::new() };
+                        let at: Vec<Option<usize>> = have.iter().map(|n| names_held.contains(n).then(|| all.iter().position(|c| c == n)).flatten().filter(|c| c < w)).collect();
+                        flat.chunks_exact((*w).max(1)).map(|r| at.iter().map(|c| c.map_or(0, |c| r[c])).collect()).collect()
+                    };
+                    let old: Vec<Vec<Vec<i64>>> = changes.iter().filter_map(|(w, _)| w.as_deref().map(&rows_of)).collect();
+                    let new: Vec<Vec<i64>> = changes.iter().filter_map(|(_, n)| n.as_deref().map(&rows_of)).flatten().collect();
+                    let evaluated: BTreeSet<i64> = old.iter().flatten().chain(new.iter()).map(|r| retain::owner_of(r, g)).filter(|o| *o < values).collect();
+                    let kept = retain::KeptInput::held(Arc::clone(last), docs, ranges);
+                    let mut patch = patch_owners(rel, &kept, g, None, &evaluated, &old, new, &cells)?;
+                    input_digests.insert(rel.clone(), patch.digest);
+                    if patch.changed.is_empty() {
+                        same += 1;
+                        base_layered.insert(rel.clone(), Arc::clone(last));
+                        continue;
+                    }
+                    patched += 1;
+                    let changed = std::mem::take(&mut patch.changed);
+                    let layered = match last.as_any().and_then(|a| a.downcast_ref::<retain::Layered>()) {
+                        Some(l) => l.then(changed),
+                        None => retain::Layered::new(have.clone(), Arc::clone(last), Arc::clone(kept.ranges()?), changed),
+                    };
+                    let names = || (0..width).map(|c| super::sql_col(rel, c)).collect::<Vec<_>>();
+                    let plus = crate::code_rule_dsl::logic::native::component::InRel::picked(Arc::clone(layered.added()), patch.plus, names());
+                    let minus = crate::code_rule_dsl::logic::native::component::InRel::picked(Arc::clone(last), patch.minus, names());
+                    given_deltas.insert(rel.clone(), (plus, minus));
+                    if let Some(docs) = patch.docs {
+                        kept_input_docs.insert(rel.clone(), Arc::new(docs));
+                    }
+                    base_layered.insert(rel.clone(), Arc::new(layered));
+                }
+                *maintained_early.borrow_mut() = Some(maintained);
+                Ok((patched, same, skipped))
+            })();
+            match laid {
+                Ok((patched, same, skipped)) => crate::code_rule_dsl::logic::profile::decision("a session's base relations (decision 0117 step 2)", || format!("{patched} patched by owner over the last run's rows, {same} as they were, {skipped} rebuilt (a semi-join's, a string's, or no ranges)")),
+                Err(why) => {
+                    // A relation patched before the failure is rebuilt with the rest: its delta and digest go too.
+                    for (rel, _) in &stored {
+                        if base_layered.remove(rel).is_some() {
+                            input_digests.remove(rel);
+                            given_deltas.remove(rel);
+                            kept_input_docs.remove(rel);
+                        }
+                    }
+                    crate::code_rule_dsl::logic::profile::decision("a session's base relations (decision 0117 step 2)", || format!("not taken ({why}): rebuilt from every file's rows"));
+                }
+            }
+        }
         // The base relations' rows and the tree counts of the hits not held again (0096 step 3): the counted rows are
         // the run's, and the kept tree counts beyond those of the files it saw. Given up, the skipped hits' are taken
         // from the memo, as the replay would have.
@@ -8441,7 +8549,8 @@ fn run_observed(
             Some(((counted, rels), own)) => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the counted base rows".into());
                 for (rel, _, from) in rels {
-                    let Some(held) = base_rows.get_mut(rel) else { continue };
+                    // A patched one (`base_layered`) is bound as it is: its rows are not copied out of the keeper.
+                    let Some(held) = base_rows.get_mut(rel).filter(|_| !base_layered.contains_key(rel)) else { continue };
                     let all = super::super::sql::select::input_columns(rel).unwrap_or_default();
                     let mut columns = counted.columns_each(rel, from.len()).into_iter();
                     for c in from {
@@ -8585,6 +8694,7 @@ fn run_observed(
                 continue;
             }
             let rows = values.iter().flatten().map(Vec::len).next().unwrap_or(0);
+            let _b = crate::code_rule_dsl::logic::profile::span(|| format!("a base relation held, bound ({rows} rows)"));
             // A semi-join's relation holds only the rows its exports name: measured, as the keeper counts every row.
             let statistics = kept.as_ref().and_then(|m| m.get(&memo::base_key(&rel))).filter(|r| !semijoin.contains(&rel) && r.rows() == rows as i64).map(|r| {
                 let held: BTreeSet<&str> = columns.iter().zip(&values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
@@ -8596,8 +8706,12 @@ fn run_observed(
                 Some(st) => crate::code_rule_dsl::logic::native::component::columns_source_measured(columns, values, st.clone()),
                 None => crate::code_rule_dsl::logic::native::component::columns_source(columns, values),
             };
-            let source = retain::kept_source(parts.as_deref(), &rel, Arc::clone(&source), &retain::cells_of(&input_atoms, &run_placed, &lowered.domains, &rel, source.columns().len()), &mut input_digests);
+            let source = {
+                let _k = crate::code_rule_dsl::logic::profile::span(|| format!("a base relation's last source found by digest ({rows} rows)"));
+                retain::kept_source(parts.as_deref(), &rel, Arc::clone(&source), &retain::cells_of(&input_atoms, &run_placed, &lowered.domains, &rel, source.columns().len()), &mut input_digests)
+            };
             let statistics = statistics.unwrap_or_else(|| {
+                let _m = crate::code_rule_dsl::logic::profile::span(|| format!("a base relation measured ({rows} rows)"));
                 let st = syntax::statistics(source.as_ref());
                 // A semi-join's, kept beside its frame for the next run's kept route (`kept_input_stats`).
                 if semijoin.contains(&rel) {

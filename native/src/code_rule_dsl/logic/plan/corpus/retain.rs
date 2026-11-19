@@ -879,6 +879,10 @@ impl Retained {
         {
             return Some(ranges);
         }
+        // A session's patched input (`Layered`): its ranges as its rows are numbered now.
+        if let Some(l) = self.input_srcs.get(rel)?.as_any().and_then(|a| a.downcast_ref::<Layered>()) {
+            return Some(l.ranges_now());
+        }
         let (source, layout) = self.input_layouts.get(rel)?;
         if !Arc::ptr_eq(source, self.input_srcs.get(rel)?) {
             return None;
@@ -1279,6 +1283,8 @@ pub(in crate::code_rule_dsl) struct Layered {
     added: Arc<dyn Source>,
     /// Each changed owner's rows in `added`.
     appended: rustc_hash::FxHashMap<i64, (u32, u32)>,
+    /// Each owner's rows as a range of this input's rows (`ranges_now`), found where first asked.
+    now: std::sync::OnceLock<Arc<Ranges>>,
 }
 
 impl Layered {
@@ -1307,7 +1313,55 @@ impl Layered {
             appended.insert(owner, (start, rows.len() as u32));
         }
         let added = crate::code_rule_dsl::logic::native::component::columns_source(names.clone(), columns.into_iter().map(Some).collect());
-        Layered { names, kept, ranges, dead, before, added, appended }
+        Layered { names, kept, ranges, dead, before, added, appended, now: std::sync::OnceLock::new() }
+    }
+
+    /// This input after a further patch (a session's next edit): laid over the same kept rows, not over this one, so
+    /// a session of many edits reads one layer. `changed`'s rows come first among the appended ones (an
+    /// `OwnerPatch::plus` names its rows by their places there), then the rows of the owners an earlier edit
+    /// changed and this one did not, as they are here.
+    pub(in crate::code_rule_dsl) fn then(&self, changed: Vec<(i64, Vec<Vec<i64>>)>) -> Layered {
+        let width = self.names.len();
+        let all: Vec<usize> = (0..width).collect();
+        let now: rustc_hash::FxHashSet<i64> = changed.iter().map(|(o, _)| *o).collect();
+        let mut earlier: Vec<(i64, (u32, u32))> = self.appended.iter().filter(|(o, _)| !now.contains(o)).map(|(o, r)| (*o, *r)).collect();
+        earlier.sort_unstable();
+        let mut owners = changed;
+        owners.extend(earlier.into_iter().map(|(o, (start, n))| {
+            let rows = (start..start + n)
+                .map(|r| {
+                    let mut row = vec![0i64; width];
+                    self.added.row_at(r as usize, &all, &mut row);
+                    row
+                })
+                .collect();
+            (o, rows)
+        }));
+        Layered::new(self.names.clone(), Arc::clone(&self.kept), Arc::clone(&self.ranges), owners)
+    }
+
+    /// Each owner's rows as a range of this input's rows, as they are numbered now: a kept owner's at its live place,
+    /// a changed one's among the appended rows.
+    pub(in crate::code_rule_dsl) fn ranges_now(&self) -> &Arc<Ranges> {
+        self.now.get_or_init(|| {
+            let mut out = Ranges::default();
+            out.reserve(self.ranges.len() + self.appended.len());
+            for (&o, &(start, n)) in self.ranges.iter() {
+                if n == 0 || self.appended.contains_key(&o) {
+                    continue;
+                }
+                if let Some(at) = self.from_kept(start as usize) {
+                    out.insert(o, (at as u32, n));
+                }
+            }
+            let live = self.live_kept() as u32;
+            for (&o, &(start, n)) in &self.appended {
+                if n > 0 {
+                    out.insert(o, (live + start, n));
+                }
+            }
+            Arc::new(out)
+        })
     }
 
     /// The changed owners' new rows, one after another (`OwnerPatch::plus` names its rows by their places here).
@@ -1417,6 +1471,41 @@ pub mod tests {
         assert_eq!(l.owner_rows(2), vec![node(2, 0), 22]);
         assert_eq!(l.owner_rows(1), vec![node(1, 0), 10, node(1, 1), 11]);
         assert!(l.owner_rows(3).is_empty());
+    }
+
+    /// A session's second edit is laid over the same kept rows (`Layered::then`): it reads as the rows now, an owner
+    /// the first edit changed keeps its rows unless the second changes it again, the new owners' rows come first
+    /// among the appended ones, and each owner's range (`ranges_now`) holds exactly its rows.
+    #[test]
+    fn a_second_patch_is_laid_over_the_same_kept_rows() {
+        let node = |d: i64, i: i64| d << 32 | i;
+        let rows = [[node(1, 0), 10], [node(1, 1), 11], [node(2, 0), 20], [node(3, 0), 30], [node(4, 0), 40]];
+        let kept = crate::code_rule_dsl::logic::native::component::columns_source(vec!["n".into(), "v".into()], (0..2).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect());
+        let ranges: Ranges = [(1, (0, 2)), (2, (2, 1)), (3, (3, 1)), (4, (4, 1))].into_iter().collect();
+        let first = Layered::new(vec!["n".into(), "v".into()], Arc::clone(&kept), Arc::new(ranges), vec![(2, vec![vec![node(2, 0), 22]]), (3, vec![vec![node(3, 0), 33]])]);
+        // The second edit: owner 3 again, owner 1 gone, owner 5 new; owner 2 keeps its first edit's rows.
+        let second = first.then(vec![(3, vec![vec![node(3, 0), 34], vec![node(3, 1), 35]]), (1, Vec::new()), (5, vec![vec![node(5, 0), 50]])]);
+        assert!(Arc::ptr_eq(&second.kept, &kept), "one layer over the kept rows");
+        let read: BTreeSet<(i64, i64)> = (0..second.len()).map(|r| (second.value(r, 0), second.value(r, 1))).collect();
+        assert_eq!(read, BTreeSet::from([(node(4, 0), 40), (node(2, 0), 22), (node(3, 0), 34), (node(3, 1), 35), (node(5, 0), 50)]));
+        assert_eq!(second.len(), 5);
+        // The second edit's rows first among the appended ones.
+        let live = second.live_kept();
+        assert_eq!((second.value(live, 1), second.value(live + 1, 1), second.value(live + 2, 1)), (34, 35, 50));
+        for (r, (_, v)) in read.iter().enumerate() {
+            assert_eq!(second.lookup(1, &[*v]).map(|f| f.len()), Some(1), "row {r}");
+        }
+        let now = second.ranges_now();
+        for (o, want) in [(2, vec![22]), (3, vec![34, 35]), (4, vec![40]), (5, vec![50])] {
+            let (start, n) = now[&o];
+            assert_eq!((start..start + n).map(|r| second.value(r as usize, 1)).collect::<Vec<_>>(), want, "owner {o}");
+        }
+        assert!(!now.contains_key(&1));
+        // A session's first source's ranges are found by one pass; a Layered's are its own.
+        let found = session_ranges(&kept, 0).unwrap();
+        assert_eq!(found.get(&1), Some(&(0, 2)));
+        let as_source: Arc<dyn Source> = Arc::new(second);
+        assert_eq!(session_ranges(&as_source, 0).unwrap().get(&3).map(|r| r.1), Some(2));
     }
 
     /// Only the documents whose rows differ are compared, and their rows new and gone are exactly the diff: with
@@ -1938,7 +2027,51 @@ pub(in crate::code_rule_dsl) struct KeptInput {
 /// Each owner's rows in a kept input: (first row, rows).
 pub(in crate::code_rule_dsl) type Ranges = rustc_hash::FxHashMap<i64, (u32, u32)>;
 
+/// Each owner's rows (by column `g`) in a session's bound input, as a range: a patched one's from its layers
+/// (`Layered::ranges_now`), else found by one pass over the owner column, once a session (its next input is a
+/// `Layered`). `None` when an owner's rows are not one run of rows.
+pub(in crate::code_rule_dsl) fn session_ranges(source: &Arc<dyn Source>, g: usize) -> Option<Arc<Ranges>> {
+    if let Some(l) = source.as_any().and_then(|a| a.downcast_ref::<Layered>()) {
+        return Some(Arc::clone(l.ranges_now()));
+    }
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "a session input's owners' ranges, found once".into());
+    let mut out = Ranges::default();
+    let (mut cur, mut start, mut ok) = (None::<i64>, 0usize, true);
+    let mut next = 0usize;
+    source.documents_of(g, &mut |r, d| {
+        if !ok {
+            return;
+        }
+        if r != next {
+            ok = false;
+            return;
+        }
+        next += 1;
+        if cur != Some(d) {
+            if let Some(c) = cur {
+                out.insert(c, (start as u32, (r - start) as u32));
+            }
+            if out.contains_key(&d) {
+                ok = false;
+                return;
+            }
+            (cur, start) = (Some(d), r);
+        }
+    });
+    if let Some(c) = cur.filter(|_| ok) {
+        out.insert(c, (start as u32, (next - start) as u32));
+    }
+    (ok && next == source.len()).then(|| Arc::new(out))
+}
+
 impl KeptInput {
+    /// A session's input as its last run bound it: its documents and ranges held already (`session_ranges`).
+    pub(in crate::code_rule_dsl) fn held(source: Arc<dyn Source>, docs: Arc<DocDigests>, ranges: Arc<Ranges>) -> KeptInput {
+        let digest = digest_of_docs(&docs);
+        let laid = LaidOut { docs, ranges, owners: Vec::new() };
+        let layout = InputLayout { rel: String::new(), frame: None, digest, atoms: None, granules: Vec::new(), laid: std::sync::OnceLock::from(Ok(laid)) };
+        KeptInput { source, layout: Arc::new(layout), digest, stats: None }
+    }
     /// An input whose documents and ranges are held already (a test's).
     #[cfg(test)]
     pub(in crate::code_rule_dsl) fn laid(source: Arc<dyn Source>, docs: DocDigests, ranges: Ranges) -> KeptInput {
