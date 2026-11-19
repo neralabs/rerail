@@ -1075,6 +1075,55 @@ Resolved(@place("git", 1), e, o) :- git_revision(_, e, o).
     expect(new (loadNativeBinding().GitRevisionSource)(root, ":/second", "expressions").commit).toBe(expected);
   }, 30_000);
 
+  it("resolves push selectors against the configured local tracking destinations", async () => {
+    const root = checkout(), upstream = git(root, "rev-parse", "HEAD");
+    git(root, "commit", "--allow-empty", "-qm", "fork tip");
+    const fork = git(root, "rev-parse", "HEAD");
+    for (const [remote, tip] of [["origin", upstream], ["fork", fork]] as const) {
+      git(root, "remote", "add", remote, "../" + remote);
+      git(root, "update-ref", `refs/remotes/${remote}/main`, tip);
+    }
+    git(root, "config", "branch.main.remote", "origin");
+    git(root, "config", "branch.main.merge", "refs/heads/main");
+    git(root, "config", "branch.main.pushRemote", "fork");
+    const Source = loadNativeBinding().GitRevisionSource;
+    const compare = (expr: string) => {
+      const expected = spawnSync("git", ["rev-parse", "--verify", "--quiet", expr], { cwd: root, encoding: "utf8" });
+      expect(expected.error).toBeUndefined();
+      const read = () => new Source(root, expr, "push").commit;
+      if (expected.status === 0) expect(read(), expr).toBe(expected.stdout.trim());
+      else expect(read, expr).toThrow();
+    };
+    const query = join(root, "push.rr");
+    writeFileSync(query, `#include "git.rr"
+.policy "push" revision 1
+.violation Seen(at: span, result: symbol) "{result}"
+git_revision_request(r,"@{push}") :- git_root_repo(r).
+Seen(@place("git",1),c) :- git_revision(_,"@{push}",c).
+Seen(@place("git",1),reason) :- git_revision_error(_,"@{push}",reason).
+`);
+    for (const [mode, result] of [["simple", "invalid-revision"], ["current", fork], ["upstream", upstream]] as const) {
+      git(root, "config", "push.default", mode);
+      for (const expr of ["@{push}", "main@{push}", "@{upstream}"]) compare(expr);
+      const report = await scan(root, { rr: [query] });
+      expect(report.failures).toEqual([]);
+      expect(report.violations.map(row => row.message)).toEqual([result]);
+    }
+    for (const mode of ["nothing", "matching"]) {
+      git(root, "config", "push.default", mode);
+      compare("@{push}");
+    }
+    git(root, "config", "push.default", "simple");
+    git(root, "config", "branch.main.pushRemote", "origin");
+    compare("@{push}");
+    git(root, "config", "branch.main.pushRemote", "fork");
+    git(root, "config", "remote.fork.push", "refs/heads/main:refs/heads/main");
+    compare("@{push}");
+    git(root, "config", "--unset", "remote.fork.push");
+    git(root, "config", "remote.fork.mirror", "true");
+    compare("@{push}");
+  }, 30_000);
+
   it("compares previous-branch reflogs and ambiguous tree paths with Git", async () => {
     const root = checkout();
     mkdirSync(join(root, "src", "two..dots"), { recursive: true });

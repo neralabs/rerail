@@ -159,6 +159,43 @@ fn previous_checkout(repo: &Repository, number: usize) -> Result<gix::bstr::BStr
         .ok_or_else(|| message("No matching prior checkout").raise())
 }
 
+fn tracking_name(reference: &gix::Reference<'_>, direction: gix::remote::Direction) -> Result<gix::refs::FullName> {
+    reference.remote_tracking_ref_name(direction).ok_or_else(|| message("No Git tracking branch is configured").raise())?
+}
+
+/// Resolve the local tracking ref for a push destination. Git compares the local
+/// refs for simple mode, including the remotes' fetch mappings.
+fn push_tracking_name(repo: &Repository, reference: &gix::Reference<'_>) -> Result<gix::refs::FullName> {
+    use gix::push::Default as PushMode;
+    use gix::remote::Direction::{Fetch, Push};
+    let remote = reference.remote(Push).ok_or_else(|| message("No Git push remote is configured").raise())??;
+    if !remote.refspecs(Push).is_empty() {
+        return tracking_name(reference, Push);
+    }
+    let config = repo.config_snapshot();
+    let mirror = remote.name().and_then(|name| name.as_symbol())
+        .and_then(|name| config.boolean(format!("remote.{name}.mirror").as_str())).unwrap_or(false);
+    let mode = if mirror { PushMode::Current } else {
+        config.string("push.default").map(|mode| gix::config::tree::Push::DEFAULT.try_into_default(mode))
+            .transpose()?.unwrap_or_default()
+    };
+    match mode {
+        PushMode::Nothing => return Err(message("No destination for push.default=nothing").raise()),
+        PushMode::Upstream => return tracking_name(reference, Fetch),
+        _ => {}
+    }
+    let specs = gix::refspec::MatchGroup::from_fetch_specs(remote.refspecs(Fetch).iter().map(|spec| spec.to_ref()));
+    let null_id = repo.object_hash().null();
+    let item = gix::refspec::match_group::Item { full_ref_name: reference.name().as_bstr(), target: &null_id, object: None };
+    let mapping = specs.match_lhs(std::iter::once(item)).mappings.into_iter().find_map(|m| m.rhs)
+        .ok_or_else(|| message("No Git tracking ref matches the push destination").raise())?;
+    let current = gix::refs::FullName::try_from(mapping.into_owned()).map_err(ErrorExt::raise)?;
+    if matches!(mode, PushMode::Simple) && current != tracking_name(reference, Fetch)? {
+        return Err(message("The simple push and upstream tracking refs differ").raise());
+    }
+    Ok(current)
+}
+
 struct Revision<'repo> {
     anchor_name: &'repo str,
     selects_path: bool,
@@ -451,13 +488,10 @@ impl delegate::Revision for Revision<'_> {
         if reference.name() == "HEAD" {
             reference.follow_to_object()?;
         }
-        let direction = match kind {
-            delegate::SiblingBranch::Upstream => gix::remote::Direction::Fetch,
-            delegate::SiblingBranch::Push => gix::remote::Direction::Push,
+        let tracking = match kind {
+            delegate::SiblingBranch::Upstream => tracking_name(&reference, gix::remote::Direction::Fetch)?,
+            delegate::SiblingBranch::Push => push_tracking_name(self.repo, &reference)?,
         };
-        let tracking = reference
-            .remote_tracking_ref_name(direction)
-            .ok_or_else(|| message("No Git tracking branch is configured").raise())??;
         self.find_ref(tracking.as_ref().as_bstr())
     }
 }
