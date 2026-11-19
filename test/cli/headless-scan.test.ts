@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -1018,22 +1018,33 @@ Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
   it("retries relational evaluation in memory when its selected cache fails", async () => {
     const root = checkout();
     const home = `${root}-home`;
-    const broken = join(home, "broken.sqlite");
+    const cache = join(home, "cache");
+    const store = join(cache, "content.sqlite");
     const policy = join(home, "committed.rr");
-    mkdirSync(home, { recursive: true });
-    writeFileSync(broken, "this is not a database");
+    mkdirSync(cache, { recursive: true });
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
     writeFileSync(policy, `#include "core.rr"\n.policy "committed" revision 1\n.language python\n.violation Seen(at: node) "needle"\nSeen(n) :- kind(n, "identifier"), text(n, "NEEDLE").\n`);
     writeFileSync(join(root, "a.py"), "# changed after the commit\n");
     const binding = loadNativeBinding();
     const run = binding.scanRrPoliciesAsync;
-    const failure = vi.spyOn(binding, "scanRrPoliciesAsync").mockImplementation((paths, root, _store, ...args) =>
-      run(paths, root, broken, ...args));
+    const failure = vi.spyOn(binding, "scanRrPoliciesAsync").mockImplementation(async (...args) => {
+      expect(args[2]).toBe(store);
+      renameSync(cache, cache + ".saved");
+      try {
+        mkdirSync(cache);
+        writeFileSync(store, "this is not a database");
+        return await run(...args);
+      } finally {
+        rmSync(cache, { recursive: true, force: true });
+        renameSync(cache + ".saved", cache);
+      }
+    });
     try {
       const report = await scan(root, { revision: "HEAD", analysisScope: "relational", rr: [policy] });
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
       expect(report.violations.map(finding => finding.path)).toEqual(["a.py"]);
       expect(report.cacheWarnings).toEqual([expect.stringMatching(/file is not a database/u)]);
-    } finally { failure.mockRestore(); }
+    } finally { failure.mockRestore(); vi.unstubAllEnvs(); }
   });
 
   it("retries unreadable stored results against the same source and policy", async () => {
@@ -1223,6 +1234,21 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
       try { expect(read()).toBe("unavailable"); }
       finally { chmodSync(store, 0o600); }
       expect(read()).toBe("true");
+      loadNativeBinding().retireUpkeepUnder?.(root + "-home");
+      renameSync(store, store + ".saved");
+      try {
+        writeFileSync(store, "temporarily damaged SQLite header");
+        expect(read()).toBe("unavailable");
+      } finally { renameSync(store + ".saved", store); }
+      expect(read()).toBe("true");
+      const directory = dirname(store);
+      const mode = statSync(directory).mode;
+      chmodSync(directory, 0);
+      try {
+        const binding = loadNativeBinding();
+        expect(() => binding.deleteAnalysisScope(store, "unrelated", false)).toThrow(/permission denied/iu);
+        await expect(binding.collectAnalysisCacheAsync(store)).rejects.toThrow(/permission denied/iu);
+      } finally { chmodSync(directory, mode); }
     } finally { vi.unstubAllEnvs(); }
   });
 

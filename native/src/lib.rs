@@ -488,7 +488,7 @@ impl napi::Task for CollectAnalysisCache {
 
     fn compute(&mut self) -> Result<()> {
         let path = Path::new(&self.0);
-        if !path.exists() { return Ok(()); }
+        if !path.try_exists().map_err(|error| Error::from_reason(error.to_string()))? { return Ok(()); }
         let collect = || -> content_store::StoreResult<()> {
             let store = content_store::ContentStore::open(path)?;
             let policy = content_store::CorpusPolicy::default();
@@ -525,7 +525,8 @@ pub fn retire_upkeep_under(directory: String) {
 pub fn delete_analysis_scope(store_path: String, value: String, directory: bool, release: Option<String>) -> Result<()> {
     use content_store::analysis_scope;
     let path = std::path::Path::new(&store_path);
-    if !path.exists() && !(directory && release.as_deref().is_some_and(|id| id.contains(':'))) {
+    if !path.try_exists().map_err(|error| Error::from_reason(error.to_string()))?
+        && !(directory && release.as_deref().is_some_and(|id| id.contains(':'))) {
         return Ok(());
     }
     let store = content_store::ContentStore::open(path).map_err(|err| Error::new(Status::GenericFailure, err.to_string()))?;

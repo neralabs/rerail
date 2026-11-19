@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { and, eq, lte, sql } from "drizzle-orm";
 import { analysisScopeGeneration, analysisScopeReleaseProbes, analysisScopeReleases } from "../storage/schema.js";
 import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../storage/database.js";
@@ -101,8 +101,8 @@ export async function collectAnalysisCaches(databasePath: string): Promise<void>
   const failures: string[] = [];
   const { fallback, registered } = analysisStores(databasePath);
   for (const store of new Set([...fallback, ...registered.map(row => row.path)])) {
-    if (!existsSync(store)) continue;
     try {
+      if (statSync(store, { throwIfNoEntry: false }) === undefined) continue;
       assertContentStoreOwner(store);
       await loadNativeBinding().collectAnalysisCacheAsync(store);
     } catch (error) {

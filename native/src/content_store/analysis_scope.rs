@@ -142,38 +142,31 @@ fn scope_prefix(scope: &str) -> String {
 }
 
 /// A route from before the directory registry must have actual ownership rows.
-/// A file that never held a usable store has no such rows.
+/// Only a successful query can establish that an old store holds no matching rows.
 pub fn existing_directory_ownership(store: &Path, directory: &Path, home: &str) -> rusqlite::Result<bool> {
-    fn check(store: &Path, directory: &Path, home: &str) -> rusqlite::Result<bool> {
-        let db = rusqlite::Connection::open_with_flags(store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let legacy = directory_in(directory, None);
-        let scoped = directory_in(directory, Some(home));
-        let scoped_prefix = scope_prefix(&scoped);
-        let legacy_prefix = scope_prefix(&legacy);
-        for table in ["analysis_scope_manifest", "analysis_scope_snapshot", "analysis_scope_workspace_snapshot"] {
-            let exists: bool = db.query_row(
-                "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)", [table], |row| row.get(0),
-            )?;
-            if !exists {
-                continue;
-            }
-            let has_owner: bool = db.query_row(&format!(
-                "SELECT EXISTS (SELECT 1 FROM {table}
-                 WHERE scope = ?1 OR scope = ?2
-                    OR substr(scope,1,length(?3)) = ?3
-                    OR substr(scope,1,length(?4)) = ?4)"
-            ), (&scoped, &legacy, &scoped_prefix, &legacy_prefix), |row| row.get(0))?;
-            if has_owner {
-                return Ok(true);
-            }
+    let db = rusqlite::Connection::open_with_flags(store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let legacy = directory_in(directory, None);
+    let scoped = directory_in(directory, Some(home));
+    let scoped_prefix = scope_prefix(&scoped);
+    let legacy_prefix = scope_prefix(&legacy);
+    for table in ["analysis_scope_manifest", "analysis_scope_snapshot", "analysis_scope_workspace_snapshot"] {
+        let exists: bool = db.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)", [table], |row| row.get(0),
+        )?;
+        if !exists {
+            continue;
         }
-        Ok(false)
+        let has_owner: bool = db.query_row(&format!(
+            "SELECT EXISTS (SELECT 1 FROM {table}
+             WHERE scope = ?1 OR scope = ?2
+                OR substr(scope,1,length(?3)) = ?3
+                OR substr(scope,1,length(?4)) = ?4)"
+        ), (&scoped, &legacy, &scoped_prefix, &legacy_prefix), |row| row.get(0))?;
+        if has_owner {
+            return Ok(true);
+        }
     }
-    match check(store, directory, home) {
-        Err(error) if matches!(error.sqlite_error_code(),
-            Some(rusqlite::ErrorCode::NotADatabase)) => Ok(false),
-        result => result,
-    }
+    Ok(false)
 }
 
 pub fn acquisition_time() -> i64 {
