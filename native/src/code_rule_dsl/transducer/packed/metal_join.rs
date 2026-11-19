@@ -2818,20 +2818,24 @@ impl Batch {
                 return Err(Error::BackendCapacity);
             }
             // A view's relation holds no values (its rows are read through the view's reads): a new one has room.
+            // Either is kept by the batch until its work, which builds the index into it, completes (Q253: a fresh
+            // relation dropped with its stage's handle gave back its index while the GPU built it).
             if let Some(view) = &rel.view {
-                let fresh = DevRel::view(rel.cols, rel.rows, view.clone())?;
+                let fresh = std::rc::Rc::new(DevRel::view(rel.cols, rel.rows, view.clone())?);
+                self.read.push(fresh.clone());
                 let ix = self.index(&fresh, cols)?;
-                return Ok(DevIndex { moved: Some(std::rc::Rc::new(fresh)), ..ix });
+                return Ok(DevIndex { moved: Some(fresh), ..ix });
             }
 // copy (0353 step 6): a second key's index copies the relation. It goes: a relation is made with room for
 // the indexes its readers probe (decision 0353).
             static MOVED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a second key's index (DevIndex::moved)");
             MOVED.copied(8 * rel.cols * rel.rows);
-            let copy = DevRel::empty(rel.cols, rel.rows)?;
+            let copy = std::rc::Rc::new(DevRel::empty(rel.cols, rel.rows)?);
+            self.read.push(copy.clone());
             let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
             self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
             let ix = self.index(&copy, cols)?;
-            return Ok(DevIndex { moved: Some(std::rc::Rc::new(copy)), ..ix });
+            return Ok(DevIndex { moved: Some(copy), ..ix });
         };
         let n = rel.rows;
         let buffer = bound(&home)?;
@@ -3212,6 +3216,33 @@ pub mod tests {
                 ((x >> 33) as i64).rem_euclid(modulus) + (3 << 32)
             })
             .collect()
+    }
+
+    /// Q253: a relation `Batch::index` moves for an index (its directory full, or its block) is the batch's until its
+    /// work, which builds the index into it, completes: a stage's handle to it dropped meanwhile does not give back
+    /// its relation, and the index the batch marks built is still its own.
+    #[test]
+    fn a_relation_moved_for_an_index_lives_until_its_batch_is_done() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let n = 1000;
+        let cols: Vec<Vec<i64>> = (0..4).map(|c| rows(n, 11 + c, 50)).collect();
+        let rel = DevRel::upload(4, n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap();
+        let mut batch = Batch::new().unwrap();
+        let keys: [&[usize]; 9] = [&[0], &[1], &[2], &[3], &[0, 1], &[0, 2], &[0, 3], &[1, 2], &[1, 3]];
+        let mut moved = None;
+        for key in keys {
+            let ix = batch.index(&rel, key).unwrap();
+            if let Some(m) = ix.moved.clone() {
+                moved = Some(m);
+                break;
+            }
+        }
+        let moved = moved.expect("a key past the relation's directory moves it");
+        assert!(std::rc::Rc::strong_count(&moved) >= 2, "the batch keeps the relation it moved");
+        drop(moved);
+        batch.finish().expect("its index built into the relation it moved, still held");
     }
 
     /// A two-stage plan on the device against the same plan by nested loops: a scan of `a` (slots 0, 1), a join of
