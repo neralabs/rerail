@@ -360,7 +360,8 @@ fn exclude_stack(
 /// again only once the file's modification time is later, but Git writes the index to a new file
 /// and renames it over the old one, and a second write within one step of the file system's clock
 /// keeps the first one's time: the stamp tells that new file from the one read where it can, and
-/// the checksum Git writes at the end of the index tells it where the stamp cannot.
+/// the checksum Git writes at the end of the index tells it where the stamp cannot, or, where Git
+/// writes none (`index.skipHash`), the bytes the index was decoded from.
 struct IndexFile {
     path: PathBuf,
     /// What the index's volume lets a stamp tell, found once per reader.
@@ -369,6 +370,10 @@ struct IndexFile {
     /// that stamp could not tell a later write from it: then the next question compares the
     /// checksum at the file's end with the one read, and reads the index again when it differs.
     stamp: Option<Option<FileStamp>>,
+    /// The digest of the bytes the index was decoded from, where they end with no checksum: a
+    /// question whose stamp is not kept compares the file's bytes with it in place of the
+    /// checksum. `None` where the repository's own open read the index.
+    digest: Option<u64>,
     file: gix::index::File,
 }
 
@@ -382,13 +387,9 @@ impl IndexFile {
         let stamp = volume.keeps(FileStamp::of(&path));
         #[cfg(test)]
         INDEX_READS.with(|reads| reads.set(reads.get() + 1));
-        let file = match repository.open_index() {
-            Ok(file) => file,
-            Err(_) if !path.exists() => gix::index::File::from_state(
-                gix::index::State::new(repository.object_hash()),
-                path.clone(),
-            ),
-            Err(error) => return Err(format!("cannot read Git index: {error}")),
+        let (file, digest) = match read_unhashed(repository, &path) {
+            Some((file, digest)) => (file, Some(digest)),
+            None => (open_index(repository, &path)?, None),
         };
         #[cfg(test)]
         tests::after_index_read();
@@ -396,36 +397,56 @@ impl IndexFile {
             stamp,
             path,
             volume,
+            digest,
             file,
         })
     }
 
-    /// Whether the file still holds the index read: its stamp equals the one kept, or it ends with
-    /// the checksum read, which Git computes over every byte before it. A stamp that tells its
-    /// file is kept from then on, so a question costs a stat again.
+    /// Whether the file still holds the index read: its stamp equals the one kept, or its bytes
+    /// are the ones read ([`Self::same_bytes`]). A stamp that tells its file is kept from then on,
+    /// so a question costs a stat again.
     fn unchanged(&mut self) -> bool {
         let now = FileStamp::of(&self.path);
         if now.is_some() && self.stamp == now {
             return true;
         }
-        // Whether the stamp tells a later write is decided by the clock before the checksum is
+        // Whether the stamp tells a later write is decided by the clock before the bytes are
         // read, as a read decides it before the index is read.
         let kept = self.volume.keeps(now);
-        if !self.same_checksum() {
+        if !self.same_bytes() {
             return false;
         }
         self.stamp = kept;
         true
     }
 
-    /// Whether the file ends with the checksum of the index read; never where Git wrote none
-    /// (`index.skipHash`), where the index is read again.
-    fn same_checksum(&self) -> bool {
-        self.file.checksum().is_some_and(|read| {
-            let read = read.as_bytes();
-            trailing_bytes(&self.path, read.len()).is_some_and(|now| now == read)
-        })
+    /// Whether the file holds the bytes the index was read from: it ends with the checksum read,
+    /// which Git computes over every byte before it, or, where Git wrote none, its bytes have the
+    /// digest of those decoded. Never where neither was read: an index Git wrote since a read of
+    /// no file, or one decoded from no bytes of its own.
+    fn same_bytes(&self) -> bool {
+        match (self.file.checksum(), self.digest) {
+            (Some(read), _) => same_trailing_bytes(&self.path, read.as_bytes()),
+            (None, Some(read)) => same_digest(&self.path, read),
+            (None, None) => false,
+        }
     }
+}
+
+/// Whether `path` ends with `read`.
+fn same_trailing_bytes(path: &Path, read: &[u8]) -> bool {
+    let now = trailing_bytes(path, read.len());
+    #[cfg(test)]
+    tests::after_index_read();
+    now.is_some_and(|now| now == read)
+}
+
+/// Whether `path`'s bytes have the digest `read`.
+fn same_digest(path: &Path, read: u64) -> bool {
+    let now = std::fs::read(path);
+    #[cfg(test)]
+    tests::after_index_read();
+    now.is_ok_and(|now| digest(&now) == read)
 }
 
 /// The last `len` bytes of `path`; `None` where it cannot be read or is shorter.
@@ -435,9 +456,56 @@ fn trailing_bytes(path: &Path, len: usize) -> Option<Vec<u8>> {
     file.seek(SeekFrom::End(-i64::try_from(len).ok()?)).ok()?;
     let mut bytes = vec![0; len];
     file.read_exact(&mut bytes).ok()?;
-    #[cfg(test)]
-    tests::after_index_read();
     Some(bytes)
+}
+
+/// `repository`'s index read by its own open, which compares the checksum and reads a shared
+/// index; an empty one where there is no file.
+fn open_index(
+    repository: &gix::Repository,
+    path: &Path,
+) -> std::result::Result<gix::index::File, String> {
+    match repository.open_index() {
+        Ok(file) => Ok(file),
+        Err(_) if !path.exists() => Ok(gix::index::File::from_state(
+            gix::index::State::new(repository.object_hash()),
+            path.to_path_buf(),
+        )),
+        Err(error) => Err(format!("cannot read Git index: {error}")),
+    }
+}
+
+/// The index at `path` decoded from one read of its bytes, with their digest, where Git wrote no
+/// checksum at their end (`index.skipHash`), so a question compares the file's bytes with the
+/// ones decoded and never answers by others. `None` where the file ends with a checksum, names a
+/// shared index (`core.splitIndex`), or cannot be read or decoded: the repository's own open
+/// reads it then.
+fn read_unhashed(repository: &gix::Repository, path: &Path) -> Option<(gix::index::File, u64)> {
+    let kind = repository.object_hash();
+    let bytes = unhashed_bytes(path, kind.len_in_bytes())?;
+    // On the caller's thread, as a question is answered. The decode keeps a time for the checks
+    // of entries' stats against the index's, which no question makes: the time of now.
+    let options = gix::index::decode::Options {
+        thread_limit: Some(1),
+        ..Default::default()
+    };
+    let timestamp = gix::index::State::new(kind).timestamp();
+    let (state, _) = gix::index::State::from_bytes(&bytes, timestamp, kind, options).ok()?;
+    if state.link().is_some() {
+        return None;
+    }
+    Some((gix::index::File::from_state(state, path), digest(&bytes)))
+}
+
+/// `path`'s bytes where they end with `len` zero bytes in place of a checksum; `None` otherwise.
+/// The end is read first, so an index with a checksum is read whole only by the repository's open.
+fn unhashed_bytes(path: &Path, len: usize) -> Option<Vec<u8>> {
+    let unhashed = |end: &[u8]| end.iter().all(|&byte| byte == 0);
+    if !trailing_bytes(path, len).is_some_and(|end| unhashed(&end)) {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    unhashed(&bytes[bytes.len().checked_sub(len)?..]).then_some(bytes)
 }
 
 #[cfg(test)]
@@ -458,15 +526,16 @@ enum Volume {
     /// clock has left the steps of its times ([`FileStamp::tells`]).
     Local,
     /// File times come from another machine's clock (NFS, SMB, 9p, FUSE and a virtual machine's
-    /// shared folder among them), which this one cannot read: no stamp is kept, so each question
-    /// compares the index's checksum.
+    /// shared folder among them), which this one cannot read, so nothing tells by time: no stamp
+    /// of a file is kept, and each question compares the index's checksum, or its bytes where Git
+    /// wrote none. A stat that finds no file is kept, which tells by no time.
     Remote,
 }
 
 impl Volume {
     /// `stamp`, from [`FileStamp::of`], where it tells its file from every later one on this
-    /// volume; `None` where it cannot: a stat refused, a time the file clock has not left, or a
-    /// volume whose times come from another clock.
+    /// volume, and a stamp of no file on every volume; `None` where it cannot: a stat refused, a
+    /// time the file clock has not left, or a volume whose times come from another clock.
     fn keeps(self, stamp: Option<Option<FileStamp>>) -> Option<Option<FileStamp>> {
         match self {
             Self::Unique => stamp,
@@ -474,7 +543,7 @@ impl Volume {
                 let now = file_clock();
                 stamp.filter(|stamp| stamp.as_ref().is_none_or(|file| file.tells(now)))
             }
-            Self::Remote => None,
+            Self::Remote => stamp.filter(Option::is_none),
         }
     }
 
@@ -646,8 +715,8 @@ const REMOTE_FILE_SYSTEMS: [u32; 15] = [
 /// and inode on Unix; volume serial and file index on Windows; none under WASI), which every write
 /// of Git's changes, and its modification time and size, which a write in place changes. All three
 /// come from the one query a stat makes, so a question costs what it cost before. Git writes the
-/// index to a new file and renames it over the old one; where a volume gives an identity again (ext4
-/// gives a freed inode number to the next new file at once), two writes within one step of the
+/// index to a new file and renames it over the old one; where a volume gives an identity again
+/// (ext4 gives a freed inode number to the next new file at once), two writes within one step of the
 /// file system's clock can land the second on the identity of the file read, at its size and
 /// time. That needs the read taken within the step, so there such a stamp is not kept
 /// ([`Volume::keeps`]) and nothing is held open. A tool can also set a file's time back to the one
@@ -2147,11 +2216,10 @@ pub mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// Under `index.skipHash` Git writes no checksum, so a question whose stamp is not kept reads
-    /// the index again. A Git that writes one there anyway leaves the case nothing to check.
-    #[test]
-    fn reads_the_index_again_where_git_writes_no_checksum() {
-        let (root, index) = two_entry_checkout("skip-hash");
+    /// A checkout whose index Git wrote under `index.skipHash`, with no checksum at its end;
+    /// `None`, the checkout removed, where this Git writes one there anyway.
+    fn checkout_with_no_index_checksum(name: &str) -> Option<(PathBuf, PathBuf)> {
+        let (root, index) = two_entry_checkout(name);
         git(&root, &["config", "index.skipHash", "true"]);
         git(&root, &["add", "-f", "gen/t.py"]);
         git(&root, &["rm", "--cached", "-q", "gen/t.py"]);
@@ -2159,19 +2227,69 @@ pub mod tests {
         if bytes[bytes.len() - 20..] != [0; 20] {
             eprintln!("this Git writes a checksum under index.skipHash");
             std::fs::remove_dir_all(root).unwrap();
-            return;
+            return None;
         }
+        Some((root, index))
+    }
+
+    /// `questions` questions about `gen/t.py`, each answered `ignored`, and the index reads they
+    /// made.
+    fn reads_over(ignore: &mut GitIgnore, questions: usize, ignored: bool) -> usize {
+        let reads = index_reads();
+        for _ in 0..questions {
+            assert_eq!(ignore.ignored("gen/t.py", false).unwrap(), ignored);
+        }
+        index_reads() - reads
+    }
+
+    /// Under `index.skipHash` Git writes no checksum, so a question whose stamp is not kept
+    /// compares the file's bytes with those the index was read from: questions read the index
+    /// again only once Git writes it. A Git that writes a checksum there anyway leaves the case
+    /// nothing to check.
+    #[test]
+    fn reads_an_index_with_no_checksum_again_only_once_its_bytes_change() {
+        let Some((root, index)) = checkout_with_no_index_checksum("skip-hash") else {
+            return;
+        };
         set_modified(&index, modified(&index) + Duration::from_secs(3_600));
         let _seams = Seams::new().volume(Volume::Local);
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
-        assert!(ignore.ignored("gen/t.py", false).unwrap());
-        let reads = index_reads();
-        assert!(ignore.ignored("gen/t.py", false).unwrap());
-        assert_eq!(
-            index_reads(),
-            reads + 1,
-            "no checksum to compare: read again"
+        assert_eq!(reads_over(&mut ignore, 100, true), 0, "the same bytes");
+        git(&root, &["add", "-f", "gen/t.py"]);
+        assert_eq!(reads_over(&mut ignore, 100, false), 1, "Git's write, read once");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The same on a volume whose times come from another machine's clock, where no stamp of a file
+    /// is kept: nothing tells by time there, so every question compares the bytes, and none
+    /// decodes the index or makes the stack again while they are the same.
+    #[test]
+    fn reads_an_index_with_no_checksum_again_only_once_its_bytes_change_on_a_share() {
+        let Some((root, _)) = checkout_with_no_index_checksum("skip-hash-remote") else {
+            return;
+        };
+        let _seams = Seams::new().volume(Volume::Remote);
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert_eq!(reads_over(&mut ignore, 100, true), 0, "the same bytes");
+        git(&root, &["add", "-f", "gen/t.py"]);
+        assert_eq!(reads_over(&mut ignore, 100, false), 1, "Git's write, read once");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// No index file is told by a stat on any volume, by no time: questions on a share read no
+    /// index until Git writes one.
+    #[test]
+    fn keeps_the_stamp_of_no_index_on_a_volume_whose_times_come_from_another_clock() {
+        let root = fixture(
+            "remote-no-index",
+            &[(".gitignore", "gen/\n"), ("gen/t.py", "")],
         );
+        git(&root, &["init", "--initial-branch=main"]);
+        let _seams = Seams::new().volume(Volume::Remote);
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert_eq!(reads_over(&mut ignore, 100, true), 0, "no index all along");
+        git(&root, &["add", "-f", "gen/t.py"]);
+        assert_eq!(reads_over(&mut ignore, 100, false), 1, "Git's index, read once");
         std::fs::remove_dir_all(root).unwrap();
     }
 
