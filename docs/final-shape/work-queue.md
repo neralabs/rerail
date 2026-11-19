@@ -2813,6 +2813,18 @@ submitted" now hold device memory at once.
     headroom, plans replanned when slow, the vocabulary's racing batches, `declines` by job walls). Next: two
     profiled runs at one forced chunking, a quiet host and a loaded one, and a diff of their decisions and spans'
     calls; then an A/B is meaningful only on an idle host or with that cause removed.
+  - (3, ab73: M3, t66, 28,600-node chunks, one run alone and one beside a copy of itself) Quiet 737.7 G / 17
+    chunks, loaded 706.3 G / 18; the default-chunked warm-up 611.0 G / 9. The joins' rows are the same in both
+    (323.96 M vs 323.24 M in, 411.97 M vs 411.27 M out, 9,107 vs 9,091 stratum runs), so at one chunking the spread
+    is 4%, under the chunk count's effect (~12 G a chunk: 611 G at 9 chunks, 706-738 G at 17-18). The quiet run's
+    joins allocated 19.8 GB own against 16.1 GB, at the same rows: not attributable, as below. The wall times
+    (51 s alone, 27 s loaded) say the M3 had other work during the "quiet" run: a host's load is not ours to set.
+  - (accounting, what blocks placing the 12 G) A span's own CPU and allocation include rayon's par_iter pieces its
+    thread steals while it waits (a join's sort, the vocabulary's `par_iter`): pool jobs (`threads::spawn_in`) open
+    their own spans and are subtracted, morsels included (0.6-0.8 s), but a par_iter's pieces are under no span.
+    `profile::carried` names such pieces only on a thread with no span open, the case that misses a steal. The
+    fix: `carried` opens its span when the thread's top span is not the caller's, and the heavy par_iters
+    (`Searchers::evaluate`, `runs::sort_unstable_par`'s callers) run through it, by pieces, not items.
   - (accounting) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
