@@ -57,7 +57,7 @@ describe("engine service answers a hook no longer waits for", () => {
     await vi.waitFor(() => expect(queued?.req.readableEnded).toBe(true), { timeout: task.timeout, interval: 10 });
     await new Promise<void>(done => setImmediate(done));
     // The hook goes as its answer is written, before the daemon can read its close: the write is refused.
-    goneAtItsAnswer(answer, stop.destroy);
+    atItsAnswer(answer, stop.destroy);
     service.finishCheck();
     expect(contents(await next)).toEqual([STEER]);
     expect(await ingestEngineEvent(service.engine, prompt("prompt-3"))).toEqual([]);
@@ -117,7 +117,7 @@ describe("engine service answers a hook no longer waits for", () => {
     await service.closeIdleSessions();
     const responses = serverResponses(1);
     const gone = hook(service.socketPath, prompt("prompt-2", SESSION, service.root));
-    goneAtItsAnswer((await responses)[0], gone.destroy);
+    atItsAnswer((await responses)[0], gone.destroy);
     await gone.closed;
     expect(contents(await ingestEngineEvent(service.engine, prompt("prompt-3")))).toEqual([STEER]);
     expect(await ingestEngineEvent(service.engine, prompt("prompt-4"))).toEqual([]);
@@ -129,7 +129,7 @@ describe("engine service answers a hook no longer waits for", () => {
     await first.steer(SESSION, STEER);
     const responses = serverResponses(1);
     const gone = hook(first.socketPath, prompt("prompt-1"));
-    goneAtItsAnswer((await responses)[0], gone.destroy);
+    atItsAnswer((await responses)[0], gone.destroy);
     await gone.closed;
     await first.close();
     const second = await checkingService({ root: first.root });
@@ -171,12 +171,11 @@ describe("engine service answers a hook no longer waits for", () => {
     const service = await checkingService({ idleRuntimeMs: 0 });
     const responses = serverResponses(1);
     const ending = ingestEngineEvent(service.engine, { kind: "session-end", eventId: "end", sessionId: SESSION, session: { host: "claude-code", sessionId: SESSION, cwd: service.root } });
-    const [response] = await responses;
-    if (response === undefined) throw new Error("the server read no request");
-    // What the service holds when the answer has been handed to the connection: the session's runtime is gone.
-    const openWhenAnswered = new Promise<number>(done => response.once("finish", () => done(service.openRuntimes())));
+    // What the service holds as it writes the answer: the session's runtime is gone already.
+    let openWhenAnswered = -1;
+    atItsAnswer((await responses)[0], () => (openWhenAnswered = service.openRuntimes()));
     await ending;
-    expect(await openWhenAnswered).toBe(0);
+    expect(openWhenAnswered).toBe(0);
   });
 });
 
@@ -210,14 +209,14 @@ function serverResponses(count: number): Promise<ServerResponse[]> {
 }
 
 /**
- * Has `leave` run as the server writes `response`, in the same turn and before the write: the daemon writes the answer
- * before it can read that its client has gone.
+ * Has `act` run as the server writes `response`, in the same turn and before the write: a client that leaves then goes
+ * before the daemon can read that it has gone, and what `act` reads is what the service holds as it answers.
  */
-function goneAtItsAnswer(response: ServerResponse | undefined, leave: () => void): void {
+function atItsAnswer(response: ServerResponse | undefined, act: () => void): void {
   if (response === undefined) throw new Error("the server read no request");
   const end = response.end.bind(response);
   response.end = ((...args: Parameters<typeof end>) => {
-    leave();
+    act();
     return end(...args);
   }) as typeof response.end;
 }
