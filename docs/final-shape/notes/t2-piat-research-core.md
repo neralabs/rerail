@@ -69,7 +69,7 @@ Root: `Pulling-it-all-together/docs/rule-engine-direction/`. Sections are append
 
 ---
 
-## research/tape-v8-measurements.md (215 lines) + experiments/tape-v8/results/tables.md (67), read in full
+## research/tape-v8-measurements.md (215 lines) + experiments/tape-v8/results/tables.md (67; removed; at 7efcac9c67), read in full
 
 Corpora (:3): CPython 3.13 `Lib/`, the data-layer repository's `impl/`, rerail TS, Rust and PHP fixtures, **24.2M nodes**. Grammars are from crates.io, not Rerail's patched ones (caveat :196).
 

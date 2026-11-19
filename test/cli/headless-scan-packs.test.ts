@@ -7,7 +7,8 @@ import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import type { PackStore } from "../../src/setup/index.js";
 import { withExperiments } from "../support/environment/experiments.js";
-import { installPackDirectory } from "../support/installed-packs.js";
+import { installPackDirectory, versionOf } from "../support/installed-packs.js";
+import { repositoryPath } from "../support/oracles.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 
@@ -78,7 +79,13 @@ const published = realpathSync(mkdtempSync(join(tmpdir(), "rerail-published-pack
 afterAll(() => removeFolderSync(published));
 const ONE = writePack(join(published, "one"), "@neralabs/rerail-pack-needles", "1.0.0", { "needles-alpha": "ALPHA" });
 const TWO = writePack(join(published, "two"), "@neralabs/rerail-pack-needles", "2.0.0", { "needles-beta": "BETA" });
-const npm = registry({ "@neralabs/rerail-pack-needles@1.0.0": ONE, "@neralabs/rerail-pack-needles@2.0.0": TWO });
+const COMPLEXITY = repositoryPath("packs", "complexity");
+const COMPLEXITY_VERSION = versionOf(COMPLEXITY);
+const npm = registry({
+  "@neralabs/rerail-pack-needles@1.0.0": ONE,
+  "@neralabs/rerail-pack-needles@2.0.0": TWO,
+  [`@neralabs/rerail-pack-complexity@${COMPLEXITY_VERSION}`]: COMPLEXITY,
+});
 
 function writePacksFile(root: string, packs: unknown): void {
   mkdirSync(join(root, ".rerail"), { recursive: true });
@@ -288,5 +295,107 @@ describe("rerail scan with the packs a repository declares in .rerail/packs.json
     expect(runRuleApproveCommand(["@acme/rerail-pack-extra", "--repo", root], () => "usage", { stdout: { write: () => true } }, home.databasePath)).toBe(0);
     const approved = await scanIn(home, root, { packs: ["extra"], rulesRef: "HEAD" });
     expect(approved.rules.map(rule => [rule.ruleId, rule.mode])).toEqual([["extra-own", "steer"]]);
+  });
+});
+
+/** `count` copies of `line(index)`, one per line. */
+const lines = (count: number, line: (index: number) => string): string => Array.from({ length: count }, (_, index) => line(index + 1)).join("\n");
+
+/**
+ * A file per language of the complexity pack, holding one function per entry of `ccns` at that cyclomatic complexity:
+ * `ccn - 1` if statements, each one path more than the function's one.
+ */
+const COMPLEXITY_FILES: Record<string, { path: string; text: (ccns: readonly number[]) => string }> = {
+  python: { path: "src/ccn.py", text: ccns => ccns.map(ccn => `def f${ccn}(x):\n${lines(ccn - 1, at => `    if x == ${at}:\n        return ${at}`)}\n    return 0\n`).join("\n\n") },
+  typescript: { path: "src/ccn.ts", text: ccns => ccns.map(ccn => `export function f${ccn}(x: number): number {\n${lines(ccn - 1, at => `  if (x === ${at}) return ${at};`)}\n  return 0;\n}\n`).join("\n") },
+  javascript: { path: "src/ccn.js", text: ccns => ccns.map(ccn => `export function f${ccn}(x) {\n${lines(ccn - 1, at => `  if (x === ${at}) return ${at};`)}\n  return 0;\n}\n`).join("\n") },
+  php: { path: "src/Ccn.php", text: ccns => `<?php\n${ccns.map(ccn => `function f${ccn}(int $x): int\n{\n${lines(ccn - 1, at => `    if ($x === ${at}) {\n        return ${at};\n    }`)}\n    return 0;\n}\n`).join("\n")}` },
+  blade: {
+    path: "resources/views/ccn.blade.php",
+    text: ccns => `@php\n${ccns.map(ccn => `    $f${ccn} = function (int $x): int {\n${lines(ccn - 1, at => `        if ($x === ${at}) return ${at};`)}\n        return 0;\n    };`).join("\n")}\n@endphp\n<p>{{ $x }}</p>\n`,
+  },
+  rust: { path: "src/ccn.rs", text: ccns => ccns.map(ccn => `pub fn f${ccn}(x: u32) -> u32 {\n${lines(ccn - 1, at => `    if x == ${at} {\n        return ${at};\n    }`)}\n    0\n}\n`).join("\n") },
+  vue: {
+    path: "src/components/Ccn.vue",
+    text: ccns => `<script setup lang="ts">\n${ccns.map(ccn => `function f${ccn}(x: number): number {\n${lines(ccn - 1, at => `  if (x === ${at}) return ${at};`)}\n  return 0;\n}\n`).join("\n")}</script>\n\n<template>\n  <p>ccn</p>\n</template>\n`,
+  },
+  java: { path: "src/main/java/com/example/Ccn.java", text: ccns => `class Ccn {\n${ccns.map(ccn => `    int f${ccn}(int x) {\n${lines(ccn - 1, at => `        if (x == ${at}) {\n            return ${at};\n        }`)}\n        return 0;\n    }\n`).join("\n")}}\n` },
+};
+
+/** A committed checkout with a function at cyclomatic complexity 6, 7, 10 and 11 in each language, listing `packs`. */
+function complexityCheckout(packs: unknown): string {
+  const root = folder("rerail-declared-ceiling-");
+  git(root, "init", "--quiet", "--initial-branch=main");
+  for (const { path, text } of Object.values(COMPLEXITY_FILES)) {
+    mkdirSync(join(root, path, ".."), { recursive: true });
+    writeFileSync(join(root, path), text([6, 7, 10, 11]));
+  }
+  writePacksFile(root, packs);
+  git(root, "add", ".");
+  git(root, "commit", "--quiet", "-m", "seed");
+  return root;
+}
+
+const complexityPack = (config?: unknown): unknown => ({ id: "complexity", version: COMPLEXITY_VERSION, ...(config === undefined ? {} : { config }) });
+
+/** Per language, the complexity of each function the scan flagged, and every ceiling its messages name. */
+function flagged(report: ScanReport): { ccns: Record<string, number[]>; ceilings: string[] } {
+  expect(report.status).toBe("completed");
+  const ccns = Object.fromEntries(Object.entries(COMPLEXITY_FILES).map(([language, { path }]) => [language, report.violations
+    .filter(violation => violation.path === path)
+    .map(violation => Number(/has cyclomatic complexity (\d+),/u.exec(violation.message)?.[1]))
+    .sort((left, right) => left - right)]));
+  const ceilings = [...new Set(report.violations.map(violation => /over the ceiling of (\d+)\./u.exec(violation.message)?.[1] ?? violation.message))];
+  return { ccns, ceilings };
+}
+
+const everyLanguage = (ccns: number[]): Record<string, number[]> => Object.fromEntries(Object.keys(COMPLEXITY_FILES).map(language => [language, ccns]));
+
+describe("the complexity pack's ceiling, set in .rerail/packs.json", () => {
+  it("flags functions over 6 without config, and over the ceiling the file sets with it, in every language, naming the ceiling", async () => {
+    const root = complexityCheckout([complexityPack()]);
+    const home = freshHome();
+    expect(flagged(await scanIn(home, root))).toEqual({ ccns: everyLanguage([7, 10, 11]), ceilings: ["6"] });
+
+    writePacksFile(root, [complexityPack({ ceiling: 10 })]);
+    const configured = await scanIn(home, root);
+    expect(flagged(configured)).toEqual({ ccns: everyLanguage([11]), ceilings: ["10"] });
+    expect(configured.packs).toEqual([{ id: "complexity", packageName: "@neralabs/rerail-pack-complexity", version: COMPLEXITY_VERSION, from: "npm", config: { ceiling: 10 } }]);
+  });
+
+  it.each([0, 1.5, "10"])("fails the scan for a ceiling of %j, naming the file, the pack and the option", async ceiling => {
+    const root = complexityCheckout([complexityPack({ ceiling })]);
+    await expect(scanIn(freshHome(), root)).rejects.toThrow(
+      `.rerail/packs.json sets config.ceiling for @neralabs/rerail-pack-complexity@${COMPLEXITY_VERSION} to ${JSON.stringify(ceiling)}, which complexity-cyclomatic-`,
+    );
+  });
+
+  it("fails the scan for an option no rule of the pack declares, naming the file, the pack and the option", async () => {
+    const root = complexityCheckout([complexityPack({ ceiling: 10, max: 10 })]);
+    await expect(scanIn(freshHome(), root)).rejects.toThrow(
+      `.rerail/packs.json sets config.max for @neralabs/rerail-pack-complexity@${COMPLEXITY_VERSION}, which no rule of that pack declares (its rules declare ceiling)`,
+    );
+  });
+
+  it("takes the ceiling from the file at --rules-ref, so a change cannot raise the ceiling it is judged by", async () => {
+    const root = complexityCheckout([complexityPack({ ceiling: 10 })]);
+    const home = freshHome();
+    writePacksFile(root, [complexityPack({ ceiling: 20 })]);
+    git(root, "commit", "--quiet", "-am", "raise the ceiling");
+
+    expect(flagged(await scanIn(home, root))).toEqual({ ccns: everyLanguage([]), ceilings: [] });
+    const atBase = await scanIn(home, root, { rulesRef: "main~1" });
+    expect(flagged(atBase)).toEqual({ ccns: everyLanguage([11]), ceilings: ["10"] });
+    expect(atBase.packs.map(pack => pack.config)).toEqual([{ ceiling: 10 }]);
+  });
+
+  it("runs a --pack that replaces the file's packs at its defaults, not at the file's ceiling", async () => {
+    const root = complexityCheckout([complexityPack({ ceiling: 10 })]);
+    const home = freshHome();
+    installPackDirectory(COMPLEXITY, "@neralabs/rerail-pack-complexity", home.home, COMPLEXITY_VERSION);
+
+    const report = await scanIn(home, root, { packs: ["complexity"] });
+    expect(report.packs).toEqual([{ id: "complexity", packageName: "@neralabs/rerail-pack-complexity", version: COMPLEXITY_VERSION, from: "home" }]);
+    expect(flagged(report)).toEqual({ ccns: everyLanguage([7, 10, 11]), ceilings: ["6"] });
   });
 });
