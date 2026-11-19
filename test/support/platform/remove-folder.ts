@@ -125,21 +125,36 @@ export function runningIn(folder: string): string[] {
 function exitedUnreaped(child: ChildProcess): boolean {
   const pid = child.pid;
   if (pid === undefined) return false;
-  if (process.platform === "win32") {
-    try {
-      process.kill(pid, 0);
-      return false;
-    } catch (error) {
-      return error instanceof Error && "code" in error && error.code === "ESRCH";
-    }
-  }
-  if (process.platform !== "linux") return false;
+  if (process.platform === "win32") return signalFindsGone(pid);
+  return process.platform === "linux" && procShowsExited(pid);
+}
+
+/** Whether signal 0 finds no process at `pid` (`ESRCH`): on Windows, also one that exited while a handle to it is open. */
+function signalFindsGone(pid: number): boolean {
   try {
-    const status = readFileSync(`/proc/${pid}/status`, "utf8");
-    return /^State:\s*[ZX]/mu.test(status) && Number(/^Threads:\s*(\d+)/mu.exec(status)?.[1] ?? 1) <= 1;
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "ESRCH";
+  }
+}
+
+/** Whether `/proc/<pid>/status` shows the process exited, every thread of it ({@link exitedEveryThread}). */
+function procShowsExited(pid: number): boolean {
+  try {
+    return exitedEveryThread(readFileSync(`/proc/${pid}/status`, "utf8"));
   } catch {
     return false;
   }
+}
+
+/**
+ * `exitedEveryThread` of `src/engine/process-liveness.ts`, repeated, as this module loads no Rerail module
+ * ({@link REMOVAL_RETRIES}): whether the text of a Linux `/proc/<pid>/status` shows a process that has exited, every
+ * thread of it. `test/engine/process-liveness.test.ts` holds the two equal.
+ */
+export function exitedEveryThread(status: string): boolean {
+  return /^State:\s*[ZX]/mu.test(status) && Number(/^Threads:\s*(\d+)/mu.exec(status)?.[1] ?? 1) <= 1;
 }
 
 /** The codes of a removal Windows refused because something holds the folder, the ones `rm` retries. */

@@ -43,10 +43,8 @@ function signalState(pid: number, kill: ProcessSignal): ProcessState {
 /**
  * A process that has exited but was never reaped still answers signal 0. In a container without an init process
  * nothing reaps a detached daemon, so it stays a zombie for as long as the container runs: it holds no port, no socket
- * and no lock, and counts as gone. Its main thread alone is no such zombie: when it exits first, `/proc/<pid>/stat`
- * reads `Z` while the process's other threads still exit, holding its files, sockets and locks until the last one has.
- * The process is a zombie once `Threads` reads 1, the main thread that exited. Undefined on Linux when `/proc` has no
- * entry to read for `pid`: it was reaped since it answered, or `/proc` hides it or is not mounted.
+ * and no lock, and counts as gone ({@link exitedEveryThread}). Undefined on Linux when `/proc` has no entry to read for
+ * `pid`: it was reaped since it answered, or `/proc` hides it or is not mounted.
  */
 function isZombie(pid: number): boolean | undefined {
   if (process.platform !== "linux") return false;
@@ -56,6 +54,16 @@ function isZombie(pid: number): boolean | undefined {
   } catch {
     return undefined;
   }
+  return exitedEveryThread(status);
+}
+
+/**
+ * Whether `status`, the text of a Linux `/proc/<pid>/status`, shows a process that has exited, every thread of it. Its
+ * main thread alone exiting is not enough: `State` reads `Z` from then on while the process's other threads still exit,
+ * holding its files, sockets and locks until the last one has. The process has exited once `Threads` reads 1, the main
+ * thread that exited.
+ */
+export function exitedEveryThread(status: string): boolean {
   return /^State:\s*[ZX]/mu.test(status) && Number(/^Threads:\s*(\d+)/mu.exec(status)?.[1] ?? 1) <= 1;
 }
 

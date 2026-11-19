@@ -64,7 +64,8 @@ describe("removeFolder", () => {
     const exited = once(child, "exit");
     child.kill("SIGKILL");
     // No turn of the event loop comes while this loop runs, so Node cannot take the exit in: only the system shows it.
-    const deadline = Date.now() + 10_000;
+    // Within the test's 5 s.
+    const deadline = Date.now() + 3_000;
     while (runningIn(path).length > 0 && Date.now() < deadline) {
       // The process ends on the system's schedule.
     }
