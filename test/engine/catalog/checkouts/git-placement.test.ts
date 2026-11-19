@@ -330,7 +330,11 @@ describe("GIT_CEILING_DIRECTORIES, which stops Git's search only above the folde
   });
 });
 
-/** A checkout `inner` in a folder `between` of a repository in `edge`, which a repository `above` holds. */
+/**
+ * A checkout `inner` in a folder `between` of a folder `repo` holding an empty `.git` folder, below a folder `edge`,
+ * which a repository `above` holds: Git's search walks from `inner` through `edge` to `above` unless a ceiling or a
+ * change of device stops it before `edge`.
+ */
 interface EdgeLayout {
   readonly root: string;
   readonly edge: string;
@@ -343,8 +347,10 @@ interface EdgeLayout {
 async function belowAnEdge(): Promise<EdgeLayout> {
   const root = await temporaryRoot();
   const edge = join(repository(join(root, "above")), "edge");
-  const between = join(repository(join(edge, "repo")), "between");
+  const between = join(edge, "repo", "between");
   mkdirSync(join(between, "inner"), { recursive: true });
+  // An empty .git folder, which Git's search passes over, and where Rerail's check for a repository above ends.
+  mkdirSync(join(edge, "repo", ".git"));
   mkdirSync(join(edge, "outside"));
   mkdirSync(join(root, "elsewhere"));
   linkFolder(edge, join(root, "link"));
@@ -412,12 +418,85 @@ describe("the read before Git places a folder stops where Git's search for a rep
     if (gitStops !== undefined) expect(gitsAnswer(join(at.edge, "outside")).git, "Git's search past the edge").toBe(!gitStops);
     if (mounted === true) onAnotherDevice(at.edge);
     const before = vi.mocked(lstatSync).mock.calls.length;
-    expect(registryPlacements(at.inner)).toBe(1);
+    // Git's acceptance is kept for three lists; where Git's search stops below `above`, Git refuses at each.
+    expect(registryPlacements(at.inner)).toBe(gitsAnswer(at.inner).git ? 1 : 3);
     expect(searchReadsFrom(before, from(at)).length > 0, "a .git or a HEAD read in the stop or above").toBe(reads);
 
     // Every folder below the stop is read: one between the checkout and its repository that becomes one ends the acceptance.
     repository(at.between);
     expectGitsRegistries(at.inner);
+  });
+});
+
+/** The folders whose `.git` Rerail read since the `before`th lstat, sorted. */
+function gitEntriesReadIn(before: number): string[] {
+  const read = vi.mocked(lstatSync).mock.calls.slice(before).map(([path]) => resolve(String(path))).filter(path => basename(path) === ".git");
+  return [...new Set(read.map(path => dirname(path)))].sort();
+}
+
+/** `folder` and each folder above it up to `top`, sorted. */
+function foldersUpTo(folder: string, top: string): string[] {
+  const folders = [resolve(folder)];
+  while (folders.at(-1) !== resolve(top)) folders.push(dirname(folders.at(-1)!));
+  return folders.sort();
+}
+
+/** A folder at least six folders below the root of its file system, removed after the case. */
+async function deepRoot(): Promise<string> {
+  let root = await temporaryRoot();
+  while (resolve(root).split(/[\\/]/u).filter(Boolean).length < (process.platform === "win32" ? 7 : 6)) root = join(root, "r");
+  mkdirSync(root, { recursive: true });
+  return root;
+}
+
+describe("the read before Git places a folder ends in the folder where Git's search ends", () => {
+  it("reads no folder above the repository a checkout is placed in, six folders or more below the root", async () => {
+    const root = await deepRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const linked = await gitFolderLinked(join(root, "linked"), join(root, "linked.git"));
+    git(root, "init", "--quiet", "--bare", join(root, "bare.git"));
+    mkdirSync(join(root, "bare.git", "refs", "heads", "d0"), { recursive: true });
+    // Below a .git folder, at depth 1 and 5; below a .git link; below a linked worktree's .git file; in a bare repository.
+    const placed = [[join(outer, "d0"), outer], [join(outer, "d0", "d1", "d2", "d3", "d4"), outer], [join(linked, "d0"), linked], [join(root, "w", "d0"), join(root, "w")], [join(root, "bare.git", "refs", "heads", "d0"), join(root, "bare.git")]] as const;
+    for (const [folder, top] of placed) {
+      mkdirSync(folder, { recursive: true });
+      const before = vi.mocked(lstatSync).mock.calls.length;
+      expect(worktreeRegistry(folder)?.worktrees, folder).toEqual(listedByGit(folder));
+      expect(gitEntriesReadIn(before), folder).toEqual(foldersUpTo(folder, top));
+    }
+  });
+
+  /**
+   * A `.git` folder that Git's search passes over though `objects`, `refs` or `HEAD` are there, each as `is_git_directory`
+   * reads it: a `HEAD` with a vertical tab after `ref:`, which Git does not skip; no `objects`; no `refs`; a `commondir`
+   * naming a folder that holds neither.
+   */
+  const HALF_MADE: ReadonlyArray<readonly [string, (gitFolder: string, root: string) => Promise<void>]> = [
+    ["a HEAD Git does not take", gitFolder => writeFile(join(gitFolder, "HEAD"), "ref:\vrefs/heads/main\n")],
+    ["no objects", gitFolder => removeFolder(join(gitFolder, "objects"))],
+    ["no refs", gitFolder => removeFolder(join(gitFolder, "refs"))],
+    ["a commondir naming a folder with neither objects nor refs", async (gitFolder, root) => {
+      mkdirSync(join(root, "empty"));
+      await writeFile(join(gitFolder, "commondir"), `${join(root, "empty")}\n`);
+    }],
+  ];
+
+  it.each(HALF_MADE)("reads past a folder between whose .git folder has %s, and lists none once the repository above is gone", async (_name, halfMake) => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    git(middle, "init", "--quiet");
+    await halfMake(join(middle, ".git"), root);
+    expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
+    expect(registryPlacements(inner)).toBe(1);
+
+    // A repository above that lists no worktree, whose registry reads the same once its .git is gone.
+    await rename(join(outer, ".git"), join(root, "outer.git"));
+    expect(gitsAnswer(inner).git).toBe(false);
+    expect(worktreeRegistry(inner)).toBeUndefined();
   });
 });
 

@@ -17,14 +17,14 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { checkoutRealpath, physicalPath, storedPath } from "./checkout-control.js";
 import {
-  entryFacts,
   filePlacementInputs,
   gitEntryFacts,
   linkedWorktreeFromFiles,
   lookupEnvironment,
   placementInputs,
   realOf,
-  searchedEntryFacts,
+  searchedIn,
+  searchStep,
   type PlacementInputs,
 } from "./checkouts/git-placement.js";
 import { foldersGitSearches } from "./checkouts/git-search.js";
@@ -142,22 +142,19 @@ interface Searched {
 
 /**
  * What Git's search for a repository reads in each folder it walks up from `requested`'s real path, the folder Git
- * changes into, as far as Git's search goes ({@link foldersGitSearches}); none when the real path cannot be read. Read
- * before Git runs: a folder that becomes a repository while Git runs, after Git passed it, then moves what the next ask
- * reads.
+ * changes into, as far as Git's search goes: up to the first folder where it ends ({@link searchStep}), within the
+ * ceilings and the device ({@link foldersGitSearches}); none when the real path cannot be read. Read before Git runs: a
+ * folder that becomes a repository while Git runs, after Git passed it, then moves what the next ask reads.
  */
 function searchedUp(requested: string): Searched[] {
   const real = realOf(requested);
-  return real === undefined ? [] : foldersGitSearches(real).map(folder => ({ folder, entries: searchedIn(folder) }));
-}
-
-/**
- * What `folder` holds where Git's search looks ({@link GIT_MARKERS}): the `.git` entry as {@link searchedEntryFacts}
- * reads it and the `HEAD` as an lstat gives it; two lstats, a third in a `.git` folder, a readlink and a stat more
- * through a `.git` link, and no Git process.
- */
-function searchedIn(folder: string): string {
-  return `${searchedEntryFacts(join(folder, ".git"))} ${entryFacts(join(folder, "HEAD"))}`;
+  const searched: Searched[] = [];
+  for (const folder of real === undefined ? [] : foldersGitSearches(real)) {
+    const step = searchStep(folder);
+    searched.push({ folder, entries: step.entries });
+    if (step.ends) break;
+  }
+  return searched;
 }
 
 function linkedLocation(inputs: PlacementInputs): RepositoryIdentityLocation | undefined {

@@ -334,8 +334,9 @@ function validHead(gitFolder: string): boolean | undefined {
   return looked !== "none" && headTaken(fileText(path));
 }
 
+/** Git skips only a space, a tab and line ends after `ref:` (its `isspace`), not a vertical tab, a form feed or a Unicode space. */
 function headTaken(head: FileText | "none" | undefined): boolean {
-  return isText(head) && (/^ref:\s*refs\//u.test(head.text) || /^(?:[0-9a-f]{64}|[0-9a-f]{40})/iu.test(head.text));
+  return isText(head) && (/^ref:[\t\n\r ]*refs\//u.test(head.text) || /^(?:[0-9a-f]{64}|[0-9a-f]{40})/iu.test(head.text));
 }
 
 /**
@@ -413,17 +414,75 @@ function described(looked: Looked): string {
 }
 
 /** {@link described} of the entry at `path`, read now: one lstat. */
-export function entryFacts(path: string): string {
+function entryFacts(path: string): string {
   return described(look(path));
 }
 
+/** What a folder holds where Git's search for a repository looks: its `.git` entry and its own `HEAD`, as lstats gave them. */
+interface FolderLook {
+  readonly dotGit: string;
+  readonly entry: Looked;
+  readonly head: Looked;
+}
+
+function lookIn(folder: string): FolderLook {
+  const dotGit = join(folder, ".git");
+  return { dotGit, entry: look(dotGit), head: look(join(folder, "HEAD")) };
+}
+
 /**
- * What Git's search for a repository reads at the `.git` entry `dotGit`, read now: the entry's facts ({@link
- * described}) and what it holds ({@link heldIn}). One lstat where nothing is there.
+ * What Git's search for a repository reads in `folder`, read now: the `.git` entry's facts ({@link described}) and what
+ * it holds ({@link heldIn}), and the facts of the folder's own `HEAD`, which a bare repository has. Two lstats where
+ * nothing is there, a third in a `.git` folder, a readlink and a stat more through a `.git` link, and no Git process.
  */
-export function searchedEntryFacts(dotGit: string): string {
-  const looked = look(dotGit);
-  return `${described(looked)}:${heldIn(dotGit, looked)}`;
+export function searchedIn(folder: string): string {
+  return entriesOf(lookIn(folder));
+}
+
+/** {@link searchedIn} of a folder, and whether Git's search for a repository ends there ({@link searchEnds}). */
+export interface SearchStep {
+  readonly entries: string;
+  readonly ends: boolean;
+}
+
+/** {@link SearchStep} of `folder`, both read from the same lstats. */
+export function searchStep(folder: string): SearchStep {
+  const looked = lookIn(folder);
+  return { entries: entriesOf(looked), ends: searchEnds(folder, looked) };
+}
+
+function entriesOf({ dotGit, entry, head }: FolderLook): string {
+  return `${described(entry)}:${heldIn(dotGit, entry)} ${described(head)}`;
+}
+
+/**
+ * Whether Git's search for a repository ends in `folder`, read as Git's `setup.c` decides it from `looked`: its `.git`,
+ * reached through any link, is a file (Git reads it, or stops at it with an error) or a folder Git takes for a Git
+ * folder ({@link takenAsGitFolder}); or the folder holds a `HEAD` and is itself one, a bare repository. Never sooner
+ * than Git: where the files cannot tell what Git takes (a `HEAD` link, a `commondir` that cannot be read), it answers
+ * no, and the read goes on to the folder above. A lookup variable needs no exception: under `GIT_DIR` Git searches no
+ * folder, and under `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` Git reads `objects` or `refs` there for every folder, so
+ * a folder these files take and Git does not means Git takes none, and its answer is not kept.
+ */
+function searchEnds(folder: string, looked: FolderLook): boolean {
+  if (gitEntryEnds(looked)) return true;
+  return isEntry(looked.head) && takenAsGitFolder(folder);
+}
+
+function gitEntryEnds({ dotGit, entry }: FolderLook): boolean {
+  const reached = isEntry(entry) && entry.isSymbolicLink() ? reach(dotGit) : entry;
+  if (isEntry(reached) && reached.isFile()) return true;
+  return isFolder(reached) && takenAsGitFolder(dotGit);
+}
+
+/**
+ * Whether Git's search takes `path` for a Git folder (`is_git_directory`): a `HEAD` it takes ({@link validHead}), and
+ * `objects` and `refs` it can reach in the common Git folder `commondir` names, else in `path` itself.
+ */
+function takenAsGitFolder(path: string): boolean {
+  const common = validHead(path) === true ? commonOf(path) : undefined;
+  const at = common?.linked ?? path;
+  return common !== undefined && reachable(join(at, "objects")) && reachable(join(at, "refs"));
 }
 
 /**
