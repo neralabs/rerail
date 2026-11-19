@@ -27,6 +27,10 @@ use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as LABEL_BASE;
 // The label passes on Metal (`rerail-device-metal`), behind `transducer::packed::device`.
 // cratify: `matcher_metal` is rerail-device-metal's (it mounts it)
 
+/// The seconds a one-tape matcher wave waits, in all, for device room strata hold (`roots_metal_split`, Q180): past
+/// it the wave's capacity failure stands (decision 0382 §6).
+const WAVE_ROOM_PATIENCE: f64 = 5.0;
+
 /// A lowered clause: label passes, in order, then the root program.
 #[derive(Clone)]
 pub struct LoweredMatcher {
@@ -1204,7 +1208,24 @@ impl LoweredWave {
     /// the batch on its own where the whole outgrows a workspace or the launch bound (a file's labels read only that
     /// file).
     fn roots_metal_split(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
-        match super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active))) {
+        let run = || super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active)));
+        let mut found = run();
+        // One tape that does not fit while strata hold or have reserved the device's room (Q180: their admission):
+        // the wave, nothing of it encoded, waits for some of it to come back and runs again, up to its patience.
+        let t0 = std::time::Instant::now();
+        while tapes.len() == 1 && matches!(found, Err(Error::BackendCapacity)) {
+            let left = WAVE_ROOM_PATIENCE - t0.elapsed().as_secs_f64();
+            #[cfg(target_os = "macos")]
+            let released = rerail_accel::gpu::shared::wait_for_release(left);
+            #[cfg(not(target_os = "macos"))]
+            let released = false;
+            if left <= 0.0 || !released {
+                break;
+            }
+            crate::code_rule_dsl::prof::count("wave.waited_for_room", 1);
+            found = run();
+        }
+        match found {
             Err(Error::BackendCapacity | Error::BackendLaunchLimit) if tapes.len() > 1 => {
                 let half = tapes.len() / 2;
                 let part = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();

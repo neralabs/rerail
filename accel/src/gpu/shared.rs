@@ -581,6 +581,33 @@ pub fn admit(bytes: usize, patience: f64) -> Result<Admitted, String> {
     got.map(|()| Admitted { waited: t0.elapsed().as_secs_f64() })
 }
 
+/// A wait for room (Q180) by work that holds nothing encoded and whose need is not known in bytes (the matcher's
+/// waves, whose buffers the pool's ledger reserves): until some of what the threads that go on hold or have reserved
+/// comes back (true), running the pool's jobs meanwhile. False at once when they hold nothing (no lease coming back
+/// can make room: as `admit`, waiting for a waiting thread is a deadlock), and past `patience` seconds.
+pub fn wait_for_release(patience: f64) -> bool {
+    let me = holder();
+    let others = || -> usize {
+        holders().lock().expect("the holders").iter().filter(|(t, (_, waiting))| **t != me && *waiting == 0).map(|(_, (held, _))| *held).sum::<usize>() + reserved()
+    };
+    let at_start = others();
+    if at_start == 0 {
+        return false;
+    }
+    let t0 = std::time::Instant::now();
+    holders().lock().expect("the holders").entry(me).or_default().1 += 1;
+    let got = crate::exec::help_until_as("device room", || {
+        if others() < at_start {
+            return Some(true);
+        }
+        (t0.elapsed().as_secs_f64() > patience).then_some(false)
+    });
+    if let Some(e) = holders().lock().expect("the holders").get_mut(&me) {
+        e.1 -= 1;
+    }
+    got
+}
+
 /// A stratum's reservation (`admit`): what its leases did not take goes back when it is dropped, after it encoded.
 #[must_use]
 pub struct Admitted {
@@ -791,6 +818,32 @@ mod tests {
         drop(mine);
         assert!(admit(64 << 20, 0.0).is_ok(), "fits once its own lease is back");
         crate::budget::METAL_TEST.with(|m| m.set(0));
+    }
+
+    /// Q180: a matcher wave, its need not known in bytes, waits for some of what other threads hold to come back, and
+    /// only that long; past its patience it gives up.
+    #[test]
+    fn a_wave_waits_for_what_others_hold_to_come_back() {
+        if get().is_none() {
+            return;
+        }
+        let (held, go) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        let other = std::thread::spawn(move || {
+            let lease = lease_within(8 << 20).expect("8 MB, the other thread's");
+            held.0.send(()).unwrap();
+            go.1.recv().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(lease);
+        });
+        held.1.recv().unwrap();
+        let t0 = std::time::Instant::now();
+        assert!(!wait_for_release(0.05), "past its patience, the lease still held");
+        assert!(t0.elapsed().as_secs_f64() < 1.0);
+        go.0.send(()).unwrap();
+        let t0 = std::time::Instant::now();
+        assert!(wait_for_release(10.0), "the other thread's lease came back");
+        assert!(t0.elapsed().as_secs_f64() > 0.1, "it waited for it");
+        other.join().unwrap();
     }
 
     #[test]
