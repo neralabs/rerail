@@ -2866,8 +2866,10 @@ submitted" now hold device memory at once.
     rows), `run_join_in_each` (3,542), and the store's write lock (3,458, parked: wall). What a call repeats
     whatever its rows (the component by name, `scalars::register` of its scalar steps, its SQL probes'
     statements, `planning_counts`) is under 100 samples together. So a chunk's 7 G is rows, not setup: more
-    chunks derive more rows, or the same rows dearer. Next: which, by the joins' rows at 11 and 17 chunks
-    (`native.tsv`'s work, and the seeds' and indexes' rows per relation).
+    chunks derive more rows, or the same rows dearer. The same rows dearer: the profiled joins (`native.tsv`) do
+    409.4 M work at 11 chunks and 411.5 M at 17 (+0.5%), at 34.9 and 38.6 ns a unit (+11%; ab74: 35.5 and 39.8).
+    ab75's loads were close (41 and 35), so not the host's. Next: why a unit of a join's work costs 11% more at
+    17 chunks (more chunks in flight at once sharing the caches, or smaller relations probed with less locality).
   - (accounting, before 7562bf8a94) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
