@@ -2151,6 +2151,12 @@ impl DevRel {
         DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0) }
     }
 
+    /// Whether it is a relation read where it lies (`in_block`): it holds the relation's block while it lives.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn read_in_place(&self) -> bool {
+        self.part.is_none() && self.view.is_none() && self.home.is_some()
+    }
+
     /// A relation the device reads where it lies (decision 0325): `b`'s, of `cols` columns, bound by its block's own
     /// device buffer (which it keeps). Nothing is copied.
     pub(in crate::code_rule_dsl) fn in_block(b: &crate::code_rule_dsl::facts::rows::InBlock, cols: usize) -> Result<DevRel, Error> {

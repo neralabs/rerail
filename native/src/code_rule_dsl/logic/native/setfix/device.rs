@@ -1184,7 +1184,9 @@ struct Entry {
     owner: Owner,
     /// The owner's columns the upload holds, in its order.
     cols: Vec<usize>,
-    dev: Rc<mj::DevRel>,
+    /// The device's copy (`None` for a relation read in place: its handle is made at each stratum from its block,
+    /// decision 0450 step 1, and the entry holds only its texts until step 2).
+    dev: Option<Rc<mj::DevRel>>,
     /// Its sorts, by the owner's key columns.
     indexes: Vec<(Vec<usize>, Rc<mj::DevIndex>)>,
     /// Per column a text test read, its distinct symbols' names; per (column, test), the test's verdicts (the
@@ -1265,6 +1267,12 @@ fn waves_kept() -> usize {
     FLUSHED.with_borrow(HashMap::len)
 }
 
+/// This thread's kept handles to relations read in place, each holding its relation's block (decision 0450 R1: none).
+#[cfg(test)]
+fn kept_in_place() -> usize {
+    RESIDENT.with_borrow(|r| r.entries.iter().filter(|e| e.dev.as_ref().is_some_and(|d| d.read_in_place())).count())
+}
+
 /// This thread's device copies of relations the engine dropped.
 #[cfg(test)]
 fn resident_dropped() -> usize {
@@ -1309,11 +1317,53 @@ struct Run<'p> {
     checks: Vec<Rc<mj::Words>>,
 }
 
+/// `rel`'s rows where they lie in a block, and the columns there: a flat relation's (its dead rows marked by its
+/// dead rows' delta, `InBlock::dead`, which the kernels skip), or a whole view's source's (the vtab's `Relation`).
+fn placed(rel: &Arc<InRel>) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
+    match (Owner::of(rel), &rel.view) {
+        (Owner::Src(_), Some(view)) => view.src.in_block().filter(|b| rel.ndead == 0 && b.rows as usize == rel.len()).map(|b| (b, view.src.columns().len())),
+        (Owner::Src(_), None) => None,
+        (Owner::Rel(_), _) => rel.in_block().map(|b| (b, rel.k)),
+    }
+}
+
+/// The entry that holds `rel`'s texts: its copy's, or one of texts alone for a relation read in place (until decision
+/// 0450 step 2 moves the texts to the one cache).
+fn texts_entry<'r>(res: &'r mut Resident, rel: &Arc<InRel>) -> &'r mut Entry {
+    let owner = Owner::of(rel);
+    let at = match res.entries.iter().position(|e| e.owner.same(&owner)) {
+        Some(at) => at,
+        None => {
+            res.clock += 1;
+            let used = res.clock;
+            res.entries.push(Entry { owner, cols: (0..rel.k).map(|c| owner_col(rel, c)).collect(), dev: None, indexes: Vec::new(), texts: Vec::new(), verdicts: Vec::new(), mapped: Vec::new(), bytes: 0, used });
+            res.entries.len() - 1
+        }
+    };
+    &mut res.entries[at]
+}
+
 /// The device's copy of `rel`'s columns `need` and `cols`, its sort by `cols` (none when it has no keys), and where
 /// each of its columns lies in the copy (`mj::NONE`: not held), uploaded and encoded into `batch` when not resident.
 /// A copy holds only the columns stages read; one that lacks a column is uploaded again with it (decision 0277).
 #[allow(clippy::type_complexity)]
 fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vec<u32>), String> {
+    // Rows in a block are read where they lie (decision 0325 step 3), and nothing is kept of them between strata
+    // (decision 0450 step 1): the handle is made from the block now, its sorts found in the block (or built there),
+    // and a stratum in flight holds its own handle until it completes.
+    if let Some((b, ncols)) = placed(rel) {
+        let dev = Rc::new(mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a relation in its block"))?);
+        rep.in_place += 1;
+        // Every column of the owner, at its own place.
+        let place: Vec<u32> = (0..rel.k).map(|c| owner_col(rel, c) as u32).collect();
+        if cols.is_empty() {
+            return Ok((dev, None, place));
+        }
+        let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
+        let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
+        if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+        return Ok((dev, Some(ix), place));
+    }
     RESIDENT.with_borrow_mut(|res| {
         res.clock += 1;
         let clock = res.clock;
@@ -1323,7 +1373,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
         want.dedup();
         let found = res.entries.iter().position(|e| e.owner.same(&owner));
         let at = match found {
-            Some(at) if want.iter().all(|c| res.entries[at].cols.contains(c)) => {
+            Some(at) if res.entries[at].dev.is_some() && want.iter().all(|c| res.entries[at].cols.contains(c)) => {
                 rep.resident_hits += 1;
                 at
             }
@@ -1339,27 +1389,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 let n_all = rel.len();
                 let ids: Option<Vec<usize>> = (rel.ndead > 0).then(|| (0..n_all).filter(|&id| !is_dead(&rel.dead, id as u32)).collect());
                 let n = ids.as_ref().map_or(n_all, Vec::len);
-                // Rows in a block are read where they lie (decision 0325 step 3): a flat relation's, or a whole
-                // view's source's (the vtab's `Relation`). Nothing uploaded, and the entry holds every column (the
-                // owner's), each at its own place.
-                let placed = match (&owner, &rel.view) {
-                    (Owner::Src(_), Some(view)) => view.src.in_block().filter(|b| ids.is_none() && b.rows as usize == n).map(|b| (b, view.src.columns().len())),
-                    (Owner::Src(_), None) => None,
-                    // Dead rows stay, marked by the relation's dead rows' delta (`InBlock::dead`), which the
-                    // kernels skip.
-                    (Owner::Rel(_), _) => rel.in_block().map(|b| (b, rel.k)),
-                };
-                if let Some((b, ncols)) = placed {
-                    // Entries of relations the engine dropped go now: an entry in place holds its block (`Held::kept`).
-                    res.trim(0);
-                    let dev = mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a relation in its block"))?;
-                    rep.in_place += 1;
-                    let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
-                    let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
-                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
-                    res.bytes = res.bytes();
-                    res.entries.len() - 1
-                } else {
+                {
                 let k = want.len();
                 res.trim(8 * k * n);
                 // The process's device budget short (the syntax side's tapes hold most of it): every relation kept
@@ -1386,7 +1416,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     crate::code_rule_dsl::prof::count(["device.view_read.node", "device.view_read.child", "device.view_read.field", "device.view_read.core", "device.view_read.axis", "device.view_read.line", "device.view_read.end_line", "device.view_read.col", "device.view_read.docof", "device.view_read.tline"].get(view as usize).copied().unwrap_or("device.view_read.other"), n);
                     let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                     let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
-                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
                     res.bytes = res.bytes();
                     res.entries.len() - 1
                 } else if let Some(d) = made {
@@ -1403,7 +1433,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     by.1 += thread_cpu() - c0;
                     let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                     let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
-                    res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
                     res.bytes = res.bytes();
                     res.entries.len() - 1
                 } else {
@@ -1450,7 +1480,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 by.1 += thread_cpu() - c0;
                 let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                 let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
-                res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
                 res.bytes = res.bytes();
                 res.entries.len() - 1
                 }
@@ -1459,7 +1489,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
         };
         let e = &mut res.entries[at];
         e.used = clock;
-        let dev = e.dev.clone();
+        let dev = e.dev.clone().expect("a copy: a relation read in place has no entry of it");
         let place: Vec<u32> = (0..rel.k).map(|c| e.cols.iter().position(|&w| w == owner_col(rel, c)).map_or(mj::NONE, |p| p as u32)).collect();
         if cols.is_empty() {
             return Ok((dev, None, place));
@@ -1497,11 +1527,17 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
         cols.iter()
             .map(|c| {
                 let StatColumn::Rel(rel, col) = c else { return None };
+                // A relation in its block: its column where it lies (decision 0450 step 1).
+                if let Some((b, ncols)) = placed(rel) {
+                    let at = owner_col(rel, *col);
+                    return (at < ncols).then(|| mj::DevRel::in_block(&b, ncols).ok().map(|d| (Rc::new(d), at))).flatten();
+                }
                 let owner = Owner::of(rel);
                 let e = res.entries.iter().find(|e| e.owner.same(&owner))?;
                 let at = e.cols.iter().position(|&w| w == owner_col(rel, *col))?;
                 // A view read in place holds no column where it lies (its rows are its reads').
-                (e.dev.rows == rel.len() - rel.ndead && at < e.dev.cols && e.dev.view.is_none()).then(|| (e.dev.clone(), at))
+                let dev = e.dev.as_ref()?;
+                (dev.rows == rel.len() - rel.ndead && at < dev.cols && dev.view.is_none()).then(|| (dev.clone(), at))
             })
             .collect()
     });
@@ -1633,8 +1669,7 @@ fn mapped_text(rel: &Arc<InRel>, col: usize, ops: &[TextOp], batch: &mut mj::Bat
     // The relation's entry holds its texts (no column of it need be uploaded for them).
     resident(rel, &[], &[], batch, rep)?;
     RESIDENT.with_borrow_mut(|res| {
-        let owner = Owner::of(rel);
-        let e = res.entries.iter_mut().find(|e| e.owner.same(&owner)).expect("the relation made resident");
+        let e = texts_entry(res, rel);
         let key = (owner_col(rel, col), steps.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";"));
         if let Some((_, (t, flag))) = e.mapped.iter().find(|(k, _)| *k == key) {
             rep.sort_hits += 1;
@@ -1672,8 +1707,7 @@ fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text
     // The relation's entry holds its texts (no column of it need be uploaded for them).
     resident(rel, &[], &[], batch, rep)?;
     RESIDENT.with_borrow_mut(|res| {
-        let owner = Owner::of(rel);
-        let e = res.entries.iter_mut().find(|e| e.owner.same(&owner)).expect("the relation made resident");
+        let e = texts_entry(res, rel);
         let oc = owner_col(rel, col);
         if let Some((_, v)) = e.verdicts.iter().find(|((c, k), _)| *c == oc && k == key) {
             rep.sort_hits += 1;

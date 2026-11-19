@@ -441,6 +441,7 @@
             ("wave_c", "h2", format!("pos {n} v0 v1\ncat v2 v0 x:{}\nhead v2 v1", hex("w"))),
         ];
         let mut got = Vec::new();
+        let mut in_place = 0;
         for waves in [false, true] {
             for (name, h, rule) in &strata {
                 db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{h}; CREATE TEMP TABLE {h} (c0, c1);")).unwrap();
@@ -462,6 +463,9 @@
                     assert!(!status.ends_with(" 3"), "{name} finished: {status}");
                     let report = super::take_report().expect("a device report");
                     assert!(report.refused.is_none() && report.waved == 1, "{report:?}");
+                    in_place += report.in_place;
+                    // Decision 0450 R1: nothing of a relation read in place is kept past its stratum.
+                    assert_eq!(super::kept_in_place(), 0, "{name}: a handle to a relation read in place outlived its stratum");
                 }
                 assert_eq!(super::waves_kept(), 0, "the wave's completion goes with its last stratum (Q261: kept for ever, before)");
             } else {
@@ -481,6 +485,7 @@
             got.push(rows);
         }
         assert_eq!(got[1], got[0], "the strata's rows after the wave are their own runs'");
+        assert!(in_place > 0, "the strata read their input in place");
         // The strata closed, their relations dropped: a chunk's end lets go of the device's copies of them, which
         // held their blocks until this thread's next device stratum (Q261).
         super::forget_dropped();
@@ -796,10 +801,10 @@
         }
     }
 
-    /// Decision 0261: the device's column statistics read a relation it holds in place (its resident upload), and
-    /// are the same as over the values gathered on the host; a relation it does not hold is gathered.
+    /// Decision 0261, with 0450 step 1: the device's column statistics read a relation in its block where it lies,
+    /// keeping nothing of it, and are the same as over the values gathered on the host.
     #[test]
-    fn column_statistics_read_a_resident_relation_in_place() {
+    fn column_statistics_read_a_relation_in_its_block_in_place() {
         use crate::code_rule_dsl::logic::device::StatColumn;
         use crate::code_rule_dsl::logic::native::setfix::InRel;
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
@@ -815,19 +820,17 @@
             rows.push(if next(2) == 0 { -(1i64 << 40) } else { 1i64 << 40 } + next(9) as i64);
         }
         let rel = InRel::from_flat(rows.clone(), n, vec![b'i'; 2]);
+        assert!(rel.in_block().is_some(), "a flat relation's rows lie in a block");
         let cols = [StatColumn::Rel(&rel, 0), StatColumn::Rel(&rel, 1)];
-        let (gathered, in_place) = super::column_stats(&cols, 16).expect("the device");
-        assert_eq!(in_place, 0);
-        let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
-        let mut rep = super::Report::default();
-        // Both columns uploaded: a copy holds only the columns asked for (decision 0277).
-        super::resident(&rel, &[0, 1], &[], &mut batch, &mut rep).expect("resident");
+        // Decision 0450 step 1: a relation in its block is read where it lies, with nothing made resident first.
         let (read, in_place) = super::column_stats(&cols, 16).expect("the device");
         assert_eq!(in_place, 2);
-        assert_eq!(read, gathered);
-        let values: Vec<i64> = rows.iter().step_by(2).copied().collect();
-        let (of_values, _) = super::column_stats(&[StatColumn::Values(&values)], 16).expect("the device");
-        assert_eq!(of_values[0], read[0]);
+        assert_eq!(super::kept_in_place(), 0, "the read keeps no handle to the relation");
+        // The same statistics as the columns' values gathered on the host.
+        let (c0, c1): (Vec<i64>, Vec<i64>) = (rows.iter().step_by(2).copied().collect(), rows.iter().skip(1).step_by(2).copied().collect());
+        let (of_values, in_place) = super::column_stats(&[StatColumn::Values(&c0), StatColumn::Values(&c1)], 16).expect("the device");
+        assert_eq!(in_place, 0);
+        assert_eq!(read, of_values);
         assert_eq!(read[1].ndv, 18);
     }
 

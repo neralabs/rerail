@@ -5378,11 +5378,17 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   chunks of 675, 1,400 and 6,898 nodes, the relation `kind` inlined), and later runs read them. With a store of its
   own a run (`RERAIL_IMAGE_STORE=project`) every run is that first run: the same 15 chunks and inline choices in 3
   of 3, the corpus's own choices as a warm run's. Measurements set it (the harness did not).
+- **Found** (2026-11-19, the django-bugs merge abaecb14a): three warnings. `content_store/journal.rs`
+  `since_within` takes a `wait` it never reads (an unfinished option?); `phases.rs:380` reads `sources.rr` into a
+  `src` it never uses; `rr/testing.rs:371` imports `ProgramFields` unused in a build without test-hooks. Left to
+  that track's owner to say which are unfinished.
 - **Partly done** (fa53bc6a6): a chunk's held bytes leave out a device run's own blocks, and the chunk drops the
   device's copies of its dead relations on its thread as it ends; `FLUSHED` no longer keeps every wave.
 - **Open**: on Metal, a chunk's held bytes still differ between runs (one chunk 19-50 MB): a chunk's device strata
   run in pool jobs on ~18 threads, and each thread's `RESIDENT` entry of a relation read in place holds its `Part`
-  until that thread's next device stratum. The user asked (2026-11-19) why the device caches relations at all:
-  analysis given, design not yet chosen. (c), the threads'
+  until that thread's next device stratum. The user asked (2026-11-19) why the device caches relations at all, and
+  set the rule: decision 0450 (one block structure for the CPU and the GPU, no pointer-chasing Rust structure).
+  Step 1 done: the held bytes are the same in every run. Still differing: a chunk's bytes written on Metal
+  (`GROWTH`, 0450 step 7; refusals by device room). (c), the threads'
   coordination; the Metal peak footprint at big chunks (1.36-1.47 GB, the count's
   most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
