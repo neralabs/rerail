@@ -224,7 +224,41 @@ impl ClDevice {
         let mut e = 0;
         let context = unsafe { (a.create_context)(std::ptr::null_mut(), 1, &device, std::ptr::null_mut(), std::ptr::null_mut(), &mut e) };
         check("clCreateContext", e)?;
-        Ok(ClDevice(Arc::new(DeviceInner { device, context, name, max_group })))
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name, max_group }));
+        d.reads_host_pages_in_place()?;
+        Ok(d)
+    }
+
+    /// Whether a kernel's write into a buffer over host pages is in those pages once it completes, with no map: a
+    /// driver may say it shares the host's memory and still keep a copy of a `CL_MEM_USE_HOST_PTR` buffer, made
+    /// visible only by a map (NVIDIA's on a GB10, whose memory is the host's: the reflection kernels' words read
+    /// 0). Such a buffer is a copy (decision 0353), so the device is refused.
+    fn reads_host_pages_in_place(&self) -> Result<(), String> {
+        const SEEN: u32 = 0x5EED_0353;
+        let lib = ClComputeFunctionLibrary::compile_from_source(self, "__kernel void ukl_in_place(__global uint* o) { o[0] = 0x5EED0353u; }", "the in-place probe")?;
+        let a = api()?;
+        let k = lib.kernel("ukl_in_place")?;
+        let out = alloc_uninitialized_array_sync::<u32>(self, 4);
+        let mut e = 0;
+        let q = unsafe { (a.create_command_queue)(self.0.context, self.0.device, 0, &mut e) };
+        check("clCreateCommandQueue", e)?;
+        let r = (|| {
+            check("clSetKernelArg", unsafe { (a.set_kernel_arg)(k.0, 0, std::mem::size_of::<Ptr>(), (&out.0.mem as *const Ptr).cast()) })?;
+            let one = 1usize;
+            check("the in-place probe", unsafe { (a.enqueue_nd_range_kernel)(q, k.0, 1, std::ptr::null(), &one, &one, 0, std::ptr::null(), std::ptr::null_mut()) })?;
+            check("clFinish", unsafe { (a.finish)(q) })
+        })();
+        unsafe { (a.release_command_queue)(q) };
+        r?;
+        // SAFETY: the buffer's host pages, which no kernel uses now.
+        let seen = unsafe { std::ptr::read_volatile(out.0.ptr.cast::<u32>()) };
+        if seen != SEEN {
+            return Err(format!(
+                "OpenCL device {} keeps a copy of host memory (a kernel's write is not in the host's pages without a map): its buffers would be copies (decision 0353)",
+                self.0.name
+            ));
+        }
+        Ok(())
     }
 
     pub fn name(&self) -> &str {

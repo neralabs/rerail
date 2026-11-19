@@ -920,6 +920,22 @@ source (the label patterns, the program backend, `metal_backend`, `block_program
 | D | Step 8: the generators write UKL (label patterns, program backend, block programs, `accel`'s joins); `accel`'s scan, sort and histogram are the library's calls | as C |
 | E | Step 9: `rerail-accel` builds on Linux; the data layer's 142 checks with the GPU lane on CUDA | native's findings, on a GB10 (speed judged there) and on the V100 (correctness only: it reads pinned host memory over PCIe until step 10) |
 
+**A: done (2026-11-19, merge 3f701ec4e).** `Native-and-GPU-strata` merged at ef9c3dcf2. Its emitter changes (each
+read's 16z body called apart, 64-bit offsets for every family but the tape's) are in `ukl.rs`, and its reads
+(block-major format 16, 0426; 16z through a cache, 0353 step 4b; reads within the tape's bytes, 0427) are the
+library's `<ukl/reads/*.h>`, written again from the merged emitter. A read is cold where 0310's policy says so and
+for every 16z body called apart. This record was 0400 there; the branch's 0400 (a small root checked by its
+listings) kept the number. The writer (`<ukl/writer.h>`) waits for oscar, which is not on the branch at the pin.
+- The reads' gate passes on Metal, the CPU and Apple's OpenCL (Mac), and on CUDA on a GB10 (sm_121), with the
+  forest's 40 and `rerail-gpu`'s 17 there; the branch's own tests pass on Metal (the tape crate's 26, the blocks'
+  33, accel's 85, `rerail-device-metal`'s 57, the engine's slab, view, id, resident-tape and label-kernel tests).
+- Found on the way: NVIDIA's OpenCL on the GB10 says it shares the host's memory (`CL_DEVICE_HOST_UNIFIED_MEMORY`)
+  but keeps a copy of a `CL_MEM_USE_HOST_PTR` buffer, made visible only by a map: the reflection kernels' words
+  read 0. The runtime now runs a one-thread write into host pages when it opens a device, and refuses one whose
+  write is not there (0353). OpenCL on NVIDIA needs SVM, which is not written. Three of the branch's tests failed
+  under parallel runs and were fixed in the merge (the merge commit says how): the writer's tail outgrew its room
+  (0426 R4), and two tests read process-wide counts that the tests beside them move.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
