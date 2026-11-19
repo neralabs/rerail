@@ -35,9 +35,9 @@
 // class chosen at run time) may lead to a write this request never runs, and the write the message names is any
 // one of those reachable, not the nearest. Log: many reached writes are such may-paths.
 
-#include "python/django.rr"
-#include "python/calls.rr"
-#include "python/types.rr"
+#include "python/django.rerail"
+#include "python/calls.rerail"
+#include "python/types.rerail"
 
 .violation GetHandlerWrites(at: node, x: symbol, what: symbol, p: symbol, o: node)
     "`{x}` answers a safe method (GET/HEAD) but writes to the database: `{what}` at {p}:{o.line}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
@@ -169,3 +169,34 @@ ghw_self_site(x, c, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn,
 ghw_own_method(k, x) :- ghw_handler(k, _, _), class_def(k, kq), method(bq, _, x), (bq = kq ; subclass(kq, bq)).
 .decl ghw_self_bound(k: node, x: node, c: node)
 ghw_self_bound(k, x, c) :- ghw_self_site(x, c, _), ghw_own_method(k, x).
+
+// The cases, `cases/django-practice-get-handler-writes/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "blog/__init__.py" from "cases/django-practice-get-handler-writes/blog/__init__.py"
+    .fixture "blog/api/__init__.py" from "cases/django-practice-get-handler-writes/blog/api/__init__.py"
+    .fixture "blog/api/viewsets.py" from "cases/django-practice-get-handler-writes/blog/api/viewsets.py"
+    .fixture "blog/inherited.py" from "cases/django-practice-get-handler-writes/blog/inherited.py"
+    .fixture "blog/models.py" from "cases/django-practice-get-handler-writes/blog/models.py"
+    .fixture "blog/services.py" from "cases/django-practice-get-handler-writes/blog/services.py"
+    .fixture "blog/tests/__init__.py" from "cases/django-practice-get-handler-writes/blog/tests/__init__.py"
+    .fixture "blog/tests/test_views.py" from "cases/django-practice-get-handler-writes/blog/tests/test_views.py"
+    .fixture "blog/views.py" from "cases/django-practice-get-handler-writes/blog/views.py"
+    .expect _ at "blog/api/viewsets.py":19
+    .expect _ at "blog/inherited.py":16
+    .expect _ at "blog/inherited.py":29
+    .expect _ at "blog/inherited.py":46
+    .expect _ at "blog/views.py":16
+    .expect _ at "blog/views.py":22
+    .expect _ at "blog/views.py":32
+    .expect _ at "blog/views.py":45
+    .expect _ at "blog/views.py":64
+    .expect _ at "blog/views.py":70
+    .expect _ at "blog/views.py":77
+    .expect _ at "blog/views.py":95
+    .expect _ at "blog/views.py":100
+    .expect _ at "blog/views.py":119
+    .expect _ at "blog/views.py":126
+    .expect _ at "blog/views.py":136
+    .expect _ at "blog/views.py":146
+.end

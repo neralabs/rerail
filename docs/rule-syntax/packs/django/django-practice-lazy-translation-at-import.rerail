@@ -23,7 +23,7 @@
 //   title = models.CharField(gettext_lazy("title"))             not reported: lazy
 //   HEADING = _("Hello %s") % name                              reported: build it per use, or format_lazy()
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation TranslatedAtImport(at: node, fn: symbol, advice: symbol) "`{fn}()` runs here when the module is imported, so it translates once into the language active then and every user sees that text, whatever their language. {advice}"
 TranslatedAtImport(c, x, a) :- lti_eager_call(c, x), lti_at_import(c), !lti_discarded(c), docof(c, d), !dj_test_doc(d),
@@ -78,3 +78,35 @@ lti_framed(n) :- nearest(n, _, lti_frame).
 lti_at_import(n) :- kind(n, "call"), !lti_framed(n).
 lti_at_import(n) :- kind(n, "call"), nearest(n, f, lti_frame), kind(f, "function_definition"), field(f, "parameters", ps),
     within(n, ps), !lti_framed(f).
+
+// The cases, `cases/django-practice-lazy-translation-at-import/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "library/apps.py" from "cases/django-practice-lazy-translation-at-import/library/apps.py"
+    .fixture "library/constants.py" from "cases/django-practice-lazy-translation-at-import/library/constants.py"
+    .fixture "library/forms.py" from "cases/django-practice-lazy-translation-at-import/library/forms.py"
+    .fixture "library/migrations/0001_initial.py" from "cases/django-practice-lazy-translation-at-import/library/migrations/0001_initial.py"
+    .fixture "library/models.py" from "cases/django-practice-lazy-translation-at-import/library/models.py"
+    .fixture "library/tests/test_models.py" from "cases/django-practice-lazy-translation-at-import/library/tests/test_models.py"
+    .expect _ at "library/apps.py":7
+    .expect _ at "library/constants.py":8
+    .expect _ at "library/constants.py":9
+    .expect _ at "library/constants.py":10
+    .expect _ at "library/constants.py":11
+    .expect _ at "library/constants.py":12
+    .expect _ at "library/constants.py":13
+    .expect _ at "library/constants.py":14
+    .expect _ at "library/constants.py":15
+    .expect _ at "library/constants.py":16
+    .expect _ at "library/constants.py":23
+    .expect _ at "library/forms.py":8
+    .expect _ at "library/forms.py":13
+    .expect _ at "library/models.py":9
+    .expect _ at "library/models.py":13
+    .expect _ at "library/models.py":17
+    .expect _ at "library/models.py":18
+    .expect _ at "library/models.py":22
+    .expect _ at "library/models.py":33
+    .expect _ at "library/models.py":36
+    .expect _ at "library/models.py":41
+.end

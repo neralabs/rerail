@@ -27,9 +27,9 @@
 // class's methods goes to that class's m: a base consumer's `async def receive` that calls `self.handle()` is judged
 // with the base's handle at the call, and with a subclass's override at `class Sub`, when only the override queries.
 
-#include "python/django.rr"
-#include "python/calls.rr"
-#include "python/types.rr"
+#include "python/django.rerail"
+#include "python/calls.rerail"
+#include "python/types.rerail"
 
 .violation SyncOrmInAsync(at: node, what: symbol, fx: symbol)
     "`{what}` runs a blocking ORM query inside `async def {fx}`, where Django raises SynchronousOnlyOperation. Use the async ORM (`aget()`, `acount()`, `async for`, `asave()`), or move the query into a function called through `await sync_to_async(...)`."
@@ -133,3 +133,33 @@ sora_model_instance(r, h) :- proven_type(r, t), class_def(k, t), dj_model(k), ne
 .decl sora_model_call(c: node, g: node)
 sora_model_call(c, g) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, m), nearest(c, h, dj_region_stop),
     dj_instance_class(r, h, q), !call_target(c, _), mro_method(q, m, g).
+
+// The cases, `cases/django-practice-sync-orm-reached-from-async/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "shop/__init__.py" from "cases/django-practice-sync-orm-reached-from-async/shop/__init__.py"
+    .fixture "shop/consumers.py" from "cases/django-practice-sync-orm-reached-from-async/shop/consumers.py"
+    .fixture "shop/consumers_late.py" from "cases/django-practice-sync-orm-reached-from-async/shop/consumers_late.py"
+    .fixture "shop/helpers.py" from "cases/django-practice-sync-orm-reached-from-async/shop/helpers.py"
+    .fixture "shop/models.py" from "cases/django-practice-sync-orm-reached-from-async/shop/models.py"
+    .fixture "shop/tests/__init__.py" from "cases/django-practice-sync-orm-reached-from-async/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "cases/django-practice-sync-orm-reached-from-async/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "cases/django-practice-sync-orm-reached-from-async/shop/views.py"
+    .expect _ at "shop/consumers.py":7
+    .expect _ at "shop/consumers.py":10
+    .expect _ at "shop/consumers_late.py":12
+    .expect _ at "shop/consumers_late.py":19
+    .expect _ at "shop/views.py":11
+    .expect _ at "shop/views.py":12
+    .expect _ at "shop/views.py":13
+    .expect _ at "shop/views.py":14
+    .expect _ at "shop/views.py":15
+    .expect _ at "shop/views.py":16
+    .expect _ at "shop/views.py":21
+    .expect _ at "shop/views.py":43
+    .expect _ at "shop/views.py":44
+    .expect _ at "shop/views.py":45
+    .expect _ at "shop/views.py":56
+    .expect _ at "shop/views.py":58
+    .expect _ at "shop/views.py":60
+.end

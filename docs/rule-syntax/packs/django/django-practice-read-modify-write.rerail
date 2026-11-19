@@ -20,7 +20,7 @@
 // Gaps: obj as an attribute chain (`self.object.hits += 1`), a parameter whose model only callers know, a save()
 // in a helper; a model method is reported even when every caller locks the row.
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation ReadModifyWrite(at: node, o: symbol, x: symbol, model: symbol) "{o}.{x} is read into Python, changed and saved back with {o}.save(): two concurrent requests both read the old value and one change is lost. Let the database do the arithmetic: `{o}.{x} = F(\"{x}\") + n` before {o}.save() (save() and its signals still run; call {o}.refresh_from_db() before reading {o}.{x} again), or `{model}.objects.filter(pk={o}.pk).update({x}=F(\"{x}\") + n)`, which skips them; or lock the row with select_for_update() inside transaction.atomic()."
 ReadModifyWrite(s, o, x, m) :- rmw_change(f, s, o, x), rmw_save(f, sv, o), earlier(s, sv), !rmw_locked(f),
@@ -67,3 +67,18 @@ rmw_class(e, mc) :- sym_of(e, q), class_def(mc, q), dj_model(mc).
 // its body or in a base class of the run.
 .decl rmw_numeric(mc: node, x: symbol)
 rmw_numeric(mc, x) :- dj_has_field(mc, x, _, t), (dj_number_field(t) ; t = "DurationField").
+
+// The cases, `cases/django-practice-read-modify-write/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "shop/models.py" from "cases/django-practice-read-modify-write/shop/models.py"
+    .fixture "shop/tests/test_models.py" from "cases/django-practice-read-modify-write/shop/tests/test_models.py"
+    .fixture "shop/views.py" from "cases/django-practice-read-modify-write/shop/views.py"
+    .expect _ at "shop/models.py":18
+    .expect _ at "shop/models.py":22
+    .expect _ at "shop/views.py":10
+    .expect _ at "shop/views.py":16
+    .expect _ at "shop/views.py":22
+    .expect _ at "shop/views.py":28
+    .expect _ at "shop/views.py":35
+.end

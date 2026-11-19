@@ -20,7 +20,7 @@
 //   len(Book.objects.filter(author=a))                 not reported here: django-practice-count-not-len
 //   if Page.objects.filter(slug=s).count() > 0:        not reported in a mongoengine file (Page a Document)
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation ExistsForExistence(at: node, how: symbol) "{how} only to test whether any exist; call `.exists()` on the queryset instead (`not qs.exists()` to test for none), which fetches one row at most."
 
@@ -46,3 +46,36 @@ ExistsForExistence(c, how) :- py_empty_cmp(c, x), efe_counted(x, q, how), efe_dj
 ExistsForExistence(x, how) :- py_truth(x), efe_counted(x, q, how), efe_django(q).
 ExistsForExistence(x, "Testing the queryset itself loads every matching row") :- py_truth(x), kind(x, "call"), dj_qs(x),
     !dj_qs_call(x, "raw"), efe_django(x).
+
+// The cases, `cases/django-practice-exists-for-existence/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "mongo/docs.py" from "cases/django-practice-exists-for-existence/mongo/docs.py"
+    .fixture "shop/models.py" from "cases/django-practice-exists-for-existence/shop/models.py"
+    .fixture "shop/services/stock.py" from "cases/django-practice-exists-for-existence/shop/services/stock.py"
+    .fixture "shop/tests/test_views.py" from "cases/django-practice-exists-for-existence/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "cases/django-practice-exists-for-existence/shop/views.py"
+    .expect _ at "shop/services/stock.py":7
+    .expect _ at "shop/services/stock.py":12
+    .expect _ at "shop/views.py":7
+    .expect _ at "shop/views.py":9
+    .expect _ at "shop/views.py":11
+    .expect _ at "shop/views.py":13
+    .expect _ at "shop/views.py":15
+    .expect _ at "shop/views.py":17
+    .expect _ at "shop/views.py":19
+    .expect _ at "shop/views.py":21
+    .expect _ at "shop/views.py":22
+    .expect _ at "shop/views.py":24
+    .expect _ at "shop/views.py":30
+    .expect _ at "shop/views.py":32
+    .expect _ at "shop/views.py":34
+    .expect _ at "shop/views.py":36
+    .expect _ at "shop/views.py":38
+    .expect _ at "shop/views.py":43
+    .expect _ at "shop/views.py":45
+    .expect _ at "shop/views.py":47
+    .expect _ at "shop/views.py":48
+    .expect _ at "shop/views.py":49
+    .expect _ at "shop/views.py":50
+.end

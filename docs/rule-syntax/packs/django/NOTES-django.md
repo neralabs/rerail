@@ -1,8 +1,8 @@
 # Notes: batch django (Rerail's own Django practice rules)
 
-27 rules, written by hand as .rr (2,264 lines, 24-181 per rule), over one library, `lib/python/django.rr` (499
+27 rules, written by hand as .rerail (2,264 lines, 24-181 per rule), over one library, `lib/python/django.rerail` (499
 lines). None is a port, so there is no upstream to score against: each rule is checked by its cases
-(`cases/<id>/`, run by the Rust test `django_practice_rules_report_exactly_their_caught_lines`) and by a run on the 31
+(`cases/<id>/`, run by each rule file's own test, `.test cases exactly`) and by a run on the 31
 pinned apps of [README.md](README.md#the-corpus), whose matches were read. What each rule matches, leaves alone and
 misses, with its corpus numbers and sources, is in README.md's "Rule details".
 
@@ -77,7 +77,7 @@ Research verdicts that never became rules:
 - Left unsure for want of a second source or a docs statement: `float-for-money`, `post-save-saves-instance`,
   `get-without-404`, `migration-mixes-runpython-and-schema`, `signal-local-receiver-weak`, `multiple-view-bases`.
 
-## Library: `lib/python/django.rr`
+## Library: `lib/python/django.rerail`
 
 What it gives the rules, by group (its header is the full interface):
 
@@ -102,7 +102,7 @@ What it gives the rules, by group (its header is the full interface):
 - Python tests shared by several rules: `py_truth`, `py_empty_cmp`, `py_empty_test`, `py_no_args`,
   `py_reraising_handler` (every path of an except clause ends in `raise`).
 
-Open proposals, each written rule-locally today (checked against the current django.rr: none is in it):
+Open proposals, each written rule-locally today (checked against the current django.rerail: none is in it):
 
 - `dj_row(o, c)`: name o holds a row of model c (`self` in its method, the latest `M.objects.get(…)` assignment, a
   `for` target over `M.objects…`). Now fk-id-not-relation's `fir_row`; the library's `dj_instance_class` does not
@@ -170,7 +170,7 @@ Smaller, not bugs: a rule-local relation that joins two unrelated sides is evalu
 `body_len`) ran netbox to 24 GB and past 15 minutes, while the same flow seeded from the blocks a rule needs
 (clean-field-returns-value's `cfr_block`) finishes in about a minute; `within_stop(n, a, stop)` does not treat `a` itself as a stop (as documented,
 "strictly between", but easy to miss: a lambda passed as a default had to be excluded separately).
-`docs/rule-syntax/site/check_rr.py` fails only on `lib/python/pytest-collect.rr:342: unbound k, product, w`, a file
+`docs/rule-syntax/site/check_rr.py` fails only on `lib/python/pytest-collect.rerail:342: unbound k, product, w`, a file
 outside this batch.
 
 ## Overlap with existing tools (partial)

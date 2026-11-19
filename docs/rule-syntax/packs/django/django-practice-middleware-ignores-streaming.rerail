@@ -23,7 +23,7 @@
 // Gaps: helpers the response is handed to; a response reached another way (`super().__call__`,
 // `process_template_response`).
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation MiddlewareIgnoresStreaming(at: node, r: symbol) "Streaming responses (StreamingHttpResponse, FileResponse) have no `content`, so `{r}.content` fails with AttributeError on them. Check `{r}.streaming` first and pass streaming responses through (or wrap `{r}.streaming_content`)."
 
@@ -64,3 +64,17 @@ mis_read(f, x, n) :- mis_content(f, x, n), !mis_guarded(f, x), !mis_caught(n), d
 mis_later(n) :- mis_read(f, x, n), mis_read(f, x, m), earlier(m, n).
 
 MiddlewareIgnoresStreaming(n, x) :- mis_read(_, x, n), !mis_later(n).
+
+// The cases, `cases/django-practice-middleware-ignores-streaming/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "core/__init__.py" from "cases/django-practice-middleware-ignores-streaming/core/__init__.py"
+    .fixture "core/middleware.py" from "cases/django-practice-middleware-ignores-streaming/core/middleware.py"
+    .fixture "core/tests/test_middleware.py" from "cases/django-practice-middleware-ignores-streaming/core/tests/test_middleware.py"
+    .expect _ at "core/middleware.py":8
+    .expect _ at "core/middleware.py":18
+    .expect _ at "core/middleware.py":23
+    .expect _ at "core/middleware.py":30
+    .expect _ at "core/middleware.py":40
+    .expect _ at "core/middleware.py":122
+.end

@@ -28,7 +28,7 @@
 // read); loops in helpers and `while` loops; per-row `.update()`, `.delete()` and `get_or_create()`; related-manager
 // `.create()`; a custom manager `create()` with another signature is matched.
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation QueryInLoop(at: node, what: symbol, fix: symbol) "`{what}` in a loop runs one query per iteration; collect the rows and use {fix} instead. bulk_create and bulk_update do not call the model's save() or send pre_save/post_save signals: keep the loop where those must run."
 QueryInLoop(c, "objects.create()", "`bulk_create()`") :- bnl_loop(_, body), dj_qs_call(c, "create"),
@@ -117,3 +117,23 @@ bnl_in_using(i) :- kind(u, "call"), field(u, "function", uf), attr_of(uf, _, "us
 bnl_attr_name(i) :- kind(a, "attribute"), field(a, "attribute", i).
 .decl bnl_kwarg_name(i: node)
 bnl_kwarg_name(i) :- kind(k, "keyword_argument"), field(k, "name", i).
+
+// The cases, `cases/django-practice-bulk-not-loop/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "shop/imports.py" from "cases/django-practice-bulk-not-loop/shop/imports.py"
+    .fixture "shop/models.py" from "cases/django-practice-bulk-not-loop/shop/models.py"
+    .fixture "shop/tests/test_imports.py" from "cases/django-practice-bulk-not-loop/shop/tests/test_imports.py"
+    .expect _ at "shop/imports.py":7
+    .expect _ at "shop/imports.py":8
+    .expect _ at "shop/imports.py":15
+    .expect _ at "shop/imports.py":21
+    .expect _ at "shop/imports.py":26
+    .expect _ at "shop/imports.py":29
+    .expect _ at "shop/imports.py":31
+    .expect _ at "shop/imports.py":82
+    .expect _ at "shop/imports.py":90
+    .expect _ at "shop/imports.py":98
+    .expect _ at "shop/imports.py":118
+    .expect _ at "shop/imports.py":122
+.end

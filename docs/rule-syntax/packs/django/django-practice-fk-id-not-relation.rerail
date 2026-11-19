@@ -24,7 +24,7 @@
 //   book = Book.objects.get(pk=1); book.author.id      reported
 //   def f(book): return book.author.id                 not reported: the parameter's class is not known
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation FkIdNotRelation(at: node, obj: symbol, fk: symbol, key: symbol) "{obj}.{fk}.{key} loads the related object only to read its key; use {obj}.{fk}_id, which the row already holds and needs no query."
 
@@ -67,3 +67,20 @@ FkIdNotRelation(a, v, x, k) :- attr_of(a, o, k), (k = "id" ; k = "pk"), attr_of(
 fir_saved_test(m) :- py_truth(m).
 fir_saved_test(m) :- cmp_pair(_, _, _, l, r), unparen(l, m), kind(r, "none").
 fir_saved_test(m) :- cmp_pair(_, _, _, l, r), unparen(r, m), kind(l, "none").
+
+// The cases, `cases/django-practice-fk-id-not-relation/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "shop/base.py" from "cases/django-practice-fk-id-not-relation/shop/base.py"
+    .fixture "shop/models.py" from "cases/django-practice-fk-id-not-relation/shop/models.py"
+    .fixture "shop/tests/test_models.py" from "cases/django-practice-fk-id-not-relation/shop/tests/test_models.py"
+    .fixture "shop/views.py" from "cases/django-practice-fk-id-not-relation/shop/views.py"
+    .expect _ at "shop/models.py":18
+    .expect _ at "shop/models.py":22
+    .expect _ at "shop/models.py":26
+    .expect _ at "shop/models.py":30
+    .expect _ at "shop/views.py":7
+    .expect _ at "shop/views.py":9
+    .expect _ at "shop/views.py":11
+    .expect _ at "shop/views.py":40
+.end

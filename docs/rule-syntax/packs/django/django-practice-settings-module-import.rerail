@@ -18,7 +18,7 @@
 //   from rest_framework.settings import api_settings   not reported: an app's own defaults module, no INSTALLED_APPS
 //   from myproject.settings import env_bool        not reported: a lower-case helper, not a setting
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation SettingsModuleImport(at: node, module: symbol, read: symbol) "This imports from the project settings module `{module}` directly, so `override_settings`, test settings and whichever settings module Django was started with are not seen. Use `from django.conf import settings` and read {read} instead."
 SettingsModuleImport(a, m, cat("`settings.", cat(x, "`"))) :- import_alias(i, a, m, x, _), match("[A-Z][A-Z0-9_]*", x),
@@ -67,3 +67,37 @@ smi_resolves(mi, n, q) :- smi_query(mi, n), smi_root(mi, r), q = @dot(r, n), doc
 .decl smi_reported_doc(i: node)
 smi_reported_doc(i) :- docof(i, d), !smi_doc(d), !path_part(d, "settings"), file_name(d, s), !glob("*settings*.py", s),
     s != "manage.py", s != "wsgi.py", s != "asgi.py", !dj_test_doc(d).
+
+// The cases, `cases/django-practice-settings-module-import/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "manage.py" from "cases/django-practice-settings-module-import/manage.py"
+    .fixture "src/config/prod.py" from "cases/django-practice-settings-module-import/src/config/prod.py"
+    .fixture "src/deploy/__init__.py" from "cases/django-practice-settings-module-import/src/deploy/__init__.py"
+    .fixture "src/deploy/asgi.py" from "cases/django-practice-settings-module-import/src/deploy/asgi.py"
+    .fixture "src/deploy/config.py" from "cases/django-practice-settings-module-import/src/deploy/config.py"
+    .fixture "src/myproject/__init__.py" from "cases/django-practice-settings-module-import/src/myproject/__init__.py"
+    .fixture "src/myproject/settings/__init__.py" from "cases/django-practice-settings-module-import/src/myproject/settings/__init__.py"
+    .fixture "src/myproject/settings/base.py" from "cases/django-practice-settings-module-import/src/myproject/settings/base.py"
+    .fixture "src/myproject/settings/helpers.py" from "cases/django-practice-settings-module-import/src/myproject/settings/helpers.py"
+    .fixture "src/myproject/settings/local.py" from "cases/django-practice-settings-module-import/src/myproject/settings/local.py"
+    .fixture "src/myproject/urls.py" from "cases/django-practice-settings-module-import/src/myproject/urls.py"
+    .fixture "src/myproject/wsgi.py" from "cases/django-practice-settings-module-import/src/myproject/wsgi.py"
+    .fixture "src/shop/__init__.py" from "cases/django-practice-settings-module-import/src/shop/__init__.py"
+    .fixture "src/shop/settings.py" from "cases/django-practice-settings-module-import/src/shop/settings.py"
+    .fixture "src/shop/tests/test_settings.py" from "cases/django-practice-settings-module-import/src/shop/tests/test_settings.py"
+    .fixture "src/shop/utils.py" from "cases/django-practice-settings-module-import/src/shop/utils.py"
+    .fixture "src/shop/views.py" from "cases/django-practice-settings-module-import/src/shop/views.py"
+    .expect _ at "src/myproject/urls.py":1
+    .expect _ at "src/myproject/urls.py":2
+    .expect _ at "src/shop/utils.py":1
+    .expect _ at "src/shop/utils.py":2
+    .expect _ at "src/shop/utils.py":3
+    .expect _ at "src/shop/utils.py":4
+    .expect _ at "src/shop/views.py":5
+    .expect _ at "src/shop/views.py":7
+    .expect _ at "src/shop/views.py":10
+    .expect _ at "src/shop/views.py":11
+    .expect _ at "src/shop/views.py":12
+    .expect _ at "src/shop/views.py":18
+.end

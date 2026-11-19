@@ -18,7 +18,7 @@
 //   ship_order.delay(order.pk)                                          not reported
 //   send_report.delay(order)   # send_report is a plain function        not reported
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation TaskArgModelInstance(at: node, task: symbol, arg: symbol) "`{arg}` is a model instance passed to the Celery task `{task}`: the JSON serializer cannot encode it (EncodeError), and with pickle the worker gets a snapshot that may be stale by the time it runs, so saving it overwrites newer changes. Pass `{arg}.pk` and re-fetch the row in the task."
 TaskArgModelInstance(a, t, x) :- tam_task_call(c, t), tam_arg(c, a), tam_instance(a), text(a, x), docof(c, d),
@@ -68,3 +68,30 @@ tam_rows(q) :- dj_qs_has(q, m), (m = "values" ; m = "values_list").
 tam_instance_value(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, q), class_def(k, q), dj_model(k).
 tam_instance_value(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, "django.shortcuts.get_object_or_404").
 tam_instance_value(v) :- attr_of(v, o, "user"), unparen(o, r), (text(r, "request") ; attr_of(r, _, "request")).
+
+// The cases, `cases/django-practice-task-arg-model-instance/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "proj/celery.py" from "cases/django-practice-task-arg-model-instance/proj/celery.py"
+    .fixture "shop/models.py" from "cases/django-practice-task-arg-model-instance/shop/models.py"
+    .fixture "shop/services.py" from "cases/django-practice-task-arg-model-instance/shop/services.py"
+    .fixture "shop/tasks.py" from "cases/django-practice-task-arg-model-instance/shop/tasks.py"
+    .fixture "shop/tests/test_tasks.py" from "cases/django-practice-task-arg-model-instance/shop/tests/test_tasks.py"
+    .fixture "shop/views.py" from "cases/django-practice-task-arg-model-instance/shop/views.py"
+    .expect _ at "shop/models.py":11
+    .expect _ at "shop/services.py":21
+    .expect _ at "shop/services.py":26
+    .expect _ at "shop/views.py":11
+    .expect _ at "shop/views.py":13
+    .expect _ at "shop/views.py":14
+    .expect _ at "shop/views.py":15
+    .expect _ at "shop/views.py":16
+    .expect _ at "shop/views.py":18
+    .expect _ at "shop/views.py":19
+    .expect _ at "shop/views.py":20
+    .expect _ at "shop/views.py":24
+    .expect _ at "shop/views.py":25
+    .expect _ at "shop/views.py":27
+    .expect _ at "shop/views.py":31
+    .expect _ at "shop/views.py":49
+.end

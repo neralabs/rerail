@@ -84,8 +84,8 @@
 //                                                       dj_qs_model(<Book.objects.filter(x=1)>, <Book>)
 //         with transaction.atomic():                    dj_atomic_with; its statements are dj_in_atomic
 //         if Book.objects.count() > 0:                  py_empty_cmp(<the comparison>, <the count() call>)
-#include "python/ast.rr"
-#include "python/calls.rr"   // call_arg, posarg: its syntax helpers only
+#include "python/ast.rerail"
+#include "python/calls.rerail"   // call_arg, posarg: its syntax helpers only
 
 // ---- models ------------------------------------------------------------------------------------------------------
 // dj_model_base(q): classes outside the run that are models: Django's own and common third-party bases.

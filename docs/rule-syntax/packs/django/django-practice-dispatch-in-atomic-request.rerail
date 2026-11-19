@@ -27,7 +27,7 @@
 //   def place(request): with transaction.atomic(): notify.delay(1)               not reported: enqueue-on-commit's
 //   @transaction.non_atomic_requests  def hook(request): notify.delay(1)         not reported
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation DispatchInAtomicRequest(at: node, what: symbol) "`{what}` runs inside a request while ATOMIC_REQUESTS wraps every view in a transaction (here or in a view that calls this code): a worker can pick the task up (or the mail goes out) before the request commits, so it may read rows that are not committed yet or act on changes that roll back. Run it after commit: `transaction.on_commit(partial(...))`, or Celery's `.delay_on_commit()`."
 // What a dispatch is, and which ones stay, is python/django's side-effect vocabulary, shared with
@@ -82,3 +82,26 @@ dar_on_commit(oc) :- kind(oc, "call"), field(oc, "function", f), sym_of(f, "djan
 dar_on_commit(oc) :- kind(oc, "call"), field(oc, "function", f), attr_of(f, _, "on_commit").
 .decl dar_after_commit(n: node)
 dar_after_commit(n) :- dar_on_commit(oc), within(n, oc).
+
+// The cases, `cases/django-practice-dispatch-in-atomic-request/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "proj/settings.py" from "cases/django-practice-dispatch-in-atomic-request/proj/settings.py"
+    .fixture "shop/api/viewsets.py" from "cases/django-practice-dispatch-in-atomic-request/shop/api/viewsets.py"
+    .fixture "shop/middleware.py" from "cases/django-practice-dispatch-in-atomic-request/shop/middleware.py"
+    .fixture "shop/models.py" from "cases/django-practice-dispatch-in-atomic-request/shop/models.py"
+    .fixture "shop/tasks.py" from "cases/django-practice-dispatch-in-atomic-request/shop/tasks.py"
+    .fixture "shop/tests/test_views.py" from "cases/django-practice-dispatch-in-atomic-request/shop/tests/test_views.py"
+    .fixture "shop/urls.py" from "cases/django-practice-dispatch-in-atomic-request/shop/urls.py"
+    .fixture "shop/views.py" from "cases/django-practice-dispatch-in-atomic-request/shop/views.py"
+    .expect _ at "shop/api/viewsets.py":9
+    .expect _ at "shop/tasks.py":12
+    .expect _ at "shop/views.py":15
+    .expect _ at "shop/views.py":16
+    .expect _ at "shop/views.py":17
+    .expect _ at "shop/views.py":18
+    .expect _ at "shop/views.py":20
+    .expect _ at "shop/views.py":60
+    .expect _ at "shop/views.py":65
+    .expect _ at "shop/views.py":103
+.end

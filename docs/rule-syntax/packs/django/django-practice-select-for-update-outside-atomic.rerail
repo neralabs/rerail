@@ -21,7 +21,7 @@
 //   def view(request): with transaction.atomic(): lock(1)                                  not reported
 //   def expire(pk): with transaction.atomic(): Hold.objects.select_for_update().get(pk=pk) not reported
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation SelectForUpdateOutsideAtomic(at: node, f: symbol, why: symbol) "`select_for_update()` in `{f}` runs outside transaction.atomic(): {why}. In autocommit mode Django raises TransactionManagementError here on PostgreSQL, MySQL and Oracle, though a TestCase (which wraps each test in a transaction) passes. Wrap the locking read and the writes that depend on it in `transaction.atomic()`, and give any try/except of a DatabaseError inside it its own nested `atomic()`."
 SelectForUpdateOutsideAtomic(c, x, why) :- sfu_site(c, f), def_name(f, x), sfu_exposed(f), sfu_why(f, why).
@@ -190,3 +190,38 @@ sfu_why(f, "no code in the project calls it, so it is an entry point (a view, ta
 sfu_why(f, cat("`", cat(g, cat("` calls it outside a transaction at ", cat(p, cat(":", to_string(l))))))) :-
     sfu_bare_call(c, f), !sfu_entry(f), l = min m : { sfu_bare_call(b, f), line(b, m) }, line(c, l), owner(c, h), def_name(h, g),
     docof(c, d), doc(d, p, _).
+
+// The cases, `cases/django-practice-select-for-update-outside-atomic/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "backend/__init__.py" from "cases/django-practice-select-for-update-outside-atomic/backend/__init__.py"
+    .fixture "backend/plates/__init__.py" from "cases/django-practice-select-for-update-outside-atomic/backend/plates/__init__.py"
+    .fixture "backend/plates/gate.py" from "cases/django-practice-select-for-update-outside-atomic/backend/plates/gate.py"
+    .fixture "backend/plates/models.py" from "cases/django-practice-select-for-update-outside-atomic/backend/plates/models.py"
+    .fixture "backend/plates/rebuild.py" from "cases/django-practice-select-for-update-outside-atomic/backend/plates/rebuild.py"
+    .fixture "shop/__init__.py" from "cases/django-practice-select-for-update-outside-atomic/shop/__init__.py"
+    .fixture "shop/checkout/__init__.py" from "cases/django-practice-select-for-update-outside-atomic/shop/checkout/__init__.py"
+    .fixture "shop/checkout/complete.py" from "cases/django-practice-select-for-update-outside-atomic/shop/checkout/complete.py"
+    .fixture "shop/core/__init__.py" from "cases/django-practice-select-for-update-outside-atomic/shop/core/__init__.py"
+    .fixture "shop/core/tracing.py" from "cases/django-practice-select-for-update-outside-atomic/shop/core/tracing.py"
+    .fixture "shop/core/transactions.py" from "cases/django-practice-select-for-update-outside-atomic/shop/core/transactions.py"
+    .fixture "shop/gates.py" from "cases/django-practice-select-for-update-outside-atomic/shop/gates.py"
+    .fixture "shop/jobs.py" from "cases/django-practice-select-for-update-outside-atomic/shop/jobs.py"
+    .fixture "shop/locks.py" from "cases/django-practice-select-for-update-outside-atomic/shop/locks.py"
+    .fixture "shop/models.py" from "cases/django-practice-select-for-update-outside-atomic/shop/models.py"
+    .fixture "shop/services.py" from "cases/django-practice-select-for-update-outside-atomic/shop/services.py"
+    .fixture "shop/settings.py" from "cases/django-practice-select-for-update-outside-atomic/shop/settings.py"
+    .fixture "shop/tasks.py" from "cases/django-practice-select-for-update-outside-atomic/shop/tasks.py"
+    .fixture "shop/tests/__init__.py" from "cases/django-practice-select-for-update-outside-atomic/shop/tests/__init__.py"
+    .fixture "shop/tests/test_holds.py" from "cases/django-practice-select-for-update-outside-atomic/shop/tests/test_holds.py"
+    .fixture "shop/transactions.py" from "cases/django-practice-select-for-update-outside-atomic/shop/transactions.py"
+    .fixture "shop/views.py" from "cases/django-practice-select-for-update-outside-atomic/shop/views.py"
+    .expect _ at "shop/gates.py":60
+    .expect _ at "shop/jobs.py":58
+    .expect _ at "shop/locks.py":13
+    .expect _ at "shop/services.py":8
+    .expect _ at "shop/services.py":33
+    .expect _ at "shop/services.py":69
+    .expect _ at "shop/tasks.py":9
+    .expect _ at "shop/views.py":57
+.end

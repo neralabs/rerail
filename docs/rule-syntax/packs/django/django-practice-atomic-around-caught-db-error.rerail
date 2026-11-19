@@ -25,7 +25,7 @@
 // Gaps: ATOMIC_REQUESTS and an atomic in a caller; writes in helpers the try body calls; atomic wrappers such as
 // `traced_atomic_transaction()`; a handler that raises inside a nested try/with/match counts as not raising.
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation CaughtDbErrorInAtomic(at: node, err: symbol) "This `except {err}` sits inside transaction.atomic, and its try body runs a database query with no savepoint (atomic block) of its own: after the error the transaction is broken, so later queries in the block fail or are silently rolled back. Wrap the try body in `with transaction.atomic():` so the error rolls back only that savepoint."
 // A handler that always re-raises (python/django's py_reraising_handler) lets the error leave the atomic block and
@@ -82,3 +82,20 @@ adb_no_savepoint(w) :- dj_atomic_with(w, wb), kind(e, "call"), within(e, w), !wi
 .decl adb_savepoint(x: node)
 adb_savepoint(x) :- kind(x, "except_clause"), kind(c, "call"), within(c, x), field(c, "function", f), sym_of(f, q),
     (q = "django.db.transaction.savepoint_rollback" ; q = "django.db.transaction.set_rollback").
+
+// The cases, `cases/django-practice-atomic-around-caught-db-error/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "shop/services.py" from "cases/django-practice-atomic-around-caught-db-error/shop/services.py"
+    .fixture "shop/tests/test_services.py" from "cases/django-practice-atomic-around-caught-db-error/shop/tests/test_services.py"
+    .expect _ at "shop/services.py":15
+    .expect _ at "shop/services.py":25
+    .expect _ at "shop/services.py":33
+    .expect _ at "shop/services.py":37
+    .expect _ at "shop/services.py":45
+    .expect _ at "shop/services.py":146
+    .expect _ at "shop/services.py":186
+    .expect _ at "shop/services.py":208
+    .expect _ at "shop/services.py":223
+    .expect _ at "shop/services.py":232
+.end

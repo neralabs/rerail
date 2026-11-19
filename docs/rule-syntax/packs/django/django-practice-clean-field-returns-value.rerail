@@ -25,8 +25,8 @@
 //               raise ValidationError("digits only")
 //           return code
 
-#include "python/django.rr"
-#include "python/flow-return.rr"   // fn_return, bare_return
+#include "python/django.rerail"
+#include "python/flow-return.rerail"   // fn_return, bare_return
 
 .violation CleanFieldFallsOff(at: node, m: symbol, x: symbol) "`{m}()` can reach its end without returning: Django stores its return value as cleaned_data[\"{x}\"], so on that path the field's value becomes None. Return the cleaned value (`return self.cleaned_data[\"{x}\"]`, or the normalised one) on every path that does not raise ValidationError."
 CleanFieldFallsOff(n, m, x) :- cfr_clean(f, m, x), field(f, "body", b), cfr_open(b), field(f, "name", n).
@@ -122,3 +122,27 @@ cfr_clause(t, k, b) :- kind(t, "try_statement"), child(t, c, _), kind(c, k), chi
 cfr_has_else(s) :- field(s, "alternative", a), kind(a, "else_clause").
 .decl cfr_loop(k: symbol)
 cfr_loop("while_statement"). cfr_loop("for_statement"). cfr_loop("function_definition"). cfr_loop("class_definition").
+
+// The cases, `cases/django-practice-clean-field-returns-value/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "accounts/__init__.py" from "cases/django-practice-clean-field-returns-value/accounts/__init__.py"
+    .fixture "accounts/base.py" from "cases/django-practice-clean-field-returns-value/accounts/base.py"
+    .fixture "accounts/forms.py" from "cases/django-practice-clean-field-returns-value/accounts/forms.py"
+    .fixture "accounts/models.py" from "cases/django-practice-clean-field-returns-value/accounts/models.py"
+    .fixture "accounts/tests/__init__.py" from "cases/django-practice-clean-field-returns-value/accounts/tests/__init__.py"
+    .fixture "accounts/tests/test_forms.py" from "cases/django-practice-clean-field-returns-value/accounts/tests/test_forms.py"
+    .expect _ at "accounts/forms.py":24
+    .expect _ at "accounts/forms.py":31
+    .expect _ at "accounts/forms.py":34
+    .expect _ at "accounts/forms.py":60
+    .expect _ at "accounts/forms.py":82
+    .expect _ at "accounts/forms.py":95
+    .expect _ at "accounts/forms.py":108
+    .expect _ at "accounts/forms.py":155
+    .expect _ at "accounts/forms.py":169
+    .expect _ at "accounts/forms.py":177
+    .expect _ at "accounts/forms.py":192
+    .expect _ at "accounts/forms.py":206
+    .expect _ at "accounts/forms.py":214
+.end

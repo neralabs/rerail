@@ -1,20 +1,20 @@
 # Engine and library bugs found while writing the Django practice rules
 
 Found while running the `django-practice-*` rules over 32 open-source Django apps with `rerail-engine run-rr`
-(release build of this branch, `tbelanger/final-rerail-shape-integration-django-rules`, based on `91c2df8863`).
+(a release build of the engine at `91c2df8863`, 2026-11-14).
 Paths are relative to the repository root. Each section is self-contained: symptom, reproduction, where it is in the
 code, evidence, the workaround used, and a suggested fix. "Not confirmed" marks what was inferred and not proven.
 
 | # | Bug | Area | Status |
 |---|---|---|---|
 | 1 | Runs deadlock at 0% CPU | engine: `logic/strings.rs`, rayon | Reproduced many times; mechanism partly inferred |
-| 2 | A huge module of string literals never finishes | engine guests / `python/names.rr` annotations | Reproduced |
+| 2 | A huge module of string literals never finishes | engine guests / `python/names.rerail` annotations | Reproduced |
 | 3 | Module names are taken from the repository root (src layouts) | engine `doc` facts vs Python imports | Reproduced with a 3-file probe |
-| 4 | `sym_of` drops relative imports of two or more dots | `lib/python/imports.rr` | Reproduced; root cause found |
+| 4 | `sym_of` drops relative imports of two or more dots | `lib/python/imports.rerail` | Reproduced; root cause found |
 | 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced |
 | 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog) |
-| 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rr` | Reproduced with a probe; cause found |
-| 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rr` | Reproduced with a probe |
+| 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found |
+| 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe |
 | 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Observed; not profiled |
 
 ---
@@ -26,8 +26,8 @@ happens at random, more often on larger repositories, under the default thread c
 During the corpus runs it hit netbox, openedx, cvat, DefectDojo, healthchecks, authentik, readthedocs, taiga-back
 and LibrePhotos at different times; one run sat at 0 s CPU for 100 minutes, three others for 10 to 14 hours.
 
-**Reproduce.** Run any rule that includes `python/names.rr` over a mid-sized repository a few times in parallel, e.g.
-`RERAIL_TAPE_CACHE=off rerail-engine run-rr docs/rule-syntax/packs/django/django-practice-count-not-len.rr <repo> <out>`
+**Reproduce.** Run any rule that includes `python/names.rerail` over a mid-sized repository a few times in parallel, e.g.
+`RERAIL_TAPE_CACHE=off rerail-engine run-rr docs/rule-syntax/packs/django/django-practice-count-not-len.rerail <repo> <out>`
 on netbox or openedx. Not every run hangs; it showed up a few times per full pass of a rule over the 31-app corpus.
 
 **Where.** `native/src/code_rule_dsl/logic/strings.rs`, `Vocabulary::rows` (line 242): it takes the `seen` mutex
@@ -80,12 +80,12 @@ about 52 to 66 s.
 .policy "probe-model" revision 1
 .language python
 .scope include "**/*.py"
-#include "python/django.rr"
+#include "python/django.rerail"
 .violation P(at: node) "m"
 P(n) :- dj_model(c), field(c, "name", n).
 ```
 
-`RERAIL_THREADS=4 RERAIL_TAPE_CACHE=off rerail-engine run-rr probe.rr <netbox checkout> <out>`: no result after 15
+`RERAIL_THREADS=4 RERAIL_TAPE_CACHE=off rerail-engine run-rr probe.rerail <netbox checkout> <out>`: no result after 15
 minutes. Delete `netbox/extras/data/un_locode.py`: 187 findings in 66 s. Not every rule is affected: count-not-len,
 which reads only `sym_of`, finished on netbox with the file present in 169 s.
 
@@ -93,7 +93,7 @@ which reads only `sym_of`, finished on netbox with the file present in 169 s.
 (`local/guests/tree-sitter parse`) and the chunk holding the file stuck in a set-fixpoint seed join after the
 `tgt`/`rasg` strata; the heads that grew were python/names' annotation strata (`rr_in_annotation_*`, `ann_str`,
 `parsed`). 297,707 is about the number of string literals in the file, so every string of the module is parsed as a
-possible annotation guest. Not confirmed: which rule in `python/names.rr` (`parsed_in`, lines 386-388, or the
+possible annotation guest. Not confirmed: which rule in `python/names.rerail` (`parsed_in`, lines 386-388, or the
 `string_annotation` rows, line 373) asks for every string rather than only strings in annotation positions.
 
 **Workaround used.** The file was deleted from the corpus checkout.
@@ -128,7 +128,7 @@ src/shop/base.py   class_def     src.shop.base.Base
 src/shop/child.py  class_base    shop.base.Base        ← never equals src.shop.base.Base
 ```
 
-**Where.** The engine's `doc(d, path, module)` facts (`lib/core.rr`, line 31) derive the module from the path relative
+**Where.** The engine's `doc(d, path, module)` facts (`lib/core.rerail`, line 31) derive the module from the path relative
 to the scanned root. Python resolves `shop.base` from the source root (`src/`), so the names disagree.
 
 **Evidence from the corpus.** pretix (`src/pretix/...` is module `src.pretix...`, imports say `pretix...`), InvenTree
@@ -170,7 +170,7 @@ one(); two(); three(); four()
 A rule reporting `sym_of` of each callee reports only `a.b.c.d.e.x.one`. A rule reporting `import_alias` gives all
 four, correctly resolved (`a.b.c.d.x`, `a.b.c.x`, `a.b.x`).
 
-**Where.** `docs/rule-syntax/lib/python/imports.rr`. `impmod` (lines 26-35), which feeds `rifrom` → `ribind` →
+**Where.** `docs/rule-syntax/lib/python/imports.rerail`. `impmod` (lines 26-35), which feeds `rifrom` → `ribind` →
 python/names' `ibind` → `qn` → `sym_of`, handles only single-dot relative imports (its comment says so, line 28).
 Two or more dots fall to `irel_open` (lines 51-57) and bind the name as an unknown target (`rotgt`). Yet `rel_base`
 (lines 66-71) already resolves any number of dots with `@pkg_up`, and `module_text`/`import_alias` use it.
@@ -233,7 +233,7 @@ that normally takes about 5 s, hung until a 120 s timeout, which may be bug 1.
 `run-rr` of count-not-len did not finish in 50 minutes (killed at 3,000 s). Netbox (1,295 Python files) takes 30 to 70 s
 for most rules, so the cost is far from linear in the number of files.
 
-**Reproduce.** `RERAIL_THREADS=4 rerail-engine run-rr docs/rule-syntax/packs/django/django-practice-count-not-len.rr
+**Reproduce.** `RERAIL_THREADS=4 rerail-engine run-rr docs/rule-syntax/packs/django/django-practice-count-not-len.rerail
 <posthog checkout> <out>`. Not profiled; bug 2 (a few very large generated files such as `posthog/schema.py`, 1.7 MB)
 and bug 1 may account for it.
 
@@ -272,7 +272,7 @@ A rule reporting `sym_of` of each right-hand side gives only `pkg.m.Base`; `qual
 `class Meta(Other.Meta)` gives `sym_of` `shop.base.Other.Meta` and the `class_base` row `shop.base.Other.Meta`; the
 same-module `class Meta(Base.Meta)` gives neither.
 
-**Where.** `docs/rule-syntax/lib/python/names.rr`, `sym_of` (lines 359-362). Rule 1 goes through `qn` (lines 273-275),
+**Where.** `docs/rule-syntax/lib/python/names.rerail`, `sym_of` (lines 359-362). Rule 1 goes through `qn` (lines 273-275),
 which extends a name along an attribute chain (`qn(n, @dot(q, a)) :- attr_of(n, o, a), qn(o, q)`) but starts only
 from an import binding (`ibind`). Rule 2, a local def or class, matches only the bare name (`look(n, x, s), defn(s, x,
 f), qualname(f, q)`), with no attribute step.
@@ -297,7 +297,7 @@ decorator of the run `def mine(f)` that returns a `functools.wraps(f)` wrapper, 
 `def plain(): ...`; then `with held(): pass; wrapped(); cached(); plain()`. A rule reporting `call_target`/`call_open`
 per call gives: `held()` open, `cached()` open, `wrapped()` → `w` (the run's wrapper), `plain()` → `plain`.
 
-**Where.** `docs/rule-syntax/lib/python/calls.rr`: a decorator outside the run makes the decorated name's value
+**Where.** `docs/rule-syntax/lib/python/calls.rerail`: a decorator outside the run makes the decorated name's value
 unknown, so the call is left open. That is sound for an arbitrary decorator; for the standard ones above it loses
 edges a rule needs.
 

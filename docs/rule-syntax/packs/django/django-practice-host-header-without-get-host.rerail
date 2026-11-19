@@ -15,7 +15,7 @@
 //   request.META["HTTP_HOST"] = "example.com"        not reported: a store (tests, RequestFactory setup)
 //   logger.warning("host %s", request.headers.get("Host"))     not reported: logging
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation HostHeaderWithoutGetHost(at: node, key: symbol) "This reads the `{key}` header directly, which skips the ALLOWED_HOSTS check Django does only in `request.get_host()`: a client can send any host, and links or cache keys built from it can point at the attacker's site. Use `request.get_host()`; leave the raw read only for logging or diagnostics."
 
@@ -44,3 +44,19 @@ hhg_read(c, key) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "get
     hhg_host_key(k, key).
 
 HostHeaderWithoutGetHost(n, key) :- hhg_read(n, key), !hhg_logged(n), docof(n, d), !dj_test_doc(d).
+
+// The cases, `cases/django-practice-host-header-without-get-host/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "site/__init__.py" from "cases/django-practice-host-header-without-get-host/site/__init__.py"
+    .fixture "site/tests/test_views.py" from "cases/django-practice-host-header-without-get-host/site/tests/test_views.py"
+    .fixture "site/views.py" from "cases/django-practice-host-header-without-get-host/site/views.py"
+    .expect _ at "site/views.py":9
+    .expect _ at "site/views.py":10
+    .expect _ at "site/views.py":11
+    .expect _ at "site/views.py":12
+    .expect _ at "site/views.py":13
+    .expect _ at "site/views.py":14
+    .expect _ at "site/views.py":20
+    .expect _ at "site/views.py":34
+.end

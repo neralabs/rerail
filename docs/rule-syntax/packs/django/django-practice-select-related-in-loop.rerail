@@ -25,7 +25,7 @@
 // Gap: when the iterated model is not a class of the run (`model.objects.all()`, a model of another package), a
 // property returning a queryset cannot be told from a related manager, and is reported as one.
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation SelectRelatedInLoop(at: node, var: symbol, rel: symbol, fix: symbol) "The loop reads {var}.{rel} for every row of this queryset, one query per row; add .{fix}('{rel}') to the queryset so they load in one query (leave it when the loop stops after a row or two)."
 
@@ -81,3 +81,23 @@ srl_not_manager(q, rel) :- dj_qs_model(q, mc), srl_defines(mc, rel), !srl_m2m(mc
 .decl srl_defines(mc: node, x: symbol)
 srl_defines(mc, x) :- dj_model_method(mc, _, x).
 srl_defines(mc, x) :- dj_model_super(mc, b), kind(f, "function_definition"), nearest(f, b, scope), def_name(f, x).
+
+// The cases, `cases/django-practice-select-related-in-loop/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "shop/base.py" from "cases/django-practice-select-related-in-loop/shop/base.py"
+    .fixture "shop/models.py" from "cases/django-practice-select-related-in-loop/shop/models.py"
+    .fixture "shop/tests/test_views.py" from "cases/django-practice-select-related-in-loop/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "cases/django-practice-select-related-in-loop/shop/views.py"
+    .expect _ at "shop/views.py":6
+    .expect _ at "shop/views.py":8
+    .expect _ at "shop/views.py":10
+    .expect _ at "shop/views.py":11
+    .expect _ at "shop/views.py":21
+    .expect _ at "shop/views.py":23
+    .expect _ at "shop/views.py":25
+    .expect _ at "shop/views.py":63
+    .expect _ at "shop/views.py":70
+    .expect _ at "shop/views.py":72
+    .expect _ at "shop/views.py":74
+.end

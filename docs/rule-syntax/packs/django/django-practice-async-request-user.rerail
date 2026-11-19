@@ -18,7 +18,7 @@
 //   async def middleware(request): request.user = SimpleLazyObject(...)   not reported: a write
 //   async def me(request): request.user.display_name   in a Starlette file: not reported
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation AsyncRequestUser(at: node) "`request.user` is a lazy object whose first use queries the session and user tables synchronously, which raises SynchronousOnlyOperation inside `async def` unless a sync middleware already resolved it. Use `user = await request.auser()` (Django 5.0+) and read the user from that. If your own middleware always sets `request.user` to a loaded user, this read is safe, but `await request.auser()` still keeps the view independent of that."
 AsyncRequestUser(a) :- attr_of(a, o, "user"), aru_request(o), expr_ctx(a, "load"), aru_in_async(a), !aru_handed_off(a).
@@ -36,3 +36,19 @@ aru_in_async(n) :- nearest(n, f, dj_region_stop), is_async(f), docof(n, d), dj_d
 .decl aru_handed_off(a: node)
 aru_handed_off(a) :- call_name(w, x), (x = "sync_to_async" ; x = "database_sync_to_async"), field(c, "function", w),
     call_arg(c, _, _, v), unparen(v, a).
+
+// The cases, `cases/django-practice-async-request-user/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "api/app.py" from "cases/django-practice-async-request-user/api/app.py"
+    .fixture "shop/api/drf.py" from "cases/django-practice-async-request-user/shop/api/drf.py"
+    .fixture "shop/tests/test_views.py" from "cases/django-practice-async-request-user/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "cases/django-practice-async-request-user/shop/views.py"
+    .expect _ at "shop/api/drf.py":7
+    .expect _ at "shop/views.py":7
+    .expect _ at "shop/views.py":9
+    .expect _ at "shop/views.py":13
+    .expect _ at "shop/views.py":19
+    .expect _ at "shop/views.py":20
+    .expect _ at "shop/views.py":26
+.end

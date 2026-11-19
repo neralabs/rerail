@@ -19,7 +19,7 @@
 //       super().save(*args, **kwargs)
 //   def save(self, *args, update_fields=None, **kwargs): ...   not reported: handles update_fields
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation SaveIgnoresUpdateFields(at: node, fields: symbol) "This save() sets {fields} and then passes the caller's arguments to super().save(); when the caller gives `update_fields` (save(update_fields=...), and every update_or_create() since Django 4.2), that change is silently not written. If update_fields is given, add the fields you set to it before calling super().save(); if the value is set only for a new row, test `self._state.adding` around it."
 SaveIgnoresUpdateFields(n, fs) :- siuf_save(f), field(f, "name", n),
@@ -82,3 +82,20 @@ siuf_new_test("^not +(bool\\()?self\\.(pk|id)\\)?( +and .*)?$"). siuf_new_test("
 siuf_new_test("^self\\._state\\.adding( +and .*)?$"). siuf_new_test("^not +self\\.present_in_database( +and .*)?$").
 siuf_new_test("^kwa?r?g?s?\\.get\\(.force_insert.[^)]*\\)( +and .*)?$").
 siuf_new_test("^not +self\\.(pk|id) +or +kwa?r?g?s?\\.get\\(.force_insert.[^)]*\\)$").
+
+// The cases, `cases/django-practice-save-ignores-update-fields/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "blog/base.py" from "cases/django-practice-save-ignores-update-fields/blog/base.py"
+    .fixture "blog/branches.py" from "cases/django-practice-save-ignores-update-fields/blog/branches.py"
+    .fixture "blog/models.py" from "cases/django-practice-save-ignores-update-fields/blog/models.py"
+    .fixture "blog/tests/test_models.py" from "cases/django-practice-save-ignores-update-fields/blog/tests/test_models.py"
+    .expect _ at "blog/branches.py":42
+    .expect _ at "blog/branches.py":65
+    .expect _ at "blog/models.py":19
+    .expect _ at "blog/models.py":30
+    .expect _ at "blog/models.py":39
+    .expect _ at "blog/models.py":48
+    .expect _ at "blog/models.py":145
+    .expect _ at "blog/models.py":180
+.end

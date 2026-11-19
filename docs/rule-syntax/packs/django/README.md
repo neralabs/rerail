@@ -9,7 +9,7 @@ django-migration-linter and Django's system checks; the Semgrep registry and orm
 overlaps are listed in [NOTES-django.md](NOTES-django.md).
 
 Each rule reads the repository's Python files through the shared library
-[`python/django.rr`](../../lib/python/django.rr). Most rules read one file at a time; many also follow names into the
+[`python/django.rerail`](../../lib/python/django.rerail). Most rules read one file at a time; many also follow names into the
 repository's other files. The model rules follow a model's bases, so fields, Meta options and save()/delete()
 overrides declared on a base in another module count (fk-id-not-relation, select-related-in-loop, model-init-override,
 save-ignores-update-fields, bulk-write-skips-hooks, read-modify-write, get-or-create-needs-unique, which also reads the
@@ -26,11 +26,11 @@ it reaches). These four are the slowest: on the largest apps a run takes hours. 
 misses.
 
 Each rule is proven three ways: by its cases in `cases/<id>/`, where a line ending in `# caught` must be reported and no
-other line may be, run by the Rust test `django_practice_rules_report_exactly_their_caught_lines`
-(`native/src/code_rule_dsl/logic/rr/tests.rs`); by a run on 31 open-source Django apps at pinned commits
-([the corpus](#the-corpus)), whose matches were read and judged real or not (every match where a rule had at most 80,
-otherwise a spread sample of at least 80 with every matching repository represented); and by an independent review of
-each rule that tried counterexamples against it, which were added to its cases.
+other line may be, run by the rule file's own test (`.test cases exactly`, which reads the case directory as one
+repository and expects each `# caught` line; `rerail rules test <file>.rerail`); by a run on 31 open-source Django apps
+at pinned commits ([the corpus](#the-corpus)), whose matches were read and judged real or not (every match where a rule
+had at most 80, otherwise a spread sample of at least 80 with every matching repository represented); and by an
+independent review of each rule that tried counterexamples against it, which were added to its cases.
 
 | Rule | Mode | Catches | Matches (repos) on 31 apps | Precision of read matches |
 |---|---|---|---|---|
@@ -1129,8 +1129,8 @@ code) was removed from the working tree, because of an engine issue described in
 
 | Path | What it is |
 |---|---|
-| `django-practice-<id>.rr` | The 27 rules, written by hand. Each opens with a comment on what it matches and leaves alone, with an example of each |
-| `cases/<id>/` | Each rule's cases, a small repository: a line ending in `# caught` must be reported, no other line may be |
-| [`../../lib/python/django.rr`](../../lib/python/django.rr) | `python/django`, the shared vocabulary: models and their fields, querysets, transactions, views, test and migration files, settings |
+| `django-practice-<id>.rerail` | The 27 rules, written by hand. Each opens with a comment on what it matches and leaves alone, with an example of each |
+| `cases/<id>/` | Each rule's cases, a small repository: a line ending in `# caught` must be reported, no other line may be (the rule file's `.test cases`) |
+| [`../../lib/python/django.rerail`](../../lib/python/django.rerail) | `python/django`, the shared vocabulary: models and their fields, querysets, transactions, views, test and migration files, settings |
 | [`NOTES-django.md`](NOTES-django.md) | The batch notes: dropped candidates, open library proposals, overlaps with other tools |
 | [`ENGINE-BUGS.md`](ENGINE-BUGS.md) | Engine and library bugs found while writing and measuring these rules |

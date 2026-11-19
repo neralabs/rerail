@@ -24,7 +24,7 @@
 //   class SearchForm(forms.Form):
 //       def clean(self): ...                   not reported: a plain Form has no model validation to skip
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation ModelFormCleanSkipsSuper(at: node, c: symbol, skip: symbol, fix: symbol) "`{c}.clean()` never calls the parent class's clean(), so Django skips {skip} and a duplicate fails at save() with an IntegrityError. {fix}"
 ModelFormCleanSkipsSuper(n, cn, skip, fix) :- mcs_clean(c, f), !mcs_calls_parent(f), param(f, "self", 0), docof(f, d),
@@ -70,3 +70,21 @@ mcs_calls_parent(f) :- mcs_clean(c, f), mcs_formset(c), kind(k, "call"), field(k
 .decl mcs_clean_call(f: node, k: node, o: node)
 mcs_clean_call(f, k, o) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, o, "clean"),
     nearest(k, f, "function_definition").
+
+// The cases, `cases/django-practice-modelform-clean-calls-super/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "library/__init__.py" from "cases/django-practice-modelform-clean-calls-super/library/__init__.py"
+    .fixture "library/base.py" from "cases/django-practice-modelform-clean-calls-super/library/base.py"
+    .fixture "library/forms.py" from "cases/django-practice-modelform-clean-calls-super/library/forms.py"
+    .fixture "library/models.py" from "cases/django-practice-modelform-clean-calls-super/library/models.py"
+    .fixture "library/tests/__init__.py" from "cases/django-practice-modelform-clean-calls-super/library/tests/__init__.py"
+    .fixture "library/tests/test_forms.py" from "cases/django-practice-modelform-clean-calls-super/library/tests/test_forms.py"
+    .expect _ at "library/forms.py":14
+    .expect _ at "library/forms.py":52
+    .expect _ at "library/forms.py":79
+    .expect _ at "library/forms.py":85
+    .expect _ at "library/forms.py":91
+    .expect _ at "library/forms.py":125
+    .expect _ at "library/forms.py":133
+.end

@@ -21,7 +21,7 @@
 //   created = models.DateTimeField(default=datetime.now())                reported: naive local, W161 misses it
 //   expires = models.DateTimeField(default=lambda: now() + timedelta(7))  not reported: runs per object
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation DefaultCalledOnce(at: node, fn: symbol) "`{fn}()` runs once, when this field is defined at import, not for each object: every row this process creates (or every choice filter, for limit_choices_to) gets that one value. Pass a callable instead (`default=uuid.uuid4`, or a module-level function for a derived value such as now plus seven days, which migrations can serialize) so Django calls it each time."
 DefaultCalledOnce(c, q) :- dco_value(f, v), (c = v ; within_stop(c, v, dco_stop)), dco_call(c, q), docof(f, d),
@@ -71,3 +71,27 @@ dco_w161_whole("DateField", "django.utils.timezone.localdate").
 dco_w161_part("DateField", "date", "django.utils.timezone.now"). dco_w161_part("DateField", "date", "django.utils.timezone.localtime").
 dco_w161_part("DateField", "date", "datetime.datetime.utcnow"). dco_w161_part("TimeField", "time", "django.utils.timezone.now").
 dco_w161_part("TimeField", "time", "datetime.datetime.utcnow").
+
+// The cases, `cases/django-practice-default-called-once/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "shop/migrations/0002_invite_key.py" from "cases/django-practice-default-called-once/shop/migrations/0002_invite_key.py"
+    .fixture "shop/models.py" from "cases/django-practice-default-called-once/shop/models.py"
+    .fixture "shop/tests/test_models.py" from "cases/django-practice-default-called-once/shop/tests/test_models.py"
+    .expect _ at "shop/models.py":30
+    .expect _ at "shop/models.py":31
+    .expect _ at "shop/models.py":32
+    .expect _ at "shop/models.py":33
+    .expect _ at "shop/models.py":34
+    .expect _ at "shop/models.py":35
+    .expect _ at "shop/models.py":36
+    .expect _ at "shop/models.py":37
+    .expect _ at "shop/models.py":38
+    .expect _ at "shop/models.py":39
+    .expect _ at "shop/models.py":41
+    .expect _ at "shop/models.py":46
+    .expect _ at "shop/models.py":64
+    .expect _ at "shop/models.py":65
+    .expect _ at "shop/models.py":67
+    .expect _ at "shop/models.py":75
+.end

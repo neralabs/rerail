@@ -22,7 +22,7 @@
 //   Book.objects.get_or_create(author=a, title=t)            not reported: UniqueConstraint(fields=["author", "title"])
 //   a.book_set.get_or_create(title=t)                        not reported: related managers are not followed
 
-#include "python/django.rr"
+#include "python/django.rerail"
 
 .violation GetOrCreateNeedsUnique(at: node, m: symbol, model: symbol, keys: symbol) "{m}() on {model} looks up ({keys}), which no unique field or unique constraint covers, so concurrent calls can each insert a row and leave duplicates. Add a UniqueConstraint(fields=[{keys}]) (or unique=True) to {model}, or look up a field that is unique."
 GetOrCreateNeedsUnique(c, m, x, ks) :- goc_call(c, m, mc), !goc_unknown(c), !goc_unique(c, mc), def_name(mc, x),
@@ -153,3 +153,27 @@ goc_opaque(mc) :- goc_meta_opt(mc, "constraints", v), child(v, k, _), goc_constr
 goc_opaque(mc) :- goc_meta_opt(mc, "constraints", v), child(v, k, _), !kind(k, "comment"), !kind(k, "call").
 .decl goc_fields_lit(k: node)
 goc_fields_lit(k) :- call_arg(k, -1, "fields", f), unparen(f, g), goc_strings(g).
+
+// The cases, `cases/django-practice-get-or-create-needs-unique/`, read as one repository: each line ending in `# caught` is reported, and no
+// other line.
+.test cases exactly
+    .fixture "shop/base.py" from "cases/django-practice-get-or-create-needs-unique/shop/base.py"
+    .fixture "shop/models.py" from "cases/django-practice-get-or-create-needs-unique/shop/models.py"
+    .fixture "shop/tests/test_views.py" from "cases/django-practice-get-or-create-needs-unique/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "cases/django-practice-get-or-create-needs-unique/shop/views.py"
+    .expect _ at "shop/models.py":94
+    .expect _ at "shop/models.py":137
+    .expect _ at "shop/views.py":9
+    .expect _ at "shop/views.py":10
+    .expect _ at "shop/views.py":11
+    .expect _ at "shop/views.py":12
+    .expect _ at "shop/views.py":13
+    .expect _ at "shop/views.py":14
+    .expect _ at "shop/views.py":15
+    .expect _ at "shop/views.py":19
+    .expect _ at "shop/views.py":20
+    .expect _ at "shop/views.py":48
+    .expect _ at "shop/views.py":51
+    .expect _ at "shop/views.py":53
+    .expect _ at "shop/views.py":54
+.end

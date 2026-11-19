@@ -287,51 +287,6 @@ fn rule_syntax_files_pass_check_rr() {
     assert!(problems.is_empty(), "{} problems:\n{}", problems.len(), problems.join("\n"));
 }
 
-/// The Django practice rules (`packs/django/<id>.rr`) on their cases, `packs/django/cases/<id>/`: the rule runs over
-/// the case directory as over a repository, and reports exactly the lines that end in `# caught`.
-#[test]
-fn django_practice_rules_report_exactly_their_caught_lines() {
-    let pack = rule_syntax().join("packs/django");
-    let mut rules = Vec::new();
-    files(&pack, "rr", &mut rules);
-    assert!(!rules.is_empty());
-    let mut problems = Vec::new();
-    for rule in rules {
-        let id = rule.file_stem().unwrap().to_str().unwrap().to_owned();
-        let cases = pack.join("cases").join(&id);
-        if !cases.is_dir() {
-            problems.push(format!("{id}: no cases at {}", short(&cases)));
-            continue;
-        }
-        let mut sources = Vec::new();
-        files(&cases, "py", &mut sources);
-        let mut want = BTreeSet::new();
-        for source in &sources {
-            let path = source.strip_prefix(&cases).unwrap().display().to_string();
-            for (i, text) in std::fs::read_to_string(source).unwrap().lines().enumerate() {
-                if text.trim_end().ends_with("# caught") {
-                    want.insert((path.clone(), i as i64 + 1));
-                }
-            }
-        }
-        let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("django-cases");
-        let report = crate::code_rule_dsl::tools::run_rr(&rule, &cases, &out, &serde_json::Value::Null).unwrap();
-        let _ = std::fs::remove_dir_all(&out);
-        let got: BTreeSet<(String, i64)> = report["diagnostics"].as_array().unwrap().iter()
-            .map(|row| (row["path"].as_str().unwrap().to_owned(), row["line"].as_i64().unwrap())).collect();
-        if want.is_empty() {
-            problems.push(format!("{id}: no line of its cases is marked `# caught`"));
-        }
-        for (path, line) in want.difference(&got) {
-            problems.push(format!("{id}: {path}:{line} is marked `# caught` and not reported"));
-        }
-        for (path, line) in got.difference(&want) {
-            problems.push(format!("{id}: {path}:{line} is reported and not marked `# caught`"));
-        }
-    }
-    assert!(problems.is_empty(), "{} problems:\n{}", problems.len(), problems.join("\n"));
-}
-
 /// The checks find what they are for.
 #[test]
 fn check_rr_finds_problems() {
