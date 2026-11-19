@@ -577,6 +577,10 @@ Progress (2026-11-18):
     `keep`, `keep_into`, `copy_as_is` and `copy_from` do too; `Builder::keep_run` copies a run of consecutive rules
     as one range, and a derivation's kept rules (`manager::drive`) go as runs, ending where a visited rule writes.
     Locked by `a_run_of_kept_rules_is_the_rules_kept_one_by_one`.
+  - *Done (`rewrite_all`).* `Builder::rewrite_all(from, rw)` runs every rule through one `Rewrite`: `Rewrite::begin`
+    (every rule, by default) picks the rules it rewrites, and the rest are kept as ranges. The name move of a lowered
+    program (`plan::lower`), simplify's units and column projection, and the nullary relations' unit column are one
+    call each.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 

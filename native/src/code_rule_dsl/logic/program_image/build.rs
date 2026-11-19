@@ -447,6 +447,21 @@ impl<'p> Builder<'p> {
 
     /// Starts a rule that is `from`'s rule `rule` rewritten by `rw` as it is copied: its head, then each body literal
     /// `rw` keeps. More literals may follow; `finish` writes it, recording `rule` as its source (§9).
+    /// Every rule of `from` through `rw` (0276 §3), in order: a rule `rw.begin` picks is rewritten, the rest are kept
+    /// (`keep_run`). The rewrite of the whole program, one call.
+    pub fn rewrite_all(&mut self, from: &Version, rw: &mut impl Rewrite) -> Result<(), String> {
+        let mut kept: Vec<RuleRef<'_>> = Vec::new();
+        for r in from.rules() {
+            if rw.begin(r) {
+                self.keep_run(from, &std::mem::take(&mut kept));
+                self.rewrite(from, r, rw).finish()?;
+            } else {
+                kept.push(r);
+            }
+        }
+        self.keep_run(from, &kept);
+        Ok(())
+    }
     pub fn rewrite(&mut self, from: &Version, rule: RuleRef<'_>, rw: &mut impl Rewrite) -> RuleBuilder<'_, 'p> {
         let same = self.same(rule);
         let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
@@ -1104,6 +1119,11 @@ pub enum Site<'v> {
 /// A rule rewritten as it is copied (`Builder::rewrite`). Each hook's default keeps what it is given, so a pass states
 /// only what it changes, and never walks a rule's nodes itself.
 pub trait Rewrite {
+    /// Starts rule `r` of a rewrite of the whole program (`Builder::rewrite_all`): whether it is rewritten. A rule it
+    /// leaves is kept as it is, copied with its neighbours as a range.
+    fn begin(&mut self, _r: RuleRef<'_>) -> bool {
+        true
+    }
     /// Terms to write before atom `a`'s own arguments (a presence column, say), into `out`.
     fn prefix(&mut self, _a: AtomRef<'_>, _out: &mut Vec<T<'static>>) {}
     /// A term to write in place of `t` at `site`; `None` keeps it (and asks again of each of a call's arguments).

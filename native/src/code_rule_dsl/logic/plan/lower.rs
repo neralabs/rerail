@@ -366,9 +366,7 @@ pub fn relocate(v: &Version, to: &HashMap<u32, u32>) -> Result<Option<std::sync:
     }
     let mut b = Builder::derive(v);
     let mut moved = Moved { to, missing: false };
-    for r in v.rules() {
-        b.rewrite(v, r, &mut moved).finish().map_err(Error::Plan)?;
-    }
+    b.rewrite_all(v, &mut moved).map_err(Error::Plan)?;
     for rel in v.fact_names() {
         let mut rows = v.fact_rows(&rel);
         for row in &mut rows {

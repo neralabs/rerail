@@ -944,9 +944,13 @@ pub struct BooleanRelations;
 struct Unit1<'a> {
     v: &'a Version,
     names: &'a BTreeSet<String>,
+    touched: &'a BTreeSet<RuleId>,
 }
 
 impl crate::code_rule_dsl::logic::program_image::build::Rewrite for Unit1<'_> {
+    fn begin(&mut self, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>) -> bool {
+        self.touched.contains(&r.id())
+    }
     fn prefix(&mut self, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>, out: &mut Vec<T<'static>>) {
         if self.names.contains(self.v.rel_name(a.rel())) && a.args().next().is_none() {
             out.push(T::Int(1));
@@ -982,13 +986,7 @@ impl ProgramPass for BooleanRelations {
             let rows: Vec<_> = rows.iter().map(|row| row.iter().cloned().chain([crate::code_rule_dsl::logic::front::Value::Int(1)]).collect::<Vec<_>>().into()).collect();
             b.set_facts(name, &rows);
         }
-        for r in input.rules() {
-            if touched.contains(&r.id()) {
-                b.rewrite(&input, r, &mut Unit1 { v: &input, names: &names }).finish()?;
-            } else {
-                b.keep(&input, r);
-            }
-        }
+        b.rewrite_all(&input, &mut Unit1 { v: &input, names: &names, touched: &touched })?;
         Ok(())
     }
 }

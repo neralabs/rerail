@@ -471,6 +471,10 @@ impl ProgramPass for UnitColumns {
             head: u32,
         }
         impl Rewrite for Units<'_> {
+            fn begin(&mut self, r: RuleRef<'_>) -> bool {
+                self.head = r.head().node();
+                std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.arity() == 0 && self.units.contains(self.v.rel_name(a.rel())))
+            }
             fn prefix(&mut self, a: AtomRef<'_>, out: &mut Vec<T<'static>>) {
                 if a.arity() == 0 && self.units.contains(self.v.rel_name(a.rel())) {
                     out.push(if a.node() == self.head { T::Int(1) } else { T::Wild });
@@ -479,14 +483,7 @@ impl ProgramPass for UnitColumns {
         }
         let input = w.input().clone();
         let b = w.derive()?;
-        for r in input.rules() {
-            let touches = std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.arity() == 0 && units.contains(input.rel_name(a.rel())));
-            if touches {
-                b.rewrite(&input, r, &mut Units { v: &input, units: &units, head: r.head().node() }).finish()?;
-            } else {
-                b.keep(&input, r);
-            }
-        }
+        b.rewrite_all(&input, &mut Units { v: &input, units: &units, head: 0 })?;
         for rel in &units {
             b.declare(rel, &[("unit", "int")]);
             if let Some(rows) = f.facts(rel) {
@@ -2853,6 +2850,9 @@ impl ProgramPass for ProjectAll {
             keep: &'a HashMap<String, Vec<usize>>,
         }
         impl Rewrite for Project<'_> {
+            fn begin(&mut self, r: RuleRef<'_>) -> bool {
+                std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| self.keep.contains_key(self.v.rel_name(a.rel())))
+            }
             fn drop_arg(&mut self, a: AtomRef<'_>, c: usize) -> bool {
                 self.keep.get(self.v.rel_name(a.rel())).is_some_and(|k| !k.contains(&c))
             }
@@ -2866,14 +2866,7 @@ impl ProgramPass for ProjectAll {
             .collect();
         let input = w.input().clone();
         let b = w.derive()?;
-        for r in input.rules() {
-            let touches = std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| keep_of.contains_key(input.rel_name(a.rel())));
-            if touches {
-                b.rewrite(&input, r, &mut Project { v: &input, keep: &keep_of }).finish()?;
-            } else {
-                b.keep(&input, r);
-            }
-        }
+        b.rewrite_all(&input, &mut Project { v: &input, keep: &keep_of })?;
         for (rel, cols) in &decls {
             let decl: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
             b.declare(rel, &decl);
