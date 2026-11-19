@@ -79,10 +79,15 @@ libraries: `lib/tsx/rerail-module-loads.rerail` (b), `lib/rust/rerail-native.rer
 | `rerail-walk-limits` | No: two regex clauses. |
 | `rerail-walk-limits-native` | No: two regex clauses. |
 
-`site/check_rr.py` learned that `match_all` binds its match (`match_all("re", sp, m)` binds `m`; over a symbol, the
-ordinal and offsets): it reported every regex rule here as ungrounded, and three earlier files too.
+`site/souffle.py`, the grounding check `site/check_rr.py` runs, learned that `match_all` binds its match
+(`match_all("re", sp, m)` binds `m`; over a symbol, `match_all("re", s, ordinal, start, end)` the ordinal and
+offsets; no other arity, as the engine's `rr/check.rs`): it reported every regex rule here as ungrounded, and three
+earlier files too.
 
 ### Engine faults met on the way (fixed in the engine, no workaround left)
+
+Both fixes are their own pull requests, #861 and #863, merged into this branch to drop the workarounds; once they
+are on main, this pull request's diff no longer holds them.
 
 - A run of two or more policies lost the declaration of `within`, which `core.rerail` declares, and panicked with
   `no declaration of within`. Fixed in the lowering (`logic/rr/lower.rs`, `link_seeded`); `rerail-ui-pure-modules`
