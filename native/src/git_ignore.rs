@@ -607,6 +607,80 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// The root `.gitignore` and `info/exclude` are read whole as a matcher opens, so a change of
+    /// either is a change of its rules.
+    #[test]
+    fn says_a_matcher_opened_now_reads_a_changed_root_gitignore_or_info_exclude() {
+        let root = fixture(
+            "root-files",
+            &[(".gitignore", "gen/\n"), ("a.py", ""), ("b.py", "")],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        let root = root.canonicalize().unwrap();
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(!ignore.ignored("a.py", false).unwrap());
+        assert!(ignore.sources_unchanged(), "nothing changed");
+        std::fs::write(root.join(".gitignore"), "gen/\na.py\n").unwrap();
+        assert!(!ignore.sources_unchanged(), "the root .gitignore changed");
+        let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
+        assert!(ignore.ignored("a.py", false).unwrap());
+        assert!(ignore.sources_unchanged());
+        std::fs::write(root.join(".git/info/exclude"), "b.py\n").unwrap();
+        assert!(!ignore.sources_unchanged(), "info/exclude changed");
+        let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
+        assert!(ignore.ignored("b.py", false).unwrap());
+        assert!(ignore.sources_unchanged());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A linked worktree reads `info/exclude` in the repository's common Git folder, not in its
+    /// own folder under `worktrees/`.
+    #[test]
+    fn says_a_matcher_in_a_linked_worktree_reads_the_common_info_exclude() {
+        let root = fixture("common", &[(".gitignore", "gen/\n")]);
+        let linked = std::env::temp_dir().join(format!(
+            "rerail-git-ignore-common-linked-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&linked);
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", ".gitignore"]);
+        git(
+            &root,
+            &[
+                "-c",
+                "user.name=Rerail",
+                "-c",
+                "user.email=rerail@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "-m",
+                "base",
+            ],
+        );
+        let path = linked.to_string_lossy().into_owned();
+        git(&root, &["worktree", "add", "--quiet", "--detach", &path]);
+        std::fs::write(linked.join("c.py"), "").unwrap();
+        let linked = linked.canonicalize().unwrap();
+        let mut ignore = GitIgnore::open(&linked).unwrap().expect("a Git worktree");
+        assert!(!ignore.ignored("c.py", false).unwrap());
+        assert!(ignore.sources_unchanged(), "nothing changed");
+        std::fs::write(root.join(".git/info/exclude"), "c.py\n").unwrap();
+        assert!(
+            !ignore.sources_unchanged(),
+            "the common info/exclude changed"
+        );
+        let mut fresh = GitIgnore::open(&linked).unwrap().unwrap();
+        assert!(
+            fresh.ignored("c.py", false).unwrap(),
+            "a matcher opened now reads the common info/exclude"
+        );
+        std::fs::remove_dir_all(linked).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// `gitoxide.parsePrecious` decides whether a `$` line is a precious pattern or a name that
     /// starts with `$`, so turning it on changes what the same `.gitignore` ignores.
     #[test]
