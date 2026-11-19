@@ -53,6 +53,11 @@ The initial NTFS test reached teardown, where Windows refused to delete the open
 The native view stays open across the rewrite and restoration. Both Windows tests passed together on the committed checkout. The CLI rewrite test also passed on macOS.
 [Regression tests](../../../../test/cli/headless-scan.test.ts)
 
+The Parallels guest rebuilt the Windows ARM64 addon at `61d8073a5`. On NTFS, all three selected tests passed in 24.96 seconds.
+These covered Git message selection, invalidation and restoration of a damaged tree, and checked source reads on a single revision view.
+The read test distinguished a missing path, an empty file, a byte limit, and an unavailable blob or subtree.
+It also moved the Git directory and restored it before reading again.
+
 ## Earlier repairs to the catalog and store
 
 The headless regression for case 102 reproduced the permission change before the repair.
