@@ -245,7 +245,7 @@ fn simd_group_operations_and_their_references() {
 fn threadgroup_sums_and_scans() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(19);
-    for lsz in [32u32, 64, 96, 256, 1024] {
+    for lsz in [32u32, 64, 96, 256, 1024].into_iter().filter(|&l| l <= crate::device::max_threadgroup()) {
         let groups = 5u32;
         let n = lsz * groups;
         let vals: Vec<u32> = (0..n).map(|_| if rng.below(3) == 0 { rng.next() as u32 } else { rng.below(100) as u32 }).collect();

@@ -30,8 +30,12 @@ fn tokens(text: &str) -> Vec<String> {
 /// headers, the same search order (the forest, then the carried headers' directories on disk).
 fn clang(backend: Backend, main: &str) -> Option<String> {
     let f = forest();
-    let mut c = Command::new("clang++");
-    c.args(["-x", "c++", "-std=gnu++20", "-undef", "-nostdinc", "-E", "-P", "-w"]);
+    let mut c = Command::new("clang");
+    if backend == Backend::OpenCl {
+        c.args(["-x", "c", "-std=gnu99", "-undef", "-nostdinc", "-E", "-P", "-w"]);
+    } else {
+        c.args(["-x", "c++", "-std=gnu++20", "-undef", "-nostdinc", "-E", "-P", "-w"]);
+    }
     c.arg(format!("-I{f}")).arg(format!("-I{f}/mldb/builtin/{}/ukl", backend.dir())).arg(format!("-I{f}/mldb/block/ukl"));
     c.arg(format!("-I{}/lib", env!("CARGO_MANIFEST_DIR")));
     for (n, v) in backend.predefines() {
@@ -62,13 +66,36 @@ fn same_as_clang(backend: Backend, main: &str, min_tokens: usize) {
 #[test]
 fn every_library_header_stands_alone_on_every_backend() {
     let dir = format!("{}/lib", env!("CARGO_MANIFEST_DIR"));
-    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Cpu] {
+    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Cpu, Backend::OpenCl] {
         // A body is included by its header, with its parameters, and refuses to stand alone.
         for (name, _) in LIBRARY.iter().filter(|(n, _)| !n.starts_with("ukl/body/")) {
             // The shim's tokens, at least, and the header's own.
             same_as_clang(backend, &format!("{dir}/{name}"), 300);
         }
     }
+}
+
+/// The OpenCL gate (decision 0400 §3.5): each library header, preprocessed for OpenCL, is OpenCL C 1.2 that clang's
+/// front end accepts: with the SIMD group emulated (width 32), and at width 1.
+#[test]
+fn every_library_header_is_opencl_c_1_2() {
+    let dir = format!("{}/lib", env!("CARGO_MANIFEST_DIR"));
+    let tmp = std::env::temp_dir().join(format!("rerail-ukl-cl-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    for width in ["32u", "8u", "1u"] {
+        for (name, _) in LIBRARY.iter().filter(|(n, _)| !n.starts_with("ukl/body/")) {
+            let main = format!("{dir}/{name}");
+            let src = Preprocess::new(Backend::OpenCl).define("UKL_SIMD_WIDTH", Some(width)).run(&main).unwrap_or_else(|e| panic!("{e}"));
+            let file = tmp.join(format!("{}.cl", name.replace('/', "_")));
+            std::fs::write(&file, &src).unwrap();
+            let Ok(o) = Command::new("clang").args(["-x", "cl", "-cl-std=CL1.2", "-fsyntax-only", "-Werror=implicit-function-declaration"]).arg(&file).output() else {
+                eprintln!("no clang here: {name} preprocessed for OpenCL, not compiled");
+                return;
+            };
+            assert!(o.status.success(), "{name} at width {width} is not OpenCL C 1.2 ({}):\n{}", file.display(), String::from_utf8_lossy(&o.stderr).lines().take(30).collect::<Vec<_>>().join("\n"));
+        }
+    }
+    std::fs::remove_dir_all(&tmp).ok();
 }
 
 /// A kernel reaches the library by `<ukl/...>`, from memory as from disk: the carried copy.

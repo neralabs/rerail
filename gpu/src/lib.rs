@@ -1,5 +1,5 @@
-//! The GPU device layer (decision 0400): one interface over the backends, Metal on macOS and CUDA on Linux, or the CPU
-//! when `RERAIL_GPU=cpu` (`device`),
+//! The GPU device layer (decision 0400): one interface over the backends, Metal on macOS and CUDA on Linux, an OpenCL
+//! GPU when `RERAIL_GPU=opencl`, or the CPU when `RERAIL_GPU=cpu` (`device`),
 //! MLDB's compute-kernel runtime (the argument types, the grid launcher that binds a kernel's parameters by name, and
 //! each backend's runtime, at their upstream paths under `mldb/`), the process's shared device, kernels compiled
 //! from UKL source at run time with the UKL library on their include path (`kernels`), and the library's device-wide
@@ -20,6 +20,8 @@ pub mod compute_kernel_metal;
 pub mod compute_kernel_cuda;
 #[path = "mldb/builtin/cpu/compute_kernel_cpu.rs"]
 pub mod compute_kernel_cpu;
+#[path = "mldb/builtin/opencl/compute_kernel_opencl.rs"]
+pub mod compute_kernel_opencl;
 pub mod device;
 pub mod kernels;
 pub mod library;
@@ -58,10 +60,33 @@ pub mod shared {
     }
 
     /// The process's device and queue: `None` without a device. The CPU's when `RERAIL_GPU=cpu`
-    /// (`device::cpu_chosen`), else the GPU's.
+    /// (`device::cpu_chosen`), an OpenCL GPU's when `RERAIL_GPU=opencl`, else the target's GPU's.
     pub fn get() -> Option<&'static Shared> {
         static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
-        SHARED.get_or_init(|| if crate::device::cpu_chosen() { open_cpu() } else { open() }).as_ref()
+        SHARED
+            .get_or_init(|| {
+                if crate::device::cpu_chosen() {
+                    open_cpu()
+                } else if crate::device::opencl_chosen() {
+                    open_opencl()
+                } else {
+                    open()
+                }
+            })
+            .as_ref()
+    }
+
+    /// The OpenCL GPU, or none (why, on stderr: a process that asked for OpenCL says why it has no device).
+    fn open_opencl() -> Option<Shared> {
+        use crate::compute_kernel_opencl::{ClDevice, ClQueueRoot};
+        let opened = ClDevice::open().and_then(|d| Ok((ClQueueRoot::new(&d)?, ClQueueRoot::new(&d)?, d)));
+        match opened {
+            Ok((queue, waiting, device)) => Some(Shared { device: Device::OpenCl(device), queue: QueueRoot::OpenCl(queue), waiting: QueueRoot::OpenCl(waiting) }),
+            Err(e) => {
+                eprintln!("RERAIL_GPU=opencl: {e}");
+                None
+            }
+        }
     }
 
     fn open_cpu() -> Option<Shared> {

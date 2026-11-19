@@ -1808,10 +1808,10 @@ mod tests {
 #define CLIF_VIEW_SPACE UKL_GLOBAL
 #include READS_HEADER
 
-struct ReadArgs {
+typedef struct ReadArgs {
     uint32_t n;
     uint32_t pad;
-};
+} ReadArgs;
 UKL_REFLECT_STRUCT(ReadArgs, n, pad)
 
 DEFINE_KERNEL2(tests, t_reads,

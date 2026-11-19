@@ -29,7 +29,7 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_hist_tile)(UKL_GLOBAL const UKL_RADIX_K
 // rounds; its offset for the tile).
 UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_GLOBAL const UKL_RADIX_KEY* keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* offsets,
                                        UKL_GLOBAL UKL_RADIX_KEY* outKeys, UKL_GLOBAL uint32_t* outValues, UklRadixArgs args, UKL_LOCAL uint32_t* counts,
-                                       UKL_LOCAL uint32_t* before, UKL_LOCAL uint32_t* base, uint32_t tile, uint32_t t)
+                                       UKL_LOCAL uint32_t* before, UKL_LOCAL uint32_t* base, uint32_t tile, uint32_t t __UKL_PARAMS)
 {
     uint32_t lane = t % UKL_SIMD_WIDTH, sg = t / UKL_SIMD_WIDTH;
     base[t] = offsets[t * args.tiles + tile];

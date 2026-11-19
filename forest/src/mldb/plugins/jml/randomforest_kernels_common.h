@@ -338,7 +338,7 @@ decompressRowsImpl)(ROBUFFER(uint64_t) rowData,
     }
 }
 
-uint32_t testRow(uint32_t rowId,
+UKL_FUNCTION(v1,uint32_t,testRow)(uint32_t rowId,
                  ROBUFFER(float) rowData,
                  uint32_t numRows,
                  
@@ -534,8 +534,8 @@ UKL_FUNCTION(v1,float,nextFloat)(float val, int32_t n)
 // Stable SQRT: take the largest value which when squared is less than or equal to the desired value
 UKL_FUNCTION(v1,float,sqrt3)(float val)
 {
-    constexpr float SQRT3_MULT_BEFORE = 65536.0f;
-    constexpr float SQRT3_MULT_AFTER  = 1.0f / 256.0f;
+    const float SQRT3_MULT_BEFORE = 65536.0f;
+    const float SQRT3_MULT_AFTER  = 1.0f / 256.0f;
 
     val *= SQRT3_MULT_BEFORE;
     float approx = nextFloat(sqrt(val), 3);

@@ -64,7 +64,7 @@ UKL_INLINE uint32_t ukl_radix_row(uint32_t tile, uint32_t k, uint32_t t) { retur
                    TGID0,    uint32_t,     tile,      ,                                                                 \
                    LID0,     uint32_t,     t,         )                                                                 \
     {                                                                                                                   \
-        ukl_radix_scatter_tile_##Suffix(keys, values, offsets, outKeys, outValues, args, counts, before, base, tile, t);          \
+        ukl_radix_scatter_tile_##Suffix(keys, values, offsets, outKeys, outValues, args, counts, before, base, tile, t __UKL_ARGS);\
     }
 
 #define UKL_RADIX_NAME(f) f##_u32

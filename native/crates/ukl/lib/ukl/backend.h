@@ -11,14 +11,16 @@
 
 #pragma once
 
+#include <ukl>
+
 // The SIMD group's state, for a backend that keeps it in memory (OpenCL without subgroups: a threadgroup's scratch,
-// decision 0400 §3.5): every function that reaches a SIMD-group operation takes `__UKL_PARAMS` after its parameters,
-// and passes `__UKL_ARGS` after its arguments. Empty where the hardware holds the group (Metal, CUDA, the CPU).
+// which its shim defines, decision 0400 §3.5): every function that reaches a SIMD-group operation takes
+// `__UKL_PARAMS` after its parameters, and passes `__UKL_ARGS` after its arguments. Empty where the hardware holds the
+// group (Metal, CUDA, the CPU).
 #ifndef __UKL_PARAMS
 #define __UKL_PARAMS
 #define __UKL_ARGS
 #endif
-#include <ukl>
 
 #if defined(UKL_METAL)
 
@@ -209,6 +211,120 @@ UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t 
 }
 UKL_INLINE void ukl_fence_device() { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return __atomic_fetch_add(p, v, __ATOMIC_RELAXED); }
+
+#elif defined(UKL_OPENCL)
+
+// OpenCL C 1.2 (ukl_opencl_shim.h): C with address spaces, clang's `overloadable`, and C11's `_Static_assert`.
+#define UKL_INLINE static inline
+#ifndef UKL_COLD
+#define UKL_COLD static __attribute__((noinline))
+#endif
+#define UKL_GLOBAL __global
+#define UKL_COHERENT volatile __global
+#define UKL_LOCAL __local
+#define UKL_PRIVATE
+#define UKL_OVERLOAD __attribute__((overloadable))
+#define UKL_STATIC_ASSERT(c, m) _Static_assert(c, m)
+
+UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return popcount(x); }
+UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return (uint32_t)popcount(x); }
+UKL_INLINE uint32_t ukl_clz32(uint32_t x) { return clz(x); }
+UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return (uint32_t)clz(x); }
+// OpenCL C 1.2 has no `ctz`: the lowest set bit's position from the count of zeros above it.
+UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return x == 0u ? 32u : 31u - clz(x & (0u - x)); }
+UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0ul ? 64u : 63u - (uint32_t)clz(x & (0ul - x)); }
+
+UKL_INLINE void ukl_tg_barrier() { barrier(CLK_LOCAL_MEM_FENCE); }
+UKL_INLINE void ukl_tg_barrier_device() { barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
+
+#if defined(UKL_OPENCL_EMULATED_SG)
+// The SIMD group through threadgroup memory: each thread writes its value to its word of `__ukl_sg`, and reads its
+// source lane's. A barrier before the write keeps the last operation's reads ahead of it; one after makes the
+// writes seen. OpenCL 1.2's barrier is the workgroup's: every live thread of the threadgroup reaches each operation.
+// A lane outside the group, or the group's own (`shuffle_up` below lane `d`, `shuffle_down` past the last lane),
+// reads its own value, as CUDA's do.
+UKL_INLINE uint32_t __ukl_cl_exchange(uint32_t v, uint32_t from __UKL_PARAMS)
+{
+    uint32_t l = __ukl_cl_lid();
+    barrier(CLK_LOCAL_MEM_FENCE);
+    __ukl_sg[l] = v;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    return __ukl_sg[(l & ~(UKL_SIMD_WIDTH - 1u)) + (from & (UKL_SIMD_WIDTH - 1u))];
+}
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return __ukl_cl_exchange(v, lane __UKL_ARGS); }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS)
+{
+    uint32_t l = __UKL_CL_LANE;
+    return __ukl_cl_exchange(v, l >= d ? l - d : l __UKL_ARGS);
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
+{
+    uint32_t l = __UKL_CL_LANE;
+    return __ukl_cl_exchange(v, l + d < UKL_SIMD_WIDTH ? l + d : l __UKL_ARGS);
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return __ukl_cl_exchange(v, __UKL_CL_LANE ^ m __UKL_ARGS); }
+// The ballot: every lane reads the group's words.
+UKL_INLINE uint32_t ukl_sg_ballot(bool b __UKL_PARAMS)
+{
+    uint32_t l = __ukl_cl_lid(), base = l & ~(UKL_SIMD_WIDTH - 1u);
+    barrier(CLK_LOCAL_MEM_FENCE);
+    __ukl_sg[l] = b ? 1u : 0u;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    uint32_t m = 0u;
+    for (uint32_t j = 0u; j < UKL_SIMD_WIDTH; j++)
+        m |= __ukl_sg[base + j] << j;
+    return m;
+}
+UKL_INLINE void ukl_sg_barrier() { barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
+#elif UKL_SIMD_WIDTH == 1
+// A group of one lane: every lane reads its own value.
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return v; }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS) { return v; }
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS) { return v; }
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return v; }
+UKL_INLINE uint32_t ukl_sg_ballot(bool b __UKL_PARAMS) { return b ? 1u : 0u; }
+UKL_INLINE void ukl_sg_barrier() { mem_fence(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
+#else
+#  error "ukl/backend.h: OpenCL's native subgroups (cl_khr_subgroup_shuffle, _ballot) are not written yet (decision 0400 §3.5)"
+#endif
+
+// Relaxed atomics on a device word (OpenCL 1.2's are relaxed), and a fence. OpenCL 1.2 has no coherent memory but
+// its atomics: a plain load, `volatile` or not, may be answered by a cache another threadgroup's write has not
+// reached (Apple's). So an atomic load is an atomic read-modify-write that changes nothing, an atomic store an
+// exchange, and a coherent load (`ukl_ldc_*`, ukl/memory.h) reads its words' halves so.
+UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return atomic_or((volatile __global uint32_t*)p, 0u); }
+UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { (void)atomic_xchg((volatile __global uint32_t*)p, v); }
+UKL_INLINE uint64_t __ukl_cl_coherent_load64(volatile __global const uint64_t* p)
+{
+    volatile __global uint32_t* w = (volatile __global uint32_t*)p;
+    return (uint64_t)atomic_or(w, 0u) | ((uint64_t)atomic_or(w + 1, 0u) << 32);
+}
+#define UKL_COHERENT_LOAD64(p) __ukl_cl_coherent_load64(p)
+// The bits `m` of the 64-bit word at `p` set to `x`'s, by halves: each half's bits cleared, then set, by atomics that
+// leave its other bits as another thread writes them.
+UKL_INLINE void __ukl_cl_coherent_store_bits64(volatile __global uint64_t* p, uint64_t m, uint64_t x)
+{
+    volatile __global uint32_t* w = (volatile __global uint32_t*)p;
+    uint32_t ml = (uint32_t)m, mh = (uint32_t)(m >> 32), xl = (uint32_t)x & ml, xh = (uint32_t)(x >> 32) & mh;
+    if (ml != 0u) {
+        atomic_and(w, ~ml);
+        atomic_or(w, xl);
+    }
+    if (mh != 0u) {
+        atomic_and(w + 1, ~mh);
+        atomic_or(w + 1, xh);
+    }
+}
+#define UKL_COHERENT_STORE_BITS64(p, m, x) __ukl_cl_coherent_store_bits64(p, m, x)
+UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_add((volatile __global uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_sub((volatile __global uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_or(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_or((volatile __global uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_xchg((volatile __global uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_min((volatile __global uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_max((volatile __global uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomic_cmpxchg((volatile __global uint32_t*)p, e, n); }
+UKL_INLINE void ukl_fence_device() { mem_fence(CLK_GLOBAL_MEM_FENCE); }
+UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_add((volatile __local uint32_t*)p, v); }
 
 #else
 #  error "the UKL library has no intrinsics for this backend (ukl/backend.h)"

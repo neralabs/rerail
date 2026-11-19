@@ -25,7 +25,7 @@
 // gives w (1 - t) and w t). Upstream had one float, the sign giving the label and the magnitude the weight.
 // A 1D kernel over the rows.
 
-struct DecompressRowsKernelArgs {
+typedef struct DecompressRowsKernelArgs {
     uint32_t rowDataLength;
     uint16_t weightBits;
     uint16_t exampleNumBits;
@@ -33,7 +33,7 @@ struct DecompressRowsKernelArgs {
     WeightFormat weightFormat;
     float weightMultiplier;
     uint32_t numTargets;
-};
+} DecompressRowsKernelArgs;
 UKL_REFLECT_STRUCT(DecompressRowsKernelArgs, rowDataLength, weightBits, exampleNumBits, numRows, weightFormat, weightMultiplier, numTargets)
 
 
@@ -51,10 +51,10 @@ DEFINE_KERNEL2(randomforest_kernels, decompressRowsKernel,
                        decodedRowsOut, id, n);
 }
 
-struct TestFeatureArgs {
+typedef struct TestFeatureArgs {
     uint32_t numRows;
     uint32_t maxLocalBuckets;
-};
+} TestFeatureArgs;
 UKL_REFLECT_STRUCT(TestFeatureArgs, numRows, maxLocalBuckets)
 
 
@@ -79,9 +79,9 @@ DEFINE_KERNEL2(randomforest_kernels, testFeatureKernel,
                     gid0, lid1, lsz1, gid1, gsz1);
 }
 
-struct GetPartitionSplitsArgs {
+typedef struct GetPartitionSplitsArgs {
     uint32_t wLocalSize;
-};
+} GetPartitionSplitsArgs;
 UKL_REFLECT_STRUCT(GetPartitionSplitsArgs, wLocalSize)
 
 
@@ -200,9 +200,9 @@ DEFINE_KERNEL2(randomforest_kernels, updatePartitionNumbersKernel,
                                localState, gid0, gsz0, lid0, lsz0);
 }
 
-struct UpdateBucketsArgs {
+typedef struct UpdateBucketsArgs {
     uint32_t maxLocalBuckets;
-};
+} UpdateBucketsArgs;
 UKL_REFLECT_STRUCT(UpdateBucketsArgs, maxLocalBuckets)
 
 
@@ -264,13 +264,13 @@ DEFINE_KERNEL2(randomforest_kernels, fixupBucketsKernel,
                      gid1, gid0, gsz0);
 }
 
-struct PredictForestArgs {
+typedef struct PredictForestArgs {
     uint32_t numItems;
     uint32_t numForests;
     uint32_t maxDepth;
     uint32_t lanesPerRow;
     uint32_t columnStride;
-};
+} PredictForestArgs;
 UKL_REFLECT_STRUCT(PredictForestArgs, numItems, numForests, maxDepth, lanesPerRow, columnStride)
 
 
@@ -295,11 +295,11 @@ DEFINE_KERNEL2(randomforest_kernels, predictForestKernel,
                       predictionsOut, partials, group, tid, ntid);
 }
 
-struct NumericBucketsArgs {
+typedef struct NumericBucketsArgs {
     uint32_t numRows;
     uint32_t numSplits;
     uint32_t numericOffset;
-};
+} NumericBucketsArgs;
 UKL_REFLECT_STRUCT(NumericBucketsArgs, numRows, numSplits, numericOffset)
 
 
@@ -314,10 +314,10 @@ DEFINE_KERNEL2(randomforest_kernels, numericBucketsKernel,
     numericBucketsImpl(args.numRows, keys, splitKeys, args.numSplits, args.numericOffset, bucketsOut, id);
 }
 
-struct CodesArgs {
+typedef struct CodesArgs {
     uint32_t numRows;
     uint32_t numCodes;
-};
+} CodesArgs;
 UKL_REFLECT_STRUCT(CodesArgs, numRows, numCodes)
 
 
@@ -342,11 +342,11 @@ DEFINE_KERNEL2(randomforest_kernels, categoricalBucketsKernel,
     categoricalBucketsImpl(args.numRows, args.numCodes, codes, codeBuckets, bucketsOut, id);
 }
 
-struct RowBucketsArgs {
+typedef struct RowBucketsArgs {
     uint32_t numRows;
     uint32_t numColumns;
     uint32_t columnStride;
-};
+} RowBucketsArgs;
 UKL_REFLECT_STRUCT(RowBucketsArgs, numRows, numColumns, columnStride)
 
 
@@ -365,11 +365,11 @@ DEFINE_KERNEL2(randomforest_kernels, rowBucketsKernel,
                    codeTables, bucketDataOut, id);
 }
 
-struct PackBucketsArgs {
+typedef struct PackBucketsArgs {
     uint32_t numRows;
     uint32_t entryBits;
     uint32_t numWords;
-};
+} PackBucketsArgs;
 UKL_REFLECT_STRUCT(PackBucketsArgs, numRows, entryBits, numWords)
 
 
@@ -383,13 +383,13 @@ DEFINE_KERNEL2(randomforest_kernels, packBucketsKernel,
     packBucketsImpl(args.numRows, args.entryBits, args.numWords, buckets, wordsOut, id);
 }
 
-struct BagRowsArgs {
+typedef struct BagRowsArgs {
     uint32_t numExamples;
     uint32_t seed;
     uint32_t keep24;
     uint32_t sample;
     float scale;
-};
+} BagRowsArgs;
 UKL_REFLECT_STRUCT(BagRowsArgs, numExamples, seed, keep24, sample, scale)
 
 

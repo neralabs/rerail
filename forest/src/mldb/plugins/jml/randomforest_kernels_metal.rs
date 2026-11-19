@@ -17,7 +17,7 @@ use std::sync::{Mutex, OnceLock};
 #[cfg(target_os = "macos")]
 pub const SOURCE: &str = include_str!(concat!(env!("OUT_DIR"), "/randomforest_kernels.metal"));
 
-/// The kernels for `backend` (CUDA, the CPU): the UKL source, carried in the binary, preprocessed in-process
+/// The kernels for a backend other than Metal (CUDA, OpenCL, the CPU): the UKL source, carried in the binary, preprocessed in-process
 /// through the backend's shim (`rerail-ukl`), as its compiler takes it.
 pub fn ukl_source(preprocess: rerail_ukl::Preprocess) -> Result<String, String> {
     const ROOT: &str = "/<forest>";
@@ -61,7 +61,7 @@ pub fn library() -> Result<&'static ComputeFunctionLibrary, String> {
     LIB.get_or_init(|| {
         let shared = crate::gpu::shared::get().ok_or("no device")?;
         #[cfg(target_os = "macos")]
-        let source = if shared.device.is_cpu() { ukl_source(shared.device.preprocess())? } else { SOURCE.to_string() };
+        let source = if shared.device.metal().is_some() { SOURCE.to_string() } else { ukl_source(shared.device.preprocess())? };
         #[cfg(target_os = "linux")]
         let source = ukl_source(shared.device.preprocess())?;
         ComputeFunctionLibrary::compile_from_source(&shared.device, &source, "randomforest_kernels_ukl.h")

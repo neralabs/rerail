@@ -1,7 +1,8 @@
 //! The forest's device (Rerail, decision 0400): the target's GPU (Metal on macOS, compute_kernel_metal.rs; CUDA on
-//! Linux, compute_kernel_cuda.rs) or the CPU (compute_kernel_cpu.rs: every threadgroup's threads coroutines, for
-//! debugging kernels), chosen once a process: the CPU when `RERAIL_GPU=cpu`, else the GPU. Each type below is one or
-//! the other, and gives the grid runtime and the trainer one interface (MLDB's `ComputeRuntime`):
+//! Linux, compute_kernel_cuda.rs), an OpenCL GPU (compute_kernel_opencl.rs: integrated GPUs with no other way in) or
+//! the CPU (compute_kernel_cpu.rs: every threadgroup's threads coroutines, for debugging kernels), chosen once a
+//! process: `RERAIL_GPU=cpu` or `=opencl`, else the target's GPU. Each type below is one of them, and gives the grid
+//! runtime and the trainer one interface (MLDB's `ComputeRuntime`):
 //!
 //! - `Device`, `DeviceRef`: the device (`gpu::shared`'s); `QueueRoot`: what a `ComputeQueue` is made from;
 //! - `Buffer`, `BufferRef`: memory the host reads and writes in place (`contents`) and kernels read;
@@ -14,6 +15,7 @@
 
 pub use crate::compute_kernel::*;
 use crate::compute_kernel_cpu as cpu;
+use crate::compute_kernel_opencl as cl;
 
 #[cfg(target_os = "macos")]
 mod native {
@@ -38,10 +40,20 @@ mod native {
     pub const NAME: &str = "CUDA";
 }
 
+/// The backend `RERAIL_GPU` chooses, lower case: "cpu", "opencl", or "" for the target's GPU.
+fn chosen() -> &'static str {
+    static CHOSEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CHOSEN.get_or_init(|| std::env::var("RERAIL_GPU").map(|v| v.to_ascii_lowercase()).unwrap_or_default())
+}
+
 /// Whether this process runs its kernels on the CPU (`RERAIL_GPU=cpu`).
 pub fn cpu_chosen() -> bool {
-    static CPU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CPU.get_or_init(|| std::env::var("RERAIL_GPU").is_ok_and(|v| v.eq_ignore_ascii_case("cpu")))
+    chosen() == "cpu"
+}
+
+/// Whether this process runs its kernels on an OpenCL GPU (`RERAIL_GPU=opencl`).
+pub fn opencl_chosen() -> bool {
+    chosen() == "opencl"
 }
 
 /// The lanes of the process's device's SIMD groups (`UKL_SIMD_WIDTH`).
@@ -49,18 +61,25 @@ pub fn simd_width() -> u32 {
     crate::shared::get().map_or(32, |s| s.device.simd_width())
 }
 
+/// The most threads a threadgroup of the process's device can have.
+pub fn max_threadgroup() -> u32 {
+    crate::shared::get().map_or(1024, |s| s.device.max_threadgroup())
+}
+
 /// The backend's name, for messages: the process's device's.
 pub fn backend() -> &'static str {
     match crate::shared::get().map(|s| &s.device) {
         Some(Device::Cpu(_)) => "CPU",
+        Some(Device::OpenCl(_)) => "OpenCL",
         Some(Device::Native(_)) => native::NAME,
         None if cpu_chosen() => "CPU",
+        None if opencl_chosen() => "OpenCL",
         None => native::NAME,
     }
 }
 
 fn other() -> ! {
-    panic!("a value of one backend given to the other's (the GPU's and the CPU's)")
+    panic!("a value of one backend given to another's (the GPU's, OpenCL's and the CPU's)")
 }
 
 /// The device.
@@ -68,6 +87,7 @@ fn other() -> ! {
 pub enum Device {
     Native(native::Device),
     Cpu(cpu::CpuDevice),
+    OpenCl(cl::ClDevice),
 }
 
 pub type DeviceRef = Device;
@@ -78,7 +98,7 @@ impl Device {
     pub fn metal(&self) -> Option<&metal::Device> {
         match self {
             Device::Native(d) => Some(d),
-            Device::Cpu(_) => None,
+            _ => None,
         }
     }
 
@@ -87,7 +107,7 @@ impl Device {
     pub fn cuda(&self) -> Option<&crate::compute_kernel_cuda::CudaDevice> {
         match self {
             Device::Native(d) => Some(d),
-            Device::Cpu(_) => None,
+            _ => None,
         }
     }
 
@@ -96,6 +116,16 @@ impl Device {
         match self {
             Device::Native(_) => 32,
             Device::Cpu(_) => cpu::simd_width(),
+            Device::OpenCl(_) => cl::simd_width(),
+        }
+    }
+
+    /// The most threads a threadgroup can have: 1,024 on Metal, CUDA and the CPU; an OpenCL device's own (256 on
+    /// Apple's).
+    pub fn max_threadgroup(&self) -> u32 {
+        match self {
+            Device::OpenCl(d) => d.max_group() as u32,
+            _ => 1024,
         }
     }
 
@@ -107,6 +137,7 @@ impl Device {
     pub fn ukl_backend(&self) -> rerail_ukl::Backend {
         match self {
             Device::Cpu(_) => rerail_ukl::Backend::Cpu,
+            Device::OpenCl(_) => rerail_ukl::Backend::OpenCl,
             #[cfg(target_os = "macos")]
             Device::Native(_) => rerail_ukl::Backend::Metal { version: 310 },
             #[cfg(target_os = "linux")]
@@ -115,13 +146,16 @@ impl Device {
     }
 
     /// A preprocessing of UKL for this device: its backend, and the defines its compile takes (the CPU's knobs,
-    /// `compute_kernel_cpu::defines`).
+    /// `compute_kernel_cpu::defines`; OpenCL's width and largest threadgroup).
     pub fn preprocess(&self) -> rerail_ukl::Preprocess {
         let mut p = rerail_ukl::Preprocess::new(self.ukl_backend());
-        if let Device::Cpu(_) = self {
-            for (name, value) in cpu::defines() {
-                p = p.define(name, Some(&value));
-            }
+        let defines = match self {
+            Device::Cpu(_) => cpu::defines(),
+            Device::OpenCl(d) => d.defines(),
+            Device::Native(_) => Vec::new(),
+        };
+        for (name, value) in defines {
+            p = p.define(name, Some(&value));
         }
         p
     }
@@ -130,6 +164,7 @@ impl Device {
         match self {
             Device::Native(d) => SharedEvent::Native(d.new_shared_event()),
             Device::Cpu(d) => SharedEvent::Cpu(d.new_shared_event()),
+            Device::OpenCl(d) => SharedEvent::OpenCl(d.new_shared_event()),
         }
     }
 }
@@ -139,6 +174,7 @@ impl Device {
 pub enum Buffer {
     Native(native::Buffer),
     Cpu(cpu::CpuBuffer),
+    OpenCl(cl::ClBuffer),
 }
 
 pub type BufferRef = Buffer;
@@ -148,6 +184,7 @@ impl std::fmt::Debug for Buffer {
         match self {
             Buffer::Native(_) => write!(f, "Buffer({} bytes)", self.length()),
             Buffer::Cpu(b) => b.fmt(f),
+            Buffer::OpenCl(b) => b.fmt(f),
         }
     }
 }
@@ -157,6 +194,7 @@ impl Buffer {
         match self {
             Buffer::Native(b) => b.contents(),
             Buffer::Cpu(b) => b.contents(),
+            Buffer::OpenCl(b) => b.contents(),
         }
     }
 
@@ -164,6 +202,7 @@ impl Buffer {
         match self {
             Buffer::Native(b) => b.length(),
             Buffer::Cpu(b) => b.length(),
+            Buffer::OpenCl(b) => b.length(),
         }
     }
 
@@ -172,7 +211,7 @@ impl Buffer {
     pub fn metal(&self) -> Option<&metal::Buffer> {
         match self {
             Buffer::Native(b) => Some(b),
-            Buffer::Cpu(_) => None,
+            _ => None,
         }
     }
 }
@@ -182,6 +221,7 @@ impl Buffer {
 pub enum SharedEvent {
     Native(native::SharedEvent),
     Cpu(cpu::CpuSharedEvent),
+    OpenCl(cl::ClSharedEvent),
 }
 
 impl SharedEvent {
@@ -189,6 +229,7 @@ impl SharedEvent {
         match self {
             SharedEvent::Native(e) => e.set_signaled_value(v),
             SharedEvent::Cpu(e) => e.set_signaled_value(v),
+            SharedEvent::OpenCl(e) => e.set_signaled_value(v),
         }
     }
 
@@ -196,6 +237,7 @@ impl SharedEvent {
         match self {
             SharedEvent::Native(e) => e.signaled_value(),
             SharedEvent::Cpu(e) => e.signaled_value(),
+            SharedEvent::OpenCl(e) => e.signaled_value(),
         }
     }
 }
@@ -204,6 +246,7 @@ impl SharedEvent {
 pub enum QueueRoot {
     Native(native::QueueRoot),
     Cpu(cpu::CpuQueueRoot),
+    OpenCl(cl::ClQueueRoot),
 }
 
 impl QueueRoot {
@@ -212,7 +255,7 @@ impl QueueRoot {
     pub fn metal(&self) -> Option<&metal::CommandQueue> {
         match self {
             QueueRoot::Native(q) => Some(q),
-            QueueRoot::Cpu(_) => None,
+            _ => None,
         }
     }
 }
@@ -221,6 +264,7 @@ impl QueueRoot {
 pub enum ComputeQueue {
     Native(native::Queue),
     Cpu(cpu::CpuComputeQueue),
+    OpenCl(cl::ClComputeQueue),
 }
 
 impl ComputeQueue {
@@ -228,6 +272,7 @@ impl ComputeQueue {
         match root {
             QueueRoot::Native(r) => ComputeQueue::Native(native::Queue::new(r)),
             QueueRoot::Cpu(r) => ComputeQueue::Cpu(cpu::CpuComputeQueue::new(r)),
+            QueueRoot::OpenCl(r) => ComputeQueue::OpenCl(cl::ClComputeQueue::new(r)),
         }
     }
 
@@ -235,6 +280,7 @@ impl ComputeQueue {
         match (self, function) {
             (ComputeQueue::Native(q), ComputeFunction::Native(f)) => BindContext::Native(q.new_bind_context(f)),
             (ComputeQueue::Cpu(q), ComputeFunction::Cpu(f)) => BindContext::Cpu(q.new_bind_context(f)),
+            (ComputeQueue::OpenCl(q), ComputeFunction::OpenCl(f)) => BindContext::OpenCl(q.new_bind_context(f)),
             _ => other(),
         }
     }
@@ -243,6 +289,7 @@ impl ComputeQueue {
         match (self, dst) {
             (ComputeQueue::Native(q), Buffer::Native(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
             (ComputeQueue::Cpu(q), Buffer::Cpu(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
+            (ComputeQueue::OpenCl(q), Buffer::OpenCl(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
             _ => other(),
         }
     }
@@ -251,6 +298,7 @@ impl ComputeQueue {
         match (self, dst) {
             (ComputeQueue::Native(q), Buffer::Native(d)) => q.enqueue_fill_array(d, value, offset, count),
             (ComputeQueue::Cpu(q), Buffer::Cpu(d)) => q.enqueue_fill_array(d, value, offset, count),
+            (ComputeQueue::OpenCl(q), Buffer::OpenCl(d)) => q.enqueue_fill_array(d, value, offset, count),
             _ => other(),
         }
     }
@@ -259,6 +307,7 @@ impl ComputeQueue {
         match (self, src, dst) {
             (ComputeQueue::Native(q), Buffer::Native(s), Buffer::Native(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
             (ComputeQueue::Cpu(q), Buffer::Cpu(s), Buffer::Cpu(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
+            (ComputeQueue::OpenCl(q), Buffer::OpenCl(s), Buffer::OpenCl(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
             _ => other(),
         }
     }
@@ -267,6 +316,7 @@ impl ComputeQueue {
         match (self, event) {
             (ComputeQueue::Native(q), SharedEvent::Native(e)) => q.wait_for_event(e, value),
             (ComputeQueue::Cpu(q), SharedEvent::Cpu(e)) => q.wait_for_event(e, value),
+            (ComputeQueue::OpenCl(q), SharedEvent::OpenCl(e)) => q.wait_for_event(e, value),
             _ => other(),
         }
     }
@@ -275,6 +325,7 @@ impl ComputeQueue {
         match self {
             ComputeQueue::Native(q) => ComputeEvent::Native(q.flush()),
             ComputeQueue::Cpu(q) => ComputeEvent::Cpu(q.flush()),
+            ComputeQueue::OpenCl(q) => ComputeEvent::OpenCl(q.flush()),
         }
     }
 
@@ -282,6 +333,7 @@ impl ComputeQueue {
         match self {
             ComputeQueue::Native(q) => q.finish(),
             ComputeQueue::Cpu(q) => q.finish(),
+            ComputeQueue::OpenCl(q) => q.finish(),
         }
     }
 }
@@ -290,6 +342,7 @@ impl ComputeQueue {
 pub enum ComputeEvent {
     Native(native::Event),
     Cpu(cpu::CpuComputeEvent),
+    OpenCl(cl::ClComputeEvent),
 }
 
 impl ComputeEvent {
@@ -297,6 +350,7 @@ impl ComputeEvent {
         match self {
             ComputeEvent::Native(e) => e.await_(),
             ComputeEvent::Cpu(e) => e.await_(),
+            ComputeEvent::OpenCl(e) => e.await_(),
         }
     }
 
@@ -304,6 +358,7 @@ impl ComputeEvent {
         match self {
             ComputeEvent::Native(e) => e.is_complete(),
             ComputeEvent::Cpu(e) => e.is_complete(),
+            ComputeEvent::OpenCl(e) => e.is_complete(),
         }
     }
 
@@ -311,6 +366,7 @@ impl ComputeEvent {
         match self {
             ComputeEvent::Native(e) => e.gpu_seconds(),
             ComputeEvent::Cpu(e) => e.gpu_seconds(),
+            ComputeEvent::OpenCl(e) => e.gpu_seconds(),
         }
     }
 }
@@ -319,6 +375,7 @@ impl ComputeEvent {
 pub enum ComputeFunctionLibrary {
     Native(native::Library),
     Cpu(cpu::CpuComputeFunctionLibrary),
+    OpenCl(cl::ClComputeFunctionLibrary),
 }
 
 impl ComputeFunctionLibrary {
@@ -327,6 +384,7 @@ impl ComputeFunctionLibrary {
         Ok(match device {
             Device::Native(d) => ComputeFunctionLibrary::Native(native::Library::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
             Device::Cpu(d) => ComputeFunctionLibrary::Cpu(cpu::CpuComputeFunctionLibrary::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
+            Device::OpenCl(d) => ComputeFunctionLibrary::OpenCl(cl::ClComputeFunctionLibrary::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
         })
     }
 
@@ -334,6 +392,7 @@ impl ComputeFunctionLibrary {
         Ok(match (self, device) {
             (ComputeFunctionLibrary::Native(l), Device::Native(d)) => ComputeFunction::Native(l.get_function(d, function_name)?),
             (ComputeFunctionLibrary::Cpu(l), Device::Cpu(d)) => ComputeFunction::Cpu(l.get_function(d, function_name)?),
+            (ComputeFunctionLibrary::OpenCl(l), Device::OpenCl(d)) => ComputeFunction::OpenCl(l.get_function(d, function_name)?),
             _ => other(),
         })
     }
@@ -343,6 +402,7 @@ impl ComputeFunctionLibrary {
 pub enum ComputeFunction {
     Native(native::Function),
     Cpu(cpu::CpuComputeFunction),
+    OpenCl(cl::ClComputeFunction),
 }
 
 impl ComputeFunction {
@@ -350,6 +410,7 @@ impl ComputeFunction {
         match self {
             ComputeFunction::Native(f) => f.get_argument_info(),
             ComputeFunction::Cpu(f) => f.get_argument_info(),
+            ComputeFunction::OpenCl(f) => f.get_argument_info(),
         }
     }
 
@@ -358,7 +419,7 @@ impl ComputeFunction {
     pub fn metal(&self) -> Option<&crate::compute_kernel_metal::MetalComputeFunction> {
         match self {
             ComputeFunction::Native(f) => Some(f),
-            ComputeFunction::Cpu(_) => None,
+            _ => None,
         }
     }
 }
@@ -370,6 +431,7 @@ pub enum BindContext<'a> {
     #[cfg(target_os = "linux")]
     Native(crate::compute_kernel_cuda::CudaBindContext<'a>),
     Cpu(cpu::CpuBindContext<'a>),
+    OpenCl(cl::ClBindContext<'a>),
 }
 
 impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
@@ -377,6 +439,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         match self {
             BindContext::Native(c) => c.set_primitive(arg_num, bytes),
             BindContext::Cpu(c) => c.set_primitive(arg_num, bytes),
+            BindContext::OpenCl(c) => c.set_primitive(arg_num, bytes),
         }
     }
 
@@ -384,6 +447,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         match (self, buffer) {
             (BindContext::Native(c), Buffer::Native(b)) => c.set_buffer(arg_num, b),
             (BindContext::Cpu(c), Buffer::Cpu(b)) => c.set_buffer(arg_num, b),
+            (BindContext::OpenCl(c), Buffer::OpenCl(b)) => c.set_buffer(arg_num, b),
             _ => other(),
         }
     }
@@ -392,6 +456,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         match self {
             BindContext::Native(c) => c.set_thread_group_memory(arg_num, n_bytes),
             BindContext::Cpu(c) => c.set_thread_group_memory(arg_num, n_bytes),
+            BindContext::OpenCl(c) => c.set_thread_group_memory(arg_num, n_bytes),
         }
     }
 
@@ -399,6 +464,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         match self {
             BindContext::Native(c) => c.launch(grid, block),
             BindContext::Cpu(c) => c.launch(grid, block),
+            BindContext::OpenCl(c) => c.launch(grid, block),
         }
     }
 }
@@ -408,6 +474,7 @@ pub fn alloc_uninitialized_array_sync<T>(device: &Device, length: usize) -> Buff
     match device {
         Device::Native(d) => Buffer::Native(native::alloc_uninitialized_array_sync::<T>(d, length)),
         Device::Cpu(d) => Buffer::Cpu(cpu::alloc_uninitialized_array_sync::<T>(d, length)),
+        Device::OpenCl(d) => Buffer::OpenCl(cl::alloc_uninitialized_array_sync::<T>(d, length)),
     }
 }
 
@@ -416,6 +483,7 @@ pub fn transfer_to_device_immutable<T: crate::Pod>(device: &Device, data: &[T]) 
     match device {
         Device::Native(d) => Buffer::Native(native::transfer_to_device_immutable(d, data)),
         Device::Cpu(d) => Buffer::Cpu(cpu::transfer_to_device_immutable(d, data)),
+        Device::OpenCl(d) => Buffer::OpenCl(cl::transfer_to_device_immutable(d, data)),
     }
 }
 
@@ -424,10 +492,11 @@ pub fn transfer_to_host_sync<T: crate::Pod + Clone>(buffer: &Buffer, length: usi
     match buffer {
         Buffer::Native(b) => native::transfer_to_host_sync(b, length),
         Buffer::Cpu(b) => cpu::transfer_to_host_sync(b, length),
+        Buffer::OpenCl(b) => cl::transfer_to_host_sync(b, length),
     }
 }
 
 /// The device seconds of every event awaited so far in this process.
 pub fn gpu_seconds_awaited() -> f64 {
-    native::gpu_seconds_awaited() + cpu::gpu_seconds_awaited()
+    native::gpu_seconds_awaited() + cpu::gpu_seconds_awaited() + cl::gpu_seconds_awaited()
 }

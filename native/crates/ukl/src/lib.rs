@@ -41,6 +41,7 @@ const HEADERS: &[(&str, &str)] = &[
     ("mldb/builtin/metal/ukl/ukl_metal_shim.h", include_str!("../../../../forest/src/mldb/builtin/metal/ukl/ukl_metal_shim.h")),
     ("mldb/builtin/cuda/ukl/ukl_cuda_shim.h", include_str!("../../../../forest/src/mldb/builtin/cuda/ukl/ukl_cuda_shim.h")),
     ("mldb/builtin/cpu/ukl/ukl_cpu_shim.h", include_str!("../../../../forest/src/mldb/builtin/cpu/ukl/ukl_cpu_shim.h")),
+    ("mldb/builtin/opencl/ukl/ukl_opencl_shim.h", include_str!("../../../../forest/src/mldb/builtin/opencl/ukl/ukl_opencl_shim.h")),
 ];
 
 /// The library's headers, by the name a kernel includes them by (`#include <ukl/memory.h>`), each after the ones it
@@ -113,6 +114,9 @@ pub enum Backend {
     /// The CPU: C++ for the host's compiler, each threadgroup's threads coroutines (`ukl_cpu_shim.h`), for this
     /// process's architecture and system.
     Cpu,
+    /// OpenCL: OpenCL C 1.2 for the device's driver (`ukl_opencl_shim.h`). The device's SIMD width is a define
+    /// (`UKL_SIMD_WIDTH`, 32 by default: emulated through threadgroup memory on a device without subgroups).
+    OpenCl,
 }
 
 impl Backend {
@@ -122,6 +126,7 @@ impl Backend {
             Backend::Metal { .. } => "metal",
             Backend::Cuda { .. } => "cuda",
             Backend::Cpu => "cpu",
+            Backend::OpenCl => "opencl",
         }
     }
 
@@ -149,6 +154,11 @@ impl Backend {
                 v.push(d(if cfg!(target_os = "macos") { "__APPLE__" } else { "__linux__" }, "1".into()));
                 v
             }
+            Backend::OpenCl => vec![
+                d("__OPENCL_VERSION__", "120".into()),
+                d("__OPENCL_C_VERSION__", "120".into()),
+                d("__UKL_OPENCL_PREPROCESSING", "1".into()),
+            ],
         }
     }
 }
@@ -247,8 +257,14 @@ impl Preprocess {
 
     /// `main` preprocessed: the backend's source text, with line markers to the original files.
     pub fn run(&self, main: &str) -> Result<String, Error> {
-        let mut cfg = Config::new(Options::cpp(20, true));
-        cfg.predefines = vec![("__cplusplus".into(), Some("202002L".into()))];
+        // OpenCL C is C (C99 with clang's extensions); every other backend's language is C++.
+        let mut cfg = if self.backend == Backend::OpenCl {
+            Config::new(Options::c(99, true))
+        } else {
+            let mut c = Config::new(Options::cpp(20, true));
+            c.predefines = vec![("__cplusplus".into(), Some("202002L".into()))];
+            c
+        };
         cfg.predefines.extend(self.backend.predefines());
         cfg.predefines.extend(self.defines.iter().cloned());
         let carried: HashMap<String, &'static str> = HEADERS

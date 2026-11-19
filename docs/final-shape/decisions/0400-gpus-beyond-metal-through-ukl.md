@@ -390,9 +390,43 @@ subgroup problem above:
   under the rule, the work queue's test included (its SIMD groups stay together); unchanged on Metal and on CUDA
   (V100: 16 + 7, the reads' gate).
 
-The gate: every library header compiles as OpenCL C 1.2 (clang's front end, `-x cl -cl-std=CL1.2`), and still
-preprocesses and compiles as before on Metal, CUDA and the CPU. Then an OpenCL section of `backend.h`, the
-OpenCL shim and runtime, and the library's tests on Apple's OpenCL.
+**Done (2026-11-18): OpenCL runs UKL** (`RERAIL_GPU=opencl`).
+- **The gate.** Every library header, the generated reads included, preprocessed for OpenCL
+  (`rerail_ukl::Backend::OpenCl`, as C: no `__cplusplus`), is OpenCL C 1.2 that clang's front end accepts, at
+  widths 32, 8 and 1 (`every_library_header_is_opencl_c_1_2`); its preprocessing equals clang's.
+- **The shim** (`forest/src/mldb/builtin/opencl/ukl/ukl_opencl_shim.h`): a `__kernel` entry from the rows, `RWLOCAL`
+  rows as `__local` arguments the host sizes, `SHARED` rows and the SIMD group's scratch declared in the entry. For
+  the host, one-thread reflection kernels beside each kernel (`Name__ukl_info`: the rows' layout and text) and
+  each reflected structure (`Type__ukl_layout`), as OpenCL cannot read a program's constants back; type kinds by
+  `_Generic`. MLDB's older calls (`SYNC_*`, `atom_*`, `ukl_simdgroup_*` through the caller's scratch word) for the
+  forest's kernels.
+- **`backend.h`'s OpenCL section**: the SIMD group emulated through `__ukl_sg` (a word a thread, two barriers an
+  operation), or one lane at width 1; native subgroups (`cl_khr_subgroup_shuffle`, `_ballot`) are refused as not
+  written, as no device we can test has them. **Coherent memory is atomics**: OpenCL 1.2 has no coherent
+  qualifier, and on Apple's GPU a `volatile` load from another threadgroup's write read a stale line (the 16z
+  decode cache's bytes read 0). So an atomic load is `atomic_or(p, 0)`, and `memory.h` takes two hooks
+  (`UKL_COHERENT_LOAD64`, `UKL_COHERENT_STORE_BITS64`): a coherent load reads its words' halves atomically, a
+  coherent store sets its bits by `atomic_and` then `atomic_or` per half, never touching a neighbour's bytes. On
+  Metal, CUDA and the CPU the hooks are absent and `memory.h` is the same code as before.
+- **The runtime** (`gpu/src/mldb/builtin/opencl/compute_kernel_opencl.rs`): the system's OpenCL loaded by `dlopen`
+  (no link dependency). The device must share the host's memory: a buffer is host pages the device reads in place
+  (`CL_MEM_USE_HOST_PTR`, 0353); a discrete device (NVIDIA's OpenCL on the V100) is refused with its reason, as it
+  would stage copies (SVM is not written). A queue holds its work until a flush, which enqueues it on its root's
+  in-order queue. A wait for a host-signalled event holds the rest on the host, and the root's later flushes
+  behind it, until the signal: Apple's `clFlush` blocks on a barrier on a user event, so the device cannot hold
+  it (`a_wait_holds_the_roots_later_work_until_the_signal`, which fails if the wait is dropped once reached, as a
+  first version did). The device seconds are the kernels' profiled times. The device's largest threadgroup is
+  `Device::max_threadgroup()` (256 on Apple's), and the scratch is sized to it (`UKL_TG_MAX`).
+- **The forest's kernels are in the subset** too (`typedef struct` arguments, no `constexpr`, a prototype by
+  `UKL_FUNCTION`), and on every device but Metal they are built from UKL source (Metal keeps the build step's).
+  Their SIMD-group calls keep OpenCL's rule (the CPU's check passes them).
+- **Measured on Apple's OpenCL (M5 Max):** the library's 16 tests and the runtime's own, at widths 32 and 1; the
+  reads' gate (every read of every node of the plain, 16z and format-15 tapes); the forest's 40 tests (training,
+  prediction, armed prediction). The library's kernels build in 0.24 s, the forest's in 0.41 s. Unchanged on Metal
+  (gpu, the reads' gate, the forest, rerail-device-metal's 56), CUDA (V100: gpu, ukl, the reads' gate, the
+  forest) and the CPU.
+- **Open:** native subgroups where a device has them (Intel's, Mesa's); a 64-lane mask type (AMD); SVM for discrete
+  devices; the engine's own kernels (the GPU lane, 0400 step 3) on OpenCL; a device other than Apple's.
 
 ## 4. The C preprocessor
 
