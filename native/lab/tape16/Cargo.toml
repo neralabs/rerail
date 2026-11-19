@@ -1,0 +1,43 @@
+[package]
+name = "rerail-tape-lab"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Spikes for tape format 16 (decision 0156): candidate encodings measured across its tradeoffs on captured corpora."
+
+# Its own workspace: the lab builds optimized in the dev profile (below) without changing the engine's profiles.
+[workspace]
+
+[dependencies]
+zstd = { version = "=0.14.3", features = ["zdict_builder"] }
+sha2 = "0.10"
+# fastCover training (the zstd CLI's `--train`), as the store's dictionaries were trained; the plain trainer returns far less than asked.
+zstd-sys = { version = "=2.1.3", features = ["experimental", "zdict_builder"] }
+blake3 = "=1.8.2"
+libc = "0.2"
+# E18: LZ4 as the reference library builds it (fast and HC, with dictionaries), for disk sizes and match coverage.
+lz4-sys = "=1.11.1"
+rerail-tape-format = { path = "../../crates/tape_format" }
+# E6: the lean `.rerail` parser, whose writer is the engine's (`tape16 writer`). Heavy, so a feature.
+rerail-rr-syntax = { path = "../../crates/rr_syntax", optional = true }
+
+# E25: the code table from the grammar (`tape16 gcodes`): node types generated as the build generates them.
+tree-sitter-generate = { version = "=0.27.2", default-features = false, features = ["load"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[features]
+lean = ["dep:rerail-rr-syntax"]
+grammar = ["dep:tree-sitter-generate", "dep:serde_json"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.33.0"
+
+# Measurements are of optimized code: a lab crate is small, so this costs seconds, not the engine's release build.
+[profile.dev]
+opt-level = 3
+debug = 1
+debug-assertions = true
+overflow-checks = true
+
+[profile.dev.package."*"]
+opt-level = 3

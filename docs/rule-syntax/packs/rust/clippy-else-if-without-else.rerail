@@ -1,0 +1,15 @@
+.policy "clippy-else-if-without-else" revision 3
+.description "End every Rust if / else if chain with a final else branch; it makes the remaining case explicit."
+.language rust
+.mode steer
+.scope include "**/*"
+
+// Clippy's else_if_without_else (restriction): an `if … else if …` chain whose last `else if` has no
+// final `else`. Reported at that last `if`.
+//   if a { } else if b { }                       reported at `if b`
+//   if a { } else if b { } else { }   if a { }   not reported
+.violation else_if_without_else(at: node) code "else_if_without_else"
+    "Add a final else branch to this if / else if chain to handle the remaining case."
+    suppress clippy "clippy::else_if_without_else", "clippy::restriction", "warnings"
+else_if_without_else(i) :- kind(i, "if_expression"), child(e, i, _), kind(e, "else_clause"),
+    !field(i, "alternative", _).
