@@ -8,7 +8,8 @@
 //! ignored file brings it back and a `.gitignore` the index marks skip-worktree is read from the
 //! blob it names now; a `.gitignore` is read when the walk first enters its folder. A matcher says
 //! whether one opened now would read the rules it read (`sources_unchanged`), so hosts can share
-//! one per checkout: every holder reads the index again once its file changes.
+//! one per checkout: every holder reads the index again once its file changes. On Unix the index
+//! file read stays open until the next read, so its inode number never goes to a later index.
 //!
 //! The repository opens through the engine's one opener (`git_access::opener`), so a repository
 //! Git refuses has no matcher. Opening runs on a thread of its own under the Git read time limit; questions
@@ -351,6 +352,8 @@ struct IndexFile {
     path: PathBuf,
     stamp: Option<FileStamp>,
     file: gix::index::File,
+    /// The file read, kept open on Unix until the next read replaces it.
+    _held: HeldIndex,
 }
 
 impl IndexFile {
@@ -359,7 +362,7 @@ impl IndexFile {
         let path = repository.index_path();
         // Stamped before it is read, so a write that lands meanwhile reads as a change at the
         // next question.
-        let stamp = FileStamp::of(&path);
+        let (stamp, held) = HeldIndex::stamp(&path);
         let file = match repository.open_index() {
             Ok(file) => file,
             Err(_) if !path.exists() => gix::index::File::from_state(
@@ -368,13 +371,109 @@ impl IndexFile {
             ),
             Err(error) => return Err(format!("cannot read Git index: {error}")),
         };
-        Ok(Self { path, stamp, file })
+        Ok(Self {
+            path,
+            stamp,
+            file,
+            _held: held,
+        })
     }
+}
+
+/// On Unix, the index file a matcher read, held open until its next read replaces it. A file
+/// system such as ext4 gives a freed inode number to the next new file at once: two Git writes
+/// within one step of its clock could land the second on the number of the file read, at its size
+/// and time, where no stamp tells them apart. Held open, the file read keeps its number, so every
+/// write of Git's shows a new identity. With no slot (see [`Slot`]) or where the file cannot be
+/// opened, the stamp comes from a stat and nothing is held.
+#[cfg(unix)]
+struct HeldIndex {
+    _file: Option<(std::fs::File, Slot)>,
+}
+
+#[cfg(unix)]
+impl HeldIndex {
+    /// `path`'s stamp, from the file held open while a slot is free.
+    fn stamp(path: &Path) -> (Option<FileStamp>, Self) {
+        Self::stamp_in(path, Slot::take())
+    }
+
+    /// `path`'s stamp, from the file held open in `slot` when one is given.
+    fn stamp_in(path: &Path, slot: Option<Slot>) -> (Option<FileStamp>, Self) {
+        let held = slot.and_then(|slot| Some((std::fs::File::open(path).ok()?, slot)));
+        let stamp = match &held {
+            Some((file, _)) => file
+                .metadata()
+                .ok()
+                .map(|metadata| FileStamp::from(&metadata)),
+            None => FileStamp::of(path),
+        };
+        (stamp, Self { _file: held })
+    }
+}
+
+/// On Windows nothing is held: NTFS gives every new file a file index of its own, and a file held
+/// open there would stand in the way of Git's rename of the next index over it.
+#[cfg(windows)]
+struct HeldIndex;
+
+#[cfg(windows)]
+impl HeldIndex {
+    fn stamp(path: &Path) -> (Option<FileStamp>, Self) {
+        (FileStamp::of(path), Self)
+    }
+}
+
+/// Index files held open now, by every matcher of the process.
+#[cfg(unix)]
+static HELD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A place for one held index file, counted in the count it was taken from. Matchers hold at most
+/// a quarter of the process's descriptor limit, so the files they hold never take the descriptors
+/// the host needs for its own work.
+#[cfg(unix)]
+struct Slot(&'static std::sync::atomic::AtomicUsize);
+
+#[cfg(unix)]
+impl Slot {
+    /// A slot while fewer than a quarter of the descriptor limit are held; `None` once they are.
+    fn take() -> Option<Self> {
+        Self::within(&HELD, descriptor_limit() / 4)
+    }
+
+    /// A slot of `count` while it counts fewer than `most`.
+    fn within(count: &'static std::sync::atomic::AtomicUsize, most: usize) -> Option<Self> {
+        use std::sync::atomic::Ordering::SeqCst;
+        count
+            .fetch_update(SeqCst, SeqCst, |held| (held < most).then_some(held + 1))
+            .ok()
+            .map(|_| Self(count))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// The process's soft limit of open descriptors; none where it cannot be read.
+#[cfg(unix)]
+fn descriptor_limit() -> usize {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: a buffer of the type the call fills; a call that fails leaves it at none.
+    unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) };
+    usize::try_from(limit.rlim_cur).unwrap_or(usize::MAX)
 }
 
 /// What tells one index file from another and from itself rewritten: the file's identity (device
 /// and inode on Unix; volume serial and file index on Windows), which every write of Git's
-/// changes, and its modification time and size, which a write in place changes. All three come
+/// changes (on Unix because the file read is held open: [`HeldIndex`]), and its modification time
+/// and size, which a write in place changes. All three come
 /// from the one query a stat makes, so a question costs what it cost before. The change time is
 /// left out: only a write in place that keeps the size and sets the time back would need it, and
 /// Git never writes the index in place.
@@ -392,17 +491,23 @@ type FileTime = Option<std::time::SystemTime>;
 #[cfg(windows)]
 type FileTime = u64;
 
+#[cfg(unix)]
+impl From<&std::fs::Metadata> for FileStamp {
+    fn from(metadata: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            identity: (metadata.dev(), metadata.ino()),
+            modified: metadata.modified().ok(),
+            len: metadata.len(),
+        }
+    }
+}
+
 impl FileStamp {
     /// `path`'s stamp; `None` when it is absent or cannot be read.
     #[cfg(unix)]
     fn of(path: &Path) -> Option<Self> {
-        use std::os::unix::fs::MetadataExt;
-        let metadata = std::fs::metadata(path).ok()?;
-        Some(Self {
-            identity: (metadata.dev(), metadata.ino()),
-            modified: metadata.modified().ok(),
-            len: metadata.len(),
-        })
+        Some(Self::from(&std::fs::metadata(path).ok()?))
     }
 
     /// `path`'s stamp; `None` when it is absent or cannot be read. One open and one query, the
@@ -1173,6 +1278,115 @@ mod tests {
         if gix::discover(&root).is_err() {
             assert!(GitIgnore::open(&root).unwrap().is_none());
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The open files of this process on `file`'s device and inode, by their link count: an open
+    /// file deleted since stays listed in `/proc/self/fd`, with no link.
+    #[cfg(target_os = "linux")]
+    fn held_open(file: &std::fs::Metadata) -> Vec<u64> {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .flatten()
+            .filter_map(|entry| std::fs::metadata(entry.path()).ok())
+            .filter(|open| (open.dev(), open.ino()) == (file.dev(), file.ino()))
+            .map(|open| open.nlink())
+            .collect()
+    }
+
+    /// ext4 gives a freed inode number to the next new file at once. After a matcher reads the
+    /// index, Git writes it twice within one tick of the file system's clock: the first write frees
+    /// the number of the file read, and the second, at its size and time, can land on it. The
+    /// matcher keeps the file it read open, so the number stays taken and the second write is
+    /// another file, which it reads. Other threads take and free inode numbers too, so the writes
+    /// are made again until the second lands on the number read or that file is held.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reads_the_index_again_when_git_writes_it_twice_onto_the_inode_number_of_the_file_read() {
+        use std::os::unix::fs::MetadataExt;
+        let root = fixture(
+            "reused",
+            &[(".gitignore", "gen/\n"), ("gen/t.py", ""), ("z/m.py", "")],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", ".gitignore", "z/m.py"]);
+        let index = root.join(".git/index");
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        let made = (0..10).any(|_| {
+            assert!(ignore.ignored("gen/t.py", false).unwrap(), "read out of the index");
+            let read = std::fs::metadata(&index).unwrap();
+            git(&root, &["add", "-f", "gen/t.py"]);
+            git(&root, &["update-index", "--force-remove", "z/m.py"]);
+            set_modified(&index, read.modified().unwrap());
+            let now = std::fs::metadata(&index).unwrap();
+            assert_eq!(now.len(), read.len(), "both entries take 72 bytes");
+            let held = !held_open(&read).is_empty();
+            assert!(
+                !ignore.ignored("gen/t.py", false).unwrap(),
+                "a file Git now tracks is not ignored (read on inode {}, the index now on inode {})",
+                read.ino(),
+                now.ino()
+            );
+            git(&root, &["update-index", "--add", "z/m.py"]);
+            git(&root, &["rm", "--cached", "-q", "gen/t.py"]);
+            now.ino() == read.ino() || held
+        });
+        assert!(
+            made,
+            "the second write took the inode number of the file read, or that file was held open"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The index file read is held until the next read replaces it, so a replaced index's blocks
+    /// are freed at the matcher's next question. A checkout removed while its file is held goes
+    /// with its folder, and the matcher answers with nothing ignored.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn lets_go_of_the_index_file_it_read_once_it_reads_another() {
+        let root = fixture("let-go", &[(".gitignore", "gen/\n"), ("gen/t.py", "")]);
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", ".gitignore"]);
+        let index = root.join(".git/index");
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        let read = std::fs::metadata(&index).unwrap();
+        assert_eq!(held_open(&read), [1], "the file read is held");
+
+        git(&root, &["add", "-f", "gen/t.py"]);
+        assert_eq!(held_open(&read), [0], "held once Git replaced it");
+        assert!(!ignore.ignored("gen/t.py", false).unwrap());
+        assert!(held_open(&read).is_empty(), "let go at the next question");
+
+        let next = std::fs::metadata(&index).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(!root.exists(), "the checkout's folder is removed");
+        assert!(!ignore.ignored("gen/t.py", false).unwrap());
+        assert!(held_open(&next).is_empty(), "nothing of it is held");
+    }
+
+    /// Matchers hold at most as many index files as their slots allow, and a slot comes back once
+    /// its file is let go; with no slot the stamp comes from a stat and nothing is held.
+    #[cfg(unix)]
+    #[test]
+    fn holds_the_index_file_only_in_a_free_slot() {
+        static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let root = fixture("slots", &[(".gitignore", "")]);
+        git(&root, &["init", "--initial-branch=main"]);
+        git(&root, &["add", ".gitignore"]);
+        let index = root.join(".git/index");
+
+        let slot = Slot::within(&COUNT, 1);
+        assert!(slot.is_some(), "a slot of one");
+        assert!(Slot::within(&COUNT, 1).is_none(), "none left");
+        let (stamp, held) = HeldIndex::stamp_in(&index, slot);
+        assert!(held._file.is_some(), "held in its slot");
+        assert_eq!(stamp, FileStamp::of(&index));
+        drop(held);
+        let (stamp, held) = HeldIndex::stamp_in(&index, None);
+        assert!(held._file.is_none(), "no slot, nothing held");
+        assert_eq!(stamp, FileStamp::of(&index), "stamped by a stat");
+        assert!(Slot::within(&COUNT, 1).is_some(), "the slot came back");
         std::fs::remove_dir_all(root).unwrap();
     }
 }
