@@ -96,15 +96,31 @@ fn make(path: &Path) {
         std::fs::create_dir_all(&staging).expect("the template's staging directory");
         drop(crate::content_store::ContentStore::open(&store).expect("an empty store"));
     }
+    // Its atoms' blocks frozen (each shrunk to what it holds: a copy's first write starts its own, decision 0401), and
+    // its folders (the atoms', the tapes' and sources', the frames' and the memo's) copied beside it: its rows name them.
+    crate::content_store::atoms::freeze_blocks(&store).expect("the template's atoms, frozen");
     let published = path.with_extension(format!("{}.{}.tmp", std::process::id(), nanos()));
     let db = rusqlite::Connection::open(&store).expect("the template's staging store");
     db.execute("VACUUM INTO ?1", [published.to_string_lossy()]).expect("the template, written whole");
     drop(db);
+    for suffix in FOLDERS {
+        clone_dir(&beside(&store, suffix), &beside(&published, suffix)).expect("the template's folders, copied");
+    }
     // Published as a copy needs it: in WAL mode (a store's first open would switch it), and with no identity (each
     // copy takes its own at its first open, `ContentStore::initialize`), so that a copy is a clone and nothing more.
     let db = rusqlite::Connection::open(&published).expect("the published template");
     db.execute_batch("DELETE FROM store_identity; PRAGMA journal_mode=WAL;").expect("the template, made ready to copy");
     drop(db);
+    // The folders first: a reader of the template's file finds what it names.
+    for suffix in FOLDERS {
+        let (made, at) = (beside(&published, suffix), beside(path, suffix));
+        if at.exists() {
+            std::fs::remove_dir_all(&at).expect("the old template's folders");
+        }
+        if made.exists() {
+            std::fs::rename(&made, &at).expect("the template's folders, published");
+        }
+    }
     std::fs::rename(&published, path).expect("the template, published");
     let _ = std::fs::remove_dir_all(&staging);
 }
@@ -169,9 +185,9 @@ impl Drop for Store {
     }
 }
 
-/// This process's open files under `dir` (macOS: `F_GETPATH`).
+/// The files under `dir` this process holds open, each named once a descriptor (macOS: `F_GETPATH`).
 #[cfg(target_vendor = "apple")]
-pub fn open_under(dir: &Path) -> Vec<String> {
+pub fn held_under(dir: &Path) -> Vec<String> {
     let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
     let prefix = format!("{}/", dir.display());
     (0..8192)
@@ -180,7 +196,7 @@ pub fn open_under(dir: &Path) -> Vec<String> {
             // SAFETY: F_GETPATH writes at most PATH_MAX bytes into `buf`.
             let named = unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) } == 0;
             let path = std::ffi::CStr::from_bytes_until_nul(&buf).ok()?.to_string_lossy().into_owned();
-            (named && path.starts_with(&prefix)).then_some(path)
+            (named && path.starts_with(&prefix)).then(|| format!("{fd}: {path}"))
         })
         .collect()
 }
@@ -198,6 +214,9 @@ pub fn copy() -> Store {
     std::fs::create_dir_all(&dir).expect("a test store's directory");
     let path = dir.join("store.sqlite");
     clone_file(template, &path).expect("a copy of the template");
+    for suffix in FOLDERS {
+        clone_dir(&beside(template, suffix), &beside(&path, suffix)).expect("a copy of the template's folders");
+    }
     Store { dir, path }
 }
 
@@ -295,6 +314,9 @@ fn sweep_templates(dir: &Path, key: &str) {
             for suffix in [".sqlite", ".ready", ".lock"] {
                 let _ = std::fs::remove_file(dir.join(format!("{other}{suffix}")));
             }
+            for suffix in FOLDERS {
+                let _ = std::fs::remove_dir_all(dir.join(format!("{other}.sqlite{suffix}")));
+            }
         }
     }
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
@@ -309,6 +331,34 @@ fn sweep_templates(dir: &Path, key: &str) {
             let _ = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
         }
     }
+}
+
+/// The folders beside a store's file that its rows name files in: its atoms' blocks (decision 0401), its tapes' and
+/// sources' segments, its frames' and its memo's (0295).
+const FOLDERS: [&str; 5] = [".atoms", ".facts", ".objects", ".frames", ".memo"];
+
+/// The folder `suffix` beside the store at `path`.
+fn beside(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// The files of folder `from` cloned into `to` (made), where there is one, and its folders' in turn: the kept facts
+/// are a folder a space (`kept_facts::space_dir`, `.facts/<space>/`), and a copy that took the top level alone held
+/// rows naming files it lacked ("a space's kept facts: No such file or directory").
+fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    let Ok(entries) = std::fs::read_dir(from) else { return Ok(()) };
+    std::fs::create_dir_all(to)?;
+    for e in entries.flatten() {
+        let kind = e.file_type()?;
+        if kind.is_file() {
+            clone_file(&e.path(), &to.join(e.file_name()))?;
+        } else if kind.is_dir() {
+            clone_dir(&e.path(), &to.join(e.file_name()))?;
+        }
+    }
+    Ok(())
 }
 
 /// `to`, a clone of `from` where the file system makes one (APFS), else a copy.
@@ -347,6 +397,32 @@ impl Lock {
 
 #[cfg(test)]
 mod tests {
+    /// A store copied as a test's store is (`copy`: its file and `FOLDERS`) carries its memo packs: the copy's rows
+    /// find the template's bytes (decision 0240 §4), and its own writes go after them. Its file alone was copied
+    /// before, so its rows named a pack the copy's writer began again. PR #508's 62b554c01 (t47).
+    #[test]
+    fn a_template_is_published_and_copied_with_its_memo_packs() {
+        use crate::content_store::{ContentStore, MemoPut};
+        let dir = tempfile::tempdir().unwrap();
+        let space = crate::content_store::local_space(&[7u8; 32]);
+        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], over: false };
+        let template = dir.path().join("template.sqlite");
+        ContentStore::open(&template).unwrap().put_memo_entries(&space, (0..4).map(|p| put(p, 1)).collect(), 4).unwrap();
+        let copy = dir.path().join("copy/store.sqlite");
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        super::clone_file(&template, &copy).unwrap();
+        for suffix in super::FOLDERS {
+            super::clone_dir(&super::beside(&template, suffix), &super::beside(&copy, suffix)).unwrap();
+        }
+        let store = ContentStore::open(&copy).unwrap();
+        store.put_memo_entries(&space, (4..8).map(|p| put(p, 2)).collect(), 4).unwrap();
+        let read = store.memo_entries(&space, &(0..8).collect::<Vec<_>>(), true).unwrap();
+        assert_eq!(read.len(), 8, "the template's entries and the copy's each find their bytes");
+        for (part, blob) in read {
+            assert!(blob.bytes.bytes().iter().all(|&b| b == if part < 4 { 1 } else { 2 }), "part {part} reads the bytes it was put with");
+        }
+    }
+
     /// Another build's template unused for an hour goes, by its mark's time or, without one, its own; a fresh one and
     /// this build's stay.
     #[test]

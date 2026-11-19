@@ -22,9 +22,7 @@ use std::path::{Path, PathBuf};
 /// objects, and a run's relations held in SQLite.
 const FACT_STORE: &[&str] = &[
     "atoms",
-    "atom_segment",
-    "atom_key",
-    "atom_key_end",
+    "atom_blocks",
     "strings",
     "hashes",
     "paths",
@@ -49,6 +47,16 @@ const FACT_STORE: &[&str] = &[
     "tape",
     "node_type",
     "frames",
+    // A space's kept facts as blocks (decision 0401): which base and delta files it has.
+    "facts_blocks",
+    // The segments frames, sources and tapes lie in (decision 0295 step 5): where the rows are, as `memo_packs`. (From
+    // PR #508's 5420af2ef and rr-align's 6e917ffec, t47.)
+    "frame_segments",
+    "object_segments",
+    // Each guest's key by its identity (decision 0391): a name, as `strings`.
+    "guest_keys",
+    // The observer's journal of what it saw change (decision 0400): observations, not a result kept for later.
+    "observed_changes",
     "frame_spaces",
     // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
     "frame_confirmed",
@@ -66,6 +74,12 @@ const FACT_STORE: &[&str] = &[
     // The kernels' forms per machine (decision 0202): each compiled or interpreted, its compile time, what it missed;
     // measurements of the machine, as `samples`, ranked for the upkeep job that compiles them.
     "kernel_forms",
+    // Each program's measured steps per unit of size, and its overruns (decision 0334): what a task's budgets are
+    // predicted from (`evaluation_costs`); measurements, as `samples`.
+    "program_steps",
+    // The join steps' estimates and what they made (decision 0354, `costs::join_steps`): the learned correction's
+    // data, measurements, as `samples`.
+    "join_steps",
     "{p}_out in code_rule_dsl/logic/native.rs",
     "{p}_out in code_rule_dsl/logic/native/extension.rs",
     "{} in code_rule_dsl/logic/plan.rs",
@@ -211,12 +225,13 @@ const STATE: &[(&str, &str)] = &[
     // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
     ("code_rule_dsl/logic/costs/sql_plans.rs", "MODEL"),
     ("code_rule_dsl/logic/costs/sql_plans.rs", "QUEUE"),
+    // The join steps submitted at their lines' ends, queued for the cost statistics' writer (decision 0354).
+    ("code_rule_dsl/logic/costs/join_steps.rs", "QUEUE"),
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
     ("code_rule_dsl/logic/lanes.rs", "SQL"),
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
     // The device's wave on this thread (decision 0113 §3): its open command buffer, the waves flushed, the strata
     // waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a result kept.
-    ("code_rule_dsl/logic/native/setfix/device.rs", "WAVE"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
@@ -381,6 +396,30 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/write_back.rs", "WRITERS"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
+    // The record kinds (decision 0306): each kind's apply, registered once a process, a registry of code; and a
+    // test's log of the records it applied. (PR #508's 5420af2ef, t47.)
+    ("content_store/record.rs", "KINDS"),
+    ("content_store/record.rs", "LOG"),
+    // The component's own columns whose values are arena texts (decision 0307), set while its plans compile: state
+    // of the compilation, not a result kept. (PR #508's 5420af2ef.)
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
+    // A count of the trees this thread decoded from versions, and where the last was (0281's measure): a counter.
+    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
+    // The open submission of this thread's device wave, which its strata share: the wave's state.
+    ("code_rule_dsl/logic/lanes.rs", "OPEN"),
+    // A run's given versions of its changed reads (`give_versions`), dropped with its engine: the run's state.
+    ("code_rule_dsl/logic/native/setfix.rs", "GIVEN"),
+    // `RERAIL_KEPT_DOCS`'s debugging aid (Q20): the setting read once, and the rows it counts while one is set.
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "COUNTING"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_DOCS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_ROWS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "LISTED"),
+    // `RERAIL_HEAP_AT`, read once: a setting.
+    ("code_rule_dsl/logic/profile/memory.rs", "AT"),
+    // The answerers' world (the file system's and the installed languages'), made once: a registry of code.
+    ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
+    // The stores forgotten, under whose lock upkeep's check reads none being removed: a lock, not a result.
+    ("content_store/upkeep.rs", "GONE"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
@@ -393,7 +432,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "COMBINED", "2"),
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
     ("code_rule_dsl/logic/plan/choices.rs", "KEPT", "2"),
-    ("code_rule_dsl/logic/plan/corpus/guests.rs", "KEPT", "3"),
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
@@ -413,7 +451,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 24;
+const NOT_YET_MAPS_PIN: usize = 22;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")

@@ -54,18 +54,42 @@ impl<'v> R<'v> {
     }
 }
 
-/// A base relation of the corpus: an input, a `nearest_<set>` or an `inside_<set>`.
-fn base(f: &Fields<'_>, rel: &str) -> bool {
-    f.is_input(rel) || rel.starts_with("nearest_") || rel.starts_with(super::super::super::front::AXIS)
+/// A base relation of the corpus: an input, a view of an input's columns, a `nearest_<set>` or an `inside_<set>`.
+fn base(f: &Fields<'_>, rel: &str, a: AtomRef<'_>) -> bool {
+    f.is_input(rel) || rel.starts_with("nearest_") || rel.starts_with(super::super::super::front::AXIS) || view_of(f, a).is_some()
 }
 
-/// The rows a base atom reaches: its relation's, or, with constants, the fewest postings of one of them.
+/// Atom `a` of a view of an input's columns (Q37, `kind(n, k) :- node(_, n, k, _, _)`) as the input's reads it: the
+/// input, and its column of each of the view's. A view is the input's rows, so it is a base relation here: taken as
+/// derived, `kind(o, "type_alias_statement")` bound nothing, a definition's `field(o, "left", l)` (8,152 rows in a
+/// chunk of PostHog) made `tp_name` large and so demanded, and `tp_ref`'s split made every identifier with each of
+/// its ancestors (55 M rows a cold run; work queue Q88's measurement).
+fn view_of<'v>(f: &Fields<'v>, a: AtomRef<'_>) -> Option<(String, Vec<usize>)> {
+    if f.is_input(f.v.rel_name(a.rel())) {
+        return None;
+    }
+    let mut rules = f.v.heads(a.rel());
+    let (Some(r), None) = (rules.next(), rules.next()) else { return None };
+    super::super::input_view_shape(f.v, r, |x| f.is_input(x))
+}
+
+/// The rows a base atom reaches: its relation's, or, with constants, the fewest postings of one of them (a view's
+/// those of its input's columns).
 fn base_rows(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<'_>) -> f64 {
+    let view = view_of(f, a);
+    let (rel, at): (&str, Option<&[usize]>) = match &view {
+        Some((input, at)) => (input.as_str(), Some(at.as_slice())),
+        None => (rel, None),
+    };
     let all = if rel.starts_with("nearest_") || rel.starts_with(super::super::super::front::AXIS) { model.stats.nodes } else { model.card(rel) };
     let names: Option<Vec<&str>> = f.v.decl_of(rel).map(|d| d.cols().map(|(n, _)| f.v.text(n)).collect());
     a.args()
         .enumerate()
         .filter_map(|(c, t)| {
+            let c = match at {
+                Some(at) => *at.get(c)?,
+                None => c,
+            };
             let v = match t {
                 TermRef::Int(i) => super::super::Constant::Int(i),
                 TermRef::Branded(a) => super::super::Constant::Int(a.value()),
@@ -90,7 +114,7 @@ fn anchor(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<'_>
     if rel.starts_with("strtest_") || rel.starts_with("demand_") {
         return false;
     }
-    !base(f, rel) || base_rows(f, model, rel, a) < model.stats.nodes / 32.0
+    !base(f, rel, a) || base_rows(f, model, rel, a) < model.stats.nodes / 32.0
 }
 
 /// The relations `split_negations` demands, before its rounds (the module's conditions): derived, not kept, not
@@ -143,7 +167,7 @@ pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super
             .filter_map(|v| {
                 (0..r.lits.len())
                     .filter_map(|i| match r.lits[i].view() {
-                        Lit::Atom(a) if !a.neg() && base(f, r.rel(a)) && a.args().any(|t| t.var() == Some(v)) => Some(base_rows(f, model, r.rel(a), a)),
+                        Lit::Atom(a) if !a.neg() && base(f, r.rel(a), a) && a.args().any(|t| t.var() == Some(v)) => Some(base_rows(f, model, r.rel(a), a)),
                         _ => None,
                     })
                     .reduce(f64::min)
@@ -421,8 +445,9 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
 
 #[cfg(test)]
 mod tests {
-    use super::{R, disconnected};
+    use super::{R, base, disconnected, view_of};
     use super::super::super::body::Placed;
+    use super::super::super::fields::Fields;
 
     /// Whether rule `k` of `text` falls apart once its reads of `cut` are cut. Its variables are written `$x`, as the
     /// planner shows them; the `.rr` text names them without the `$`.
@@ -466,5 +491,36 @@ mod tests {
             "#;
         assert!(apart(p, 0, "uinst"), "cutting uinst leaves a product by documents");
         assert!(!apart(p, 0, "rr_cx_reach"), "the rest still joins by t and c");
+    }
+
+    /// A view of an input's columns (Q37) is a base relation to the split, read as its input's columns: `kind(o, 7)`
+    /// is `node(_, o, 7, _, _)`, whose postings bound the scan. Taken as derived, a definition's `tp_name` was large by
+    /// its `field` atom alone, and demanded (work queue Q88's measurement).
+    #[test]
+    fn a_view_of_an_input_reads_as_the_inputs_columns() {
+        let p = r#"
+            .decl node(d: number, n: node, kind: number, s: number, e: number)
+            .decl field(p: node, f: number, c: node)
+            .decl kind(n: node, k: number)
+            .decl named(o: node, c: node)
+            .decl out(o: node)
+            .input node, field
+            .output out
+            kind($n, $k) :- node(_, $n, $k, _, _).
+            named($o, $c) :- kind($o, 7), field($o, 3, $c).
+            out($o) :- named($o, _).
+            "#;
+        let placed = Placed::whole(super::super::super::super::rr::parse_version(&p.replace('$', "")).unwrap());
+        let f = Fields::of(&placed).unwrap();
+        let k = (0..placed.len()).find(|&k| R::of(&placed, k).head() == "named").unwrap();
+        let r = R::of(&placed, k);
+        let atom = |rel: &str| (0..r.lits.len()).find_map(|i| r.plain(i).filter(|a| r.rel(*a) == rel)).unwrap();
+        assert_eq!(view_of(&f, atom("kind")), Some(("node".to_owned(), vec![1, 2])), "kind's columns are node's 1 and 2");
+        assert!(base(&f, "kind", atom("kind")), "a view of an input is a base relation");
+        assert_eq!(view_of(&f, atom("field")), None, "an input is no view");
+        let n = (0..placed.len()).find(|&k| R::of(&placed, k).head() == "out").unwrap();
+        let o = R::of(&placed, n);
+        let named = (0..o.lits.len()).find_map(|i| o.plain(i)).unwrap();
+        assert!(!base(&f, "named", named), "a derived relation is not");
     }
 }

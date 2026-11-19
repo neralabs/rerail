@@ -1,5 +1,24 @@
 # Agent instructions
 
+## Blocks are never copied
+
+Read [decision 0353](docs/final-shape/decisions/0353-blocks-are-never-copied-every-reader-reads-in-place.md)
+before touching how the engine holds or reads data. Data lives in one place, in one layout: a document's tape, the
+relations the rules derive, and their indexes, each in its block. Every reader reads it there: the CPU executor, the
+JIT, the Metal kernels and SQLite's virtual tables, all through the reads written once in CLIF (decision 0310).
+
+- **Never copy a block or a tape into another data structure.** That includes columns, rows, per-node arrays, a
+  device relation, an upload, a staging vector or a "view made" for a kernel. No exception for convenience, speed,
+  a layout a kernel prefers, or a missing accessor. Write the missing read instead, once.
+- **A view (`node`, `child`, `field`, `line`, …) is a read of the tape, not a relation.** Nothing makes its rows.
+- **Not copies:**
+  - a load from disk to the exact in-memory bytes;
+  - a derived fact (a rule's head, an axis's answer, an interned text), written once where it is computed, into a
+    relation in a block;
+  - an index in its relation's block.
+- **The copies that still exist are listed in 0353** and marked `copy (0353 step N)` in the code. The list only
+  shrinks. `scripts/check/check-no-block-copies.py` (pre-commit) refuses a commit that adds one.
+
 ## Builds and test runs
 
 Run every build and test run at a high nice value, so it never starves other work on the
@@ -98,7 +117,10 @@ themselves: a host reached over the wrong link is moved back to its fast one whe
 be, a host that fails a probe is skipped, with a growing back-off, and a lost connection
 reruns the command here at `nice -n 19`. Don't work around a host that is down. Run
 `status` to see why, and go on locally. `--remote-only` exits 69 when no host can take the
-command. Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version
+command. A host may be a Linux machine: it takes a command when every Mac slot is busy (never a
+Metal one or a `--tree` run), and the command is then a Linux build and run, as CI's; its line
+says `(Linux: ...)`, and `--os macos` keeps a command on a Mac. It also compiles this Mac's library
+crates, in a container, to the very bytes this Mac would (the farm's README, "Mac compiles on a Linux host"). Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version
 this checkout has.
 
 On a machine with the farm, every build already goes through it: `~/.cargo/config.toml` (written
@@ -122,7 +144,7 @@ after the same tests pass under cargo, because Relax's std is its own.
 scripts/dev/relax/build        # once, and after it changes: the pinned, patched Relax, into ~/.local/share/rerail-relax
 cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_SHARE=rerail RELAX_CACHE_MAX=8192 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
   nice -n 19 ~/.local/share/rerail-relax/bin/relax test --live rerail-engine --lib -- FILTER
-scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host
+scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host (a Mac first, else a Linux one)
 ```
 
 The engine needs std items that upstream Relax lacked. They are `scripts/dev/relax/std.patch`,

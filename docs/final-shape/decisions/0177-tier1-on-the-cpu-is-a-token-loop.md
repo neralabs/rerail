@@ -195,7 +195,9 @@ token, a popcount over its words or one window compare. Metal's record kernel an
 interpreter test each token the same way.
 
 They replace the escape over `f_dot & prev(frac)` and the 19 digits' tier 2 `CHECK` (one
-local check fewer). CPU form: 249 operations, from 259; the fallback reads 85, from 130
+local check fewer). Since 0413, neither number escapes: a number's run is cut at its second
+`.` (`run num_run once dot`), and only an integer's 19 digits go to the engine
+(`all(digit) at least 19`). CPU form: 249 operations, from 259; the fallback reads 85, from 130
 (`a_numbers_checks_are_at_its_token`).
 
 ## Readers
@@ -3619,3 +3621,124 @@ leads were checked and are not the difference:
   reloads a pair the same way.
 - **The first byte's entry.** It is two instructions and a load after
   the token's bytes, as lean's.
+
+## The refill takes bits, not compares
+
+This settles the base loop. On lines of words neither lexer looks up,
+the two loops cost the same a token once a block holds 8 tokens or more
+(about 5 cycles each). The gap was a fixed cost a block: about 6–8
+cycles, 33 instructions.
+
+How it was found:
+
+- **The measure.** Lines of 3-letter words at 1, 2, 4, 8 and 16 a
+  block. The line used before (`aghknqru…`) had `n` and `u` words, which
+  ours looks up (`null`, `uses`); lean's was off. Instructions a block:
+  ours 288 + 38 a token, lean 256 + 51.
+- **The paths.** lldb stepped one steady block of each, every pc logged.
+  A block's way from token to token is 314 instructions for ours, 294
+  for lean. The extra is in the vector work: `add`/`cmhi` and `orn`
+  that lean does not have.
+- **The cause.** Three of the refill's sets were a table bit **or a
+  range** of the bytes: `b == ' '`, the digits (`b - 48 <= 9`), and
+  `(`..`.` (`b - 40 <= 6`). A range is a `sub`, a compare and an `orr`
+  on each of the four vectors. Lean's digits are a bit (`C_DIGIT`). With
+  the ranges taken out (an experiment, wrong results), ours matched
+  lean: 12.3 against 12.2 cycles at 8 a block, 8.8 against 8.8 at 16.
+
+Ruled out on the way, each by a measurement:
+
+- the arms' branches (`-`, punctuation, wordy, marks): 0.2–0.4 cycles;
+- latency from the masks to a block's first token (7 cycles more on
+  that chain cost nothing), so the masks' `ldp` reload is not it either;
+- reading the token's bytes from the file rather than a stack copy:
+  lean reading from the file is 0.2 cycles slower.
+
+`class_pack::pack` chose by `(tables, products, ranges)`: it saved a
+product before a range. But a product is free while its table has
+room, since a set is one `vtst` however many bits it has. A range costs
+three instructions a vector. `plan` took a range wherever it saved a
+product, so no plan without ranges was ever tried. Now `plan` takes the
+needs that may have a range (`ranged_ok`). In each of its four orders,
+`pack` starts with ranges open to every need. It then closes them one
+need at a time, keeping each closure that adds no table. That is
+O(n²) plans at worst; trying every subset doubled the module's test
+time. It keeps the fewest range instructions in the fewest tables. A
+single byte is one compare (`cmeq`), a run a subtract and a compare;
+counting ranges alone, the greedy search kept a run where a byte would
+do:
+
+```rust
+let key = |p: &Packing| (p.tables.len(), p.tests.iter().filter_map(|t| t.range).map(|(_, span)| if span == 0 { 1 } else { 2 }).sum(), p.products());
+```
+
+The refill's three sets are one table and one compare now, as lean's
+window.
+
+Measured, as information (cycles a token, lean in brackets). Lines of
+words neither looks up, lean's lookup off, each lexer's fastest of six
+runs:
+
+| Tokens a block | Before | After |
+|---|---|---|
+| 1 | 49.7 (67.0) | 41.9 (67.0) |
+| 4 | 14.4 (18.4) | 13.4 (18.4) |
+| 8 | 13.2 (12.2) | 12.2 (12.2) |
+| 16 | 9.3 (8.8) | 8.7 (8.9) |
+
+By kind: words 17.2 → 16.6 (lean 16.0), punctuation 8.9 → 8.7, mixed
+9.0 → 8.9. Instructions a token: strings 224 → 205, comments 180 → 168,
+words 82.5 → 78.9.
+
+What is left of the words gap is the lookup's: ours 2.6 cycles a word
+(16.1 − 13.5), lean's about 2.1.
+
+Tests: `class_pack`'s `a_lexers_sets_are_one_table` (one compare at
+most, the word's bytes bits) and `a_lexers_classes_are_one_lookup`; AOT
+`the_refill_is_leans_window` (4 compares of the bytes at most, lean's).
+
+## A word's slot is lean's `(key, len, code)`
+
+Lean's `WORDS` entry is three fields, each loaded by itself:
+
+```rust
+static WORDS: [(u64, u8, u8); 128] = …;
+let (k, l, code) = WORDS[word_slot(w, len)];
+```
+
+Ours packed the slot's second word as one `u64` meta: the length in its
+low byte, the code bits above it, the ninth byte (or the long-word flag)
+at its top. The meta was read once and cut: an `ldp` of key and meta, an
+`and` for the length, a `lsr #8` for the code. Each cut sat on the path
+from the slot's load to the record. Now the meta's fields have places of
+their own (`META_TOP`, `META_CODE`):
+
+| Byte | Field |
+|---|---|
+| 0 | the length (`ldrb`) |
+| 1 | the ninth byte (`WordRest::Ninth`) or `LONG_WORD` (`WordRest::Tails`) |
+| 4–7 | the code bits, a `u32` (`ldr w`) |
+
+The code is the record's code word itself (kind, word, marks), so no
+shift. The punctuation table is derived from the slots
+(`punct_codes`). Its decode had to move with the layout: decoding
+`m >> 8` left every punctuation's bits past 32, so no byte took its code
+from the table. The tapes stayed right, only slower (punctuation 47.2 →
+66.6 instructions a token). `rrs_records_are_rows_on_the_cpu` checks
+those bytes. It had been stale since `/` (the comment's reader's
+first byte) came into the table, and now expects it.
+
+Measured, as information. Lines of 3-letter words ours and lean both look
+up, each lexer's fastest of six runs, with the lookup minus without:
+
+| Tokens a block | Before | After | Lean |
+|---|---|---|---|
+| 8 | 3.5 | 2.9 | 2.9 |
+| 16 | 3.4 | 2.8 | 2.6 |
+
+Instructions are unchanged: the lookup is ours 20.7 a word against lean's 16.3. The rest are the
+`orr` of the code with the token's kind, which is the record format's, and the
+lookup's block, which is out of line with a branch back.
+
+Test: `a_words_lookup_is_leans` (no meta read whole; the code a `u32` of
+its own).

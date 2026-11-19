@@ -76,9 +76,7 @@ impl PythonCandidates for Batch {
                     if n == NONE {
                         Some(-1)
                     } else {
-                        p.local
-                            .get(n as usize)
-                            .copied()
+                        Some(p.local_of_node(n))
                             .filter(|&v| v != NONE)
                             .map(|v| p.global(v))
                     }

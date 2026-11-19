@@ -59,7 +59,7 @@ pub use grouped::Grouped;
 pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 pub use strings::Strings;
 pub use tree::Tree;
-pub use version::{DeclRef, FactsRef, Layer, Made, Version, differences, forget_trees_decoded, trees_decoded};
+pub use version::{DeclRef, FactsRef, Layer, Made, Version, differences, forget_trees_decoded, same_program, trees_decoded};
 
 pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x05";
 /// 3: every relation the program names has an id, those its declarations, facts, inputs, outputs and about rows
@@ -224,9 +224,19 @@ pub fn bad(what: impl std::fmt::Display) -> String {
 
 /// An image's bytes, held at 16-byte alignment, viewed by region.
 pub struct Image {
-    buf: Vec<u128>,
+    buf: Buf,
     len: usize,
     regions: [(usize, usize); REGIONS],
+}
+
+/// Bytes an image is read in place from, at a stable address for as long as they are held: a store's segment,
+/// mapped (decision 0394).
+pub type SharedBytes = std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>;
+
+/// Where an image's bytes are: a buffer of its own, or bytes it shares, read where they are.
+enum Buf {
+    Owned(Vec<u128>),
+    Shared(SharedBytes),
 }
 
 impl Image {
@@ -236,7 +246,28 @@ impl Image {
         let mut buf = vec![0u128; bytes.len().div_ceil(16)];
         // SAFETY: `buf` holds at least `bytes.len()` bytes.
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.as_mut_ptr().cast::<u8>(), bytes.len()) };
-        let mut image = Image { buf, len: bytes.len(), regions: [(0, 0); REGIONS] };
+        Image::checked(Image { buf: Buf::Owned(buf), len: bytes.len(), regions: [(0, 0); REGIONS] })
+    }
+
+    /// The image of `bytes`, read where they are, not copied (decision 0394), and checked as `open` checks it. Bytes
+    /// not at 16 bytes are refused: an image's regions are read at 16.
+    pub fn open_shared(bytes: SharedBytes) -> Result<Image, String> {
+        let (at, len) = {
+            let b = (*bytes).as_ref();
+            (b.as_ptr() as usize, b.len())
+        };
+        if at % 16 != 0 {
+            return Err(bad("shared bytes not at 16 bytes"));
+        }
+        Image::checked(Image { buf: Buf::Shared(bytes), len, regions: [(0, 0); REGIONS] })
+    }
+
+    /// Whether its bytes are shared, read where they are (`open_shared`), not a copy of its own.
+    pub fn is_shared(&self) -> bool {
+        matches!(self.buf, Buf::Shared(_))
+    }
+
+    fn checked(mut image: Image) -> Result<Image, String> {
         let b = image.bytes();
         if b.len() < HEADER || b[..8] != MAGIC {
             return Err(bad("no image"));
@@ -271,8 +302,11 @@ impl Image {
     }
 
     pub fn bytes(&self) -> &[u8] {
-        // SAFETY: `buf` holds `len` initialized bytes.
-        unsafe { std::slice::from_raw_parts(self.buf.as_ptr().cast::<u8>(), self.len) }
+        match &self.buf {
+            // SAFETY: `buf` holds `len` initialized bytes.
+            Buf::Owned(buf) => unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), self.len) },
+            Buf::Shared(b) => (**b).as_ref(),
+        }
     }
 
     fn slice<T>(&self, r: R) -> &[T] {

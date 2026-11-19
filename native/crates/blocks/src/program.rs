@@ -42,7 +42,7 @@ pub struct Program {
 }
 
 fn open(nmod: usize, delta: bool) -> Block {
-    let b = Block::anon(kind::PROGRAM, 256 << 20);
+    let b = crate::alloc::host(kind::PROGRAM, 256 << 20);
     let root: *mut ProgramRoot = b.alloc_t(1);
     let mods: *mut Ptr<Module> = b.alloc_t(nmod);
     let ranges: *mut Range = b.alloc_t(nmod);

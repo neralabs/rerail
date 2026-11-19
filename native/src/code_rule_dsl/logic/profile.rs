@@ -273,6 +273,7 @@ impl State {
             s.planned_work += t.planned_work;
             s.planned_scanned += t.planned_scanned;
             s.steps += t.steps;
+            s.rules += t.rules;
             s.work += t.work;
             s.cpu_estimate += t.cpu_estimate;
             s.gpu_estimate += t.gpu_estimate;
@@ -286,6 +287,9 @@ impl State {
                 a.3 += b.3;
             }
             s.gpu.add(&t.gpu);
+            for (a, b) in s.gpu_terms.iter_mut().zip(t.gpu_terms) {
+                *a += b;
+            }
             if t.refused.is_some() {
                 s.refused = t.refused;
             }
@@ -327,6 +331,8 @@ pub struct PlacedTotal {
     /// Of the planned work, the rows its scans read (`Shape::scanned`), and its rules' steps, over its runs.
     pub planned_scanned: f64,
     pub steps: u64,
+    /// Its rules, over its runs.
+    pub rules: u64,
     pub work: u64,
     pub cpu_estimate: f64,
     pub gpu_estimate: f64,
@@ -343,6 +349,9 @@ pub struct PlacedTotal {
     /// refused it, when it was placed there and did not run there.
     pub gpu: GpuTotal,
     pub refused: Option<String>,
+    /// The device price's terms over its runs on the device, as priced (`placement::DeviceTerms::array`: rules,
+    /// steps, sorts, values read, rows made, joins' device seconds, other work, views read).
+    pub gpu_terms: [f64; 8],
 }
 
 #[derive(Default, Clone)]
@@ -1977,6 +1986,27 @@ impl Deciding {
 impl Drop for Deciding {
     fn drop(&mut self) {
         DECIDING.with(|d| d.borrow_mut().truncate(self.depth - 1));
+    }
+}
+
+/// Decisions made before, stated again as made now (decision 0385): a pass run over an edit, where the decisions it
+/// made over the whole stand, says what it said then, to the profile and to every open step (`Deciding`).
+pub fn restate(made: &[Decided]) {
+    if made.is_empty() || QUIET.get() {
+        return;
+    }
+    DECIDING.with(|d| {
+        for step in d.borrow_mut().iter_mut() {
+            for (k, n) in made {
+                *step.entry(k.clone()).or_default() += n;
+            }
+        }
+    });
+    if on() {
+        let mut state = state();
+        for (k, n) in made {
+            *state.decisions.entry(k.clone()).or_default() += n;
+        }
     }
 }
 

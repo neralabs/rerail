@@ -9,8 +9,15 @@
 //! - [`msl`]: CLIF as Metal Shading Language: the reads' for the kernels.
 //! - [`relation`]: a relation's reads (decision 0325), the second family: a value of `rerail_blocks`' rows, a
 //!   dead bit, an index's group, each read through the block's self-relative references.
+//! - [`ids`]: a projection's numbering as its reads are told where it lies (decision 0353 step 2): its rank index
+//!   and granule table, each a run of its block.
+//! - [`id_reads`]: the numbering's reads (a node's or token's id from its number, and back; order keys; rank and
+//!   select), in the relation's family.
 //! - [`inline`]: the JIT's one inlining pass: a call of a hot read is replaced by its body, a cold
 //!   one stays a call of the read compiled once in the module.
+pub mod ids;
+#[cfg(feature = "ir")]
+pub mod id_reads;
 #[cfg(feature = "ir")]
 pub mod inline;
 #[cfg(feature = "ir")]
@@ -24,3 +31,4 @@ pub mod msl;
 #[cfg(feature = "ir")]
 pub mod rust;
 pub mod view;
+pub mod view_reads;

@@ -122,7 +122,7 @@ pub use super::front::Error;
 pub use lower::drop_unread_core;
 pub use lower::is_core;
 pub use lower::findings::{is_diagnostic, HEAD as DIAGNOSTIC_HEAD};
-pub use lower::WORLD;
+pub use lower::{FILE_SYSTEM, WORLD};
 pub use print::print_version;
 pub use syntax::quote;
 pub use translate::translate;
@@ -697,7 +697,7 @@ pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::co
 
 /// How long a module's or program's image stays in the store after the last run that read or wrote it
 /// (`keep_image`): collection keeps a source while a pin's lease runs, as it keeps the combined program's entry before
-/// a run names it (`combined::record`). Naming the images in the run's record is decision 0246 §6's.
+/// a run names it (`combined::record_version`). Naming the images in the run's record is decision 0246 §6's.
 const IMAGE_LEASE_SECS: i64 = 7 * 24 * 3600;
 
 /// The owner of the images' pins.
@@ -774,11 +774,11 @@ pub(in crate::code_rule_dsl) fn graph_image(store: Option<&crate::content_store:
 /// files its graph reached, so an edited library gives the same key another graph: the store's alias holds one
 /// image, and the first stays. A run then finds it does not hold (`Graph::holds`) and derives the graph, as without
 /// images. The shipped bundle's graphs are its library's; exported, the last derived is the one written.
-pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, bytes: Vec<u8>) -> bool {
+pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, bytes: Vec<u8>) {
     use crate::content_store::write_back::{Key, Syms};
     const WHAT: &str = "phase 0's graph of a seed";
     images::export(key, &bytes);
-    let Some(store) = store else { return false };
+    let Some(store) = store else { return };
     // A record of its own (decision 0306), dropped where the queue is full, as `keep_image`'s: the graph in its byte
     // area, the first kept under its key staying.
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
@@ -790,7 +790,7 @@ pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_s
         cx.store.pin_source(id, IMAGE_OWNER, image_lease())
     }
     let queued = Key::of(&[WHAT.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
-    store.queue_record(Syms::None, WHAT, vec![queued], &key, Some(bytes), apply, true)
+    store.queue_record(Syms::None, WHAT, vec![queued], &key, Some(bytes), apply, true);
 }
 
 /// The lease of image `id`, read by this run, renewed (`keep_image`) once more than half of it has run: a run that reads
@@ -1665,6 +1665,13 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
     let mut keep: BTreeSet<(usize, usize)> = BTreeSet::new();
     let mut todo: Vec<String> = reached.iter().cloned().collect();
     while let Some(rel) = todo.pop() {
+        // An answer read reaches its request: a request of several columns is a rule's (`c_pp_tu_req(tu, spec)`),
+        // which nothing reads by name.
+        for (_, req) in WORLD.iter().filter(|(a, _)| *a == rel) {
+            if reached.insert((*req).to_owned()) {
+                todo.push((*req).to_owned());
+            }
+        }
         for &(f, s) in by_head.get(rel.as_str()).into_iter().flatten() {
             if !keep.insert((f, s)) {
                 continue;

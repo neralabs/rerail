@@ -13,6 +13,8 @@ sha2 = "0.10"
 lz4-sys = "=1.11.1"
 # The newlines of a document, a chunk at a time, for its newline index (0156 §1.6).
 memchr = "=2.8.3"
+# simdjson's nibble lookups: a format 16 part's code bytes tested against a set 64 at a time (`match_groups`).
+rerail-simd8 = { path = "../simd8" }
 
 # SHA-256 on the CPU's SHA instructions, as the engine has it (its Cargo.toml says why).
 [target.'cfg(all(target_arch = "aarch64", not(windows)))'.dependencies]

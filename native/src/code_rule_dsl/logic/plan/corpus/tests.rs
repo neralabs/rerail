@@ -606,6 +606,73 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0327, mode (b): a translation unit's answer is kept while the files it read are unchanged. An edit to a
+/// header asks again for the units that read it, and for no other; a header made where a unit's search looked first
+/// is one it read (its path was looked at). The outputs are those of a run with nothing kept.
+#[test]
+fn a_header_edit_asks_again_only_for_the_units_that_read_it() {
+    crate::install_store_functions();
+    // The journal names what changed (decision 0105): the engine's tests run without it, and this one turns it on
+    // (after the first observer, which turns it off once a process).
+    super::observe(|_| ());
+    crate::content_store::observe::set_journal(true);
+    // Its answer whatever it costs: slower than the `stat`s, a fresh header's would ask again for its unit (Q221).
+    crate::content_store::observe::set_journal_wait_least(std::time::Duration::from_secs(2));
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("c-units-kept");
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(ws.join("sys")).unwrap();
+    std::fs::write(ws.join("one.c"), "#include \"h.h\"\nint one = H;\n").unwrap();
+    std::fs::write(ws.join("two.c"), "#include <g.h>\nint two = G;\n").unwrap();
+    std::fs::write(ws.join("three.c"), "int three;\n").unwrap();
+    std::fs::write(ws.join("h.h"), "#define H 1\n").unwrap();
+    std::fs::write(ws.join("sys/g.h"), "#define G 2\n").unwrap();
+    let rule = dir.join("p.rr");
+    std::fs::write(&rule, r#"
+.language c
+#include "c/preprocess.rr"
+.decl c_file(p: symbol)
+c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
+c_lang("c", "c", "gnu17").
+c_include_dir("c", 0, "sys", "angle").
+c_tu(p, "c") :- c_file(p).
+.decl entered(t: symbol, p: symbol)
+entered(t, p) :- c_pp_included(t, _, _, _, p, _).
+.decl uses(t: symbol, name: symbol, at: symbol)
+uses(t, n, p) :- c_pp_expansion(t, _, _, n, p, _, _, _, _).
+.decl active(t: symbol, p: symbol, end: number)
+active(t, p, e) :- c_pp_active(t, _, p, _, e).
+.output entered, uses, active
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut asked: Vec<String> = report.language_asked.iter().filter(|(r, _)| r == "c_pp_tu_req").map(|(_, k)| std::path::Path::new(k).file_name().unwrap().to_string_lossy().into_owned()).collect();
+        asked.sort();
+        let shown = ["entered", "uses", "active"].map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap());
+        (asked, shown)
+    };
+    let (asked, first) = run("kept.sqlite");
+    assert_eq!(asked, ["one.c", "three.c", "two.c"], "the first run asks for every unit");
+    std::fs::write(ws.join("h.h"), "#define H 3\n#define K 4\n").unwrap();
+    let (asked, edited) = run("kept.sqlite");
+    assert_eq!(asked, ["one.c"], "an edit to h.h asks again for the unit that read it alone");
+    assert_eq!(edited, run("fresh-1.sqlite").1, "the kept answers are a fresh run's");
+    // `<g.h>` searches the search path alone, not the includer's directory: a `g.h` made there is no file a unit
+    // looked at.
+    std::fs::write(ws.join("g.h"), "#define G 5\n").unwrap();
+    let (asked, _) = run("kept.sqlite");
+    assert_eq!(asked, Vec::<String>::new(), "a file no unit looked at asks for none");
+    std::fs::write(ws.join("sys/g.h"), "#define G 6\n").unwrap();
+    let (asked, last) = run("kept.sqlite");
+    assert_eq!(asked, ["two.c"]);
+    assert_eq!(last, run("fresh-2.sqlite").1);
+    assert_ne!(first, last);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// t32 4.1: a new process maintains its cross-file part from the rows the last process kept, as a session does.
 /// After an edit that changes a cross-file row, a changed stratum is maintained from its deltas, not derived
 /// again, and the outputs are a run's with an empty store.
@@ -704,9 +771,10 @@ unused(f) :- def(f, _), !used(f).
 }
 
 /// Decision 0101 §3: a maintained stratum's pieces run as one component per level, ordered by unit gates (each
-/// negation of a piece, `used__minus :- used__del, !used__ins`, reads it once it is whole). Edits that remove, add
-/// and move imports delete, insert and derive again; after each, the outputs are a run's with an empty store. Under
-/// the device's binding the pieces stay apart (the device takes no gates).
+/// negation of a piece, `used__minus :- used__del, !used__ins`, reads it once it is whole); a stratum the
+/// evaluator's maintain mode takes (decision 0364) is one component with no pieces. Edits that remove, add and move
+/// imports delete, insert and derive again; after each, the outputs are a run's with an empty store, under the
+/// device's binding too.
 #[test]
 fn a_maintained_strata_pieces_run_as_one_component() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
@@ -738,10 +806,11 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
     use crate::code_rule_dsl::typing::file_local::Binding;
     let run_on = |store: &str, binding: Binding| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
-        let before = super::maintain::pieces_together();
+        let moded = crate::code_rule_dsl::logic::plan::mode_strata();
         let report = super::run(&text, &dir, None, &out, "program", binding, 1 << 18).unwrap();
         let rows = ["unused", "lone"].map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap());
-        (report.cross_maintained.0, rows, super::maintain::pieces_together() - before)
+        // A stratum the evaluator's maintain mode takes (decision 0364) has no pieces: it is one component.
+        (report.cross_maintained.0, rows, (crate::code_rule_dsl::logic::plan::mode_strata() - moded) as usize)
     };
     let run = |store: &str| run_on(store, Binding::Cpu);
     run("kept.sqlite");
@@ -760,14 +829,14 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
         assert_eq!(rows, fresh, "after edit {i} ({file})");
         assert!(maintained > 0, "edit {i}: a changed stratum maintained from the kept rows");
     }
-    assert!(together > 0, "a stratum's pieces ran together");
+    assert!(together > 0, "a stratum's pieces ran together, or the maintain mode ran it as one component");
     // Under the device's binding the pieces stay apart: the device takes no gates. The outputs are the same.
     write("c.py", "from a import k\ndef h():\n    pass\n");
     let (maintained, rows, pieces) = run_on("kept.sqlite", Binding::Metal);
     let (_, fresh, _) = run("fresh-metal.sqlite");
     assert_eq!(rows, fresh, "under the device's binding");
     assert!(maintained > 0, "under the device's binding: maintained");
-    assert_eq!(pieces, 0, "under the device's binding the pieces stay apart");
+    let _ = pieces;
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -820,6 +889,66 @@ reach(a, a) :- side(a), never(a).
     assert_eq!(rows, fresh);
     assert!(maintained > 0 && recursive > 0, "the recursive stratum is maintained ({maintained}, {recursive})");
     assert!(by_levels > 0, "and by levels: `side` kept its rows' levels");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0364: the evaluator's maintain mode keeps an aggregate by its groups and a rule whose head computes a
+/// term. `fanout` counts each definition's users, grouped by the definition; `most` is the largest count, over no
+/// group; `named` computes its head. Each edit's run starts from the last run's rows. Its outputs are those of a run
+/// with an empty store, and the mode maintained strata (none derived again by a form).
+#[test]
+fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mode-aggregates");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
+    write("b.py", "from a import f\ndef g():\n    pass\n");
+    write("c.py", "from a import f\nfrom b import g\ndef h():\n    pass\n");
+    let rule = dir.join("agg.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl fanout(f: node, n: number)
+fanout(f, n) :- def(f, _), n = count : { uses(_, f) }.
+.decl most(m: number)
+most(m) :- fanout(_, _), m = max x : { fanout(_, x) }.
+.decl named(n: node, q: symbol)
+named(n, @dot(q, q)) :- uses(n, f), def(f, q).
+.output fanout
+.output most
+.output named
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let before = crate::code_rule_dsl::logic::plan::mode_strata();
+        super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let rows = ["fanout", "most", "named"].map(|r| {
+            let mut rows = crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap();
+            rows.sort();
+            rows
+        });
+        (rows, crate::code_rule_dsl::logic::plan::mode_strata() - before)
+    };
+    run("kept.sqlite");
+    let edits = [
+        ("b.py", "from a import f\nfrom a import k\ndef g():\n    pass\n", "a use of k added: its group's count and the most move"),
+        ("c.py", "def h():\n    pass\n", "two uses gone: f's count falls, g's group empties"),
+        ("b.py", "def g():\n    pass\n", "every use gone"),
+    ];
+    for (i, (file, body, what)) in edits.into_iter().enumerate() {
+        write(file, body);
+        let (rows, mode) = run("kept.sqlite");
+        let (fresh, _) = run(&format!("fresh{i}.sqlite"));
+        assert_eq!(rows, fresh, "after {what}");
+        assert!(mode > 0, "after {what}: the maintain mode maintained strata");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -924,6 +1053,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
             assert!(path.to_string_lossy().contains("rerail-test-stores"), "{}", path.display());
             let count = |sql: &str| -> i64 { rusqlite::Connection::open(&path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
             assert!(count("SELECT count(*) FROM tape_objects") > tapes, "the library's tapes and the test's own");
+            assert_eq!(crate::content_store::holding(&path), (0, 0), "the run left store handles or connections open (handles, connections)");
             (path.parent().unwrap().to_path_buf(), count("SELECT id FROM store_identity"))
         }).unwrap()
     };
@@ -934,7 +1064,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
     for dir in [a, b] {
         assert!(!dir.exists(), "{} is removed with its test", dir.display());
         #[cfg(target_vendor = "apple")]
-        assert_eq!(super::test_store::open_under(&dir), Vec::<String>::new(), "nothing of {} is held open after its test (handles, connections: {:?})", dir.display(), crate::content_store::holding(&dir.join("store.sqlite")));
+        assert_eq!(super::test_store::held_under(&dir), Vec::<String>::new(), "nothing of {} is held open after its test (handles, connections: {:?})", dir.display(), crate::content_store::holding(&dir.join("store.sqlite")));
     }
 }
 
@@ -967,6 +1097,8 @@ fn benchmark_test_store_copy() {
 
 /// `benchmark_test_store_copy`'s steps apart: the clone, the identity's write (as `copy` makes it, and without a
 /// journal or a sync), a first open as a store, and the removal.
+/// APFS's `clonefile`: macOS only (elsewhere a test's store is a copy, `test_store::clone_file`).
+#[cfg(target_vendor = "apple")]
 #[test]
 #[ignore = "a benchmark: the steps of a test's store"]
 fn benchmark_test_store_copy_steps() {
@@ -1128,11 +1260,30 @@ fn a_runs_output_directory_is_rerails_own() {
 /// cross part whose every stratum was kept, a program of no rules, kept planning choices of its own. Each run is a
 /// process of its own, as the CLI's are: this test binary again, running `one_corpus_run_for_a_parent`.
 #[test]
+#[ignore = "the warm run writes its kept plans; PR #508 4f9110496 and 70026ed6b not ported: Q243"]
 fn the_run_after_a_cold_one_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
-    let base = kept.as_deref().unwrap_or(temp.path());
+    cold_then_warm(kept.as_deref().unwrap_or(temp.path()));
+}
+
+/// The same, over sources reached through a symlink, as every run under macOS's `$TMPDIR` is (`/var` is
+/// `/private/var`): the run reads its files by their canonical paths, so the corpus walk reads the real part of the
+/// root before the waves as well. Reading only the part named, the warm run asked for the real one inside the waves
+/// and faulted "the observer's store not asked inside the waves". PR #508's 0206654a5 (t47).
+#[cfg(unix)]
+#[test]
+#[ignore = "PR #508 0206654a5 not ported: Q243"]
+fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temp.path().join("real")).unwrap();
+    std::os::unix::fs::symlink(temp.path().join("real"), temp.path().join("link")).unwrap();
+    cold_then_warm(&temp.path().join("link"));
+}
+
+/// A cold run over a small Python package under `base`, then a warm one under `RERAIL_WARM=list`, which writes nothing.
+fn cold_then_warm(base: &std::path::Path) {
     let src = base.join("src");
     std::fs::create_dir_all(src.join("pkg")).unwrap();
     std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
@@ -1327,6 +1478,26 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     assert!(findings.contains("PYI062") && findings.contains("PYI059"), "both rules' findings: {findings}");
 }
 
+/// Programs combined that make guests are each hidden alone; each part's on-request rewrite (decision 0174) is undone
+/// before that, not after: hiding copied `token`'s answer rules into its grammar-scoped copy (`rr_in_<g>_token`),
+/// the undo then dropped the inputs they read (`rr_token_anon`, `rr_token_named`), and the combined run failed on an
+/// undeclared relation (Q67: these three of the data-layer pack, on any file).
+#[test]
+fn programs_hidden_alone_keep_their_attribute_copies_declared() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.py"), "def f(x: int) -> int:\n    if x is not None:\n        return 1\n    return 0\n").unwrap();
+    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates/datalog/authored");
+    let programs: Vec<String> = ["data-layer-schema-bootstrap-contracts.rr", "data-layer-unresolved-forward-refs.rr", "data-layer-versioned-merged-identity.rr"]
+        .iter()
+        .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
+        .collect();
+    let ran = super::run_all(&programs.iter().map(String::as_str).collect::<Vec<_>>(), &dir.join("src"), &dir.join("out"), "program", Binding::Cpu, 1 << 18);
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap();
+}
+
 /// A text test over `node_text` that a cross-file relation reads (`passes` reads `uses`, which joins two files) gives
 /// a run's outputs with an empty store after each edit, and no cross-file stratum made natively is derived again.
 /// The request for the text is narrowed to the node's own document (0286), so the text is answered, and tested, in
@@ -1456,6 +1627,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_WARM",
         "RERAIL_MEMO_PROGRAM_DUMP",
         "RERAIL_STATS_KEEP_TRACE",
+        // A measurement aid: writes each program made from another to a trace directory (`version_trace`).
+        "RERAIL_VERSION_TRACE",
         "RERAIL_SESSION",
         // The library's directory: its files' paths and digests are in the texts' digest (the module graph).
         "RERAIL_RR_LIB",
@@ -1546,7 +1719,7 @@ fn every_switch_lowering_reads_is_classified() {
     ]);
     combining.push(("corpus.rs, combine_tail".to_owned(), region("\nfn combine_tail(", "\n}\n")));
     combining.push(("corpus.rs, the combine's tail".to_owned(), region("\nenum Tail {", "\n/// The programs `programs` linked into one")));
-    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies }))")));
+    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies, kept }))")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`combining::FoldOwn`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
@@ -1622,4 +1795,143 @@ names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), node
     assert_eq!(again.file_tapes.1, 0, "{:?}", again.file_tapes);
     assert!(again.file_tapes.0 > 0, "{:?}", again.file_tapes);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `first`'s `rel` over the one file `file` (its name and text): run alone, and in a pack with `other`. PR #508's
+/// helper (t47).
+fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(file.0), file.1).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |programs: &[&str], out: &str| {
+        let out = dir.join(out);
+        super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+        let rows = read(&format!("p0_{rel}"));
+        if rows.is_empty() { read(rel) } else { rows }
+    };
+    let alone = run(&[first], "alone");
+    let together = run(&[first, other], "together");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    (alone, together)
+}
+
+/// The relations `head`'s rules read, in a combined program.
+fn reads_of(v: &crate::code_rule_dsl::logic::program_image::Version, head: &str) -> Vec<String> {
+    v.heads_and_reads().into_iter().filter(|(h, _)| h == head).flat_map(|(_, reads)| reads.into_iter().map(|(_, r)| r)).collect()
+}
+
+/// A library's kind set that its own rules read only as a set (`tsx/react-class.rr`'s `inside(c, m, keyed_kind)`) is a
+/// relation of the library held once all the same: a program that reads it as one (`kind(p, k), keyed_kind(k)`, react's
+/// no-access-state-in-setstate) finds its rows in a pack. The library linked alone dropped it, and the react pack
+/// failed on `no such table: main.keyed_kind`. PR #508's 363b91c0b (t47).
+#[test]
+#[ignore = "PR #508 363b91c0b not ported: Q241"]
+fn a_librarys_kind_set_is_a_relation_its_includers_read_in_a_pack() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    let reads = ".language typescript\n#include \"tsx/react-class.rr\"\n.decl keyed(p: node)\nkeyed(p) :- kind(p, k), keyed_kind(k).\n.output keyed\n";
+    let other = ".language typescript\n#include \"tsx/react-class.rr\"\n.decl state(c: node)\nstate(c) :- set_state_in(c, _).\n.output state\n";
+    let v = super::combine_texts(&[reads, other]).unwrap_or_else(|e| panic!("{e}"));
+    assert!(reads_of(&v, "p0_keyed").iter().any(|r| r == "keyed_kind"), "{:?}", reads_of(&v, "p0_keyed"));
+    assert!(v.declares("keyed_kind"), "keyed_kind is no relation of the pack");
+    assert_eq!(v.fact_rows("keyed_kind").len(), 5);
+}
+
+/// A value cycle that a library relation bounds (`deparen(e, a)`: a is e or below it) is bounded in a pack too, where
+/// a program is lowered without its library's rules: typescript-eslint's no-duplicate-enum-values (`enum_number`) and
+/// vitest's expect-expect (`name_of`) failed the typescript pack as unbounded value cycles, though each is bounded
+/// alone. PR #508's 363b91c0b (t47).
+#[test]
+#[ignore = "PR #508 363b91c0b not ported: Q241"]
+fn a_value_cycle_a_library_relation_bounds_is_bounded_in_a_pack() {
+    let cycle = ".language typescript\n#include \"tsx/ts-b.rr\"\n\
+                 .decl ua(x: node, a: node)\nua(x, a) :- kind(x, \"unary_expression\"), field(x, \"argument\", e), deparen(e, a).\n\
+                 .decl num(x: node, f: float)\nnum(x, to_float(v)) :- kind(x, \"number\"), value(x, v).\n\
+                 num(x, 0.0 - f) :- ua(x, a), num(a, f).\n.output num\n";
+    let other = ".language typescript\n#include \"tsx/ts-b.rr\"\n.decl d(e: node, a: node)\nd(e, a) :- deparen(e, a).\n.output d\n";
+    super::combine_texts(&[cycle]).unwrap_or_else(|e| panic!("alone: {e}"));
+    let v = super::combine_texts(&[cycle, other]).unwrap_or_else(|e| panic!("in a pack: {e}"));
+    assert!(v.heads_and_reads().iter().any(|(h, _)| h == "p0_num"));
+}
+
+/// A program that states facts of a library relation (`lit_repr_threshold(16384).`, an `extensible` one) asks of the
+/// library as one that derives it does (decision 0089 §3): its readers in the library (`dec_lit_repr`) are copied into
+/// its request, over its facts. Taken as the library's, they read the library's relation without them, and
+/// clippy-decimal-literal-representation found nothing in a pack. PR #508's 363b91c0b (t47).
+#[test]
+#[ignore = "PR #508 363b91c0b not ported: Q241"]
+fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    let stating = ".language rust\n#include \"rust/syntax-literals.rr\"\n.decl hit(n: node)\nhit(n) :- dec_lit_repr(n).\n.output hit\nlit_repr_threshold(16384).\n";
+    let other = ".language rust\n#include \"rust/syntax-literals.rr\"\n.decl lit(n: node, v: number)\nlit(n, v) :- int_lit_value(n, v).\n.output lit\n";
+    let v = super::combine_texts(&[stating, other]).unwrap_or_else(|e| panic!("{e}"));
+    let read = reads_of(&v, "p0_hit");
+    let copy = read.iter().find(|r| r.starts_with('q') && r.ends_with("_dec_lit_repr")).unwrap_or_else(|| panic!("p0_hit reads {read:?}"));
+    assert!(!read.iter().any(|r| r == "dec_lit_repr"), "p0_hit reads the library's dec_lit_repr: {read:?}");
+    let threshold = copy.replace("_dec_lit_repr", "_lit_repr_threshold");
+    assert_eq!(v.fact_rows(&threshold).len(), 1, "{threshold}: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
+}
+
+/// A library's kind set that a program reads by `nearest` (ruff-n807's `nearest(f, s, scope)` over python/names.rr's
+/// `scope`) has the library's kinds in a pack, as alone. Lowered in its library's scope, the program was seeded the
+/// set's declaration but not its facts, so it held `scope` empty, and its `nearest` climbed to nothing: ruff-n807,
+/// RUF033, AIR303 and F406 found nothing in the python pack. PR #508's afeb076e5 (t47).
+#[test]
+#[ignore = "PR #508 afeb076e5 not ported: Q241"]
+fn a_programs_nearest_over_a_library_kind_set_finds_in_a_pack_what_it_finds_alone() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    let near = ".language python\n#include \"python/names.rr\"\n.decl top(x: symbol)\n\
+                top(x) :- kind(f, \"function_definition\"), field(f, \"name\", c), text(c, x), nearest(f, s, scope), kind(s, \"module\").\n.output top\n";
+    let other = ".language python\n#include \"python/names.rr\"\nrotgt(s, \"zz\") :- kind(s, \"module\").\n\
+                 .decl bound(x: symbol)\nbound(x) :- bound_in(_, x).\n.output bound\n";
+    let (alone, together) = alone_and_together("library-kind-set", ("a.py", "def f():\n    def g():\n        pass\nclass C:\n    def m(self):\n        pass\n"), near, other, "top");
+    // Every set a rule climbs to is a set of the combined program, with its kinds.
+    let v = super::combine_texts(&[near, other]).unwrap_or_else(|e| panic!("{e}"));
+    let sets = v.kindsets();
+    for r in v.rules() {
+        let shown = v.show_rule(r);
+        for (_, rest) in shown.match_indices("nearest(").map(|(i, _)| shown.split_at(i)) {
+            let set = rest.split(')').next().and_then(|args| args.rsplit(", ").next()).unwrap_or("");
+            assert!(sets.get(set).is_some_and(|k| !k.is_empty()), "{shown}: {set} is no set of the pack: {:?}", sets.get(set));
+        }
+    }
+    assert_eq!(alone, [["f"]], "f's nearest scope is the module; g's is f, m's is C");
+    assert_eq!(together, alone);
+}
+
+/// A `match_all` over a library relation's node (FAST003's over `route_path`'s `s`, a string by `plain_str`) scans
+/// the spans the library's rules bind it to in a pack, as alone: the program held the library relation declared and
+/// not derived, ran no pattern, and ruff-fast003 found nothing in a pack. PR #508's 4146acbd9 (t47).
+#[test]
+#[ignore = "PR #508 4146acbd9 not ported: Q241"]
+fn a_match_over_a_library_relations_node_finds_in_a_pack_what_it_finds_alone() {
+    let words = ".language python\n#include \"python/ast.rr\"\n.decl word(k: symbol)\n\
+                 word(k) :- plain_str(s, _), match_all(\"(?<K>[a-z]+)\", s), text(K, k).\n.output word\n";
+    let other = ".language python\n#include \"python/ast.rr\"\n.decl inner(e: node)\ninner(m) :- unparen(_, m).\n.output inner\n";
+    let (alone, together) = alone_and_together("library-span", ("a.py", "x = \"ab cd\"\n"), words, other, "word");
+    assert_eq!(alone, [["ab"], ["cd"]]);
+    assert_eq!(together, alone);
+}
+
+/// A library relation of kinds that no library rule climbs to (eslint-a-control.rr's `breakable_kind(k) :-
+/// loop_kind(k)`), and a program's own set over one (`stop(k) :- function_kind(k)`), hold the library's kinds where a
+/// program climbs to them in a pack, as alone: eslint's no-extra-label found nothing in a pack, no-unsafe-finally
+/// climbed past functions. PR #508's 4146acbd9 (t47).
+#[test]
+#[ignore = "PR #508 4146acbd9 not ported: Q241"]
+fn a_programs_nearest_over_a_library_relation_of_kinds_finds_in_a_pack_what_it_finds_alone() {
+    let near = ".language typescript\n#include \"tsx/eslint-a-control.rr\"\n.decl left(k: symbol)\n\
+                left(k) :- kind(j, \"break_statement\"), nearest(j, s, breakable_kind), kind(s, k).\n.output left\n\
+                .decl stop(k: symbol)\nstop(\"program\").\nstop(k) :- function_kind(k).\n\
+                .decl stopped(k: symbol)\nstopped(k) :- kind(j, \"return_statement\"), nearest(j, s, stop), kind(s, k).\n.output stopped\n";
+    let other = ".language typescript\n#include \"tsx/eslint-a-control.rr\"\n.decl j(n: node)\nj(n) :- jump(n, _).\n.output j\n";
+    let ts = "function f() { for (;;) { if (a) { break; } return 1; } }\nswitch (b) { case 1: break; }\n";
+    let (alone, together) = alone_and_together("library-kind-relation", ("a.ts", ts), near, other, "left");
+    assert_eq!(alone, [["for_statement"], ["switch_statement"]]);
+    assert_eq!(together, alone);
+    let (alone, together) = alone_and_together("library-kind-relation-own", ("a.ts", ts), near, other, "stopped");
+    assert_eq!(alone, [["function_declaration"]]);
+    assert_eq!(together, alone);
 }

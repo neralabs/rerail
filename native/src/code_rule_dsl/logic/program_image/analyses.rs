@@ -306,8 +306,7 @@ impl Analysis for Needed {
     }
 }
 
-/// The components, dependencies first, in the tree form's order, each by name (`components_by_name`, no sets run
-/// together): what the run's readers of a version's strata read (`Placed::components`).
+/// The components, dependencies first, in the tree form's order, each by name (`components_by_name`): what the run's readers of a version's strata read (`Placed::components`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Components(pub Vec<BTreeSet<String>>);
 
@@ -322,7 +321,7 @@ impl Analysis for Components {
     const NAME: &'static str = "components";
     const READS: Reads = Reads::RULES.or(Reads::ABOUT);
     fn compute(cx: &Cx<'_>) -> Result<Components, String> {
-        components_by_name(cx.v(), &*cx.get::<About>()?, &[]).map(Components).map_err(|e| e.to_string())
+        components_by_name(cx.v(), &*cx.get::<About>()?).map(Components).map_err(|e| e.to_string())
     }
     /// One row per member, `(k, name)`, components in order (decision 0333 §4).
     fn rows(&self, _v: &Version) -> Option<Vec<super::manager::Row>> {

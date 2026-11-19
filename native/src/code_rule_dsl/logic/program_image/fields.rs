@@ -3,7 +3,7 @@
 //! edits a setting states that edit, and reads what it needs from the version. A field's rows are its `.about`
 //! relations (`program_facts::Field`), so stating one replaces its relations' rows and keeps every other field's.
 
-use super::super::front::ast::{Gate, LatticeDecl, Native, Report, Shape, SpanIn, Value};
+use super::super::front::ast::{Gate, LatticeDecl, LayoutFact, Native, Report, Shape, SpanIn, Value};
 use super::super::front::name::{List, Lists};
 use super::super::program_facts::{self, Facts, Field};
 use super::{ABOUT, Builder, Cell, Version};
@@ -287,6 +287,10 @@ pub trait ProgramFields {
     }
     fn shapes(&self) -> Vec<Shape> {
         field(self, &["shape", "shape_after", "shape_bound"], |f| f.shapes())
+    }
+    /// Each relation's layout facts (`.layout`, decision 0361).
+    fn layouts(&self) -> BTreeMap<String, Vec<LayoutFact>> {
+        field(self, &["layout"], |f| f.layouts())
     }
     fn answers(&self) -> BTreeMap<String, Vec<String>> {
         field(self, &["answer"], |f| f.answers())

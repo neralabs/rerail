@@ -145,6 +145,7 @@ fn common_of(v: &Version) -> [u8; 32] {
         v.text_globs(),
         v.asked(),
         v.shapes(),
+        v.layouts(),
     );
     sha2::Sha256::digest(format!("{shared:?}\0{more:?}").as_bytes()).into()
 }
@@ -218,7 +219,7 @@ impl ProgramFields for Selected<'_> {
         if self.has(rel) { self.v.fact_rows(rel) } else { Vec::new() }
     }
     fn about(&self, _relations: &[&str]) -> Facts {
-        Facts::new()
+        self.v.about(&[])
     }
     fn settings(&self) -> Vec<(String, String)> {
         Vec::new()
@@ -397,6 +398,7 @@ fn state_fields(b: &mut Builder<'_>, own: &dyn ProgramFields, shared: &dyn Progr
     b.set_field(Field::TextGlobs(&shared!(text_globs)));
     b.set_field(Field::Asked(&shared!(asked)));
     b.set_field(Field::Shapes(&shared!(shapes)));
+    b.set_field(Field::Layouts(&shared!(layouts)));
 }
 
 /// A part's program: its own header (`Own`) on the shared fields of the program `v`, and its rules, copied from it.
@@ -620,6 +622,27 @@ fn record(store: &ContentStore, key: &[u8; 32], p: &Prepared) {
     keep(store, key, &p.version, |digest| facts_of(p, digest));
 }
 
+/// The facts kept under `key` alone (`keep_facts`): no image.
+pub(in crate::code_rule_dsl::logic::plan::corpus) fn kept_facts_alone(store: &ContentStore, key: &[u8; 32]) -> Option<Facts> {
+    let source = store.source_by_hash(HashKey::sha256(source_text(key).as_bytes())).ok()??;
+    let set = plan();
+    let result = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }).ok()?.results.remove(&set.plans[0])?;
+    program_facts::decode(&result.entry).ok()
+}
+
+/// Keeps `facts` under `key`, no image beside them, written by the store's writer (`kept_facts_alone` reads them).
+pub(in crate::code_rule_dsl::logic::plan::corpus) fn keep_facts(store: &ContentStore, key: &[u8; 32], facts: &Facts) {
+    let entry = program_facts::encode(facts);
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+        let (key, entry): ([u8; 32], Vec<u8>) = crate::content_store::record::codec::from_body("kept facts", body)?;
+        let source = super::super::memo::source(cx.store, &source_text(&key))?;
+        cx.name([source]);
+        let set = plan();
+        cx.store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[]).map(drop)
+    }
+    store.record("kept facts", Vec::new(), &(*key, entry), None, apply);
+}
+
 /// Keeps `version` and the facts `facts` makes of its image's digest under `key` (either stage's part).
 pub(in crate::code_rule_dsl::logic::plan::corpus) fn keep(store: &ContentStore, key: &[u8; 32], version: &Arc<Version>, facts: impl FnOnce(&[u8; 32]) -> Facts) {
     let Some(encoded) = program_text::encode_version(version) else { return };
@@ -669,7 +692,7 @@ impl Rewrite for Renaming<'_> {
 /// What part `after`'s passes changed of its header `before`, applied to the link's fields `all` with its relations
 /// renamed by `rename`: entries added or changed are set; entries of relations the part owns that its passes removed
 /// go. A field no part changed is not read of `all`.
-fn merge_header(all: &mut Builder<'_>, before: &dyn ProgramFields, after: &dyn ProgramFields, owned: &dyn Fn(&str) -> bool, rename: &dyn Fn(&str) -> String) {
+fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn ProgramFields, owned: &dyn Fn(&str) -> bool, rename: &dyn Fn(&str) -> String) {
     use crate::code_rule_dsl::logic::program_facts::Field;
     for rel in after.declared_names() {
         let cols = after.columns_of(&rel);
@@ -800,6 +823,20 @@ fn merge_header(all: &mut Builder<'_>, before: &dyn ProgramFields, after: &dyn P
     }
     list!(demand_dropped, DemandDropped);
     list!(shapes, Shapes);
+    // Each part starts with the whole program's layouts. Link only the facts its passes added.
+    let (b4, now) = (before.v.layouts(), after.layouts());
+    let mut layouts = all.layouts();
+    let mut grew = false;
+    for (rel, facts) in &now {
+        let new: Vec<front::LayoutFact> = facts.iter().filter(|f| !b4.get(rel).is_some_and(|b| b.contains(f))).cloned().collect();
+        if !new.is_empty() {
+            front::add_layout(layouts.entry(rename(rel)).or_default(), new);
+            grew = true;
+        }
+    }
+    if grew {
+        all.set_field(Field::Layouts(&layouts));
+    }
     list!(settings, Settings);
     let (b, a) = (before.magic_report(), after.magic_report());
     if a != b && a.is_some() {
@@ -820,6 +857,16 @@ fn merge_header(all: &mut Builder<'_>, before: &dyn ProgramFields, after: &dyn P
 /// (`interface`) did not, those parts' rules are spliced into the last linked version in their places, and the
 /// other parts are neither read nor linked again.
 pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, store: &ContentStore, keep: bool) -> Result<(Arc<Version>, Front, Vec<SourceId>)> {
+    let (version, front, sources) = link_front(version, dialect, store, keep)?;
+    // A part's inputs and outputs are its linking interface. The demand proof needs the
+    // linked rules, where it can see the product's readers and what supplies their joins.
+    let mut pipeline = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("bound node products after linking", version);
+    pipeline.program(&mut super::super::product_demand::BoundProducts::Linked);
+    let (version, _) = pipeline.finish()?;
+    Ok((version, front, sources))
+}
+
+fn link_front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, store: &ContentStore, keep: bool) -> Result<(Arc<Version>, Front, Vec<SourceId>)> {
     let parts = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the parts and their interfaces (decision 0345)".into());
         parts_of(&version)
@@ -866,7 +913,7 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("prepare part {} ({} rules)", part.name, part.rules.len()));
         let input = program_of(&version, &rules, &heads[j], part)?;
         let had = names_of(&input);
-        let (v, f, _) = crate::code_rule_dsl::logic::profile::quiet(|| super::front(input, dialect, None))?;
+        let (v, f, _) = crate::code_rule_dsl::logic::profile::quiet(|| super::front_of(input, dialect, None, false))?;
         let made_names: Vec<String> = names_of(&v).into_iter().filter(|r| !had.contains(r)).collect();
         let v = stripped(&v, &version)?;
         let p = Prepared::of(v, f, made_names);
@@ -978,7 +1025,8 @@ fn interface(v: &Version, head: &Own, part: &Part, p: &Prepared) -> [u8; 32] {
     let (head, after) = (Shown(&Selected { v, own: head }), Shown(&*p.version));
     let derived: BTreeSet<&str> = p.version.rules().map(|r| p.version.rel_name(r.head().rel())).collect();
     let found = facts_of(p, &[0; 32]);
-    sha2::Sha256::digest(format!("{head:?}\0{:?}\0{:?}\0{after:?}\0{derived:?}\0{found:?}", part.made, part.read).as_bytes()).into()
+    let layouts = p.version.layouts();
+    sha2::Sha256::digest(format!("{head:?}\0{:?}\0{:?}\0{after:?}\0{layouts:?}\0{derived:?}\0{found:?}", part.made, part.read).as_bytes()).into()
 }
 
 /// The slots a kept link's facts hold, in the parts' order.
@@ -1665,7 +1713,8 @@ fn interface_after(whole: &Version, head: &Own, part: &Part, v: &Version) -> [u8
     use sha2::Digest as _;
     let (head, after) = (Shown(&Selected { v: whole, own: head }), Shown(v));
     let derived: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
-    sha2::Sha256::digest(format!("{head:?}\0{:?}\0{:?}\0{after:?}\0{derived:?}", part.made, part.read).as_bytes()).into()
+    let layouts = v.layouts();
+    sha2::Sha256::digest(format!("{head:?}\0{:?}\0{:?}\0{after:?}\0{layouts:?}\0{derived:?}", part.made, part.read).as_bytes()).into()
 }
 
 /// The last link after lowering with the `changed` parts' rules in their places; `None` when its image is missing or

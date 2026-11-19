@@ -503,6 +503,8 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
     // `.shape` binds to the rule just before it (O-join-shape-directives): its heads, then each directive and its line.
     let mut last_heads: Option<Vec<String>> = None;
     let mut shapes: Vec<(crate::code_rule_dsl::logic::front::Shape, usize)> = Vec::new();
+    // `.layout r …` (decision 0361): read once every declaration is, as `r`'s columns name its facts.
+    let mut layouts: Vec<(String, usize)> = Vec::new();
     // The facts its clauses state, by relation, stated on the header once read.
     let mut own_facts: BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::List<Value>>> = BTreeMap::new();
     for (item, line) in statements {
@@ -554,6 +556,7 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
                     shapes.push((crate::code_rule_dsl::logic::front::Shape::parse(h, &text).map_err(|m| Error::Syntax(format!("line {line}: {m}")))?, line));
                 }
             }
+            Item::Setting { key, text } if key == "layout" => layouts.push((text, line)),
             Item::Setting { key, text } => l.prog.push_setting(key, text),
             Item::Violation { name, cols, code, code_in, tag, suppress, fixes, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?,
             Item::Clause { heads, body, edits } => {
@@ -571,6 +574,10 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
     }
     for (rel, rows) in own_facts {
         l.prog.add_facts(&rel, &rows);
+    }
+    for (text, line) in layouts {
+        let (rel, facts) = layout(&l.prog, &text).map_err(|m| Error::Syntax(format!("line {line}: `.layout {}`: {m}", text.trim())))?;
+        l.prog.edit(|b| ProgramFields::layouts(b), |x| Field::Layouts(x), |x| crate::code_rule_dsl::logic::front::add_layout(x.entry(rel).or_default(), facts));
     }
     drop(reading);
     let stated: BTreeSet<String> = l.prog.input_names().into_iter().filter(|r| !seeded.inputs.contains(r)).collect();
@@ -633,6 +640,16 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
     let Out::Version(w) = std::mem::take(&mut l.out) else { unreachable!("the walk writes a version") };
     let version = w.version(std::mem::take(&mut l.prog))?;
     Ok(Module { l, written, docof, places, version })
+}
+
+/// A `.layout` line's relation and facts (decision 0361): the relation must be declared, and each fact names its
+/// columns.
+fn layout(prog: &(impl ProgramFields + ?Sized), text: &str) -> Result<(String, Vec<crate::code_rule_dsl::logic::front::LayoutFact>), String> {
+    let text = text.trim();
+    let (rel, rest) = text.split_once(|c: char| c.is_whitespace()).unwrap_or((text, ""));
+    let cols = prog.columns_of(rel).ok_or_else(|| format!("`{rel}` is not declared"))?;
+    let col = |w: &str| cols.iter().position(|(c, _)| c.as_str() == w).ok_or_else(|| format!("`{rel}` has no column `{w}`"));
+    Ok((rel.to_owned(), crate::code_rule_dsl::logic::front::layout_facts(rest, &col)?))
 }
 
 /// A module of the modules `scope` reaches (each once), its rules written as a version in the walk: a library's
@@ -1203,6 +1220,15 @@ pub fn append_fields(a: &mut (impl crate::code_rule_dsl::logic::program_image::f
         all.extend(more);
         a.set_field(Field::Shapes(&all));
     }
+    // Its relations' layouts (decision 0361).
+    let more = b.layouts();
+    if !more.is_empty() {
+        let mut all = a.layouts();
+        for (rel, facts) in more {
+            crate::code_rule_dsl::logic::front::add_layout(all.entry(rel).or_default(), facts);
+        }
+        a.set_field(Field::Layouts(&all));
+    }
 }
 
 /// A name's place in a helper's columns: its text, a helper's (`rr_<stem><n>`) as its stem and number.
@@ -1307,6 +1333,15 @@ fn renamed_fields(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
     b.set_field(Field::Natives(&natives));
     b.set_field(Field::Nullary(&F::nullary(v).iter().map(|r| to(r)).collect()));
     b.set_field(Field::Demand(&names(F::demand(v))));
+    // Its layouts (decision 0361), each fact's columns' relation renamed too.
+    let layouts: BTreeMap<String, _> = F::layouts(v)
+        .into_iter()
+        .map(|(rel, mut facts)| {
+            facts.iter_mut().for_each(|f| f.rename(&to));
+            (to(&rel), facts)
+        })
+        .collect();
+    b.set_field(Field::Layouts(&layouts));
     let mut shapes = F::shapes(v);
     for shape in &mut shapes {
         shape.head = to(&shape.head);
@@ -2484,8 +2519,10 @@ impl Lowerer {
         let saved = self.siblings.clone();
         let mut keep = keep.into_iter();
         self.siblings.retain(|_| keep.next().unwrap_or(false));
-        // Bound by an atom, or computed from what atoms bind (`d = cat(r, "/", p)`).
+        // Bound by an atom, or computed from what atoms bind (`d = cat(r, "/", p)`, or a `match`'s named group: `match("(?<d>.*)/[^/]*", p)`
+        // is `d = @rx_group(p, …)` once lowered).
         let binds = self.siblings.iter().any(|l| match l {
+            Lit::Atom { rel, neg: false, args, .. } if matches!(rel.as_str(), "match" | "match_all") => matches!(args.first(), Some(STerm::Str(re)) if groups(re).contains(s)),
             Lit::Atom { rel, neg: false, .. } => test_of(rel).is_none() && rel != "earlier" && body_vars(std::slice::from_ref(l)).contains(s),
             Lit::Cmp { l, op: "=", r } => matches!(l, STerm::Var(v) if v == s) || matches!(r, STerm::Var(v) if v == s),
             _ => false,
@@ -4383,12 +4420,13 @@ pub fn made_on_request(rel: &str) -> bool {
 }
 
 /// Whether rules of `head` are the on-request rewrite's own (decision 0174): an attribute's answer, its requests, a
-/// widened copy. They are no reader of anything a program adds: a library's cone (`rr::with_cone`) is taken without
+/// widened copy, a request's readers' asks (decision 0291, `{req}_by_{reader}_{col}`, which `undo_on_request` removes). They are no reader of anything a program adds: a library's cone (`rr::with_cone`) is taken without
 /// them, or it reached, from a relation a program adds to, the widened copies of its readers, their requests, the
 /// attribute's answer and then every reader of the attribute (five of the Python pack's programs took 1,300 of the
 /// library's rules each).
 pub fn on_request_rule(head: &str) -> bool {
-    head.starts_with("rr_wide_") || ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.rel == head || a.req == head)
+    head.starts_with("rr_wide_")
+        || ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.rel == head || a.req == head || head.strip_prefix(a.req).is_some_and(|rest| rest.starts_with("_by_")))
 }
 
 /// What answers an attribute's request for a node.
@@ -4407,6 +4445,8 @@ pub const ON_REQUEST: [&[OnRequest]; 2] = [
     &[
         OnRequest { rel: "node_text", req: "rr_node_text_req", answer: Answer::Function("rr_node_text_any"), eager: None },
         OnRequest { rel: "value", req: "rr_value_req", answer: Answer::Function("rr_node_value"), eager: Some("rr_value_lit") },
+        // A string literal's content: a derived value, computed where a rule asks for it (decision 0353 step 3).
+        OnRequest { rel: "str", req: "rr_str_req", answer: Answer::Function("rr_node_str"), eager: None },
     ],
 ];
 
@@ -4551,10 +4591,37 @@ fn rename_literal(l: &Literal, name: &dyn Fn(&str) -> String) -> Literal {
     }
 }
 
-pub const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
+/// The file system's answers and their requests (t21 E1).
+pub const FILE_SYSTEM: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
 
+/// Every answer of a file and its request: the file system's (`FILE_SYSTEM`), then each language's
+/// (`answerers`), one row an answer's relation. A request of several relations has a row for each.
+pub static WORLD: World = World;
+
+/// `WORLD`'s rows. Made once the languages are installed, and not before: a process whose languages install after
+/// its first program is lowered (a test runner with no load hook, where the first store opened installs them) kept
+/// the file system's alone, and answered no language's request.
+pub struct World;
+
+impl World {
+    pub fn iter(&self) -> std::slice::Iter<'static, (&'static str, &'static str)> {
+        static FS: [(&str, &str); 3] = FILE_SYSTEM;
+        static ALL: std::sync::OnceLock<Vec<(&'static str, &'static str)>> = std::sync::OnceLock::new();
+        if !crate::code_rule_dsl::language::answerers_installed() {
+            return FS.iter();
+        }
+        ALL.get_or_init(|| {
+            let languages = crate::code_rule_dsl::language::answerers().iter().flat_map(|a| a.produces().iter().map(|r| (*r, a.request())));
+            FILE_SYSTEM.into_iter().chain(languages).collect()
+        })
+        .iter()
+    }
+}
+
+/// The request an answer's relation asks by its first column: the file system's, and a language's of one column. A
+/// request of several columns is made by rules (`c_pp_tu_req(tu, spec)`).
 fn world_demand(rel: &str) -> Option<&'static str> {
-    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)
+    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d).filter(|d| crate::code_rule_dsl::language::answerer(d).is_none_or(|a| a.key_width() == 1))
 }
 
 fn body_vars(lits: &[Lit]) -> BTreeSet<String> {

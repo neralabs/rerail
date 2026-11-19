@@ -406,6 +406,10 @@ Progress (2026-11-18):
   tree against versions, went (0173 names its last commit). §6's guard is `front::tests::no_tree_program_comes_back`.
   Left: the intermediate forms (stage 6): the clause lowering still builds `front::Rule`s for `Builder::add`, reads
   back its helpers through `program_image::Tree::rule`, and walks `rr/from_tape.rs`'s statements.
+  The hub's merge (65e368a0b) brought the product-demand pass (`BoundProducts`), which rewrites trees: it reads its
+  version through `product_demand::Decoded` (each rule as `Tree::rule` gives it, and the fields its proofs read)
+  and writes through the builder. It is the last tree pass on the preparation path, and goes with the forms. The
+  rank form's tree entry (`rank_form::find`) went, and its tests moved onto the version's pass.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 

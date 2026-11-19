@@ -57,7 +57,8 @@ pub struct Graph {
     /// digest, which keys the program, leaves them out.
     pub(in crate::code_rule_dsl) rules: BTreeMap<PathBuf, [u8; 32]>,
     /// The plans the run of `bootstrap.rr` that derived it used (`Report::plans`): the run that reads the graph
-    /// names them in its record, so they stay live. Not part of the graph's digest.
+    /// names them in its record, so they stay live. A graph kept as an image keeps them (`Images`, Q150), so a run
+    /// that reads it names what the run that derived it named. Not part of the graph's digest.
     pub(in crate::code_rule_dsl) plans: Vec<[u8; 32]>,
 }
 
@@ -219,7 +220,9 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         let whole = derive(&wanted).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
         let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
         // Kept as images (decision 0246) whichever process derived them: an image is the engine build's, not the
-        // process's.
+        // process's. The image keeps the bootstrap run's plans (Q150), so this run and the next, which reads it, name
+        // the same plans (`the_run_after_a_cold_one_writes_nothing`). Clearing them here as well (f7e047997, from
+        // before images kept them) made the run that derived a graph name none and the run that read it name them.
         if let Some(images) = Images::here() {
             for (seed, g) in &made {
                 crate::code_rule_dsl::logic::rr::keep_graph_image(images.store.as_deref(), images.key(seed), images.encode(g));
@@ -318,7 +321,7 @@ pub(in crate::code_rule_dsl) fn phase_lib() -> Option<PathBuf> {
 /// library and the phase programs' directory, so a bundle made where those stand elsewhere is read here too (each file
 /// is then checked by its digest, `Graph::holds`). The bootstrap run's plans are kept with it: a run that reads the
 /// graph names them in its manifest, as the run that derived it did, so a warm run's manifest is the cold run's and
-/// what the graph came from stays live while it is used (Q68).
+/// what the graph came from stays live while it is used (Q150).
 struct Images {
     lib: String,
     phases: String,

@@ -65,78 +65,32 @@ fn string_equal(
     function.block_params(merge)[0]
 }
 
-fn string_contains(
+/// Whether node `node_id`'s text holds the contains test's string whose row is `row` past the task's program's first
+/// (`NativeTaskContext::contains_start`): the node's bit of the batch's row, which the text layer made with the
+/// batch (`packed_batch::contains_rows`, Q54), not a search of the node's bytes.
+fn contains_bit(
     function: &mut FunctionBuilder<'_>,
-    reads: &ReadIds,
     task: cranelift_codegen::ir::Value,
     node_id: cranelift_codegen::ir::Value,
-    expected: &[u8],
+    row: u32,
 ) -> cranelift_codegen::ir::Value {
-    if expected.is_empty() {
-        return function.ins().iconst(types::I8, 1);
-    }
-    let ty = function.func.dfg.value_type(task);
-    let (start, end) = native_cpu_tape::span(function, reads, task, node_id);
-    let length = function.ins().isub(end, start);
-    let search = function.create_block();
-    function.append_block_param(search, types::I32);
-    let compare = function.create_block();
-    function.append_block_param(compare, types::I32);
-    let advance = function.create_block();
-    function.append_block_param(advance, types::I32);
-    let accept = function.create_block();
-    let reject = function.create_block();
-    let merge = function.create_block();
-    function.append_block_param(merge, types::I8);
-    let enough = function.ins().icmp_imm(
-        IntCC::UnsignedGreaterThanOrEqual,
-        length,
-        expected.len() as i64,
-    );
-    let zero = function.ins().iconst(types::I32, 0);
-    function
-        .ins()
-        .brif(enough, search, &[zero.into()], reject, &[]);
-    function.switch_to_block(search);
-    let at = function.block_params(search)[0];
-    let limit = function.ins().iadd_imm(at, expected.len() as i64);
-    let in_range = function
-        .ins()
-        .icmp(IntCC::UnsignedLessThanOrEqual, limit, length);
-    function
-        .ins()
-        .brif(in_range, compare, &[at.into()], reject, &[]);
-    function.switch_to_block(compare);
-    let at = function.block_params(compare)[0];
-    let source = pointer(function, task, mem::offset_of!(NativeTaskContext, source));
-    let offset = function.ins().iadd(start, at);
-    let offset = function.ins().uextend(ty, offset);
-    let source = function.ins().iadd(source, offset);
-    let mut equal = function.ins().iconst(types::I8, 1);
-    for (offset, byte) in expected.iter().copied().enumerate() {
-        let actual = function
-            .ins()
-            .load(types::I8, MemFlags::trusted(), source, offset as i32);
-        let found = function
-            .ins()
-            .icmp_imm(IntCC::Equal, actual, i64::from(byte));
-        equal = function.ins().band(equal, found);
-    }
-    function
-        .ins()
-        .brif(equal, accept, &[], advance, &[at.into()]);
-    function.switch_to_block(advance);
-    let previous = function.block_params(advance)[0];
-    let at = function.ins().iadd_imm(previous, 1);
-    function.ins().jump(search, &[at.into()]);
-    function.switch_to_block(accept);
-    let true_value = function.ins().iconst(types::I8, 1);
-    function.ins().jump(merge, &[true_value.into()]);
-    function.switch_to_block(reject);
-    let false_value = function.ins().iconst(types::I8, 0);
-    function.ins().jump(merge, &[false_value.into()]);
-    function.switch_to_block(merge);
-    function.block_params(merge)[0]
+    let pointer_type = function.func.dfg.value_type(task);
+    let flags = MemFlags::trusted().with_readonly();
+    let start = function.ins().load(types::I32, flags, task, mem::offset_of!(NativeTaskContext, contains_start) as i32);
+    let words = function.ins().load(types::I32, flags, task, mem::offset_of!(NativeTaskContext, derived_words) as i32);
+    let bits = function.ins().load(pointer_type, flags, task, mem::offset_of!(NativeTaskContext, derived) as i32);
+    let row = function.ins().iadd_imm(start, i64::from(row));
+    let row = function.ins().imul(row, words);
+    let column = function.ins().ushr_imm(node_id, 5);
+    let index = function.ins().iadd(row, column);
+    let offset = function.ins().imul_imm(index, 4);
+    let offset = function.ins().uextend(pointer_type, offset);
+    let address = function.ins().iadd(bits, offset);
+    let word = function.ins().load(types::I32, flags, address, 0);
+    let shift = function.ins().band_imm(node_id, 31);
+    let bit = function.ins().ushr(word, shift);
+    let bit = function.ins().band_imm(bit, 1);
+    function.ins().ireduce(types::I8, bit)
 }
 
 fn relation_matches(
@@ -204,6 +158,7 @@ fn define_one(
     native: &NativeModule,
     program: &CaptureProgram,
     values: &[FuncId],
+    contains_row: u32,
 ) -> Result<(), Box<cranelift_module::ModuleError>> {
     let reads = ReadIds::declare(module)?;
     let mut context = module.make_context();
@@ -412,14 +367,8 @@ fn define_one(
                     .ins()
                     .iconst(types::I8, i64::from(!any && !strings.is_empty()));
                 let mut negative = positive;
-                for string in strings {
-                    let found = string_contains(
-                        &mut function,
-                        &reads,
-                        task,
-                        node,
-                        &native.strings[usize::from(*string)],
-                    );
+                for k in 0..strings.len() {
+                    let found = contains_bit(&mut function, task, node, contains_row + k as u32);
                     let not_found = function.ins().bxor_imm(found, 1);
                     positive = if any {
                         function.ins().bor(positive, found)
@@ -513,7 +462,13 @@ pub(super) fn define(
     values: &[FuncId],
 ) -> Result<Vec<FuncId>, Box<cranelift_module::ModuleError>> {
     let mut functions = Vec::with_capacity(native.capture_programs.len());
+    // Each contains test's first row past the program's first (`packed_batch`'s order: its tests' strings in turn).
+    let mut contains_row = 0_u32;
     for (index, program) in native.capture_programs.iter().enumerate() {
+        let row = contains_row;
+        if let CaptureProgram::Contains { strings, .. } = program {
+            contains_row += strings.len() as u32;
+        }
         if matches!(
             program,
             CaptureProgram::Equal { .. } | CaptureProgram::SameLine { .. }
@@ -531,7 +486,7 @@ pub(super) fn define(
             Linkage::Local,
             &signature,
         )?;
-        define_one(module, id, native, program, values)?;
+        define_one(module, id, native, program, values, row)?;
         functions.push(id);
     }
     Ok(functions)

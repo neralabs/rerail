@@ -4,13 +4,20 @@
 
 /// The CLIF blocks of the hot loop, each with its instruction lines: the full body (`block2`) and
 /// the blocks it reaches before it leaves for the head (`block4`) or loops back to itself, which
-/// are its extracts' flattening.
+/// are its extracts' flattening. None where the pass has no block loop.
 pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
+    hot_loop_until(clif, &["block4".to_owned()])
+}
+
+/// `hot_loop`, the body leaving for `exits` (`native_cpu_block::PassShape::exits`): the
+/// blocks' head, and the token loop where the pass runs it over the final blocks.
+pub fn hot_loop_until(clif: &str, exits: &[String]) -> Vec<(String, Vec<String>)> {
     let mut blocks: Vec<(String, Vec<String>)> = Vec::new();
     for line in clif.lines() {
         let t = line.trim();
         if t.starts_with("block") && t.ends_with(':') {
-            let name = t.split(['(', ':']).next().unwrap_or("").to_owned();
+            // `block7(v1: i64):`, `block9 cold:`: the name alone.
+            let name = t.split(['(', ':', ' ']).next().unwrap_or("").to_owned();
             blocks.push((name, Vec::new()));
         } else if let Some((_, lines)) = blocks.last_mut()
             && !t.is_empty()
@@ -25,11 +32,17 @@ pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
             .flat_map(|l| l.split(|c: char| !c.is_alphanumeric()).filter(|w| w.starts_with("block")).map(str::to_owned).collect::<Vec<_>>())
             .collect()
     };
+    // A pass with no block loop (`bodiless_body`): its body's blocks were cut, and it has none.
+    if !blocks.iter().any(|(n, _)| n == "block2") {
+        return Vec::new();
+    }
     let (mut seen, mut work, mut out) = (vec!["block2".to_owned()], vec!["block2".to_owned()], Vec::new());
     while let Some(name) = work.pop() {
-        let (_, lines) = blocks.iter().find(|(n, _)| *n == name).expect("a block of the function");
+        let Some((_, lines)) = blocks.iter().find(|(n, _)| *n == name) else {
+            panic!("{name} is not a block of the function (its blocks: {:?})", blocks.iter().map(|b| &b.0).take(12).collect::<Vec<_>>());
+        };
         for next in successors(lines) {
-            if next != "block4" && !seen.contains(&next) {
+            if !exits.contains(&next) && !seen.contains(&next) {
                 seen.push(next.clone());
                 work.push(next);
             }
@@ -37,6 +50,64 @@ pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
         out.push((name, lines.clone()));
     }
     out
+}
+
+/// The functions `clif`'s calls call, a user name's index each (`u0:N`), one a call line: each
+/// function's `fnK = … u0:N …` declarations name its `fnK`.
+pub fn callees(clif: &str) -> Vec<u32> {
+    let mut names: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for line in clif.lines().map(str::trim) {
+        if line.starts_with("function ") {
+            names.clear();
+        } else if let Some((name, decl)) = line.split_once(" = ").filter(|(n, d)| n.starts_with("fn") && d.contains(" u0:")) {
+            if let Some(n) = decl.split(" u0:").nth(1).and_then(|r| r.split_whitespace().next()).and_then(|n| n.parse().ok()) {
+                names.insert(name.to_owned(), n);
+            }
+        } else if let Some(rest) = line.split("call ").nth(1).filter(|_| line.starts_with("call ") || line.contains(" call ")) {
+            if let Some(&n) = names.get(rest.split('(').next().unwrap_or_default()) {
+                out.push(n);
+            }
+        }
+    }
+    out
+}
+
+/// The call lines of `clif`'s functions in blocks their entry reaches, by its branches (`brif`,
+/// `jump`, `br_table`): a call in a block no branch reaches is compiled out.
+pub fn reached_calls(clif: &str) -> usize {
+    let mut total = 0;
+    for function in clif.split("\nfunction ").filter(|f| !f.trim().is_empty()) {
+        let mut blocks: Vec<(String, Vec<&str>)> = Vec::new();
+        for line in function.lines().map(str::trim) {
+            if line.starts_with("block") && line.ends_with(':') {
+                blocks.push((line.split(['(', ':', ' ']).next().unwrap_or_default().to_owned(), Vec::new()));
+            } else if let Some((_, lines)) = blocks.last_mut()
+                && !line.is_empty()
+            {
+                lines.push(line);
+            }
+        }
+        let Some(first) = blocks.first().map(|b| b.0.clone()) else {
+            continue;
+        };
+        let (mut seen, mut work) = (vec![first.clone()], vec![first]);
+        while let Some(name) = work.pop() {
+            let Some((_, lines)) = blocks.iter().find(|b| b.0 == name) else {
+                continue;
+            };
+            for line in lines.iter().filter(|l| matches!(opcode(l), "brif" | "jump" | "br_table")) {
+                for next in line.split(|c: char| !c.is_alphanumeric()).filter(|w| w.starts_with("block")) {
+                    if !seen.iter().any(|s| s == next) {
+                        seen.push(next.to_owned());
+                        work.push(next.to_owned());
+                    }
+                }
+            }
+            total += lines.iter().filter(|l| l.starts_with("call ") || l.contains(" = call ")).count();
+        }
+    }
+    total
 }
 
 /// The CLIF opcode of an instruction line (`v3 = icmp eq v1, v2` → `icmp`).
@@ -126,7 +197,8 @@ pub fn carried_words(p: &crate::block::BlockProgram) -> usize {
 /// `fill`, and for each value its `prev`s read, the top `k` bits of its previous word (`k` the
 /// farthest look-back). A `toggle`'s and a `fill`'s carry is its top bit, so a look-back on one
 /// costs `k - 1` more. Every executor carries these bits and no more: Cranelift packs them into
-/// words, never a word per bit.
+/// words, never a word per bit, but a chain's carry (a `toggle`'s, a `fill`'s, an `escaped`'s),
+/// in a word of its own as simdjson keeps them (0346).
 pub fn state_bits(p: &crate::block::BlockProgram) -> usize {
     use crate::block::BlockOp::*;
     let mut back: std::collections::BTreeMap<u16, u8> = std::collections::BTreeMap::new();

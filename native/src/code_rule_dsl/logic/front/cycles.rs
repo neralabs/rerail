@@ -1210,7 +1210,7 @@ fn constant_keyed(rules: &[Rule<'_>], component: &BTreeSet<String>) -> bool {
 pub fn check(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
     let about = About::of(v);
     // A program that does not stratify fails there, by name.
-    let Ok(sccs) = graph::components_by_name(v, &about, &[]) else { return Ok(Vec::new()) };
+    let Ok(sccs) = graph::components_by_name(v, &about) else { return Ok(Vec::new()) };
     let edges_by = graph::edges_by_name(v, &about);
     let p = Prog { v, lattice: ProgramFields::lattice(v) };
     let mut treed = Vec::new();

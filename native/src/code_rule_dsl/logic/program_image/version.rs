@@ -127,7 +127,15 @@ impl<'v> Iterator for Down<'v> {
 impl Version {
     /// The base `bytes` hold.
     pub fn open(bytes: &[u8]) -> Result<Arc<Version>, String> {
-        let image = Image::open(bytes)?;
+        Version::base_of(Image::open(bytes)?)
+    }
+
+    /// The base `bytes` hold, read where they are, not copied (`Image::open_shared`, decision 0394).
+    pub fn open_shared(bytes: super::SharedBytes) -> Result<Arc<Version>, String> {
+        Version::base_of(Image::open_shared(bytes)?)
+    }
+
+    fn base_of(image: Image) -> Result<Arc<Version>, String> {
         if image.is_delta() {
             return Err(bad("a delta is opened over its parent (`Version::over`)"));
         }
@@ -135,10 +143,23 @@ impl Version {
         Ok(Arc::new(Version::Base { image: Arc::new(image), digest, analyses: Held::default() }))
     }
 
+    /// The overlay of `parent` and the delta `bytes` hold, read where they are (`Image::open_shared`, decision 0394).
+    pub fn over_shared(parent: &Arc<Version>, bytes: super::SharedBytes) -> Result<Arc<Version>, String> {
+        Version::overlay_of(parent, Image::open_shared(bytes)?)
+    }
+
+    /// Whether its own image (a base's, or an overlay's delta) is read where a store holds it, not copied.
+    pub fn is_shared(&self) -> bool {
+        self.top().is_shared()
+    }
+
     /// The overlay of `parent` and the delta `bytes` hold: the delta's bases must be `parent`'s id spaces, and what
     /// it removes `parent`'s rules.
     pub fn over(parent: &Arc<Version>, bytes: &[u8]) -> Result<Arc<Version>, String> {
-        let delta = Image::open(bytes)?;
+        Version::overlay_of(parent, Image::open(bytes)?)
+    }
+
+    fn overlay_of(parent: &Arc<Version>, delta: Image) -> Result<Arc<Version>, String> {
         if !delta.is_delta() || delta.atom_base() != parent.atom_end() || delta.rel_base() != parent.rel_end() || delta.rule_base() != parent.rule_end() {
             return Err(bad("a delta over another parent"));
         }
@@ -230,6 +251,16 @@ impl Version {
             Version::Base { image, .. } => image.rules(),
             Version::View { size, .. } | Version::Overlay { size, .. } => *size,
         }
+    }
+    /// Every rule its stack numbers, by id, ascending: its own and those an overlay above removed (decision 0385,
+    /// `build::flat`).
+    pub(crate) fn stack_rules(&self) -> Vec<RuleRef<'_>> {
+        let mut layers: Vec<&Image> = self.down().collect();
+        layers.reverse();
+        layers.into_iter().flat_map(|im| {
+            let base = if im.is_delta() { im.rule_base() } else { 0 };
+            (0..im.rules() as u32).map(move |k| RuleRef::new(im, k, RuleId(base + k)))
+        }).collect()
     }
     /// How many deltas are stacked on the base.
     pub fn depth(&self) -> usize {
@@ -491,6 +522,32 @@ pub fn forget_trees_decoded() {
     DECODED.with(|d| d.set((0, None)));
 }
 
+/// Whether `a` and `b` are one program, as a debug check compares a version with the tree's image: the same size, the
+/// same digest apart from the request record's `asked` rows, and the record the same by rule. The digest is a sum,
+/// blind to the rules' order, but the record states each request rule's readers by its place among its relation's
+/// rules (decision 0331). So a version whose passes put a rule elsewhere than the tree's (a rule pass run as an edit
+/// writes its rules after the rest) holds the same record in other rows, and one whose readers sit on the wrong rules
+/// can hold the same rows, and the same digest.
+pub fn same_program(a: &Version, b: &Version) -> bool {
+    if a.size() != b.size() {
+        return false;
+    }
+    let asked_hash = |v: &Version| v.about_facts().into_iter().filter(|f| v.text(f.name()) == "asked").fold(0u64, |h, f| h.wrapping_add(f.hash()));
+    // Each request relation's rules by content, each with its readers, in order.
+    let by_rule = |v: &Version| -> BTreeMap<String, Vec<(u64, Vec<String>)>> {
+        v.asked()
+            .into_iter()
+            .map(|(req, by)| {
+                let hashes: Vec<u64> = v.rel(&req).into_iter().flat_map(|rel| v.heads(rel)).map(|r| r.hash()).collect();
+                let mut rules: Vec<(u64, Vec<String>)> = by.into_iter().enumerate().map(|(k, readers)| (hashes.get(k).copied().unwrap_or(0), readers.into_iter().collect())).collect();
+                rules.sort();
+                (req, rules)
+            })
+            .collect()
+    };
+    a.digest().wrapping_sub(asked_hash(a)) == b.digest().wrapping_sub(asked_hash(b)) && by_rule(a) == by_rule(b)
+}
+
 /// What two versions differ in, by text: the rules, declarations, facts and about rows only one has (a debug check's
 /// message).
 pub fn differences(a: &Version, b: &Version) -> String {
@@ -506,6 +563,8 @@ pub fn differences(a: &Version, b: &Version) -> String {
             Cell::Branded(b) => b.to_string(),
         };
         for f in v.all_facts().into_iter().chain(v.about_facts()) {
+            // Named, rows or none: an empty relation is one too.
+            out.insert(format!("{} {} ({} rows)", if f.about() { "about" } else { "fact" }, v.text(f.name()), f.rows().count()));
             for (k, row) in f.rows().enumerate() {
                 out.insert(format!("{} {} #{k} ({})", if f.about() { "about" } else { "fact" }, v.text(f.name()), row.map(cell).collect::<Vec<_>>().join(", ")));
             }
@@ -515,6 +574,29 @@ pub fn differences(a: &Version, b: &Version) -> String {
         out
     };
     let (ta, tb) = (texts(a), texts(b));
-    let only = |x: &BTreeSet<String>, y: &BTreeSet<String>| x.difference(y).take(12).cloned().collect::<Vec<_>>().join("\n    ");
-    format!("\n  only the first:\n    {}\n  only the second:\n    {}", only(&ta, &tb), only(&tb, &ta))
+    let only = |x: &BTreeSet<String>, y: &BTreeSet<String>| x.difference(y).take(40).cloned().collect::<Vec<_>>().join("\n    ");
+    // The same texts may lie in another order: the first rule out of place.
+    let order = |v: &Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>();
+    let (oa, ob) = (order(a), order(b));
+    let moved = oa.iter().zip(&ob).position(|(x, y)| x != y).map_or(String::new(), |k| format!("\n  rule #{k} first differs:\n    {}\n    {}", oa[k], ob[k]));
+    // The request record by rule (`same_program`): the same rows may state readers of other rules.
+    let record = |v: &Version| -> std::collections::BTreeMap<String, Vec<(String, Vec<String>)>> {
+        v.asked()
+            .into_iter()
+            .map(|(req, by)| {
+                let rules: Vec<String> = v.rel(&req).into_iter().flat_map(|rel| v.heads(rel)).map(|r| v.show_rule(r)).collect();
+                let mut pairs: Vec<(String, Vec<String>)> = by.into_iter().enumerate().map(|(k, readers)| (rules.get(k).cloned().unwrap_or_default(), readers.into_iter().collect())).collect();
+                pairs.sort();
+                (req, pairs)
+            })
+            .collect()
+    };
+    let (ra, rb) = (record(a), record(b));
+    let readers = ra
+        .iter()
+        .filter(|(req, by)| rb.get(*req) != Some(by))
+        .take(4)
+        .map(|(req, by)| format!("\n  {req}'s readers by rule:\n    {by:?}\n    {:?}", rb.get(req)))
+        .collect::<String>();
+    format!("\n  only the first:\n    {}\n  only the second:\n    {}{moved}{readers}", only(&ta, &tb), only(&tb, &ta))
 }

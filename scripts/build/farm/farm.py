@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 20
+VERSION = 32
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -120,12 +120,105 @@ def emits(args):
     return kinds or {"link"}
 
 
+def linux_compiles(args):
+    """Whether a Linux host can compile this Mac's crate to the same bytes (`mac_compiles`, README
+    "Mac compiles on a Linux host"): its rustc cross-compiles for aarch64-apple-darwin, reading
+    every file at this Mac's path. A proc-macro it loads is a macOS library: the host builds it as
+    a Linux one from how it was compiled here (`host_builds`), so one built before that was
+    recorded keeps the compile here."""
+    externs = [e.split("=", 1)[1] for e in values(args, "--extern") if "=" in e]
+    return all(e.endswith((".rlib", ".rmeta")) or (e.endswith(".dylib") and host_builds(os.path.abspath(e))[1] is None)
+               for e in externs)
+
+
+def toolchain_of(rustc):
+    """The rustup toolchain `rustc` is of (`1.99.1`), from its path; None for another rustc."""
+    m = re.search(r"/toolchains/([^/]+)-aarch64-apple-darwin/bin/rustc$", rustc)
+    return m.group(1) if m else None
+
+
+def call_stem(out_dir, crate, extra):
+    """What names a compile's outputs, whatever their kinds: `<out-dir>/<crate><extra>`."""
+    return os.path.join(os.path.abspath(out_dir), crate + extra)
+
+
+def stem_of(path):
+    """`call_stem` of an output file (`.../libfoo-abc.rlib`, `.rmeta`, `.dylib`)."""
+    d, f = os.path.split(path)
+    return os.path.join(d, os.path.splitext(f[3:] if f.startswith("lib") else f)[0])
+
+
+def record_call(args, out_dir, crate, env):
+    """Keeps how a registry library or proc-macro was compiled here (cargo's arguments, before the
+    farm's own), under `calls/` by its outputs' stem: a Linux host builds a proc-macro a compile
+    loads from it (`host_builds`), and sccache's hits never reach farm-rustc, so the wrapper keeps
+    it. Rewritten only when it changed; a record unused for a week goes (a 1 in 200 sweep)."""
+    if not out_dir or "--test" in args or not any(os.getcwd().startswith(p + "/") for p in IN_PLACE):
+        return
+    types = set()
+    for t in values(args, "--crate-type"):
+        types.update(t.split(","))
+    if not types or not types <= {"lib", "rlib", "proc-macro"}:
+        return
+    path = state("calls", key(call_stem(out_dir, crate, codegen(args, "extra-filename") or "")))
+    rec = {"cwd": os.getcwd(), "args": args, "proc_macro": "proc-macro" in types,
+           "env": {k: v for k, v in env.items() if k.startswith("CARGO") or k in ("OUT_DIR", "RUSTFLAGS")}}
+    text = json.dumps(rec, sort_keys=True)
+    try:
+        same = open(path).read() == text
+    except OSError:
+        same = False
+    if same:
+        os.utime(path)
+    else:
+        with open(path + ".tmp", "w") as f:
+            f.write(text)
+        os.replace(path + ".tmp", path)
+    if os.urandom(1)[0] < 2:
+        cutoff = time.time() - 7 * 86400
+        d = os.path.dirname(path)
+        for n in os.listdir(d):
+            try:
+                if os.stat(os.path.join(d, n)).st_mtime < cutoff:
+                    os.unlink(os.path.join(d, n))
+            except OSError:
+                pass
+
+
+def host_builds(dylib):
+    """The recorded compiles (`record_call`) that make the proc-macro `dylib` and what it links,
+    dependencies first: a Linux host builds them as Linux libraries (farm-agent, `pm_build`).
+    (calls, None), or (None, why not)."""
+    order, seen = [], set()
+
+    def visit(path):
+        stem = stem_of(path)
+        if stem in seen:
+            return None
+        seen.add(stem)
+        rec = read_json(state("calls", key(stem)), None)
+        if rec is None:
+            return f"no record of how {os.path.basename(path)} was compiled (a build before farm 32)"
+        for e in values(rec["args"], "--extern"):
+            if "=" in e:
+                why = visit(os.path.abspath(e.split("=", 1)[1]))
+                if why:
+                    return why
+        order.append(rec)
+        return None
+    why = visit(dylib)
+    return (None, why) if why else (order, None)
+
+
 def remote_eligible(args):
     """A library's compile: its outputs are files in `--out-dir`, and it links nothing."""
     types = set()
     for t in values(args, "--crate-type"):
         types.update(t.split(","))
-    return types <= {"lib", "rlib"} and "--test" not in args and value(args, "--out-dir") is not None
+    # A compile for another target (cargo-linux's) stays here: the Macs' toolchains have no std of it.
+    target = value(args, "--target")
+    return types <= {"lib", "rlib"} and "--test" not in args and value(args, "--out-dir") is not None \
+        and target in (None, "aarch64-apple-darwin")
 
 
 # ---- places
@@ -283,7 +376,8 @@ def same_in_every_checkout(args, out_dir, crate):
     checkout = checkout_of(os.getcwd())
     out = ["--remap-path-prefix", f"{checkout}=/rerail-farm/checkout"] if checkout else []
     out += ["--remap-path-prefix", f"{target}=/rerail-farm/target"]
-    if sys.platform == "darwin":
+    # ld64's own flags: a macOS link only (cargo-linux's links are lld's, for Linux).
+    if sys.platform == "darwin" and value(args, "--target") in (None, "aarch64-apple-darwin"):
         # The path as a link-arg of its own (`link-arg=<path>`), where sccache strips a basedir from
         # its key: in `-Wl,-oso_prefix,<path>` it would not, and each checkout would key apart.
         out += ["-C", "link-arg=-Xlinker", "-C", "link-arg=-oso_prefix", "-C", "link-arg=-Xlinker", "-C", f"link-arg={target}/"]
@@ -654,6 +748,10 @@ def wrapper(rustc, args):
             note_variant(checkout, args, out_dir, crate)
         except (OSError, ValueError, KeyError):
             pass  # never fail a compile over its bookkeeping
+    try:
+        record_call(args, out_dir, crate, env)
+    except (OSError, ValueError):
+        pass  # never fail a compile over its bookkeeping
     args = args + same_in_every_checkout(args, out_dir, crate)
     stripped, inc = without_incremental(args)
     if inc is not None:
@@ -725,9 +823,15 @@ def cc(argv0, args):
 # The local configuration (README.md, "Configuration"): never in git. Its keys, with their defaults:
 DEFAULTS = {
     "hosts": [],
-    # A host is used only while its disk has this much free, its round trip is this short and the
-    # link carries this much: a host that dropped to WiFi or a busy network is no faster than here.
+    # Under `min_free_gb` free, the farm frees its own data on a host at once (`free_host`), and says
+    # so when that is not enough; the host stays in use down to `floor_free_gb`, which is left to the
+    # host's own work. A host is used only while its round trip is this short and the link carries
+    # this much: a host that dropped to WiFi or a busy network is no faster than here.
     "min_free_gb": 40,
+    "floor_free_gb": 20,
+    # The most a host's test targets hold together (GB): over it, the least recently used that no
+    # command holds go (farm-agent, `keep_to_budget`).
+    "max_target_gb": 150,
     "max_rtt_ms": 150,
     "min_mbps": 8,
 }
@@ -768,6 +872,13 @@ def hosts():
     return [h for h in config()["hosts"] if h.get("name")]
 
 
+def host_os(host):
+    """`host`'s system: "macos" (the default) or "linux" (`os` in the configuration). A Linux host
+    runs test commands as a Linux build (test-remote), Relax runs (live-test-remote), and this Mac's
+    compiles that need no macOS library (`linux_compiles`)."""
+    return host.get("os", "macos")
+
+
 def read_json(path, default):
     try:
         return json.load(open(path))
@@ -805,6 +916,14 @@ def link_of(host):
     return (host.get("link") or host.get("link_match") or "").lstrip("%") or None
 
 
+# The free disk macOS gives an important write: what is free and what it purges for it (Time
+# Machine's hourly local snapshots, caches). df leaves that out: one host showed 19 GB free with
+# 691 GB available, its snapshots holding a day of every file the farm had deleted, and was left
+# out (2026-11-17). farm-agent's `free_gb` asks the same.
+AVAILABLE_JS = ('ObjC.import("Foundation"); var r = Ref(); $.NSURL.fileURLWithPath($.NSHomeDirectory())'
+                '.getResourceValueForKeyError(r, $.NSURLVolumeAvailableCapacityForImportantUsageKey, null); String(r[0].js)')
+
+
 def probe(host, cfg, fell_back=False, recovered=False):
     """Asks `host` how it is, over ssh: its idle time, free disk, NFS mounts, the address it sees this
     machine connect from, then the round trip and (every PROBE_SECONDS) the link's throughput.
@@ -815,9 +934,21 @@ def probe(host, cfg, fell_back=False, recovered=False):
          "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0)}
     if previous.get("route") != route(name):
         h["mbps"], h["mbps_at"] = None, 0  # another path: its throughput is not known
-    script = ('echo "$SSH_CONNECTION"; df -k "$HOME" | tail -1;'
+    # Free disk: what macOS gives an important write (AVAILABLE_JS), then statvfs's, in KB.
+    available = shlex.quote(AVAILABLE_JS)
+    # Linux: df alone (no purgeable space), no input to idle on (a server: never attended), the
+    # interface that holds the address ssh arrived at, /proc's load, and NFS mounts by findmnt.
+    linux = ('echo "$SSH_CONNECTION"; df -k "$HOME" | tail -1 | awk \'{print $4}\'; echo 1000000000000000;'
+             " s=$(echo $SSH_CONNECTION | cut -d' ' -f3); echo \"$(ip -o addr show | awk -v s=\"$s\" '{split($4, a, \"/\")} a[1]==s {print $2; exit}')\";"
+             " cut -d' ' -f1 /proc/loadavg; findmnt -rn -t nfs,nfs4 -o TARGET; true")
+    script = linux if host_os(host) == "linux" else ('echo "$SSH_CONNECTION"; echo "$(osascript -l JavaScript -e ' + available + ' 2>/dev/null) $(df -k "$HOME" | tail -1 | awk \'{print $4}\')";'
               " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'; echo \"$(" + ARRIVAL + ")\";"
               " sysctl -n vm.loadavg; mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
+    if host.get("fleet"):
+        # A nera-fleet node (`"fleet": true`): the fleet's jobs are containers carrying `fleet.job`.
+        # Counted first; docker may be outside a plain ssh command's PATH on a Mac.
+        script = ('echo "fleet $(PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin '
+                  'docker ps -q --filter label=fleet.job 2>/dev/null | wc -l)"; ' + script)
     try:
         out = subprocess.run(ssh(name, script, "health"), capture_output=True, text=True, timeout=10)
     except subprocess.TimeoutExpired:
@@ -832,9 +963,14 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = blocked or "unreachable (off, asleep, or off the network)"
         return h
     lines = out.stdout.splitlines()
+    fleet_jobs = None
+    if lines and lines[0].startswith("fleet "):
+        fleet_jobs = h["fleet_jobs"] = int(lines.pop(0).split()[1] or 0)
     client = h["client"] = (lines[0].split() or [""])[0]
     try:
-        h["free_gb"] = int(lines[1].split()[3]) // (1 << 20)
+        words = lines[1].split()
+        h["df_free_gb"] = int(words[-1]) // (1 << 20)
+        h["free_gb"] = int(float(words[0])) >> 30 if len(words) == 2 and float(words[0]) > 0 else h["df_free_gb"]
         h["idle_s"] = int(lines[2]) / 1e9
     except (ValueError, IndexError):
         h["why"] = "its answer could not be read"
@@ -879,10 +1015,13 @@ def probe(host, cfg, fell_back=False, recovered=False):
     if link and arrival != link and not recovered and recover(host, arrival):
         return probe(host, cfg, fell_back=fell_back, recovered=True)
     h["route"] = route(name)
-    if link and arrival != link:
+    if fleet_jobs:
+        h["why"] = (f"running {fleet_jobs} nera-fleet job{'s' * (fleet_jobs > 1)}: the farm and the fleet are equals there, "
+                    "and the farm starts nothing more until they end")
+    elif link and arrival != link:
         h["why"] = f"not on its link: reached over its {arrival or '?'}, not {link}"
-    elif h["free_gb"] < cfg["min_free_gb"]:
-        h["why"] = f"{h['free_gb']} GB free, under {cfg['min_free_gb']}"
+    elif h["free_gb"] < cfg["floor_free_gb"]:
+        h["why"] = f"{h['free_gb']} GB free, under {cfg['floor_free_gb']}: {short_of_disk(host, h, cfg)}"
     # The round trip and throughput stand in for the link when none is configured (a host that fell
     # back to WiFi is slow). With `link` confirmed they are only reported: an ssh command's round
     # trip measures how fast both machines schedule ssh, and a loaded build machine (a load of 70
@@ -893,7 +1032,90 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = f"{h['mbps']} MB/s, under {cfg['min_mbps']}"
     else:
         h["ok"], h["why"], h["failures"] = True, "", 0
+        if h["free_gb"] < cfg["min_free_gb"]:
+            h["short"] = f"{h['free_gb']} GB free, under {cfg['min_free_gb']}: {short_of_disk(host, h, cfg)}"
     return h
+
+
+# ---- a host short of disk
+#
+# Never a silent exclusion: the farm frees its own data there at once (farm-agent `free`), at most
+# every FREE_SECONDS, and when the host is still short the user is told, on this machine's screen
+# (at most every NOTIFY_SECONDS a host), how much of it the farm still holds.
+FREE_SECONDS = 600
+NOTIFY_SECONDS = 6 * 3600
+
+
+def short_of_disk(host, h, cfg):
+    """What is being done about `host` being short of disk (its health record `h`): starts freeing
+    the farm's data there when that has not run in the last FREE_SECONDS, and says what the last
+    pass found."""
+    name = host["name"]
+    last = read_json(state("freeing", name + ".json"), {})
+    stamp = state("freeing", name + ".started")
+    try:
+        started = os.stat(stamp).st_mtime
+    except OSError:
+        started = 0
+    if time.time() - started >= FREE_SECONDS:
+        open(stamp, "w").close()
+        try:
+            subprocess.Popen([sys.executable, os.path.realpath(__file__), "free-host", name],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=open(state("freeing", name + ".err"), "a"), start_new_session=True)
+        except OSError as e:
+            return f"the farm's data there could not be freed: {e}"
+        started = time.time()
+    if last.get("at", 0) < started:
+        return "freeing the farm's data there now"
+    return (f"the farm freed {max(0, last['after_gb'] - last['before_gb']):.0f} GB there at "
+            f"{time.strftime('%H:%M', time.localtime(last['at']))} and holds {last['farm_gb']:.0f} GB; "
+            "the rest is the host's own")
+
+
+def free_host(name):
+    """`farm.py free-host NAME` (started by short_of_disk): runs farm-agent's `free` on the host,
+    records what it did, tells the user when the host is still short, and probes it again."""
+    host = next((h for h in hosts() if h["name"] == name), None)
+    if host is None:
+        return
+    cfg = config()
+    job = {"min_free_gb": cfg["min_free_gb"], "max_target_gb": host.get("max_target_gb", cfg["max_target_gb"])}
+    text = cleaner()
+    if text:
+        job["cleaner"] = text
+    try:
+        out = subprocess.run(ssh(name, on_host("farm-agent") + " free " + shlex.quote(json.dumps(job)), "free"),
+                             capture_output=True, text=True, timeout=3600)
+        result = json.loads(out.stdout.strip().splitlines()[-1])
+    except (subprocess.TimeoutExpired, OSError, ValueError, IndexError):
+        return
+    result["at"] = time.time()
+    write_json(state("freeing", name + ".json"), result)
+    if result["after_gb"] < cfg["min_free_gb"]:
+        said = state("freeing", name + ".notified")
+        try:
+            recent = time.time() - os.stat(said).st_mtime < NOTIFY_SECONDS
+        except OSError:
+            recent = False
+        if not recent:
+            open(said, "w").close()
+            usable_too = result["after_gb"] >= cfg["floor_free_gb"]
+            notify(f"{name}: {result['after_gb']:.0f} GB free after the farm freed "
+                   f"{max(0, result['after_gb'] - result['before_gb']):.0f} GB; the farm holds {result['farm_gb']:.0f} GB "
+                   f"there, the rest is the host's own. "
+                   + ("Still in use." if usable_too else f"Not used under {cfg['floor_free_gb']} GB free."))
+    health(host, fresh=True)
+
+
+def notify(message):
+    """Shows `message` on this machine's screen (a notification), and logs it."""
+    log(message)
+    script = f"display notification {json.dumps(message)} with title \"Rerail build farm\""
+    try:
+        subprocess.run(["osascript", "-e", script], capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def health(host, fresh=False):
@@ -917,7 +1139,8 @@ def health(host, fresh=False):
         h = probe(host, config())
         if not h["ok"] and h["why"].startswith("not on its link"):
             h["down_until"] = now + OFF_LINK_SECONDS
-        elif not h["ok"] and "Local Network privacy" in h["why"]:
+        elif not h["ok"] and ("Local Network privacy" in h["why"] or h.get("fleet_jobs")):
+            # (or the fleet's jobs: asked again each minute, the moment they may have ended)
             # Not the host: it is back the moment the permission is given, so no growing back-off.
             h["down_until"] = now + DOWN_SECONDS[0]
         elif not h["ok"]:
@@ -1158,34 +1381,52 @@ def agent_exec(job):
     """The command that runs `job` with farm-agent on a host (test-remote, live-test-remote,
     quiet-run). The cleaner's text goes with it: once the command ends, the agent cleans the job's
     target directory with it (farm-agent, `clean`)."""
-    here = os.path.dirname(os.path.realpath(__file__))
-    for c in (os.path.join(here, "clean-target"), os.path.join(here, "../../dev/clean-target")):
-        if os.path.isfile(c):
-            job = dict(job, cleaner=open(c).read())
-            break
+    text = cleaner()
+    if text:
+        job = dict(job, cleaner=text)
+    job.setdefault("max_target_gb", config()["max_target_gb"])
     return on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
 
 
-def remote_slot():
+def cleaner():
+    """clean-target's text (installed beside this file, or in the checkout), or None."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    for c in (os.path.join(here, "clean-target"), os.path.join(here, "../../dev/clean-target")):
+        if os.path.isfile(c):
+            return open(c).read()
+    return None
+
+
+def remote_slot(args=(), rustc=""):
     """A free compile slot on a host, and its lock. Slots are taken in turn across the hosts (each
-    one's first, then each one's second, ...), so every host works, not only the first listed."""
+    one's first, then each one's second, ...), so every host works, not only the first listed: the
+    Macs', then the Linux hosts' for a compile they can take (`linux_compiles`; `mac_compiles`
+    false in the configuration keeps a Linux host to tests). `RERAIL_FARM_HOST=NAME` takes only
+    that host's slots (scripts/build/farm/test-mac-compiles)."""
     if os.environ.get("RERAIL_FARM_LOCAL"):
         return None, None
-    open_hosts = []
+    only = os.environ.get("RERAIL_FARM_HOST")
+    linux = linux_compiles(args) and toolchain_of(rustc) is not None
+    tiers = [[], []]
     for h in hosts():
-        if not h.get("enabled", True):
+        if not h.get("enabled", True) or (only and h["name"] != only):
             continue
-        open_hosts.append((h, capacity(h)))
-    for i in range(max((c for _, c in open_hosts), default=0)):
-        for host, cap in open_hosts:
-            if i >= cap:
-                continue
-            lock = Lock(state("slots", f"{host['name']}.{i}"), blocking=False)
-            if lock.held:
-                CHANNEL[0] = str(i)
-                return host, lock
-            lock.release()
+        if host_os(h) == "macos":
+            tiers[0].append((h, capacity(h)))
+        elif host_os(h) == "linux" and linux and h.get("mac_compiles", True):
+            tiers[1].append((h, capacity(h)))
+    for open_hosts in tiers:
+        for i in range(max((c for _, c in open_hosts), default=0)):
+            for host, cap in open_hosts:
+                if i >= cap:
+                    continue
+                lock = Lock(state("slots", f"{host['name']}.{i}"), blocking=False)
+                if lock.held:
+                    CHANNEL[0] = str(i)
+                    return host, lock
+                lock.release()
     return None, None
+
 
 
 def local_slot():
@@ -1250,8 +1491,15 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
     # A crate whose build script generated sources (OUT_DIR) would read them from the farm's root.
     if not any(cwd.startswith(p + "/") for p in IN_PLACE):
         return give_up("its sources are not cargo's registry's (a path of this machine's only)")
+    # The host maps this machine's paths in the arguments by their normalized prefixes: one with a
+    # `..` or `.` component (a CARGO_TARGET_DIR of `../tmp/x`) matched none, and rustc there was
+    # handed this machine's own path, outside the farm's root (2026-11-17).
+    if any(re.search(r"/\.\.?(/|$)", a) for a in args):
+        return give_up("a path in its arguments has a `..` or `.` component")
+    linux = host_os(host) == "linux"
     out = env.get("OUT_DIR")
-    if out and os.path.isdir(out) and os.listdir(out):
+    wrote_out = out and os.path.isdir(out) and os.listdir(out)
+    if wrote_out and not linux:
         return give_up("its build script wrote OUT_DIR, which a compile there would read from another path")
     roots = [[out_dir, "deps"]]
     for d in values(args, "-L"):
@@ -1263,12 +1511,48 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
     kinds = emits(args)
     outputs = [f"{crate}{extra}.d"] * ("dep-info" in kinds) + [f"lib{crate}{extra}.rmeta"] * ("metadata" in kinds) \
         + [f"lib{crate}{extra}.rlib"] * ("link" in kinds)
+    if linux and not toolchain_of(rustc):
+        return give_up("its rustc is no rustup toolchain's")
+    pms = []
+    if linux:
+        for e in files:
+            if e.endswith(".dylib"):
+                calls, why = host_builds(e)
+                if why:
+                    return give_up(f"it loads a proc-macro the host cannot build: {why}")
+                pms.append({"dylib": e, "calls": calls})
     run = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir], "inplace": [cwd],
            "outputs": [os.path.join(out_dir, o) for o in outputs],
            "depinfo": os.path.join(out_dir, f"{crate}{extra}.d") if "dep-info" in kinds else None,
            "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))},
            # What the host keeps under its farm root, and maps there in the arguments and environment.
-           "map": [r for r, _ in roots] + files}
+           "map": [r for r, _ in roots] + files,
+           # The crates it links against, whose copies there are checked as its sources are: the
+           # dep-info lists no `--extern`, and sccache keys the compile by this machine's copy. A
+           # vendored crate keeps its file name across edits, so a host's older copy compiled a
+           # crate against another version under this one's key (Q68: E0463 above it).
+           "externs": files}
+    if linux and any(not p.startswith(HOME + "/") for p in [out_dir] + files + [r for r, _ in roots]):
+        return give_up("its outputs or dependencies are outside this machine's home, which the host's container does not hold")
+    if linux:
+        # In the host's container, at this Mac's paths, with the same toolchain's Linux rustc
+        # (farm-agent, `xc`). Every path there is this Mac's, so the crate's sources and what its
+        # build script wrote go with it (a crate is sent once a connection), and nothing is
+        # read in place.
+        run["xc"] = {"home": HOME, "toolchain": toolchain_of(rustc)}
+        run["inplace"] = []
+        roots.append([cwd, "tree"])
+        if wrote_out:
+            roots.append([os.path.abspath(out), "tree"])
+        # The proc-macros it loads, as Linux libraries: built there from their sources (farm-agent,
+        # `pm_build`), the SVH of this Mac's own put in.
+        run["pm"] = pms
+        for pm in pms:
+            for rec in pm["calls"]:
+                roots.append([rec["cwd"], "tree"])
+                o = rec["env"].get("OUT_DIR")
+                if o and os.path.isdir(o):
+                    roots.append([o, "tree"])
     reply = mirror.compile({"host": host["name"], "since": since, "roots": roots, "files": files, "run": run})
     if reply is None:
         return give_up("the mirror daemon did not answer")
@@ -1322,7 +1606,7 @@ def farm_rustc(argv0, args):
         log(f"{crate}: missed, incremental here")
         local(rustc, args + ["-C", f"incremental={inc}"])
     if remote_eligible(args):
-        host, lock = remote_slot()
+        host, lock = remote_slot(args, rustc)
         if not host:
             log(f"{crate}: no host has a free slot")
         if host:
@@ -1344,3 +1628,7 @@ def local(rustc, args):
     finally:
         lock.release()
     sys.exit(code)
+
+
+if __name__ == "__main__" and sys.argv[1:2] == ["free-host"]:
+    free_host(sys.argv[2])

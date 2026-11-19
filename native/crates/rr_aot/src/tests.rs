@@ -141,6 +141,10 @@ fn a_words_lookup_is_leans() {
         // The slot's length and ninth byte loaded alone (lean's `ldrb`s), not cut from its
         // meta word an instruction after its load.
         assert!(look.contains("wrapping_add(8isize as usize)) as *const u8)") && !look.contains(".wrapping_shr(56)"), "the slot's length and ninth as bytes: {look}");
+        // Each field of the slot's meta a load of its own, as lean's `(key, len, code)`: no
+        // eight bytes read at the meta, the code a `u32` taken whole (no shift, no mask).
+        assert!(!look.contains("wrapping_add(8isize as usize)) as *const u64)"), "the meta read whole: {look}");
+        assert!(look.contains("wrapping_add(12isize as usize)) as *const u32)"), "the code a u32 of its own: {look}");
     }
     // The key cut to its length as lean's `u64::MAX >> (64 - 8 * len)`: a shift by 64 less
     // its bits, not by their negation (`(56 * n) & 56` to LLVM).
@@ -203,6 +207,11 @@ fn the_refill_is_leans_window() {
     tables.sort_unstable();
     tables.dedup();
     assert_eq!(tables.len(), 2, "the classes' lookups, one table's halves: {tables:?}\n{window}");
+    // The table's bits where it has room, not compares of the bytes: lean's window has one, the
+    // bytes past 0xbf (`cmhi`), on each of its four vectors; a range is three instructions a
+    // vector (`class_pack::pack`), a bit none.
+    let compares = window.matches("vcleq_u8(").count() + window.matches("vceqq_u8(").count();
+    assert!(compares <= 4, "{compares} compares of the bytes, lean's 4:\n{window}");
     let odd = f0.lines().filter(|l| l.contains("vld1q_u8(") && [1, 17, 33, 49].iter().any(|off| l.contains(&format!("wrapping_add({off}isize as usize)"))));
     assert_eq!(odd.count(), 0, "a vector load at a block's byte after");
 }
@@ -465,6 +474,8 @@ fn aot_profile_loop() {
 #[ignore = "a measurement: run by hand"]
 fn tier1_by_kind() {
     let aot = crate::aot(BOTH).expect("the ahead-of-time build");
+    // The same program by Cranelift (the JIT): what LLVM's back end adds, by kind.
+    let jit = rerail_rr_parser::compiled().expect("compiles");
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let rounds = 21;
     let kinds: [(&str, &str); 6] = [
@@ -494,22 +505,25 @@ fn tier1_by_kind() {
         let comments = text.matches("//").count() + text.matches("/*").count();
         let tokens = rr::lean::token_count(&text) + comments;
         if only.is_some() {
-            // `RR_WHO=lean`: the lean lexer alone, for the same profile of it.
+            // `RR_WHO=lean`: the lean lexer alone, for the same profile of it; `jit`: Cranelift's.
             let lean = std::env::var("RR_WHO").is_ok_and(|w| w == "lean");
-            let mut b = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
+            let p = if std::env::var("RR_WHO").is_ok_and(|w| w == "jit") { &jit.parser } else { &aot.parser };
+            let mut b = rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[text.as_bytes()]);
             let t0 = thread_cpu();
             while (thread_cpu() - t0).as_secs_f64() < seconds {
                 if lean {
                     std::hint::black_box(rr::lean::token_count(std::hint::black_box(&text)));
                 } else {
-                    b.call(&aot.parser.tier1);
+                    b.call(&p.tier1);
                 }
             }
             continue;
         }
         let mut b = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
         b.call(&aot.parser.tier1);
-        let (mut ours, mut lean) = ((u64::MAX, u64::MAX), (u64::MAX, u64::MAX));
+        let mut bj = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[text.as_bytes()]);
+        bj.call(&jit.parser.tier1);
+        let (mut ours, mut lean, mut cl) = ((u64::MAX, u64::MAX), (u64::MAX, u64::MAX), (u64::MAX, u64::MAX));
         let least = |m: (u64, u64), a: (u64, u64), b: (u64, u64)| (m.0.min(b.0 - a.0), m.1.min(b.1 - a.1));
         for _ in 0..rounds {
             let at = retired();
@@ -518,11 +532,14 @@ fn tier1_by_kind() {
             let at = retired();
             std::hint::black_box(rr::lean::token_count(std::hint::black_box(&text)));
             lean = least(lean, at, retired());
+            let at = retired();
+            bj.call(&jit.parser.tier1);
+            cl = least(cl, at, retired());
         }
         let t = tokens as f64;
         eprintln!(
-            "  {name:>12}: {tokens:6} tokens; tier 1 AOT {:6.1} instructions {:5.1} cycles a token (IPC {:.2}), lean lexer {:6.1} {:5.1} (IPC {:.2})",
-            ours.0 as f64 / t, ours.1 as f64 / t, ours.0 as f64 / ours.1 as f64, lean.0 as f64 / t, lean.1 as f64 / t, lean.0 as f64 / lean.1 as f64
+            "  {name:>12}: {tokens:6} tokens; tier 1 AOT {:6.1} instructions {:5.1} cycles a token (IPC {:.2}), lean lexer {:6.1} {:5.1} (IPC {:.2}), JIT {:6.1} {:5.1} (IPC {:.2})",
+            ours.0 as f64 / t, ours.1 as f64 / t, ours.0 as f64 / ours.1 as f64, lean.0 as f64 / t, lean.1 as f64 / t, lean.0 as f64 / lean.1 as f64, cl.0 as f64 / t, cl.1 as f64 / t, cl.0 as f64 / cl.1 as f64
         );
     }
 }

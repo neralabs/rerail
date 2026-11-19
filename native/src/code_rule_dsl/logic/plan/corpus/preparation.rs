@@ -16,6 +16,7 @@ pub(crate) mod lowering_tail;
 pub mod demand;
 pub mod magic;
 pub mod prune;
+mod rank;
 pub mod simplify;
 mod nearest;
 pub mod parts;
@@ -129,8 +130,14 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 /// The passes before lowering, on the version (decision 0281's path, steps 6c–6e): the functors only CPython gives
 /// and the base relations as inputs, a prune, `simplify` and a prune again, the reach form, the demand for negated
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after
-/// it, the reaches in cycles made rows again, then the text passes. Their decisions reach the run's profile.
+/// it, the reaches in cycles made rows again, the counts below a bound made by rank, then the text passes. Their decisions reach the run's profile.
 pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>) -> Result<(Arc<Version>, Front, Run), String> {
+    front_of(version, dialect, last, true)
+}
+
+/// `front`, with the node products bounded by their readers (`product_demand`) where `whole`: a whole program's; a
+/// part's are bounded once the parts are linked (`parts::front`), where the products' readers are.
+pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>, whole: bool) -> Result<(Arc<Version>, Front, Run), String> {
     let mut p = kept(FRONT, version, last)?;
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
     // reads and does not derive are inputs, as an authored file's are.
@@ -142,6 +149,9 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
     let simplified = simplify::passes(&mut p)?;
     simplify::decide(&simplified);
     p.program(&mut prune::Prune::default());
+    if whole {
+        p.program(&mut super::product_demand::BoundProducts::Whole);
+    }
     let mut reach = demand::ReachForm::default();
     p.program(&mut reach);
     let mut negated = demand::NegatedDemand::default();
@@ -161,6 +171,14 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
     }
     let mut undo = demand::UndoInCycles::default();
     p.program(&mut undo);
+    // Counts below a bound made without the pairs (decision 0361 step 7), once demand has placed its readers: a
+    // relation the form replaced is unread, and pruned.
+    let mut ranks = rank::RankForm::default();
+    p.program(&mut ranks);
+    if ranks.found > 0 {
+        p.program(&mut prune::Prune::default());
+        crate::code_rule_dsl::logic::profile::decision("counts below a bound (decision 0361 step 7)", || format!("{} counts made by rank over their asked and counted rows, not their pairs", ranks.found));
+    }
     let text::Found { matchers, vocabulary } = text::passes(&mut p, dialect)?;
     for d in p.decisions() {
         crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
@@ -244,7 +262,8 @@ pub fn runs_digest(front: &Run) -> [u8; 32] {
 /// A pipeline named `name` over `version`, kept to be stored: run `again` from `last` when `version` is an edit of
 /// its input (`rebase`), else from scratch.
 fn kept(name: &'static str, version: Arc<Version>, last: Option<Run>) -> Result<Pipeline<'static>, String> {
-    if let Some(last) = last
+    // Its versions a few edits deep made flat (decision 0385), so a ninth edit in a row runs again too.
+    if let Some(last) = last.map(crate::code_rule_dsl::logic::program_image::manager::Run::shallow)
         && let Some(v) = crate::code_rule_dsl::logic::program_image::manager::rebase(last.input(), &version)?
     {
         crate::code_rule_dsl::logic::profile::decision("the last run (decision 0333)", || format!("{name}: run again over an edit of the last run's input ({} rules)", crate::code_rule_dsl::logic::program_image::manager::Delta::of(last.input(), &v).size()));

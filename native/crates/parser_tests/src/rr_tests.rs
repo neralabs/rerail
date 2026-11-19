@@ -262,6 +262,7 @@ const CASES: &[(&str, &str)] = &[
     (".mode 1.5\nr(x) :- s(x, y), y > 0.10, x = -2.5 * y, z = - 3.25.", "13"),
     (".scope 1.2.3\n.mode 1.2.3.4\nr(x) :- x = 1.2.", "13"),
     ("r(x) :- x = 1.05, y = 007.5, z = 12345678901234567890.5, (a - 1.5) * 2.0 > b, c = -0.5.", "13"),
+    (".scope 1.2.3.4.5\n.mode 10.25.5 x\nr(x) :- x = 1.25.", "13"),
     (".policy {\"a\": 1.5, \"b\": -0.25, \"c\": [1.0]}", "13"),
     (".lattice l<b> { A -> 1.5 * x }\n.functor f(x: number): t 2.5\nr(x) :- count : { s(_) } > 1.5, max v : { t(v) } < -2.25.", "13"),
     ("r(x) :- x = 1..5.", "never"),
@@ -312,12 +313,12 @@ fn engine(src: &str) -> (Vec<Named>, bool) {
 
 /// A step's nodes by names: its ids back to the names they were made from.
 fn named(c: &Compiled, nodes: &[IdNode]) -> Vec<Named> {
-    let names: std::collections::HashMap<u16, String> = c.ids.0.borrow().iter().map(|(n, &i)| (i, n.clone())).collect();
+    let (kinds, fields) = c.ids.names();
     nodes
         .iter()
         .map(|n| {
-            let field = if n.1 == 0 { String::new() } else { names[&n.1].trim_start_matches("field ").to_owned() };
-            (names[&n.0].clone(), field, n.3, n.4, n.5)
+            let field = if n.1 == 0 { String::new() } else { fields[&n.1].clone() };
+            (kinds[&n.0].clone(), field, n.3, n.4, n.5)
         })
         .collect()
 }

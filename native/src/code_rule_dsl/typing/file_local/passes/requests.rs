@@ -1,5 +1,5 @@
 //! Each request of decision 0174 (`rr_<a>_req(n)`) that the split finds cross-file narrowed to literals over the
-//! asked node's own document (decision 0281's path, step 7b; work queue Q52). A node's attribute is its own
+//! asked node's own document (decision 0281's path, step 7b; work queue Q149). A node's attribute is its own
 //! document's, so a request over that document alone is answered in its chunk, while the batch holding its text is
 //! there, and kept per file; asked in the cross-file part, it found no batch (O-cross-file-answers; the hub's
 //! work-queue question 2, option a).
@@ -18,9 +18,9 @@
 
 use super::super::{ALTERNATIVES, FileLocal, UNFOLD, close_under};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, T};
-use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{AtomId, CmpOp, Lit as L, LitRef, RuleId, RuleRef, Slot, TermRef, Version};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 /// `requests_file_local` of the version, for the requests `requests` names (those the program declares).
@@ -241,6 +241,53 @@ impl ProgramPass for RequestsFileLocal {
     fn settings(&self) -> Vec<u8> {
         self.requests.join("\n").into_bytes()
     }
+    /// Over an edit (decision 0393): the edit as it is, onto the last output, where no rule of it is a request and
+    /// none defines what a request reads, down (so the file-local split places what a request is narrowed by as it
+    /// did). Otherwise it runs whole.
+    fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool, String> {
+        use crate::code_rule_dsl::logic::program_image::manager::{Reads, edit_as_is};
+        if last.delta.touched != Reads::RULES {
+            return Ok(false);
+        }
+        let v = cx.v();
+        let request = |of: &Version, r: RuleRef<'_>| self.requests.contains(&of.rel_name(r.head().rel()));
+        for id in last.delta.removed.iter() {
+            if last.input.rule(id).is_none_or(|r| request(&**last.input, r)) {
+                return Ok(false);
+            }
+        }
+        for &id in &last.delta.added {
+            if v.rule(id).is_none_or(|r| request(&**v, r)) {
+                return Ok(false);
+            }
+        }
+        // Nor does one define what a request's body unfolds (`Narrower::unfold`): what the requests read, down. The
+        // split places a relation from its rules and what they read, down (its maintain splits a changed head's
+        // readers, up), so where the edit defines none of these, the split places the requests and what they read as
+        // it did, and is not asked for (decision 0385).
+        let mut down: BTreeSet<String> = BTreeSet::new();
+        let mut todo: Vec<String> = Vec::new();
+        for req in &self.requests {
+            let Some(id) = v.rel(req) else { continue };
+            for r in v.heads(id) {
+                todo.extend(r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()));
+            }
+        }
+        while let Some(rel) = todo.pop() {
+            if !down.insert(rel.clone()) {
+                continue;
+            }
+            let Some(id) = v.rel(&rel) else { continue };
+            for r in v.heads(id) {
+                todo.extend(r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).filter(|x| !down.contains(x)));
+            }
+        }
+        let head_of = |of: &Version, r: RuleRef<'_>| of.rel_name(r.head().rel()).to_owned();
+        if last.delta.removed.iter().filter_map(|id| last.input.rule(id)).map(|r| head_of(&**last.input, r)).chain(last.delta.added.iter().filter_map(|&id| v.rule(id)).map(|r| head_of(&**v, r))).any(|h| down.contains(&h)) {
+            return Ok(false);
+        }
+        edit_as_is(cx, last, w)
+    }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
         let is_request = |r: &RuleRef<'_>| self.requests.contains(&v.rel_name(r.head().rel()));
@@ -256,15 +303,15 @@ impl ProgramPass for RequestsFileLocal {
             let p = Piece { src: r.id(), node: 0, names: None };
             format!("{}({})", v.rel_name(r.head().rel()), r.head().args().map(|t| p.show_term(v, t)).collect::<Vec<_>>().join(", "))
         };
-        let mut plan: Vec<(RuleRef<'_>, Made)> = Vec::new();
+        let mut plan: Vec<(usize, RuleRef<'_>, Made)> = Vec::new();
         let mut every_node = false;
         let mut changed = false;
-        for rule in v.rules() {
+        for (at, rule) in v.rules().enumerate() {
             let req = v.rel_name(rule.head().rel());
             let n = match rule.head().args().next() {
                 Some(TermRef::Var(n)) if self.requests.contains(&req) && !split.local.contains(req) => n,
                 _ => {
-                    plan.push((rule, Made::Keep));
+                    plan.push((at, rule, Made::Keep));
                     continue;
                 }
             };
@@ -290,7 +337,11 @@ impl ProgramPass for RequestsFileLocal {
                 (None, None) => Made::Keep,
             };
             changed |= !matches!(made, Made::Keep);
-            plan.push((rule, made));
+            plan.push((at, rule, made));
+        }
+        // Said from the pass, so a run over an edit says it again with its step (decision 0385).
+        for (req, how) in &self.narrowed {
+            crate::code_rule_dsl::logic::profile::decision("on request: narrowed to the node's document", || format!("{req}: {how}"));
         }
         if !changed {
             return Ok(());
@@ -300,19 +351,39 @@ impl ProgramPass for RequestsFileLocal {
         if every_node {
             b.add_input("node");
         }
-        // Two rules narrowed to one body are one rule (a request's).
-        let mut seen: HashSet<String> = HashSet::new();
-        for (rule, made) in plan {
+        // Two rules narrowed to one body are one rule (a request's, the tree's `seen`), serving both rules' readers:
+        // each rule written with its head and the input rules it came from, so the request record follows
+        // (`front::carried_record`, as the tree's `set_rules_from`).
+        let mut seen: HashMap<String, usize> = HashMap::new();
+        let mut written: Vec<(String, Vec<usize>)> = Vec::new();
+        fn first(seen: &mut HashMap<String, usize>, written: &mut Vec<(String, Vec<usize>)>, key: String, head: &str, at: usize) -> bool {
+            match seen.get(&key) {
+                Some(&k) => {
+                    written[k].1.push(at);
+                    false
+                }
+                None => {
+                    seen.insert(key, written.len());
+                    written.push((head.to_owned(), vec![at]));
+                    true
+                }
+            }
+        }
+        for (at, rule, made) in plan {
             let request = is_request(&rule);
+            let head = v.rel_name(rule.head().rel());
             match made {
                 Made::Keep => {
-                    if !request || seen.insert(format!("{} :- {}", head_shown(rule), shown(&own(rule)))) {
+                    if !request {
+                        written.push((head.to_owned(), vec![at]));
+                        b.keep(&input, rule);
+                    } else if first(&mut seen, &mut written, format!("{} :- {}", head_shown(rule), shown(&own(rule))), head, at) {
                         b.keep(&input, rule);
                     }
                 }
                 Made::EveryNode(n, arity) => {
                     let key = format!("{} :- node(_, {}, …)", head_shown(rule), v.text(rule.var(n)));
-                    if seen.insert(key) {
+                    if first(&mut seen, &mut written, key, head, at) {
                         let mut args = vec![T::Wild; arity];
                         args[1] = T::VarAtom(rule.var(n));
                         b.rule().source(rule.id()).head_from(&input, rule, rule.head()).atom("node", &args).finish()?;
@@ -320,7 +391,7 @@ impl ProgramPass for RequestsFileLocal {
                 }
                 Made::Bodies(bodies) => {
                     for body in bodies {
-                        if !seen.insert(format!("{} :- {}", head_shown(rule), shown(&body))) {
+                        if !first(&mut seen, &mut written, format!("{} :- {}", head_shown(rule), shown(&body)), head, at) {
                             continue;
                         }
                         // Each renamed piece's names, interned before the rule is opened.
@@ -340,6 +411,12 @@ impl ProgramPass for RequestsFileLocal {
                     }
                 }
             }
+        }
+        let asked = v.asked();
+        if !asked.is_empty() {
+            let heads: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+            let old = crate::code_rule_dsl::logic::front::readers_of_heads(&asked, &heads);
+            b.set_asked(&crate::code_rule_dsl::logic::front::carried_record(&asked, &old, written.iter().map(|(h, from)| (h.as_str(), from.as_slice()))));
         }
         Ok(())
     }

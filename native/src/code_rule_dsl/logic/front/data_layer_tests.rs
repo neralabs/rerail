@@ -48,7 +48,7 @@ fn data_layer_programs_parse() {
         }
         let text = std::fs::read_to_string(&path).unwrap();
         let expect = text.lines().next().and_then(|l| l.strip_prefix("// expect: ")).map(str::trim);
-        let result = parse(&format!("{prelude}\n{text}")).and_then(|p| analyses::components_by_name(&p, &About::of(&p), &[]).map(|_| p));
+        let result = parse(&format!("{prelude}\n{text}")).and_then(|p| analyses::components_by_name(&p, &About::of(&p)).map(|_| p));
         let failure = match (expect, result) {
             (None, Ok(p)) => {
                 let p: &Version = &p;

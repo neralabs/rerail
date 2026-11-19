@@ -138,7 +138,7 @@ fn grammar(name: &str) -> Option<(&'static str, bool)> {
 /// positive: a function of what it is (a guest's host path, place and grammar), so a memoised row's guest nodes keep
 /// their ids. A code guest in the run's language takes `GUEST_KEYS..ANNOTATION_KEYS`, which a policy shows; an
 /// annotation `ANNOTATION_KEYS..HIDDEN_KEYS`; every other document `HIDDEN_KEYS..2^31` (decision 0058 §1).
-/// A key's range (its base and span), the place in it its parts hash to, and the guest's identity (decision 0323):
+/// A key's range (its base and span), the place in it its parts hash to, and the guest's identity (decision 0391):
 /// a SHA-256 of the range and the parts.
 fn first_key(parts: &[&[u8]], range: Range) -> (u32, u32, u32, [u8; 32]) {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, HIDDEN_KEYS};
@@ -182,9 +182,9 @@ fn string_text(label: &str, kind: &str, text: &str, start: u32, node: [u32; 2]) 
 
 /// The text of host node `local` to parse, and where it stands: a string's normalized text (decision 0058 §3; a
 /// concatenation's parts joined), any other node's text, copied.
-fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option<(String, Placement)> {
+fn host_text(host: &Document, ids: &syntax::Numbering, local: u32) -> Option<(String, Placement)> {
     let f = &*host.facts;
-    let &(id, kind) = ids.get(local as usize)?;
+    let (id, kind) = ids.node(local)?;
     let (start, end) = (f.start(id), f.end(id));
     let node = [start, end];
     let tag = core::facts_tag(f);
@@ -201,7 +201,7 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
         let mut pieces = Vec::new();
         let mut tail = i64::from(end);
         for c in f.children(id) {
-            let Some(&(_, k)) = ids.iter().find(|&&(i, _)| i == c) else { continue };
+            let Some(k) = ids.kind_of(c) else { continue };
             if !is_string(k) {
                 continue;
             }
@@ -257,7 +257,7 @@ pub fn markdown_inline_text(f: &core::Facts, id: u32) -> (String, Placement) {
 }
 
 /// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and
-/// the run's guest keys (the store's, decision 0323).
+/// the run's guest keys (the store's, decision 0391).
 #[derive(Default)]
 pub(super) struct Guests {
     run: &'static str,
@@ -443,10 +443,9 @@ impl Guests {
         let ids = self.numbering(host)?;
         // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
         let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(None) };
-        let ids = &ids.nodes;
         let placed = match text {
             Some(text) => {
-                let Some(&(id, _)) = ids.get(local as usize) else { return Ok(None) };
+                let Some((id, _)) = ids.node(local) else { return Ok(None) };
                 Some((text, Placement::At([host.facts.start(id), host.facts.end(id)])))
             }
             None => host_text(host, ids, local),
@@ -667,7 +666,7 @@ mod tests {
     use super::*;
 
     /// Two hosts' annotations whose identities hash to one key, made in two chunks of a run: two keys, and the first
-    /// identity's key again in a third chunk (decision 0323). Before, each chunk probed only its own keys.
+    /// identity's key again in a third chunk (decision 0391). Before, each chunk probed only its own keys.
     #[test]
     fn two_chunks_guests_that_hash_alike_take_two_keys() {
         let parts = |p: &str| [p.as_bytes().to_vec(), 0i64.to_le_bytes().to_vec(), b"annotation".to_vec()];

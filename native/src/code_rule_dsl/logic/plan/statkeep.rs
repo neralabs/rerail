@@ -320,40 +320,52 @@ impl RelStats {
         if width == 0 {
             return;
         }
+        let each = |sign: i64, f: &mut dyn FnMut(&[i64])| (if sign < 0 { minus } else { plus }).chunks_exact(width).for_each(|r| f(r));
+        self.delta_each((plus.len() / width, minus.len() / width), width, &each);
+    }
+
+    /// `delta`, its rows handed by `each(sign, f)`: every row added (`sign` 1) or gone (−1) given to `f`, read where it
+    /// lies (`DeltaIds::each`), none copied (0364 R2). `counts`: how many are added and gone.
+    pub(in crate::code_rule_dsl) fn delta_each(&mut self, counts: (usize, usize), width: usize, each: &(dyn Fn(i64, &mut dyn FnMut(&[i64])) + Sync)) {
+        if width == 0 {
+            return;
+        }
         self.partial = true;
         // Out before in: a value whose rows are replaced never counts past them, so an exact map is not given up on
         // the way. Each row goes into the sketches as it comes (they are linear: the same counters as its value's
         // count added once), not through a map of the batch's values: two map entries a row a column were most of a
         // kept relation's count (O125's cold run: 13% of its CPU). Only an exact map is a map.
-        for (flat, sign) in [(minus, -1i64), (plus, 1)] {
-            self.rows += sign * (flat.len() / width) as i64;
-        }
+        self.rows += counts.0 as i64 - counts.1 as i64;
         let one = |c: usize, col: &mut Column| {
-            for (flat, sign) in [(minus, -1i64), (plus, 1)] {
-                for row in flat.chunks_exact(width) {
+            for sign in [-1i64, 1] {
+                each(sign, &mut |row| {
                     col.sketch.add(row[c], sign);
                     if let Some(p) = &mut col.pairs {
                         p.add(pair(group(row[0]), row[c]), sign);
                     }
-                }
+                });
                 if let Some(exact) = &mut col.exact {
-                    for row in flat.chunks_exact(width) {
+                    let mut over = false;
+                    each(sign, &mut |row| {
+                        if over {
+                            return;
+                        }
                         let e = exact.entry(row[c]).or_default();
                         *e += sign;
                         if *e == 0 {
                             exact.remove(&row[c]);
                         } else if exact.len() > EXACT {
-                            break;
+                            over = true;
                         }
-                    }
-                    if exact.len() > EXACT {
+                    });
+                    if over || exact.len() > EXACT {
                         col.exact = None;
                     }
                 }
             }
         };
         // Many rows: a job a column (decision 0294); each column takes its rows in the same order either way.
-        if (plus.len() + minus.len()) / width >= 1 << 16 && crate::threads::max() > 1 {
+        if counts.0 + counts.1 >= 1 << 16 && crate::threads::max() > 1 {
             crate::threads::scope(|jobs| {
                 for (c, col) in self.cols.iter_mut().enumerate().take(width) {
                     jobs.spawn("a column's statistics", move |_| one(c, col));

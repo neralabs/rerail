@@ -26,7 +26,7 @@ pub mod cycles;
 pub mod graph;
 pub mod template;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-pub use ast::{AXIS, AggOp, Atom, Branded, Class, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+pub use ast::{AXIS, AggOp, Algo, Atom, Branded, Class, DESCENDANTS, EVERY_KIND, FEW, Fan, GLOBAL, LIBRARY, LatticeDecl, LayoutFact, Literal, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, Size as LayoutSize, SpanIn, Term, Value, Values as LayoutValues, add_layout, axis, carried_record, cmp_binds, globals, is_axis, is_transduced, join, layout_facts, readers_of_heads, record_copy, shape_base};
 
 use ast::PUNCT;
 
@@ -229,15 +229,14 @@ pub type Edges = BTreeMap<String, BTreeSet<(String, bool)>>;
 
 /// `components_of` of a dependency graph read from a version (`program_image::analyses::components_by_name`): the
 /// derived relations' names, sorted; each one's dependencies by their places among them, with whether negative, sorted
-/// and each once; the non-monotone aggregation edges; and the sets run as one component. The components, their order
-/// and the error are the tree's.
-pub fn components_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, aggs: rustc_hash::FxHashSet<(u32, u32)>, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
-    Graph { names, succ, aggs }.components(together)
+/// and each once; and the non-monotone aggregation edges. The components, their order and the error are the tree's.
+pub fn components_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, aggs: rustc_hash::FxHashSet<(u32, u32)>) -> Result<Vec<BTreeSet<String>>, Error> {
+    Graph { names, succ, aggs }.components()
 }
 
 /// The dependency graph of `strata` on numbers: the derived relations in their order, each one's dependencies among
-/// them (with whether negative, sorted as `Edges` sorts them), and the non-monotone aggregation edges. The search, the
-/// stratification check and `together`'s rings run on it; the edges by name are made only for a caller that reads
+/// them (with whether negative, sorted as `Edges` sorts them), and the non-monotone aggregation edges. The search and the
+/// stratification check run on it; the edges by name are made only for a caller that reads
 /// them (`edges`). Each edge as a pair of names in a sorted map was most of the strata's cost.
 struct Graph<'p> {
     names: Vec<&'p str>,
@@ -247,39 +246,10 @@ struct Graph<'p> {
 
 impl<'p> Graph<'p> {
 
-    /// The components, each set of `sets` one of them (decision 0101 §3): its relations joined in a ring for the
-    /// search only, so the edges stay the rules' own. A set that would take in a relation outside it (one read by a
-    /// member and reading another) is left apart.
-    fn together(&self, sets: &[BTreeSet<String>]) -> Vec<Vec<u32>> {
-        let id = |r: &str| self.names.binary_search(&r).ok().map(|i| i as u32);
-        let mut sets: Vec<Vec<u32>> = sets.iter().map(|t| t.iter().filter_map(|r| id(r)).collect::<Vec<_>>()).filter(|t| t.len() > 1).collect();
-        loop {
-            if sets.is_empty() {
-                return tarjan_ids(&self.succ);
-            }
-            let mut ring = self.succ.clone();
-            for t in &sets {
-                for (i, &r) in t.iter().enumerate() {
-                    let e = (t[(i + 1) % t.len()], false);
-                    let s = &mut ring[r as usize];
-                    if let Err(at) = s.binary_search(&e) {
-                        s.insert(at, e);
-                    }
-                }
-            }
-            let sccs = tarjan_ids(&ring);
-            let n = sets.len();
-            sets.retain(|t| sccs.iter().find(|s| s.contains(&t[0])).is_some_and(|s| s.len() == t.len()));
-            if sets.len() == n {
-                return sccs;
-            }
-        }
-    }
 
-    /// The components, dependencies first, `together`'s sets each one (`together`): an error if a negation or a
-    /// non-monotone aggregate closes a cycle.
-    fn components(&self, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
-        let sccs = self.together(together);
+    /// The components, dependencies first: an error if a negation or a non-monotone aggregate closes a cycle.
+    fn components(&self) -> Result<Vec<BTreeSet<String>>, Error> {
+        let sccs = tarjan_ids(&self.succ);
         match self.first_unstratified(&sccs, true).into_iter().next() {
             Some(e) => Err(e),
             None => Ok(self.named(&sccs)),
@@ -334,13 +304,6 @@ pub fn unstratified_trace(head: &str, dep: &str, component: &BTreeSet<String>) {
     }
 }
 
-/// `apart` over a graph given by its names (sorted) and each name's reads (sorted, each with whether negative): for
-/// a program held as a version, whose rules are not trees.
-pub fn apart_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, together: &[BTreeSet<String>]) -> Vec<usize> {
-    let g = Graph { names, succ, aggs: rustc_hash::FxHashSet::default() };
-    let sccs = g.named(&g.together(together));
-    (0..together.len()).filter(|&i| !sccs.iter().any(|s| *s == together[i])).collect()
-}
 
 /// Strongly connected components on numbers (`tarjan`), dependencies first; each component's members in the order
 /// they leave the stack.

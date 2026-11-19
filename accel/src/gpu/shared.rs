@@ -101,6 +101,8 @@ pub fn get() -> Option<&'static Shared> {
     static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
     SHARED
         .get_or_init(|| {
+            // The pool's blocks are handed out by the one policy (decision 0342).
+            crate::blocks::install();
             objc::rc::autoreleasepool(|| {
                 // The forest's (the lowest crate that uses Metal): one device and one queue for the process.
                 let one = rerail_forest::gpu::shared::get()?;
@@ -283,9 +285,10 @@ pub fn lease_block_within(kind: u32, bytes: usize) -> Result<rerail_blocks::Bloc
 /// A block for one of a device join's own relations (decision 0325 step 5: a view it makes, a fixpoint's total): a
 /// pooled buffer of the relation's size, leased as a join's buffer is (`lease_for_join`: bounded by the budget inside
 /// `within_budget`, where a refusal runs the work on the CPU), and back in the pool when the relation goes. No slab's
-/// least size: shared 16 MB blocks, kept by any relation in them, refused small views their room.
-pub fn lease_block_for_join(kind: u32, bytes: usize) -> Result<rerail_blocks::Block, String> {
-    let slab = lease_for_join(bytes.max(4 * rerail_blocks::block::PAGE), false)?;
+/// least size: shared 16 MB blocks, kept by any relation in them, refused small views their room. The block policy's
+/// alone (`Size::Exact` in `Budget::Join`, Q205): every block is leased through it.
+pub(crate) fn lease_block_for_join(kind: u32, bytes: usize) -> Result<rerail_blocks::Block, String> {
+    let slab = lease_for_join(bytes.max(rerail_blocks::alloc::EXACT_MIN), false)?;
     Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
 }
 

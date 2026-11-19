@@ -90,10 +90,9 @@ pub fn edges_by_name(v: &Version, about: &About) -> crate::code_rule_dsl::logic:
 }
 
 /// The components by name, dependencies first (`analyses::strata` without its edges), in the tree's order: the relations numbered in the order of their
-/// names, each set of `together` (a maintained program's, `body::Maint`) one component where it can be, and the
-/// tree's error where a negation closes a cycle. For a reader whose output follows the components' order (the
+/// names, and the tree's error where a negation closes a cycle. For a reader whose output follows the components' order (the
 /// composed query lists its definitions in it); `strata` gives them in an order of ids.
-pub fn components_by_name(v: &Version, about: &About, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
+pub fn components_by_name(v: &Version, about: &About) -> Result<Vec<BTreeSet<String>>, Error> {
     let (mut by_name, edges, aggs) = components(v, about);
     by_name.sort_unstable_by(|a, b| v.rel_name(*a).cmp(v.rel_name(*b)));
     const NONE: u32 = u32::MAX;
@@ -112,6 +111,6 @@ pub fn components_by_name(v: &Version, about: &About, together: &[BTreeSet<Strin
         s.sort_unstable();
     }
     let aggs = aggs.iter().map(|(h, w)| (place[h.index()], place[w.index()])).collect();
-    crate::code_rule_dsl::logic::front::components_of_graph(by_name.iter().map(|&r| v.rel_name(r)).collect(), succ, aggs, together)
+    crate::code_rule_dsl::logic::front::components_of_graph(by_name.iter().map(|&r| v.rel_name(r)).collect(), succ, aggs)
 }
 

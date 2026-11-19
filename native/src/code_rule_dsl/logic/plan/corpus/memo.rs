@@ -269,10 +269,14 @@ pub(super) fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code
 }
 
 /// Where the memo's space `space` names the whole file-local program whose entries it holds last (`set_last_program`).
+/// Under the space's plan (`plan_digest`: the engine build, the grammar, the node ids' scheme), as its entries are
+/// (`local_space`): another build's entries are not this build's hits, so its last program, and the statistics kept
+/// under it, are not this build's either (Q102). Before, a new build read the old build's keeper, whose counts
+/// trusted entries it could not read, and gave it up at the edited file.
 fn last_key(space: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local-last/v1\0");
-    hash.update(space);
+    hash.update(b"rerail.corpus-local-last/v2\0");
+    hash.update(plan_digest(space));
     hash.finalize().into()
 }
 
@@ -608,10 +612,19 @@ impl Frame {
     }
 }
 
-/// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves.
+/// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves: none of an entry whose
+/// symbols this process holds already. The profile says how many it read.
 pub(super) fn hold<'a>(store: &ContentStore, blobs: impl IntoIterator<Item = &'a crate::content_store::MemoBlob>) -> StoreResult<()> {
     let bytes: Vec<_> = blobs.into_iter().map(|b| &b.bytes).collect();
-    image::hold(&bytes, &store.atoms_handle())
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let read = image::hold(&bytes, &store.atoms_handle())?;
+    crate::code_rule_dsl::prof::count("corpus.memo_entries_held_read", read);
+    crate::code_rule_dsl::logic::profile::decision("the memo's entries' atoms, before the first wave (decision 0397)", || {
+        format!("{read} of {} entries read; the others' symbols held already", bytes.len())
+    });
+    Ok(())
 }
 
 /// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
@@ -933,8 +946,9 @@ pub(super) enum Memo<'a> {
     Held(&'a Held),
 }
 
-/// A session's memo: each entry under its content's digest, its path and the file-local program's digest.
-pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), Entry>>;
+/// A session's memo: each entry under its content's digest, its path and the file-local program's digest. Shared
+/// (an `Arc`): a hit, and an input's change read from the changed documents' entries, read it in place (0364 R2).
+pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), std::sync::Arc<Entry>>>;
 
 /// A file's content as the memo knows it: its stored source; a content the store does not hold yet, by its digest
 /// (its source is written by the store's writer, behind the run, with its tape: decision 0104); or (held) its digest.
@@ -1046,7 +1060,7 @@ impl Memo<'_> {
                 Ok(docs
                     .iter()
                     .map(|(c, p)| match c {
-                        Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), program.id)).map(|e| Found::Held(std::sync::Arc::new(e.clone()))),
+                        Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), program.id)).map(|e| Found::Held(std::sync::Arc::clone(e))),
                         Content::Stored(_) | Content::Unstored(_) => None,
                     })
                     .collect())
@@ -1073,7 +1087,7 @@ impl Memo<'_> {
                 },
             },
             (Memo::Held(held), Content::Held(digest)) => {
-                Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), program.id)).filter(|e| e.key == key).cloned())
+                Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), program.id)).filter(|e| e.key == key).map(|e| (**e).clone()))
             }
             _ => Ok(None),
         }
@@ -1109,7 +1123,7 @@ impl Memo<'_> {
                 if held.len() >= HELD_ENTRIES {
                     held.clear();
                 }
-                held.insert((digest, path.to_owned(), program.id), Entry { key, ..entry.clone() });
+                held.insert((digest, path.to_owned(), program.id), std::sync::Arc::new(Entry { key, ..entry.clone() }));
                 Ok(())
             }
             _ => Ok(()),

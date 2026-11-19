@@ -75,10 +75,9 @@ pub(super) mod inline;
 /// The relations inlined, and the program's version with them unfolded into their readers (an overlay of `base`);
 /// `None` when nothing is inlined. `Err` names a `.decl r(…) inline` that cannot be honoured.
 pub(super) fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, Placed)>, String> {
-    // The program's fields beside its rules, read from its version; a program of no image (maintenance's parts: a
-    // session's maintained program) inlines nothing, its relations each `no_inline` or a session's piece.
-    let Some(f) = Fields::of(base).filter(|_| base.maint.is_none()) else {
-        super::super::profile::decision("inline or store (decision 0099)", || "a maintained program (maintenance's parts): nothing estimated".to_owned());
+    // The program's fields beside its rules, read from its version; a version of rules alone inlines nothing.
+    let Some(f) = Fields::of(base) else {
+        super::super::profile::decision("inline or store (decision 0099)", || "a version of rules alone: nothing estimated".to_owned());
         return Ok(None);
     };
     let v: &Version = &base.v;
@@ -931,6 +930,9 @@ pub(in crate::code_rule_dsl) struct ObservedShared {
     published: arc_swap::ArcSwapOption<Observed>,
     pending: parking_lot::Mutex<Vec<Observed>>,
     folding: parking_lot::Mutex<()>,
+    /// A chunk's (Q88, `chunk_observed`): what its jobs handed in over the run's as filed, apart, for the run's in the
+    /// chunks' order (`file_observed`).
+    made: Option<parking_lot::Mutex<Observed>>,
 }
 
 /// The jobs' sums handed in before one of them folds them in: the lag of an estimate read in a job.
@@ -972,6 +974,9 @@ impl ObservedShared {
         let Some(now) = self.published.load_full() else { return };
         let mut next = Observed::clone(&now);
         for p in pending {
+            if let Some(made) = &self.made {
+                made.lock().add(p.clone());
+            }
             next.add(p);
         }
         self.published.store(Some(Arc::new(next)));
@@ -1077,6 +1082,30 @@ impl ObservedKey {
     }
 }
 static OBSERVED: ObservedKey = ObservedKey;
+
+/// A chunk's observations (Q88): the run's as filed when it began (`published`), what it observes over them, and that
+/// apart (`observed_made`).
+pub(in crate::code_rule_dsl) fn chunk_observed(published: Option<Arc<Observed>>) -> SharedObserved {
+    let s = ObservedShared { made: Some(Default::default()), ..Default::default() };
+    s.published.store(published);
+    Arc::new(s)
+}
+
+/// What a chunk observed (`chunk_observed`), every job's handed in.
+pub(in crate::code_rule_dsl) fn observed_made(chunk: &SharedObserved) -> Observed {
+    chunk.fold(true);
+    chunk.made.as_ref().map(|m| std::mem::take(&mut *m.lock())).unwrap_or_default()
+}
+
+/// The observations as last published: `None` while not observing.
+pub(in crate::code_rule_dsl) fn observed_now(s: &SharedObserved) -> Option<Arc<Observed>> {
+    s.published.load_full()
+}
+
+/// Adds a chunk's observations to the run's, as the main thread files it (Q88: in the chunks' order).
+pub(in crate::code_rule_dsl) fn file_observed(run: &SharedObserved, made: Observed) {
+    run.change(|o| o.add(made));
+}
 
 /// This thread's observations, for a job on another thread to enter.
 pub(in crate::code_rule_dsl) fn share_observed() -> SharedObserved {

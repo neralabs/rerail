@@ -264,7 +264,7 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
     sampled peak). Live at the peak, by allocating span: the memo replay of the 299 unchanged files 454 MB (exports
     appended 238, base rows held 216; the replay split into spans for this), the kept part's rows from the frames
     358 MB, the export held 80 MB, the atoms' lease 75 MB. Step (a) was built (decision 0117 step 1) but never
-    taken: its check found no input's frame, "0 of 989 inputs have one", on every edit (Q69). Fixed: the replay
+    taken: its check found no input's frame, "0 of 989 inputs have one", on every edit (Q151). Fixed: the replay
     reads 8.5 MB of values (was 348.5 MB), and the peak is 1.38 GB (live heap 1.28 GB). Live at that peak: a kept
     input decoded where read 312 MB (the next lead), the kept inputs from the frames 59 MB, the atoms' lease 75 MB,
     the kept part's changes to the frames 55 MB.

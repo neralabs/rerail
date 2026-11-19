@@ -276,6 +276,19 @@ impl<'v> Printer<'v> {
                 let set = Pattern::Set(patterns.iter().map(|p| Pattern::Str(Cow::Borrowed(p.as_str()))).collect());
                 format!("{} :- {}({}), {}.", self.atom(r, head)?, relation(input), args()?, self.test(r, op, &s, &set, false)?)
             }
+            // A count below a bound, as the count it holds (`rank_form`): read back, it is found in the form again.
+            Native::Rank { query, counted, group, op } => {
+                let width = |rel: &str| self.v.columns_of(rel).map_or(0, |c| c.len());
+                let (wq, wc) = (width(query), width(counted));
+                let g: Vec<String> = (0..*group).map(|i| var(&format!("rr_g{i}"))).collect();
+                let q: Vec<String> = (*group..wq.saturating_sub(1)).map(|i| var(&format!("rr_q{i}"))).collect();
+                let c: Vec<String> = (*group..wc.saturating_sub(1)).map(|i| var(&format!("rr_c{i}"))).collect();
+                let (kx, ky, n) = (var("rr_kx"), var("rr_ky"), var("rr_n"));
+                let head_cols = g.iter().chain(&q).cloned().chain([n.clone()]).collect::<Vec<_>>().join(", ");
+                let query_cols = g.iter().chain(&q).cloned().chain([kx.clone()]).collect::<Vec<_>>().join(", ");
+                let counted_cols = g.iter().chain(&c).cloned().chain([ky.clone()]).collect::<Vec<_>>().join(", ");
+                format!("{}({head_cols}) :- {}({query_cols}), {n} = count : {{ {}({counted_cols}), {ky} {op} {kx} }}.", relation(head_rel), relation(query), relation(counted))
+            }
             Native::MatchAll { input, pattern, groups, positions } => {
                 let s = (0..).map(|i| format!("rr_text{i}")).find(|v| !groups.contains(v)).expect("a free name");
                 let coordinates: Vec<_> = (0..).map(|i| format!("rr_position{i}")).filter(|v| !groups.contains(v) && v != &s).take(if *positions { 3 } else { 0 }).map(|v| var(&v)).collect();

@@ -137,35 +137,57 @@ fn a_batch_over_several_slabs_is_gathered_into_one_block() {
     if metal::Device::system_default().is_none() {
         return;
     }
+    use crate::code_rule_dsl::tape::formats::Format;
     let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    drop_all();
-    let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = SOURCES.iter().map(|(source, lang)| document(source, *lang).0).collect();
-    let first = admit_docs(&docs[..1]).unwrap();
-    // A source larger than a slab takes one of its own; the next document goes to another.
-    let big = vec![b'x'; SLAB_BYTES + (1 << 20)];
-    let held_big = admit_sources(&[&big]).unwrap();
-    let rest = admit_docs(&docs[1..]).unwrap();
-    assert_ne!(first[0].slab.id, rest[0].slab.id, "the documents are in two slabs");
-    let documents: Vec<Arc<Resident>> = first.iter().chain(&rest).cloned().collect();
-    let table = DocTable::one_block(documents.clone()).unwrap();
-    let block = table.block.as_ref().expect("one block bound");
-    for (document, gathered) in documents.iter().zip(&table.documents) {
-        assert_eq!(gathered.slab.id, block.id);
-        assert_eq!(gathered.image(), document.image());
-        let v = &gathered.view;
-        assert_eq!(gathered.bytes_at(v.source, v.source_len as usize), document.bytes_at(document.view.source, document.view.source_len as usize));
-        assert_eq!(u32s(gathered, v.lines, v.line_count as usize), u32s(document, document.view.lines, document.view.line_count as usize));
-        assert_eq!(gathered.codes(), document.codes());
-        // The view moved with the document: its offsets count from its first byte.
-        assert_eq!(gathered.view.view(), document.view.view());
+    for format in [Format::F15, Format::F16, Format::F16Z] {
+        drop_all();
+        let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = SOURCES
+            .iter()
+            .map(|&(source, lang)| {
+                let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
+                let grammar = Grammar::new(lang).unwrap();
+                crate::code_rule_dsl::tape::formats::as_run(format, || {
+                    let image = crate::code_rule_dsl::tape::TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary.in_format(format, source.as_bytes());
+                    crate::code_rule_dsl::tape::TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+                })
+            })
+            .collect();
+        let first = admit_docs(&docs[..1]).unwrap();
+        // A source larger than a slab takes one of its own; the next document goes to another.
+        let big = vec![b'x'; SLAB_BYTES + (1 << 20)];
+        let held_big = admit_sources(&[&big]).unwrap();
+        let rest = admit_docs(&docs[1..]).unwrap();
+        assert_ne!(first[0].slab.id, rest[0].slab.id, "the documents are in two slabs");
+        let documents: Vec<Arc<Resident>> = first.iter().chain(&rest).cloned().collect();
+        let table = DocTable::one_block(documents.clone()).unwrap();
+        let block = table.block.as_ref().expect("one block bound");
+        for (document, gathered) in documents.iter().zip(&table.documents) {
+            assert_eq!(gathered.slab.id, block.id);
+            assert_eq!(gathered.image(), document.image());
+            let v = &gathered.view;
+            assert_eq!(gathered.bytes_at(v.source, v.source_len as usize), document.bytes_at(document.view.source, document.view.source_len as usize));
+            // Format 15's line starts are placed beside its tape; format 16's are its tape's, compared with the image.
+            if v.format == 15 {
+                assert_eq!(u32s(gathered, v.lines, v.line_count as usize), u32s(document, document.view.lines, document.view.line_count as usize));
+            }
+            assert_eq!(gathered.codes(), document.codes());
+            // The view moved with the document: its offsets count from its first byte (format 16's codes are its
+            // language's table, the block's: copied there once).
+            let codes = |view: &DocView| DocView { at: 0, codes: 0, ..*view };
+            assert_eq!(codes(&gathered.view), codes(&document.view));
+            assert_eq!(gathered.table, document.table);
+            if let Some(table) = gathered.table {
+                assert_eq!(Some(gathered.at.wrapping_add(v.codes as usize) as u32 as usize), block.table(table.key), "{format:?}: the block's table");
+            }
+        }
+        // Asked again, the residency gives the gathered documents: one slab already, nothing copied.
+        let again = admit_docs(&docs).unwrap();
+        assert!(again.iter().all(|document| document.slab.id == block.id));
+        let twice = gather(again.clone()).unwrap();
+        assert!(twice.iter().zip(&again).all(|(a, b)| Arc::ptr_eq(a, b)));
+        drop((table, held_big, twice, again));
+        drop_all();
     }
-    // Asked again, the residency gives the gathered documents: one slab already, nothing copied.
-    let again = admit_docs(&docs).unwrap();
-    assert!(again.iter().all(|document| document.slab.id == block.id));
-    let twice = gather(again.clone()).unwrap();
-    assert!(twice.iter().zip(&again).all(|(a, b)| Arc::ptr_eq(a, b)));
-    drop((table, held_big, twice, again));
-    drop_all();
 }
 
 /// The device reads a resident tape as its document reads it (decision 0293), in every format the run may store:
@@ -178,19 +200,20 @@ fn the_device_reads_every_format_as_the_document_does() {
     use crate::code_rule_dsl::tape::formats::Format;
     use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
     use metal::MTLSize;
-    const TAPE: &str = concat!(include_str!("../../transducer/packed/metal_tape_reads.metal"), include_str!("../../transducer/packed/metal_tape.metal"));
-    const FIELDS: usize = 12;
+    let tape = format!("{}{}{}", msl(), include_str!("../../transducer/packed/metal_tape_reads.metal"), include_str!("../../transducer/packed/metal_tape.metal"));
+    const FIELDS: usize = 14;
     const KERNEL: &str = r#"
-inline uint tape_global(ChunkTape d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
-kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* s [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
+inline uint tape_global(DocView d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
+kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* s [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
  if(g>=count)return;
- ChunkTape d=docs[nodeDoc[g]];
+ DocView d=docs[nodeDoc[g]];
  uint i=g-d.node_base;
- device uint* o=out+g*12u;
+ device uint* o=out+g*14u;
  o[0]=tape_kind(s,d,i);o[1]=tape_field(s,d,i);o[2]=tape_flags(s,d,i);
  o[3]=tape_global(d,tape_parent(s,d,i));o[4]=tape_global(d,tape_next(s,d,i));o[5]=tape_global(d,tape_next_named(s,d,i));
  o[6]=tape_child_count(s,d,i);o[7]=d.node_base+i+tape_size(s,d,i);o[8]=tape_start(s,d,i);o[9]=tape_end(s,d,i);
  o[10]=tape_global(d,tape_first_child(s,d,i));o[11]=tape_code(s,d,i).classCount;
+ uint line=tape_line(s,d,tape_start(s,d,i));o[12]=line;o[13]=tape_line_start(s,d,line);
 }
 "#;
     let Some(device) = metal::Device::system_default() else { return };
@@ -224,13 +247,37 @@ kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device c
             digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         }
         let table = DocTable::one_block(admit(&store, &digests, &grammar).unwrap()).unwrap();
+        if format == Format::F16Z {
+            // The device decoded each 16z tape's pieces (decision 0336 §8): byte for byte the host's decode, LZ4
+            // pieces among them.
+            let mut lz4 = 0;
+            for (doc, resident_doc) in docs.iter().zip(&table.documents) {
+                let z = resident::Tape16Z::from_bytes(doc.resident_parts(None).unwrap().0).unwrap();
+                lz4 += z.piece_jobs().filter(|job| job.lz4).count();
+                let mut host = vec![0u8; z.decoded_len()];
+                z.decode_into(&mut host).unwrap();
+                assert_eq!(resident_doc.image(), host.as_slice(), "the device's 16z decode");
+            }
+            assert!(lz4 > 0, "LZ4 pieces decoded on the device");
+        }
         let expected_format = if format == Format::F15 { 15 } else { 16 };
         assert!(table.views.iter().all(|view| view.format == expected_format), "{format:?} placed as format {expected_format}");
+        if format != Format::F15 {
+            // One code table a language in the block (decision 0336 §7): documents of a language read the same one.
+            let mut tables = std::collections::HashMap::new();
+            for (view, (_, lang)) in table.views.iter().zip(&sources) {
+                let at = view.at.wrapping_add(view.codes);
+                assert_eq!(*tables.entry(*lang).or_insert(at), at, "{format:?}: {lang:?}'s documents share its table");
+            }
+            assert!(tables.len() < sources.len(), "a language of several documents");
+            let distinct: std::collections::HashSet<_> = tables.values().collect();
+            assert_eq!(distinct.len(), tables.len(), "a table a language");
+        }
         let node_doc = table.views.iter().enumerate().flat_map(|(doc, view)| std::iter::repeat_n(doc as u32, view.nodes as usize)).collect::<Vec<_>>();
-        let views = MappedBuffer::from_slice::<ChunkTape>(&device, &table.views).unwrap();
+        let views = MappedBuffer::from_slice::<DocView>(&device, &table.views).unwrap();
         let node_doc = MappedBuffer::from_slice(&device, &node_doc).unwrap();
         let out = MappedBuffer::zeroed::<u32>(&device, table.nodes * FIELDS).unwrap();
-        let pipeline = pipeline_named(&format!("#include <metal_stdlib>\nusing namespace metal;\n{}{TAPE}{KERNEL}", msl()), "tape_conformance").unwrap();
+        let pipeline = pipeline_named(&format!("#include <metal_stdlib>\nusing namespace metal;\n{tape}{KERNEL}"), "tape_conformance").unwrap();
         let queue = device.new_command_queue();
         let command = queue.new_command_buffer();
         let encoder = command.new_compute_command_encoder();
@@ -238,8 +285,7 @@ kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device c
         encoder.set_buffer(0, Some(&views.buffer), 0);
         encoder.set_buffer(1, Some(&node_doc.buffer), 0);
         encoder.set_buffer(2, Some(&out.buffer), 0);
-        // The batch's chunk block, as the kernels bind it (decision 0289 §4).
-        encoder.set_buffer(3, Some(table.block.as_ref().expect("one block").buffer()), 0);
+        encoder.set_buffer(3, Some(table.block.as_ref().expect("one block bound").buffer()), 0);
         let count = table.nodes as u32;
         encoder.set_bytes(7, 4, std::ptr::from_ref(&count).cast());
         encoder.dispatch_threads(MTLSize::new(table.nodes as u64, 1, 1), MTLSize::new(64, 1, 1));
@@ -249,6 +295,7 @@ kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device c
         // SAFETY: the kernel wrote `nodes * FIELDS` u32s, and the command finished.
         let read = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), table.nodes * FIELDS) };
         for (doc, (tape, view)) in docs.iter().zip(&table.views).enumerate() {
+            let source = sources[doc].0.as_bytes();
             let global = |node: Option<u32>| node.map_or(u32::MAX, |node| node + view.node_base);
             let mut classes = vec![0u32; tape.transducer_len()];
             for (node, _) in tape.transducer_supertypes() {
@@ -269,6 +316,9 @@ kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device c
                     span.end as u32,
                     global(tape.transducer_children(node).next()),
                     classes[node as usize],
+                    // The line of the node's start, and that line's first byte: from the source's newlines.
+                    source[..span.start].iter().filter(|&&byte| byte == b'\n').count() as u32,
+                    source[..span.start].iter().rposition(|&byte| byte == b'\n').map_or(0, |at| at as u32 + 1),
                 ];
                 let g = (view.node_base + node) as usize;
                 assert_eq!(&read[g * FIELDS..][..FIELDS], &expected, "{format:?}: document {doc} node {node}");

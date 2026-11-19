@@ -20,7 +20,7 @@ use crate::code_rule_dsl::logic::front::Value;
 use crate::code_rule_dsl::logic::program_facts::{self, Facts};
 use crate::code_rule_dsl::logic::program_text;
 use crate::code_rule_dsl::logic::rr::{self, LibraryFile};
-use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
+use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::path::PathBuf;
 
@@ -36,6 +36,11 @@ const PROGRAM: &str = "rr_combined_program";
 /// The relation holding the images the combine read or kept (decision 0246 §6): their aliases (sha256 hex). A run
 /// that names the entry names them too, so collection keeps them while it keeps the run.
 const IMAGE: &str = "rr_combined_image";
+
+/// The relation holding the kept tail run the program was made over or kept (decision 0393): its key (sha256 hex). A
+/// run that names the entry names the run's sources too (`program_text::run_sources`), as the run that made the
+/// program named them when it kept or read the run (Q101), so collection keeps the run while it keeps the entry.
+const RUN: &str = "rr_combined_tail_run";
 
 /// The relation holding the read record: (path, sha256 hex, or "" for a miss).
 const READ_FILE: &str = "rr_combined_read_file";
@@ -178,17 +183,25 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 /// (`program_text::encode_version`, Typing-support's `remember_version`, taken at the merge of e829e72a7 as an item
 /// of the run's record).
 pub(in crate::code_rule_dsl) fn record_version(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey]) {
-    let Some(encoded) = program_text::encode_version(v) else { return };
-    record_encoded(store, what, key, read, encoded, images);
+    record_version_ran(store, what, key, read, v, images, None);
 }
 
-fn record_encoded(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], encoded: program_text::Encoded, images: &[HashKey]) {
+/// `record_version`, naming the kept tail run it was made over or kept (`RUN`, decision 0393).
+pub(super) fn record_version_ran(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey], run: Option<[u8; 32]>) {
+    let Some(encoded) = program_text::encode_version(v) else { return };
+    record_encoded(store, what, key, read, encoded, images, run);
+}
+
+fn record_encoded(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], encoded: program_text::Encoded, images: &[HashKey], run: Option<[u8; 32]>) {
     let mut facts = Facts::new();
     facts.insert(PROGRAM.to_owned(), vec![[Value::Str(hex(&encoded.digest).into())].into()]);
     let rows = read.iter().map(|f| [Value::Str(f.path.to_string_lossy().into_owned().into()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default().into())].into()).collect();
     facts.insert(READ_FILE.to_owned(), rows);
     let images = images.iter().filter_map(|k| k.sha256_bytes()).map(|d| [Value::Str(hex(&d).into())].into()).collect();
     facts.insert(IMAGE.to_owned(), images);
+    if let Some(run) = run {
+        facts.insert(RUN.to_owned(), vec![[Value::Str(hex(&run).into())].into()]);
+    }
     let entry = program_facts::encode(&facts);
     // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`) ships the entry (its program's image ships with
     // `program_text::encode_version`).
@@ -285,7 +298,8 @@ fn program_source(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<cr
     store.source_by_hash(HashKey::from_sha256_digest(digest))
 }
 
-/// The images texts `key`'s entry names (`IMAGE`) that the store still keeps.
+/// The images texts `key`'s entry names (`IMAGE`) that the store still keeps, and the sources of the tail run it names
+/// (`RUN`) where the store keeps that run whole.
 fn image_sources(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Vec<crate::content_store::SourceId>> {
     let Some(source) = store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(Vec::new()) };
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
@@ -298,6 +312,14 @@ fn image_sources(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Vec<crate:
             && let Some(id) = store.source_by_alias(HashKey::from_sha256_digest(digest))?
         {
             out.push(id);
+        }
+    }
+    for row in facts.get(RUN).into_iter().flatten() {
+        if let [Value::Str(run)] = row.as_slice()
+            && let Some(run) = unhex(run)
+            && let Some(ids) = program_text::run_sources(store, &run).map_err(StoreError::Invalid)?
+        {
+            out.extend(ids);
         }
     }
     crate::code_rule_dsl::prof::count("corpus.combined_images_named", out.len());

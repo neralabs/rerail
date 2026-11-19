@@ -99,6 +99,8 @@ struct Parser<'a> {
     flags: Vec<String>,
     /// The nested levels open: in one, a mark it can not take ends it, and is its caller's.
     nested: usize,
+    /// The furthest token a match has tested: where a grammar with one way through it stops.
+    far: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -620,6 +622,7 @@ impl<'a> Parser<'a> {
     /// A token of `kind` at `at`: its leaf (a mark has none), then past the marks that `follow`
     /// does not hold. A hidden one is skipped; one not hidden fails the parse.
     fn token(&mut self, kind: &str, at: usize, follow: u64) -> Option<usize> {
+        self.far = self.far.max(at);
         // Its own kind, or the soft keyword it is.
         let t = self.tokens.get(at).filter(|t| t.kind == kind || t.soft.as_deref() == Some(kind))?;
         if !t.mark {
@@ -753,7 +756,7 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         return Err("more than 64 marks and soft keywords".into());
     }
     let extra_at = extras.iter().map(|e| e.1.start).collect();
-    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, dissolved: None, fatal: None, word: None, flags: Vec::new(), nested: 0 };
+    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, dissolved: None, fatal: None, word: None, flags: Vec::new(), nested: 0, far: 0 };
     first_of(&mut p);
     // A whole root is opened at byte 0 and matched by its content, which may be empty. Marks
     // before the first token are kept where the root can start with them.
@@ -776,7 +779,10 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
     let mut out = match matched {
         Some(next) if next == plain.len() => p.out,
         Some(next) => return Err(format!("the token at byte {} is past the grammar's end", plain[next].start)),
-        None => return Err("no parse: the tokens do not match the grammar".into()),
+        None => {
+            let at = plain.get(p.far).map_or_else(|| "the end".to_owned(), |t| format!("{} at byte {}", t.kind, t.start));
+            return Err(format!("no parse: the tokens do not match the grammar (the furthest: {at})"));
+        }
     };
     // The nodes dropped (`drop`) go, each node's size less those inside it.
     if out.iter().any(|x| x.kind == crate::syntax::GONE) {

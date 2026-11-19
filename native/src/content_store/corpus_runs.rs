@@ -391,6 +391,19 @@ impl ContentStore {
         Ok(rows.into_iter().filter_map(|d| d.try_into().ok()).collect())
     }
 
+    /// `corpus_run_also` of the newest run of lane `lane` over `root`: what a run of the same programs named last.
+    pub fn corpus_lane_also(&self, root: &str, lane: &[u8; 32]) -> StoreResult<Vec<[u8; 32]>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let rows = connection
+            .prepare_cached(
+                "SELECT plan_digest FROM corpus_manifest_plans WHERE manifest_id = (SELECT m.manifest_id FROM corpus_manifests m \
+                 JOIN corpus_roots r USING (root_id) WHERE r.path = ?1 AND m.lane = ?2 ORDER BY m.last_run DESC LIMIT 1)",
+            )?
+            .query_map(params![root, &lane[..]], |r| r.get::<_, Vec<u8>>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows.into_iter().filter_map(|d| d.try_into().ok()).collect())
+    }
+
     /// The sources the newest `runs` runs over `root` read, of any lane. A lane is the programs' texts, so a rule's
     /// edit starts a new one with no run: what a root's files and guests are does not change with the rules (Q22).
     pub fn root_sources(&self, root: &str, runs: usize) -> StoreResult<Vec<SourceId>> {

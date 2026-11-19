@@ -1393,6 +1393,9 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 }
                 _ => "bad = true;".to_string(),
             }
+        } else if c.all {
+            // The mask at every byte of a token `least` long at least (`records::check_holds`).
+            format!("if (len >= {n}u) {{ bool every = true; for (uint q = s / 64u; q <= l / 64u; q++) {{ ulong want = ~0ul; if (q == s / 64u) want &= ~0ul << (s % 64u); if (q == l / 64u) want &= ~0ul >> (63u - l % 64u); every = every && (out[f.out_base + {o}u * f.groups + q] & want) == want; }} bad = bad || every; }}", n = c.least)
         } else if c.count {
             format!("uint got = 0u; for (uint q = s / 64u; q <= l / 64u; q++) {{ ulong x = out[f.out_base + {o}u * f.groups + q]; if (q == s / 64u) x &= ~0ul << (s % 64u); if (q == l / 64u) x &= ~0ul >> (63u - l % 64u); got += popcount(x); }} bad = bad || got >= {n}u;", n = c.least)
         } else {
@@ -1405,7 +1408,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
         let t = rerail_compiler::records::WordTable::new(&r.words).expect("verified: the words fit a table");
         let tails: Vec<u64> = if t.tails.is_empty() { vec![0; 7] } else { t.tails.iter().flatten().copied().collect() };
         let (se, le, e, x) = (r.starts, r.lasts, n.extracts.len(), n.extracts.len());
-        let tested = r.checks.iter().any(|c| c.then != rerail_compiler::records::CheckThen::Escape);
+        let tested = r.checks.iter().any(|c| c.then.marks());
         // The tests, each once whatever rules it is at (a bit of `record_tests`).
         let mut distinct: Vec<rerail_compiler::records::TokenCheck> = Vec::new();
         for c in &r.checks {
@@ -1496,7 +1499,8 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 .enumerate()
                 .filter_map(|(i, c)| {
                     let bit = match c.then {
-                        rerail_compiler::records::CheckThen::Escape => return None,
+                        // A cut is in the lasts' mask already (`TokenRule::last`).
+                        rerail_compiler::records::CheckThen::Escape | rerail_compiler::records::CheckThen::Cut => return None,
                         rerail_compiler::records::CheckThen::At(k) => 1u32 << k,
                         rerail_compiler::records::CheckThen::After(k) => 1u32 << (rerail_compiler::records::AFTER_SHIFT + u32::from(k)),
                     };
@@ -1808,6 +1812,10 @@ fn run_split_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: 
 
 /// The files' bytes admitted once a run, every pass of it reading them where they are.
 fn run_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], digests: Option<&[[u8; 32]]>, segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
+    // An `early` (decision 0330) or a prefix (0335) is the CPU's for now, as at `run_batch`.
+    if programs.iter().any(|p| crate::block_program::starts_late(p)) {
+        return Err(Error::UnsupportedBackend);
+    }
     let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
     let sources = match digests {
         Some(d) if d.len() == files.len() => crate::slabs::admit_sources_digested(&bytes, d)?,
@@ -2058,6 +2066,9 @@ fn back_kernels(fills: &[(u16, u16, u16)], slots: u16) -> String {
 
 /// `run_serial` over programs without passes, or one forward pass of a program in passes (`io`).
 fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std::sync::Arc<crate::slabs::ResidentSource>], segments: Segments, io: Option<&Io<'_>>, read: bool) -> Result<(SerialRun, Option<Kept>), Error> {
+    if programs.iter().any(|p| crate::block_program::starts_late(p)) {
+        return Err(Error::UnsupportedBackend);
+    }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
     let refs: Vec<&BlockNative> = forms.iter().collect();

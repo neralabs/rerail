@@ -1,3 +1,172 @@
+diff --git a/libs/relax/backend/src/arm64.rs b/libs/relax/backend/src/arm64.rs
+index 06425555..a501d14b 100644
+--- a/libs/relax/backend/src/arm64.rs
++++ b/libs/relax/backend/src/arm64.rs
+@@ -6163,9 +6163,11 @@ pub fn tls_slow(host: u64, key: u64) -> Vec<u8> {
+ /// `mrs xN, <register holding the thread's slot array>` (N or-ed in). macOS: tpidrro_el0 (the
+ /// pthread TSD base; its low 3 bits carry the cpu number, masked off after). Android: tpidr_el0,
+ /// bionic's thread pointer = its TLS slot array (bionic libc/platform/bionic/tls_defines.h).
+-#[cfg(not(target_os = "android"))]
++/// Linux: tpidr_el0 too, glibc's thread pointer, from which the executable's static TLS sits at a
++/// fixed offset (os/tls.rs: the block's cell is "slot" offset/8).
++#[cfg(not(any(target_os = "android", target_os = "linux")))]
+ const MRS_SLOT_BASE: u32 = 0xD53B_D060;
+-#[cfg(target_os = "android")]
++#[cfg(any(target_os = "android", target_os = "linux"))]
+ const MRS_SLOT_BASE: u32 = 0xD53B_D040;
+ 
+ pub fn tsd_reader() -> Vec<u8> {
+diff --git a/libs/relax/backend/src/asm/arm64.rs b/libs/relax/backend/src/asm/arm64.rs
+index 810a74bb..14f83c1b 100644
+--- a/libs/relax/backend/src/asm/arm64.rs
++++ b/libs/relax/backend/src/asm/arm64.rs
+@@ -3304,6 +3304,36 @@ fn neon_extra(ctx: &mut Ctx, mn: &str, o: &[Op]) -> Res<bool> {
+             w(ctx, if mn == "sha1su1" { 0x5E28_1800 } else { 0x5E28_2800 } | rn.n() << 5 | rd.n());
+             return Ok(true);
+         }
++        // ARMv8.2 SHA-512 (FEAT_SHA512): sha2's aarch64 backend writes these as asm!
++        "sha512h" | "sha512h2" => {
++            let rd = fp_same(o.first(), K::Q)?;
++            let rn = fp_same(o.get(1), K::Q)?;
++            let (rm, c) = vr(o.get(2))?;
++            if o.len() != 3 || c != (Arr { n: 2, es: 3 }) {
++                return bad();
++            }
++            w(ctx, if mn == "sha512h" { 0xCE60_8000 } else { 0xCE60_8400 } | rm.n() << 16 | rn.n() << 5 | rd.n());
++            return Ok(true);
++        }
++        "sha512su1" => {
++            let (rd, a) = vr(o.first())?;
++            let (rn, b) = vr(o.get(1))?;
++            let (rm, c) = vr(o.get(2))?;
++            if o.len() != 3 || a != (Arr { n: 2, es: 3 }) || b != a || c != a {
++                return bad();
++            }
++            w(ctx, 0xCE60_8800 | rm.n() << 16 | rn.n() << 5 | rd.n());
++            return Ok(true);
++        }
++        "sha512su0" => {
++            let (rd, a) = vr(o.first())?;
++            let (rn, b) = vr(o.get(1))?;
++            if o.len() != 2 || a != (Arr { n: 2, es: 3 }) || b != a {
++                return bad();
++            }
++            w(ctx, 0xCEC0_8000 | rn.n() << 5 | rd.n());
++            return Ok(true);
++        }
+         "sha1h" => {
+             let rd = fp_same(o.first(), K::S)?;
+             let rn = fp_same(o.get(1), K::S)?;
+diff --git a/libs/relax/backend/src/asm/dis_arm64.rs b/libs/relax/backend/src/asm/dis_arm64.rs
+index 11ebfe14..1b07d6d1 100644
+--- a/libs/relax/backend/src/asm/dis_arm64.rs
++++ b/libs/relax/backend/src/asm/dis_arm64.rs
+@@ -1813,6 +1813,23 @@ fn simd_fp(w: u32) -> Option<D> {
+         wr!(d, "v{}.2d, v{}.2d, v{}.2d, #{}", f(w, 0, 5), f(w, 5, 5), f(w, 16, 5), f(w, 10, 6));
+         return Some(d);
+     }
++    // sha512h / sha512h2 / sha512su1 (opcode 3 is rax1, below) and sha512su0
++    if w & 0xFFE0_F000 == 0xCE60_8000 && f(w, 10, 2) != 3 {
++        let (rd, rn, rm) = (f(w, 0, 5), f(w, 5, 5), f(w, 16, 5));
++        let (name, ops) = match f(w, 10, 2) {
++            0 => ("sha512h", format!("q{}, q{}, v{}.2d", rd, rn, rm)),
++            1 => ("sha512h2", format!("q{}, q{}, v{}.2d", rd, rn, rm)),
++            _ => ("sha512su1", format!("v{}.2d, v{}.2d, v{}.2d", rd, rn, rm)),
++        };
++        let mut d = D::new(name, Class::Vector);
++        d.ops = ops;
++        return Some(d);
++    }
++    if w & 0xFFFF_FC00 == 0xCEC0_8000 {
++        let mut d = D::new("sha512su0", Class::Vector);
++        wr!(d, "v{}.2d, v{}.2d", f(w, 0, 5), f(w, 5, 5));
++        return Some(d);
++    }
+     if w & 0xFFE0_FC00 == 0xCE60_8C00 {
+         let mut d = D::new("rax1", Class::Vector);
+         wr!(d, "v{}.2d, v{}.2d, v{}.2d", f(w, 0, 5), f(w, 5, 5), f(w, 16, 5));
+diff --git a/libs/relax/backend/src/asm/tests_arm64.rs b/libs/relax/backend/src/asm/tests_arm64.rs
+index 80e4299b..97f2e9b4 100644
+--- a/libs/relax/backend/src/asm/tests_arm64.rs
++++ b/libs/relax/backend/src/asm/tests_arm64.rs
+@@ -862,6 +862,10 @@ ld1r {v0.2d}, [x0], #8
+ ld2r {v0.8h, v1.8h}, [x0]
+ ld3r {v0.4s, v1.4s, v2.4s}, [x0]
+ ld4r {v0.2d, v1.2d, v2.2d, v3.2d}, [x0], #32
++sha512h q0, q1, v2.2d
++sha512h2 q3, q4, v5.2d
++sha512su0 v6.2d, v7.2d
++sha512su1 v8.2d, v9.2d, v10.2d
+ "#;
+     let v16 = ["16b", "8b", "8h", "4h", "4s", "2s", "2d"];
+     for f in ["add", "sub", "cmeq", "cmgt", "cmge", "cmhi", "cmhs", "cmtst", "sshl", "ushl", "srshl", "urshl", "sqadd", "uqadd", "sqsub", "uqsub", "addp"] {
+@@ -1202,3 +1206,20 @@ fn unencodable_logical_immediates_are_errors() {
+         assert!(e.contains("logical immediate"), "{}: {}", l, e);
+     }
+ }
++
++/// The SHA-512 instructions (FEAT_SHA512), as sha2's aarch64 backend spells them in its asm!
++/// (upper case, `.2D`): the words clang gives for each.
++#[test]
++fn sha512_instructions() {
++    for (src, word) in [
++        ("sha512h q0, q1, v2.2d", 0xce62_8020u32),
++        ("SHA512H q31, q30, v29.2D", 0xce7d_83df),
++        ("sha512h2 q3, q4, v5.2d", 0xce65_8483),
++        ("SHA512SU0 v6.2D, v7.2D", 0xcec0_80e6),
++        ("sha512su1 v8.2d, v9.2d, v10.2d", 0xce6a_8928),
++    ] {
++        assert_eq!(ours_bytes(src).unwrap(), word.to_le_bytes(), "{src}");
++    }
++    assert!(ours_bytes("sha512h q0, q1, v2.4s").is_err(), "the arrangement is 2d");
++    assert!(ours_bytes("sha512su0 v0.2d, v1.4s").is_err());
++}
+diff --git a/libs/relax/base/src/cfg.rs b/libs/relax/base/src/cfg.rs
+index 695fd45e..a07f3ade 100644
+--- a/libs/relax/base/src/cfg.rs
++++ b/libs/relax/base/src/cfg.rs
+@@ -58,6 +58,8 @@ impl CfgSet {
+             CfgSet::ios_arm64(sess, features)
+         } else if cfg!(windows) {
+             CfgSet::windows_x64(sess, features)
++        } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
++            CfgSet::linux_arm64(sess, features)
+         } else {
+             CfgSet::linux_x64(sess, features)
+         }
+@@ -154,6 +156,23 @@ impl CfgSet {
+         CfgSet { session: sess.clone(), set }
+     }
+ 
++    /// aarch64 Linux (glibc), release, panic=abort, not test: the machine only (a Linux arm64
++    /// host such as a DGX Spark), not a check target. `rustc --print cfg --target
++    /// aarch64-unknown-linux-gnu` (1.99.1): neon is the only default target_feature.
++    pub fn linux_arm64(sess: &std::sync::Arc<crate::Session>, features: &[String]) -> CfgSet {
++        let mut set: Vec<String> = [
++            "unix", "target_os=linux", "target_family=unix", "target_env=gnu", "target_abi=",
++            "target_vendor=unknown", "target_arch=aarch64",
++            "target_pointer_width=64", "target_endian=little", "panic=abort",
++            "target_feature=neon", "target_has_atomic=8", "target_has_atomic=16",
++            "target_has_atomic=32", "target_has_atomic=64", "target_has_atomic=ptr",
++        ].iter().map(|s| s.to_string()).collect();
++        for f in features {
++            set.push(format!("feature={}", f));
++        }
++        CfgSet { session: sess.clone(), set }
++    }
++
+     /// x86_64 Linux, release (no debug_assertions), panic=abort, not test.
+     pub fn linux_x64(sess: &std::sync::Arc<crate::Session>, features: &[String]) -> CfgSet {
+         let mut set = Vec::new();
+@@ -255,6 +274,8 @@ impl CfgSet {
+             "aarch64-apple-darwin"
+         } else if self.has("target_os=ios") {
+             "aarch64-apple-ios"
++        } else if self.has("target_arch=aarch64") {
++            "aarch64-unknown-linux-gnu"
+         } else {
+             "x86_64-unknown-linux-gnu"
+         }
 diff --git a/libs/relax/compiler/src/cache.rs b/libs/relax/compiler/src/cache.rs
 index a83c0c4f..f44a8d24 100644
 --- a/libs/relax/compiler/src/cache.rs
@@ -14,6 +183,248 @@ index a83c0c4f..f44a8d24 100644
          return None;
      }
      home().ok().map(|dir| SharedCode { dir, stale: Vec::new() })
+diff --git a/libs/relax/compiler/src/inspect/instrument.rs b/libs/relax/compiler/src/inspect/instrument.rs
+index 88412a53..068bad81 100644
+--- a/libs/relax/compiler/src/inspect/instrument.rs
++++ b/libs/relax/compiler/src/inspect/instrument.rs
+@@ -1571,7 +1571,7 @@ mod pause_imp {
+     }
+ }
+ 
+-#[cfg(target_os = "linux")]
++#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+ mod pause_imp {
+     use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+     static HELD: relax_session::sync::Mutex<Vec<(u64, &'static crate::inspect::threads::HoldSlot)>> = relax_session::sync::Mutex::new(Vec::new());
+@@ -1651,7 +1651,8 @@ mod pause_imp {
+     }
+ }
+ 
+-#[cfg(any(windows, target_os = "android"))]
++// (Linux aarch64 as Android: no pause; a live patch's threads are not held)
++#[cfg(any(windows, target_os = "android", all(target_os = "linux", target_arch = "aarch64")))]
+ mod pause_imp {
+     pub fn pause(_want: &'static (dyn Fn(&crate::inspect::threads::Thread) -> bool + Sync)) -> usize {
+         0
+diff --git a/libs/relax/compiler/src/inspect/prof.rs b/libs/relax/compiler/src/inspect/prof.rs
+index 01bf1fe4..82402f8d 100644
+--- a/libs/relax/compiler/src/inspect/prof.rs
++++ b/libs/relax/compiler/src/inspect/prof.rs
+@@ -114,12 +114,12 @@ pub fn collect_opts(secs: f64, hz: u64, ev: Ev, wall: bool, want: &dyn Fn(&super
+ }
+ 
+ /// Stack samples of threads `tids` of another process, walked by its CFI (`vsnative pid=`).
+-#[cfg(target_os = "linux")]
++#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+ pub fn collect_foreign(tids: &[u64], secs: f64, hz: u64, ev: Ev, cfi: &super::cfi::Foreign, cancel: &dyn Fn() -> bool) -> (Vec<Sample>, u64, Vec<String>) {
+     imp::collect_foreign(tids, secs, hz, ev, cfi, cancel)
+ }
+ 
+-#[cfg(target_os = "linux")]
++#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+ mod imp {
+     use super::{Run, Sample};
+     use crate::inspect::cfi::Regs;
+@@ -477,7 +477,8 @@ mod imp {
+     }
+ }
+ 
+-#[cfg(any(target_vendor = "apple", target_os = "android"))]
++// (Linux aarch64 as Android's: samples by capture, frames by their records)
++#[cfg(any(target_vendor = "apple", target_os = "android", all(target_os = "linux", target_arch = "aarch64")))]
+ mod imp {
+     use super::{Run, Sample};
+ 
+@@ -485,7 +486,7 @@ mod imp {
+     fn on_cpu(t: &crate::inspect::threads::Thread) -> bool {
+         #[cfg(target_vendor = "apple")]
+         { crate::inspect::threads::running(t) }
+-        #[cfg(target_os = "android")]
++        #[cfg(any(target_os = "android", target_os = "linux"))]
+         { t.state == "running" }
+     }
+ 
+@@ -498,6 +499,10 @@ mod imp {
+         if wall {
+             notes.push("wall=1: waiting threads sampled too (bucket `off CPU (waiting)`)".into());
+         }
++        #[cfg(target_os = "linux")]
++        if ev != super::Ev::Cpu {
++            notes.push(format!("{} is sampled only on x86-64 Linux (perf_event's walk there); CPU time instead", ev.name()));
++        }
+         #[cfg(target_os = "android")]
+         if ev != super::Ev::Cpu {
+             notes.push(format!("{} cannot be sampled in an Android app (perf_event is closed to apps); CPU time instead", ev.name()));
+diff --git a/libs/relax/compiler/src/inspect/threads.rs b/libs/relax/compiler/src/inspect/threads.rs
+index 64fedf3a..2d5b07bf 100644
+--- a/libs/relax/compiler/src/inspect/threads.rs
++++ b/libs/relax/compiler/src/inspect/threads.rs
+@@ -1129,7 +1129,7 @@ mod x64_walk {
+ 
+ /// Android arm64: JIT code and host code both keep frame records (x29 = fp: [fp] = the caller's
+ /// fp, [fp+8] = the return address); a frame is kept while its return address is code.
+-#[cfg(all(target_os = "android", target_arch = "aarch64"))]
++#[cfg(all(any(target_os = "android", target_os = "linux"), target_arch = "aarch64"))]
+ mod arm64_walk {
+     use super::{Raw, MAX_FRAMES};
+ 
+diff --git a/libs/relax/compiler/src/lib.rs b/libs/relax/compiler/src/lib.rs
+index 5e831c36..4dcb73ca 100644
+--- a/libs/relax/compiler/src/lib.rs
++++ b/libs/relax/compiler/src/lib.rs
+@@ -427,7 +427,7 @@ pub fn print_as_rustc(sess: &std::sync::Arc<crate::Session>, args: &[String], in
+     // split-debuginfo kinds, only_cdylib)
+     let (dll_pre, dll_suf, exe_suf, st_pre, st_suf, split, only_cdylib): (&str, &str, &str, &str, &str, &[&str], bool) = match triple {
+         "aarch64-apple-darwin" | "aarch64-apple-ios" => ("lib", ".dylib", "", "lib", ".a", &["off", "packed", "unpacked"], false),
+-        "x86_64-unknown-linux-gnu" | "aarch64-linux-android" => ("lib", ".so", "", "lib", ".a", &["off", "packed", "unpacked"], false),
++        "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu" | "aarch64-linux-android" => ("lib", ".so", "", "lib", ".a", &["off", "packed", "unpacked"], false),
+         "x86_64-pc-windows-gnu" => ("", ".dll", ".exe", "lib", ".a", &["off"], false),
+         "wasm32-unknown-unknown" | "wasm64-unknown-unknown" => ("", ".wasm", ".wasm", "lib", ".a", &["off"], true),
+         t => return Err(format!("no target model for {t}")),
+diff --git a/libs/relax/compiler/src/os/proc.rs b/libs/relax/compiler/src/os/proc.rs
+index 4f714be3..4bbe077a 100644
+--- a/libs/relax/compiler/src/os/proc.rs
++++ b/libs/relax/compiler/src/os/proc.rs
+@@ -597,7 +597,14 @@ mod imp {
+     fn versioned_so(name: &str) -> Option<String> {
+         let prefix = format!("lib{}.so.", name);
+         let mut best: Option<String> = None;
+-        for dir in ["/usr/lib", "/usr/lib64", "/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "/lib64"] {
++        // (the multiarch folders of the machine's own arch: an aarch64 host's libstdc++.so.6 is
++        // only under aarch64-linux-gnu)
++        let multiarch: &[&str] = if cfg!(target_arch = "aarch64") {
++            &["/lib/aarch64-linux-gnu", "/usr/lib/aarch64-linux-gnu"]
++        } else {
++            &["/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu"]
++        };
++        for dir in ["/usr/lib", "/usr/lib64"].iter().chain(multiarch).chain(&["/lib64"]) {
+             if let Ok(rd) = std::fs::read_dir(dir) {
+                 for e in rd.flatten() {
+                     let f = e.file_name().to_string_lossy().into_owned();
+diff --git a/libs/relax/compiler/src/os/tls.rs b/libs/relax/compiler/src/os/tls.rs
+index 781123aa..4760aaf3 100644
+--- a/libs/relax/compiler/src/os/tls.rs
++++ b/libs/relax/compiler/src/os/tls.rs
+@@ -53,11 +53,35 @@ mod imp {
+ 
+     /// Linux x86-64: the block pointer lives in a static-TLS cell of this (executable)
+     /// runtime, at a fixed offset from the thread pointer that JIT code reads via fs.
++    #[cfg(target_arch = "aarch64")]
++    pub fn jit_offset(key: u64, emit: &dyn Fn(&[u8]) -> u64) -> u64 {
++        // Linux aarch64: the cell is at a fixed offset from tpidr_el0 (glibc's thread pointer;
++        // the executable's static TLS follows its 16-byte TCB), which JIT code reads as the
++        // thread's "slot array" (backend arm64 tls_block_ip0: [tp + slot*8]), so the slot is the
++        // offset in words. Checked through the emitted reader, as on Android.
++        let tp: u64;
++        unsafe { core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nomem, nostack, preserves_flags)); }
++        let cell = TLS_BLOCK.with(|c| c as *const std::cell::Cell<u64> as u64);
++        let off = cell.wrapping_sub(tp) as i64;
++        if off % 8 != 0 || off < 0 || off > i32::MAX as i64 || !static_cell(cell) {
++            panic!("thread-local block cell is not in static TLS (offset {:#x})", off);
++        }
++        let slot = (off / 8) as u64;
++        let reader = emit(&relax_backend::arm64::tsd_reader());
++        let read: extern "C" fn(u64) -> u64 = unsafe { std::mem::transmute(reader as usize) };
++        let old = get(key);
++        set(key, 0x5a5a_0000 as *mut u8);
++        let seen = read(slot);
++        set(key, old);
++        if seen != 0x5a5a_0000 {
++            panic!("thread-local fast path: the static TLS cell at tp+{:#x} reads {:#x}", off, seen);
++        }
++        slot
++    }
++
++    #[cfg(target_arch = "x86_64")]
+     pub fn jit_offset(_key: u64, emit: &dyn Fn(&[u8]) -> u64) -> u64 {
+-        #[cfg(target_arch = "x86_64")]
+         let reader = emit(&relax_backend::x64::fs_reader());
+-        #[cfg(not(target_arch = "x86_64"))]
+-        let reader: u64 = compile_error!("the JIT does not build for Linux on this CPU: its thread-local fast path has only the x86-64 (fs) reader on Linux");
+         let fs_base: rt_fn_ty!(fn() -> u64) = unsafe { std::mem::transmute(reader as usize) };
+         let cell = TLS_BLOCK.with(|c| c as *const std::cell::Cell<u64> as u64);
+         let off = cell.wrapping_sub(fs_base()) as i64;
+diff --git a/libs/relax/compiler/std/std/os/linux.rs b/libs/relax/compiler/std/std/os/linux.rs
+index eb9e99f2..fff2cdde 100644
+--- a/libs/relax/compiler/std/std/os/linux.rs
++++ b/libs/relax/compiler/std/std/os/linux.rs
+@@ -24,3 +24,47 @@ pub mod net {
+         }
+     }
+ }
++
++pub mod fs {
++    //! Linux-specific extensions to [`fs::Metadata`](crate::fs::Metadata) (rustc
++    //! library/std/src/os/linux/fs.rs): the fields of the `stat` it was read from.
++    use crate::fs::Metadata;
++
++    pub trait MetadataExt {
++        fn st_dev(&self) -> u64;
++        fn st_ino(&self) -> u64;
++        fn st_mode(&self) -> u32;
++        fn st_nlink(&self) -> u64;
++        fn st_uid(&self) -> u32;
++        fn st_gid(&self) -> u32;
++        fn st_rdev(&self) -> u64;
++        fn st_size(&self) -> u64;
++        fn st_atime(&self) -> i64;
++        fn st_atime_nsec(&self) -> i64;
++        fn st_mtime(&self) -> i64;
++        fn st_mtime_nsec(&self) -> i64;
++        fn st_ctime(&self) -> i64;
++        fn st_ctime_nsec(&self) -> i64;
++        fn st_blksize(&self) -> u64;
++        fn st_blocks(&self) -> u64;
++    }
++
++    impl MetadataExt for Metadata {
++        fn st_dev(&self) -> u64 { self.stat().st_dev as u64 }
++        fn st_ino(&self) -> u64 { self.stat().st_ino as u64 }
++        fn st_mode(&self) -> u32 { self.stat().st_mode as u32 }
++        fn st_nlink(&self) -> u64 { self.stat().st_nlink as u64 }
++        fn st_uid(&self) -> u32 { self.stat().st_uid as u32 }
++        fn st_gid(&self) -> u32 { self.stat().st_gid as u32 }
++        fn st_rdev(&self) -> u64 { self.stat().st_rdev as u64 }
++        fn st_size(&self) -> u64 { self.stat().st_size as u64 }
++        fn st_atime(&self) -> i64 { self.stat().st_atime as i64 }
++        fn st_atime_nsec(&self) -> i64 { self.stat().st_atime_nsec as i64 }
++        fn st_mtime(&self) -> i64 { self.stat().st_mtime as i64 }
++        fn st_mtime_nsec(&self) -> i64 { self.stat().st_mtime_nsec as i64 }
++        fn st_ctime(&self) -> i64 { self.stat().st_ctime as i64 }
++        fn st_ctime_nsec(&self) -> i64 { self.stat().st_ctime_nsec as i64 }
++        fn st_blksize(&self) -> u64 { self.stat().st_blksize as u64 }
++        fn st_blocks(&self) -> u64 { self.stat().st_blocks as u64 }
++    }
++}
+diff --git a/libs/relax/compiler/tests/cast_open_slice_referent.rs b/libs/relax/compiler/tests/cast_open_slice_referent.rs
+new file mode 100644
+index 00000000..a3a893dd
+--- /dev/null
++++ b/libs/relax/compiler/tests/cast_open_slice_referent.rs
+@@ -0,0 +1,23 @@
++// A cast whose source referent is a slice of a still-open element type: `&[][..] as &[String]`.
++// rustc's cast check coerces the operand to the target (cast.rs try_coercion_cast), which decides
++// the element; Relax left it open and reported the index's `[_; 0]: Index<RangeFull>` as E0283.
++// Run with `makepad test` and rustc --test; lines "| " are compared.
++fn count(lists: &[&[String]]) -> usize {
++    lists.iter().map(|l| l.len()).sum::<usize>() + lists.len()
++}
++
++#[test]
++fn empty_slice_cast_takes_the_target_element() {
++    let lists = [&[][..] as &[String]];
++    let words = vec!["a".to_string()];
++    let more = [&words[..] as &[String], &[][..] as &[String]];
++    println!("| {} {}", count(&lists), count(&more));
++}
++
++#[test]
++fn literal_elements_still_cast() {
++    let bytes = &[1u8, 2][..] as &[u8];
++    let v: Vec<u16> = Vec::new();
++    let r = &v[..] as &[u16];
++    println!("| {:?} {}", bytes, r.len());
++}
 diff --git a/libs/relax/front/src/native.rs b/libs/relax/front/src/native.rs
 index 20d9fcc4..2b518851 100644
 --- a/libs/relax/front/src/native.rs
@@ -128,7 +539,7 @@ index 20d9fcc4..2b518851 100644
              }
          } else if *kind == "dep-info" {
 diff --git a/libs/relax/front/src/unitgraph.rs b/libs/relax/front/src/unitgraph.rs
-index 84bcc71b..38004990 100644
+index 84bcc71b..99b79aee 100644
 --- a/libs/relax/front/src/unitgraph.rs
 +++ b/libs/relax/front/src/unitgraph.rs
 @@ -785,6 +785,8 @@ pub fn run_build_scripts(sess: &std::sync::Arc<crate::Session>, g: &mut Graph, t
@@ -218,7 +629,28 @@ index 84bcc71b..38004990 100644
      };
      for (k, v) in cenv {
          cmd.env(k, v);
-@@ -2085,6 +2112,9 @@ fn rerun_reason(stored: &str, now: &str, stored_env: &str, env_key: &str) -> Str
+@@ -1815,6 +1842,20 @@ fn run_one(sess: &std::sync::Arc<crate::Session>, bs: &BuildScript, raw: &[RawUn
+         // RELAX_WORKSPACE first: rustix's build.rs probed `src/backend/linux_raw/arch/x86_64.rs`
+         // there, found nothing and chose its libc backend)
+         cmd.current_dir(dir);
++        // The mount table does cross while one is active: the script's own build-dependencies
++        // may be a mount's packages (a registry crate's build.rs that uses a crate the workspace
++        // patches in from a vendored copy: cranelift-assembler-x64's, of the vendored
++        // cranelift-assembler-x64-meta), loaded from their virtual paths, which nothing served
++        // ("load error ... No such file or directory", shown on disk by vfs::shown). It changes
++        // no relative path (those resolve against RELAX_WORKSPACE, which stays unset) and no
++        // rerun key (SCRIPT_RUN_SHAPE_VARS).
++        let mounts = crate::vfs::mounts_text();
++        if !mounts.is_empty() {
++            cmd.env("RELAX_VFS", mounts);
++            if let Some(e) = std::env::var_os("RELAX_EDITS") {
++                cmd.env("RELAX_EDITS", e);
++            }
++        }
+     }
+     // cargo's `[env]` configuration, after every variable set above (cargo apply_env_config)
+     for (k, v) in crate::crates::config_env() {
+@@ -2085,6 +2126,9 @@ fn rerun_reason(stored: &str, now: &str, stored_env: &str, env_key: &str) -> Str
  /// build-dependency there) keeps one output (relax issue 69). No cargo script can read them.
  /// The variable that hands a build script's child run its parent's native receipt.
  pub const NATIVE_RECEIPT: &str = "RELAX_NATIVE_RECEIPT";
@@ -228,7 +660,7 @@ index 84bcc71b..38004990 100644
  /// The variable that hands the package binaries an integration test starts (CARGO_BIN_EXE_<name>)
  /// its run's native receipt (`Inherit::Binary`): set in the test's environment. Empty: none, the
  /// binary builds its own natives. A binary whose test cleared it from its environment (or cleared
-@@ -2283,7 +2313,8 @@ fn names_program(stdout: &str, out_dir: &str, exe: &std::path::Path) -> bool {
+@@ -2283,7 +2327,8 @@ fn names_program(stdout: &str, out_dir: &str, exe: &std::path::Path) -> bool {
  
  /// A script run's environment as its rerun key holds it: the hash of its units, what runs it
  /// (`tool`, run_build_scripts) and the variables it is given. Left out: the variables that only
@@ -238,7 +670,7 @@ index 84bcc71b..38004990 100644
  /// output's folder, `script_build_dir`), and RUSTC and CARGO while they name the program that runs
  /// it (`exe`): where that program lies is no input of the script, what it is (`tool`) is. Two
  /// copies of one Relax find each other's outputs; a Relax that compiles the script or answers its
-@@ -2292,7 +2323,7 @@ fn script_env_key<'a>(h: u64, tool: u128, envs: impl Iterator<Item = (&'a std::f
+@@ -2292,7 +2337,7 @@ fn script_env_key<'a>(h: u64, tool: u128, envs: impl Iterator<Item = (&'a std::f
      let mut key = format!("{:016x}\ntool={:032x}", h, tool);
      for (k, v) in envs {
          let the_program = (k == "RUSTC" || k == "CARGO") && v == Some(exe.as_os_str());
@@ -247,7 +679,7 @@ index 84bcc71b..38004990 100644
              continue;
          }
          key.push_str(&format!("\n{}={}", k.to_string_lossy(), v.map(|v| v.to_string_lossy().into_owned()).unwrap_or_default()));
-@@ -2861,6 +2892,29 @@ mod shared_script_tests {
+@@ -2861,6 +2906,29 @@ mod shared_script_tests {
          d
      }
  
@@ -386,3 +818,62 @@ index eeb69f2d..9be81c76 100644
      /// `UniversalRegions::closure_mapping`: the regions of the parent that the nested body's
      /// external universal regions (global first, then external) stand for. Those the nested body
      /// inherits are the parent's own universal regions; the others sit in the regions of the closure
+diff --git a/libs/relax/types/src/typeck.rs b/libs/relax/types/src/typeck.rs
+index 15b36829..7d3de8d1 100644
+--- a/libs/relax/types/src/typeck.rs
++++ b/libs/relax/types/src/typeck.rs
+@@ -5373,6 +5373,14 @@ impl<'a> Fcx<'a> {
+                     // `p.as_ref() as &Path`: the source referent is open (`AsRef<_>` with several
+                     // impls); rustc check_casts coerces at the end of typeck, which decides it
+                     self.deferred_casts.push((*x, xt, target));
++                } else if matches!((&kx, &kt), (TyKind::Ref(_, p, _), TyKind::Ref(..)) if self.has_open_infer(*p)) {
++                    // `&[][..] as &[String]`: the source referent is known in shape but holds an
++                    // open variable (`[?T]`). rustc's cast check coerces (try_coercion_cast), which
++                    // unifies it with the target's referent; without that nothing decided `?T`, and
++                    // the index's `[?T; 0]: Index<RangeFull>` stayed ambiguous (E0283). A failed
++                    // coercion leaves the types as they were, for the cast check to report.
++                    let snap = self.start_snapshot();
++                    if self.try_coerce(xt, target, Some(*x)) { self.commit_from(snap); } else { self.rollback_to(snap); }
+                 } else if let (TyKind::Ref(m1, a, _), TyKind::Ref(m2, bt, _)) = (&kx, &kt) {
+                     // a cast is first a coercion when one applies (rustc cast.rs
+                     // try_coercion_cast): `&s as &str` is a deref coercion of &String
+diff --git a/tools/run/runner/src/lib.rs b/tools/run/runner/src/lib.rs
+index 3fffa292..4acd5840 100644
+--- a/tools/run/runner/src/lib.rs
++++ b/tools/run/runner/src/lib.rs
+@@ -219,6 +219,8 @@ fn plain(p: std::path::PathBuf) -> std::path::PathBuf {
+ 
+ /// The runner on this process's command line, with `host` added.
+ pub fn main(host: &'static Host) {
++    #[cfg(all(target_os = "linux", target_env = "gnu"))]
++    static_tls_room();
+     // a package binary above a test's deps/ (Windows): its run, with the environment its .cmd
+     // would give it, before anything reads the environment
+     let bin = relax_compiler::selfexe::bin_start(&relax_compiler::os::proc::args_bytes());
+@@ -245,6 +247,26 @@ pub fn main(host: &'static Host) {
+     run(relax_compiler::os::proc::args_bytes())
+ }
+ 
++/// glibc keeps 512 bytes of static TLS for libraries loaded after the start, and an `--allow-c`
++/// native library that bundles an allocator (jemalloc, mimalloc: initial-exec TLS) needs more:
++/// its load failed "cannot allocate memory in static TLS block". The surplus is fixed when the
++/// process starts, from GLIBC_TUNABLES, so Relax restarts itself once with room for it (and
++/// every process it starts inherits it).
++#[cfg(all(target_os = "linux", target_env = "gnu"))]
++fn static_tls_room() {
++    use std::os::unix::process::CommandExt;
++    const TUNABLE: &str = "glibc.rtld.optional_static_tls";
++    let old = std::env::var("GLIBC_TUNABLES").unwrap_or_default();
++    if old.contains(TUNABLE) {
++        return;
++    }
++    let new = if old.is_empty() { format!("{TUNABLE}=262144") } else { format!("{old}:{TUNABLE}=262144") };
++    let mut args = std::env::args_os();
++    let arg0 = args.next().unwrap_or_default();
++    let err = std::process::Command::new("/proc/self/exe").arg0(arg0).args(args).env("GLIBC_TUNABLES", new).exec();
++    eprintln!("relax: could not restart with room for native libraries' static TLS: {err}");
++}
++
+ /// Warn about legacy environment names still carried in people's notes.
+ fn warn_legacy_env() {
+     const OLD_PREFIX: &str = concat!("MAKEPAD_", "RUN_");

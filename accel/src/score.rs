@@ -79,12 +79,33 @@ pub struct Unit {
     /// CPU on a device lane. Placement reads them (`Executor::place`).
     pub latency: Option<f64>,
     pub job_cpu: Option<f64>,
+    /// The share clock (seconds from the epoch): each second the lane has jobs running advances it by the second over
+    /// the jobs running then. A job's share of the lane is the clock's advance from its start to its end
+    /// ([`Unit::share`]); `share_at` is when it was last advanced.
+    pub share_clock: f64,
+    pub share_at: f64,
     /// A job's thread CPU over the price's host CPU estimate, as a moving average: placement scales the lane's
     /// host estimates by it.
     pub host_ratio: Option<f64>,
 }
 
 impl Unit {
+    /// Advances the share clock to `at`, before the jobs running change.
+    fn advance(&mut self, at: f64) {
+        if self.running > 0 && at > self.share_at {
+            self.share_clock += (at - self.share_at) / self.running as f64;
+        }
+        self.share_at = self.share_at.max(at);
+    }
+
+    /// What a job that ran from share clock `from` to `to` (`ran` seconds of wall) occupied of the lane. A device
+    /// lane (one slot) runs jobs side by side: two waves in flight each take the device's time while both run, so
+    /// a job's own wall counted that shared time twice. The shares of a lane's jobs sum to the time it had any job
+    /// running. A pool lane's jobs run on threads of their own: their wall.
+    fn share(&self, from: f64, to: f64, ran: f64) -> f64 {
+        if self.slots == 1 { (to - from).clamp(0.0, ran) } else { ran }
+    }
+
     /// Busy seconds over the lane's capacity in the span it worked: 1 when every worker ran from first to last.
     pub fn utilization(&self) -> f64 {
         match self.first {
@@ -343,7 +364,8 @@ pub struct Sample {
     /// The price's wall and host CPU estimates.
     pub estimate: f64,
     pub host_estimate: f64,
-    /// Its wall from start to end, its thread's CPU, and its wait in the queue.
+    /// Its wall from start to end (on a device lane, its share of the lane while other jobs ran beside it:
+    /// [`Unit::share`]), its thread's CPU, and its wait in the queue.
     pub wall: f64,
     pub cpu: f64,
     pub waited: f64,
@@ -392,6 +414,8 @@ pub struct Ticket {
     items: Vec<Item>,
     queued: Instant,
     started: Option<Instant>,
+    /// The lane's share clock when it started ([`Unit::share_clock`]).
+    share0: f64,
     /// The CPU seconds counted so far, on every thread the job ran on.
     cpu: f64,
     /// The thread it runs on now and its clock then: `None` while it is handed between threads.
@@ -424,6 +448,11 @@ impl Ticket {
     }
 
     /// The job runs on this thread from now: its clock is read here, and what the thread counted before is not its.
+    /// CPU seconds the job spent on a thread that did not resume it (its submission run on the lanes' pool).
+    pub fn add_cpu(&mut self, seconds: f64) {
+        self.cpu += seconds.max(0.0);
+    }
+
     pub fn resume(&mut self) {
         take_phases();
         self.cpu0 = Some((std::thread::current().id(), thread_cpu()));
@@ -505,7 +534,7 @@ impl Scoreboard {
             u.queued += 1;
             u.outstanding += est;
         });
-        Ticket { id: NEXT.fetch_add(1, Ordering::Relaxed), lane, items, queued: Instant::now(), started: None, cpu: 0.0, cpu0: None, phases: Vec::new() }
+        Ticket { id: NEXT.fetch_add(1, Ordering::Relaxed), lane, items, queued: Instant::now(), started: None, share0: 0.0, cpu: 0.0, cpu0: None, phases: Vec::new() }
     }
 
     /// A worker took the job.
@@ -515,10 +544,12 @@ impl Scoreboard {
         t.resume();
         self.with(|s| {
             let u = &mut s.units[t.lane.index()];
+            let at = since(now);
+            u.advance(at);
+            t.share0 = u.share_clock;
             u.queued -= 1;
             u.running += 1;
             u.peak = u.peak.max(u.running);
-            let at = since(now);
             u.first = Some(u.first.map_or(at, |f| f.min(at)));
         });
     }
@@ -526,6 +557,7 @@ impl Scoreboard {
     /// The job ended, well or not: its seconds run, and its CPU seconds on every thread it ran on.
     pub fn finish(&self, mut t: Ticket, ok: bool) -> (f64, f64) {
         let end = Instant::now();
+        let mut share = 0.0;
         t.pause();
         let cpu = t.cpu;
         let phases = std::mem::take(&mut t.phases);
@@ -536,12 +568,15 @@ impl Scoreboard {
         let host_est: f64 = t.items.iter().map(|i| i.host).sum();
         self.with(|s| {
             let u = &mut s.units[t.lane.index()];
+            u.advance(since(end));
+            share = u.share(t.share0, u.share_clock, ran);
             u.running -= 1;
             u.outstanding = (u.outstanding - est).max(0.0);
             u.jobs += 1;
             u.launches += t.items.len() as u64;
             u.failed += u64::from(!ok);
-            u.busy += ran;
+            // A device lane's busy seconds are its jobs' shares: they sum to the time it had a job running.
+            u.busy += share;
             u.cpu += cpu;
             u.waited += waited;
             u.estimated += est;
@@ -551,7 +586,7 @@ impl Scoreboard {
                 r.launches += 1;
                 r.units += i.units;
                 r.estimated += i.estimate;
-                r.actual += if est > 0.0 { ran * i.estimate / est } else { ran / t.items.len().max(1) as f64 };
+                r.actual += if est > 0.0 { share * i.estimate / est } else { share / t.items.len().max(1) as f64 };
                 r.host_estimated += i.host;
                 r.host += if host_est > 0.0 { cpu * i.host / host_est } else { cpu / t.items.len().max(1) as f64 };
             }
@@ -567,7 +602,7 @@ impl Scoreboard {
             if t.lane != Lane::Cpu && ok && !cold {
                 u.job_cpu = Some(u.job_cpu.map_or(cpu, |a| a + AVG * (cpu - a)));
             }
-            if ok && !cold && host_est > 0.0 && t.items.iter().all(|i| i.units > 0.0) {
+            if ok && !cold && host_est > 0.0 && t.items.iter().all(|i| i.units > 0.0 && !crate::price::host_learned(i.form, t.lane)) {
                 let r = (cpu / host_est).clamp(0.05, 50.0);
                 u.host_ratio = Some(u.host_ratio.map_or(r, |a| a + AVG * (r - a)));
             }
@@ -581,8 +616,12 @@ impl Scoreboard {
         // A job with no units (a stream's: `strata`, the whole strata loop) prices nothing, and its wall would be
         // fitted as its lane's submission: not kept.
         let units: f64 = t.items.iter().map(|i| i.units).sum();
+        let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
+        // The run prices its later launches from this one (`price::observe`): one kernel name's jobs only.
+        if units > 0.0 && t.items.windows(2).all(|w| w[0].form == w[1].form) && let Some(first) = t.items.first() {
+            crate::price::observe(t.lane, first.form, t.items.len() as u32, units, share, cpu, crate::exec::cores_slowdown(), cold, ok);
+        }
         if KEEP.load(Ordering::Relaxed) && units > 0.0 {
-            let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
             let sample = Sample {
                 lane: t.lane,
                 forms: t.items.iter().map(|i| i.form).collect::<Vec<_>>().join(","),
@@ -590,7 +629,7 @@ impl Scoreboard {
                 units,
                 estimate: est,
                 host_estimate: host_est,
-                wall: ran,
+                wall: share,
                 cpu,
                 waited,
                 phases: phases.iter().map(|&(name, _, c, w)| format!("{name}={:.1}/{:.1}", c * 1e6, w * 1e6)).collect::<Vec<_>>().join(","),
@@ -752,6 +791,37 @@ mod tests {
         // The submission's time shared by the estimates: a quarter to the probe.
         assert!((s.forms[&(Lane::Gpu, "probe")].actual - ran / 4.0).abs() < 1e-12);
         assert!(s.to_string().contains("gpu"));
+    }
+
+    /// Two jobs side by side on a device lane share its time: each is charged the seconds it ran over the jobs
+    /// running then, so their shares sum to the time the lane had a job running, not to both jobs' walls.
+    #[test]
+    fn jobs_side_by_side_on_a_device_lane_share_its_time() {
+        let b = Scoreboard::new([2, 0, 1, 0, 0]);
+        let item = || vec![Item { form: "wave", units: 1.0, estimate: 0.0, host: 0.0 }];
+        let pause = || std::thread::sleep(std::time::Duration::from_millis(30));
+        let (mut first, mut second) = (b.queue(Lane::Gpu, item()), b.queue(Lane::Gpu, item()));
+        let begun = Instant::now();
+        b.start(&mut first);
+        pause();
+        b.start(&mut second);
+        pause();
+        let (ran_first, _) = b.finish(first, true);
+        pause();
+        let (ran_second, _) = b.finish(second, true);
+        let span = begun.elapsed().as_secs_f64();
+        let busy = b.score().units[Lane::Gpu.index()].busy;
+        // Each ran about 60 ms; together the lane was busy about 90.
+        assert!(ran_first + ran_second > 1.2 * span, "the walls overlap: {ran_first} + {ran_second} against {span}");
+        assert!((busy - span).abs() < 0.005, "shares {busy} against the lane's span {span}");
+        // The cores run jobs on threads of their own: each is charged its wall.
+        let (mut a, mut c) = (b.queue(Lane::Cpu, item()), b.queue(Lane::Cpu, item()));
+        b.start(&mut a);
+        b.start(&mut c);
+        pause();
+        let (ra, _) = b.finish(a, true);
+        let (rc, _) = b.finish(c, true);
+        assert!((b.score().units[Lane::Cpu.index()].busy - (ra + rc)).abs() < 1e-9);
     }
 
     /// A device job begins on its lane's thread and ends on a pool thread: its CPU is the work it did on each, never

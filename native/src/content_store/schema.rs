@@ -23,15 +23,16 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 5;
+pub(super) const SCHEMA_VERSION: i64 = 6;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v5.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 5: a frame's row points at its bytes in a segment beside the store
+pub const STORE_FILE_NAME: &str = "content-v6.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 6: the atoms are blocks in files beside the store (decision 0401:
+/// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
 /// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
 /// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 5;
+const STORE_FILE_FLOOR: i64 = 6;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -448,16 +449,30 @@ CREATE TABLE IF NOT EXISTS corpus_swept (
 ) STRICT;
 INSERT OR IGNORE INTO corpus_swept(singleton, done) VALUES (1, 0);
 
--- The single interner (atoms.rs, decision 0049): dense, append-only; atom 0 is the empty string.
--- Each row is a run of consecutive atoms from `first`: their end offsets (u32, little-endian,
--- relative to the row's bytes) and their bytes. SQL reads atoms through the `atoms` virtual table
--- over the process's arena; a row that names an atom commits with or after its segment.
-CREATE TABLE IF NOT EXISTS atom_segment (
-    first INTEGER PRIMARY KEY CHECK(first >= 0),
-    ends BLOB NOT NULL,
-    bytes BLOB NOT NULL
+-- The single interner (atoms.rs, decisions 0049, 0401): dense, append-only; atom 0 is the empty string, and no
+-- block's. The atoms are a chain of blocks in `<store>.atoms/`, mapped by every process: each row is a block, its
+-- file's name there, its first id, the end the last commit reached in it, and the tag the block holds too (a block
+-- not the row's is refused: a store copied without its folder). SQL reads atoms through the `atoms`
+-- virtual table; a row that names an atom commits with or after the commit that reached it.
+CREATE TABLE IF NOT EXISTS atom_blocks (
+    seq INTEGER PRIMARY KEY CHECK(seq >= 1),
+    name TEXT NOT NULL UNIQUE,
+    first INTEGER NOT NULL UNIQUE CHECK(first >= 1),
+    upto INTEGER NOT NULL CHECK(upto >= first),
+    tag INTEGER NOT NULL
 ) STRICT;
-INSERT OR IGNORE INTO atom_segment(first,ends,bytes) VALUES (0,x'00000000',x'');
+
+-- A space's kept facts (decision 0401 F2): a base block and one cumulative delta in
+-- `<store>.facts/<space>/`, each with its maker's tag (a block not its row's is refused). Replaced
+-- in the transaction that commits a run's writes. Additive: an older binary reads the frames.
+CREATE TABLE IF NOT EXISTS facts_blocks (
+    space BLOB PRIMARY KEY CHECK(length(space) = 32),
+    base TEXT,
+    base_tag INTEGER,
+    delta TEXT,
+    delta_tag INTEGER,
+    CHECK((base IS NULL) = (base_tag IS NULL) AND (delta IS NULL) = (delta_tag IS NULL) AND (delta IS NULL OR base IS NOT NULL))
+) STRICT;
 
 -- The derivation graph (derivation.rs): fact names (atoms) bound to digests, and each
 -- derivation's inputs with the digest it read. A derivation's output is a name too, so an
@@ -761,7 +776,7 @@ CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NU
 CREATE INDEX IF NOT EXISTS memo_entries_by_path ON memo_entries(space, path, pack, at);
 -- The segments (and packs before) the entries are in.
 CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY);
--- Each guest's key (decision 0323): one row per identity (a SHA-256 of its range and parts), its key unique, its host
+-- Each guest's key (decision 0391): one row per identity (a SHA-256 of its range and parts), its key unique, its host
 -- file (a value's first asker).
 CREATE TABLE IF NOT EXISTS guest_keys(identity BLOB PRIMARY KEY, key INTEGER NOT NULL UNIQUE, path TEXT NOT NULL) WITHOUT ROWID;
 "#;

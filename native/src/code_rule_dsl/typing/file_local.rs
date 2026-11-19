@@ -242,6 +242,10 @@ fn close_under<T: Ord + Clone>(vars: &mut std::collections::BTreeSet<T>, equal: 
     }
 }
 
+pub(super) fn push_equal_columns() -> bool {
+    std::env::var("RERAIL_PUSH_EQUAL_COLUMNS").map_or(true, |value| value != "off")
+}
+
 pub use crate::code_rule_dsl::logic::front::document_column;
 
 /// Base relations whose rows a chunk makes for itself and that name no document (decision 0058 §4).

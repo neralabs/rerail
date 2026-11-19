@@ -52,6 +52,7 @@ pub mod resident;
 pub mod validated;
 /// A document's tape through one API, in the run's format (decision 0293).
 pub mod formats;
+pub mod placed;
 pub mod token_census;
 /// Python's tape from the lean parser (`rerail_python_lean`).
 pub mod python_lean;
@@ -67,6 +68,12 @@ pub mod go_lean;
 pub mod c_lean;
 /// C#'s tape from the lean parser (`rerail_csharp_lean`).
 pub mod csharp_lean;
+/// Kotlin's tape from the lean parser (`rerail_kotlin_lean`).
+pub mod kotlin_lean;
+/// Swift's tape from the lean parser (`rerail_swift_lean`).
+pub mod swift_lean;
+/// Scala's tape from the lean parser (`rerail_scala_lean`).
+pub mod scala_lean;
 /// PHP's tape from the lean parser (`rerail_php_lean`).
 pub mod php_lean;
 /// HTML's tape from the lean parser (`rerail_html_lean`).
@@ -170,6 +177,9 @@ pub struct Grammar {
     /// by measuring and validating its C string on every call, and `kind` is the matcher's
     /// most frequent question.
     named: Vec<(Option<&'static str>, bool)>,
+    /// The field names and their codes, sorted by name, read once: Tree-sitter answers a field's code by comparing
+    /// the name with each field's in turn, and the summaries ask it at every `field` (Q51).
+    fields: Vec<(&'static str, u16)>,
 }
 
 impl Grammar {
@@ -188,10 +198,10 @@ impl Grammar {
     }
 
     pub fn field_code(&self, name: &str) -> Option<u16> {
-        self.kinds.field_id(name)
+        self.fields.binary_search_by(|(field, _)| (*field).cmp(name)).ok().map(|at| self.fields[at].1)
     }
     pub fn has_field(&self, name: &str) -> bool {
-        self.kinds.field_id(name).is_some()
+        self.field_code(name).is_some()
     }
     pub fn new(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         let kinds = lang.kinds();
@@ -204,7 +214,11 @@ impl Grammar {
                 (kinds.kind_name(code), kinds.kind_is_named(code))
             })
             .collect();
-        Ok(Arc::new(Self { lang, kinds, named }))
+        let mut fields: Vec<(&'static str, u16)> = (1..=kinds.field_count() as u16).filter_map(|code| Some((kinds.field_name(code)?, code))).collect();
+        fields.sort_unstable();
+        // A name of two codes keeps its first, as the grammar's own lookup answers.
+        fields.dedup_by_key(|(name, _)| *name);
+        Ok(Arc::new(Self { lang, kinds, named, fields }))
     }
 
     /// The grammar of a dialect, built once per process and shared by every document of it: built per document, a
@@ -381,11 +395,13 @@ pub enum Held {
 /// Format 15's columns (above), its code table, and the table as the tape API reads it (made once).
 #[derive(Clone)]
 pub struct Columns15 {
-    /// The five columns (code, size, base, off, tail) in one buffer, each from a `COLUMN_ALIGN` boundary and
-    /// padded with zeros, as the stored image lays them after its header: one base addresses every column, as a
-    /// reader of the tape in place takes it (decision 0310).
-    bytes: Vec<u8>,
-    /// Each column's start in `bytes`, and its length.
+    /// The five columns (code, size, base, off, tail), from `base` in `bytes`, each from a `COLUMN_ALIGN` boundary
+    /// and padded with zeros, as the stored image lays them after its header: one base addresses every column, as a
+    /// reader of the tape in place takes it (decision 0310). A loaded image is placed: `bytes` is the stored image
+    /// in its slab's room, read where it lies (decision 0353 step 4a); a parser's holds its columns alone.
+    bytes: rerail_tape_format::home::Home,
+    base: usize,
+    /// Each column's start from `base`, and its length.
     at: [(usize, usize); 5],
     pub widths: [u8; 3],
     pub codes: Vec<Code>,
@@ -1117,54 +1133,97 @@ fn encode_node<'l>(
 impl TapeImage {
     /// The tape as the store keeps it: format 15's bytes, or format 16's (or 16z's) as held.
     pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
+        let mut bytes = Vec::with_capacity(self.stored_len());
+        self.emit(&mut |b| bytes.extend_from_slice(b))?;
+        Ok(bytes)
+    }
+
+    /// The tape as the store keeps it (`to_bytes`), written straight into its home, a slab's room (decision 0353
+    /// step 4a): the store's writer and every reader take it there.
+    pub fn place_stored(&self) -> Result<rerail_tape_format::home::Home, String> {
+        let len = self.stored_len();
+        placed::place(len, |out| {
+            let mut at = 0;
+            self.emit(&mut |b| {
+                out[at..at + b.len()].copy_from_slice(b);
+                at += b.len();
+            })
+            .map_err(std::io::Error::other)?;
+            debug_assert_eq!(at, len, "the stored length");
+            Ok(())
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    /// The length of the bytes the store keeps (`to_bytes`).
+    pub fn stored_len(&self) -> usize {
         match &self.held {
-            Held::F15(c) => self.to_bytes15(c),
-            Held::F16(t) => Ok(t.as_bytes().to_vec()),
-            Held::F16Z(t) => Ok(t.as_bytes().to_vec()),
+            Held::F15(c) => {
+                let alias_bytes = c.kind_aliases.iter().map(|(name, _)| 5 + name.len()).sum::<usize>();
+                let code_bytes = c.codes.iter().map(Code::stored_len).sum::<usize>();
+                HEADER_BYTES + c.columns_bytes().len() + code_bytes + alias_bytes
+            }
+            Held::F16(t) => t.as_bytes().len(),
+            Held::F16Z(t) => t.as_bytes().len(),
         }
     }
 
-    fn to_bytes15(&self, c: &Columns15) -> Result<Vec<u8>, String> {
+    /// The bytes the store keeps, in order, to `put`.
+    fn emit(&self, put: &mut dyn FnMut(&[u8])) -> Result<(), String> {
+        match &self.held {
+            Held::F15(c) => self.emit15(c, put),
+            Held::F16(t) => {
+                put(t.as_bytes());
+                Ok(())
+            }
+            Held::F16Z(t) => {
+                put(t.as_bytes());
+                Ok(())
+            }
+        }
+    }
+
+    fn emit15(&self, c: &Columns15, put: &mut dyn FnMut(&[u8])) -> Result<(), String> {
         let language =
             super::language::tape_tag(self.language).ok_or("unsupported tape language")?;
         let alias_bytes = c.kind_aliases.iter().map(|(name, _)| 5 + name.len()).sum::<usize>();
         let code_bytes = c.codes.iter().map(Code::stored_len).sum::<usize>();
         let lengths = [c.node_count(), c.codes.len(), code_bytes, c.kind_aliases.len(), alias_bytes];
-        let mut bytes = Vec::with_capacity(
-            HEADER_BYTES
-                + c.bytes.len()
-                + code_bytes
-                + alias_bytes,
-        );
-        bytes.extend_from_slice(TAPE_MAGIC);
-        bytes.push(language);
-        bytes.extend_from_slice(&c.widths);
-        bytes.extend_from_slice(&TAPE_FORMAT_VERSION.to_le_bytes());
-        bytes.extend_from_slice(&(self.source_len as u64).to_le_bytes());
+        put(TAPE_MAGIC);
+        put(&[language]);
+        put(&c.widths);
+        put(&TAPE_FORMAT_VERSION.to_le_bytes());
+        put(&(self.source_len as u64).to_le_bytes());
         for length in lengths {
-            bytes.extend_from_slice(&(length as u64).to_le_bytes());
+            put(&(length as u64).to_le_bytes());
         }
-        debug_assert_eq!(bytes.len() % COLUMN_ALIGN, 0);
-        bytes.extend_from_slice(&c.bytes);
+        put(c.columns_bytes());
         for code in &c.codes {
-            bytes.extend_from_slice(&code.kf.to_le_bytes());
-            bytes.push(code.flags);
-            bytes.extend_from_slice(&code.alias.to_le_bytes());
-            bytes.push(code.class_count);
+            put(&code.kf.to_le_bytes());
+            put(&[code.flags]);
+            put(&code.alias.to_le_bytes());
+            put(&[code.class_count]);
             for class in code.classes() {
-                bytes.extend_from_slice(&class.to_le_bytes());
+                put(&class.to_le_bytes());
             }
         }
         for (name, named) in &c.kind_aliases {
-            bytes.push(u8::from(*named));
-            bytes.extend_from_slice(
-                &u32::try_from(name.len())
-                    .map_err(|_| "contextual grammar alias length overflow")?
-                    .to_le_bytes(),
-            );
-            bytes.extend_from_slice(name.as_bytes());
+            put(&[u8::from(*named)]);
+            put(&u32::try_from(name.len()).map_err(|_| "contextual grammar alias length overflow")?.to_le_bytes());
+            put(name.as_bytes());
         }
-        Ok(bytes)
+        Ok(())
+    }
+
+    /// A stored tape placed in a room (decision 0353 step 4a), read where it lies: format 15's columns, or format 16
+    /// (or 16z) as stored. Nothing is copied.
+    pub fn from_home(home: rerail_tape_format::home::Home, grammar: &Arc<Grammar>) -> Result<Self, String> {
+        use rerail_tape_format::f16::{MAGIC16, MAGIC16Z};
+        let magic = home.get(..8).ok_or("a short tape")?;
+        if magic != MAGIC16 && magic != MAGIC16Z {
+            return Self::read_image_in(&home, grammar, Some(&home));
+        }
+        Self::sixteen(home, grammar)
     }
 
     /// A stored tape, in the format it was stored in (its magic): format 15's columns, or format 16 (or 16z) held
@@ -1175,17 +1234,23 @@ impl TapeImage {
         if magic != MAGIC16 && magic != MAGIC16Z {
             return Self::read_image(bytes, grammar);
         }
+        Self::sixteen(bytes.to_vec().into(), grammar)
+    }
+
+    /// A format 16 or 16z tape held as stored, in `bytes`.
+    fn sixteen(bytes: rerail_tape_format::home::Home, grammar: &Arc<Grammar>) -> Result<Self, String> {
+        use rerail_tape_format::f16::{MAGIC16, Tape16, Tape16Z};
         let tag = super::language::tape_tag(grammar.lang).ok_or("unsupported tape language")?;
-        if bytes[header::LANGUAGE] != tag {
+        if bytes.get(header::LANGUAGE) != Some(&tag) {
             return Err("tape image grammar mismatch".into());
         }
         let lang = rerail_tape_format::f16::lang(tag).ok_or("a format 16 tape of a language without its table")?;
-        let held = if magic == MAGIC16 {
-            let t = Tape16::from_bytes(bytes.to_vec())?;
+        let held = if bytes[..8] == *MAGIC16 {
+            let t = Tape16::from_bytes(bytes)?;
             t.reader(lang)?;
             Held::F16(Arc::new(t))
         } else {
-            let t = Tape16Z::from_bytes(bytes.to_vec())?;
+            let t = Tape16Z::from_bytes(bytes)?;
             t.reader(lang)?;
             Held::F16Z(Arc::new(t))
         };
@@ -1204,12 +1269,26 @@ impl TapeImage {
     /// An image of format 15's columns (code, size, base, off, tail), laid out in one buffer.
     fn of15(columns: [&[u8]; 5], widths: [u8; 3], codes: Vec<Code>, kind_aliases: Vec<(String, bool)>, language: GrammarDialect, source_len: usize, source_digest: Option<[u8; 32]>) -> Self {
         let (bytes, at) = Columns15::laid(columns);
-        Self { held: Held::F15(Columns15 { bytes, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
+        Self { held: Held::F15(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
     }
 
     /// The tape as held.
     pub fn held(&self) -> &Held {
         &self.held
+    }
+
+    /// Whether its bytes are placed in a room (a slab's, decision 0353 step 4a), not its own.
+    pub fn placed(&self) -> bool {
+        self.room().is_some()
+    }
+
+    /// The room the tape is placed in (`placed`), which says where the device reads it.
+    pub fn room(&self) -> Option<&std::sync::Arc<dyn rerail_tape_format::home::Room>> {
+        match &self.held {
+            Held::F15(c) => c.bytes.room(),
+            Held::F16(t) => t.home().room(),
+            Held::F16Z(t) => t.home().room(),
+        }
     }
 
     /// Format 15's columns, where it is held in format 15.
@@ -1235,6 +1314,12 @@ impl TapeImage {
 
     /// The image `bytes` hold, of a `grammar` file.
     fn read_image(bytes: &[u8], grammar: &Grammar) -> Result<Self, String> {
+        Self::read_image_in(bytes, grammar, None)
+    }
+
+    /// A stored format 15 image (`read_image`), its columns read where they lie in `placed` (whose bytes are
+    /// `bytes`, decision 0353 step 4a) or laid out in a buffer of their own.
+    fn read_image_in(bytes: &[u8], grammar: &Grammar, placed: Option<&rerail_tape_format::home::Home>) -> Result<Self, String> {
         let mut reader = TapeReader { bytes, offset: 0 };
         if reader.take(8)? != TAPE_MAGIC {
             return Err("wrong tape image magic".into());
@@ -1280,6 +1365,7 @@ impl TapeImage {
             return Err("invalid contextual grammar alias count".into());
         }
         // Each column, then its padding to `COLUMN_ALIGN`, which must be zero.
+        let columns_at = reader.offset;
         let mut columns: [&[u8]; 5] = [&[]; 5];
         for (column, length) in columns.iter_mut().zip(lengths) {
             *column = reader.take(length)?;
@@ -1340,6 +1426,17 @@ impl TapeImage {
         }
         if reader.offset != bytes.len() {
             return Err("trailing tape image bytes".into());
+        }
+        if let Some(home) = placed {
+            // The columns as the stored image lays them, from `columns_at`: each padded to `COLUMN_ALIGN`.
+            let mut at = [(0, 0); 5];
+            let mut start = 0;
+            for (k, column) in columns.iter().enumerate() {
+                at[k] = (start, column.len());
+                start = padded(start + column.len());
+            }
+            let c = Columns15 { bytes: home.clone(), base: columns_at, at, widths, codes, kind_aliases, table: Default::default() };
+            return Ok(Self { held: Held::F15(c), language, source_len, source_digest: None });
         }
         Ok(Self::of15(columns, widths, codes, kind_aliases, language, source_len, None))
     }
@@ -1594,6 +1691,23 @@ impl TapeImage {
         Ok(Self::of15([&code, &size, &base, &off, &tail], widths, codes, Vec::new(), grammar.lang, source.len(), Some(digest)))
     }
 
+    /// A written tape whose codes name contextual aliases (`Code::alias`, an index into
+    /// `kind_aliases`): a kind whose symbol's own name or namedness is not the node's, as
+    /// `encode_node` finds it. The aliases numbered by first use, as `pack` numbers them.
+    pub fn with_kind_aliases(mut self, kind_aliases: Vec<(String, bool)>) -> Result<Self, String> {
+        // A parser writes format 15's columns (`written`); a tape held in another format came from a store.
+        let Held::F15(c) = &mut self.held else { return Err("a written tape is held in format 15".into()) };
+        if kind_aliases.len() >= usize::from(SENTINEL)
+            || c.codes.iter().any(|code| code.alias != SENTINEL && usize::from(code.alias) >= kind_aliases.len())
+        {
+            return Err("a written tape's aliases do not agree with its codes".into());
+        }
+        c.kind_aliases = kind_aliases;
+        // The table as the tape API reads it names the aliases: made again from them.
+        c.table = Default::default();
+        Ok(self)
+    }
+
     /// The columns of `nodes`, in preorder with their sizes set: codes folded and numbered by
     /// first use, `base` per 16 nodes, and each column at its narrowest width.
     fn pack(
@@ -1834,7 +1948,13 @@ impl Columns15 {
     /// Column `k` (`CODE` … `TAIL`).
     pub fn column(&self, k: usize) -> &[u8] {
         let (start, length) = self.at[k];
-        &self.bytes[start..start + length]
+        &self.bytes[self.base + start..self.base + start + length]
+    }
+
+    /// The columns, laid out from `base`, each padded.
+    fn columns_bytes(&self) -> &[u8] {
+        let (start, length) = self.at[Self::TAIL];
+        &self.bytes[self.base..self.base + padded(start + length)]
     }
 
     pub fn code(&self) -> &[u8] {
@@ -1859,7 +1979,7 @@ impl Columns15 {
 
     /// The buffer every column lies in, and where each starts in it: what a reader in place takes.
     pub fn laid_out(&self) -> (&[u8], [usize; 5]) {
-        (&self.bytes, self.at.map(|(start, _)| start))
+        (self.columns_bytes(), self.at.map(|(start, _)| start))
     }
 
     /// A test's change of column `k` (its bytes, or its length): the columns laid out again.
@@ -1867,7 +1987,8 @@ impl Columns15 {
     pub fn edit(&mut self, k: usize, change: impl FnOnce(&mut Vec<u8>)) {
         let mut columns: Vec<Vec<u8>> = (0..5).map(|k| self.column(k).to_vec()).collect();
         change(&mut columns[k]);
-        (self.bytes, self.at) = Self::laid(std::array::from_fn(|k| columns[k].as_slice()));
+        let (bytes, at) = Self::laid(std::array::from_fn(|k| columns[k].as_slice()));
+        (self.bytes, self.base, self.at) = (bytes.into(), 0, at);
         self.table = Default::default();
     }
 
@@ -1910,8 +2031,12 @@ impl Columns15 {
     }
 
     fn estimated_bytes(&self) -> usize {
-        self.bytes.capacity()
-            + self.codes.capacity() * std::mem::size_of::<Code>()
+        // A placed image's bytes are its slab's, counted there.
+        let own = match &self.bytes {
+            rerail_tape_format::home::Home::Own(v) => v.capacity(),
+            rerail_tape_format::home::Home::Placed(_) => 0,
+        };
+        own + self.codes.capacity() * std::mem::size_of::<Code>()
             + self.kind_aliases.capacity() * std::mem::size_of::<(String, bool)>()
             + self.kind_aliases.iter().map(|(name, _)| name.capacity()).sum::<usize>()
     }
@@ -2932,11 +3057,12 @@ impl<'a> TapeNode<'a> {
     }
 }
 
+/// A node's children, read off the tape as they are asked for. How many are left is counted only when asked
+/// (`size_hint`): a search among them (`child_by_field_id`) counted every child first, then walked them again.
 struct Children<'a> {
     node: TapeNode<'a>,
     next: Option<usize>,
     end: usize,
-    remaining: usize,
 }
 impl<'a> Iterator for Children<'a> {
     type Item = TapeNode<'a>;
@@ -2944,11 +3070,12 @@ impl<'a> Iterator for Children<'a> {
         let index = self.next?;
         read!("children");
         self.next = self.node.tape.next_sibling(index, self.end);
-        self.remaining -= 1;
         Some(self.node.at(index as u32, self.node.index))
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.remaining, Some(self.remaining))
+        let tape = self.node.tape;
+        let remaining = std::iter::successors(self.next, |&at| tape.next_sibling(at, self.end)).count();
+        (remaining, Some(remaining))
     }
 }
 impl ExactSizeIterator for Children<'_> {}
@@ -2984,7 +3111,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     fn children(&self) -> impl ExactSizeIterator<Item = Self> {
         let (tape, index) = (self.tape, self.index as usize);
         let end = tape.subtree_end(index);
-        Children { node: *self, next: tape.first_child(index), end, remaining: rerail_tape_format::tape::children(tape, index).count() }
+        Children { node: *self, next: tape.first_child(index), end }
     }
     /// The subtree in preorder, each node with its parent: the subtrees open around it.
     fn dfs(&self) -> impl Iterator<Item = Self> {
@@ -3090,7 +3217,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         self.entry().flags & CODE_MISSING != 0
     }
     fn field(&self, name: &str) -> Option<Self> {
-        let field = self.grammar.kinds.field_id(name)?;
+        let field = self.grammar.field_code(name)?;
         self.child_by_field_id(field)
     }
     fn field_children(&self, field_id: Option<u16>) -> impl Iterator<Item = Self> {

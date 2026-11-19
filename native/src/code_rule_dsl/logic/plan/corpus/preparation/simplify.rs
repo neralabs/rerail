@@ -672,18 +672,48 @@ impl ProgramPass for DecidedFactTests {
         if !any {
             return Ok(());
         }
+        // A relation whose every rule went is empty (it had rules, so nothing outside fills it): a positive read of it
+        // cannot hold, and its rule goes; a negated one holds, and is dropped. To a fixpoint, as each emptied relation
+        // may empty its readers (the tree's `decided_fact_tests`).
+        let rules: Vec<RuleRef<'_>> = v.rules().collect();
+        let mut alive: Vec<bool> = decided.iter().map(Option::is_some).collect();
+        self.0 += alive.iter().filter(|a| !**a).count();
+        let mut drops: Vec<HashSet<u32>> = decided.into_iter().map(Option::unwrap_or_default).collect();
+        self.0 += drops.iter().map(HashSet::len).sum::<usize>();
+        let live = |alive: &[bool]| -> BTreeSet<String> { rules.iter().zip(alive).filter(|(_, a)| **a).map(|(r, _)| v.rel_name(r.head().rel()).to_owned()).collect() };
+        let empty_among = |alive: &[bool], among: BTreeSet<String>| -> BTreeSet<String> {
+            let live = live(alive);
+            among.into_iter().filter(|r| !live.contains(r) && !f.has_facts(r) && !fixed(&f, r) && !(f.is_input(r) || f.native(r).is_some())).collect()
+        };
+        let mut emptied = empty_among(&alive, derived.iter().map(|r| (*r).to_owned()).collect());
+        while !emptied.is_empty() {
+            let before = live(&alive);
+            for (i, r) in rules.iter().enumerate() {
+                if !alive[i] {
+                    continue;
+                }
+                let reads = |l: LitRef<'_>, neg: bool| !drops[i].contains(&l.node()) && matches!(l.view(), Lit::Atom(a) if a.neg() == neg && emptied.contains(v.rel_name(a.rel())));
+                if r.body().any(|l| reads(l, false)) {
+                    alive[i] = false;
+                    self.0 += 1;
+                    continue;
+                }
+                let negated: Vec<u32> = r.body().filter(|&l| reads(l, true)).map(|l| l.node()).collect();
+                self.0 += negated.len();
+                drops[i].extend(negated);
+            }
+            emptied = empty_among(&alive, before);
+        }
         let input = w.input().clone();
         let b = w.derive()?;
-        for (r, d) in input.rules().zip(decided) {
-            match d {
-                None => self.0 += 1,
-                Some(drop) if drop.is_empty() => {
-                    b.keep(&input, r);
-                }
-                Some(drop) => {
-                    self.0 += drop.len();
-                    b.rewrite(&input, r, &mut Subst { drop, ..Default::default() }).finish()?;
-                }
+        for ((r, keep), drop) in input.rules().zip(alive).zip(drops) {
+            if !keep {
+                continue;
+            }
+            if drop.is_empty() {
+                b.keep(&input, r);
+            } else {
+                b.rewrite(&input, r, &mut Subst { drop, ..Default::default() }).finish()?;
             }
         }
         Ok(())
@@ -912,6 +942,55 @@ fn write_placed<'b, 'p>(v: &Version, w: RuleBuilder<'b, 'p>, p: &Placed<'_>) -> 
 #[derive(Default)]
 pub struct InlineNodeTests(pub Vec<String>);
 
+/// `Program::inlined_readers` and `replace_readers` on the version (decision 0331): in the request record, each
+/// relation `gone` that a pass inlines into its readers is replaced by the relations whose rules read it (through
+/// other relations `gone`), as `v` holds them before the pass. A request of an inlined relation serves its readers.
+/// A request relation inlined away has no rules left, so no entry (`Program::set_rules_from` keeps none).
+fn replace_inlined_readers(v: &Version, b: &mut Builder<'_>, gone: &BTreeSet<&str>) {
+    if gone.is_empty() || v.asked().is_empty() {
+        return;
+    }
+    let mut direct: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for r in v.rules() {
+        for l in r.body() {
+            if let Some(a) = l.atom()
+                && gone.contains(v.rel_name(a.rel()))
+            {
+                direct.entry(v.rel_name(a.rel())).or_default().insert(v.rel_name(r.head().rel()));
+            }
+        }
+    }
+    let inlined: BTreeMap<&str, BTreeSet<&str>> = gone
+        .iter()
+        .map(|g| {
+            let (mut out, mut seen, mut todo) = (BTreeSet::new(), BTreeSet::from([*g]), vec![*g]);
+            while let Some(x) = todo.pop() {
+                for &h in direct.get(x).into_iter().flatten() {
+                    if !gone.contains(h) {
+                        out.insert(h);
+                    } else if seen.insert(h) {
+                        todo.push(h);
+                    }
+                }
+            }
+            (*g, out)
+        })
+        .filter(|(_, out)| !out.is_empty())
+        .collect();
+    // Restated in the record's own order (`Builder::set_asked`), as the tree's image writes it.
+    let was = b.asked();
+    let mut asked = was.clone();
+    asked.retain(|req, _| !gone.contains(req.as_str()));
+    for readers in asked.values_mut().flatten() {
+        if readers.iter().any(|x| inlined.contains_key(x.as_str())) {
+            *readers = std::mem::take(readers).into_iter().flat_map(|x| inlined.get(x.as_str()).map_or_else(|| vec![x.clone()], |to| to.iter().map(|t| (*t).to_owned()).collect())).collect();
+        }
+    }
+    if asked != was {
+        b.set_asked(&asked);
+    }
+}
+
 impl ProgramPass for InlineNodeTests {
     const NAME: &'static str = "inline node tests";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
@@ -1027,6 +1106,7 @@ impl ProgramPass for InlineNodeTests {
         for rel in bodies.keys() {
             b.undeclare(rel);
         }
+        replace_inlined_readers(v, b, &bodies.keys().copied().collect());
         self.0.extend(bodies.keys().map(|r| (*r).to_owned()));
         Ok(())
     }
@@ -1295,6 +1375,7 @@ impl ProgramPass for InlineFilters {
         for rel in bodies.keys() {
             b.undeclare(rel);
         }
+        replace_inlined_readers(v, b, &bodies.keys().copied().collect());
         self.0.extend(bodies.keys().map(|r| (*r).to_owned()));
         Ok(())
     }
@@ -2567,7 +2648,7 @@ impl ProgramPass for SubsumeRequests {
     const NAME: &'static str = "request rules another subsumes";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         let v = cx.v();
-        let mut asked = super::prune::asked_of(v);
+        let mut asked = v.asked();
         if asked.is_empty() {
             return Ok(());
         }
@@ -2603,7 +2684,7 @@ impl ProgramPass for SubsumeRequests {
         self.0 += n;
         let gone: HashSet<_> = rules.iter().zip(&dropped).filter(|(_, d)| **d).map(|(r, _)| r.id()).collect();
         w.keep(|r| !gone.contains(&r.id()))?;
-        super::prune::set_asked(w.on()?, &asked);
+        w.on()?.set_asked(&asked);
         Ok(())
     }
 }
@@ -2647,6 +2728,13 @@ impl ProgramPass for DropUnread {
                 if !gone.contains(&r.id()) {
                     b.keep(&input, r);
                 }
+            }
+            // A request relation dropped has no rules, so no entry in the request record (decision 0331).
+            let was = b.asked();
+            let mut asked = was.clone();
+            asked.retain(|req, _| !unread.contains(req.as_str()));
+            if asked != was {
+                b.set_asked(&asked);
             }
         }
         self.0 = unread.into_iter().map(str::to_owned).collect();

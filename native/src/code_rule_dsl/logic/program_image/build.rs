@@ -144,6 +144,36 @@ impl<'p> Builder<'p> {
         b
     }
 
+    /// `v` with no stack (decision 0385): a view of one new base holding every rule `v`'s stack numbers, by its id,
+    /// its own and those an overlay removed, under `v`'s atom and relation ids and with its parts, each rule's source
+    /// kept; the view leaves out the removed. Its ids, size and digest are `v`'s, so an edit of it reads as an edit of
+    /// `v`. `None` where the removed rules are more ranges than a view holds.
+    pub fn flat(v: &Arc<Version>) -> Result<Option<Arc<Version>>, String> {
+        let mut b = Builder::derive(v);
+        for r in v.stack_rules() {
+            let id = b.copy(v, r);
+            if id != r.id() {
+                return Err(format!("a flat version numbers rule {} as {}", r.id().0, id.0));
+            }
+            if let Some(src) = r.source() {
+                b.enc.set_from(id.0 - b.enc.rule_base(), src);
+            }
+        }
+        let base = Version::open(&b.finish_bytes()?)?;
+        let mut ranges: Vec<(u32, u32)> = Vec::new();
+        for r in v.rules() {
+            let k = r.id().0;
+            match ranges.last_mut() {
+                Some((_, end)) if *end == k => *end = k + 1,
+                _ => ranges.push((k, k + 1)),
+            }
+        }
+        if ranges.len() > super::version::max_ranges(base.size()) {
+            return Ok(None);
+        }
+        Ok(Some(Version::view(&base, ranges, v.size(), v.digest())))
+    }
+
     /// A base of all of `edit`, an overlay of `parent` (its derivation's input), under its atom and relation ids: each
     /// rule copied with the source the derivation records for it: a rule of `parent` with a source its own (as `keep`
     /// records it), a rule the edit added its source in `parent`; a rule with none stays without (a base's digest). A pass's output folded so is the same edit of its input as the
@@ -218,6 +248,12 @@ impl<'p> Builder<'p> {
     pub fn add(&mut self, rule: &Rule) -> Result<RuleId, String> {
         let id = self.next_id();
         self.enc.tree_rule(rule)?;
+        Ok(id)
+    }
+    /// Adds a rewritten tree rule and records which input rule it came from.
+    pub fn add_from(&mut self, rule: &Rule, source: RuleId) -> Result<RuleId, String> {
+        let id = self.add(rule)?;
+        self.enc.set_from(id.0 - self.enc.rule_base(), source);
         Ok(id)
     }
     /// Adds a copy of `rule`, one of `from`'s rules: its nodes as they are when `from`'s ids are this builder's,

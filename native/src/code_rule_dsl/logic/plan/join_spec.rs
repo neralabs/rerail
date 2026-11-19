@@ -163,6 +163,7 @@ impl<'a> Run<'a, '_> {
         scc: &BTreeSet<String>,
         native_rels: &BTreeSet<String>,
     ) -> Option<Arc<JoinSpec>> {
+        let _span = super::super::profile::span(|| "a line's join spec".into());
         let mut bound = VarSet::new();
         for s in steps {
             let mut add = |t: TermRef<'_>| {
@@ -280,6 +281,10 @@ impl<'a> Run<'a, '_> {
                 }
             }
         };
+        // The maintain mode's joins read an input's version by name (`mode_reads`): made each time, never kept.
+        if !self.mode_reads.is_empty() {
+            return self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(Arc::new);
+        }
         super::super::derived::value("join spec", inputs, || self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(Arc::new))
     }
 
@@ -426,7 +431,10 @@ impl<'a> Run<'a, '_> {
                     if s.mode == Some(Mode::Range) {
                         return None;
                     }
-                    let (src, args) = atom(b.rel(l), b.args(s.at), Some(idx), &mut slots)?;
+                    let (src, args) = match self.mode_reads.get(&s.at) {
+                        Some(t) => (t.clone(), arg_toks(b.args(s.at), &mut slots)?),
+                        None => atom(b.rel(l), b.args(s.at), Some(idx), &mut slots)?,
+                    };
                     lines.push(JoinItem::Atom { neg: l.neg(), src, args });
                 }
                 Lit::Cmp { l: TermRef::Call(fl, xl), op: op @ (CmpOp::Eq | CmpOp::Ne), r: TermRef::Call(fr, xr) }
@@ -569,12 +577,18 @@ impl<'a> Run<'a, '_> {
                     if args.iter().any(|&t| matches!(t, TermRef::Var(_)) && !slots.bound(t)) {
                         return None;
                     }
-                    // Input constant filters are projected out by `atom`; its value column uses that projection too.
-                    let value_col = col.map(|c| read_col(rel, &args, c));
-                    let (src, mut toks) = atom(rel, &args, None, &mut slots)?;
+                    // Input constant filters are projected out by `atom`; its value column uses that projection too. The
+                    // maintain mode's version of a changed read (`mode_reads`) is whole: its columns are the relation's.
+                    let mode = self.mode_reads.get(&s.at);
+                    let rc = |c: usize| if mode.is_some() { c } else { read_col(rel, &args, c) };
+                    let value_col = col.map(rc);
+                    let (src, mut toks) = match mode {
+                        Some(t) => (t.clone(), arg_toks(&args, &mut slots)?),
+                        None => atom(rel, &args, None, &mut slots)?,
+                    };
                     if local.len() > 1 {
                         for c in local {
-                            toks[read_col(rel, &args, c)] = Arg::Local("0".into());
+                            toks[rc(c)] = Arg::Local("0".into());
                         }
                     }
                     let out = var_tok(var, &mut slots);
@@ -610,17 +624,22 @@ impl<'a> Run<'a, '_> {
                     }
                     let sym = |c: usize| pf.types(rel).get(c).copied() == Some("sym");
                     let xc = column(o)?;
+                    let mode = self.mode_reads.get(&s.at);
+                    let rc = |args: &[TermRef<'_>], c: usize| if mode.is_some() { c } else { read_col(rel, args, c) };
                     let mut bycols = Vec::new();
                     for v in by.filter(|v| !slots.has(Key::Var(*v))) {
                         let c = column(v)?;
-                        bycols.push((read_col(rel, &args, c), sym(c)));
+                        bycols.push((rc(&args, c), sym(c)));
                     }
-                    let x = (read_col(rel, &args, xc), sym(xc));
+                    let x = (rc(&args, xc), sym(xc));
                     let wild: Vec<usize> = local.iter().map(|&v| column(v)).collect::<Option<_>>()?;
                     for c in wild {
                         args[c] = TermRef::Wild;
                     }
-                    let (src, toks) = atom(rel, &args, None, &mut slots)?;
+                    let (src, toks) = match mode {
+                        Some(t) => (t.clone(), arg_toks(&args, &mut slots)?),
+                        None => atom(rel, &args, None, &mut slots)?,
+                    };
                     let sep = Tok::Sym(b.v.text(sep).to_owned());
                     let out = var_tok(var, &mut slots);
                     lines.push(JoinItem::StrJoin { src, args: toks, x, by: bycols, sep, out });

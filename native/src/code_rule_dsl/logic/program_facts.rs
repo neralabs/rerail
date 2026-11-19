@@ -26,7 +26,7 @@
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
 
 use super::front::name::Name;
-use super::front::ast::{LatticeDecl, Native, Shape, ShapeWait, SpanIn, Value};
+use super::front::ast::{LatticeDecl, LayoutFact, Native, Shape, ShapeWait, SpanIn, Value};
 use super::front::ast::{Gate, Report};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -123,6 +123,7 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::name::List
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
         ("native_reach", &["p:sym", "rel:sym", "seed:sym", "edge:sym"]),
         ("native_reach_through", &["p:sym", "rel:sym", "reach:sym", "map:sym"]),
+        ("native_rank", &["p:sym", "rel:sym", "query:sym", "counted:sym", "group:int", "op:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
         // `ast_patterns`: the AST patterns the program matches (`n ~ `…``), each by its text.
         ("ast_pattern", &["p:sym", "s:sym"]),
@@ -149,6 +150,8 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::name::List
         ("shape", &["p:sym", "k:int", "head:sym", "lit:sym", "text:sym"]),
         ("shape_after", &["p:sym", "k:int", "rel:sym"]),
         ("shape_bound", &["p:sym", "k:int", "i:int", "var:sym"]),
+        // `layouts`: each relation's facts (`.layout`, decision 0361), in order, each with its columns by place.
+        ("layout", &["p:sym", "rel:sym", "k:int", "fact:sym"]),
     ];
     SCHEMA
         .iter()
@@ -209,6 +212,13 @@ impl Writer<'_> {
                 for (rel, cols) in map {
                     for i in cols {
                         self.row("tape_column", vec![s(rel), n(*i)]);
+                    }
+                }
+            }
+            Field::Layouts(map) => {
+                for (rel, facts) in map {
+                    for (k, f) in facts.iter().enumerate() {
+                        self.row("layout", vec![s(rel), n(k), s(&f.placed())]);
                     }
                 }
             }
@@ -380,6 +390,7 @@ impl Writer<'_> {
             Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
             Native::Reach { seed, edge } => self.row("native_reach", vec![s(rel), s(seed), s(edge)]),
             Native::ReachThrough { reach, map } => self.row("native_reach_through", vec![s(rel), s(reach), s(map)]),
+            Native::Rank { query, counted, group, op } => self.row("native_rank", vec![s(rel), s(query), s(counted), n(*group), s(op)]),
         }
     }
 }
@@ -397,6 +408,9 @@ pub enum Field<'a> {
     /// The columns declared `tape` (decision 0103 §3), by relation: stored as `sym`, checked before lowering
     /// (`rr::tape_type`) and printed back as `tape`.
     Tapes(&'a BTreeMap<String, BTreeSet<usize>>),
+    /// What each relation's rows are known to be (`.layout`, decision 0361), by relation: facts about the rows, so
+    /// they hold for every form made from its rules. Several lines add up; each fact once, in the order first written.
+    Layouts(&'a BTreeMap<String, Vec<LayoutFact>>),
     /// Join shape directives (`.shape`, O-join-shape-directives), each on the rules of its relation and every form
     /// made from them.
     Shapes(&'a [Shape]),
@@ -435,7 +449,7 @@ pub enum Field<'a> {
 }
 
 /// The native relations' about relations: each names its relation in its first column after the program's.
-pub const NATIVE_RELATIONS: &[&str] = &["native_dfs", "native_roots", "native_match", "native_group", "native_text_test", "native_text_pattern", "native_python_candidates", "native_python", "native_components", "native_reach", "native_reach_through"];
+pub const NATIVE_RELATIONS: &[&str] = &["native_dfs", "native_roots", "native_match", "native_group", "native_text_test", "native_text_pattern", "native_python_candidates", "native_python", "native_components", "native_reach", "native_reach_through", "native_rank"];
 
 impl<'a> Field<'a> {
     /// The relations this field's rows are rows of: stating the field replaces all of theirs.
@@ -444,6 +458,7 @@ impl<'a> Field<'a> {
             Field::Nullary(_) => &["nullary"],
             Field::Qualifiers(_) => &["qualifier"],
             Field::Tapes(_) => &["tape_column"],
+            Field::Layouts(_) => &["layout"],
             Field::Shapes(_) => &["shape", "shape_after", "shape_bound"],
             Field::Lattice(_) => &["lattice", "lattice_merge", "lattice_widen"],
             Field::Kindsets(_) => &["kindset", "kindset_kind"],
@@ -679,6 +694,13 @@ impl<'a, C: Cell> Reader<'a, C> {
         }
         Ok(out)
     }
+    fn layouts(&self) -> Result<BTreeMap<String, Vec<LayoutFact>>, String> {
+        let mut layouts: BTreeMap<String, Vec<(i64, LayoutFact)>> = BTreeMap::new();
+        for row in self.get("layout") {
+            layouts.entry(text(&row[0])?).or_default().push((int(&row[1])?, LayoutFact::of_placed(&text(&row[2])?)?));
+        }
+        Ok(layouts.into_iter().map(|(rel, facts)| (rel, ordered(facts))).collect())
+    }
     fn lattice(&self) -> Result<BTreeMap<String, LatticeDecl>, String> {
         let merges = self.by_id_text("lattice_merge")?;
         let widens = self.by_id_text("lattice_widen")?;
@@ -797,6 +819,9 @@ impl<'a, C: Cell> Reader<'a, C> {
         for row in self.get("native_reach_through") {
             out.insert(text(&row[0])?, Native::ReachThrough { reach: text(&row[1])?, map: text(&row[2])? });
         }
+        for row in self.get("native_rank") {
+            out.insert(text(&row[0])?, Native::Rank { query: text(&row[1])?, counted: text(&row[2])?, group: int(&row[3])? as usize, op: text(&row[4])? });
+        }
         Ok(out)
     }
     fn rx_spans(&self) -> Result<BTreeSet<(SpanIn, String)>, String> {
@@ -896,6 +921,7 @@ impl Fields<'_> {
     pub fn magic_report(&self) -> Result<Option<Report>, String> { self.0.magic_report() }
     pub fn gates(&self) -> Result<Vec<(String, Gate)>, String> { self.0.gates() }
     pub fn shapes(&self) -> Result<Vec<Shape>, String> { self.0.shapes() }
+    pub fn layouts(&self) -> Result<BTreeMap<String, Vec<LayoutFact>>, String> { self.0.layouts() }
     pub fn policies(&self) -> Result<Vec<serde_json::Value>, String> { self.0.policies() }
     pub fn settings(&self) -> Result<Vec<(String, String)>, String> { self.0.settings() }
     pub fn natives(&self) -> Result<BTreeMap<String, Native>, String> { self.0.natives() }

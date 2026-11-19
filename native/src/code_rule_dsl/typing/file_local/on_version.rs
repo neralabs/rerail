@@ -142,7 +142,13 @@ impl Analysis for FileLocal {
         }
         let d = cx.get::<FieldsData>().ok()?;
         let p = Program::of(cx.v(), Fields::over(cx.v(), &d));
-        let keys = p.keys();
+        // An edit of rules alone whose heads are derived before and after: only their keys are made again (decision
+        // 0385); the global key reads no rule but which relations are derived.
+        let keys = match &delta.heads {
+            Some(heads) if delta.touched == Reads::RULES => p.keys_over(&self.keys, heads),
+            _ => None,
+        }
+        .unwrap_or_else(|| p.keys());
         if keys.global != self.keys.global {
             return None;
         }
@@ -268,6 +274,33 @@ impl<'v> Program<'v> {
         option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && self.f.is_input(rel))
     }
 
+    /// A derived relation's key: its columns and its rules' hashes, in the program's order.
+    fn head_key(&self, r: u32) -> u64 {
+        let mut h = hasher();
+        self.f.columns(self.name(r)).hash(&mut h);
+        for &k in &self.rels.rules[r as usize] {
+            h.write_u64(self.rules[k].hash());
+        }
+        h.finish()
+    }
+
+    /// `keys` over an edit of rules alone (decision 0385): `was` with the keys of `heads` (the edit's) made again,
+    /// where each is derived before and after (so the derived relations, which the global key reads, are as they
+    /// were). `None` otherwise.
+    fn keys_over(&self, was: &Keys, heads: &BTreeSet<String>) -> Option<Keys> {
+        let mut keys = was.clone();
+        for rel in heads {
+            let r = self.v.rel(rel)?.0;
+            // Derived before: keyed, and not by its declaration (a base relation's key).
+            let before = was.heads.get(rel).is_some_and(|&k| self.base_key(rel) != Some(k));
+            if !self.rels.is_derived(r) || self.rels.rules[r as usize].is_empty() || !before {
+                return None;
+            }
+            keys.heads.insert(rel.clone(), self.head_key(r));
+        }
+        Some(keys)
+    }
+
     fn keys(&self) -> Keys {
         let mut g = hasher();
         // The inputs a split asks about: derived, facts, or a phase's exports.
@@ -285,25 +318,30 @@ impl<'v> Program<'v> {
         let mut heads: BTreeMap<String, u64> = BTreeMap::new();
         for r in 0..self.rels.n as u32 {
             if self.rels.is_derived(r) {
-                let mut h = hasher();
-                self.f.columns(self.name(r)).hash(&mut h);
-                for &k in &self.rels.rules[r as usize] {
-                    h.write_u64(self.rules[k].hash());
-                }
-                heads.insert(self.name(r).to_owned(), h.finish());
+                heads.insert(self.name(r).to_owned(), self.head_key(r));
             }
         }
         // A base relation's declaration is its own key.
         for d in self.v.decls() {
             let rel = self.v.text(d.name());
             if !self.f.derives(rel) {
-                let mut h = hasher();
-                b"base".hash(&mut h);
-                d.hash().hash(&mut h);
-                heads.insert(rel.to_owned(), h.finish());
+                heads.insert(rel.to_owned(), Self::decl_key(d.hash()));
             }
         }
         Keys { global: g.finish(), heads }
+    }
+
+    /// A base relation's key: its declaration's.
+    fn decl_key(decl: u64) -> u64 {
+        let mut h = hasher();
+        b"base".hash(&mut h);
+        decl.hash(&mut h);
+        h.finish()
+    }
+
+    /// The key `rel` would have as a base relation, where it is declared.
+    fn base_key(&self, rel: &str) -> Option<u64> {
+        self.v.decls().into_iter().find(|d| self.v.text(d.name()) == rel).map(|d| Self::decl_key(d.hash()))
     }
 
     /// A base relation's location columns: node columns, the document column (`document_column`: `node`, `doc`,
@@ -437,6 +475,8 @@ impl<'v> Program<'v> {
         let cross_native = |rel: &str| {
             self.f.native(rel).is_some_and(|nat| match &nat.spec {
                 NativeSpec::TextTest { .. } => false,
+                // A rank's rows are its groups' (`rank_form`): its rule's join on the group is judged as any rule's.
+                NativeSpec::Rank { .. } => false,
                 NativeSpec::PythonCandidates { targets, .. } => !constants.contains(self.v.rel_name(*targets)) && !fact_not_input(*targets),
                 NativeSpec::Python { targets, .. } => targets.is_some_and(|t| !constants.contains(self.v.rel_name(t)) && !fact_not_input(t)),
                 _ => true,

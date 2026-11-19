@@ -16,9 +16,15 @@ if git rev-parse --verify --quiet origin/main >/dev/null; then
 else
   echo "pre-commit: there is no origin/main, so the release notes are not checked" >&2
 fi
-npm run --silent check
+# `npm run check` and `check:reference` are off on this branch (the user, 2026-11-17): they fail on what the branch
+# carried before the hook was installed, not on a commit's change. `check` fails `check:structure` (15 of the
+# repository-layout scorecard's targets) and `check:internal-refs` (476 `nera-` names outside the public list);
+# `check:reference` finds 3 productions where the DSL reference and the zod schema differ (8 languages in
+# `codeRuleDefineSchema` and `codeRuleQuerySchema.ast`, and `codeRuleParseSchema`'s `filePath`, not in zod).
+# Run them by hand: `npm run check`, `npm run check:reference`.
 npm run --silent check:ui-tokens
-npm run --silent check:reference
 # The engine's `test-hooks` feature carries what its dev-dependencies turn on, so the CLI and the tests build
 # their dependencies once (native/Cargo.toml).
 python3 scripts/check/check-dev-features.py
+# Blocks are never copied into another data structure (decision 0353): a commit that adds a copy is refused.
+python3 scripts/check/check-no-block-copies.py

@@ -47,7 +47,10 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
     let inputs: std::collections::HashSet<&str> = input_names.iter().map(String::as_str).collect();
     let (natives, lattice) = (v.native_map().map_err(super::super::Error::Plan)?, v.lattice_decls().map_err(super::super::Error::Plan)?);
     let outputs = v.output_names();
-    let world = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
+    let world = |rel: &str| crate::code_rule_dsl::logic::rr::FILE_SYSTEM.iter().any(|(r, _)| *r == rel);
+    // A language's answer is a constant where its request is (as `foldable`'s, 0327 mode (b)); not in the split's
+    // constants (`constant_relations` reads no requests).
+    let request_of = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().find(|(r, _)| *r == rel && !world(r)).map(|(_, q)| *q);
     let mut heads: std::collections::HashMap<&str, Vec<RuleRef<'_>>> = std::collections::HashMap::new();
     for r in v.rules() {
         heads.entry(v.rel_name(r.head().rel())).or_default().push(r);
@@ -55,8 +58,9 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
     let candidates: std::collections::HashSet<&str> = heads.keys().copied().filter(|r| !natives.contains_key(*r) && !lattice.contains_key(*r) && !inputs.contains(r)).collect();
     // The greatest fixpoint of the candidates whose every rule reads only those left, relations `given` holds, and
     // comparisons.
-    let fixpoint = |given: &dyn Fn(&str) -> bool| -> BTreeSet<String> {
+    let fixpoint = |given: &dyn Fn(&str) -> bool, requests: bool| -> BTreeSet<String> {
         let mut fold = candidates.clone();
+        let reads = |fold: &std::collections::HashSet<&str>, rel: &str| fold.contains(rel) || given(rel) || (requests && request_of(rel).is_some_and(|q| fold.contains(q) || given(q)));
         loop {
             let out: Vec<&str> = fold
                 .iter()
@@ -64,8 +68,8 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
                 .filter(|rel| {
                     !heads[rel].iter().all(|r| {
                         r.body().all(|l| match l.view() {
-                            Lit::Atom(a) => fold.contains(v.rel_name(a.rel())) || given(v.rel_name(a.rel())),
-                            Lit::Agg { atom, .. } => fold.contains(v.rel_name(atom.rel())) || given(v.rel_name(atom.rel())),
+                            Lit::Atom(a) => reads(&fold, v.rel_name(a.rel())),
+                            Lit::Agg { atom, .. } => reads(&fold, v.rel_name(atom.rel())),
                             Lit::Cmp { .. } => true,
                             _ => false,
                         })
@@ -81,10 +85,10 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
         }
     };
     let fact = |rel: &str| !heads.contains_key(rel) && v.find(rel).is_some_and(|a| v.facts(a).is_some()) && !inputs.contains(rel);
-    let mut fold = fixpoint(&|rel| !heads.contains_key(rel) && (option_input(rel) || world(rel) || fact(rel)));
+    let mut fold = fixpoint(&|rel| !heads.contains_key(rel) && (option_input(rel) || world(rel) || fact(rel)), true);
     // Only those that read the world: the split's constants (`file_local::FileLocal::constants`: facts, the run's
     // options and phases' exports, no request) are derived in both parts already.
-    let constant = fixpoint(&|rel| option_input(rel) || (super::phases::is_phased(rel) && inputs.contains(rel)) || fact(rel));
+    let constant = fixpoint(&|rel| option_input(rel) || (super::phases::is_phased(rel) && inputs.contains(rel)) || fact(rel), false);
     fold.retain(|r| !constant.contains(r));
     let shape = super::shape::Shape::of(v);
     let read_outside: BTreeSet<&str> =

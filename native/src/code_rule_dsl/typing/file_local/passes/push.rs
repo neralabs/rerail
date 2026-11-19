@@ -2,7 +2,7 @@
 //! name, so each component, interface and helper name (`fl<h>_<head>`, from its content: `helper_name`) is fixed by
 //! the program; each round's program is a version of its own, split again to check the helpers stay file-local.
 
-use super::super::{FileLocal, close_under, var_equalities_in};
+use super::super::{FileLocal, close_under, push_equal_columns, var_equalities_in};
 use super::{BodyItem, Made, NOwned, Round, lit_vars, name, term_vars, write};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::manager::{self, Cx, ProgramPass, ProgramW};
@@ -148,6 +148,7 @@ fn node_read(v: &Version, rule: RuleRef<'_>, l: LitRef<'_>) -> Option<(String, S
 /// A round of `PushLocalJoins`: the relations made, and the split of the program as it is left; `None` where it makes
 /// nothing.
 fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, keep_unrestricted: bool) -> Result<Option<Pushed<'v>>, String> {
+    let equal_columns = push_equal_columns();
     let rules: Vec<RuleRef<'v>> = v.rules().collect();
     let decl_names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
     let base = |rel: &str| f.is_input(rel);
@@ -266,14 +267,30 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 let typed: Option<Vec<(String, String)>> = iface
                     .iter()
                     .map(|x| {
-                        // A node read's value is text.
-                        if node_reads.contains(x) {
-                            return Some((x.clone(), "sym".to_owned()));
-                        }
-                        atoms.iter().find_map(|a| {
-                            let c = a.args().position(|t| matches!(t, TermRef::Var(s) if name(v, rule, s) == *x))?;
-                            f.column_type(rel(a), c).map(|t| (x.clone(), t.to_owned()))
-                        })
+                        let column_type = |var: &str| {
+                            if node_reads.iter().any(|read| read == var) {
+                                return Some("sym".to_owned());
+                            }
+                            atoms.iter().find_map(|a| {
+                                let c = a.args().position(|t| matches!(t, TermRef::Var(s) if name(v, rule, s) == var))?;
+                                f.column_type(rel(a), c).map(str::to_owned)
+                            })
+                        };
+                        let ty = column_type(x).or_else(|| {
+                            if !equal_columns {
+                                return None;
+                            }
+                            let equal: Vec<_> = lits.iter().filter_map(|&j| match body[j].view() {
+                                L::Cmp { l: TermRef::Var(a), op: CmpOp::Eq, r: TermRef::Var(b) } => {
+                                    Some((name(v, rule, a), name(v, rule, b)))
+                                }
+                                _ => None,
+                            }).collect();
+                            let mut available = BTreeSet::from([x.clone()]);
+                            close_under(&mut available, &equal);
+                            available.iter().find_map(|var| column_type(var))
+                        })?;
+                        Some((x.clone(), ty))
                     })
                     .collect();
                 let Some(typed) = typed else { continue };

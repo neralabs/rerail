@@ -29,18 +29,26 @@ pub mod native_cpu_block;
 pub mod native_cpu_walk;
 pub mod native_cpu_codegen;
 pub mod native_cpu_bytes;
+pub mod native_cpu_edge;
 pub mod native_cpu_lanes;
+pub mod native_cpu_pairs;
 pub mod native_cpu_pressure;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2).
 pub mod native_cpu_rows;
 pub mod native_cpu_clusters;
 pub mod native_cpu_shape;
+pub mod clif_msl;
 pub mod clif_rust;
 pub mod rust_stream;
 pub mod native_cpu_stream;
+pub mod native_cpu_pp;
 pub mod native_cpu_tape;
 pub mod native_ir;
 pub mod program;
+pub mod pp_expr;
+pub mod pp_words;
+#[cfg(test)]
+mod pp_words_tests;
 pub mod records;
 pub mod rir_asm;
 pub mod rir_text;
@@ -66,6 +74,8 @@ pub use error::Error;
 mod delay_tests;
 #[cfg(test)]
 mod gating_tests;
+#[cfg(test)]
+mod regions_tests;
 #[cfg(test)]
 mod outline_tests;
 #[cfg(test)]
