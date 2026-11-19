@@ -1,0 +1,501 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-npy002-numpy-legacy-random",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a NumPy random Generator instead of the legacy global-state functions in numpy.random.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "callee-position": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call",
+                  "field": "function"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "callee-position"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "seed",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.random.seed"
+              ]
+            },
+            "pattern": "$NAME",
+            "matches": "callee-position"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY002",
+        "message": "Create `rng = np.random.default_rng(seed)` and pass it around instead of seeding NumPy's global state with `$NAME`; keep `$NAME` where legacy seeded results must match.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "state",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.random.get_state",
+                "numpy.random.set_state"
+              ]
+            },
+            "pattern": "$NAME",
+            "matches": "callee-position"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY002",
+        "message": "Save or restore state through `bit_generator.state` on a `np.random.default_rng()` generator instead of `$NAME`; keep `$NAME` where legacy seeded results must match.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "rand",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.random.rand"
+              ]
+            },
+            "pattern": "$NAME",
+            "matches": "callee-position"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY002",
+        "message": "Call `rng.random(shape)` on a `np.random.default_rng()` generator instead of `$NAME`, passing one shape instead of separate dimensions; keep `$NAME` where legacy seeded results must match.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "randn",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.random.randn"
+              ]
+            },
+            "pattern": "$NAME",
+            "matches": "callee-position"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY002",
+        "message": "Call `rng.standard_normal(shape)` on a `np.random.default_rng()` generator instead of `$NAME`, passing one shape instead of separate dimensions; keep `$NAME` where legacy seeded results must match.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "randint",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.random.randint"
+              ]
+            },
+            "pattern": "$NAME",
+            "matches": "callee-position"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY002",
+        "message": "Call `rng.integers(low, high, size)` on a `np.random.default_rng()` generator instead of `$NAME`; the upper bound stays exclusive; keep `$NAME` where legacy seeded results must match.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "random-integers",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.random.random_integers"
+              ]
+            },
+            "pattern": "$NAME",
+            "matches": "callee-position"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY002",
+        "message": "Call `rng.integers(low, high, size, endpoint=True)` on a `np.random.default_rng()` generator instead of `$NAME`, as it includes the upper bound; keep `$NAME` where legacy seeded results must match.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "random-sample",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.random.random",
+                "numpy.random.ranf",
+                "numpy.random.sample",
+                "numpy.random.random_sample"
+              ]
+            },
+            "pattern": "$NAME",
+            "matches": "callee-position"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY002",
+        "message": "Call `rng.random(size)` on a `np.random.default_rng()` generator instead of `$NAME`; keep `$NAME` where legacy seeded results must match.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "same-method",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "numpy.random.choice",
+                "numpy.random.bytes",
+                "numpy.random.shuffle",
+                "numpy.random.permutation",
+                "numpy.random.beta",
+                "numpy.random.binomial",
+                "numpy.random.chisquare",
+                "numpy.random.dirichlet",
+                "numpy.random.exponential",
+                "numpy.random.f",
+                "numpy.random.gamma",
+                "numpy.random.geometric",
+                "numpy.random.gumbel",
+                "numpy.random.hypergeometric",
+                "numpy.random.laplace",
+                "numpy.random.logistic",
+                "numpy.random.lognormal",
+                "numpy.random.logseries",
+                "numpy.random.multinomial",
+                "numpy.random.multivariate_normal",
+                "numpy.random.negative_binomial",
+                "numpy.random.noncentral_chisquare",
+                "numpy.random.noncentral_f",
+                "numpy.random.normal",
+                "numpy.random.pareto",
+                "numpy.random.poisson",
+                "numpy.random.power",
+                "numpy.random.rayleigh",
+                "numpy.random.standard_cauchy",
+                "numpy.random.standard_exponential",
+                "numpy.random.standard_gamma",
+                "numpy.random.standard_normal",
+                "numpy.random.standard_t",
+                "numpy.random.triangular",
+                "numpy.random.uniform",
+                "numpy.random.vonmises",
+                "numpy.random.wald",
+                "numpy.random.weibull",
+                "numpy.random.zipf"
+              ]
+            },
+            "pattern": "$NAME",
+            "matches": "callee-position"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "NPY002",
+        "message": "Call the method of the same name on a `np.random.default_rng()` generator instead of `$NAME`; keep `$NAME` where legacy seeded results must match.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY002"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "string-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "reference": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "numpy.random.seed",
+                      "numpy.random.get_state",
+                      "numpy.random.set_state",
+                      "numpy.random.rand",
+                      "numpy.random.randn",
+                      "numpy.random.randint",
+                      "numpy.random.random_integers",
+                      "numpy.random.random",
+                      "numpy.random.ranf",
+                      "numpy.random.sample",
+                      "numpy.random.random_sample",
+                      "numpy.random.choice",
+                      "numpy.random.bytes",
+                      "numpy.random.shuffle",
+                      "numpy.random.permutation",
+                      "numpy.random.beta",
+                      "numpy.random.binomial",
+                      "numpy.random.chisquare",
+                      "numpy.random.dirichlet",
+                      "numpy.random.exponential",
+                      "numpy.random.f",
+                      "numpy.random.gamma",
+                      "numpy.random.geometric",
+                      "numpy.random.gumbel",
+                      "numpy.random.hypergeometric",
+                      "numpy.random.laplace",
+                      "numpy.random.logistic",
+                      "numpy.random.lognormal",
+                      "numpy.random.logseries",
+                      "numpy.random.multinomial",
+                      "numpy.random.multivariate_normal",
+                      "numpy.random.negative_binomial",
+                      "numpy.random.noncentral_chisquare",
+                      "numpy.random.noncentral_f",
+                      "numpy.random.normal",
+                      "numpy.random.pareto",
+                      "numpy.random.poisson",
+                      "numpy.random.power",
+                      "numpy.random.rayleigh",
+                      "numpy.random.standard_cauchy",
+                      "numpy.random.standard_exponential",
+                      "numpy.random.standard_gamma",
+                      "numpy.random.standard_normal",
+                      "numpy.random.standard_t",
+                      "numpy.random.triangular",
+                      "numpy.random.uniform",
+                      "numpy.random.vonmises",
+                      "numpy.random.wald",
+                      "numpy.random.weibull",
+                      "numpy.random.zipf"
+                    ]
+                  }
+                },
+                {
+                  "matches": "callee-position"
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "reference",
+                      "capture": "NAME"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "matches": "in-string"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "code": "NPY002",
+        "message": "Call the matching method of a `np.random.default_rng()` generator instead of the legacy `$NAME`; keep `$NAME` where legacy seeded results must match.",
+        "each": "NAME",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "NPY002"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

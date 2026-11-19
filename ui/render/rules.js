@@ -4,7 +4,7 @@
  */
 import { h, setAttr, setText, setClass, syncChildren } from "../dom.js";
 import { fmt, plural, whenLabel } from "../format.js";
-import { INTERNAL_TESTING, isInternalTesting, isLog, isRunning } from "../derive.js";
+import { INTERNAL_TESTING, isInternalTesting, isLog, isRunning, violationOutcomes } from "../derive.js";
 import { data, isMeasured, isAudited, fires, allFires, activityOf, activityAllOf, rangeLabel, titleOf, panelRuleId } from "../state.js";
 
 export const CREATE_COMMAND = "/rerail-create";
@@ -27,9 +27,12 @@ function createRow(stored) {
   return row;
 }
 
-/** A count's hover: `f` violations in the range, and that the agent wasn't told when every one was recorded on Log. */
+/**
+ * A count's hover: `f` violations in the range, and that the agent wasn't told when every one is Log only (one whose
+ * steer was declined before the rule went to Log was told).
+ */
 export function loggedTip(stored, f) {
-  return isLog(stored) && !stored.mixed && activityOf(stored.rule.id).loggedViolations === f
+  return isLog(stored) && !stored.mixed && violationOutcomes(activityOf(stored.rule.id)).logged === f
     ? `${fmt(f)} logged ${rangeLabel()}. Agent not told.`
     : `${fmt(f)} ${plural(f, "violation")} logged ${rangeLabel()}`;
 }

@@ -1,0 +1,42 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f823-undefined-local",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't read a variable before the function assigns it, even when an outer scope has the same name; Python raises UnboundLocalError.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "undefined-local",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$N",
+            "resolves": {
+              "beforeLocal": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F823",
+        "message": "Assign `$N` before reading it here, or declare it `global` or `nonlocal` if you meant the outer variable.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F823"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

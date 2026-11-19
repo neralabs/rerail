@@ -129,7 +129,7 @@ pub struct VerifiedFiles<'a> {
 
 impl<'a> VerifiedFiles<'a> {
     /// The memory of the worktree whose root is `worktree`, kept in `store`.
-    pub(super) fn new(store: Option<&'a ContentStore>, worktree: &Path) -> Self {
+    pub(crate) fn new(store: Option<&'a ContentStore>, worktree: &Path) -> Self {
         Self {
             store,
             worktree: worktree.to_string_lossy().into_owned(),
@@ -258,7 +258,7 @@ const NOT_ALL_ON_DISK: u32 = 0x0040_0000 | 0x0004_0000 | 0x0000_1000;
 /// placeholder's space moves its change time and keeps its stat, so its stat decides, as it does
 /// for Git: a read would download every freed file.
 #[cfg(windows)]
-pub(crate) fn recalls_data(attributes: u32) -> bool {
+pub fn recalls_data(attributes: u32) -> bool {
     attributes & NOT_ALL_ON_DISK != 0
 }
 

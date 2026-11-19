@@ -11,7 +11,7 @@ use std::fmt;
 #[cfg(unix)]
 use std::io::Read;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(unix)]
 use std::{
@@ -51,31 +51,33 @@ const RESTORE_STAT: gix::index::entry::stat::Options = gix::index::entry::stat::
 /// conversion only inserts carriage returns, so a size check sees it; these need a hash.
 const SIZE_PRESERVING_CONVERSIONS: [&str; 3] = ["filter", "ident", "working-tree-encoding"];
 
+// This file compiles in rerail-store through `#[path]`, so its submodules are named by path.
+#[path = "git_workspace/worktree_stat.rs"]
 mod worktree_stat;
 
 pub use worktree_stat::VerifiedFiles;
 #[cfg(windows)]
-pub(crate) use worktree_stat::recalls_data;
+pub use worktree_stat::recalls_data;
 use worktree_stat::{ChangeStamp, Proof, WorktreeStat, stat_decides};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 static SOURCE_ALIAS_HASHES: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(test)]
-pub(crate) fn reset_source_alias_hashes() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_source_alias_hashes() {
     SOURCE_ALIAS_HASHES.store(0, Ordering::Relaxed);
 }
 
-#[cfg(test)]
-pub(crate) fn source_alias_hashes() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn source_alias_hashes() -> usize {
     SOURCE_ALIAS_HASHES.load(Ordering::Relaxed)
 }
 
 /// Sets `path`'s modification time to `when`, as for a file last written then and left alone
 /// since. On Windows its change time goes there too: setting a time moves NTFS's change time to
 /// now, which such a file does not have.
-#[cfg(test)]
-pub(crate) fn backdate(path: &Path, when: std::time::SystemTime) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn backdate(path: &Path, when: std::time::SystemTime) {
     let file = std::fs::File::options().write(true).open(path).unwrap();
     #[cfg(not(windows))]
     file.set_modified(when).unwrap();
@@ -83,7 +85,7 @@ pub(crate) fn backdate(path: &Path, when: std::time::SystemTime) {
     set_written(&file, when);
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(any(test, feature = "test-hooks"), windows))]
 fn set_written(file: &std::fs::File, when: std::time::SystemTime) {
     let time = file_time_of(when);
     set_basic_info(
@@ -98,8 +100,8 @@ fn set_written(file: &std::fs::File, when: std::time::SystemTime) {
 
 /// Sets `path`'s NTFS change time to `when` and leaves its other times, as a file whose times a
 /// tool set has one that differs from its modification time.
-#[cfg(all(test, windows))]
-pub(crate) fn set_change_time(path: &Path, when: std::time::SystemTime) {
+#[cfg(all(any(test, feature = "test-hooks"), windows))]
+pub fn set_change_time(path: &Path, when: std::time::SystemTime) {
     let file = std::fs::File::options().write(true).open(path).unwrap();
     set_basic_info(
         &file,
@@ -111,7 +113,7 @@ pub(crate) fn set_change_time(path: &Path, when: std::time::SystemTime) {
 }
 
 /// `when` as a file time: 100 ns intervals from 1601.
-#[cfg(all(test, windows))]
+#[cfg(all(any(test, feature = "test-hooks"), windows))]
 fn file_time_of(when: std::time::SystemTime) -> i64 {
     let since_1601 = when
         .duration_since(std::time::UNIX_EPOCH)
@@ -123,7 +125,7 @@ fn file_time_of(when: std::time::SystemTime) -> i64 {
 }
 
 /// Sets the times `info` names on `file`; a time left at 0 stays as it is.
-#[cfg(all(test, windows))]
+#[cfg(all(any(test, feature = "test-hooks"), windows))]
 fn set_basic_info(
     file: &std::fs::File,
     info: windows_sys::Win32::Storage::FileSystem::FILE_BASIC_INFO,
@@ -146,8 +148,8 @@ fn set_basic_info(
 
 /// Sets `path`'s attributes to `attributes`, as a provider that moves a file's data off this disk
 /// sets them; this moves its change time. `FILE_ATTRIBUTE_NORMAL` clears them.
-#[cfg(all(test, windows))]
-pub(crate) fn set_attributes(path: &Path, attributes: u32) {
+#[cfg(all(any(test, feature = "test-hooks"), windows))]
+pub fn set_attributes(path: &Path, attributes: u32) {
     let file = std::fs::File::options().write(true).open(path).unwrap();
     set_basic_info(
         &file,
@@ -160,12 +162,12 @@ pub(crate) fn set_attributes(path: &Path, attributes: u32) {
 
 /// While it lives, everyone is denied the read of a file, as a person denies it with `icacls`:
 /// the denial moves the file's change time and leaves its modification time and size.
-#[cfg(all(test, windows))]
-pub(crate) struct ReadDenied(PathBuf);
+#[cfg(all(any(test, feature = "test-hooks"), windows))]
+pub struct ReadDenied(PathBuf);
 
-#[cfg(all(test, windows))]
+#[cfg(all(any(test, feature = "test-hooks"), windows))]
 impl ReadDenied {
-    pub(crate) fn new(path: &Path) -> Self {
+    pub fn new(path: &Path) -> Self {
         let output = icacls(path, &["/deny", "*S-1-1-0:(R)"]).unwrap();
         assert!(
             output.status.success(),
@@ -176,7 +178,7 @@ impl ReadDenied {
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(any(test, feature = "test-hooks"), windows))]
 impl Drop for ReadDenied {
     /// Takes the denial off, so the test's folder can be removed.
     fn drop(&mut self) {
@@ -184,7 +186,7 @@ impl Drop for ReadDenied {
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(any(test, feature = "test-hooks"), windows))]
 fn icacls(path: &Path, change: &[&str]) -> std::io::Result<std::process::Output> {
     std::process::Command::new("icacls")
         .arg(path)
@@ -192,11 +194,11 @@ fn icacls(path: &Path, change: &[&str]) -> std::io::Result<std::process::Output>
         .output()
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Runs once, inside the next discovery on this thread, after it walked the HEAD tree and
     /// before it reads the index: a test commits there.
-    pub(crate) static AFTER_HEAD_TREE_VISIT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+    pub static AFTER_HEAD_TREE_VISIT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -357,8 +359,8 @@ fn read_anchored_prefix(
 /// The path of `relative_path` below `root`, refused where it resolves outside `root`.
 #[cfg(not(unix))]
 fn anchored_path(root: &Path, relative_path: &str) -> std::io::Result<PathBuf> {
-    let root = root.canonicalize()?;
-    let path = root.join(relative_path).canonicalize()?;
+    let root = dunce::canonicalize(root)?;
+    let path = dunce::canonicalize(root.join(relative_path))?;
     if !path.starts_with(&root) {
         return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
     }
@@ -601,7 +603,7 @@ struct OverlayFlags {
 impl GitWorkspace {
     /// The source paths Git knows in this worktree, each with whether it is clean: what discovery
     /// found, for its tests. Scans list the worktree themselves and use Git only to restore.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn index_files(&self) -> Vec<(String, bool)> {
         let mut files = self
             .base_files
@@ -749,6 +751,64 @@ impl GitWorkspace {
         }
     }
 
+    /// A clean base file's blob, unread: the path has no overlay and its worktree stat is exactly its index entry's
+    /// (`BaseFile::checkout`), so its bytes are the blob's (phase 0, t23). `None` where only a hash could tell.
+    pub fn clean_blob_unread(&self, relative_path: &str) -> Option<HashKey> {
+        if self
+            .overlays
+            .binary_search_by(|o| o.path.as_str().cmp(relative_path))
+            .is_ok()
+        {
+            return None;
+        }
+        let file = &self.base_files[self
+            .base_files
+            .binary_search_by(|f| f.path.as_str().cmp(relative_path))
+            .ok()?];
+        let recorded = file.checkout?;
+        let metadata =
+            gix::index::fs::Metadata::from_path_no_follow(&self.worktree_root.join(relative_path))
+                .ok()?;
+        (metadata.is_file()
+            && gix::index::entry::Stat::from_fs(&metadata)
+                .is_ok_and(|now| recorded.matches(&now, RESTORE_STAT)))
+        .then_some(file.blob)
+    }
+
+    /// Every file of the worktree as Git sees it, relative and sorted: HEAD's (less those deleted), the staged new
+    /// ones and the untracked ones Git does not ignore. Ignored directories are not entered; nested repositories are
+    /// their own.
+    pub fn worktree_files(&self) -> Vec<String> {
+        const TREE: u16 = 0o040000;
+        const COMMIT: u16 = 0o160000;
+        let mut files: BTreeSet<String> = BTreeSet::new();
+        for tree in &self.trees {
+            for entry in tree
+                .entries
+                .iter()
+                .filter(|e| e.mode & 0o170000 != TREE && e.mode & 0o170000 != COMMIT)
+            {
+                files.insert(if tree.prefix.is_empty() {
+                    entry.name.clone()
+                } else {
+                    format!("{}/{}", tree.prefix, entry.name)
+                });
+            }
+        }
+        for overlay in &self.overlays {
+            match overlay.kind {
+                OverlayKind::Deleted => {
+                    files.remove(&overlay.path);
+                }
+                _ if self.worktree_root.join(&overlay.path).is_file() => {
+                    files.insert(overlay.path.clone());
+                }
+                _ => {}
+            }
+        }
+        files.into_iter().collect()
+    }
+
     /// Return the committed blob alias only when the evaluated bytes have that identity.
     pub fn source_alias(&self, relative_path: &str, bytes: &[u8]) -> Option<HashKey> {
         let index = self
@@ -760,7 +820,7 @@ impl GitWorkspace {
         } else {
             GitHashAlgorithm::Sha1
         };
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         SOURCE_ALIAS_HASHES.fetch_add(1, Ordering::Relaxed);
         let computed = gix::objs::compute_hash(hash_kind(algorithm), gix::objs::Kind::Blob, bytes)
             .ok()
@@ -782,7 +842,7 @@ impl GitWorkspace {
             .into_iter()
             .collect::<Vec<_>>();
         store
-            .put_source(&bytes, &aliases)
+            .put_source_at(&bytes, &aliases, relative_path)
             .map_err(|error| discovery_error("cannot persist workspace source", error))
     }
 
@@ -806,38 +866,136 @@ impl GitWorkspace {
     }
 }
 
-/// Whether `gix::discover` failed because no repository encloses the path, rather than because one could not be read.
-pub(crate) fn is_no_repository(error: &gix::Error) -> bool {
-    matches!(
-        error.downcast_any_ref::<gix::discover::upwards::Error>(),
-        Some(
-            gix::discover::upwards::Error::NoGitRepository { .. }
-                | gix::discover::upwards::Error::NoGitRepositoryWithinCeiling { .. }
-                | gix::discover::upwards::Error::NoGitRepositoryWithinFs { .. }
-        )
-    )
+/// The attribute stack that tells which files a size-preserving conversion applies to: gix's
+/// global attribute files with the system file Rerail's Git reads in front, which the opener keeps
+/// out of gix's own stack since finding it starts a Git on Windows. `None` where that file cannot
+/// be named, so no file takes the stat shortcut.
+fn conversion_attributes<'repository>(
+    repository: &'repository gix::Repository,
+    index: &gix::index::State,
+) -> Result<Option<gix::AttributeStack<'repository>>, DiscoveryError> {
+    let Ok(system) = crate::git_access::opener::system_attributes() else {
+        return Ok(None);
+    };
+    let read = |error: &dyn fmt::Display| discovery_error("cannot read Git attributes", error);
+    let mut files = system.into_iter().collect::<Vec<_>>();
+    files.extend(
+        repository
+            .attribute_global_paths()
+            .map_err(|error| read(&error))?,
+    );
+    for file in &files {
+        crate::git_access::opener::check_size(file).map_err(|error| read(&error))?;
+    }
+    let mut buf = Vec::new();
+    let mut collection = gix::attrs::search::MetadataCollection::default();
+    let globals = gix::attrs::Search::new_globals(files, &mut buf, &mut collection)
+        .map_err(|error| read(&error))?;
+    let state =
+        gix::worktree::stack::State::AttributesStack(gix::worktree::stack::state::Attributes::new(
+            globals,
+            Some(repository.common_dir().join("info").join("attributes")),
+            gix::worktree::stack::state::attributes::Source::IdMapping,
+            collection,
+        ));
+    let case = if repository
+        .filesystem_options()
+        .map_err(|error| discovery_error("cannot read core.ignoreCase", error))?
+        .ignore_case
+    {
+        gix::glob::pattern::Case::Fold
+    } else {
+        gix::glob::pattern::Case::Sensitive
+    };
+    let id_mappings = state.id_mappings_from_index(index, index.path_backing(), case);
+    let root = repository.workdir().unwrap_or(repository.git_dir());
+    Ok(Some(gix::AttributeStack::new(
+        gix::worktree::Stack::new(root, state, case, buf, id_mappings),
+        repository,
+    )))
+}
+
+/// Gives each base file whose index entry is not racy, is compared with the worktree and has no
+/// size-preserving conversion the stat of that entry (`BaseFile::checkout`).
+fn record_checkout_stats(
+    attributes: &mut gix::AttributeStack<'_>,
+    index: &gix::index::State,
+    base_files: &mut [BaseFile],
+) -> Result<(), DiscoveryError> {
+    let mut conversions = attributes.selected_attribute_matches(SIZE_PRESERVING_CONVERSIONS);
+    let index_written = index.timestamp();
+    for file in base_files {
+        let Some(entry) = index.entry_by_path(file.path.as_bytes().as_bstr()) else {
+            continue;
+        };
+        if entry.stat.is_racy(index_written, RESTORE_STAT)
+            || entry
+                .flags
+                .intersects(UNCOMPARED_INDEX_ENTRY.union(gix::index::entry::Flags::INTENT_TO_ADD))
+        {
+            continue;
+        }
+        attributes
+            .at_entry(file.path.as_str(), Some(gix::index::entry::Mode::FILE))
+            .map_err(|error| discovery_error("cannot read Git attributes", error))?
+            .matching_attributes(&mut conversions);
+        if conversions.iter_selected().all(|found| {
+            matches!(
+                found.assignment.state,
+                gix::attrs::StateRef::Unspecified | gix::attrs::StateRef::Unset
+            )
+        }) {
+            file.checkout = Some(entry.stat);
+        }
+    }
+    Ok(())
 }
 
 /// Discover one repository without an external `git` process.
 ///
-/// The result is sorted by path and object identity. The caller can use the
-/// Git object IDs as aliases only after it compares them with evaluated bytes.
+/// The repository opens through the engine's one opener (`git_access::opener::open`, under the Git
+/// read time limit), so a repository Git refuses is not discovered, and its status runs no filter
+/// driver: a file under one whose stat changed reads as changed. The walk and status that follow
+/// have no limit, as a large checkout may take longer. The result is sorted by path and object
+/// identity. The caller can use the Git object IDs as aliases only after it compares them with
+/// evaluated bytes.
 pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
-    let repository = gix::discover(root).map_err(|error| {
-        let message = format!("cannot discover Git repository: {error}");
-        if is_no_repository(&error) {
+    discover_in(root, false)
+}
+
+/// [`discover`] for the files under `root` only: HEAD's subtree there, and status over that part of the
+/// worktree. Its trees, base files and overlays are those under `root`; a file elsewhere is none of them.
+/// Where the Git repository holding `root` keeps its work tree, its own directory (`HEAD`, the index) and the
+/// directory it shares with its other work trees (refs, config, info), each canonical: found without reading its
+/// status (decision 0105: a run watches them before it reads the status). Opened through the engine's one opener,
+/// as [`discover`] opens it: a repository Git refuses has none.
+pub fn locations(root: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
+    let repository = crate::git_access::opener::open(root).ok()?;
+    let canonical = |p: &Path| dunce::canonicalize(p).ok();
+    Some((
+        canonical(repository.workdir()?)?,
+        canonical(repository.git_dir())?,
+        canonical(repository.common_dir())?,
+    ))
+}
+
+pub fn discover_under(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
+    discover_in(root, true)
+}
+
+fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError> {
+    let mut repository = crate::git_access::opener::open(root).map_err(|error| match error {
+        crate::git_access::opener::OpenError::NoRepository(message) => {
             DiscoveryError::NoRepository(message)
-        } else {
-            DiscoveryError::Failed(message)
         }
+        crate::git_access::opener::OpenError::Failed(message) => DiscoveryError::Failed(message),
     })?;
-    let worktree = repository
-        .workdir()
-        .ok_or_else(|| {
-            DiscoveryError::Failed("bare Git repositories have no workspace".to_owned())
-        })?
-        .canonicalize()
-        .map_err(|error| discovery_error("cannot resolve Git worktree", error))?;
+    crate::git_access::opener::without_filter_programs(&mut repository)
+        .map_err(DiscoveryError::Failed)?;
+    let worktree = dunce::canonicalize(repository.workdir().ok_or_else(|| {
+        DiscoveryError::Failed("bare Git repositories have no workspace".to_owned())
+    })?)
+    .map_err(|error| discovery_error("cannot resolve Git worktree", error))?;
     let case = if repository
         .filesystem_options()
         .map_err(|error| discovery_error("cannot read core.ignoreCase", error))?
@@ -858,16 +1016,48 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
     let mut trees = Vec::new();
     let mut base_files = Vec::new();
     let mut nested_paths = BTreeSet::new();
-    visit_tree(
-        &repository,
-        root_tree,
-        "",
-        &ignore,
-        &mut trees,
-        &mut base_files,
-        &mut nested_paths,
-    )?;
-    #[cfg(test)]
+    // Scoped: the root's path in the worktree ("" at the top), its subtree, and a pathspec for status.
+    let scope = if scoped {
+        let canonical = dunce::canonicalize(root)
+            .map_err(|error| discovery_error("cannot resolve the root", error))?;
+        canonical
+            .strip_prefix(&worktree)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    if scope.is_empty() {
+        visit_tree(
+            &repository,
+            root_tree,
+            "",
+            &ignore,
+            &mut trees,
+            &mut base_files,
+            &mut nested_paths,
+        )?;
+    } else if let Some(entry) = root_tree
+        .lookup_entry_by_path(&scope)
+        .map_err(|error| discovery_error("cannot read HEAD tree", error))?
+        .filter(|entry| entry.mode().is_tree())
+    {
+        let subtree = entry
+            .object()
+            .map_err(|error| discovery_error("cannot read Git subtree", error))?
+            .try_into_tree()
+            .map_err(|error| discovery_error("Git subtree has the wrong object kind", error))?;
+        visit_tree(
+            &repository,
+            subtree,
+            &scope,
+            &ignore,
+            &mut trees,
+            &mut base_files,
+            &mut nested_paths,
+        )?;
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(hook) = AFTER_HEAD_TREE_VISIT.take() {
         hook();
     }
@@ -886,9 +1076,14 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
         .index_worktree_submodules(None)
         .head_tree(head_tree)
         .into_iter(
-            STATUS_EXCLUDES
-                .iter()
-                .map(|pattern| gix::bstr::BString::from(*pattern)),
+            (!scope.is_empty())
+                .then(|| gix::bstr::BString::from(format!(":(top,literal){scope}")))
+                .into_iter()
+                .chain(
+                    STATUS_EXCLUDES
+                        .iter()
+                        .map(|pattern| gix::bstr::BString::from(*pattern)),
+                ),
         )
         .map_err(|error| discovery_error("cannot read Git status", error))?;
     for item in status {
@@ -941,38 +1136,10 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
     // The index entry stat of each base file a restore may verify by one `lstat`. A racy entry
     // (written in the same timestamp tick as the index) proves nothing about later writes, and a
     // size-preserving conversion makes the checkout bytes differ from the blob's at equal size:
-    // both leave the file to be hashed when restored.
-    let mut attributes = repository
-        .attributes_only(
-            &index,
-            gix::worktree::stack::state::attributes::Source::IdMapping,
-        )
-        .map_err(|error| discovery_error("cannot read Git attributes", error))?;
-    let mut conversions = attributes.selected_attribute_matches(SIZE_PRESERVING_CONVERSIONS);
-    let index_written = index.timestamp();
-    for file in &mut base_files {
-        let Some(entry) = index.entry_by_path(file.path.as_bytes().as_bstr()) else {
-            continue;
-        };
-        if entry.stat.is_racy(index_written, RESTORE_STAT)
-            || entry
-                .flags
-                .intersects(UNCOMPARED_INDEX_ENTRY.union(gix::index::entry::Flags::INTENT_TO_ADD))
-        {
-            continue;
-        }
-        attributes
-            .at_entry(file.path.as_str(), Some(gix::index::entry::Mode::FILE))
-            .map_err(|error| discovery_error("cannot read Git attributes", error))?
-            .matching_attributes(&mut conversions);
-        if conversions.iter_selected().all(|found| {
-            matches!(
-                found.assignment.state,
-                gix::attrs::StateRef::Unspecified | gix::attrs::StateRef::Unset
-            )
-        }) {
-            file.checkout = Some(entry.stat);
-        }
+    // both leave the file to be hashed when restored, as does every file where the system
+    // attributes file cannot be named.
+    if let Some(mut attributes) = conversion_attributes(&repository, &index)? {
+        record_checkout_stats(&mut attributes, &index, &mut base_files)?;
     }
 
     let mut overlays: Vec<WorkspaceOverlay> = flags
@@ -1105,7 +1272,10 @@ mod tests {
     }
 
     fn run_git(directory: &Path, arguments: &[&str]) {
+        // The machine's git settings (a signing key, hooks, a default branch) are not the test's.
         let output = std::process::Command::new("git")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .arg("-C")
             .arg(directory)
             .args(arguments)
@@ -1128,7 +1298,9 @@ mod tests {
         for (path, contents) in files {
             std::fs::write(root.join(path), contents).unwrap();
         }
-        run_git(root, &["add", "."]);
+        let mut paths = vec!["add", "--"];
+        paths.extend(files.iter().map(|(path, _)| *path));
+        run_git(root, &paths);
         run_git(root, &["commit", "-m", "initial"]);
     }
 
@@ -1705,7 +1877,7 @@ mod tests {
 
         assert_eq!(
             workspace.nested_roots,
-            [parent.canonicalize().unwrap().join("vendor/sub")]
+            [dunce::canonicalize(parent).unwrap().join("vendor/sub")]
         );
 
         assert_eq!(
@@ -1807,7 +1979,7 @@ mod tests {
             ],
         );
 
-        let linked_root = linked.canonicalize().unwrap();
+        let linked_root = dunce::canonicalize(&linked).unwrap();
         let workspace = discover(&linked).unwrap();
         assert_eq!(workspace.worktree_root, linked_root);
         assert!(
@@ -1826,7 +1998,10 @@ mod tests {
 
         std::fs::copy(parent.join("nested/.git"), linked.join("nested/.git")).unwrap();
         let workspace = discover(&linked).unwrap();
-        assert_eq!(workspace.worktree_root, linked.canonicalize().unwrap());
+        assert_eq!(
+            workspace.worktree_root,
+            dunce::canonicalize(&linked).unwrap()
+        );
         assert!(
             !workspace
                 .base_files

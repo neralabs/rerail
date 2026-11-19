@@ -553,21 +553,21 @@
                       "has": {
                         "stopBy": "neighbor",
                         "matches": "values-call",
+                        "nthChild": {
+                          "position": 2,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        },
                         "follows": {
                           "stopBy": {
                             "not": {
                               "kind": "comment"
                             }
                           },
-                          "regex": "^,$",
-                          "follows": {
-                            "stopBy": {
-                              "not": {
-                                "kind": "comment"
-                              }
-                            },
-                            "matches": "keys-call"
-                          }
+                          "matches": "keys-call"
                         }
                       }
                     }

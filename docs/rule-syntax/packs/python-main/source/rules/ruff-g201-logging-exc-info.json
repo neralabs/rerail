@@ -1,0 +1,297 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-g201-logging-exc-info",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the exception logging method instead of error with exc_info inside exception handlers; it logs the same traceback at ERROR level.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "logging-exc-info",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "logger-object": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "resolves": {
+                      "import": [
+                        "logging.getLogger",
+                        "logging.Logger"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "logger-object"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "logging",
+                      "flask.current_app.logger"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$"
+                    },
+                    {
+                      "kind": "attribute",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "attribute",
+                            "regex": "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "object",
+                            "matches": "name-chain"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "not": {
+                    "resolves": {
+                      "import": true
+                    }
+                  }
+                }
+              ]
+            },
+            "name-chain": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "matches": "name-chain"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-chain"
+                  }
+                }
+              ]
+            },
+            "in-handler": {
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "except_clause"
+                    },
+                    {
+                      "kind": "block",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "class_definition"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "kind": "except_clause"
+              }
+            },
+            "exc-info-set": {
+              "any": [
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "resolves": {
+                      "import": [
+                        "sys.exc_info"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exc-info-set"
+                  }
+                }
+              ]
+            },
+            "exc-info-kwarg": {
+              "kind": "keyword_argument",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "regex": "^exc_info$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "exc-info-set"
+                  }
+                }
+              ]
+            },
+            "level-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^error$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "matches": "logger-object"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "logging.error"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "level-callee"
+                  }
+                }
+              ]
+            },
+            "error-call": {
+              "kind": "call",
+              "matches": "in-handler",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "arguments",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "exc-info-kwarg"
+                }
+              }
+            },
+            "callee": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "kind": "call",
+                    "matches": "error-call"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "attribute",
+                  "kind": "attribute",
+                  "matches": "level-callee",
+                  "all": [
+                    {
+                      "matches": "callee"
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "level-callee",
+                "all": [
+                  {
+                    "matches": "callee"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "G201",
+        "message": "Call `exception(...)` instead and drop `exc_info`: in an except block it logs the same traceback at ERROR level. Leave it if this object is not a standard logger.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "G201"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

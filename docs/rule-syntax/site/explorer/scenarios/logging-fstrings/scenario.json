@@ -1,0 +1,5 @@
+{
+  "title": "f-strings in logging calls",
+  "rule": "ruff-g004-logging-f-string",
+  "note": "G004 flags an f-string as a logging message: it is formatted even when the level is off, and log aggregators lose the template. Pass the values as arguments instead."
+}

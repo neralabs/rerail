@@ -24,7 +24,7 @@ import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
-import { loadNativeBinding } from "../../../src/engine/native/native.js";
+import { GIT_OPEN_AGAIN_MS, nativeGitAccess } from "../../../src/engine/native/git-access.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -60,7 +60,7 @@ async function repository(path: string): Promise<string> {
   await mkdir(join(path, "api"), { recursive: true });
   await writeFile(join(path, "README.md"), "seed\n");
   git(path, "init", "--quiet");
-  git(path, "add", ".");
+  git(path, "add", "--", "README.md");
   git(path, "commit", "--quiet", "-m", "seed");
   return await realpath(path);
 }
@@ -207,9 +207,9 @@ describe("CheckoutCodeRuleRouter", () => {
     await writeFile(join(session, ".gitignore"), "scratch/\n*.log\n");
     startTestRepository(session, databasePath);
     // A nested `.gitignore` the matcher cannot read (or the index caught mid-rewrite) fails that one path's question.
-    const binding = loadNativeBinding();
-    const open = binding.openGitIgnoreMatcher.bind(binding);
-    const opens = vi.spyOn(binding, "openGitIgnoreMatcher").mockImplementation(checkoutRoot => {
+    const access = nativeGitAccess();
+    const open = access.openGitIgnoreMatcher.bind(access);
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementation(checkoutRoot => {
       const matcher = open(checkoutRoot);
       return matcher === null ? null : {
         ignored: (path, directory) => {
@@ -231,6 +231,37 @@ describe("CheckoutCodeRuleRouter", () => {
     expect(following.ignoresPath("api/x.py", false)).toBe(false);
     expect(opens).toHaveBeenCalledTimes(1);
     expect(errors.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
+  });
+
+  it("opens a checkout's Git ignore rules again once GIT_OPEN_AGAIN_MS has passed after a timeout, and reports the refusal that follows too", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await writeFile(join(session, ".gitignore"), "*.log\n");
+    // Started but not set up: no lane runs, so the router opens the checkout's rules itself.
+    startTestRepository(session, databasePath);
+    const access = nativeGitAccess();
+    const timedOut = Object.assign(new Error("opening Git's ignore rules gave no answer within 10 s"), { code: "GitReadTimedOut" });
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher")
+      .mockImplementationOnce(() => { throw timedOut; })
+      .mockImplementation(() => { throw new Error("detected dubious ownership"); });
+    cleanups.push(async () => { opens.mockRestore(); });
+    const errors = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    cleanups.push(async () => { errors.mockRestore(); });
+    const { recorder } = recordingAudits();
+    const following = router(session, databasePath, recorder, undefined, true);
+    await following.openWorkspace("timed-out-then-refused");
+
+    let clock = Date.now();
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    cleanups.push(async () => { now.mockRestore(); });
+    expect(["a.log", "b.log"].map(path => following.ignoresPath(path, false))).toEqual([false, false]);
+    expect(opens).toHaveBeenCalledTimes(1);
+    clock += GIT_OPEN_AGAIN_MS;
+    expect(["c.log", "d.log"].map(path => following.ignoresPath(path, false))).toEqual([false, false]);
+    expect(opens).toHaveBeenCalledTimes(2);
+    const logged = errors.mock.calls.map(([text]) => String(text)).filter(text => text.includes("cannot read Git ignore rules"));
+    expect(logged).toEqual([expect.stringContaining("gave no answer within 10 s"), expect.stringContaining("detected dubious ownership")]);
   });
 
   it("looks up the checkout of a walk's files once per folder, not once per file", async () => {

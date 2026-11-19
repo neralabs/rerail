@@ -1,7 +1,11 @@
-/** A call still running: when it started, on the filesystem's clock, and whether it is a shell command's. */
+/**
+ * A call still running: when it started, on the filesystem's clock, whether it is a shell command's, and the files its
+ * tool named, as the session names them, where it was never begun on the evaluator (`begin`'s `paths`).
+ */
 interface RunningCall {
   readonly start: number;
   readonly command: boolean;
+  readonly paths: readonly string[];
 }
 
 /** A finished tool call's run on the filesystem's clock: from just before it started to just after it ended. */
@@ -31,8 +35,8 @@ export class ToolCallWindows {
   #ends = 0;
 
   /**
-   * How many calls have ended so far. A walk notes it as it starts (`commandSince`): unlike the filesystem's clock, it
-   * orders a call's end and a walk's start that fall within one tick.
+   * How many calls have ended so far. A walk notes it as it starts (`commandSince`, `answered`): unlike the filesystem's
+   * clock, it orders a call's end and a walk's start that fall within one tick, or that the walk reads the clock after.
    */
   get ends(): number {
     return this.#ends;
@@ -40,10 +44,11 @@ export class ToolCallWindows {
 
   /**
    * A call starts; one begun again (restored after a restart, or begun after it was answered unwatched) keeps its first
-   * start. `command` marks a shell command's call, whose writes no tool input names.
+   * start. `command` marks a shell command's call, whose writes no tool input names. `paths` are the files the tool of a
+   * call answered while the evaluator opened names (`namedAt`).
    */
-  begin(toolCallId: string, at: number, command = false): void {
-    if (!this.#running.has(toolCallId)) this.#running.set(toolCallId, { start: at, command });
+  begin(toolCallId: string, at: number, command = false, paths: readonly string[] = []): void {
+    if (!this.#running.has(toolCallId)) this.#running.set(toolCallId, { start: at, command, paths });
   }
 
   /** A call whose start was not seen opened no window, and adds none. */
@@ -64,15 +69,28 @@ export class ToolCallWindows {
     for (const toolCallId of [...this.#running.keys()]) this.finish(toolCallId, at);
   }
 
-  /** A walk that began at `at` has seen every write of the calls that ended before it: those go. */
-  answered(at: number): void {
-    this.#finished = this.#finished.filter(window => window.end >= at);
+  /**
+   * A walk that began once `ends` calls had ended (`ends` as it began) has seen every write of those calls: they go. A
+   * call that ended since stays, though it ended before the walk read the clock: the walk may have left what it was
+   * writing to the walk after it (`commandSince`), which takes that write as the call's.
+   */
+  answered(ends: number): void {
+    this.#finished = this.#finished.filter(window => window.ended > ends);
   }
 
   /** Whether a call ran at some point from `from` to `to`; `from` equal to `to` asks about one stamp. */
   ranDuring(from: number, to: number): boolean {
     for (const { start } of this.#running.values()) if (start <= to) return true;
     return this.#finished.some(window => window.start <= to && window.end >= from);
+  }
+
+  /**
+   * Whether a call whose tool named `path` (`begin`'s `paths`) ran at `stamp`: a write then is taken as that call's
+   * edit, as the session's walks take a write stamped while one of its calls ran.
+   */
+  namedAt(path: string, stamp: number): boolean {
+    for (const call of this.#running.values()) if (call.start <= stamp && call.paths.includes(path)) return true;
+    return this.#finished.some(window => window.start <= stamp && window.end >= stamp && window.paths.includes(path));
   }
 
   /**

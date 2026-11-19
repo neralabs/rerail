@@ -15,7 +15,7 @@ use std::path::Path;
 
 /// What the walk makes of an entry: a link of any kind is `Other`, as `std::fs::FileType` reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Kind {
+pub enum Kind {
     Folder,
     File,
     Other,
@@ -35,39 +35,39 @@ impl Kind {
 
 /// A file's length and what its `Stamp` stands on: its `lstat`.
 #[cfg(not(windows))]
-pub(super) type Facts = std::fs::Metadata;
+pub type Facts = std::fs::Metadata;
 
 /// One entry of a folder, as `read_dir` gives it.
 #[cfg(not(windows))]
-pub(super) struct Entry(std::fs::DirEntry);
+pub struct Entry(std::fs::DirEntry);
 
 #[cfg(not(windows))]
 impl Entry {
-    pub(super) fn name(&self) -> OsString {
+    pub fn name(&self) -> OsString {
         self.0.file_name()
     }
 
-    pub(super) fn kind(&self) -> io::Result<Kind> {
+    pub fn kind(&self) -> io::Result<Kind> {
         self.0
             .file_type()
             .map(|kind| Kind::of(kind.is_dir(), kind.is_file()))
     }
 
-    pub(super) fn facts(&self) -> io::Result<Facts> {
+    pub fn facts(&self) -> io::Result<Facts> {
         self.0.metadata()
     }
 }
 
 /// The entries of `directory`, in no order.
 #[cfg(not(windows))]
-pub(super) fn list(directory: &Path) -> io::Result<impl Iterator<Item = io::Result<Entry>>> {
+pub fn list(directory: &Path) -> io::Result<impl Iterator<Item = io::Result<Entry>>> {
     Ok(std::fs::read_dir(directory)?.map(|entry| entry.map(Entry)))
 }
 
-#[cfg(all(test, windows))]
-pub(super) use windows::PAGES_READ;
+#[cfg(all(any(test, feature = "test-hooks"), windows))]
+pub use windows::PAGES_READ;
 #[cfg(windows)]
-pub(super) use windows::{Entry, Facts, list};
+pub use windows::{Entry, Facts, list};
 
 #[cfg(windows)]
 mod windows {
@@ -95,54 +95,54 @@ mod windows {
     /// One page of a folder's listing, in 8-byte words: its entries start 8-byte aligned.
     const PAGE_WORDS: usize = 8192;
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     thread_local! {
         /// How many pages this thread's listings asked their file system for.
-        pub(in super::super) static PAGES_READ: std::cell::Cell<usize> =
+        pub static PAGES_READ: std::cell::Cell<usize> =
             const { std::cell::Cell::new(0) };
     }
 
     /// A file's length and `Stamp`, read with its folder's listing.
     #[derive(Clone, Copy, Debug)]
-    pub(in super::super) struct Facts {
+    pub struct Facts {
         length: u64,
         stamp: Option<Stamp>,
     }
 
     impl Facts {
-        pub(in super::super) fn len(&self) -> u64 {
+        pub fn len(&self) -> u64 {
             self.length
         }
 
-        pub(in super::super) fn stamp(&self) -> Option<Stamp> {
+        pub fn stamp(&self) -> Option<Stamp> {
             self.stamp
         }
     }
 
     /// One entry of a folder, read whole with the folder's listing.
-    pub(in super::super) struct Entry {
+    pub struct Entry {
         name: OsString,
         kind: Kind,
         facts: Facts,
     }
 
     impl Entry {
-        pub(in super::super) fn name(&self) -> OsString {
+        pub fn name(&self) -> OsString {
             self.name.clone()
         }
 
-        pub(in super::super) fn kind(&self) -> io::Result<Kind> {
+        pub fn kind(&self) -> io::Result<Kind> {
             Ok(self.kind)
         }
 
-        pub(in super::super) fn facts(&self) -> io::Result<Facts> {
+        pub fn facts(&self) -> io::Result<Facts> {
             Ok(self.facts)
         }
     }
 
     /// The entries of `directory`, in no order, read a page at a time as they are taken: a walk
     /// that stops at its entry bound reads no page past the one that holds it.
-    pub(in super::super) fn list(directory: &Path) -> io::Result<Listing> {
+    pub fn list(directory: &Path) -> io::Result<Listing> {
         or_read_dir(directory, Pages::open(directory))
     }
 
@@ -160,7 +160,7 @@ mod windows {
 
     /// A folder's entries, as `list` reads them. Windows' `ReadDir` holds a whole find record, ten
     /// times a page cursor's size, so the fallback alone pays for its box.
-    pub(in super::super) enum Listing {
+    pub enum Listing {
         Paged(Pages),
         ReadDir(Box<std::fs::ReadDir>),
     }
@@ -179,7 +179,7 @@ mod windows {
     }
 
     /// A folder's entries from its handle, one page of `FileIdBothDirectoryInfo` at a time.
-    pub(in super::super) struct Pages {
+    pub struct Pages {
         folder: std::fs::File,
         page: Vec<u64>,
         /// The entries of the page read last that are not taken yet.
@@ -238,7 +238,7 @@ mod windows {
         class: FILE_INFO_BY_HANDLE_CLASS,
         page: &mut [u64],
     ) -> io::Result<bool> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         PAGES_READ.with(|read| read.set(read.get() + 1));
         // SAFETY: an open folder handle and a buffer of the size given, alive across the call.
         let read = unsafe {
