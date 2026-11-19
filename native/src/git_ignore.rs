@@ -630,7 +630,10 @@ mod tests {
         assert!(!ignore.ignored("a.py", false).unwrap());
         assert!(ignore.sources_unchanged(true), "nothing changed");
         std::fs::write(root.join(".gitignore"), "gen/\na.py\n").unwrap();
-        assert!(!ignore.sources_unchanged(true), "the root .gitignore changed");
+        assert!(
+            !ignore.sources_unchanged(true),
+            "the root .gitignore changed"
+        );
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
         assert!(ignore.ignored("a.py", false).unwrap());
         assert!(ignore.sources_unchanged(true));
@@ -660,7 +663,10 @@ mod tests {
         let file = std::fs::File::options().write(true).open(&index).unwrap();
         file.set_modified(read).unwrap();
         drop(file);
-        assert!(ignore.sources_unchanged(false), "the rules' sources are as read");
+        assert!(
+            ignore.sources_unchanged(false),
+            "the rules' sources are as read"
+        );
         assert!(
             ignore.ignored("gen/x.py", false).unwrap(),
             "a holder that asks again keeps the index it read"
