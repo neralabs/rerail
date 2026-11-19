@@ -2,9 +2,79 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners. The experiments ran on macOS.
 
-## Open findings after testing the standalone commands
+## Status at `680694436`
 
-At `00ca25ab7`, 23 implementation findings remain. Three come from new fixtures against the rebuilt standalone CLI and native addon.
+Twenty-one implementation findings remain open, including one partial performance repair. Two additional checks need Windows runtime results.
+The numbers in this document identify follow-up cases. The original audit has its own numbering.
+
+### Working-tree batch publication (case 58)
+
+I ran `rerail-engine run-policies` with a Python identifier policy and a second policy with no violation declaration.
+Each comparison started with a fresh store. The working tree and its commit contained the same assignment.
+
+| Source and policy order | Exit | Findings | Published manifest memberships | Pending runs |
+| --- | --- | --- | --- | --- |
+| Working tree, valid then invalid | 1 | 1 | 2 under the directory | 0 |
+| Working tree, invalid then valid | 1 | 1 | 2 under the directory | 0 |
+| Commit, valid then invalid | 1 | 1 | 0 | 0 |
+| Working tree, valid policy alone | 0 | 1 | 2 under the directory | 0 |
+
+I also started with a successful working-tree run. After I edited its source, a failed batch added two more manifests under the same directory.
+The report kept the two findings from the edited file. The existing test checks published membership only for the named revision scope. [Executable regression](../../../../native/tests/git_revision_cli.rs)
+
+Use the [policy fixture below](#three-new-reproductions) and a fresh store to repeat the working-tree check.
+
+```sh
+RERAIL_TAPE_CACHE="$out/store.sqlite" nice -n 19 rerail-engine run-policies "$repo" "$out/batch" good.rr bad.rr
+sqlite3 "$out/store.sqlite" "SELECT scope, count(*) FROM analysis_scope_manifest GROUP BY scope"
+```
+
+The standalone working-tree batch lets its individual corpus evaluations acquire directory ownership.
+Stage the packed and individual evaluations under one directory run. Publish once the batch succeeds.
+In both policy orders, verify that failure preserves the earlier memberships exactly. Then remove the invalid policy and verify that the new memberships appear. [Batch runner](../../../../native/src/code_rule_dsl/tools.rs) · [Run publication](../../../../native/src/content_store/analysis_scope.rs)
+
+### Repairs and remaining work
+
+| Cases | Result checked |
+| --- | --- |
+| 55–56 | `65a745ab2` keeps findings and reports each failing policy. Both policy orders pass in working-tree and revision mode. The revision commands return exit 1 on incomplete file coverage and recover after the missing subtree returns. A metadata-only policy can still succeed. |
+| 57 | `37af0408e` looks up the same inspected Git policy through equivalent path spellings. Tests cover two policy revisions in both load orders, directory suffixes and a root escape. |
+| 53 (partial) | `680694436` checks the selected store's recorded inputs and compiled image on a process-cache hit. The collector test retains the input record, evicts the compiled program, then verifies that another read restores a loadable program. |
+
+The paired macOS measurements used ten warmups and forty measured reads per case.
+A fresh catalog in the same store went from 2.225 ms to 1.872 ms median per policy inspection.
+A reused catalog took 0.053 ms before and 0.052 ms after. A fresh catalog still opens the store outside a held reading session.
+In a separate run, fresh catalogs alternated between two warm stores and returned identical inspection data on all 100 reads.
+The medians were 6.242 ms and 5.958 ms. The headless tests were running during that measurement.
+Profile that open and its queries before changing the store handle lifetime. Test concurrent stores and collection when measuring a change.
+
+| Work remaining | Cases |
+| --- | --- |
+| Persist completed run IDs and expose rule-visible scope and source relations | 13 |
+| Recover committed stops, route deletion to its owners and register named-run stores for collection | 23, 14, 41 |
+| Retire obsolete stores, compact generation rows and record failed probe attempts | 42, 15, 17 |
+| Publish a whole working-tree batch atomically | 58 |
+| Report which scope owns a scan and distinguish publication from later collection | 29, 30 |
+| Support first use in a read-only repository and use one clone ID across linked worktrees | 44, 45 |
+| Match Git for previous-checkout reflog suffixes and relative selectors ending in `..` | 34, 35 |
+| Resolve case-insensitive selections, classify large binaries, and distinguish absent, unreadable and excluded inputs | 46, 11, 28, 47 |
+| Bound decoded trees, reuse Git-backed policy compilations and reduce working-tree catalog cost | 18, 52, 53 |
+
+The [scope publication fixture](#scope-membership-at-publication) compares distinct scan IDs with the memberships that survived publication in case 13.
+For case 13, publish the scope, run ID and selected source in the same transaction as their cache ownership.
+Expose those records through explicitly keyed `.rr` relations. A tree-only run supplies a tree ID and zero commit rows.
+Preserve existing manifest owners on upgrade. Earlier databases discarded completed scan IDs, so their historical run membership cannot be reconstructed.
+The [case descriptions and acceptance checks](#status-at-6e3f1618e) specify a repair for each older finding.
+Cases 21 and 22 still need an NTFS rewrite and a selector comparison with the installed Git for Windows.
+
+Run the standalone regressions from the checkout root with `nice -n 19 scripts/dev/test-remote -- cargo nextest run -p rerail-engine --features test-hooks --profile gate --test git_revision_cli`.
+Both executable regressions passed. Eight targeted Rust program-cache tests passed.
+The first run of the headless and Git helper suites passed 145 of 146 tests.
+The first cold checkout scan exceeded its five-second timeout. The repeat passed all 146 with the same addon and timeout.
+
+## Standalone command findings at `00ca25ab7`
+
+At `00ca25ab7`, 23 implementation findings remained. Three came from new fixtures against the rebuilt standalone CLI and native addon.
 Two additional checks require Windows. The full headless and Git helper suites passed 146 tests on this build.
 
 ### Three new reproductions
