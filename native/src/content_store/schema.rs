@@ -191,6 +191,9 @@ CREATE INDEX IF NOT EXISTS analysis_scope_workspace_snapshot_by_snapshot ON anal
 CREATE TABLE IF NOT EXISTS analysis_scope_collect (
     snapshot_id INTEGER PRIMARY KEY REFERENCES snapshots(snapshot_id) ON DELETE CASCADE
 ) STRICT;
+CREATE TABLE IF NOT EXISTS analysis_scope_pending (
+    id TEXT PRIMARY KEY
+) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS analysis_scope_release (
     id TEXT PRIMARY KEY,
     scope TEXT NOT NULL DEFAULT '',

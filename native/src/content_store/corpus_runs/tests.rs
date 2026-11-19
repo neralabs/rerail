@@ -141,6 +141,23 @@ fn concurrent_analysis_runs_order_snapshots_and_isolate_staging() {
 }
 
 #[test]
+fn analysis_scope_rejects_finished_and_foreign_run_owners() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, first_store) = store("scope-closed-owner");
+    let (other_path, second_store) = store("scope-foreign-owner");
+    let scope = "named:review";
+    let mut first = AnalysisRun::begin(ContentStore::open(&path).unwrap(), scope, "client").unwrap();
+    let mut second = AnalysisRun::begin(ContentStore::open(&other_path).unwrap(), scope, "client").unwrap();
+    let publish = |store: &ContentStore, owner: &_| store.record_corpus_run_retaining(
+        "/root", &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(owner)).unwrap();
+    assert!(!publish(&second_store, &first.owner), "an owner cannot write to another store's identical staging key");
+    first.finish(true).unwrap();
+    assert!(!publish(&first_store, &first.owner), "an async worker cannot stage new rows after finish");
+    assert!(publish(&second_store, &second.owner));
+    second.finish(true).unwrap();
+}
+
+#[test]
 fn numbered_directory_stops_keep_one_cutoff_per_directory() {
     use crate::content_store::analysis_scope;
     let (_path, store) = store("scope-high-water");

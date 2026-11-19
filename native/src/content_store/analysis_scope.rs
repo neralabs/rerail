@@ -49,8 +49,9 @@ impl AnalysisOwner {
         }
         tx.query_row_cached(
             "SELECT EXISTS (SELECT 1 FROM analysis_scope_generation WHERE scope=?1 AND generation=?2) \
+                AND (?5 IS NULL OR EXISTS (SELECT 1 FROM analysis_scope_pending WHERE id=?5)) \
                 AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE scope IN (SELECT value FROM json_each(?4)) AND before>=?3)",
-            (&self.scope, self.generation, self.acquired_at, serde_json::to_string(&ancestors).expect("string list")), |row| row.get(0),
+            (&self.scope, self.generation, self.acquired_at, serde_json::to_string(&ancestors).expect("string list"), self.pending.as_deref()), |row| row.get(0),
         )
     }
 }
@@ -73,7 +74,12 @@ impl AnalysisRun {
     pub fn begin_at(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
         let lease = store.hold_collection()?;
         let mut owner = store.begin_analysis_scope_at(scope, acquired_at)?;
-        owner.pending = Some(format!("pending:{}:{id}", owner.acquisition));
+        let pending = format!("pending:{}:{}:{id}", store.connection.identity(), owner.acquisition);
+        store.immediate_transaction(|tx| {
+            tx.execute_cached("INSERT INTO analysis_scope_pending(id) VALUES (?1)", [&pending])?;
+            Ok(())
+        })?;
+        owner.pending = Some(pending);
         owner.warning = Some(Default::default());
         Ok(Self { owner, store, lease: Some(lease) })
     }
@@ -97,6 +103,7 @@ impl AnalysisRun {
                 }
             }
             release_memberships(tx, "scope=?1", [pending])?;
+            tx.execute_cached("DELETE FROM analysis_scope_pending WHERE id=?1", [pending])?;
             Ok(())
         })?;
         self.lease.take();
@@ -201,6 +208,7 @@ impl ContentStore {
     /// Called with the exclusive collection lease held.
     pub(super) fn discard_abandoned_analysis(tx: &rusqlite::Connection) -> rusqlite::Result<()> {
         release_memberships(tx, "scope GLOB ?1", ["pending:*"])?;
+        tx.execute_cached("DELETE FROM analysis_scope_pending", [])?;
         Ok(())
     }
 }
@@ -277,7 +285,7 @@ impl ContentStore {
     pub(super) fn analysis_snapshot_due(&self, now: i64) -> StoreResult<bool> {
         let connection = self.connection.lock().expect("content store connection unavailable");
         Ok(connection.query_row_cached(
-            "SELECT EXISTS (SELECT 1 FROM analysis_scope_manifest WHERE scope GLOB 'pending:*') \
+            "SELECT EXISTS (SELECT 1 FROM analysis_scope_pending) OR EXISTS (SELECT 1 FROM analysis_scope_manifest WHERE scope GLOB 'pending:*') \
              OR EXISTS (SELECT 1 FROM analysis_scope_workspace_snapshot WHERE scope GLOB 'pending:*') \
              OR EXISTS (SELECT 1 FROM analysis_scope_collect q \
              WHERE NOT EXISTS (SELECT 1 FROM analysis_scope_snapshot a WHERE a.snapshot_id=q.snapshot_id) \

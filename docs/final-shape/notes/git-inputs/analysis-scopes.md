@@ -77,7 +77,9 @@ publication and collection. A scan stages ownership and publishes it after the
 whole report succeeds and every cache write succeeds. If a cache write fails,
 the report keeps its findings and reports a cache warning. Collection releases
 abandoned staged rows after their process drops the lease. A scope deletion
-advances the scope's generation.
+advances the scope's generation. Each run has its own staging key in the store where it started.
+Finishing the run closes that key. Its workers can no longer add memberships.
+Within one generation, the directory keeps the snapshot from the most recently acquired successful run.
 A run in that generation can finish its report. Only the current generation can
 publish ownership.
 Collection also checks whether another workspace still has a live lease on the
