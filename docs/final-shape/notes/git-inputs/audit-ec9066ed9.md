@@ -22,6 +22,8 @@ The raw inventory reader answered the request for the selected repository and fi
 The headless scan selected both paths, then selected one path under the same analysis scope. The file selection changed the view ID and preserved the tape.
 After Git repacked the objects, selecting both paths in reverse order restored the original view ID and findings.
 All 13 standalone revision tests passed on Linux. Five related headless tests passed on macOS.
+On Windows 11 ARM64 with NTFS, all 13 standalone tests passed at `d7e7a8018a` in 47.89 seconds.
+The headless path-selection and repack test passed with the addon rebuilt from that commit.
 [Rule example](../../../rule-syntax/git.md#find-the-git-blob-behind-a-parsed-document) · [Standalone regression](../../../../native/tests/git_revision_cli.rs) · [Headless regression](../../../../test/cli/headless-scan.test.ts)
 
 ## Recovery of a committed directory stop
