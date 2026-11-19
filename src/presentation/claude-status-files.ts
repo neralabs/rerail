@@ -1,14 +1,17 @@
 /**
  * Claude Code's status line, drawn ahead of time. Claude Code only runs a command for its status line, so every
  * refresh is a process launch; the daemon therefore keeps each Claude Code session's line in a file,
- * `<Rerail home>/status/<session id>`, and the registered command prints it with shell built-ins
+ * `<Rerail home>/claude-status-lines/<session id>`, and the registered command prints it with shell built-ins
  * (`src/hosts/claude/claude-status.sh`), starting nothing.
  *
  * A file holds the line three times, one per colour depth the script picks from (`STATUS_FILE_DEPTHS`), or nothing
  * where the session draws no line. The lines are what `readPresentation` gives the same session over HTTP: this asks
  * the daemon's own `presentation_get` and builds the footer from its answer with the same code.
+ *
+ * Only names Rerail gives are touched in the folder: a session's file and the sidecar a write of it cut short leaves
+ * (`isStatusFileEntry`). Anything else in it is someone else's, and stays.
  */
-import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { invokeOperation, type RerailApiStores } from "../api/operation.js";
 import { operations } from "../api/operations.js";
@@ -29,6 +32,17 @@ const HOST = "claude-code";
  * accepts exactly these, so an id cannot name a file outside the folder; a session with any other id gets no file.
  */
 const STATUS_FILE_NAME = /^[A-Za-z0-9_-]+$/u;
+
+/** The `<file>.<pid>.<uuid>.tmp` beside a session's file that a write of it cut short leaves (`replaceFile`). */
+const CUT_SHORT_STATUS_WRITE = /^[A-Za-z0-9_-]+\.\d+\.[0-9a-f-]+\.tmp$/u;
+
+/**
+ * Whether `name`, at `path` in the status lines folder, is Rerail's: a regular file that is a session's status file,
+ * or a write of one cut short. A folder or a link there is someone else's, whatever its name.
+ */
+export function isStatusFileEntry(name: string, path: string): boolean {
+  return lstatSync(path, { throwIfNoEntry: false })?.isFile() === true && (STATUS_FILE_NAME.test(name) || CUT_SHORT_STATUS_WRITE.test(name));
+}
 
 /** The terminals a status file holds a line for, in the file's line order: 24-bit colour, 256 colours, no colour. */
 const STATUS_FILE_DEPTHS: readonly TerminalEnv[] = [{ COLORTERM: "truecolor" }, {}, { NO_COLOR: "1" }];
@@ -61,14 +75,19 @@ export function statusFileText(presentation: SessionPresentation): string {
   return STATUS_FILE_DEPTHS.map(env => `${formatTerminalStatus(presentation, env)}\n`).join("");
 }
 
-/** The session ids with a status file in `folder`; none when the folder is missing. */
-function drawnSessionIds(folder: string): string[] {
+/** The regular files in `folder` whose name `pattern` matches; none when the folder is missing. */
+function folderFiles(folder: string, pattern: RegExp): string[] {
   try {
-    return readdirSync(folder).filter(name => STATUS_FILE_NAME.test(name));
+    return readdirSync(folder, { withFileTypes: true }).filter(entry => entry.isFile() && pattern.test(entry.name)).map(entry => entry.name);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+/** The session ids with a status file in `folder`. */
+function drawnSessionIds(folder: string): string[] {
+  return folderFiles(folder, STATUS_FILE_NAME);
 }
 
 /**
@@ -87,7 +106,7 @@ export function removeUnrecordedStatusFiles(
 }
 
 export interface ClaudeStatusFilesOptions {
-  /** `<Rerail home>/status`; made, in a home that exists, when the first line is written. */
+  /** `<Rerail home>/claude-status-lines`; made, in a home that exists, when the first line is written. */
   folder: string;
   /** The daemon's stores: its sessions, its answer for each (`presentation_get`) and the dashboard's origin the lines link into. */
   stores: RerailApiStores;
@@ -107,6 +126,9 @@ export interface ClaudeStatusFiles {
 
 const PRESENTATION_GET = operations.find(operation => operation.id === "presentation_get")!;
 
+/** What a pass does with one session's file: write it again when its line changed, remove it, or leave it. */
+type FileAction = "draw" | "remove" | "leave";
+
 class StatusFileKeeper implements ClaudeStatusFiles {
   readonly #folder: string;
   readonly #stores: RerailApiStores;
@@ -120,11 +142,12 @@ class StatusFileKeeper implements ClaudeStatusFiles {
   readonly #endedAt = new Map<string, number | null>();
   readonly #timer: NodeJS.Timeout | undefined;
   #done: Promise<void> = Promise.resolve();
-  #queued = false;
+  /** A pass is queued or running: the check asks for no other until it is done and has had its rest (`PACE`). */
+  #busy = false;
   #stopped = false;
   #folderMade = false;
   #swept = false;
-  /** The database's change counter at the last pass, and when the next pass may and must run. */
+  /** The database's change counter at the last pass that drew every session it set out to, and when the next pass may and must run. */
   #version: string | undefined;
   #notBefore = 0;
   #drawAnywayAt = 0;
@@ -141,10 +164,10 @@ class StatusFileKeeper implements ClaudeStatusFiles {
     void this.refresh();
   }
 
-  /** Whether something may have changed since the last pass, which has had its rest. */
+  /** Whether something may have changed since the last pass, which has finished and had its rest. */
   #due(): boolean {
     const now = Date.now();
-    if (this.#queued || now < this.#notBefore) return false;
+    if (this.#busy || now < this.#notBefore) return false;
     try {
       return now >= this.#drawAnywayAt || this.#stores.historyVersion() !== this.#version;
     } catch {
@@ -154,38 +177,44 @@ class StatusFileKeeper implements ClaudeStatusFiles {
   }
 
   refresh(): Promise<void> {
-    this.#queued = true;
-    this.#done = this.#done.then(async () => {
-      this.#queued = false;
-      if (this.#stopped) return;
-      const started = Date.now();
-      const everySession = started >= this.#drawAnywayAt;
-      try {
-        const version = this.#stores.historyVersion();
-        await this.#drawAll(started, everySession);
-        this.#version = version;
-        this.#reported = undefined;
-      } catch (error) {
-        this.#report(error);
-      }
-      const finished = Date.now();
-      this.#notBefore = finished + PACE * (finished - started);
-      if (everySession) this.#drawAnywayAt = finished + DRAW_ANYWAY_MS;
-    });
+    this.#busy = true;
+    this.#done = this.#done.then(async () => await this.#pass());
     return this.#done;
+  }
+
+  async #pass(): Promise<void> {
+    if (this.#stopped) return;
+    const started = Date.now();
+    const everySession = started >= this.#drawAnywayAt;
+    try {
+      const version = this.#stores.historyVersion();
+      // A session that could not be written makes the next check draw again.
+      const kept = await this.#drawAll(started, everySession);
+      this.#version = kept ? version : undefined;
+      if (kept) this.#reported = undefined;
+    } catch (error) {
+      this.#report(error);
+    }
+    const finished = Date.now();
+    this.#notBefore = finished + PACE * (finished - started);
+    if (everySession) this.#drawAnywayAt = finished + DRAW_ANYWAY_MS;
+    this.#busy = false;
   }
 
   async stop(): Promise<void> {
     this.#stopped = true;
     clearInterval(this.#timer);
     await this.#done;
+    let sessionIds: string[] = [];
     try {
-      for (const sessionId of drawnSessionIds(this.#folder)) {
-        const state = this.#written.get(sessionId)?.state;
-        await this.#write(sessionId, statusFileText(stoppedDaemonPresentation(state)), state);
-      }
+      sessionIds = drawnSessionIds(this.#folder);
     } catch (error) {
       this.#report(error);
+    }
+    // Each file on its own: one that cannot be written leaves the others saying the daemon stopped.
+    for (const sessionId of sessionIds) {
+      const state = this.#written.get(sessionId)?.state;
+      await this.#write(sessionId, statusFileText(stoppedDaemonPresentation(state)), state).catch((error: unknown) => this.#report(error));
     }
   }
 
@@ -193,34 +222,77 @@ class StatusFileKeeper implements ClaudeStatusFiles {
    * One pass. A session gets a file while it is open, or holds one from an earlier daemon, and had an event within
    * `UNREAD_AFTER_MS`; one that ended while this daemon ran, or is no longer recorded, gets none. With `everySession`
    * each of them is drawn; otherwise only the active ones (`QUIET_AFTER_MS`) and those this daemon has not drawn yet.
+   * Whether every session was kept: one that failed is reported, and the pass goes on with the next.
    */
-  async #drawAll(now: number, everySession: boolean): Promise<void> {
+  async #drawAll(now: number, everySession: boolean): Promise<boolean> {
     this.#sweepCutShortWrites();
-    const sessions = removeUnrecordedStatusFiles(this.#folder, this.#stores.reader, now - UNREAD_AFTER_MS);
+    const sessions = removeUnrecordedStatusFiles(this.#folder, this.#stores.reader, now - UNREAD_AFTER_MS)
+      .filter(session => STATUS_FILE_NAME.test(session.sessionId));
+    const drawn = this.#forgetRemovedFiles();
+    let kept = true;
+    for (const session of sessions) kept = await this.#keepSession(session, drawn, now, everySession) && kept;
+    this.#forgetUnread(sessions);
+    return kept;
+  }
+
+  /** The sessions whose file is in the folder; a file removed behind the daemon's back is written again. */
+  #forgetRemovedFiles(): Set<string> {
     const drawn = new Set(drawnSessionIds(this.#folder));
-    // A file removed behind the daemon's back is written again.
     for (const sessionId of this.#written.keys()) if (!drawn.has(sessionId)) this.#written.delete(sessionId);
-    for (const session of sessions) {
-      const { sessionId, endedAt, lastActiveAt } = session;
-      if (!STATUS_FILE_NAME.test(sessionId)) continue;
-      const endedHere = endedAt !== null && this.#endedAt.has(sessionId) && this.#endedAt.get(sessionId) !== endedAt;
-      this.#endedAt.set(sessionId, endedAt);
-      if (endedHere || now - lastActiveAt > UNREAD_AFTER_MS) {
-        rmSync(join(this.#folder, sessionId), { force: true });
-        this.#written.delete(sessionId);
-        continue;
-      }
-      // An ended session whose file is gone is read by nothing, unless its next event opens it again.
-      if (endedAt !== null && !drawn.has(sessionId)) continue;
-      if (everySession || !this.#written.has(sessionId) || now - lastActiveAt <= QUIET_AFTER_MS) await this.#draw(session);
-    }
-    // What no pass reads any more: sessions past `UNREAD_AFTER_MS` whose file is gone.
+    return drawn;
+  }
+
+  /** Forgets what no pass reads any more: sessions past `UNREAD_AFTER_MS` whose file is gone. */
+  #forgetUnread(sessions: readonly DrawnSession[]): void {
     const read = new Set(sessions.map(session => session.sessionId));
     for (const sessionId of this.#endedAt.keys()) if (!read.has(sessionId)) this.#endedAt.delete(sessionId);
   }
 
+  /** Does what a pass does with `session`'s file; false, with the failure reported, when it could not. */
+  async #keepSession(session: DrawnSession, drawn: ReadonlySet<string>, now: number, everySession: boolean): Promise<boolean> {
+    try {
+      const action = this.#action(session, drawn, now, everySession);
+      if (action === "remove") this.#remove(session.sessionId);
+      else if (action === "draw") await this.#draw(session);
+      return true;
+    } catch (error) {
+      this.#report(error);
+      return false;
+    }
+  }
+
+  #action(session: DrawnSession, drawn: ReadonlySet<string>, now: number, everySession: boolean): FileAction {
+    if (this.#endedHere(session) || now - session.lastActiveAt > UNREAD_AFTER_MS) return "remove";
+    return this.#wanted(session, drawn, now, everySession) ? "draw" : "leave";
+  }
+
+  /** Whether this pass draws `session`, which keeps its file. */
+  #wanted(session: DrawnSession, drawn: ReadonlySet<string>, now: number, everySession: boolean): boolean {
+    // An ended session whose file is gone is read by nothing, unless its next event opens it again.
+    if (session.endedAt !== null && !drawn.has(session.sessionId)) return false;
+    return everySession || this.#unsettled(session, now);
+  }
+
+  /** Whether `session` ended since the last pass read it, so it ended while this daemon ran; records its end either way. */
+  #endedHere({ sessionId, endedAt }: DrawnSession): boolean {
+    const known = this.#endedAt.has(sessionId);
+    const before = this.#endedAt.get(sessionId);
+    this.#endedAt.set(sessionId, endedAt);
+    return endedAt !== null && known && before !== endedAt;
+  }
+
+  /** Whether a pass that does not draw every session draws `session`: one active lately, or not drawn yet. */
+  #unsettled({ sessionId, lastActiveAt }: DrawnSession, now: number): boolean {
+    return !this.#written.has(sessionId) || now - lastActiveAt <= QUIET_AFTER_MS;
+  }
+
+  #remove(sessionId: string): void {
+    rmSync(join(this.#folder, sessionId), { force: true });
+    this.#written.delete(sessionId);
+  }
+
   /** The session's line as the daemon answers for it now, written when it differs from its file. */
-  async #draw({ sessionId, cwd }: { sessionId: string; cwd: string }): Promise<void> {
+  async #draw({ sessionId, cwd }: DrawnSession): Promise<void> {
     let text: string;
     let state: RepositoryStartState | undefined;
     try {
@@ -270,17 +342,11 @@ class StatusFileKeeper implements ClaudeStatusFiles {
     this.#folderMade = true;
   }
 
-  /** Once per daemon: the `<file>.<pid>.<uuid>.tmp` a write cut short left, which no session id can name. */
+  /** Once per daemon: the sidecar a write of a session's file cut short left (`CUT_SHORT_STATUS_WRITE`). */
   #sweepCutShortWrites(): void {
     if (this.#swept) return;
     this.#swept = true;
-    let names: string[];
-    try {
-      names = readdirSync(this.#folder);
-    } catch {
-      return;
-    }
-    for (const name of names) if (name.endsWith(".tmp")) rmSync(join(this.#folder, name), { force: true });
+    for (const name of folderFiles(this.#folder, CUT_SHORT_STATUS_WRITE)) rmSync(join(this.#folder, name), { force: true });
   }
 
   /** To the daemon's log, once for each different failure in a row. */

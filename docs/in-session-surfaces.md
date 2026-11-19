@@ -381,7 +381,7 @@ The footer never animates. Full audits and rule lists are on the dashboard.
 
 Claude Code runs the status line when a session starts or resumes, on each new assistant message, after `/compact` and when the permission mode changes. Rerail sets no timer, so an idle session starts nothing.
 
-On macOS and Linux, where you had no status line of your own, a refresh starts no program. The daemon keeps each Claude Code session's line in `~/.rerail/status/<session id>` and writes it again when what it shows changes. The shell Claude Code starts for the status command prints that file with shell built-ins. Only a session's first draw may start a program, `sleep`, while it waits for the line.
+On macOS and Linux, where you had no status line of your own, a refresh starts no program. The daemon keeps each Claude Code session's line in `~/.rerail/claude-status-lines/<session id>` and writes it again when what it shows changes. The shell Claude Code starts for the status command prints that file with shell built-ins. Only a session's first draw may start a program, `sleep`, while it waits for the line.
 
 <details>
 <summary>What follows from that</summary>
@@ -392,7 +392,8 @@ On macOS and Linux, where you had no status line of your own, a refresh starts n
 - **A busy daemon's last line stays.** Claude Code's status line no longer says `not answering`.
 - **With no daemon recorded, a session with no line says `not running`**, also in a repository where Rerail is not on: the command cannot tell the two apart. While a daemon runs, such a session shows no line, as before.
 - **With a status line of your own, each refresh starts Node**, which runs your command and adds Rerail's line, read from the daemon as before. So does every refresh on Windows. Its first draw waits the same way while the daemon says `starting`.
-- **The files are yours alone**, like Rerail's other files, and set-up keeps coding agents' file tools out of the folder. A session's file goes when the session ends, with `rerail reset` when it deletes the session, and with `rerail install --remove`. Claude Code often exits before a session's end hook has run; such a session's file goes once it has had no event for a week.
+- **The files are yours alone**, like Rerail's other files, and set-up keeps coding agents' file tools out of the folder. A session's file goes when the session ends, with `rerail reset` when it deletes the session, and with `rerail install --remove`. Claude Code often exits before a session's end hook has run; such a session's file goes once it has had no event for a week. Rerail removes only its own files from the folder, named by session id; anything else you put there stays.
+- **`RERAIL_HOME` must be an absolute path** for the status line to find the files; with any other value it reads `~/.rerail`.
 
 </details>
 

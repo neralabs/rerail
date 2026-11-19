@@ -579,8 +579,9 @@ On Windows every refresh of Rerail's status line starts Node (`sh -c '…' <node
 which asks the daemon for the session's line. On macOS and Linux a session with no status line of the person's own
 prints the line the daemon keeps in a file, with shell built-ins and no Node (`src/hosts/claude/claude-status.sh`);
 Windows does not use that yet, since the script has not been run under Git Bash, where `.` takes a Windows path and
-the home is not always `$HOME`. Registration sets no refresh interval on any platform, so Claude Code runs the status
-line on its own events only ([how Claude Code draws it](in-session-surfaces.md#how-claude-code-draws-it)).
+the home is not always `$HOME`, and the daemon keeps no such files there (`src/cli/daemon-entry.ts`). Registration sets
+no refresh interval on any platform, so Claude Code runs the status line on its own events only
+([how Claude Code draws it](in-session-surfaces.md#how-claude-code-draws-it)).
 
 Rerail's status line runs the person's previous status line through Git Bash, as Claude Code ran it, and
 ends its whole process tree when it overruns its 2 s budget.

@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { build } from "esbuild";
 import ignore from "ignore";
 import { sql } from "drizzle-orm";
-import { commandLine, ENTRY_POINTS, openSqliteDatabase, shellWord } from "../../src/engine/index.js";
+import { commandLine, ENTRY_POINTS, openSqliteDatabase, shellWord, STATUS_LINES_FOLDER } from "../../src/engine/index.js";
 import {
   CURSOR_HOOK_EVENTS,
   HARNESSES,
@@ -1380,7 +1380,7 @@ describe("Claude Code status-line ownership", () => {
     await copyFile(join(process.cwd(), "src", "hosts", "claude", "claude-status.sh"), join(options.root, ENTRY_POINTS.claudeStatusShell));
     await registerHarnesses(options);
     const { command } = (await readJson(path)).statusLine as { command: string };
-    const status = join(options.home, ".rerail", "status");
+    const status = join(options.home, ".rerail", STATUS_LINES_FOLDER);
     await mkdir(status, { recursive: true });
     await writeFile(join(status, "session-one"), "24-bit colour\n256 colours\nno colour\n");
     // As Claude Code runs it: `/bin/sh -c <command>`, the session as JSON on stdin. The empty PATH holds no node, or

@@ -8,6 +8,7 @@ import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome, STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
 import { scrubWrites } from "../engine/secret-scrub.js";
 import { runHomeDaemon } from "../daemon/daemon.js";
+import type { RerailApiStores } from "../api/operation.js";
 import { keepClaudeStatusFiles } from "../presentation/claude-status-files.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { checkNodeVersion } from "../setup/node-version.js";
@@ -28,11 +29,14 @@ if (!node.ok) {
 }
 
 // A home runs one daemon, whatever starts it (`runHomeDaemon`). A TLS key other accounts can read keeps the daemon from
-// other machines only: it then serves this one (`serveRerailDaemon`).
+// other machines only: it then serves this one (`serveRerailDaemon`). Claude Code's status line on Windows still starts
+// Node, which asks the daemon, so no status lines are kept there.
 try {
   await runHomeDaemon(process.argv.slice(2), {
     codingAgents: () => codingAgentStates(registrationRoot(defaultRerailHome(), PACKAGE_ROOT), codingAgentHome()),
-    statusLines: stores => keepClaudeStatusFiles({ stores, folder: join(defaultRerailHome(), STATUS_LINES_FOLDER) }),
+    ...(process.platform === "win32" ? {} : {
+      statusLines: (stores: RerailApiStores) => keepClaudeStatusFiles({ stores, folder: join(defaultRerailHome(), STATUS_LINES_FOLDER) }),
+    }),
   });
 } catch (error) {
   process.stderr.write(`rerail daemon: ${(error as Error).message}\n`);

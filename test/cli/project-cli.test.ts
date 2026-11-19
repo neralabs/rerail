@@ -8,7 +8,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { preUpdateSnapshotPath, runResetCommand, runRulesCommand, type SnapshotUpdater, updateWithSnapshot } from "../../src/cli/project-cli.js";
 import type { UpdateResult, UpdateStatus } from "../../src/setup/index.js";
-import { defaultRerailDatabasePath, loadRuleCatalog, openRerailDatabase, recordCheckout, upsertLibraryRule } from "../../src/engine/index.js";
+import { defaultRerailDatabasePath, loadRuleCatalog, openRerailDatabase, recordCheckout, STATUS_LINES_FOLDER, upsertLibraryRule } from "../../src/engine/index.js";
 import { MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { POSIX_MODES } from "../support/platform/file-mode.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -276,13 +276,15 @@ describe("rerail reset", () => {
       session.run("ended-here", checkout, repositoryKey, 2);
       session.run("running-here", checkout, repositoryKey, null);
       session.run("in-another-repository", root, "another-repository", 2);
-      const status = join(root, "home", "status");
+      const status = join(root, "home", STATUS_LINES_FOLDER);
       mkdirSync(status);
       for (const sessionId of ["ended-here", "running-here", "in-another-repository"]) writeFileSync(join(status, sessionId), "a line\n");
+      // A file of the person's own, with a name no session id can have.
+      writeFileSync(join(status, "notes.txt"), "mine\n");
 
       expect(runResetCommand([], () => "usage")).toBe(0);
 
-      expect(readdirSync(status).sort()).toEqual(["in-another-repository", "running-here"]);
+      expect(readdirSync(status).sort()).toEqual(["in-another-repository", "notes.txt", "running-here"]);
     } finally {
       live.$client.close();
     }

@@ -14,7 +14,7 @@ Set-up copies Rerail out of npm's ephemeral `npx` cache into a durable install i
 ├── bin/rerail                                         launcher shim → current/dist/cli/cli.js
 ├── update-state.json                                  active + previous version, channel
 ├── daemon.json / daemon.log                           the running daemon
-├── status/<session id>                                each Claude Code session's status line, kept by the daemon
+├── claude-status-lines/<session id>                   each Claude Code session's status line, kept by the daemon
 ├── daemon-port.json                                   the port the daemon comes back on after a restart
 ├── coding-agents.json                                 the coding agents set-up and rerail install have seen
 ├── packs/node_modules/@neralabs/rerail-pack-<id>/     Rerail's rule packs you installed (rerail packs)
@@ -185,7 +185,7 @@ Agents run commands as you, so only their own sandbox can keep them out.
   `current` and `versions` in the Rerail home, so commands can read the installed package but no data.
 - `permissions.deny` covers the file tools, which the sandbox does not: `Edit(...)` for both folders; `Read(...)` for
   the whole cache and the Rerail home's data files (`*.json*`, `*.sqlite*`, `*.log*`, `*.lock`, `access-token*`,
-  `active-profile*`, `device-secrets/`, `profiles/`, `status/`). The installed package, `bin/` and `packs/` stay readable:
+  `active-profile*`, `device-secrets/`, `profiles/`, `claude-status-lines/`). The installed package, `bin/` and `packs/` stay readable:
   `/rerail-create` reads its skill there, and a deny cannot be reopened for one folder.
 - `sandbox.excludedCommands` holds Rerail's CLI as Rerail commands run it (`<node> <root>/dist/cli/cli.js *`), the
   launcher (`~/.rerail/bin/rerail *`) and `rerail *`. These run unsandboxed under your normal permission rules: what a

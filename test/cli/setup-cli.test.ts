@@ -529,6 +529,21 @@ describe("rerail install --root", () => {
     expect(output.mock.calls.join("")).toContain(`Removed ${status} (the Claude Code status lines).`);
   });
 
+  it("removes only the status lines from a status lines folder that holds files that are not Rerail's", async () => {
+    const { context, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    const status = join(context.home, STATUS_LINES_FOLDER);
+    await mkdir(join(status, "drafts"), { recursive: true });
+    for (const name of ["a-session", "a-session.4242.2f0e9b7a-0000-4000-8000-000000000000.tmp"]) await writeFile(join(status, name), "Rerail's\n");
+    for (const name of ["notes.txt", "draft.tmp"]) await writeFile(join(status, name), "not Rerail's\n");
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
+
+    expect((await readdir(status)).sort()).toEqual(["draft.tmp", "drafts", "notes.txt"]);
+    expect(output.mock.calls.join("")).toContain(`Kept ${status} (the Claude Code status lines): it holds files that are not Rerail's: draft.tmp, drafts, notes.txt.`);
+  });
+
   it("counts every name a Rerail writer gives an entry in its home as Rerail's, and what a write cut short leaves beside it", async () => {
     const { context, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);

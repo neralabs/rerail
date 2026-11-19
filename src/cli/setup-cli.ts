@@ -67,6 +67,7 @@ import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pa
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
 import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, type DashboardLink, type SetupCommand, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
+import { isStatusFileEntry } from "../presentation/claude-status-files.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_STATE_FILE, VERSIONS_DIR, type ManagedUpdater } from "../setup/updater.js";
 import { requireLfsContent } from "../setup/lfs-pointers.js";
@@ -426,7 +427,7 @@ function installedFiles(context: SetupContext): Array<{ path: string; what: stri
     },
     { path: updater.statePath, what: "the record of them" },
     { path: installedPacksPrefix(context.home), what: "the installed rule packs", ours: name => RULE_PACK_PREFIX_ENTRIES.has(name) },
-    { path: join(context.home, STATUS_LINES_FOLDER), what: "the Claude Code status lines" },
+    { path: join(context.home, STATUS_LINES_FOLDER), what: "the Claude Code status lines", ours: isStatusFileEntry },
     { path: mainContentStoreDirectory(), what: "the cache" },
     ...(process.platform === "win32" ? [{ path: legacyWindowsContentStoreDirectory(), what: "the cache an earlier release kept" }] : []),
   ];

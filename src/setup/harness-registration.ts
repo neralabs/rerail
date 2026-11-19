@@ -1025,6 +1025,15 @@ function isLegacyRefreshInterval(generated: ClaudeStatusLine, previous: ClaudeSt
     && generatedClaudeStatus(generated.command, platform)?.legacy === true;
 }
 
+/** `base`'s display settings around Rerail's `command`, less the interval an earlier version set on it (`isLegacyRefreshInterval`). */
+function composedStatusLine(
+  base: ClaudeStatusLine | undefined, command: string, previous: ClaudeStatusLine | null, platform: NodeJS.Platform,
+): ClaudeStatusLine {
+  const composed: ClaudeStatusLine = { ...base, type: "command", command };
+  if (base !== undefined && isLegacyRefreshInterval(base, previous, platform)) delete composed.refreshInterval;
+  return composed;
+}
+
 /**
  * `replaceable`: the predecessor is a status line of this package, or of an install that is gone, whose composition
  * this home has no record of.
@@ -1036,23 +1045,24 @@ function registerClaudeStatus(
   inherited: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration | undefined, replaceable: boolean,
 ): ClaudeStatusRegistration {
   const ownsStatus = registration !== undefined && statusLine?.command === registration.installedCommand;
-  const predecessor = ownsStatus ? registration : unownedClaudeStatus(context, path, { statusLine, inherited, replaceable });
-  const command = claudeStatusCommand(context, path, predecessor.previous !== null || predecessor.previousInherited === true);
-  const base = statusLine ?? inherited;
-  // The status line's display settings stay around Rerail's command.
-  const composed: ClaudeStatusLine = { ...base, type: "command", command };
-  if (base !== undefined && isLegacyRefreshInterval(base, predecessor.previous, context.platform)) delete composed.refreshInterval;
-  next.statusLine = composed;
+  const { previous, previousInherited } = ownsStatus ? registration : unownedClaudeStatus(context, path, { statusLine, inherited, replaceable });
+  const command = claudeStatusCommand(context, path, previous !== null || previousInherited === true);
+  next.statusLine = composedStatusLine(statusLine ?? inherited, command, previous, context.platform);
   return {
-    settingsPath: path, installedRoot: context.root, installedCommand: command,
-    previous: predecessor.previous,
-    ...(predecessor.previousInherited === true ? { previousInherited: true } : {}),
+    settingsPath: path, installedRoot: context.root, installedCommand: command, previous,
+    ...(previousInherited === true ? { previousInherited: true } : {}),
   };
+}
+
+/** Whether `command` is a status line of Rerail's own: of a shape it writes or wrote, or the one it would write at `path`. */
+function isOwnStatusCommand(context: Context, path: string, command: string): boolean {
+  return generatedClaudeStatus(command, context.platform) !== undefined
+    || [false, true].some(composed => command === claudeStatusCommand(context, path, composed));
 }
 
 /**
  * What a status line Rerail has no record of owning leaves for removal to bring back: nothing when it is `replaceable`,
- * else itself or the one it inherits, which must not be a status line of Rerail's own (`generatedClaudeStatus`).
+ * else itself or the one it inherits, which must not be a status line of Rerail's own (`isOwnStatusCommand`).
  */
 function unownedClaudeStatus(
   context: Context, path: string,
@@ -1060,10 +1070,12 @@ function unownedClaudeStatus(
 ): Pick<ClaudeStatusRegistration, "previous" | "previousInherited"> {
   if (replaceable) return { previous: null };
   const previous = statusLine ?? inherited;
-  const own = previous !== undefined && (generatedClaudeStatus(previous.command, context.platform) !== undefined
-    || [false, true].some(composed => previous.command === claudeStatusCommand(context, path, composed)));
-  if (own) throw new Error(`Cannot preserve the existing rerail status line in ${path}: registration ownership is missing`);
-  return { previous: previous ?? null, previousInherited: statusLine === undefined && inherited !== undefined };
+  if (previous === undefined) return { previous: null };
+  if (isOwnStatusCommand(context, path, previous.command)) {
+    throw new Error(`Cannot preserve the existing rerail status line in ${path}: registration ownership is missing`);
+  }
+  // With no status line of its own here, the settings inherit `previous`.
+  return { previous, previousInherited: statusLine === undefined };
 }
 
 /**
@@ -1440,12 +1452,19 @@ function nodeStatusScript(text: string, windows: boolean): string | undefined {
 /** What `command` is when it has a generated shape (`claudeStatusCommand`, and the direct form earlier versions wrote). */
 function generatedClaudeStatus(command: string, platform: NodeJS.Platform): GeneratedClaudeStatus | undefined {
   const sourced = STATUS_SCRIPT_COMMAND.exec(command);
-  if (sourced !== null) {
-    const script = unquoteShellWord(sourced[2]!);
-    const generated = script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatusShell)
-      && (sourced[1] === undefined || nodeStatusScript(sourced[1], false) !== undefined);
-    return generated ? { script, executable: ENTRY_POINTS.claudeStatusShell, legacy: false } : undefined;
-  }
+  return sourced === null ? nodeClaudeStatus(command, platform) : sourcedClaudeStatus(sourced);
+}
+
+/** `. <claude-status.sh>`, after `set -- <node> <claude-status.js> [<settings>]; ` or not (`STATUS_SCRIPT_COMMAND`). */
+function sourcedClaudeStatus([, node, word]: RegExpExecArray): GeneratedClaudeStatus | undefined {
+  const script = unquoteShellWord(word!);
+  const generated = script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatusShell)
+    && (node === undefined || nodeStatusScript(node, false) !== undefined);
+  return generated ? { script, executable: ENTRY_POINTS.claudeStatusShell, legacy: false } : undefined;
+}
+
+/** Node started on the Node status script: direct, as earlier versions wrote it, or behind the fallback. */
+function nodeClaudeStatus(command: string, platform: NodeJS.Platform): GeneratedClaudeStatus | undefined {
   const fallback = command.startsWith(CLAUDE_STATUS_FALLBACK);
   // Words behind the fallback are POSIX-quoted on every platform; only the direct form earlier Windows set-ups wrote is not.
   const script = nodeStatusScript(fallback ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command, platform === "win32" && !fallback);

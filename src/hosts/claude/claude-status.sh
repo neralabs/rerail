@@ -3,9 +3,9 @@
 # so a refresh starts no process of its own; only a session's first draw may start `sleep` (below). POSIX sh: /bin/sh
 # is bash 3.2 on macOS and dash on most of Linux.
 #
-# The daemon keeps each session's line in <Rerail home>/status/<session id> (src/presentation/claude-status-files.ts)
-# and this prints it. The file holds the line three times, for a terminal with 24-bit colour, 256 colours and no
-# colour; an empty file draws nothing.
+# The daemon keeps each session's line in <Rerail home>/claude-status-lines/<session id>
+# (src/presentation/claude-status-files.ts) and this prints it. The file holds the line three times, for a terminal
+# with 24-bit colour, 256 colours and no colour; an empty file draws nothing.
 
 # `set -- <node> <claude-status.js> [<settings>]` before this file: the person had a status line of their own, which
 # Node runs before it adds Rerail's line (src/hosts/claude/claude-status.ts). The node set-up recorded while it is
@@ -75,16 +75,22 @@ else
   green='\033[32m' red='\033[31m' plain='\033[39m'
 fi
 
-home=${RERAIL_HOME:-$HOME/.rerail}
+# The Rerail home: RERAIL_HOME when it is an absolute path, else ~/.rerail. Set-up records an absolute one; the daemon
+# would read another relative to its own folder, which this cannot know.
+case ${RERAIL_HOME:-} in
+  /*) home=$RERAIL_HOME ;;
+  *) home=$HOME/.rerail ;;
+esac
+status=$home/claude-status-lines
 
 # Claude Code draws the status line as a session starts, about a second before the session's start hook has told the
 # daemon of it, and draws again only with the session's first reply. So until that reply, a draw that finds no file
 # waits for one: 7 s at most, in six sleeps at most, the only program this script starts. The Node status line waits
 # the same (STARTING_WAITS_MS in claude-status.ts). Without a `sleep` to start there is no wait.
-if [ -z "$nested" ] && [ -n "$id" ] && [ -n "$unanswered" ] && [ ! -e "$home/status/$id" ] && command -v sleep >/dev/null 2>&1; then
+if [ -z "$nested" ] && [ -n "$id" ] && [ -n "$unanswered" ] && [ ! -e "$status/$id" ] && command -v sleep >/dev/null 2>&1; then
   for pause in 0.2 0.3 0.5 1 2 3; do
     sleep "$pause" || break
-    if [ -e "$home/status/$id" ]; then break; fi
+    if [ -e "$status/$id" ]; then break; fi
   done
 fi
 
@@ -92,7 +98,7 @@ if [ -n "$nested" ]; then
   :
 elif [ -z "$id" ]; then
   printf "$brand $green●$plain session unavailable\n"
-elif [ -r "$home/status/$id" ]; then
+elif [ -r "$status/$id" ]; then
   count=0
   while IFS= read -r line || [ -n "$line" ]; do
     count=$((count + 1))
@@ -100,7 +106,7 @@ elif [ -r "$home/status/$id" ]; then
       printf '%s\n' "$line"
       break
     fi
-  done < "$home/status/$id"
+  done < "$status/$id"
 elif [ -e "$home/daemon.json" ]; then
   # A daemon is recorded and keeps no line for this session: Rerail is not on in its repository, or the session's
   # start never reached the daemon. Either way there is nothing to draw.

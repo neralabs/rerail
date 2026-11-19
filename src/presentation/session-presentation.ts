@@ -392,6 +392,21 @@ async function liveHealth(daemon: VerifiedDaemon): Promise<z.infer<typeof health
  */
 export const FOOTER_DAEMON_HOSTS: readonly string[] = ["127.0.0.1", "[::1]", "localhost"];
 
+/** Whether `origin`, the URL `state` records, is one a footer reads: loopback, http or pinned https, and bare. */
+function isFooterDaemonOrigin(origin: URL, state: DaemonState): boolean {
+  return isFooterDaemonTransport(origin, state) && FOOTER_DAEMON_HOSTS.includes(origin.hostname) && isBareOrigin(origin);
+}
+
+/** http, or https with the certificate's fingerprint recorded for Rerail's clients to pin. */
+function isFooterDaemonTransport({ protocol }: URL, state: DaemonState): boolean {
+  return protocol === "http:" || (protocol === "https:" && state.tlsFingerprint256 !== undefined);
+}
+
+/** No credentials, path, query or fragment: nothing a stale or planted locator could carry. */
+function isBareOrigin({ username, password, pathname, search, hash }: URL): boolean {
+  return [username, password, search, hash].every(part => part === "") && pathname === "/";
+}
+
 /**
  * The daemon serving `cwd`'s checkout, or why there is none. Re-reads the locator on every call:
  * installed updates and daemon restarts may change the listener. The Rerail home's daemon reads the
@@ -402,12 +417,7 @@ async function verifyDaemon(cwd: string): Promise<VerifiedDaemon | string> {
   const state = await readDaemonState(join(defaultRerailHome(), DAEMON_STATE_FILE));
   if (state === undefined) return "daemon unavailable";
   const origin = new URL(state.url);
-  const secure = origin.protocol === "https:" && state.tlsFingerprint256 !== undefined;
-  if ((origin.protocol !== "http:" && !secure) || !FOOTER_DAEMON_HOSTS.includes(origin.hostname)
-      || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
-    return "daemon unavailable";
-  }
-  return { workspace, state, origin };
+  return isFooterDaemonOrigin(origin, state) ? { workspace, state, origin } : "daemon unavailable";
 }
 
 /**

@@ -7,7 +7,7 @@ import { BLOCK_STEERS_NOTE } from "../engine/catalog/rule-mode.js";
 import type { UpdateResult } from "../setup/updater.js";
 import { NO_PROGRESS, type Progress } from "../runtime/progress.js";
 import { parseArguments } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, eraseFreedPages, openRerailDatabase, resetRepositoryHistoryIn } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, eraseFreedPages, openRerailDatabase, resetRepositoryHistoryIn, type RerailDatabase } from "../engine/storage/database.js";
 import { STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
 import { removeUnrecordedStatusFiles } from "../presentation/claude-status-files.js";
 import { SqliteSessionReader } from "../runtime/session-store.js";
@@ -179,20 +179,82 @@ function plural(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`;
 }
 
-/**
- * Removes the Claude Code status file of each session a reset of the database at `database` deleted, from the status
- * folder beside it; returns why it could not, if it could not.
- */
-function removeDeletedStatusFiles(database: string): string | undefined {
+/** Removes the Claude Code status file of each session a reset of the database at `database` deleted, from the folder beside it. */
+function removeDeletedStatusFiles(database: string): void {
+  const folder = join(dirname(database), STATUS_LINES_FOLDER);
   const reader = new SqliteSessionReader(database);
   try {
-    removeUnrecordedStatusFiles(join(dirname(database), STATUS_LINES_FOLDER), reader);
-    return undefined;
+    removeUnrecordedStatusFiles(folder, reader);
   } catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    process.stdout.write(`Could not remove the deleted sessions' status lines from ${folder} (${error instanceof Error ? error.message : String(error)}).\n`);
   } finally {
     reader.close();
   }
+}
+
+/** What a reset of one repository's history did. */
+interface HistoryReset {
+  repositoryKey: string;
+  /** Ended sessions deleted. */
+  sessions: number;
+  /** Running sessions kept, their history dropped. */
+  openSessions: number;
+  /** The file was rewritten, so the deleted history cannot be read back from it (`eraseFreedPages`). */
+  erased: boolean;
+  /** Why the rewrite failed, when it did. */
+  eraseFailure: string | undefined;
+}
+
+/** Deletes the history of the repository `cwd` is in from the database at `database`; undefined when Rerail has not seen it. */
+function resetHistoryOf(database: string, cwd: string): HistoryReset | undefined {
+  const db = openRerailDatabase(database);
+  try {
+    const checkout = lookupCheckout(db, cwd);
+    if (checkout === undefined) return undefined;
+    const { repositoryKey } = checkout;
+    const repository = listRepositories(db).find(candidate => candidate.repositoryKey === repositoryKey);
+    const { sessions, openSessions } = resetRepositoryHistoryIn(db, repository === undefined ? [repositoryKey] : repositoryHistoryIds(repository));
+    return { repositoryKey, sessions, openSessions, ...eraseFreedHistory(db) };
+  } finally {
+    db.$client.close();
+  }
+}
+
+/** Rewrites the database so the history just deleted cannot be read back; a failure is returned, not thrown. */
+function eraseFreedHistory(db: RerailDatabase): Pick<HistoryReset, "erased" | "eraseFailure"> {
+  try {
+    return { erased: eraseFreedPages(db), eraseFailure: undefined };
+  } catch (error) {
+    return { erased: false, eraseFailure: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** What a reset says it deleted and kept. */
+function reportRemovedHistory(database: string, { repositoryKey, sessions, openSessions }: HistoryReset): void {
+  const kept = openSessions > 0 ? `, ${openSessions} running ${plural(openSessions, "session")} kept (history dropped)` : "";
+  process.stdout.write(
+    `Removed the history of this repository (${repositoryKey}, across all its checkouts) from ${database}: `
+    + `${sessions} ended ${plural(sessions, "session")} deleted`
+    + kept
+    + ". Rules and other repositories are unchanged.\n",
+  );
+}
+
+/** What may remain of the deleted history in the file; the reset's exit code, 1 when anything may. */
+function reportErase(database: string, { erased, eraseFailure }: HistoryReset): number {
+  if (eraseFailure !== undefined) {
+    process.stdout.write(
+      `Could not rewrite ${database} to erase the deleted history (${eraseFailure}). The history is deleted, but its `
+      + `text may remain in ${database}-wal or the file's free pages. Run rerail reset again when Rerail is idle, with `
+      + "free disk space for a second copy of the database.\n",
+    );
+    return 1;
+  }
+  if (!erased) {
+    process.stdout.write(`Another Rerail process was reading the database, so the deleted history may remain in ${database}-wal until it stops; run rerail reset again then.\n`);
+    return 1;
+  }
+  return 0;
 }
 
 /**
@@ -210,51 +272,12 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
     process.stdout.write(`No Rerail database at ${database}; nothing to reset.\n`);
     return 0;
   }
-  const db = openRerailDatabase(database);
-  let repositoryKey: string;
-  let sessions: number;
-  let openSessions: number;
-  let erased = false;
-  let eraseFailure: string | undefined;
-  try {
-    const checkout = lookupCheckout(db, process.cwd());
-    if (checkout === undefined) {
-      process.stdout.write("Rerail has not seen this repository; nothing to reset.\n");
-      return 0;
-    }
-    repositoryKey = checkout.repositoryKey;
-    const repository = listRepositories(db).find(candidate => candidate.repositoryKey === repositoryKey);
-    ({ sessions, openSessions } = resetRepositoryHistoryIn(db, repository === undefined ? [repositoryKey] : repositoryHistoryIds(repository)));
-    try {
-      erased = eraseFreedPages(db);
-    } catch (error) {
-      eraseFailure = error instanceof Error ? error.message : String(error);
-    }
-  } finally {
-    db.$client.close();
+  const reset = resetHistoryOf(database, process.cwd());
+  if (reset === undefined) {
+    process.stdout.write("Rerail has not seen this repository; nothing to reset.\n");
+    return 0;
   }
-  const kept = openSessions > 0 ? `, ${openSessions} running ${plural(openSessions, "session")} kept (history dropped)` : "";
-  process.stdout.write(
-    `Removed the history of this repository (${repositoryKey}, across all its checkouts) from ${database}: `
-    + `${sessions} ended ${plural(sessions, "session")} deleted`
-    + kept
-    + ". Rules and other repositories are unchanged.\n",
-  );
-  const statusLinesKept = removeDeletedStatusFiles(database);
-  if (statusLinesKept !== undefined) {
-    process.stdout.write(`Could not remove the deleted sessions' status lines from ${join(dirname(database), STATUS_LINES_FOLDER)} (${statusLinesKept}).\n`);
-  }
-  if (eraseFailure !== undefined) {
-    process.stdout.write(
-      `Could not rewrite ${database} to erase the deleted history (${eraseFailure}). The history is deleted, but its `
-      + `text may remain in ${database}-wal or the file's free pages. Run rerail reset again when Rerail is idle, with `
-      + "free disk space for a second copy of the database.\n",
-    );
-    return 1;
-  }
-  if (!erased) {
-    process.stdout.write(`Another Rerail process was reading the database, so the deleted history may remain in ${database}-wal until it stops; run rerail reset again then.\n`);
-    return 1;
-  }
-  return 0;
+  reportRemovedHistory(database, reset);
+  removeDeletedStatusFiles(database);
+  return reportErase(database, reset);
 }

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseApiStores } from "../../src/api/index.js";
-import { defaultRerailDatabasePath, loadRuleCatalog, openRerailDatabase, ruleConfigurationSignature } from "../../src/engine/index.js";
+import { defaultRerailDatabasePath, loadRuleCatalog, openRerailDatabase, ruleConfigurationSignature, STATUS_LINES_FOLDER } from "../../src/engine/index.js";
 import { keepClaudeStatusFiles, statusFileText, type ClaudeStatusFiles } from "../../src/presentation/claude-status-files.js";
 import { fallbackPresentation, stoppedDaemonPresentation } from "../../src/presentation/session-presentation.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
@@ -31,7 +31,7 @@ let keepers: ClaudeStatusFiles[];
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "rerail-status-files-"));
   home = join(root, "home");
-  folder = join(home, "status");
+  folder = join(home, STATUS_LINES_FOLDER);
   workspace = join(root, "workspace");
   await mkdir(workspace);
   vi.stubEnv("RERAIL_HOME", home);
@@ -177,6 +177,31 @@ describe("the Claude Code status files the daemon keeps", () => {
     // An ended session with no file gets none back on a later pass.
     await kept.refresh();
     expect(readdirSync(folder)).toEqual([]);
+  });
+
+  it("leaves everything in the folder that is not a session's status file, or a write of one cut short", async () => {
+    mkdirSync(join(folder, "drafts"), { recursive: true });
+    const others = ["notes.txt", "draft.tmp", ".DS_Store", "with.dot", "a.b.c.tmp"];
+    for (const name of others) writeFileSync(join(folder, name), "not Rerail's\n");
+    writeFileSync(join(folder, "gone-session.99.2f0e9b7a-0000-4000-8000-000000000000.tmp"), "a write cut short");
+    recordSession("session-one", workspace, 3);
+    const kept = keeper();
+    await kept.refresh();
+    await kept.stop();
+    expect(readdirSync(folder).sort()).toEqual([...others, "drafts", "session-one"].sort());
+  });
+
+  it("keeps drawing, and stopping, the other sessions when one session's file cannot be written", async () => {
+    // A folder in the file's place: a write of the file renames onto it, which fails.
+    mkdirSync(join(folder, "stuck", "inside"), { recursive: true });
+    for (const sessionId of ["stuck", "other"]) recordSession(sessionId, workspace, 3);
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const kept = keeper();
+    await kept.refresh();
+    expect(shown(drawn("other")![2]!)).toBe("R E R A I L ● 3 rules");
+    await kept.stop();
+    expect(shown(drawn("other")![2]!)).toBe("R E R A I L ✕ not running");
+    expect(stderr.mock.calls.join("")).toContain("could not keep the Claude Code status lines");
   });
 
   // Claude Code often exits before its end hook has run, so the database holds such a session open for good.
@@ -365,5 +390,14 @@ describe.skipIf(process.platform === "win32")("the status script Claude Code's s
       expect(statusLine(shell, answered, { PATH: sleep.path, NO_COLOR: "1" })).toBe("R E R A I L ✕ not running\n");
     }
     expect(sleep.slept()).toHaveLength(6);
+  });
+
+  it.each(shells)("%s reads ~/.rerail where RERAIL_HOME is not an absolute path", (shell) => {
+    const userHome = join(root, ".rerail", STATUS_LINES_FOLDER);
+    mkdirSync(userHome, { recursive: true });
+    writeFileSync(join(userHome, "session-one"), "24-bit\n256\nplain\n");
+    for (const relative of ["relative/home", ""]) {
+      expect(statusLine(shell, input("session-one"), { RERAIL_HOME: relative, NO_COLOR: "1" })).toBe("plain\n");
+    }
   });
 });
