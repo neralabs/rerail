@@ -507,3 +507,43 @@ tree t {
         assert_eq!(differ, None, "{shape:?}");
     }
 }
+
+/// A token mark over a kind whose first byte another token's starts too: `annot` (`@a`) and
+/// the punctuation `@` both start with `@`, so the records' kind of a byte can not tell them
+/// apart. The kind's tokens are told by its rows' starts, a mark bit of the code
+/// (`TokenElem::rows`): `tagged` holds at `@a b`, not at `@ a`. The reference and every executor.
+#[test]
+fn a_token_mark_tells_a_kind_by_its_rows_where_a_first_byte_is_shared() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class word      = 'a'..'z'
+class at        = '@'
+class dot       = '.'
+mask name       = fill(word, ~word)
+mask lone_at    = at & ~next(word)
+mask p          = lone_at | dot
+error "a byte no token takes" by tokens when ~ws & ~name & ~at & ~dot
+token simple_identifier = start name & ~prev(name) & ~prev(at) run word
+token annot     = start at & next(word) run word
+token punct     = start p
+keywords punct { "@" "." } required
+skip ws
+mark tagged     = tokens annot simple_identifier
+tree t {
+  node source_file whole = (item)*
+  node item       = tagged tagged_item | annot | '@' simple_identifier | '.'
+  node tagged_item = annot simple_identifier
+}
+"#;
+    let c = compile_step("shared", source);
+    let rows: Vec<u32> = c.program.token_marks.iter().flat_map(|m| m.elems.iter().map(|e| e.rows)).collect();
+    assert!(rows.iter().any(|&r| r != 0), "`annot` is told by its rows: {rows:?}");
+    let fixed = ["@a b\n", "@ a\n", "@a\n.@b c", "@ a @b\n@c d", "@a @b c", "@a .", "@ a b"];
+    let parses: Vec<bool> = fixed.iter().map(|d| reference(&c, d.as_bytes()).is_some()).collect();
+    assert_eq!(parses, [true, true, true, true, true, true, false]);
+    let differ = check_documents("shared", &c, b"ab@. \n", &[], &fixed, &|_, _, _, _| None);
+    if let Some(d) = &differ {
+        eprintln!("DIFFERS: {d}");
+    }
+    assert_eq!(differ, None);
+}

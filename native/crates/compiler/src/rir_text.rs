@@ -76,6 +76,9 @@ pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
         let _ = write!(out, "  tokenmark {}{}{}", m.order, if m.refuses { " refuses" } else { "" }, if m.unless { " unless" } else { "" });
         for e in &m.elems {
             let _ = write!(out, " o{} k{:x}", e.offset, e.kinds);
+            if e.rows != 0 {
+                let _ = write!(out, " r{:x}", e.rows);
+            }
             for s in &e.words {
                 let _ = write!(out, " s{s}");
             }
@@ -97,6 +100,9 @@ pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
             // A run's `ending` (Q274): its kinds, words and keywords.
             if let Some(x) = &e.ending {
                 let _ = write!(out, " ending k{:x}", x.kinds);
+                if x.rows != 0 {
+                    let _ = write!(out, " r{:x}", x.rows);
+                }
                 for s in &x.words {
                     let _ = write!(out, " s{s}");
                 }
@@ -107,6 +113,9 @@ pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
             // A run's depths (Q271): each side's counter, then its kinds, words and keywords.
             for n in &e.nests {
                 let _ = write!(out, " {}{} k{:x}", if n.open { "open" } else { "close" }, n.counter, n.test.kinds);
+                if n.test.rows != 0 {
+                    let _ = write!(out, " r{:x}", n.test.rows);
+                }
                 for s in &n.test.words {
                     let _ = write!(out, " s{s}");
                 }

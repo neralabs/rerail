@@ -112,6 +112,9 @@ pub struct Records {
     pub gaps: u32,
     /// The mark whose bit tells an extra's token (a comment), if any: an extra has no gap mark.
     pub extra: Option<u8>,
+    /// The first of the bits that tell a token mark's kind by its rows' starts
+    /// (`TokenElem::rows`), after the marks' and the extras': no mark's bit.
+    pub kind_rows: Option<u8>,
     /// The outputs of the errors the token loop checks (`error … by tokens`): a byte it starts a
     /// token at that no token begins with refuses the file. The CPU makes none of them.
     pub untaken: Vec<u16>,
@@ -372,7 +375,7 @@ impl Records {
     /// extras' bits come after them; a mark of a later order (a token mark that tier 2 tests
     /// alone, a mark past `MARKS`) holds no bit of the code.
     pub fn mark_bits(&self) -> usize {
-        self.extra.map_or(self.marks.len(), usize::from)
+        self.extra.or(self.kind_rows).map_or(self.marks.len(), usize::from)
     }
 
     /// Where the stream starts in `bytes`: past the prefix, where the file starts with it.
