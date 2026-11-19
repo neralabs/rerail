@@ -2778,3 +2778,48 @@ fn a_store_folder_that_is_a_symlink_is_not_followed_when_tightening() {
     assert_eq!(mode_of(&elsewhere), 0o755);
     assert_eq!(mode_of(&elsewhere.join(STORE_FILE_NAME)), 0o600);
 }
+
+/// A restore's memory of a worktree's verified files: one row per worktree and path, a later
+/// hash replacing an earlier one, and every row 30 days old forgotten by a later write.
+#[test]
+fn verified_worktree_files_are_kept_by_worktree_and_path_and_forgotten_when_old() {
+    let (_path, store) = store("verified-files");
+    let file = |path: &str, changed: i64| VerifiedWorktreeFile {
+        path: path.to_owned(),
+        volume: u64::MAX,
+        file_id: [9; 16],
+        changed,
+        blob: HashKey::git_sha1([7; 20]),
+    };
+    let day = 24 * 60 * 60;
+    store
+        .remember_verified_worktree_files("/a", &[file("x.py", 1), file("y.py", 2)], 100 * day)
+        .unwrap();
+    store
+        .remember_verified_worktree_files("/b", &[file("x.py", 3)], 100 * day)
+        .unwrap();
+    store
+        .remember_verified_worktree_files("/a", &[file("x.py", 4)], 110 * day)
+        .unwrap();
+    let mut kept = store.verified_worktree_files("/a").unwrap();
+    kept.sort_by(|left, right| left.path.cmp(&right.path));
+    assert_eq!(
+        kept,
+        vec![file("x.py", 4), file("y.py", 2)],
+        "a later hash of a file replaces its row"
+    );
+    assert_eq!(
+        store.verified_worktree_files("/b").unwrap(),
+        vec![file("x.py", 3)]
+    );
+
+    store
+        .remember_verified_worktree_files("/c", &[], 131 * day)
+        .unwrap();
+    assert_eq!(
+        store.verified_worktree_files("/a").unwrap(),
+        vec![file("x.py", 4)],
+        "a row 31 days old is forgotten"
+    );
+    assert!(store.verified_worktree_files("/b").unwrap().is_empty());
+}

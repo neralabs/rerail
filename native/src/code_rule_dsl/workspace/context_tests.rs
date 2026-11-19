@@ -4076,6 +4076,66 @@ fn a_warm_index_restores_a_clean_file_whose_read_is_denied() {
     drop(denied);
 }
 
+/// A clean tracked file whose change time moved while no workspace ran (its times set again, as
+/// a copy or an extraction that keeps them leaves every file) is read by the next warm index
+/// alone: the store keeps what its hash showed, and the index after it restores the file with no
+/// read. A write that keeps the size and puts the modification time back moves the change time
+/// again, so the index after it reads the edit.
+#[cfg(windows)]
+#[test]
+fn a_warm_index_reads_a_file_whose_change_time_moved_once_until_it_is_written() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = backdated_repository(
+        "restore-remembered",
+        &[("api/a.py", b"print(1)\n"), ("lib/b.py", b"x = 2\n")],
+    );
+    let root = directory.0.join("repo");
+    let code_rule = print_code_rule();
+    let found = vec![("api/a.py".to_owned(), "print".to_owned(), 0)];
+    let mut first = storage_workspace(&root, directory.store());
+    first.add_code_rule(&code_rule, None).unwrap();
+    index_workspace(&first);
+    assert_eq!(located(&all_pages(&first, MAXIMUM_PAGE_BYTES)), found);
+    first.completion_task().compute().unwrap();
+    first.close();
+
+    let edited = root.join("api/a.py");
+    let hour = std::time::Duration::from_secs(3_600);
+    git_workspace::set_change_time(&edited, written_long_ago() + hour);
+    for (warm_index, hashed) in [(1, 1), (2, 0)] {
+        let mut warm = storage_workspace(&root, directory.store());
+        warm.add_code_rule(&code_rule, None).unwrap();
+        git_workspace::reset_source_alias_hashes();
+        let indexed = index_workspace(&warm);
+        assert_eq!(indexed["restoredFiles"], json!(2), "{indexed}");
+        assert_eq!(
+            git_workspace::source_alias_hashes(),
+            hashed,
+            "warm index {warm_index} hashes the file only once: {indexed}"
+        );
+        assert_eq!(located(&all_pages(&warm, MAXIMUM_PAGE_BYTES)), found);
+        warm.close();
+    }
+
+    std::fs::write(&edited, b"pront(1)\n").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&edited)
+        .unwrap()
+        .set_modified(written_long_ago())
+        .unwrap();
+    let mut last = storage_workspace(&root, directory.store());
+    last.add_code_rule(&code_rule, None).unwrap();
+    let indexed = index_workspace(&last);
+    assert_eq!(
+        all_pages(&last, MAXIMUM_PAGE_BYTES),
+        json!([]),
+        "the edit is read, not its committed blob's results: {indexed}"
+    );
+    assert_eq!(indexed["restoredFiles"], json!(1), "{indexed}");
+    last.close();
+}
+
 /// Three checkouts of one commit share a content store. `lf` checks out the committed bytes;
 /// `crlf` converts line endings (`core.autocrlf`), which changes the size; `swap` runs a
 /// size-preserving filter driver (`p`↔`q`). A blob alias the `lf` checkout stored names bytes

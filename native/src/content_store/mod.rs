@@ -20,12 +20,14 @@ mod snapshots;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+mod verified_files;
 mod workspaces;
 
 pub(crate) use compression::compress;
 pub(crate) use connection::BusyRetries;
 pub(crate) use connection::OperationDeadline;
 pub use schema::STORE_FILE_NAME;
+pub use verified_files::VerifiedWorktreeFile;
 
 #[cfg(test)]
 pub(crate) use connection::{

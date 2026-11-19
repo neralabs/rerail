@@ -24,7 +24,7 @@ use crate::code_rule_dsl::language::adapter::{module_path, package_manifests};
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::package_manifest::{Manifest, Manifests};
 use crate::content_store::{
-    CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredLocalResult,
+    CandidateCatalogIdentity, ContentStore, DirectoryReuse, HashKey, StoredFile, StoredLocalResult,
     StoredPathObjects,
 };
 use crate::git_workspace;
@@ -240,7 +240,11 @@ type RestoreCandidate<'a> = (
 type StoredResults = HashMap<(HashKey, HashKey), Arc<Vec<StoredLocalResult>>>;
 
 /// A candidate verified for a restore: its input, its stored source and its stored results.
-type VerifiedRestore<'a> = (FileInput, &'a StoredPathObjects, &'a Arc<Vec<StoredLocalResult>>);
+type VerifiedRestore<'a> = (
+    FileInput,
+    &'a StoredPathObjects,
+    &'a Arc<Vec<StoredLocalResult>>,
+);
 
 /// The blob alias of each accepted file in a reusable directory that discovery found clean.
 fn clean_aliases(
@@ -290,9 +294,11 @@ fn restore_candidates<'a>(
 }
 
 /// The candidates whose stored results cover the catalog and whose worktree file holds the blob's
-/// bytes now.
+/// bytes now. What a hash showed of a file whose change time moved is kept in `store`, so the
+/// next restore takes that file with no read until it is written (`VerifiedFiles`).
 fn holding_blob_bytes<'a>(
     repository: &git_workspace::GitWorkspace,
+    store: &ContentStore,
     prepared: Vec<RestoreCandidate<'a>>,
     result_manifest: &'a StoredResults,
 ) -> Vec<VerifiedRestore<'a>> {
@@ -301,15 +307,18 @@ fn holding_blob_bytes<'a>(
     // (whose stored source and results another worktree may have published). Restore only a
     // file that holds the blob's bytes now; verify before taking the workspace lock, since a
     // changed stat costs a hash.
-    prepared
+    let mut verified_files = repository.verified_files(store);
+    let verified = prepared
         .into_iter()
         .filter_map(|(file, input, stored, length, key)| {
             let results = result_manifest.get(&key)?;
             repository
-                .holds_blob_bytes(&file.repository_path, length)
+                .holds_blob_bytes(&file.repository_path, length, &mut verified_files)
                 .then_some((input, stored, results))
         })
-        .collect()
+        .collect();
+    verified_files.save();
+    verified
 }
 
 fn restore_prepared_file(
@@ -642,7 +651,7 @@ impl WorkspaceIndexTask {
             .store
             .local_check_results_by_key(&keys, catalog)
             .map_err(|error| invalid(error.to_string()))?;
-        let verified = holding_blob_bytes(repository, prepared, &result_manifest);
+        let verified = holding_blob_bytes(repository, &storage.store, prepared, &result_manifest);
         self.restore_verified(verified)
     }
 

@@ -39,8 +39,8 @@ const UNCOMPARED_INDEX_ENTRY: gix::index::entry::Flags = gix::index::entry::Flag
 /// records, nanoseconds and change time included, stricter than Git's defaults. A mismatch only
 /// costs a hash, while a false match would reuse results of other bytes: a write that restores
 /// the size and modification time (`touch -r`) still changes the change time on Unix. On Windows
-/// the stat holds the creation time in that field, so `WorktreeStat` adds the file's own change
-/// time there.
+/// the stat holds the creation time in that field, so `VerifiedFiles::proof` adds the file's own
+/// change time.
 const RESTORE_STAT: gix::index::entry::stat::Options = gix::index::entry::stat::Options {
     trust_ctime: true,
     check_stat: true,
@@ -50,6 +50,11 @@ const RESTORE_STAT: gix::index::entry::stat::Options = gix::index::entry::stat::
 /// The checkout conversions that can change a file's bytes and keep its size. An end-of-line
 /// conversion only inserts carriage returns, so a size check sees it; these need a hash.
 const SIZE_PRESERVING_CONVERSIONS: [&str; 3] = ["filter", "ident", "working-tree-encoding"];
+
+mod worktree_stat;
+
+pub use worktree_stat::VerifiedFiles;
+use worktree_stat::{ChangeStamp, Proof, WorktreeStat, stat_decides};
 
 #[cfg(test)]
 static SOURCE_ALIAS_HASHES: AtomicUsize = AtomicUsize::new(0);
@@ -78,22 +83,52 @@ pub(crate) fn backdate(path: &Path, when: std::time::SystemTime) {
 
 #[cfg(all(test, windows))]
 fn set_written(file: &std::fs::File, when: std::time::SystemTime) {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_BASIC_INFO, FileBasicInfo, SetFileInformationByHandle,
-    };
-    // A file time counts 100 ns intervals from 1601; a time left at 0 stays as it is.
+    let time = file_time_of(when);
+    set_basic_info(
+        file,
+        windows_sys::Win32::Storage::FileSystem::FILE_BASIC_INFO {
+            LastWriteTime: time,
+            ChangeTime: time,
+            ..Default::default()
+        },
+    );
+}
+
+/// Sets `path`'s NTFS change time to `when` and leaves its other times, as a file whose times a
+/// tool set has one that differs from its modification time.
+#[cfg(all(test, windows))]
+pub(crate) fn set_change_time(path: &Path, when: std::time::SystemTime) {
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    set_basic_info(
+        &file,
+        windows_sys::Win32::Storage::FileSystem::FILE_BASIC_INFO {
+            ChangeTime: file_time_of(when),
+            ..Default::default()
+        },
+    );
+}
+
+/// `when` as a file time: 100 ns intervals from 1601.
+#[cfg(all(test, windows))]
+fn file_time_of(when: std::time::SystemTime) -> i64 {
     let since_1601 = when
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos()
         / 100
         + 116_444_736_000_000_000;
-    let time = i64::try_from(since_1601).unwrap();
-    let info = FILE_BASIC_INFO {
-        LastWriteTime: time,
-        ChangeTime: time,
-        ..FILE_BASIC_INFO::default()
+    i64::try_from(since_1601).unwrap()
+}
+
+/// Sets the times `info` names on `file`; a time left at 0 stays as it is.
+#[cfg(all(test, windows))]
+fn set_basic_info(
+    file: &std::fs::File,
+    info: windows_sys::Win32::Storage::FileSystem::FILE_BASIC_INFO,
+) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_BASIC_INFO, FileBasicInfo, SetFileInformationByHandle,
     };
     // SAFETY: an open handle with write access, and a buffer of the size given.
     let set = unsafe {
@@ -158,110 +193,6 @@ pub struct BaseFile {
     /// size-preserving conversion applies to the path: while the worktree file still has exactly
     /// this stat it holds the bytes Git compared with the blob (`holds_blob_bytes`).
     pub checkout: Option<gix::index::entry::Stat>,
-}
-
-/// A worktree file's stat, as `lstat` gives it without following a link, and whether the file
-/// changed in no way after its modification time.
-struct WorktreeStat {
-    metadata: gix::index::fs::Metadata,
-    /// On Unix the stat's change time shows every write, so this holds. On Windows the stat holds
-    /// the creation time where Unix has the change time (Git for Windows records the same), and a
-    /// write that keeps the size and puts the modification time back leaves the stat as it was:
-    /// this is whether NTFS's change time, which every write and every time set moves, still
-    /// equals the modification time.
-    unchanged_since_written: bool,
-}
-
-impl WorktreeStat {
-    #[cfg(not(windows))]
-    fn read(path: &Path) -> Option<Self> {
-        let metadata = gix::index::fs::Metadata::from_path_no_follow(path).ok()?;
-        Some(Self {
-            metadata,
-            unchanged_since_written: true,
-        })
-    }
-
-    /// One handle answers both questions, opened as `lstat` opens a file: a link is not followed.
-    /// A denial of the file's read also refuses this handle, so there `lstat` gives the stat alone,
-    /// as Git for Windows reads it, and nothing proves the file unchanged since its last write.
-    #[cfg(windows)]
-    fn read(path: &Path) -> Option<Self> {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows_sys::Win32::Storage::FileSystem::{
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
-        };
-        let Ok(file) = std::fs::OpenOptions::new()
-            .access_mode(FILE_READ_ATTRIBUTES)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
-            .open(path)
-        else {
-            return Some(Self {
-                metadata: gix::index::fs::Metadata::from_path_no_follow(path).ok()?,
-                unchanged_since_written: false,
-            });
-        };
-        let metadata = gix::index::fs::Metadata::from_file(&file).ok()?;
-        Some(Self {
-            metadata,
-            unchanged_since_written: unchanged_since_written(&file),
-        })
-    }
-
-    /// Whether the file still holds the bytes Git compared with the blob when it recorded
-    /// `recorded`: it has exactly that stat and nothing changed it after its last write.
-    fn proves(&self, recorded: &gix::index::entry::Stat) -> bool {
-        self.unchanged_since_written && self.matches(recorded)
-    }
-
-    /// Whether the stat alone equals `recorded`, as Git compares them (`RESTORE_STAT`).
-    fn matches(&self, recorded: &gix::index::entry::Stat) -> bool {
-        gix::index::entry::Stat::from_fs(&self.metadata)
-            .is_ok_and(|current| recorded.matches(&current, RESTORE_STAT))
-    }
-}
-
-/// Whether a read failed because this process may not read the file now: its permissions refuse
-/// it, or another process holds the file without sharing it or locks it.
-fn unreadable(error: &std::io::Error) -> bool {
-    error.kind() == std::io::ErrorKind::PermissionDenied || held_elsewhere(error)
-}
-
-/// Whether a read failed on another process's hold of the file: a sharing or a lock violation.
-#[cfg(windows)]
-fn held_elsewhere(error: &std::io::Error) -> bool {
-    use windows_sys::Win32::Foundation::{ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION};
-    [ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION]
-        .iter()
-        .any(|&code| error.raw_os_error() == Some(code as i32))
-}
-
-/// Unix keeps no lock that refuses a read.
-#[cfg(not(windows))]
-fn held_elsewhere(_error: &std::io::Error) -> bool {
-    false
-}
-
-/// Whether `file`'s NTFS change time equals its modification time: false once anything wrote the
-/// file or set one of its times after that modification time, and where the volume keeps no
-/// change time.
-#[cfg(windows)]
-fn unchanged_since_written(file: &std::fs::File) -> bool {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_BASIC_INFO, FileBasicInfo, GetFileInformationByHandleEx,
-    };
-    let mut info = FILE_BASIC_INFO::default();
-    // SAFETY: an open handle, and a buffer of the size given that lives across the call.
-    let read = unsafe {
-        GetFileInformationByHandleEx(
-            file.as_raw_handle(),
-            FileBasicInfo,
-            (&raw mut info).cast(),
-            std::mem::size_of::<FILE_BASIC_INFO>() as u32,
-        )
-    };
-    read != 0 && info.ChangeTime == info.LastWriteTime
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -729,14 +660,24 @@ impl GitWorkspace {
             .flatten()
     }
 
+    /// What restores remember, in `store`, of this worktree's clean files whose change time moved
+    /// after their last write (`holds_blob_bytes`).
+    pub fn verified_files<'a>(&self, store: &'a ContentStore) -> VerifiedFiles<'a> {
+        VerifiedFiles::new(Some(store), &self.worktree_root)
+    }
+
     /// Whether the worktree file at `relative_path` holds exactly its committed blob's bytes, which
     /// are `blob_length` long, now. One `lstat` decides while the file's stat equals the stat of
-    /// its index entry (`BaseFile::checkout`); otherwise the file is hashed. The file may have
-    /// changed since discovery, and a checkout conversion (`core.autocrlf`, a filter driver) keeps
-    /// a file clean in Git while its bytes differ from the blob's. A file this process cannot read,
-    /// for its permissions or for another process holding it (`unreadable`), cannot be hashed: its
-    /// stat alone decides, as it does for Git.
-    pub fn holds_blob_bytes(&self, relative_path: &str, blob_length: u64) -> bool {
+    /// its index entry (`BaseFile::checkout`) and, on Windows, nothing changed the file after its
+    /// last write (`VerifiedFiles::proof`); otherwise the file is hashed. The file may have changed
+    /// since discovery, and a checkout conversion (`core.autocrlf`, a filter driver) keeps a file
+    /// clean in Git while its bytes differ from the blob's.
+    pub fn holds_blob_bytes(
+        &self,
+        relative_path: &str,
+        blob_length: u64,
+        verified: &mut VerifiedFiles<'_>,
+    ) -> bool {
         let Ok(index) = self
             .base_files
             .binary_search_by(|file| file.path.as_str().cmp(relative_path))
@@ -749,16 +690,47 @@ impl GitWorkspace {
         if !current.metadata.is_file() || current.metadata.len() != blob_length {
             return false;
         }
-        let recorded = self.base_files[index].checkout;
-        if recorded.is_some_and(|recorded| current.proves(&recorded)) {
-            return true;
+        let base = &self.base_files[index];
+        if !base
+            .checkout
+            .is_some_and(|recorded| current.matches(&recorded))
+        {
+            return self.hashes_to_blob(relative_path, blob_length);
         }
-        self.read_source(relative_path, blob_length).map_or_else(
-            |error| {
-                unreadable(&error) && recorded.is_some_and(|recorded| current.matches(&recorded))
-            },
-            |bytes| self.source_alias(relative_path, &bytes).is_some(),
-        )
+        match verified.proof(relative_path, base.blob, &current) {
+            Proof::Held => true,
+            Proof::Read(stamp) => self.read_decides(relative_path, blob_length, stamp, verified),
+        }
+    }
+
+    /// Whether the file's bytes hash to its committed blob; a file that cannot be read does not.
+    fn hashes_to_blob(&self, relative_path: &str, blob_length: u64) -> bool {
+        self.read_source(relative_path, blob_length)
+            .is_ok_and(|bytes| self.source_alias(relative_path, &bytes).is_some())
+    }
+
+    /// Whether a file whose stat equals the stat Git recorded, and which only a read can prove,
+    /// holds its blob's bytes: a hash decides, and `verified` remembers one equal to the blob
+    /// under `stamp`. A file this process cannot read cannot be hashed: its stat decides, as it
+    /// does for Git (`stat_decides`).
+    fn read_decides(
+        &self,
+        relative_path: &str,
+        blob_length: u64,
+        stamp: Option<ChangeStamp>,
+        verified: &mut VerifiedFiles<'_>,
+    ) -> bool {
+        let read_from = std::time::SystemTime::now();
+        match self.read_source(relative_path, blob_length) {
+            Err(error) => stat_decides(&error),
+            Ok(bytes) => {
+                let blob = self.source_alias(relative_path, &bytes);
+                if let Some(blob) = blob {
+                    verified.learn(relative_path, stamp, blob, read_from);
+                }
+                blob.is_some()
+            }
+        }
     }
 
     /// Return the committed blob alias only when the evaluated bytes have that identity.
@@ -1205,7 +1177,8 @@ mod tests {
             WorktreeStat::read(&path).unwrap().proves(&recorded),
             "an untouched file is proven by its stat alone, with no hash"
         );
-        assert!(workspace.holds_blob_bytes("a.py", 9));
+        let mut memory = VerifiedFiles::new(None, &root);
+        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
 
         std::fs::write(&path, b"print(1)\n").unwrap();
         std::fs::File::options()
@@ -1216,7 +1189,7 @@ mod tests {
             .unwrap();
         assert!(!WorktreeStat::read(&path).unwrap().proves(&recorded));
         assert!(
-            !workspace.holds_blob_bytes("a.py", 9),
+            !workspace.holds_blob_bytes("a.py", 9, &mut memory),
             "bytes written after Git compared the file are not its blob's"
         );
         std::fs::remove_dir_all(root).unwrap();
@@ -1238,6 +1211,7 @@ mod tests {
         );
         initialize_repository(&root, &[]);
         let workspace = discover(&root).unwrap();
+        let mut memory = VerifiedFiles::new(None, &root);
         {
             let _denied = ReadDenied::new(&path);
             assert!(
@@ -1245,11 +1219,11 @@ mod tests {
                 "the read is denied"
             );
             assert!(
-                workspace.holds_blob_bytes("a.py", 9),
+                workspace.holds_blob_bytes("a.py", 9, &mut memory),
                 "an unchanged file this process may not read keeps the answer of its stat"
             );
             assert!(
-                !workspace.holds_blob_bytes("a.py", 10),
+                !workspace.holds_blob_bytes("a.py", 10, &mut memory),
                 "a stat of another size proves nothing"
             );
         }
@@ -1270,6 +1244,7 @@ mod tests {
         backdate(&path, written);
         initialize_repository(&root, &[]);
         let workspace = discover(&root).unwrap();
+        let mut memory = VerifiedFiles::new(None, &root);
         // Setting the same time again moves the change time alone.
         std::fs::File::options()
             .write(true)
@@ -1287,7 +1262,7 @@ mod tests {
                 workspace.read_source("a.py", 9).is_err(),
                 "the file is held"
             );
-            assert!(workspace.holds_blob_bytes("a.py", 9));
+            assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
         }
         {
             let locked = std::fs::File::open(&path).unwrap();
@@ -1296,8 +1271,179 @@ mod tests {
                 workspace.read_source("a.py", 9).is_err(),
                 "the file is locked"
             );
-            assert!(workspace.holds_blob_bytes("a.py", 9));
+            assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The time a file in these cases was last written: long before any index write.
+    #[cfg(windows)]
+    fn written_long_ago() -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800)
+    }
+
+    /// A committed repository at a fixture folder named `name` holding `a.py`, written long ago,
+    /// with its discovered workspace.
+    #[cfg(windows)]
+    fn committed_long_ago(name: &str, bytes: &[u8]) -> (PathBuf, PathBuf, GitWorkspace) {
+        let root = fixture_directory(name);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("a.py");
+        std::fs::write(&path, bytes).unwrap();
+        backdate(&path, written_long_ago());
+        initialize_repository(&root, &[]);
+        let workspace = discover(&root).unwrap();
+        (root, path, workspace)
+    }
+
+    /// Sets `path`'s creation time to `when`, as the file it replaced had.
+    #[cfg(windows)]
+    fn set_creation_time(path: &Path, when: std::time::SystemTime) {
+        use std::os::windows::fs::FileTimesExt;
+        let file = std::fs::File::options().write(true).open(path).unwrap();
+        file.set_times(std::fs::FileTimes::new().set_created(when))
+            .unwrap();
+    }
+
+    /// Writes `bytes` to `path` and puts its modification time back to `written_long_ago`, as
+    /// `touch -r` does: its size and stat stay those Git recorded.
+    #[cfg(windows)]
+    fn rewrite_keeping_its_time(path: &Path, bytes: &[u8]) {
+        std::fs::write(path, bytes).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(written_long_ago())
+            .unwrap();
+    }
+
+    /// A clean file whose change time moved after its last write (its times set again, a copy or
+    /// an extraction that kept them) is read once: the hash equal to its blob is remembered in
+    /// the store, and the next restore, in a workspace of its own, takes the file with no read.
+    /// A write that keeps the size and puts the modification time back moves the change time,
+    /// so the restore after it reads the file and finds other bytes.
+    #[cfg(windows)]
+    #[test]
+    fn a_clean_file_whose_change_time_moved_is_read_once_until_a_write() {
+        let (root, path, workspace) = committed_long_ago("stat-remembered", b"print(1)\n");
+        let hour = std::time::Duration::from_secs(3_600);
+        set_change_time(&path, written_long_ago() + hour);
+        let (_database, store) = temporary_store("stat-remembered");
+        let mut first = workspace.verified_files(&store);
+        assert!(workspace.holds_blob_bytes("a.py", 9, &mut first));
+        assert_eq!(
+            first.learned(),
+            1,
+            "the first restore reads and hashes the file"
+        );
+        first.save();
+        let mut second = discover(&root).unwrap().verified_files(&store);
+        assert!(workspace.holds_blob_bytes("a.py", 9, &mut second));
+        assert_eq!(
+            second.learned(),
+            0,
+            "the next restore takes it with no read"
+        );
+        let current = WorktreeStat::read(&path).unwrap();
+        let another_blob = second.proof("a.py", HashKey::git_sha1([7; 20]), &current);
+        assert!(
+            matches!(another_blob, Proof::Read(Some(_))),
+            "what was remembered of one blob proves no other"
+        );
+
+        let remembered = WorktreeStat::read(&path).unwrap().stamp().unwrap();
+        rewrite_keeping_its_time(&path, b"pront(1)\n");
+        let written = WorktreeStat::read(&path).unwrap().stamp().unwrap();
+        assert_ne!(
+            written.changed, remembered.changed,
+            "the write moved the change time"
+        );
+        let mut third = workspace.verified_files(&store);
+        assert!(
+            !workspace.holds_blob_bytes("a.py", 9, &mut third),
+            "bytes written after the hash are not the blob's"
+        );
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A file a rename put in a remembered file's place is another file, whatever change time
+    /// it carries: its other bytes are read, not taken for the blob's.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_a_rename_put_in_place_is_read_whatever_its_change_time() {
+        let (root, path, workspace) = committed_long_ago("stat-renamed", b"print(1)\n");
+        let changed = written_long_ago() + std::time::Duration::from_secs(3_600);
+        set_change_time(&path, changed);
+        let mut memory = VerifiedFiles::new(None, &root);
+        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
+        assert_eq!(memory.learned(), 1);
+        let remembered = WorktreeStat::read(&path).unwrap().stamp().unwrap();
+
+        let created = std::fs::metadata(&path).unwrap().created().unwrap();
+        let other = root.join("other.py");
+        rewrite_keeping_its_time(&other, b"pront(1)\n");
+        std::fs::rename(&other, &path).unwrap();
+        set_creation_time(&path, created);
+        set_change_time(&path, changed);
+        let recorded = workspace.base_files[0].checkout.unwrap();
+        let renamed = WorktreeStat::read(&path).unwrap();
+        assert!(renamed.matches(&recorded), "the stat Git recorded");
+        let renamed = renamed.stamp().unwrap();
+        assert_eq!(renamed.changed, remembered.changed, "the same change time");
+        assert_ne!(renamed, remembered, "another file");
+        assert!(
+            !workspace.holds_blob_bytes("a.py", 9, &mut memory),
+            "the renamed file's bytes are not the blob's"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A write through a remembered file's other name moves the change time both names share,
+    /// so the restore reads the file again and finds the other bytes.
+    #[cfg(windows)]
+    #[test]
+    fn a_write_through_a_hard_link_moves_the_change_time_its_other_name_shows() {
+        let (root, path, workspace) = committed_long_ago("stat-linked", b"print(1)\n");
+        let link = root.join("b.py");
+        std::fs::hard_link(&path, &link).unwrap();
+        set_change_time(
+            &path,
+            written_long_ago() + std::time::Duration::from_secs(3_600),
+        );
+        let mut memory = VerifiedFiles::new(None, &root);
+        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
+        assert_eq!(memory.learned(), 1);
+        let remembered = WorktreeStat::read(&path).unwrap().stamp().unwrap();
+
+        rewrite_keeping_its_time(&link, b"pront(1)\n");
+        let through_link = WorktreeStat::read(&path).unwrap().stamp().unwrap();
+        assert_ne!(through_link.changed, remembered.changed);
+        assert_eq!(
+            through_link,
+            WorktreeStat::read(&link).unwrap().stamp().unwrap(),
+            "one file under two names"
+        );
+        assert!(
+            !workspace.holds_blob_bytes("a.py", 9, &mut memory),
+            "bytes written through the other name are not the blob's"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A change time not older than the read that hashed the file is not remembered: a write
+    /// after the read could carry the same time. Each restore reads such a file.
+    #[cfg(windows)]
+    #[test]
+    fn a_change_time_as_new_as_the_read_is_not_remembered() {
+        let (root, path, workspace) = committed_long_ago("stat-recent", b"print(1)\n");
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3_600);
+        set_change_time(&path, later);
+        let mut memory = VerifiedFiles::new(None, &root);
+        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
+        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
+        assert_eq!(memory.learned(), 0, "the change time was not remembered");
         std::fs::remove_dir_all(root).unwrap();
     }
 
