@@ -183,6 +183,10 @@ enum Data {
     /// Its rows in its space's chain (`IN_CHAIN`), not yet bound there (`bind_kept`): read, a frame left unbound is
     /// dropped (its relation absent, derived again).
     Unbound { types: Vec<u8>, n: usize },
+    /// This process's rows, queued as its kept entry's (`Put::queued_in_chain`): the frame shares the entry's rows
+    /// until the chain holds them (memory ahead of the store), and is written as its relation's metadata. Nothing
+    /// is encoded for it.
+    Queued { types: Vec<u8>, n: usize, rows: Arc<Vec<i64>> },
 }
 
 /// A kept entry: the space's chain (mapped; held while a frame names it) and the entry's key in it.
@@ -298,6 +302,8 @@ fn rows_of(data: &Data) -> StoreResult<Rows> {
             Ok(Rows { types: types.clone(), rows, n: *n })
         }
         Data::Metadata | Data::Unbound { .. } => Err(super::StoreError::Invalid("frame payload was not admitted".into())),
+        // Rows out, as a decode makes them (`Rows` is owned).
+        Data::Queued { types, n, rows } => Ok(Rows { types: types.clone(), rows: rows.to_vec(), n: *n }),
         Data::Chain { base, deltas, .. } => apply_deltas(rows_of(base)?, deltas),
         Data::Kept(k) => {
             let width = k.types.len();
@@ -352,7 +358,7 @@ impl Admitted {
 
     pub fn rows(&self) -> StoreResult<Rows> {
         match &self.data {
-            Data::Chain { .. } | Data::Encoded { .. } | Data::Kept(_) | Data::Unbound { .. } => rows_of(&self.data),
+            Data::Chain { .. } | Data::Encoded { .. } | Data::Kept(_) | Data::Unbound { .. } | Data::Queued { .. } => rows_of(&self.data),
             Data::Metadata => Err(super::StoreError::Invalid("frame payload was not admitted".into())),
         }
     }
@@ -388,7 +394,7 @@ impl Admitted {
                     }
                     Ok(())
                 }
-                Data::Encoded { store: None, .. } | Data::Metadata | Data::Unbound { .. } => Ok(()),
+                Data::Encoded { store: None, .. } | Data::Metadata | Data::Unbound { .. } | Data::Queued { .. } => Ok(()),
             }
         }
         of(&self.data, out)
@@ -402,7 +408,7 @@ impl Admitted {
                 Data::Encoded { store, .. } => store.clone(),
                 Data::Kept(k) => Some(Arc::clone(&k.store)),
                 Data::Chain { base, deltas, .. } => of(base).or_else(|| deltas.iter().find_map(|d| of(&d.data))),
-                Data::Metadata | Data::Unbound { .. } => None,
+                Data::Metadata | Data::Unbound { .. } | Data::Queued { .. } => None,
             }
         }
         of(&self.data)
@@ -414,7 +420,7 @@ impl Admitted {
             match data {
                 Data::Encoded { types, .. } => Some(types),
                 Data::Kept(k) => Some(&k.types),
-                Data::Unbound { types, .. } => Some(types),
+                Data::Unbound { types, .. } | Data::Queued { types, .. } => Some(types),
                 Data::Chain { base, .. } => of(base),
                 Data::Metadata => None,
             }
@@ -428,7 +434,7 @@ impl Admitted {
             match data {
                 Data::Encoded { types, .. } => Some(types.len()),
                 Data::Kept(k) => Some(k.types.len()),
-                Data::Unbound { types, .. } => Some(types.len()),
+                Data::Unbound { types, .. } | Data::Queued { types, .. } => Some(types.len()),
                 Data::Chain { base, .. } => of(base),
                 Data::Metadata => None,
             }
@@ -441,7 +447,7 @@ impl Admitted {
         match &self.data {
             Data::Encoded { n, .. } => Some(*n),
             Data::Kept(k) => Some(k.n),
-            Data::Unbound { n, .. } => Some(*n),
+            Data::Unbound { n, .. } | Data::Queued { n, .. } => Some(*n),
             Data::Chain { n, .. } => Some(*n),
             Data::Metadata => None,
         }
@@ -452,6 +458,7 @@ impl Admitted {
             Data::Encoded { bytes, .. } => bytes.len(),
             Data::Kept(k) => k.bytes,
             Data::Unbound { .. } => 0,
+            Data::Queued { rows, .. } => rows.len() * 8,
             Data::Chain { base, deltas, .. } => {
                 let b = Admitted { stored: self.stored.clone(), data: (**base).clone() };
                 b.encoded_bytes() + deltas.iter().map(|d| d.encoded_bytes()).sum::<usize>()
@@ -1776,6 +1783,7 @@ impl Encoded {
     fn framed(&self) -> Option<Framed<'_>> {
         match &self.frame.data {
             Data::Encoded { types, n, bytes, .. } => Some(Framed { rel: &self.rel, part: self.part, stored: &self.frame.stored, types, n: *n, bytes, place: self.place, in_chain: self.in_chain }),
+            Data::Queued { types, n, .. } => Some(Framed { rel: &self.rel, part: self.part, stored: &self.frame.stored, types, n: *n, bytes: &[], place: None, in_chain: true }),
             Data::Metadata | Data::Chain { .. } | Data::Kept(_) | Data::Unbound { .. } => None,
         }
     }
@@ -1816,6 +1824,11 @@ impl Put {
             Ok::<(), std::convert::Infallible>(())
         });
         out
+    }
+    /// A frame whose rows are queued as its kept entry's (`queue_kept`), `rows` shared with that entry: written as
+    /// its relation's metadata (`IN_CHAIN`), read from the shared rows until the chain holds them. Nothing encoded.
+    pub fn queued_in_chain(rel: Rel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, rows: Arc<Vec<i64>>) -> Encoded {
+        Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data: Data::Queued { types, n, rows } }), place: None, in_chain: true }
     }
     /// A frame of rows already encoded (`encode_rows`).
     pub fn encoded_as(rel: Rel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, bytes: Vec<u8>) -> Encoded {

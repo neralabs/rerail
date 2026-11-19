@@ -49,7 +49,7 @@ fn put(rel: &str, part: i64, digest: u64, what: KeptWhat) -> KeptPut {
 }
 
 fn flat(rows: &[i64]) -> KeptWhat {
-    KeptWhat::Flat { widths: vec![8, 8], rows: rows.to_vec(), n: rows.len() / 2, levels: None, given: false }
+    KeptWhat::Flat { widths: vec![8, 8], rows: std::sync::Arc::new(rows.to_vec()), n: rows.len() / 2, levels: None, given: false }
 }
 
 /// A store's file with its schema, and a connection to it.
@@ -248,7 +248,7 @@ fn a_frame_in_the_chain_is_its_metadata() {
     let frame = |r: &FrameRel| FramePut { rel: r.clone(), part: 0, digest: 1, reads: vec![("r".into(), 1)], rows: FrameRows { types: b"ii".to_vec(), rows: vec![3, 30, 1, 10], n: 2 } }.encoded().in_chain();
     {
         let cs = crate::content_store::ContentStore::open(&path).unwrap();
-        cs.queue_kept(SPACE, vec![put("p", 0, 1, flat(&[3, 30, 1, 10])), put("g", 0, 0, KeptWhat::Flat { widths: vec![8, 8], rows: granule_rows.clone(), n: 3, levels: None, given: true })]);
+        cs.queue_kept(SPACE, vec![put("p", 0, 1, flat(&[3, 30, 1, 10])), put("g", 0, 0, KeptWhat::Flat { widths: vec![8, 8], rows: std::sync::Arc::new(granule_rows.clone()), n: 3, levels: None, given: true })]);
         cs.queue_encoded(SPACE, vec![frame(&p), frame(&q), granule], vec![], None);
         cs.written().unwrap();
         // The frames' segments compacted: a frame in the chain names none, and stays (ep2 lost every one so).
@@ -295,7 +295,7 @@ fn kept_facts_are_a_virtual_table() {
     let view = space.view();
     let p = view.all().find(|k| k.key.rel == "p").unwrap();
     assert!(p.rows.leads(0) && !p.rows.leads(1), "a canonical entry leads by its first column");
-    write(&path, &c, vec![put("r", 0, 5, KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 0, 1, 0], n: 2, levels: None, given: true })]);
+    write(&path, &c, vec![put("r", 0, 5, KeptWhat::Flat { widths: vec![8, 8], rows: std::sync::Arc::new(vec![2, 0, 1, 0]), n: 2, levels: None, given: true })]);
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
     let r = view.all().find(|k| k.key.rel == "r").unwrap();
@@ -477,4 +477,35 @@ fn chain_columns_by_candidate() {
     for (name, (values, bytes)) in top.iter().take(25) {
         eprintln!("  {name:40} {values:10} values {bytes:11} bytes {:.1} bits", *bytes as f64 * 8.0 / (*values).max(1) as f64);
     }
+}
+
+/// Q203 item 4: an input's granule is queued as its kept entry with a frame that shares its rows
+/// (`Put::queued_in_chain`): nothing encoded, no segment written. Memory is ahead of the store: queued, the frame
+/// reads the rows (from the snapshot); written, it is the relation's metadata, its rows the entry's.
+#[test]
+fn a_frame_queued_beside_its_entry_shares_its_rows_and_writes_no_segment() {
+    use crate::content_store::{FramePut, FrameRel};
+    let (path, c) = store("queued-beside");
+    let g = FrameRel { name: "g".into(), ident: ID };
+    let rows = std::sync::Arc::new(vec![9, 2, 8, 1, 9, 2]);
+    let cs = crate::content_store::ContentStore::open(&path).unwrap();
+    cs.preload_frames().unwrap();
+    let frame = FramePut::queued_in_chain(g.clone(), 0, 0, Vec::new(), b"ii".to_vec(), 3, std::sync::Arc::clone(&rows));
+    cs.queue_kept(SPACE, vec![put("g", 0, 0, KeptWhat::Flat { widths: vec![8, 8], rows: std::sync::Arc::clone(&rows), n: 3, levels: None, given: true })]);
+    cs.queue_encoded(SPACE, vec![frame], vec![], None);
+    let queued = cs.admit_frames(&SPACE, std::slice::from_ref(&g), 0).unwrap();
+    assert_eq!(queued[&g].rows().unwrap().rows, *rows, "queued: read from the shared rows");
+    cs.written().unwrap();
+    let stored: (i64, i64, i64) = c.query_row("SELECT seg, length(data), rows FROM frames WHERE rel = 'g'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+    assert_eq!(stored, (-1, 0, 3), "written: the relation's metadata");
+    let segments: i64 = c.query_row("SELECT count(*) FROM frame_segments", [], |r| r.get(0)).unwrap();
+    assert_eq!(segments, 0, "no segment written");
+    drop(cs);
+    crate::content_store::forget_frames_snapshot(path.to_str().unwrap());
+    let cs = crate::content_store::ContentStore::open(&path).unwrap();
+    let got = cs.admit_frames(&SPACE, std::slice::from_ref(&g), 0).unwrap();
+    assert!(got[&g].from_chain());
+    assert_eq!(got[&g].rows().unwrap().rows, *rows, "read back from the chain, in its order");
+    crate::content_store::forget_frames_snapshot(path.to_str().unwrap());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }

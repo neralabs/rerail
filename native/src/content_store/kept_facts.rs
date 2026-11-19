@@ -43,7 +43,7 @@ pub enum KeptWhat {
     /// Rows not held as a relation (an input's granule): `n` rows of `widths.len()` columns, flat; each row's level
     /// (decision 0090) where its relation has them. `given`: kept in the order given, every row (an input's granule
     /// or documents' table, read by position); else in canonical order, as a relation's.
-    Flat { widths: Vec<u32>, rows: Vec<i64>, n: usize, levels: Option<Vec<u32>>, given: bool },
+    Flat { widths: Vec<u32>, rows: std::sync::Arc<Vec<i64>>, n: usize, levels: Option<Vec<u32>>, given: bool },
     /// The kept entry's rows as they are, with these reads (a frame's retag).
     Reads,
     /// No longer kept.
