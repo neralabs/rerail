@@ -467,17 +467,20 @@ describe.runIf(process.platform === "win32")("the engine proof, against a busy e
     expect(await event).toBe("proved");
   }, 45_000);
 
-  // A command keeps its 2 s from the ask however late its connect comes: here every instance stays taken until 1.5 s
-  // after the ask, and the engine answers 1 s after it frees one, past the command's 2 s. The proof asked once the
-  // engine's loop runs again shows that the engine does answer, so the first proof's silence is its limit's.
-  it("answers a command silent 2 s from its ask when an instance frees 1.5 s in to an engine that answers 1 s later", async () => {
+  // A command keeps its 2 s from the ask however late its connect comes: here every instance stays taken until 1.9 s
+  // after the ask, and the engine answers 1 s after it frees one, past the command's 2 s. The command's limit then has
+  // 0.1 s left, and a limit counted from the connect would have 2 s: the engine's answer falls 0.9 s past the one and
+  // 1 s inside the other, so a loaded machine that delays either process by less than that cannot change the verdict.
+  // The proof asked once the engine's loop runs again shows that the engine does answer, so the first proof's silence
+  // is its limit's.
+  it("answers a command silent 2 s from its ask when an instance frees 1.9 s in to an engine that answers 1 s later", async () => {
     const path = pipePath("late");
     const engine = startNode(HELD_ENGINE, [PROOF_MODULE, path, "1000"], true, true);
     const line = linesOf(engine);
     expect(await line()).toMatch(/^busy [1-9]\d* EBUSY$/u);
     vi.useFakeTimers({ toFake: ["Date"] });
     const command = engineCapabilityProof(path, "capability", 2_000);
-    vi.setSystemTime(Date.now() + 1_500);
+    vi.setSystemTime(Date.now() + 1_900);
     engine.stdin!.write("go\n");
     expect(await line()).toBe("free");
     expect(await command).toBe("silent");
