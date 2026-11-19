@@ -27,10 +27,6 @@ use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as LABEL_BASE;
 // The label passes on Metal (`rerail-device-metal`), behind `transducer::packed::device`.
 // cratify: `matcher_metal` is rerail-device-metal's (it mounts it)
 
-/// The seconds a one-tape matcher wave waits, in all, for device room strata hold (`roots_metal_split`, Q180): past
-/// it the wave's capacity failure stands (decision 0382 §6).
-const WAVE_ROOM_PATIENCE: f64 = 5.0;
-
 /// A lowered clause: label passes, in order, then the root program.
 #[derive(Clone)]
 pub struct LoweredMatcher {
@@ -1208,33 +1204,13 @@ impl LoweredWave {
     /// the batch on its own where the whole outgrows a workspace or the launch bound (a file's labels read only that
     /// file).
     fn roots_metal_split(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
-        let run = || super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active)));
-        let mut found = run();
-        // One tape that does not fit while strata hold or have reserved the device's room (Q180: their admission):
-        // the wave, nothing of it encoded, waits for some of it to come back and runs again, up to its patience.
-        let t0 = std::time::Instant::now();
-        let mut waits = 0;
-        while tapes.len() == 1 && matches!(found, Err(Error::BackendCapacity)) {
-            let left = WAVE_ROOM_PATIENCE - t0.elapsed().as_secs_f64();
-            #[cfg(target_os = "macos")]
-            let released = rerail_accel::gpu::shared::wait_for_release(left);
-            #[cfg(not(target_os = "macos"))]
-            let released = false;
-            if left <= 0.0 || !released {
-                let spent = t0.elapsed().as_secs_f64();
-                crate::code_rule_dsl::logic::profile::decision("a one-tape matcher wave found no room", || {
-                    format!("after {waits} waits, {spent:.3} s ({})", if spent >= WAVE_ROOM_PATIENCE { "its patience" } else { "nothing held by threads that go on" })
-                });
-                break;
-            }
-            waits += 1;
-            crate::code_rule_dsl::prof::count("wave.waited_for_room", 1);
-            found = run();
-        }
-        // Still past the device's room at one tape: a capacity refusal is replanned, as a stratum's is (0334), and
-        // the tape's roots are found on the cores, counted and named. A Metal failure of any other kind still stops
-        // the run (0382 §6). The room is held by the device joins and the row blocks' slabs (0342), which fill the
-        // budget whatever it is; the residency's slab for a document not resident is refused (Q180).
+        let found = super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active)));
+        // Past the device's room at one tape: a capacity refusal is replanned, as a stratum's is (0334), and the
+        // tape's roots are found on the cores at once, counted and named. A Metal failure of any other kind still
+        // stops the run (0382 §6). The room is held by the device joins and the row blocks' slabs (0342), which fill
+        // the budget whatever it is, for the run; the residency's slab for a document not resident is refused
+        // (Q180). So it is not waited for: a wait of up to 5 s a tape for room to come back held the chunks'
+        // pipeline 215 s on the 300-file job and found none (t62, 2026-11-19).
         if tapes.len() == 1 && matches!(found, Err(Error::BackendCapacity)) {
             crate::code_rule_dsl::prof::count("wave.tape_on_cpu", 1);
             #[cfg(target_os = "macos")]

@@ -2718,8 +2718,22 @@ submitted" now hold device memory at once.
 - **Measured** (2026-11-18, the full shape cold on Metal at 512 MB, the M3 at load 103-132): t57 runs to the end,
   findings identical by value to t41's CPU run; 8 chunks (t41 7, t54 10-19); 10-14 budget refusals (t54 68-111).
   755.8 G instructions against t54's 596.9 G (load 86-91) and t41's 548.6 G: not yet explained.
-- **Open**: (a) the instructions, measured as one profiled t54/t57 pair on a quieter host before anything else;
-  (b) the refusals left are leases past a stratum's reservation (an estimate under its rows, or an unestimated
+- **Instructions explained** (2026-11-19, the M1 Max at load 2-6, 2 GB budget, cost store off, one profiled run
+  each, own CPU by span): t41 552-562 G, 7 chunks; t54 619-643 G, 16 chunks; t61 (HEAD then) 776-914 G, 7 chunks.
+  (1) t61's whole rise over t54 is one span, the store writer's kept facts (0401 step 6, from the hub): 37.1 s of
+  own CPU, 1,041 jobs, 8.2 GB allocated for 344 MB held. Each input queued its own kept puts for the run's one
+  space, and each write carried every entry the wave's earlier writes put: quadratic. Gathered per space per wave
+  (b4bf47d37): t62 595-609 G, under t54. (2) t54's rise over t41 (+6.6 s own CPU) is its 16 chunks (native steps
+  22,884 -> 53,761 calls, device joins) and the inputs' frames job (1.15 -> 2.95 s over the same ~1,000 calls);
+  HEAD cuts 7 chunks again (Q180's chunk sizing). (3) ab60's 8.9 s of program lowering at t54 was the bench's: the
+  image store named for t54 had been written by another build, so every program was lowered again; a store per
+  build, cleared, reads them (ab62). (4) The one-tape wave's wait for room (`wait_for_release`, 5 s a tape) found
+  none in 30 of 43 tapes and held the chunks' pipeline 215 s (t62 wall 100-253 s against t54's 31-34 s): removed,
+  a one-tape capacity refusal goes to the cores at once (0334). t63 (both): 584.2-616.5 G, CPU 54-59 s, wall
+  37.5-48.9 s against t54's 621-624 G, 61 s, 29-34 s (one t63 run idle 11.5 s at 0.1 G/s, not in the profiled one).
+- **Open**: (a) the inputs' frames job's doubled own CPU since t41 (about 1.8 s, 3%); (b) a GPU batch's waiting
+  thread runs long jobs meanwhile ("a column sketched" 2.7 s, "a merge's part" 2.5 s) and comes back up to 7.7 s late
+  (p63's waits table); (c) the refusals left are leases past a stratum's reservation (an estimate under its rows, or an unestimated
   stage), which `lease_within` refuses without waiting.
 - **Record**: —
 
