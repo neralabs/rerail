@@ -503,6 +503,8 @@ fn json_bench() {
 #[ignore = "a dump: run by name with RERAIL_DUMP_TIER2"]
 fn json_tier2_by_word() {
     let name = std::env::var("RERAIL_FORM").unwrap_or_else(|_| "14-json".to_owned());
+    // Each function's IR kept, for its Rust (`rerail_clif::rust`).
+    rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
     let c = if name == "simdjson" { simdjson_form() } else { form(&name) };
     let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
     let dir = std::env::var("RERAIL_DUMP_TIER2").expect("RERAIL_DUMP_TIER2");
@@ -539,6 +541,13 @@ fn json_tier2_by_word() {
         }
     }
     std::fs::write(format!("{dir}/{name}.words"), words).expect("writes");
+    // Tier 2 as generated Rust, to read beside simdjson's stage 2: the structured backend's
+    // (`rust_stream`), and the compiler's own IR as Rust (`rerail_clif::rust`).
+    let rust = rerail_compiler::rust_stream::rust_source(&native).unwrap_or_else(|e| format!("// not generated: {e}\n"));
+    std::fs::write(format!("{dir}/{name}.rs"), rust).expect("writes");
+    let t2 = &c.parser.tier2;
+    let ir = rerail_compiler::clif_rust::translate(&t2.ir, &[(t2.entry_id, "tier2")], &[]).unwrap_or_else(|e| format!("// not translated: {e}\n"));
+    std::fs::write(format!("{dir}/{name}.ir.rs"), ir).expect("writes");
 }
 
 /// Cranelift's optimizer on JSON (doc 28): step 14 compiled four ways (optimizer off, on tier

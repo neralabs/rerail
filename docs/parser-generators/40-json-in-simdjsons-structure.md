@@ -482,6 +482,30 @@ in the edge (`fused_checks`) or as it compiles (`static_checks`). The trees test
 numbers that fail the check, at the file's end and past 16 bytes. Two mutations fail it: the
 fused check never refusing, and the atoms' decision inverted.
 
+## Correction: steps 4 to 12 were judged on the wrong code (the user, 2026-11-19)
+
+The user asked for the comparison to be made on the generated Rust: the ahead-of-time Rust that
+`rust_stream` writes for a Bitlex program. Steps 4 to 12 were instead chosen and judged on
+Cranelift's IR and its machine code. They were also reported as if they had been judged on the
+Rust. `rust_stream` does not generate this program at all. It refuses it at "a region tier 2
+splits (decision 0323): not yet ahead of time". The steps above went into the Cranelift backend
+(`native_cpu_stream`) alone.
+
+What follows, in order:
+1. **`rust_stream` generates this program.** It gains what the form uses:
+   - records made in tier 2: the switch by first byte, each edge making its token's record;
+   - atoms tested as simdjson tests them;
+   - supertype classes in the tape's codes;
+   - the split string read as `parse_string`;
+   - the number's check, made in the pass that finds its end.
+2. **A JSON harness, like `rr_aot`.** It builds the generated Rust and runs the trees test
+   against the interpreter.
+3. **The comparison:** the generated Rust's structure, next to `walk_document`, `parse_string`
+   and `parse_number`. The changes are chosen from that.
+
+Later, not now: the CLIF-to-Rust translator (`rerail_clif::rust`, `clif_rust`) was never meant
+to exist, and is to be deleted.
+
 ## Order
 
 1. Done: step 1, above.
