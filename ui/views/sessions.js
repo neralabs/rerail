@@ -252,22 +252,43 @@ function renderList(all, sess) {
   const total = Math.max(data.sessions.total, all.length);
   // Filters and search run over the loaded pages; the total says how many more Load more can bring.
   const narrowed = ui.sessFilter !== "all" || q !== "";
-  setText(v.lead, narrowed ? `${fmt(visible.length)} of ${fmt(total)} sessions, newest first.` : `${fmt(total)} ${plural(total, "session")}, newest first.`);
-  if (v.search.value !== ui.sessQuery && document.activeElement !== v.search) v.search.value = ui.sessQuery;
-  for (const c of v.chips.children) setAttr(c, "aria-pressed", String(c.dataset.i === ui.sessFilter));
-
-  if (sess.sessionId !== revealed) { revealed = sess.sessionId; ui.openDays.add(dayKey(daysAgo(sess.startedAt))); }
+  renderListControls(visible.length, total, narrowed);
+  revealSelectedDay(sess);
   // A chip or a search opens every day group, so what it matches shows instead of hiding in a folded day.
   const items = groupByDay(visible).flatMap(g => groupItems(g, narrowed));
   syncChildren(v.list, items, i => i.key, createListItem, updateListItem);
   setAttr(v.listEmpty, "hidden", items.length > 0);
+  renderLoadMore(all.length, total);
+  renderPicker(visible, sess);
+  if (listHidden) renderHeadPicker(all, sess);
+}
+
+/** The lead's count, the search box (left alone while the person types in it) and which chip is pressed. */
+function renderListControls(shown, total, narrowed) {
+  setText(v.lead, narrowed ? `${fmt(shown)} of ${fmt(total)} sessions, newest first.` : `${fmt(total)} ${plural(total, "session")}, newest first.`);
+  if (v.search.value !== ui.sessQuery && document.activeElement !== v.search) v.search.value = ui.sessQuery;
+  for (const c of v.chips.children) setAttr(c, "aria-pressed", String(c.dataset.i === ui.sessFilter));
+}
+
+/** A newly selected session opens its day once; after that the person owns the fold. */
+function revealSelectedDay(sess) {
+  if (sess.sessionId === revealed) return;
+  revealed = sess.sessionId;
+  ui.openDays.add(dayKey(daysAgo(sess.startedAt)));
+}
+
+/** Load more, while the daemon has more pages, with how many of the sessions are loaded. */
+function renderLoadMore(loaded, total) {
   const more = data.sessions.next !== null;
   setAttr(v.more, "hidden", !more);
-  if (more) setText(v.more.firstChild, `Load more · ${fmt(all.length)} of ${fmt(total)} loaded`);
+  if (more) setText(v.more.firstChild, `Load more · ${fmt(loaded)} of ${fmt(total)} loaded`);
+}
+
+/** The narrow layout's Session picker, over the sessions the list shows. */
+function renderPicker(visible, sess) {
   syncChildren(v.pick, visible.slice(0, 200), s => s.sessionId, s => h("option", { value: s.sessionId }),
     (o, s) => { setText(o, `${titleOf(s.sessionId)} · ${shortSessionId(s.sessionId, s.host)}`); });
   if (v.pick.value !== sess.sessionId) v.pick.value = sess.sessionId;
-  if (listHidden) renderHeadPicker(all, sess);
 }
 
 /** List hidden: the session heading is the picker, over every loaded session (and the selected one, if past them). */

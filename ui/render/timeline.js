@@ -130,33 +130,58 @@ function verbLabel(ev) {
   return ev.label;
 }
 
+/** Open when the person opened it, or when it failed and they have not closed it. */
+const eventOpen = ev => ui.openEvents.has(ev.key) || (ev.failed && !ui.closedEvents.has(ev.key));
+
+/** The call's description, or its target as a short path, with the full target in the tooltip. */
+function updateDescription(tg, ev) {
+  const desc = ev.title !== ev.target;
+  setClass(tg, "desc", desc);
+  setText(tg, desc ? ev.title : shortPath(ev.title));
+  setAttr(tg, "title", ev.target);
+}
+
+/** The outcome, redrawn only when the call's result changes. */
+function updateOutcome(oc, ev) {
+  const sig = `${ev.resSeq}|${ev.failed}|${ev.lines}`;
+  if (oc.dataset.sig === sig) return;
+  oc.dataset.sig = sig;
+  oc.replaceChildren(...outcome(ev));
+}
+
+/** The call's time and how long it took; its sequence numbers and tool in the time's tooltip, not on the row. */
+function updateTime(eh, ev) {
+  const tn = eh.querySelector(".tn");
+  setText(tn, ev.toolName);
+  setAttr(tn, "title", ev.toolName);
+  const resultRef = ev.resSeq === null ? "" : `, Result #${ev.resSeq}`;
+  const took = ev.dur ? ` · ${ev.dur}s` : "";
+  const tm = eh.querySelector(".tm");
+  setText(tm, `${clockSeconds(ev.callTime)}${took}`);
+  setAttr(tm, "title", `Call #${ev.callSeq}${resultRef} · ${ev.toolName}`);
+}
+
+/** The opened call's payload, built only while it is open and rebuilt when its result arrives. */
+function updatePayload(pay, ev, isOpen) {
+  const sig = isOpen ? `${ev.key}|${ev.resSeq}` : "";
+  if (pay.dataset.sig === sig) return;
+  pay.dataset.sig = sig;
+  pay.replaceChildren(...(isOpen ? payload(ev) : []));
+}
+
 function updateEvent(node, ev, who = null) {
   setSpeaker(node, who);
-  const isOpen = ui.openEvents.has(ev.key) || (ev.failed && !ui.closedEvents.has(ev.key));
+  const isOpen = eventOpen(ev);
   setAttr(node, "class", `evt lvl-${ev.level}${ev.failed ? " failed" : ""}`);
   setAttr(node, "data-open", String(isOpen));
   const eh = node.firstChild;
   setAttr(eh, "aria-expanded", String(isOpen));
   setText(eh.querySelector(".vb"), verbLabel(ev));
   updateCallTool(eh, ev);
-  const tg = eh.querySelector(".tg");
-  const desc = ev.title !== ev.target;
-  setClass(tg, "desc", desc);
-  setText(tg, desc ? ev.title : shortPath(ev.title));
-  setAttr(tg, "title", ev.target);
-  const sig = `${ev.resSeq}|${ev.failed}|${ev.lines}`;
-  const oc = eh.querySelector(".oc");
-  if (oc.dataset.sig !== sig) { oc.dataset.sig = sig; oc.replaceChildren(...outcome(ev)); }
-  const tn = eh.querySelector(".tn"); setText(tn, ev.toolName); setAttr(tn, "title", ev.toolName);
-  // The sequence numbers are in the time's tooltip and the opened call's Raw, not on the row.
-  const resultRef = ev.resSeq === null ? "" : `, Result #${ev.resSeq}`;
-  const took = ev.dur ? ` · ${ev.dur}s` : "";
-  const tm = eh.querySelector(".tm");
-  setText(tm, `${clockSeconds(ev.callTime)}${took}`);
-  setAttr(tm, "title", `Call #${ev.callSeq}${resultRef} · ${ev.toolName}`);
-  const pay = node.lastChild;
-  const paySig = isOpen ? `${ev.key}|${ev.resSeq}` : "";
-  if (pay.dataset.sig !== paySig) { pay.dataset.sig = paySig; pay.replaceChildren(...(isOpen ? payload(ev) : [])); }
+  updateDescription(eh.querySelector(".tg"), ev);
+  updateOutcome(eh.querySelector(".oc"), ev);
+  updateTime(eh, ev);
+  updatePayload(node.lastChild, ev, isOpen);
 }
 
 /** A violation's card: its rule's title, which opens the rule, the rule id, then its badges, over what Rerail said. */
@@ -275,11 +300,7 @@ function updateFold(fold, foldBody, turn, sessionId) {
   syncChildren(foldBody, showFold && fopen ? quiet : [], e => e.key, createEvent, updateEvent);
 }
 
-/**
- * The turn's body: its shown loud calls, each followed by its shown cards. Each item says who it is from (`who`) only
- * where the speaker changes, as a chat names a speaker once per run: the agent's calls after its reply or your
- * prompt, Rerail's cards after them.
- */
+/** The turn's body: its shown loud calls, each followed by its shown cards, each named by its speaker. */
 function turnItems(turn) {
   const card = c => ({ key: `c:${c.key}`, c });
   // Orphans are older than every loaded call, so they lead the turn.
@@ -289,11 +310,25 @@ function turnItems(turn) {
     items.push({ key: `e:${ev.key}`, ev });
     items.push(...ev.corrections.filter(cardShown).map(card));
   }
-  let last = turn.a !== null ? "Agent" : turn.u !== null ? "You" : null;
+  return nameSpeakers(items, lastSpeaker(turn));
+}
+
+/** Who the turn's messages leave speaking: the agent after its reply, you after your prompt, else nobody. */
+function lastSpeaker(turn) {
+  if (turn.a !== null) return "Agent";
+  return turn.u !== null ? "You" : null;
+}
+
+/**
+ * Each item's `who` ("Agent" for a call, "Rerail" for a card) only where the speaker changes from `last`, as a chat
+ * names a speaker once per run.
+ */
+function nameSpeakers(items, last) {
+  let previous = last;
   for (const item of items) {
     const who = item.ev ? "Agent" : "Rerail";
-    item.who = who === last ? null : who;
-    last = who;
+    item.who = who === previous ? null : who;
+    previous = who;
   }
   return items;
 }

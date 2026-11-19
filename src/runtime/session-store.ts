@@ -101,13 +101,15 @@ export interface SessionDeclines {
  * `rerail feedback` runs after the steer it answers, so that steer is the latest audit of the note's session to report
  * the rule's violations steered (`logged = 0`) and start at or before the note. Null when no audit did. The `+` keeps
  * SQLite off `audit_violations_rule_started`, which reads the rule's violations in every session: it walks the
- * session's own back from the note (`audit_violations_session_started`) and stops at the first.
+ * session's own back from the note (`audit_violations_session_started`) and stops at the first. Two audits that start
+ * at the same moment are told apart by rowid, the later row first: the index already orders equal times by rowid, so
+ * the tie-break needs no sort.
  */
 const DECLINED_AUDIT = sql`(
   SELECT steered.audit_id FROM ${auditViolations} steered
   WHERE steered.session_id = note.session_id AND +steered.rule_id = note.rule_id
     AND steered.logged = 0 AND steered.started_at <= note.recorded_at
-  ORDER BY steered.started_at DESC LIMIT 1)`;
+  ORDER BY steered.started_at DESC, steered.rowid DESC LIMIT 1)`;
 
 /**
  * How many steered violations of `session` a note declined: those its audit reported for its rule. An audit belongs to
@@ -208,6 +210,53 @@ function repositoryFilter(repositoryIds: string | readonly string[] | undefined)
   if (repositoryIds === undefined) return undefined;
   const ids = typeof repositoryIds === "string" ? [repositoryIds] : [...repositoryIds];
   return ids.length === 0 ? sql`0` : inArray(sessions.repositoryId, ids);
+}
+
+/** The sessions after a page's cursor in newest-first order; every session without one. Refuses a malformed cursor. */
+function sessionsAfter(cursor: string | undefined): SQL | undefined {
+  if (cursor === undefined) return undefined;
+  const [startedAt, sessionId] = decodeCursor(cursor, sessionCursorSchema);
+  return sql`(${sessions.startedAt} < ${startedAt} OR (${sessions.startedAt} = ${startedAt} AND ${sessions.sessionId} > ${sessionId}))`;
+}
+
+/** The sessions a page query matches: started at or after `since`, in the repositories given. */
+function sessionsMatching(since: number | undefined, repositoryIds: string | readonly string[] | undefined): SQL | undefined {
+  return and(since === undefined ? undefined : gte(sessions.startedAt, since), repositoryFilter(repositoryIds));
+}
+
+/**
+ * Up to `limit` sessions matching `where`, newest first, each with its history counts. The page is chosen first and
+ * counted after: sorting every session with its counts attached would count them all.
+ */
+function sessionPageRows(database: RerailDatabase, where: SQL | undefined, limit: number): SessionPageRow[] {
+  return database.all<SessionPageRow>(sql`
+        SELECT
+          page.session_id AS sessionId, page.host AS host, page.cwd AS cwd, page.repository_id AS repositoryId,
+          page.started_at AS startedAt, page.ended_at AS endedAt,
+          (SELECT count(*) FROM ${events} WHERE ${events.sessionId} = page.session_id) AS eventCount,
+          (SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = page.session_id
+            ORDER BY ${events.sequence} DESC LIMIT 1) AS lastEventAt,
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount,
+          -- Steered is everything not logged: counted as total minus logged, both index-only (the logged count reads the
+          -- partial index audit_violations_key_logged); "logged = 0" would read every violation row of the session.
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id)
+            - (SELECT count(*) FROM ${auditViolations}
+              WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 1) AS steeredViolations,
+          ${declinedViolationCount(sql`page.session_id`)} AS declinedViolations
+        FROM (
+          SELECT * FROM ${sessions}
+          WHERE ${where ?? sql`1 = 1`}
+          ORDER BY ${sessions.startedAt} DESC, ${sessions.sessionId}
+          LIMIT ${limit}
+        ) page
+        ORDER BY page.started_at DESC, page.session_id
+      `);
+}
+
+/** The cursor to the page after `rows`, read with one row past `limit`; null when that row is not there. */
+function nextSessionCursor(rows: readonly SessionPageRow[], limit: number): string | null {
+  const last = rows[limit - 1];
+  return rows.length > limit && last !== undefined ? encodeCursor([last.startedAt, last.sessionId]) : null;
 }
 
 function listSessions(
@@ -659,50 +708,16 @@ export class SqliteSessionReader {
    */
   sessionPage(query: SessionPageQuery, repositoryIds: readonly string[] | undefined = undefined): SessionPage {
     // A malformed cursor is refused whether or not any history exists yet.
-    const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, sessionCursorSchema);
+    const continuing = sessionsAfter(query.cursor);
     const database = this.#database.open();
     if (database === undefined) return { sessions: [], total: 0, nextCursor: null };
-    const matching = and(
-      query.since === undefined ? undefined : gte(sessions.startedAt, query.since),
-      repositoryFilter(repositoryIds ?? this.#repositoryIds),
-    );
-    const continuing = after === undefined
-      ? undefined
-      : sql`(${sessions.startedAt} < ${after[0]} OR (${sessions.startedAt} = ${after[0]} AND ${sessions.sessionId} > ${after[1]}))`;
-    // The page is chosen first and counted after: sorting every session with its counts attached would count them all.
+    const matching = sessionsMatching(query.since, repositoryIds ?? this.#repositoryIds);
     // The page and its total come from one snapshot, so a commit between them cannot make them disagree.
     const { rows, total } = database.transaction(() => ({
-      rows: database.all<SessionPageRow>(sql`
-        SELECT
-          page.session_id AS sessionId, page.host AS host, page.cwd AS cwd, page.repository_id AS repositoryId,
-          page.started_at AS startedAt, page.ended_at AS endedAt,
-          (SELECT count(*) FROM ${events} WHERE ${events.sessionId} = page.session_id) AS eventCount,
-          (SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = page.session_id
-            ORDER BY ${events.sequence} DESC LIMIT 1) AS lastEventAt,
-          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount,
-          -- Steered is everything not logged: counted as total minus logged, both index-only (the logged count reads the
-          -- partial index audit_violations_key_logged); "logged = 0" would read every violation row of the session.
-          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id)
-            - (SELECT count(*) FROM ${auditViolations}
-              WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 1) AS steeredViolations,
-          ${declinedViolationCount(sql`page.session_id`)} AS declinedViolations
-        FROM (
-          SELECT * FROM ${sessions}
-          WHERE ${and(matching, continuing) ?? sql`1 = 1`}
-          ORDER BY ${sessions.startedAt} DESC, ${sessions.sessionId}
-          LIMIT ${query.limit + 1}
-        ) page
-        ORDER BY page.started_at DESC, page.session_id
-      `),
+      rows: sessionPageRows(database, and(matching, continuing), query.limit + 1),
       total: database.select({ total: count() }).from(sessions).where(matching).get()?.total ?? 0,
     }));
-    const page = rows.slice(0, query.limit);
-    const last = page.at(-1);
-    return {
-      sessions: page,
-      total,
-      nextCursor: rows.length > query.limit && last !== undefined ? encodeCursor([last.startedAt, last.sessionId]) : null,
-    };
+    return { sessions: rows.slice(0, query.limit), total, nextCursor: nextSessionCursor(rows, query.limit) };
   }
 
   /** How many sessions started at or after `since`. */
