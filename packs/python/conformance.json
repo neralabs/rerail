@@ -8935,6 +8935,7 @@
       },
       "policy": "candidates/rules/bandit-b607-start-process-with-partial-path.json",
       "capabilities": [
+        "arguments",
         "scope",
         "suppression",
         "value"

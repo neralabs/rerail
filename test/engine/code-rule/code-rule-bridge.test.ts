@@ -45,6 +45,8 @@ const discovery = vi.hoisted(() => ({
   calls: { lstat: 0, opendir: 0, read: 0, access: 0 },
   /** Every listing in name order, as Windows lists a folder, where Linux lists it in an order of its own. */
   inNameOrder: false,
+  /** A file handle about to open there, before any byte is read. */
+  opens: new Map<string, Array<() => Promise<void>>>(),
 }));
 /**
  * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, a Git
@@ -114,6 +116,7 @@ vi.mock("node:fs/promises", async importOriginal => {
       return contents;
     },
     open: async (...args: Parameters<typeof actual.open>) => {
+      await discovery.opens.get(String(args[0]))?.shift()?.();
       const handle = await actual.open(...args);
       const closed = closedReads.get(String(args[0]))?.shift();
       if (closed !== undefined) {
@@ -213,7 +216,7 @@ interface DiscoveryGate {
 }
 const bridges: CodeRuleBridge[] = [];
 const releases: Array<() => void> = [];
-function holdDiscovery(kind: "reads" | "directories", path: string): DiscoveryGate {
+function holdDiscovery(kind: "reads" | "directories" | "opens", path: string): DiscoveryGate {
   const entered = Promise.withResolvers<void>();
   const released = Promise.withResolvers<void>();
   const gate = { entered: entered.promise, release: released.resolve, started: false };
@@ -334,6 +337,7 @@ afterEach(async () => {
   discovery.accesses.clear();
   discovery.calls = { lstat: 0, opendir: 0, read: 0, access: 0 };
   discovery.inNameOrder = false;
+  discovery.opens.clear();
   heldGit.reads = 0;
   readBuffers.watching = false;
   readBuffers.seen.clear();
@@ -2153,12 +2157,51 @@ describe("CodeRuleBridge", () => {
   // from the empty file, so every line of it read as the agent's. So too for a command answered while the evaluator
   // opened, as a reopened session's first one in OMP, whose writes the turn's end reports.
   it.each([
-    ["begun", (bridge: CodeRuleBridge) => bridge.begin("shell-1", "Bash", { command: "python3 generate.py" }), (bridge: CodeRuleBridge) => bridge.finish("shell-1")],
-    ["answered while the evaluator opened", (bridge: CodeRuleBridge) => bridge.unwatchedCall("shell-1", "Bash"), async (bridge: CodeRuleBridge) => {
+    ["begun", false, (bridge: CodeRuleBridge) => bridge.begin("shell-1", "Bash", { command: "python3 generate.py" }), (bridge: CodeRuleBridge) => bridge.finish("shell-1")],
+    ["answered while the evaluator opened", true, (bridge: CodeRuleBridge) => bridge.unwatchedCall("shell-1", "Bash"), async (bridge: CodeRuleBridge) => {
       await bridge.unwatchedResult("shell-1");
       await bridge.checkpoint("turn");
     }],
-  ] as const)("leaves a file a command %s is still writing to the walk after it ends, though another command's result walks first", async (_kind, start, end) => {
+  ] as const)("leaves a file a command %s is still writing to the walk after it ends, though another command's result walks first", async (_kind, whileOpening, start, end) => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const opening = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      openWorkspace: async () => {
+        entered.resolve();
+        await opening.promise;
+      },
+    });
+    const open = bridge.openWorkspace("session-1");
+    passes.push(open);
+    await entered.promise;
+    if (whileOpening) await start(bridge);
+    opening.resolve();
+    await open;
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 2\n");
+    await bridge.finish("write-1");
+    await awaitClockAfter(path);
+
+    if (!whileOpening) await start(bridge);
+    await bridge.begin("shell-2", "Bash", { command: "ls" });
+    await writeFile(path, "");
+    await bridge.finish("shell-2");
+    await writeFile(path, "x = 2\ny = 3\n");
+    await end(bridge);
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText, previousReadError }) => ({ generatedText, previousText, previousReadError }))).toEqual([
+      { generatedText: "x = 2\n", previousText: "x = 1\n", previousReadError: undefined },
+      { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n", previousReadError: undefined },
+    ]);
+  });
+
+  // The walk at one command's result read the file the other was writing, and that command ended before the walk was
+  // audited: the walk began while it ran, so the file is still left to the walk after.
+  it("leaves a file to the walk after a command ends, though the command ends after a walk read the file and before the walk is audited", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");
     await writeFile(path, "x = 1\n");
@@ -2168,17 +2211,71 @@ describe("CodeRuleBridge", () => {
     await bridge.begin("write-1", "write", { path: ["src/a.py"] });
     await writeFile(path, "x = 2\n");
     await bridge.finish("write-1");
+    // Every walk so far has run, so the read held below is the one of the walk at shell-2's result.
+    await bridge.checkpoint("turn");
     await awaitClockAfter(path);
 
-    await start(bridge);
-    await bridge.begin("shell-2", "Bash", { command: "ls" });
+    const finished = vi.spyOn(ToolCallWindows.prototype, "finish");
+    try {
+      await bridge.begin("shell-1", "Bash", { command: "python3 generate.py" });
+      await bridge.begin("shell-2", "Bash", { command: "ls" });
+      await writeFile(path, "x = 2\ny");
+      const read = holdDiscovery("reads", path);
+      const walked = bridge.finish("shell-2");
+      await read.entered;
+      await writeFile(path, "x = 2\ny = 3\n");
+      const ended = bridge.finish("shell-1");
+      await vi.waitFor(() => expect(finished).toHaveBeenCalledWith("shell-1", expect.any(Number)));
+      read.release();
+      await Promise.all([walked, ended]);
+    } finally {
+      finished.mockRestore();
+    }
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
+      { generatedText: "x = 2\n", previousText: "x = 1\n" },
+      { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n" },
+    ]);
+  });
+
+  // A walk looked at a file one command had written, and read it only after a second command, begun meanwhile, emptied
+  // it: its text was the emptied file, while the stamp it looked at said the change came before the second command. So
+  // too when the command then removed the file before the walk could stamp it again.
+  it.each([
+    ["empties", false],
+    ["empties and then removes", true],
+  ] as const)("leaves a file a command %s while a walk reads it to the walk after that command ends", async (_kind, removed) => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 2\n");
+    await bridge.finish("write-1");
+    // No walk runs from here until the first command's result.
+    await bridge.checkpoint("turn");
+
+    await bridge.begin("shell-1", "Bash", { command: "./first.sh" });
+    await writeFile(path, "x = 3\n");
+    await awaitClockAfter(path);
+    // The walk at the first command's result has looked at the file, and waits to open it.
+    const opening = holdDiscovery("opens", path);
+    const reading = holdDiscovery("reads", path);
+    const firstResult = bridge.finish("shell-1");
+    await opening.entered;
+    await bridge.begin("shell-2", "Bash", { command: "python3 generate.py" });
     await writeFile(path, "");
+    opening.release();
+    await reading.entered;
+    if (removed) await rm(path);
+    reading.release();
+    await firstResult;
+    await writeFile(path, "x = 3\ny = 4\n");
     await bridge.finish("shell-2");
-    await writeFile(path, "x = 2\ny = 3\n");
-    await end(bridge);
-    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText, previousReadError }) => ({ generatedText, previousText, previousReadError }))).toEqual([
-      { generatedText: "x = 2\n", previousText: "x = 1\n", previousReadError: undefined },
-      { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n", previousReadError: undefined },
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
+      { generatedText: "x = 2\n", previousText: "x = 1\n" },
+      { generatedText: "x = 3\ny = 4\n", previousText: "x = 2\n" },
     ]);
   });
 
@@ -4613,6 +4710,24 @@ describe("ToolCallWindows", () => {
     windows.finishAll(50);
     expect(windows.ranDuring(45, 45)).toBe(true);
     expect(windows.ranDuring(60, 60)).toBe(false);
+  });
+
+  it("says when the first command still running as a walk began started, ordering ends and the walk by count, not by the clock", () => {
+    const windows = new ToolCallWindows();
+    windows.begin("edit", 5);
+    windows.begin("before", 10, true);
+    windows.finish("before", 20);
+    const walk = windows.ends;
+    expect(windows.commandSince(walk)).toBeUndefined();
+    windows.begin("running", 30, true);
+    expect(windows.commandSince(walk)).toBe(30);
+    // Its end reads the same on the clock as the end of the call before the walk, yet it ended after the walk began.
+    windows.begin("ending", 15, true);
+    windows.finish("ending", 20);
+    expect(windows.commandSince(walk)).toBe(15);
+    windows.finish("running", 40);
+    expect(windows.commandSince(walk)).toBe(15);
+    expect(windows.commandSince(windows.ends)).toBeUndefined();
   });
 
   it(`keeps the newest ${MAX_FINISHED_CALLS} finished calls`, () => {
