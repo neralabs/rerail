@@ -64,6 +64,9 @@ async function secondEditBeforeDelivery(timing: "superseded" | "dropped", second
   const release = () => { pump.held?.resolve(); pump.held = undefined; };
   try {
     await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId, cwd: root } });
+    // A first start answers without waiting for its evaluator: a call made while it still opens is never begun, so its
+    // edit is not checked at its result. Each edit here is checked at its own result once the evaluator is open.
+    await runtime.codeRulesOpened(sessionId);
     await ingest({ kind: "turn-end" });
     pump.held = Promise.withResolvers<void>();
     await ingest({ kind: "call", toolCallId: "first" });
