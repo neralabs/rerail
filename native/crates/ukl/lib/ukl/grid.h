@@ -11,8 +11,12 @@
 // work. The host then runs the work again with fewer groups (G/2): a choice made for the next run, never between
 // phases.
 //
-// `UklGrid.ctl`: three words, zero before the dispatch: 0 the groups arrived at the current barrier, 1 its generation,
-// 2 the failure word. One form on every backend (CUDA's too, until the device layer makes cooperative launches).
+// `UklGrid.ctl`: three words, zero before the dispatch: 0 the groups arrived at the current barrier; 1 its
+// generation, twice over, with the failure bit (bit 0); 2 the failure word, for a phase's quick test. A barrier's
+// outcome is one for every group: the last to arrive steps the generation only by a compare-and-swap that finds no
+// failure bit, and a group past its bound sets the bit only by a compare-and-swap that finds the generation it waited
+// on. So either every group passes a barrier or none does. One form on every backend (CUDA's too, until the device
+// layer makes cooperative launches).
 //
 // Reads of what another group wrote before a barrier go through `UKL_COHERENT` memory (`ukl_ldc_*`, or a coherent
 // pointer): a plain device load may be served from a cache the other group's write did not reach.
@@ -34,32 +38,39 @@ typedef struct UklGrid {
 // Whether the grid has failed a barrier (in every thread alike after a barrier).
 UKL_INLINE bool ukl_grid_failed(UklGrid g) { return ukl_atomic_load(&g.ctl[2]) != 0u; }
 
-// Waits for every group of the grid: true when all arrived, false (the failure word set) when the bound was reached
-// here or the grid failed before. Every thread of every group calls it, the same number of times. `flag` is a word of
-// threadgroup memory.
+// Waits for every group of the grid: true when all arrived, false when the bound was reached (here or in another
+// group) or the grid failed before; the same answer in every group. Every thread of every group calls it, the same
+// number of times. `flag` is a word of threadgroup memory.
 UKL_INLINE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
 {
     // The group's writes, done.
     ukl_tg_barrier_device();
     if (g.lid == 0u) {
-        uint32_t failed = ukl_atomic_load(&g.ctl[2]);
+        // The generation before this group arrives: it cannot step until every group, this one too, has.
+        uint32_t gen = ukl_atomic_load(&g.ctl[1]);
+        uint32_t failed = gen & 1u;
         if (failed == 0u) {
             ukl_fence_device();
-            // The generation before this group arrives: it cannot step until every group, this one too, has.
-            uint32_t gen = ukl_atomic_load(&g.ctl[1]);
             if (ukl_atomic_add(&g.ctl[0], 1u) + 1u == g.groups) {
                 ukl_atomic_store(&g.ctl[0], 0u);
                 ukl_fence_device();
-                ukl_atomic_add(&g.ctl[1], 1u);
+                failed = ukl_atomic_cas(&g.ctl[1], gen, gen + 2u) == gen ? 0u : 1u;
             } else {
-                uint32_t spins = 0u;
-                while (ukl_atomic_load(&g.ctl[1]) == gen && ukl_atomic_load(&g.ctl[2]) == 0u && spins < UKL_GRID_SPINS)
+                uint32_t now = gen, spins = 0u;
+                while (now == gen && spins < UKL_GRID_SPINS) {
+                    now = ukl_atomic_load(&g.ctl[1]);
                     spins++;
-                if (spins >= UKL_GRID_SPINS)
-                    ukl_atomic_store(&g.ctl[2], 1u);
+                }
+                if (now == gen) {
+                    // The bound: fail the barrier, unless it stepped meanwhile.
+                    uint32_t seen = ukl_atomic_cas(&g.ctl[1], gen, gen | 1u);
+                    now = seen == gen ? (gen | 1u) : seen;
+                }
+                failed = now & 1u;
             }
+            if (failed != 0u)
+                ukl_atomic_store(&g.ctl[2], 1u);
             ukl_fence_device();
-            failed = ukl_atomic_load(&g.ctl[2]);
         }
         *flag = failed;
     }
@@ -75,13 +86,13 @@ UKL_INLINE uint32_t ukl_grid_first(UklGrid g, uint32_t n, uint32_t group)
     return f < n ? (uint32_t)f : n;
 }
 
-// The exclusive scan of `in`'s first `n` values into `out` (`out[n]` the total), as phases of the grid; `in` may be
-// `out`. `sums` is `groups + 1` words of device memory; `scratch` is `UKL_TG_SCRATCH` words of threadgroup memory.
+// The exclusive scan of `in`'s first `n` values into `out`, its total into `*total` (`out + n` for an offsets
+// array), as phases of the grid; `in` may be `out`. `sums` is `groups + 1` words of device memory; `scratch` is `UKL_TG_SCRATCH` words of threadgroup memory.
 // Three phases: each group sums its share; group 0 scans the sums (`sums[groups]` the total); each group scans its
 // share from its offset. False when a barrier failed (`out` is then partial). Ends with a barrier: `out` is seen by
 // every group.
 UKL_INLINE bool ukl_grid_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT uint32_t* out,
-                                UKL_COHERENT uint32_t* sums, UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
+                                UKL_COHERENT uint32_t* total, UKL_COHERENT uint32_t* sums, UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
 {
     uint32_t first = ukl_grid_first(g, n, g.group), end = ukl_grid_first(g, n, g.group + 1u);
     // 1. The share's sum, a group's tile at a time.
@@ -121,16 +132,17 @@ UKL_INLINE bool ukl_grid_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32
         run += s.total;
     }
     if (g.group == 0u && g.lid == 0u)
-        out[n] = sums[g.groups];
+        *total = sums[g.groups];
     return ukl_grid_barrier(g, flag);
 }
 
-// `ukl_grid_scan_n` of `*count` values: the count read on the device.
+// `ukl_grid_scan_n` of `*count` values (the count read on the device), the total at `out[n]`.
 UKL_INLINE bool ukl_grid_scan_exclusive_u32(UklGrid g, UKL_GLOBAL const uint32_t* count, UKL_COHERENT const uint32_t* in,
                                             UKL_COHERENT uint32_t* out, UKL_COHERENT uint32_t* sums,
                                             UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
 {
-    return ukl_grid_scan_n(g, ukl_atomic_load((UKL_GLOBAL uint32_t*)count), in, out, sums, scratch, flag __UKL_ARGS);
+    uint32_t n = ukl_atomic_load((UKL_GLOBAL uint32_t*)count);
+    return ukl_grid_scan_n(g, n, in, out, out + n, sums, scratch, flag __UKL_ARGS);
 }
 
 // --- The segmented scan ------------------------------------------------------------------------------------------
@@ -279,7 +291,7 @@ UKL_INLINE bool ukl_grid_sort_u64(UklGrid g, uint32_t n, uint32_t bits, bool iot
             ukl_radix_hist_tile_u64_grid(ki, hist, args, l.h, tile, g.lid);
         if (!ukl_grid_barrier(g, flag))
             return false;
-        if (!ukl_grid_scan_n(g, UKL_RADIX_DIGITS * tiles, hist, hist, sums, scratch, flag __UKL_ARGS))
+        if (!ukl_grid_scan_n(g, UKL_RADIX_DIGITS * tiles, hist, hist, hist + UKL_RADIX_DIGITS * tiles, sums, scratch, flag __UKL_ARGS))
             return false;
         for (uint32_t tile = first; tile < end; tile++)
             ukl_radix_scatter_tile_u64_grid(ki, vi, hist, ko, vo, args, l.counts, l.before, l.base, tile, g.lid __UKL_ARGS);

@@ -631,7 +631,7 @@ fn grid_barriers_see_every_groups_writes() {
         let c: Vec<u32> = read(&ctl, 3);
         let wrong: Vec<u32> = read(&out, groups as usize);
         assert_eq!(c[2], 0, "{}: {groups} groups: a barrier failed", crate::device::backend());
-        assert_eq!(c[1], 2 * rounds, "{}: {groups} groups: the barriers' generation", crate::device::backend());
+        assert_eq!(c[1], 4 * rounds, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
         assert!(wrong.iter().all(|&w| w == 0), "{}: {groups} groups: reads before the barrier's writes: {wrong:?}", crate::device::backend());
     }
 }
