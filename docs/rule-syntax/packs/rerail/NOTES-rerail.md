@@ -88,8 +88,6 @@ ordinal and offsets): it reported every regex rule here as ungrounded, and three
   when `rerail-ui-pure-modules` read `within(n, a)` and ran together with another JavaScript policy
   (`rerail-ui-api-precedence` or `rerail-ui-color-tokens.javascript`); each ran alone. The rule now reads the binders
   through `inside` with their kinds.
-- `test-rr` over the whole directory fails tests with `unable to open database file` under the default limit of
-  1,024 open files; with `ulimit -n 65536` all 125 pass.
 
 ## Not translated: what the engine lacks
 
