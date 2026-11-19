@@ -2,8 +2,8 @@
 //! definitions (S1, S2, S4), read from the tapes in place.
 
 use crate::Error;
-use crate::pp_blocks::{Arena, Bound, Buf, Enc, Grid, Scan, SegOp, SegScan, Sort, TG};
-use crate::pp_eval::{Front, Unit, name_key};
+use crate::pp_blocks::{Arena, Buf, Grid, Lay, Scan, Sort};
+use crate::pp_eval::{Front, TO_ALL, TO_DEFS, TO_VIS, Unit, fewer, name_key, on_grid};
 
 /// A definition (`PpDef` in the MSL): the unit's nodes of its name, its `params` node (0: none)
 /// and its body's first leaf; the leaves of each; its flags; its first parameter slot and item.
@@ -40,9 +40,6 @@ pub struct Defs {
     ifirst: Buf,
     pscan: Scan,
     bscan: Scan,
-    row_args: Buf,
-    pargs: Buf,
-    bargs: Buf,
     pub pkeys: Buf,
     pub items: Buf,
     /// Set where a store's room ran out (decision 0448 §2): the unit runs again at the next rung.
@@ -67,11 +64,8 @@ impl Defs {
             bcount: words(rows)?,
             pfirst: words(rows)?,
             ifirst: words(rows)?,
-            pscan: Scan::new(arena, rows)?,
-            bscan: Scan::new(arena, rows)?,
-            row_args: words(4)?,
-            pargs: words(4)?,
-            bargs: words(4)?,
+            pscan: Scan::new(arena)?,
+            bscan: Scan::new(arena)?,
             pkeys: arena.zeroed::<u64>(nodes)?,
             items: words(nodes)?,
             room: words(1)?,
@@ -79,41 +73,14 @@ impl Defs {
         })
     }
 
-    /// S1 (`pd_defs`, one thread a row), the scans of the counts, S2 (`pd_params`, one thread a
-    /// parameter list's leaf) and S4 (`pd_items`, one thread a body leaf).
-    pub fn encode(&self, enc: &Enc<'_>, unit: &Unit, front: &Front) -> Result<(), Error> {
-        let n32 = unit.len() as u32;
-        let (u_files, u_data) = (&front.files as &dyn Bound, front.data(unit));
-        let dir_total = &front.dir_total();
-        let row_args = &self.row_args;
-        enc.run("pb_args", None, &[dir_total, &row_args], &[0], Grid::Groups(1))?;
-        enc.run(
-            "pd_defs",
-            None,
-            &[u_files, u_data, &front.bases, &front.dir_bases, dir_total, &front.rows, &self.defs, &self.pcount, &self.bcount],
-            &[n32],
-            Grid::Indirect(&row_args, 0),
-        )?;
-        self.pscan.encode(enc, dir_total, 0, &self.pcount, &self.pfirst)?;
-        self.bscan.encode(enc, dir_total, 0, &self.bcount, &self.ifirst)?;
-        enc.run("pb_args", None, &[&self.pscan.total, &self.pargs], &[0], Grid::Groups(1))?;
-        enc.run("pb_args", None, &[&self.bscan.total, &self.bargs], &[0], Grid::Groups(1))?;
+    /// The definitions' slots of the layout: S1 (`pd_defs`, a thread a row), the scans of the
+    /// counts, S2 (`pd_params`, a thread a parameter list's leaf) and S4 (`pd_items`, a thread a
+    /// body leaf), as phases of `pp_setup`.
+    pub fn lay(&self, l: &mut Lay) {
         let va = name_key(b"__VA_ARGS__");
-        enc.run(
-            "pd_params",
-            None,
-            &[u_files, u_data, &front.bases, &front.keys, &front.dir_bases, dir_total, &self.defs, &self.pfirst, &self.pscan.total, &self.pkeys, &self.room],
-            &[n32, va as u32, (va >> 32) as u32, self.cap],
-            Grid::Indirect(&self.pargs, 0),
-        )?;
-        enc.run(
-            "pd_items",
-            None,
-            &[u_files, u_data, &front.bases, &front.keys, &front.dir_bases, dir_total, &self.defs, &self.ifirst, &self.bscan.total, &self.pkeys, &self.items, &self.room],
-            &[n32, self.cap],
-            Grid::Indirect(&self.bargs, 0),
-        )?;
-        Ok(())
+        l.at("DEFS", &self.defs).at("PCOUNT", &self.pcount).at("BCOUNT", &self.bcount).at("PFIRST", &self.pfirst).at("IFIRST", &self.ifirst);
+        l.at("PTOTAL", &self.pscan.total).at("ITOTAL", &self.bscan.total).at("PKEYS", &self.pkeys).at("ITEMS", &self.items).at("ROOM", &self.room);
+        l.word("CAP", self.cap).word("VA_LO", va as u32).word("VA_HI", (va >> 32) as u32);
     }
 }
 
@@ -132,14 +99,20 @@ pub fn definitions(unit: &Unit) -> Result<(crate::pp_eval::Evaluated, DefsRead),
 
 /// `definitions` from rung `rung`.
 pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
-    let arena = Arena::new();
-    let front = Front::new(&arena, unit, false)?;
-    let defs = Defs::new(&arena, unit, rung)?;
-    arena.lease()?;
-    crate::pp_eval::run(|enc| {
-        front.encode(enc, unit)?;
-        defs.encode(enc, unit, &front)
-    })?;
+    let mut groups = crate::pp_blocks::GROUPS;
+    let (front, defs) = loop {
+        let arena = Arena::new();
+        let front = Front::new(&arena, unit, false, groups)?;
+        let defs = Defs::new(&arena, unit, rung)?;
+        arena.lease()?;
+        let mut l = Lay::new();
+        front.lay(&mut l, TO_DEFS);
+        defs.lay(&mut l);
+        if on_grid(&arena, unit, &front, &l, groups)?.is_some() {
+            break (front, defs);
+        }
+        groups = fewer(groups)?;
+    };
     // SAFETY: the device finished writing `room`.
     if unsafe { *defs.room.host().cast::<u32>() } != 0 {
         if rung + 1 >= RUNGS {
@@ -238,7 +211,6 @@ pub struct Vis {
     owner_in: Buf,
     heads: Buf,
     owner: Buf,
-    owner_scan: SegScan,
     tflag: Buf,
     trank: Buf,
     tscan: Scan,
@@ -262,7 +234,6 @@ pub struct Vis {
     pub(crate) sslot: Buf,
     pub(crate) gat: Buf,
     pub(crate) gscan: Scan,
-    pub(crate) targs: Buf,
     pub lookups: Buf,
     pub bad: Buf,
 }
@@ -306,14 +277,13 @@ impl Vis {
             owner_in: zeroed(nodes)?,
             heads: zeroed(nodes)?,
             owner: zeroed(nodes)?,
-            owner_scan: SegScan::new(arena, nodes)?,
             tflag: zeroed(nodes)?,
             trank: zeroed(nodes)?,
-            tscan: Scan::new(arena, nodes)?,
+            tscan: Scan::new(arena)?,
             text_nodes: zeroed(nodes)?,
             rflag: zeroed(nd)?,
             rat: zeroed(nd)?,
-            rscan: Scan::new(arena, nd)?,
+            rscan: Scan::new(arena)?,
             sort_keys: arena.from_slice(&sk)?,
             name_keys: arena.from_slice(&nk)?,
             values: arena.from_slice(&vals)?,
@@ -325,120 +295,26 @@ impl Vis {
             gsort: Sort::new(arena, ng)?,
             sslot: zeroed(ng)?,
             gat: zeroed(ng)?,
-            gscan: Scan::new(arena, ng)?,
-            targs: zeroed(4)?,
+            gscan: Scan::new(arena)?,
             lookups: zeroed(top)?,
             bad: zeroed(1)?,
         })
     }
 
-    /// The passes, each one thread an element:
-    /// - the text map: `pe_owner_in` and a max scan (a node each), `pe_text_flag`, a scan,
-    ///   `pe_text_nodes`;
-    /// - the rows: `pe_row_flag` (a directive each), a scan, `pe_rows`, `pe_rows_total`, one
-    ///   stable sort by (the key's upper half, slot);
-    /// - the stretches: `pe_gap_counts` (a stretch each), a scan;
-    /// - `pe_lookups`, a stretch token each, sized by that scan.
-    pub fn encode(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs) -> Result<(), Error> {
-        let n32 = unit.len() as u32;
-        let (u_files, u_data) = (&front.files as &dyn Bound, front.data(unit));
-        let total = &front.total();
-        let dir_total = &front.dir_total();
-        let by_node = Grid::Indirect(&front.node_args(), 0);
-        enc.run("pe_owner_in", None, &[u_files, u_data, &front.bases, total, &self.owner_in], &[n32], by_node)?;
-        self.owner_scan.encode(enc, SegOp::Max, total, 0, &self.owner_in, &self.heads, &self.owner)?;
-        enc.run("pe_text_flag", None, &[u_files, u_data, &front.bases, total, &self.owner, &self.tflag], &[n32], by_node)?;
-        self.tscan.encode(enc, total, 0, &self.tflag, &self.trank)?;
-        enc.run("pe_text_nodes", None, &[&self.tflag, &self.trank, total, &self.text_nodes], &[], by_node)?;
-        let by_dir = Grid::Groups((self.nd as u64).div_ceil(TG));
-        enc.run(
-            "pe_row_flag",
-            None,
-            &[&self.insts, &self.n_insts, &self.dactive, &self.n_dirs, &front.dir_bases, &front.rows, &defs.defs, &front.dir_keys, &self.rflag],
-            &[],
-            by_dir,
-        )?;
-        self.rscan.encode(enc, &self.n_dirs, 0, &self.rflag, &self.rat)?;
-        enc.run(
-            "pe_rows",
-            None,
-            &[
-                &self.insts,
-                &self.n_insts,
-                &self.dslot,
-                &self.n_dirs,
-                &front.dir_bases,
-                &front.rows,
-                &front.dir_keys,
-                &self.rflag,
-                &self.rat,
-                &self.sort_keys,
-                &self.name_keys,
-                &self.values,
-            ],
-            &[self.n_builtin],
-            by_dir,
-        )?;
-        enc.run("pe_rows_total", None, &[&self.rscan.total, &self.n_rows], &[self.n_builtin], Grid::Groups(1))?;
-        self.sort.encode(enc, &self.n_rows, 0, &self.sort_keys, 64)?;
-        let by_gap = Grid::Groups((self.ng as u64).div_ceil(TG));
-        enc.run("pe_gap_keys", None, &[&self.gslot, &self.n_gaps, &self.gkeys], &[], by_gap)?;
-        // 32 bits sort in an even number of passes: the keys end in place, their places in `vals_a`.
-        debug_assert!(Sort::in_input(32));
-        self.gsort.encode(enc, &self.n_gaps, 0, &self.gkeys, 32)?;
-        enc.run(
-            "pe_gap_counts",
-            None,
-            &[
-                &self.insts,
-                &self.n_insts,
-                &self.gactive,
-                &self.n_gaps,
-                &front.dir_bases,
-                dir_total,
-                &front.rows,
-                &front.bases,
-                total,
-                &self.trank,
-                &self.tscan.total,
-                &self.gcounts,
-                &self.gfirsts,
-                &self.gsort.vals_a,
-                &self.gkeys,
-                &self.sslot,
-            ],
-            &[n32],
-            by_gap,
-        )?;
-        self.gscan.encode(enc, &self.n_gaps, 0, &self.gcounts, &self.gat)?;
-        enc.run("pb_args", None, &[&self.gscan.total, &self.targs], &[0], Grid::Groups(1))?;
-        // 64 bits sort in an even number of passes: the keys end in place, their rows in `vals_a`.
-        debug_assert!(Sort::in_input(64));
-        enc.run(
-            "pe_lookups",
-            None,
-            &[
-                u_files,
-                u_data,
-                &front.bases,
-                &front.keys,
-                &self.text_nodes,
-                &self.gat,
-                &self.n_gaps,
-                &self.gfirsts,
-                &self.sslot,
-                &self.gscan.total,
-                &self.sort_keys,
-                &self.sort.vals_a,
-                &self.n_rows,
-                &self.name_keys,
-                &self.values,
-                &self.lookups,
-                &self.bad,
-            ],
-            &[n32],
-            Grid::Indirect(&self.targs, 0),
-        )
+    /// The visibility's slots of the layout: the text map (a max scan of each node's owner, a
+    /// scan of the text flags), the rows (a flag and a scan, then a sort by name), the stretches
+    /// (a sort of their keys, their counts and a scan) and the lookups, as phases of `pp_setup`.
+    pub fn lay(&self, l: &mut Lay) {
+        l.at("INSTS", &self.insts).at("N_INSTS", &self.n_insts).at("DSLOT", &self.dslot).at("DACTIVE", &self.dactive).at("N_DIRS", &self.n_dirs);
+        l.at("GSLOT", &self.gslot).at("GACTIVE", &self.gactive).at("N_GAPS", &self.n_gaps);
+        l.word("N_BUILTIN", self.n_builtin).word("ND", self.nd as u32).word("NG", self.ng as u32);
+        l.at("OWNER_IN", &self.owner_in).at("VHEADS", &self.heads).at("OWNER", &self.owner).at("TFLAG", &self.tflag).at("TRANK", &self.trank);
+        l.at("TTOTAL", &self.tscan.total).at("TEXT_NODES", &self.text_nodes).at("RFLAG", &self.rflag).at("RAT", &self.rat).at("RTOTAL", &self.rscan.total);
+        l.at("SORT_KEYS", &self.sort_keys).at("NAME_KEYS", &self.name_keys).at("VALUES", &self.values).at("N_ROWS", &self.n_rows);
+        l.at("SORT_KB", &self.sort.keys_b).at("SORT_VA", &self.sort.vals_a).at("SORT_VB", &self.sort.vals_b).at("SORT_HIST", &self.sort.hist);
+        l.at("GCOUNTS", &self.gcounts).at("GFIRSTS", &self.gfirsts).at("GKEYS", &self.gkeys);
+        l.at("GSORT_KB", &self.gsort.keys_b).at("GSORT_VA", &self.gsort.vals_a).at("GSORT_VB", &self.gsort.vals_b).at("GSORT_HIST", &self.gsort.hist);
+        l.at("SSLOT", &self.sslot).at("GAT", &self.gat).at("GTOTAL", &self.gscan.total).at("LOOKUPS", &self.lookups).at("VBAD", &self.bad);
     }
 
     /// The lookups, read back for tests (after the command buffer is done).
@@ -470,13 +346,11 @@ pub const X_ACROSS: u32 = 256;
 pub const X_VA_OPT: u32 = 512;
 pub const X_RELEX: u32 = 1024;
 pub const X_SPLICE: u32 = 2048;
+/// A grid barrier's bound reached: the grid's groups were not resident together (decision 0460 §4).
+pub const X_BARRIER: u32 = 4096;
 
 /// The expansion's rungs: rung `k`'s arena holds `2^(k+1)` tokens a top token.
 pub const EXP_RUNGS: u32 = 5;
-/// The queue's persistent dispatch: worker groups, and its launches a phase (the first does the
-/// work; the others start where every worker exited with items left, and end at once if none).
-const WORKER_GROUPS: u64 = 64;
-const WORK_LAUNCHES: usize = 3;
 /// The close table's keys: a biased depth (16 bits) above a position (24 bits).
 const CLOSE_BITS: u32 = 40;
 /// A string literal's tape kind.
@@ -501,7 +375,6 @@ pub struct Exp {
     theads: Buf,
     delta: Buf,
     depth: Buf,
-    depth_scan: SegScan,
     close: Buf,
     close_at: Buf,
     close_scan: Scan,
@@ -510,7 +383,6 @@ pub struct Exp {
     cend: Buf,
     heads: Buf,
     reach: Buf,
-    reach_scan: SegScan,
     state: Buf,
     oflag: Buf,
     oid: Buf,
@@ -583,28 +455,26 @@ impl Exp {
             theads: zeroed(top)?,
             delta: zeroed(top)?,
             depth: zeroed(top)?,
-            depth_scan: SegScan::new(arena, top)?,
             close: zeroed(top)?,
             close_at: zeroed(top)?,
-            close_scan: Scan::new(arena, top)?,
+            close_scan: Scan::new(arena)?,
             close_keys: arena.zeroed::<u64>(top)?,
             close_sort: Sort::new(arena, top)?,
             cend: zeroed(top)?,
             heads: zeroed(top)?,
             reach: zeroed(top)?,
-            reach_scan: SegScan::new(arena, top)?,
             state: zeroed(top)?,
             oflag: zeroed(top)?,
             oid: zeroed(top)?,
-            oscan: Scan::new(arena, top)?,
+            oscan: Scan::new(arena)?,
             v: zeroed(top)?,
             obase: zeroed(top)?,
             xflag: zeroed(top)?,
             xat: zeroed(top)?,
-            xscan: Scan::new(arena, top)?,
+            xscan: Scan::new(arena)?,
             xpos: zeroed(top)?,
             xcover: zeroed(top)?,
-            vscan: Scan::new(arena, top)?,
+            vscan: Scan::new(arena)?,
             lists: zeroed(lists * LIST_WORDS)?,
             tokens: zeroed(tok * 5)?,
             args: zeroed(args * ARG_WORDS)?,
@@ -615,134 +485,20 @@ impl Exp {
         })
     }
 
-    /// The top level's grid passes (one thread a top token, sized by the lookups' count): its
-    /// depth (a segmented scan by stretch), the close table (a scan, one 40-bit sort), the calls,
-    /// the outermost (a max scan of the reach, a scan); the queue's first phase (CALL, SCAN,
-    /// SUBST, flattening PLACE items, to every list's final); the top level's places (a scan of
-    /// the pieces); the queue's second phase (PLACE items to the output), and the check.
-    pub fn encode(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis) -> Result<(), Error> {
-        let n32 = unit.len() as u32;
-        let (u_files, u_data) = (&front.files as &dyn Bound, front.data(unit));
-        let n_toks = &vis.gscan.total;
-        let by_top = Grid::Indirect(&vis.targs, 0);
-        let top_in = [u_files, u_data, &front.bases, &vis.text_nodes, &vis.gat, &vis.n_gaps, &vis.gfirsts, n_toks];
-        let mut parens = top_in.to_vec();
-        parens.extend([&self.theads as &dyn Bound, &self.delta, &self.close]);
-        enc.run("px_top_parens", None, &parens, &[n32], by_top)?;
-        self.depth_scan.encode(enc, SegOp::Add, n_toks, 0, &self.delta, &self.theads, &self.depth)?;
-        self.close_scan.encode(enc, n_toks, 0, &self.close, &self.close_at)?;
-        enc.run("px_close_keys", None, &[&self.depth, &self.close, &self.close_at, n_toks, &self.close_keys, &self.ctl], &[], by_top)?;
-        self.close_sort.encode(enc, &self.close_scan.total, 0, &self.close_keys, CLOSE_BITS)?;
-        let closes = if Sort::in_input(CLOSE_BITS) { &self.close_keys as &dyn Bound } else { &self.close_sort.keys_b };
-        enc.run(
-            "px_top_calls",
-            None,
-            &[
-                u_files,
-                u_data,
-                &front.bases,
-                &defs.defs,
-                &vis.lookups,
-                &vis.text_nodes,
-                &vis.gat,
-                &vis.n_gaps,
-                &vis.gfirsts,
-                n_toks,
-                &self.depth,
-                closes,
-                &self.close_scan.total,
-                &self.cend,
-                &self.ctl,
-            ],
-            &[n32],
-            by_top,
-        )?;
-        self.reach_scan.encode(enc, SegOp::Max, n_toks, 0, &self.cend, &self.heads, &self.reach)?;
-        enc.run("px_top_outer", None, &[&self.cend, &self.reach, n_toks, &self.state, &self.oflag], &[], by_top)?;
-        self.oscan.encode(enc, n_toks, 0, &self.oflag, &self.oid)?;
-        enc.run(
-            "px_top_lists",
-            None,
-            &[&vis.lookups, &self.cend, &self.state, &self.oid, n_toks, &vis.sslot, &vis.gat, &vis.n_gaps, &self.lists, &self.slots, &self.ctl, &defs.defs],
-            &[self.list_cap],
-            by_top,
-        )?;
-        enc.run("px_seed", None, &[&self.oscan.total, &self.qctl, &self.ctl], &[self.list_cap], Grid::Groups(1))?;
-        self.work(enc, unit, front, defs, vis, closes)?;
-        // The top level's rollback: the exit-bearing calls in order, decided by one SIMD group.
-        enc.run("px_top_xflag", None, &[&self.state, &self.oid, &self.lists, n_toks, &self.xflag], &[], by_top)?;
-        self.xscan.encode(enc, n_toks, 0, &self.xflag, &self.xat)?;
-        enc.run("px_top_xlist", None, &[&self.xflag, &self.xat, n_toks, &self.xpos], &[], by_top)?;
-        let n_x = &self.xscan.total;
-        enc.run("px_top_cover", None, &[&self.xpos, n_x, &self.oid, &self.lists, &self.xcover, &self.ctl], &[], Grid::Groups(1))?;
-        enc.run("px_top_sizes", None, &[&self.state, &self.oid, &self.lists, n_toks, &self.v, &self.xpos, n_x, &self.xcover], &[], by_top)?;
-        self.vscan.encode(enc, n_toks, 0, &self.v, &self.obase)?;
-        enc.run(
-            "px_top_place",
-            None,
-            &[
-                &self.state,
-                &self.oid,
-                &self.lists,
-                n_toks,
-                &self.obase,
-                &vis.text_nodes,
-                &vis.gat,
-                &vis.n_gaps,
-                &vis.gfirsts,
-                &self.out,
-                &self.slots,
-                &self.qctl,
-                &self.ctl,
-            ],
-            &[self.out_cap, self.q_cap],
-            by_top,
-        )?;
-        self.work(enc, unit, front, defs, vis, closes)?;
-        enc.run("px_check", None, &[&self.qctl, &self.vscan.total, &self.ctl], &[self.out_cap], Grid::Groups(1))
-    }
-
-    /// The queue's persistent dispatch, `WORK_LAUNCHES` times.
-    fn work(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis, closes: &dyn Bound) -> Result<(), Error> {
-        for _ in 0..WORK_LAUNCHES {
-            enc.run(
-                "px_work",
-                None,
-                &[
-                    &front.files,
-                    front.data(unit),
-                    &front.bases,
-                    &front.keys,
-                    &defs.defs,
-                    &defs.items,
-                    &vis.sort_keys,
-                    &vis.sort.vals_a,
-                    &vis.n_rows,
-                    &vis.name_keys,
-                    &vis.values,
-                    &vis.text_nodes,
-                    &vis.gat,
-                    &vis.n_gaps,
-                    &vis.gfirsts,
-                    &vis.gscan.total,
-                    &self.depth,
-                    &self.lists,
-                    &self.tokens,
-                    &self.args,
-                    &self.out,
-                    &self.slots,
-                    &self.qctl,
-                    &self.ctl,
-                    &self.words,
-                    &self.scratch,
-                    closes,
-                    &self.close_scan.total,
-                ],
-                &[],
-                Grid::Groups(WORKER_GROUPS),
-            )?;
-        }
-        Ok(())
+    /// The expansion's slots of the layout: the top level's passes (`pp_setup`'s last phases:
+    /// its depth, a segmented scan by stretch; the close table, a scan and a 40-bit sort; the
+    /// calls; the outermost, a max scan of the reach and a scan; the lists and the queue's seed),
+    /// the queue and the top level's rollback and places (`px_expand`), and the check.
+    pub fn lay(&self, l: &mut Lay) {
+        l.at("THEADS", &self.theads).at("DELTA", &self.delta).at("DEPTH", &self.depth).at("CLOSE", &self.close).at("CLOSE_AT", &self.close_at);
+        l.at("CLOSE_TOTAL", &self.close_scan.total).at("CLOSE_KEYS", &self.close_keys);
+        l.at("CSORT_KB", &self.close_sort.keys_b).at("CSORT_VA", &self.close_sort.vals_a).at("CSORT_VB", &self.close_sort.vals_b).at("CSORT_HIST", &self.close_sort.hist);
+        l.word("CLOSE_BITS", CLOSE_BITS).at("CEND", &self.cend).at("EHEADS", &self.heads).at("REACH", &self.reach).at("STATE", &self.state);
+        l.at("OFLAG", &self.oflag).at("OID", &self.oid).at("OTOTAL", &self.oscan.total).at("LISTS", &self.lists).at("SLOTS", &self.slots);
+        l.at("CTL", &self.ctl).at("QCTL", &self.qctl).at("XFLAG", &self.xflag).at("XAT", &self.xat).at("XTOTAL", &self.xscan.total);
+        l.at("XPOS", &self.xpos).at("XCOVER", &self.xcover).at("V", &self.v).at("OBASE", &self.obase).at("VTOTAL", &self.vscan.total);
+        l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("ARGS", &self.args).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
+        l.word("LIST_CAP", self.list_cap).word("OUT_CAP", self.out_cap).word("Q_CAP", self.q_cap);
     }
 
     /// The scratch tokens' bytes and (start, end, kind) (after the command buffer).
@@ -790,8 +546,10 @@ pub struct Expanded {
     pub refused: u32,
     pub out: Vec<u32>,
     pub rung: u32,
-    /// The command buffer's launches (at most `KERNEL_LAUNCH_LIMIT`).
+    /// The command buffer's launches: 4 for every unit (decision 0460 §4).
     pub launches: usize,
+    /// The groups of the grid it ran on, after any halving.
+    pub groups: u64,
     /// The scratch tokens (a ref with `SCRATCH` set): their bytes, and each one's (start, end,
     /// kind).
     pub scratch: Vec<u8>,
@@ -809,20 +567,28 @@ pub const SCRATCH: u32 = 0x8000_0000;
 /// The front passes, the definitions, the lookups and the expansion over `unit` laid out as
 /// `lay`, in one command buffer; from rung `rung`, and at the next where a store's room ran out.
 pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Error> {
-    let (mut def_rung, mut rung) = (0, rung);
+    expand_at(unit, lay, rung, crate::pp_blocks::GROUPS)
+}
+
+/// `expand_from` on a grid of `groups` groups at first (halved after a failed barrier).
+pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Expanded, Error> {
+    let (mut def_rung, mut rung, mut groups) = (0, rung, groups);
     loop {
         let arena = Arena::new();
-        let front = Front::new(&arena, unit, false)?;
+        let front = Front::new(&arena, unit, false, groups)?;
         let defs = Defs::new(&arena, unit, def_rung)?;
         let vis = Vis::new(&arena, unit, lay)?;
         let exp = Exp::new(&arena, unit, lay, rung)?;
         arena.lease()?;
-        let launches = crate::pp_eval::run(|enc| {
-            front.encode(enc, unit)?;
-            defs.encode(enc, unit, &front)?;
-            vis.encode(enc, unit, &front, &defs)?;
-            exp.encode(enc, unit, &front, &defs, &vis)
-        })?;
+        let mut l = Lay::new();
+        front.lay(&mut l, TO_ALL);
+        defs.lay(&mut l);
+        vis.lay(&mut l);
+        exp.lay(&mut l);
+        let Some(launches) = on_grid(&arena, unit, &front, &l, groups)? else {
+            groups = fewer(groups)?;
+            continue;
+        };
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
             def_rung += 1;
@@ -838,7 +604,7 @@ pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Err
             continue;
         }
         let (scratch, stoks) = exp.scratch();
-        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches, scratch, stoks, room: exp.room() });
+        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches, groups, scratch, stoks, room: exp.room() });
     }
 }
 
@@ -851,18 +617,21 @@ pub fn expand(unit: &Unit, lay: &Layout) -> Result<Expanded, Error> {
 /// command buffer: each active stretch token's meaning (`L_*`, or the directive row of its
 /// definition), in the layout's order.
 pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, Vec<u32>), Error> {
-    let mut rung = 0;
+    let (mut rung, mut groups) = (0, crate::pp_blocks::GROUPS);
     loop {
         let arena = Arena::new();
-        let front = Front::new(&arena, unit, false)?;
+        let front = Front::new(&arena, unit, false, groups)?;
         let defs = Defs::new(&arena, unit, rung)?;
         let vis = Vis::new(&arena, unit, lay)?;
         arena.lease()?;
-        crate::pp_eval::run(|enc| {
-            front.encode(enc, unit)?;
-            defs.encode(enc, unit, &front)?;
-            vis.encode(enc, unit, &front, &defs)
-        })?;
+        let mut l = Lay::new();
+        front.lay(&mut l, TO_VIS);
+        defs.lay(&mut l);
+        vis.lay(&mut l);
+        if on_grid(&arena, unit, &front, &l, groups)?.is_none() {
+            groups = fewer(groups)?;
+            continue;
+        }
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
             rung += 1;

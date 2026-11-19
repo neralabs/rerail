@@ -50,12 +50,7 @@ inline bool is_dots(Tape t, device const uchar* data, PpFile f, uint i) {
 }
 
 // S1: each row's definition, and the leaves of its parameters and its body (to be scanned).
-kernel void pd_defs(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                    device const uint* bases [[buffer(2)]], device const uint* dir_bases [[buffer(3)]],
-                    device const uint* dir_total [[buffer(4)]], device const PpDir* rows [[buffer(5)]],
-                    device PpDef* defs [[buffer(6)]], device uint* pcount [[buffer(7)]],
-                    device uint* bcount [[buffer(8)]], constant uint& n_files [[buffer(9)]],
-                    uint r [[thread_position_in_grid]]) {
+inline void pd_defs(device const PpFile* files, device const uchar* data, device const uint* bases, device const uint* dir_bases, device const uint* dir_total, device const PpDir* rows, device PpDef* defs, device uint* pcount, device uint* bcount, uint n_files, uint r) {
     if (r >= dir_total[0]) return;
     PpDef d = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
     PpDir row = rows[r];
@@ -92,14 +87,7 @@ kernel void pd_defs(device const PpFile* files [[buffer(0)]], device const uchar
 // `(` then names or `...` between commas, a name's `...` (GNU's) last, then `)`, as
 // `parse_define` reads it; anything else makes the definition bad. Each parameter's key goes to
 // its slot (`pfirst` + its leaf), `__VA_ARGS__`'s for a `...` of its own.
-kernel void pd_params(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                      device const uint* bases [[buffer(2)]], device const ulong* keys [[buffer(3)]],
-                      device const uint* dir_bases [[buffer(4)]], device const uint* dir_total [[buffer(5)]],
-                      device PpDef* defs [[buffer(6)]], device const uint* pfirst [[buffer(7)]],
-                      device const uint* ptotal [[buffer(8)]], device ulong* pkeys [[buffer(9)]],
-                      device atomic_uint* room [[buffer(10)]], constant uint& n_files [[buffer(11)]],
-                      constant uint& va_lo [[buffer(12)]], constant uint& va_hi [[buffer(13)]],
-                      constant uint& cap [[buffer(14)]], uint s [[thread_position_in_grid]]) {
+inline void pd_params(device const PpFile* files, device const uchar* data, device const uint* bases, device const ulong* keys, device const uint* dir_bases, device const uint* dir_total, device PpDef* defs, device const uint* pfirst, device const uint* ptotal, device ulong* pkeys, device atomic_uint* room, uint n_files, uint va_lo, uint va_hi, uint cap, uint s) {
     if (s >= ptotal[0]) return;
     if (s >= cap) {
         atomic_store_explicit(room, 1u, memory_order_relaxed);
@@ -157,14 +145,7 @@ inline uint param_of(PpDef d, device const ulong* pkeys, ulong key) {
 // S4: a body's leaf `k` (one thread a leaf over the rows' scanned counts): its parameter (by
 // its key among its definition's), `##` as the paste operator where it is neither first nor
 // last, and white space before it (none before the first).
-kernel void pd_items(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                     device const uint* bases [[buffer(2)]], device const ulong* keys [[buffer(3)]],
-                     device const uint* dir_bases [[buffer(4)]], device const uint* dir_total [[buffer(5)]],
-                     device PpDef* defs [[buffer(6)]], device const uint* ifirst [[buffer(7)]],
-                     device const uint* itotal [[buffer(8)]], device const ulong* pkeys [[buffer(9)]],
-                     device uint* items [[buffer(10)]], device atomic_uint* room [[buffer(11)]],
-                     constant uint& n_files [[buffer(12)]], constant uint& cap [[buffer(13)]],
-                     uint s [[thread_position_in_grid]]) {
+inline void pd_items(device const PpFile* files, device const uchar* data, device const uint* bases, device const ulong* keys, device const uint* dir_bases, device const uint* dir_total, device PpDef* defs, device const uint* ifirst, device const uint* itotal, device const ulong* pkeys, device uint* items, device atomic_uint* room, uint n_files, uint cap, uint s) {
     if (s >= itotal[0]) return;
     if (s >= cap) {
         atomic_store_explicit(room, 1u, memory_order_relaxed);
@@ -346,10 +327,7 @@ kernel void pd_relex_test(device const uchar* bytes [[buffer(0)]], device const 
 // the unit's text tokens (`text_nodes`), each file's from its root's rank.
 
 // Each node's index where it has leaves, else 0: the max scan's input.
-kernel void pe_owner_in(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                        device const uint* bases [[buffer(2)]], device const uint* total [[buffer(3)]],
-                        device uint* out [[buffer(4)]], constant uint& n_files [[buffer(5)]],
-                        uint g [[thread_position_in_grid]]) {
+inline void pe_owner_in(device const PpFile* files, device const uchar* data, device const uint* bases, device const uint* total, device uint* out, uint n_files, uint g) {
     if (g >= total[0]) return;
     uint f = file_of(bases, n_files, g);
     Tape t = tape_at(data, files, f);
@@ -357,10 +335,7 @@ kernel void pe_owner_in(device const PpFile* files [[buffer(0)]], device const u
 }
 
 // Whether each node is a text token: a leaf whose owner is a `code` node.
-kernel void pe_text_flag(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                         device const uint* bases [[buffer(2)]], device const uint* total [[buffer(3)]],
-                         device const uint* owner [[buffer(4)]], device uint* flag [[buffer(5)]],
-                         constant uint& n_files [[buffer(6)]], uint g [[thread_position_in_grid]]) {
+inline void pe_text_flag(device const PpFile* files, device const uchar* data, device const uint* bases, device const uint* total, device const uint* owner, device uint* flag, uint n_files, uint g) {
     if (g >= total[0]) return;
     uint f = file_of(bases, n_files, g);
     Tape t = tape_at(data, files, f);
@@ -369,9 +344,7 @@ kernel void pe_text_flag(device const PpFile* files [[buffer(0)]], device const 
 }
 
 // Each text token's node at its rank.
-kernel void pe_text_nodes(device const uint* flag [[buffer(0)]], device const uint* rank [[buffer(1)]],
-                          device const uint* total [[buffer(2)]], device uint* text_nodes [[buffer(3)]],
-                          uint g [[thread_position_in_grid]]) {
+inline void pe_text_nodes(device const uint* flag, device const uint* rank, device const uint* total, device uint* text_nodes, uint g) {
     if (g < total[0] && flag[g] != 0u) text_nodes[rank[g]] = g;
 }
 
@@ -401,11 +374,7 @@ inline bool px_one_token(uint m) { return m >= L_TIMESTAMP && m <= L_FILE; }
 constant uint WALK = 64u;
 
 // Each instance's directive `j`'s row, where it makes one (a flag, then its place by a scan).
-kernel void pe_row_flag(device const PpInst* insts [[buffer(0)]], device const uint* n_insts [[buffer(1)]],
-                        device const uint* dactive [[buffer(2)]], device const uint* n_dirs [[buffer(3)]],
-                        device const uint* dir_bases [[buffer(4)]], device const PpDir* rows [[buffer(5)]],
-                        device const PpDef* defs [[buffer(6)]], device const ulong* dir_keys [[buffer(7)]],
-                        device uint* flag [[buffer(8)]], uint j [[thread_position_in_grid]]) {
+inline void pe_row_flag(device const PpInst* insts, device const uint* n_insts, device const uint* dactive, device const uint* n_dirs, device const uint* dir_bases, device const PpDir* rows, device const PpDef* defs, device const ulong* dir_keys, device uint* flag, uint j) {
     if (j >= n_dirs[0]) return;
     uint i = 0u, lo = 0u, hi = n_insts[0];
     for (uint k = 0u; k < 32u && hi - lo > 1u; k++) {
@@ -421,13 +390,7 @@ kernel void pe_row_flag(device const PpInst* insts [[buffer(0)]], device const u
 
 // The rows at their places (`at`, the flags' scan) after the `n_builtin` built-ins': each its sort
 // key (the name's upper 32 bits, its slot), its name's key, and its definition.
-kernel void pe_rows(device const PpInst* insts [[buffer(0)]], device const uint* n_insts [[buffer(1)]],
-                    device const uint* dslot [[buffer(2)]], device const uint* n_dirs [[buffer(3)]],
-                    device const uint* dir_bases [[buffer(4)]], device const PpDir* rows [[buffer(5)]],
-                    device const ulong* dir_keys [[buffer(6)]], device const uint* flag [[buffer(7)]],
-                    device const uint* at [[buffer(8)]], device ulong* sort_keys [[buffer(9)]],
-                    device ulong* name_keys [[buffer(10)]], device uint* values [[buffer(11)]],
-                    constant uint& n_builtin [[buffer(12)]], uint j [[thread_position_in_grid]]) {
+inline void pe_rows(device const PpInst* insts, device const uint* n_insts, device const uint* dslot, device const uint* n_dirs, device const uint* dir_bases, device const PpDir* rows, device const ulong* dir_keys, device const uint* flag, device const uint* at, device ulong* sort_keys, device ulong* name_keys, device uint* values, uint n_builtin, uint j) {
     if (j >= n_dirs[0] || flag[j] == 0u) return;
     uint lo = 0u, hi = n_insts[0];
     for (uint k = 0u; k < 32u && hi - lo > 1u; k++) {
@@ -443,8 +406,7 @@ kernel void pe_rows(device const PpInst* insts [[buffer(0)]], device const uint*
 }
 
 // The rows in all: the built-ins' and the scan's.
-kernel void pe_rows_total(device const uint* scanned [[buffer(0)]], device uint* n_rows [[buffer(1)]],
-                          constant uint& n_builtin [[buffer(2)]], uint i [[thread_position_in_grid]]) {
+inline void pe_rows_total(device const uint* scanned, device uint* n_rows, uint n_builtin, uint i) {
     if (i == 0u) n_rows[0] = scanned[0] + n_builtin;
 }
 
@@ -470,23 +432,14 @@ inline uint visible(device const ulong* sorted, device const uint* perm, uint n,
 // --- Setup: the stretches (S8) and their names' meanings (R4) ------------------------------------
 
 // Each stretch's sort key: its slot. The unit's order is the slots'.
-kernel void pe_gap_keys(device const uint* gslot [[buffer(0)]], device const uint* n_gaps [[buffer(1)]],
-                        device ulong* gkeys [[buffer(2)]], uint j [[thread_position_in_grid]]) {
+inline void pe_gap_keys(device const uint* gslot, device const uint* n_gaps, device ulong* gkeys, uint j) {
     if (j < n_gaps[0]) gkeys[j] = ulong(gslot[j]);
 }
 
 // The stretch at place `p` in the unit's order (`order`, the sort's): its tokens (0 where it is
 // not active), from the directive before it to the one after it, by the rows' text counts (the
 // file's text after its last directive), its first text token and its slot.
-kernel void pe_gap_counts(device const PpInst* insts [[buffer(0)]], device const uint* n_insts [[buffer(1)]],
-                          device const uint* gactive [[buffer(2)]], device const uint* n_gaps [[buffer(3)]],
-                          device const uint* dir_bases [[buffer(4)]], device const uint* dir_total [[buffer(5)]],
-                          device const PpDir* rows [[buffer(6)]], device const uint* bases [[buffer(7)]],
-                          device const uint* total [[buffer(8)]], device const uint* text_rank [[buffer(9)]],
-                          device const uint* text_total [[buffer(10)]], device uint* counts [[buffer(11)]],
-                          device uint* firsts [[buffer(12)]], device const uint* order [[buffer(13)]],
-                          device const ulong* gkeys [[buffer(14)]], device uint* sslot [[buffer(15)]],
-                          constant uint& n_files [[buffer(16)]], uint p [[thread_position_in_grid]]) {
+inline void pe_gap_counts(device const PpInst* insts, device const uint* n_insts, device const uint* gactive, device const uint* n_gaps, device const uint* dir_bases, device const uint* dir_total, device const PpDir* rows, device const uint* bases, device const uint* total, device const uint* text_rank, device const uint* text_total, device uint* counts, device uint* firsts, device const uint* order, device const ulong* gkeys, device uint* sslot, uint n_files, uint p) {
     if (p >= n_gaps[0]) return;
     uint j = order[p];
     uint lo = 0u, hi = n_insts[0];
@@ -506,16 +459,7 @@ kernel void pe_gap_counts(device const PpInst* insts [[buffer(0)]], device const
 
 // Each active stretch token's meaning where it stands (R4's test): `L_NOT_NAME` where it is no
 // identifier, else what its key means at its stretch's slot.
-kernel void pe_lookups(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                       device const uint* bases [[buffer(2)]], device const ulong* keys [[buffer(3)]],
-                       device const uint* text_nodes [[buffer(4)]], device const uint* gap_at [[buffer(5)]],
-                       device const uint* n_gaps [[buffer(6)]], device const uint* firsts [[buffer(7)]],
-                       device const uint* gslot [[buffer(8)]], device const uint* n_toks [[buffer(9)]],
-                       device const ulong* sorted [[buffer(10)]], device const uint* perm [[buffer(11)]],
-                       device const uint* n_rows [[buffer(12)]], device const ulong* name_keys [[buffer(13)]],
-                       device const uint* values [[buffer(14)]], device uint* out [[buffer(15)]],
-                       device atomic_uint* bad [[buffer(16)]], constant uint& n_files [[buffer(17)]],
-                       uint s [[thread_position_in_grid]]) {
+inline void pe_lookups(device const PpFile* files, device const uchar* data, device const uint* bases, device const ulong* keys, device const uint* text_nodes, device const uint* gap_at, device const uint* n_gaps, device const uint* firsts, device const uint* gslot, device const uint* n_toks, device const ulong* sorted, device const uint* perm, device const uint* n_rows, device const ulong* name_keys, device const uint* values, device uint* out, device atomic_uint* bad, uint n_files, uint s) {
     if (s >= n_toks[0]) return;
     uint j = pb_item_of(gap_at, n_gaps[0], s);
     uint g = text_nodes[firsts[j] + (s - gap_at[j])];
@@ -546,7 +490,7 @@ constant uint TOP = 0x80000000u, NO_DEF = 0xffffffffu;
 constant uint IT_SUBST = 0u, IT_PLACE = 1u << 30, IT_CALL = 2u << 30, IT_SCAN = 3u << 30, IT_KIND = 3u << 30;
 // Why a unit is refused (`ctl[2]`); `X_ROOM` reruns it at the next rung.
 constant uint X_BUILTIN = 1u, X_PAST_END = 4u, X_PASTE = 8u, X_DEPTH = 16u, X_ROOM = 32u, X_QUEUE = 64u;
-constant uint X_HASH = 128u, X_ACROSS = 256u, X_VA_OPT = 512u, X_RELEX = 1024u, X_SPLICE = 2048u;
+constant uint X_HASH = 128u, X_ACROSS = 256u, X_VA_OPT = 512u, X_RELEX = 1024u, X_SPLICE = 2048u, X_BARRIER = 4096u;
 // A token's flags: painted (never a candidate again); space before it (or a line's start).
 constant uint T_NOEXP = 1u, T_SPACE = 2u;
 // Before the pastes: a body's `##` (an operator), and a token a paste consumed.
@@ -698,13 +642,7 @@ inline uint paren_delta(Ux u, uint g) {
 
 // Each top token's stretch head (for the depth's segmented scan), its depth change, and whether it
 // is a `)` (for the close table).
-kernel void px_top_parens(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                          device const uint* bases [[buffer(2)]], device const uint* text_nodes [[buffer(3)]],
-                          device const uint* gat [[buffer(4)]], device const uint* n_gaps [[buffer(5)]],
-                          device const uint* firsts [[buffer(6)]], device const uint* n_toks [[buffer(7)]],
-                          device uint* heads [[buffer(8)]], device uint* delta [[buffer(9)]],
-                          device uint* close [[buffer(10)]], constant uint& n_files [[buffer(11)]],
-                          uint s [[thread_position_in_grid]]) {
+inline void px_top_parens(device const PpFile* files, device const uchar* data, device const uint* bases, device const uint* text_nodes, device const uint* gat, device const uint* n_gaps, device const uint* firsts, device const uint* n_toks, device uint* heads, device uint* delta, device uint* close, uint n_files, uint s) {
     if (s >= n_toks[0]) return;
     Ux u; u.files = files; u.data = data; u.bases = bases; u.n_files = n_files;
     uint j = pb_item_of(gat, n_gaps[0], s);
@@ -715,10 +653,7 @@ kernel void px_top_parens(device const PpFile* files [[buffer(0)]], device const
 }
 
 // Each `)`'s key at its place: its depth after it (biased), its position below.
-kernel void px_close_keys(device const uint* depth [[buffer(0)]], device const uint* close [[buffer(1)]],
-                          device const uint* at [[buffer(2)]], device const uint* n_toks [[buffer(3)]],
-                          device ulong* keys [[buffer(4)]], device atomic_uint* ctl [[buffer(5)]],
-                          uint s [[thread_position_in_grid]]) {
+inline void px_close_keys(device const uint* depth, device const uint* close, device const uint* at, device const uint* n_toks, device ulong* keys, device atomic_uint* ctl, uint s) {
     if (s >= n_toks[0] || close[s] == 0u) return;
     uint b = depth[s] + DEPTH_BIAS;
     if (b >= 2u * DEPTH_BIAS || s >= (1u << POS_BITS)) { px_refuse(ctl, X_DEPTH); return; }
@@ -743,15 +678,7 @@ inline uint top_close(device const ulong* closes, uint n_close, device const uin
 
 // Each top token's call: an object-like name, or a function-like one followed in its stretch by
 // `(`, to its `)`. `cend` is the call's last token + 1 (0: no call), the max scan's input.
-kernel void px_top_calls(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                         device const uint* bases [[buffer(2)]], device const PpDef* defs [[buffer(3)]],
-                         device const uint* lookups [[buffer(4)]], device const uint* text_nodes [[buffer(5)]],
-                         device const uint* gat [[buffer(6)]], device const uint* n_gaps [[buffer(7)]],
-                         device const uint* firsts [[buffer(8)]], device const uint* n_toks [[buffer(9)]],
-                         device const uint* depth [[buffer(10)]], device const ulong* closes [[buffer(11)]],
-                         device const uint* n_close [[buffer(12)]], device uint* cend [[buffer(13)]],
-                         device atomic_uint* ctl [[buffer(14)]], constant uint& n_files [[buffer(15)]],
-                         uint s [[thread_position_in_grid]]) {
+inline void px_top_calls(device const PpFile* files, device const uchar* data, device const uint* bases, device const PpDef* defs, device const uint* lookups, device const uint* text_nodes, device const uint* gat, device const uint* n_gaps, device const uint* firsts, device const uint* n_toks, device const uint* depth, device const ulong* closes, device const uint* n_close, device uint* cend, device atomic_uint* ctl, uint n_files, uint s) {
     uint n = n_toks[0];
     if (s >= n) return;
     uint m = lookups[s];
@@ -780,9 +707,7 @@ kernel void px_top_calls(device const PpFile* files [[buffer(0)]], device const 
 
 // Each top token's state: 1 an outermost call's name (no earlier call reaches it), 2 inside an
 // earlier call, 0 neither; and the outermost calls' flags, for their scan.
-kernel void px_top_outer(device const uint* cend [[buffer(0)]], device const uint* reach [[buffer(1)]],
-                         device const uint* n_toks [[buffer(2)]], device uint* state [[buffer(3)]],
-                         device uint* oflag [[buffer(4)]], uint s [[thread_position_in_grid]]) {
+inline void px_top_outer(device const uint* cend, device const uint* reach, device const uint* n_toks, device uint* state, device uint* oflag, uint s) {
     if (s >= n_toks[0]) return;
     uint before = s == 0u ? 0u : reach[s - 1u];
     uint st = before > s ? 2u : cend[s] != 0u ? 1u : 0u;
@@ -792,13 +717,7 @@ kernel void px_top_outer(device const uint* cend [[buffer(0)]], device const uin
 
 // Each outermost top call's list (its index the scan's) and its item: CALL for a function-like
 // macro, SUBST for an object-like one.
-kernel void px_top_lists(device const uint* lookups [[buffer(0)]], device const uint* cend [[buffer(1)]],
-                         device const uint* state [[buffer(2)]], device const uint* oid [[buffer(3)]],
-                         device const uint* n_toks [[buffer(4)]], device const uint* gslot [[buffer(5)]],
-                         device const uint* gat [[buffer(6)]], device const uint* n_gaps [[buffer(7)]],
-                         device PxList* lists [[buffer(8)]], device atomic_uint* slots [[buffer(9)]],
-                         device atomic_uint* ctl [[buffer(10)]], device const PpDef* defs [[buffer(11)]],
-                         constant uint& list_cap [[buffer(12)]], uint s [[thread_position_in_grid]]) {
+inline void px_top_lists(device const uint* lookups, device const uint* cend, device const uint* state, device const uint* oid, device const uint* n_toks, device const uint* gslot, device const uint* gat, device const uint* n_gaps, device PxList* lists, device atomic_uint* slots, device atomic_uint* ctl, device const PpDef* defs, uint list_cap, uint s) {
     if (s >= n_toks[0] || state[s] != 1u) return;
     uint c = oid[s];
     if (c >= list_cap) { px_refuse(ctl, X_ROOM); return; }
@@ -812,9 +731,7 @@ kernel void px_top_lists(device const uint* lookups [[buffer(0)]], device const 
 
 // The queue holds the top calls' items: head 0, tail and active their number; the arena's lists
 // start after them.
-kernel void px_seed(device const uint* n_calls [[buffer(0)]], device atomic_uint* qctl [[buffer(1)]],
-                    device atomic_uint* ctl [[buffer(2)]], constant uint& list_cap [[buffer(3)]],
-                    uint i [[thread_position_in_grid]]) {
+inline void px_seed(device const uint* n_calls, device atomic_uint* qctl, device atomic_uint* ctl, uint list_cap, uint i) {
     if (i != 0u) return;
     uint n = min(n_calls[0], list_cap);
     atomic_store_explicit(&qctl[0], 0u, memory_order_relaxed);
@@ -1838,21 +1755,7 @@ inline void px_place(Ar a, uint l, uint lane) {
 }
 
 // The queue's workers: a SIMD group each, lane 0 taking an item and the 32 lanes doing it.
-kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                    device const uint* bases [[buffer(2)]], device const ulong* keys [[buffer(3)]],
-                    device const PpDef* defs [[buffer(4)]], device const uint* items [[buffer(5)]],
-                    device const ulong* sorted [[buffer(6)]], device const uint* perm [[buffer(7)]],
-                    device const uint* n_rows [[buffer(8)]], device const ulong* name_keys [[buffer(9)]],
-                    device const uint* values [[buffer(10)]], device const uint* text_nodes [[buffer(11)]],
-                    device const uint* gat [[buffer(12)]], device const uint* n_gaps [[buffer(13)]],
-                    device const uint* firsts [[buffer(14)]], device const uint* n_toks [[buffer(15)]],
-                    device const uint* top_depth [[buffer(16)]], device PxList* lists [[buffer(17)]],
-                    device uint* cols [[buffer(18)]], device PxArg* args [[buffer(19)]],
-                    device uint* out [[buffer(20)]], device atomic_uint* slots [[buffer(21)]],
-                    device atomic_uint* qctl [[buffer(22)]], device atomic_uint* ctl [[buffer(23)]],
-                    constant uint* words [[buffer(24)]], device PxScratch* scratch [[buffer(25)]],
-                    device const ulong* closes [[buffer(26)]], device const uint* n_close [[buffer(27)]],
-                    uint lane [[thread_index_in_simdgroup]]) {
+inline void px_worker(device const PpFile* files, device const uchar* data, device const uint* bases, device const ulong* keys, device const PpDef* defs, device const uint* items, device const ulong* sorted, device const uint* perm, device const uint* n_rows, device const ulong* name_keys, device const uint* values, device const uint* text_nodes, device const uint* gat, device const uint* n_gaps, device const uint* firsts, device const uint* n_toks, device const uint* top_depth, device PxList* lists, device uint* cols, device PxArg* args, device uint* out, device atomic_uint* slots, device atomic_uint* qctl, device atomic_uint* ctl, device const uint* words, device PxScratch* scratch, device const ulong* closes, device const uint* n_close, uint lane) {
     // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high), the scratch
     // bytes' and tokens' capacities.
     Ux u;
@@ -1902,16 +1805,12 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
 
 // The top level's rollback (after the queue's first phase, when every list is final): each
 // outermost top call with an exit flagged (for a scan and a compaction, in order).
-kernel void px_top_xflag(device const uint* state [[buffer(0)]], device const uint* oid [[buffer(1)]],
-                         device const PxList* lists [[buffer(2)]], device const uint* n_toks [[buffer(3)]],
-                         device uint* xflag [[buffer(4)]], uint s [[thread_position_in_grid]]) {
+inline void px_top_xflag(device const uint* state, device const uint* oid, device const PxList* lists, device const uint* n_toks, device uint* xflag, uint s) {
     if (s >= n_toks[0]) return;
     xflag[s] = state[s] == 1u && lists[oid[s]].exit != 0u ? 1u : 0u;
 }
 
-kernel void px_top_xlist(device const uint* xflag [[buffer(0)]], device const uint* xat [[buffer(1)]],
-                         device const uint* n_toks [[buffer(2)]], device uint* xpos [[buffer(3)]],
-                         uint s [[thread_position_in_grid]]) {
+inline void px_top_xlist(device const uint* xflag, device const uint* xat, device const uint* n_toks, device uint* xpos, uint s) {
     if (s >= n_toks[0] || xflag[s] == 0u) return;
     xpos[xat[s]] = s;
 }
@@ -1919,10 +1818,7 @@ kernel void px_top_xlist(device const uint* xflag [[buffer(0)]], device const ui
 // The exit-bearing top calls, in order, by one SIMD group (they are few): each live unless an
 // earlier live one's claim covers it (decided one after another, a ballot of 32); `xcover[i]` the
 // end of the live claims through call `i` (a running max).
-kernel void px_top_cover(device const uint* xpos [[buffer(0)]], device const uint* n_x [[buffer(1)]],
-                         device const uint* oid [[buffer(2)]], device PxList* lists [[buffer(3)]],
-                         device uint* xcover [[buffer(4)]], device atomic_uint* ctl [[buffer(5)]],
-                         uint t [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+inline void px_top_cover(device const uint* xpos, device const uint* n_x, device const uint* oid, device PxList* lists, device uint* xcover, device atomic_uint* ctl, uint t, uint lane) {
     if (t >= 32u) return;
     Ar a;
     a.lists = lists; a.ctl = ctl;
@@ -1957,11 +1853,7 @@ inline uint px_lower_bound(device const uint* v, uint n, uint q) {
 // Each top token's piece of the output: 0 inside a live exit's claim (its state made 2), else 1
 // for a token no call covers, its list's size and its exits' chain's for an outermost call's name,
 // 0 inside a call.
-kernel void px_top_sizes(device uint* state [[buffer(0)]], device const uint* oid [[buffer(1)]],
-                         device PxList* lists [[buffer(2)]], device const uint* n_toks [[buffer(3)]],
-                         device uint* v [[buffer(4)]], device const uint* xpos [[buffer(5)]],
-                         device const uint* n_x [[buffer(6)]], device const uint* xcover [[buffer(7)]],
-                         uint s [[thread_position_in_grid]]) {
+inline void px_top_sizes(device uint* state, device const uint* oid, device PxList* lists, device const uint* n_toks, device uint* v, device const uint* xpos, device const uint* n_x, device const uint* xcover, uint s) {
     if (s >= n_toks[0]) return;
     uint i = px_lower_bound(xpos, n_x[0], s);
     if (i > 0u && xcover[i - 1u] > s) {
@@ -1977,14 +1869,7 @@ kernel void px_top_sizes(device uint* state [[buffer(0)]], device const uint* oi
 
 // Each top token at its place (`obase`, the sizes' scan), and each live outermost call's list's
 // base and its exits' chain's, their PLACE pushed.
-kernel void px_top_place(device const uint* state [[buffer(0)]], device const uint* oid [[buffer(1)]],
-                         device PxList* lists [[buffer(2)]], device const uint* n_toks [[buffer(3)]],
-                         device const uint* obase [[buffer(4)]], device const uint* text_nodes [[buffer(5)]],
-                         device const uint* gat [[buffer(6)]], device const uint* n_gaps [[buffer(7)]],
-                         device const uint* firsts [[buffer(8)]], device uint* out [[buffer(9)]],
-                         device atomic_uint* slots [[buffer(10)]], device atomic_uint* qctl [[buffer(11)]],
-                         device atomic_uint* ctl [[buffer(12)]], constant uint& out_cap [[buffer(13)]],
-                         constant uint& q_cap [[buffer(14)]], uint s [[thread_position_in_grid]]) {
+inline void px_top_place(device const uint* state, device const uint* oid, device PxList* lists, device const uint* n_toks, device const uint* obase, device const uint* text_nodes, device const uint* gat, device const uint* n_gaps, device const uint* firsts, device uint* out, device atomic_uint* slots, device atomic_uint* qctl, device atomic_uint* ctl, uint out_cap, uint q_cap, uint s) {
     if (s >= n_toks[0]) return;
     uint st = state[s];
     if (st == 0u) {
@@ -2007,9 +1892,7 @@ kernel void px_top_place(device const uint* state [[buffer(0)]], device const ui
 }
 
 // After the queue's launches: items left is a refusal; the output's length past its room too.
-kernel void px_check(device const atomic_uint* qctl [[buffer(0)]], device const uint* n_out [[buffer(1)]],
-                     device atomic_uint* ctl [[buffer(2)]], constant uint& out_cap [[buffer(3)]],
-                     uint i [[thread_position_in_grid]]) {
+inline void px_check(device const atomic_uint* qctl, device const uint* n_out, device atomic_uint* ctl, uint out_cap, uint i) {
     if (i != 0u) return;
     if (atomic_load_explicit(&qctl[2], memory_order_relaxed) != 0u || atomic_load_explicit(&qctl[3], memory_order_relaxed) != 0u) px_refuse(ctl, X_QUEUE);
     if (n_out[0] > out_cap) px_refuse(ctl, X_ROOM);

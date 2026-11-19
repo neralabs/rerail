@@ -236,3 +236,41 @@ with the unit, because each primitive's number of levels was chosen by its capac
       count comes with the setup kernel in step 5.
     - CUDA uses the same counter form: the device layer has no cooperative launch.
     - The tests ran on Metal only, not on UKL's CPU backend.
+- **Step 5a** (this commit): the evaluation on one persistent grid, four launches for every unit.
+  - `pp_grid.metal`:
+    - `pp_setup`: the front, the definitions, the visibility and the top level, to the queue's
+      seed, as phases with a grid barrier between them;
+    - `px_expand`, encoded twice: the queue's first phase, then the top level's rollback,
+      sizes and places, then the queue's second phase. A stage word lets the second launch
+      take up a queue whose workers all gave up waiting;
+    - `pp_check`: the refusals.
+
+    Every pass of `pp_eval.metal` and `pp_expand.metal` is now an inline body over a grid-stride
+    loop, and `px_work` is `px_worker`, run by every SIMD group of the grid.
+  - The scans, segmented scans and sorts are `ukl/grid.h`'s. `pp_blocks.metal` keeps only the
+    searches. `Scan` keeps only its total, and `Sort` keeps only its other buffers and
+    histograms. `SegScan`, the plan kernels, the indirect arguments and `Grid::Indirect` are gone.
+  - The kernels bind the arena once, with the slab and the layout. `SLOTS` names every store,
+    and `source()` turns it into the MSL's `S_*`. `Lay` holds a run's offsets and words, and
+    each structure writes its own slots (`Front/Defs/Vis/Exp::lay`). The 31-binding limit no
+    longer applies.
+  - `LAST` stops `pp_setup` after the front, the definitions or the visibility, for the tests
+    of those stages.
+  - The groups' sums are sized by the run's groups. A failed barrier sets `X_BARRIER`. The
+    host sees it in the grid's failure word and runs again at half the groups (`fewer`), down
+    to 1.
+  - Tests:
+    - `an_evaluation_is_a_fixed_handful_of_launches` (R7): an empty unit, a unit of 800
+      definitions and uses, and a unit that runs again at a larger rung, all at 4 launches. A
+      grid of 4,096 groups fails its barrier, runs again, and gives the same output at 256
+      groups.
+    - All 16 evaluator tests pass, and the 2 block tests pass.
+    - The corpus in three slices (R8): 999 + 1,199 + 934 = 3,132 units equal the serial pass,
+      the same 3 refused (`#line` twice, a call across a stretch's end once), every unit at 4
+      launches. Before this step a unit took 118 to 176 launches.
+  - Not yet as decided:
+    - G starts at 32 (`GROUPS`), not the Machine's resident count. 256 groups of 256 held here
+      (an M5), so 32 is conservative. The count from IORegistry's `gpu-core-count` is still to
+      come.
+    - `pp_expand` is still MSL, not UKL (step 5b).
+    - The setup's GPU time has not yet been measured against step 4's.

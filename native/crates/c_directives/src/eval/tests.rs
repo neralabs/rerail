@@ -451,6 +451,40 @@ fn expanded(files: &[(&str, &str)], cpp: bool, rung: u32) -> (Result<Vec<Vec<u8>
     (Ok(spelled), serial.0, x.rung, x.launches)
 }
 
+/// Decision 0460 §4: an evaluation is a fixed handful of launches, `pp_setup`, `px_expand` twice
+/// and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
+/// definitions, and one that runs again at a larger rung. A grid past the groups the device holds
+/// at once fails its barrier, never hangs, and runs again at half the groups to the same output.
+#[test]
+fn an_evaluation_is_a_fixed_handful_of_launches() {
+    let mut big = String::new();
+    for k in 0..400usize {
+        big += &format!("#define M{k}(a, b) (a + b * {k}) M{}\n", k.saturating_sub(1));
+    }
+    for k in 0..400 {
+        big += &format!("int v{k} = M{k}(x{k}, y) + M{}(1, 2);\n", (k * 7) % 400);
+    }
+    let doubling = "#define A0 x y\n#define A1 A0 A0\n#define A2 A1 A1\n#define A3 A2 A2\n#define A4 A3 A3\n#define A5 A4 A4\n#define A6 A5 A5\n#define A7 A6 A6\n#define A8 A7 A7\n#define A9 A8 A8\nA9 A9 A9\n";
+    let shapes: [(&str, &[(&str, &str)]); 3] = [("empty", &[("main.c", "")]), ("large", &[("main.c", big.as_str())]), ("doubling", &[("main.c", doubling)])];
+    for (what, files) in shapes {
+        let (got, want, rung, launches) = expanded(files, false, 0);
+        same(got.map(|g| show(&g)), Ok(show(&want)), what);
+        same(launches, 4, format!("{what}'s launches (rung {rung})"));
+    }
+    // 4,096 groups of 256 threads: past what any GPU holds at once.
+    use rerail_c_pp::files::Search;
+    let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), big.into_bytes())].into_iter().collect();
+    let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+    let p1 = rerail_c_pp::stream::parallel::p1_of(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c").unwrap();
+    let (unit, lay, _) = unit_of(&p1, false);
+    let wide = rerail_metal::pp_expand::expand_at(&unit, &lay, 0, 4096).unwrap();
+    let narrow = rerail_metal::pp_expand::expand_from(&unit, &lay, 0).unwrap();
+    assert!(wide.groups < 4096, "the grid past residency ran at {} groups", wide.groups);
+    same(wide.refused, 0, "the halved grid's refusals");
+    same(&wide.out, &narrow.out, "the halved grid's output");
+    eprintln!("past residency: ran again at {} groups", wide.groups);
+}
+
 fn show(v: &[Vec<u8>]) -> String {
     v.iter().map(|t| String::from_utf8_lossy(t).into_owned()).collect::<Vec<_>>().join(" ")
 }
@@ -625,6 +659,7 @@ fn the_corpus_expands_on_the_device() {
         (X_VA_OPT, "#__VA_OPT__"),
         (X_RELEX, "a paste the relexer refuses"),
         (X_SPLICE, "# or ## of a token with a line splice"),
+        (X_BARRIER, "a grid barrier"),
     ];
     let (mut same_units, mut tokens, mut launches) = (0, 0, 0);
     let mut refused = std::collections::BTreeMap::<&str, usize>::new();

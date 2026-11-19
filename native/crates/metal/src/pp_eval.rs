@@ -14,7 +14,7 @@
 
 use crate::Error;
 use crate::launch::{commit_checked, wait_checked};
-use crate::pp_blocks::{Arena, Bound, Buf, Enc, Grid, Scan, TG};
+use crate::pp_blocks::{Arena, Bound, Buf, Enc, Grid, Lay, Scan};
 
 /// The passes' source, preprocessed for Metal (`crate::pp_blocks::source`).
 pub fn source() -> Result<&'static str, Error> {
@@ -177,13 +177,16 @@ pub struct PpDir {
     pub chain: u32,
 }
 
-/// The passes' buffers on the device, made before any is encoded.
+/// The front passes' stores, and the grid's own: its control words (`GRID`: the barrier's and
+/// the expansion's stage), the groups' sums its scans share (`SUMS`), and the run's layout.
 pub struct Front {
     n: usize,
     nodes: bool,
     /// The unit's views (`PpFile`s), in the arena.
     pub files: Buf,
-    pub n_files: Buf,
+    pub grid: Buf,
+    sums: Buf,
+    pub lay: Buf,
     counts: Buf,
     pub bases: Buf,
     dir_counts: Buf,
@@ -192,8 +195,6 @@ pub struct Front {
     guarded: Buf,
     guards: Buf,
     bad: Buf,
-    args: Buf,
-    dir_args: Buf,
     pub keys: Buf,
     out: Buf,
     pub rows: Buf,
@@ -202,16 +203,25 @@ pub struct Front {
     dir_scan: Scan,
 }
 
+/// The stages a run of `pp_setup` ends after (`LAST`): the front, the definitions, the
+/// visibility, or the whole setup (the expansion follows).
+pub const TO_FRONT: u32 = 1;
+pub const TO_DEFS: u32 = 2;
+pub const TO_VIS: u32 = 3;
+pub const TO_ALL: u32 = 4;
+
 impl Front {
-    pub fn new(arena: &Arena, unit: &Unit, nodes: bool) -> Result<Front, Error> {
+    /// `groups`: the grid's groups (the scans' sums are two words a group).
+    pub fn new(arena: &Arena, unit: &Unit, nodes: bool, groups: u64) -> Result<Front, Error> {
         let n = unit.len();
         let per_file = || arena.zeroed::<u32>(n);
-        let one = |k: usize| arena.zeroed::<u32>(k);
         Ok(Front {
             n,
             nodes,
             files: arena.from_slice(&unit.views)?,
-            n_files: arena.from_slice(&[n as u32])?,
+            grid: arena.zeroed::<u32>(8)?,
+            sums: arena.zeroed::<u32>(2 * groups as usize + 2)?,
+            lay: arena.zeroed::<u32>(crate::pp_blocks::SLOTS.len())?,
             counts: per_file()?,
             bases: per_file()?,
             dir_counts: per_file()?,
@@ -219,16 +229,23 @@ impl Front {
             groups: per_file()?,
             guarded: per_file()?,
             guards: arena.zeroed::<u64>(n)?,
-            bad: one(1)?,
-            args: one(4)?,
-            dir_args: one(4)?,
+            bad: arena.zeroed::<u32>(1)?,
             keys: arena.zeroed::<u64>(unit.node_bound)?,
             out: arena.zeroed::<[u32; 4]>(if nodes { unit.node_bound } else { 1 })?,
             rows: arena.zeroed::<PpDir>(unit.dir_bound)?,
             dir_keys: arena.zeroed::<u64>(unit.dir_bound)?,
-            scan: Scan::new(arena, n)?,
-            dir_scan: Scan::new(arena, n)?,
+            scan: Scan::new(arena)?,
+            dir_scan: Scan::new(arena)?,
         })
+    }
+
+    /// The front's slots of the layout, and the run's words: the stage it ends after.
+    pub fn lay(&self, l: &mut Lay, last: u32) {
+        l.at("GRID", &self.grid).at("SUMS", &self.sums).at("FILES", &self.files).at("COUNTS", &self.counts).at("BASES", &self.bases);
+        l.at("TOTAL", &self.scan.total).at("DIR_COUNTS", &self.dir_counts).at("DIR_BASES", &self.dir_bases).at("DIR_TOTAL", &self.dir_scan.total);
+        l.at("DIR_GROUPS", &self.groups).at("GUARDED", &self.guarded).at("GUARDS", &self.guards).at("BAD", &self.bad).at("KEYS", &self.keys);
+        l.at("NODES_OUT", &self.out).at("ROWS", &self.rows).at("DIR_KEYS", &self.dir_keys);
+        l.word("N_FILES", self.n as u32).word("NODES_FLAG", u32::from(self.nodes)).word("LAST", last);
     }
 
     /// The slab of the unit's documents, as a pass binds it (the views' store where the unit
@@ -240,49 +257,25 @@ impl Front {
         }
     }
 
-    /// The unit's nodes in all (after `encode`).
+    /// The unit's nodes in all (after a run).
     pub fn total(&self) -> &Buf {
         &self.scan.total
     }
 
-    /// The indirect arguments of a pass a node each (after `encode`).
-    pub fn node_args(&self) -> &Buf {
-        &self.args
-    }
-
-    /// The unit's directive rows in all (after `encode`).
+    /// The unit's directive rows in all (after a run).
     pub fn dir_total(&self) -> &Buf {
         &self.dir_scan.total
     }
 
-    /// The passes, in order:
-    /// - the unit's nodes: `pp_counts` (one thread a file), a scan;
-    /// - the names: `pp_names` (and `pp_nodes` where asked), one thread a node, their number the
-    ///   scan's;
-    /// - the directives: `pp_dir_counts` (one thread a file walks its tape), a scan, `pp_dirs`
-    ///   (the same walk, each file's rows from its first);
-    /// - the directives' names: `pp_dir_keys`, one thread a row, their number the second scan's;
-    /// - each file's include guard: `pp_guards`, one thread a file.
-    pub fn encode(&self, enc: &Enc<'_>, unit: &Unit) -> Result<(), Error> {
-        let n32 = self.n as u32;
-        let files = Grid::Groups((self.n as u64).div_ceil(TG));
-        let (u_files, u_data): (&dyn Bound, &dyn Bound) = (&self.files, self.data(unit));
-        enc.run("pp_counts", None, &[u_files, u_data, &self.counts, &self.bad], &[n32], files)?;
-        self.scan.encode(enc, &self.n_files, 0, &self.counts, &self.bases)?;
-        enc.run("pb_args", None, &[&self.scan.total, &self.args], &[0], Grid::Groups(1))?;
-        let by_node = Grid::Indirect(&self.args, 0);
-        enc.run("pp_names", None, &[u_files, u_data, &self.bases, &self.scan.total, &self.keys], &[n32], by_node)?;
-        if self.nodes {
-            enc.run("pp_nodes", None, &[u_files, u_data, &self.bases, &self.scan.total, &self.out], &[n32], by_node)?;
-        }
-        enc.run("pp_dir_counts", None, &[u_files, u_data, &self.dir_counts, &self.bad], &[n32], files)?;
-        self.dir_scan.encode(enc, &self.n_files, 0, &self.dir_counts, &self.dir_bases)?;
-        enc.run("pb_args", None, &[&self.dir_scan.total, &self.dir_args], &[0], Grid::Groups(1))?;
-        enc.run("pp_dirs", None, &[u_files, u_data, &self.dir_bases, &self.rows, &self.groups, &self.guarded, &self.bad], &[n32], files)?;
-        let by_row = Grid::Indirect(&self.dir_args, 0);
-        let dir_total = &self.dir_scan.total;
-        enc.run("pp_dir_keys", None, &[u_files, u_data, &self.bases, &self.keys, &self.dir_bases, dir_total, &self.rows, &self.dir_keys], &[n32], by_row)?;
-        enc.run("pp_guards", None, &[&self.guarded, &self.dir_bases, &self.dir_keys, &self.guards], &[n32], files)
+    /// Whether the run's grid failed a barrier (after it).
+    pub fn barrier_failed(&self) -> bool {
+        // SAFETY: the device finished writing the grid's words.
+        unsafe { *self.grid.host().cast::<u32>().add(2) != 0 }
+    }
+
+    /// `pp_setup` over the arena, `groups` groups.
+    pub fn setup(&self, enc: &Enc<'_>, arena: &Arena, unit: &Unit, groups: u64) -> Result<(), Error> {
+        enc.run("pp_setup", None, &[arena, self.data(unit), &self.lay], &[], Grid::Groups(groups))
     }
 
     /// The results, read back for tests (after the command buffer is done).
@@ -341,11 +334,44 @@ pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
 pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
-    let arena = Arena::new();
-    let front = Front::new(&arena, unit, nodes)?;
-    arena.lease()?;
-    run(|enc| front.encode(enc, unit))?;
-    front.read()
+    let mut groups = crate::pp_blocks::GROUPS;
+    loop {
+        let arena = Arena::new();
+        let front = Front::new(&arena, unit, nodes, groups)?;
+        arena.lease()?;
+        let mut l = Lay::new();
+        front.lay(&mut l, TO_FRONT);
+        if on_grid(&arena, unit, &front, &l, groups)?.is_none() {
+            groups = fewer(groups)?;
+            continue;
+        }
+        return front.read();
+    }
+}
+
+/// Runs the persistent grid over the arena at `groups` groups, laid out as `l`, in one command
+/// buffer: `pp_setup` to the stage `l` names, and for the whole setup (`TO_ALL`) the expansion
+/// too: `px_expand` twice and `pp_check`. The launches it made, or `None` where a barrier failed
+/// (the grid's groups were not resident together).
+pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<usize>, Error> {
+    l.write(&front.lay);
+    let all = l.get("LAST") == TO_ALL;
+    let launches = run(|enc| {
+        front.setup(enc, arena, unit, groups)?;
+        if all {
+            for _ in 0..2 {
+                enc.run("px_expand", None, &[arena, front.data(unit), &front.lay], &[], Grid::Groups(groups))?;
+            }
+            enc.run("pp_check", None, &[arena, &front.lay], &[], Grid::Groups(1))?;
+        }
+        Ok(())
+    })?;
+    Ok(if front.barrier_failed() { None } else { Some(launches) })
+}
+
+/// The groups of the next run after a barrier failed: half, and none past one.
+pub fn fewer(groups: u64) -> Result<u64, Error> {
+    if groups <= 1 { Err(Error::BackendFailure) } else { Ok(groups / 2) }
 }
 
 /// A name's key, as `pp_eval.metal`'s `name_key` makes it: its bytes 8 at a time, line splices

@@ -52,9 +52,7 @@ inline uint tape_line_of(Tape t, uint x) { return clif_tape_line(t.d, (device co
 // --- The unit's nodes: a count a file, a prefix sum, a node's file --------------------------------
 
 // Each file's node count (its view's).
-kernel void pp_counts(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                      device uint* counts [[buffer(2)]], device atomic_uint* bad [[buffer(3)]],
-                      constant uint& n_files [[buffer(4)]], uint f [[thread_position_in_grid]]) {
+inline void pp_counts(device const PpFile* files, device const uchar* data, device uint* counts, device atomic_uint* bad, uint n_files, uint f) {
     if (f >= n_files) return;
     counts[f] = files[f].nodes;
 }
@@ -149,10 +147,7 @@ inline ulong name_key(device const ulong* d, uint a, uint len) {
 }
 
 // Each identifier leaf's key, 0 for every other node: one thread a node of the unit.
-kernel void pp_names(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                     device const uint* bases [[buffer(2)]], device const uint* total [[buffer(3)]],
-                     device ulong* keys [[buffer(4)]], constant uint& n_files [[buffer(5)]],
-                     uint g [[thread_position_in_grid]]) {
+inline void pp_names(device const PpFile* files, device const uchar* data, device const uint* bases, device const uint* total, device ulong* keys, uint n_files, uint g) {
     if (g >= total[0]) return;
     uint f = file_of(bases, n_files, g);
     Tape t = tape_at(data, files, f);
@@ -166,10 +161,7 @@ kernel void pp_names(device const PpFile* files [[buffer(0)]], device const ucha
 }
 
 // For tests: each node of the unit as the reader gives it (key, start, end, size).
-kernel void pp_nodes(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                     device const uint* bases [[buffer(2)]], device const uint* total [[buffer(3)]],
-                     device uint4* out [[buffer(4)]], constant uint& n_files [[buffer(5)]],
-                     uint g [[thread_position_in_grid]]) {
+inline void pp_nodes(device const PpFile* files, device const uchar* data, device const uint* bases, device const uint* total, device uint4* out, uint n_files, uint g) {
     if (g >= total[0]) return;
     uint f = file_of(bases, n_files, g);
     Tape t = tape_at(data, files, f);
@@ -277,9 +269,7 @@ inline uint walk_dirs(Tape t, device PpDir* out, uint at, thread uint& groups, t
 }
 
 // Each file's directives.
-kernel void pp_dir_counts(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                          device uint* counts [[buffer(2)]], device atomic_uint* bad [[buffer(3)]],
-                          constant uint& n_files [[buffer(4)]], uint f [[thread_position_in_grid]]) {
+inline void pp_dir_counts(device const PpFile* files, device const uchar* data, device uint* counts, device atomic_uint* bad, uint n_files, uint f) {
     if (f >= n_files) return;
     uint groups;
     bool guarded;
@@ -287,11 +277,7 @@ kernel void pp_dir_counts(device const PpFile* files [[buffer(0)]], device const
 }
 
 // Each file's rows from its first (the scan's), its groups, and whether it has a guard's shape.
-kernel void pp_dirs(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                    device const uint* dir_bases [[buffer(2)]], device PpDir* rows [[buffer(3)]],
-                    device uint* groups [[buffer(4)]], device uint* guarded [[buffer(5)]],
-                    device atomic_uint* bad [[buffer(6)]],
-                    constant uint& n_files [[buffer(7)]], uint f [[thread_position_in_grid]]) {
+inline void pp_dirs(device const PpFile* files, device const uchar* data, device const uint* dir_bases, device PpDir* rows, device uint* groups, device uint* guarded, device atomic_uint* bad, uint n_files, uint f) {
     if (f >= n_files) return;
     uint g;
     bool shaped;
@@ -307,11 +293,7 @@ constant uint K_DEFINE = 6u, K_UNDEF = 7u, K_IFDEF = 13u, K_ELIFDEF = 16u, K_ELI
 // Each directive's name key (0: none): a `#define`'s or `#undef`'s name, an `#ifdef`'s,
 // `#ifndef`'s, or (in a chain) `#elifdef`'s or `#elifndef`'s operand, where the first token after
 // its word is an identifier: the key the names pass gave that leaf. One thread a row.
-kernel void pp_dir_keys(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
-                        device const uint* bases [[buffer(2)]], device const ulong* keys [[buffer(3)]],
-                        device const uint* dir_bases [[buffer(4)]], device const uint* dir_total [[buffer(5)]],
-                        device const PpDir* rows [[buffer(6)]], device ulong* dir_keys [[buffer(7)]],
-                        constant uint& n_files [[buffer(8)]], uint r [[thread_position_in_grid]]) {
+inline void pp_dir_keys(device const PpFile* files, device const uchar* data, device const uint* bases, device const ulong* keys, device const uint* dir_bases, device const uint* dir_total, device const PpDir* rows, device ulong* dir_keys, uint n_files, uint r) {
     if (r >= dir_total[0]) return;
     uint f = file_of(dir_bases, n_files, r);
     Tape t = tape_at(data, files, f);
@@ -331,9 +313,7 @@ kernel void pp_dir_keys(device const PpFile* files [[buffer(0)]], device const u
 
 // Each file's include guard's key (0: none): its first directive's name, where the file has a
 // guard's shape. One thread a file.
-kernel void pp_guards(device const uint* guarded [[buffer(0)]], device const uint* dir_bases [[buffer(1)]],
-                      device const ulong* dir_keys [[buffer(2)]], device ulong* guards [[buffer(3)]],
-                      constant uint& n_files [[buffer(4)]], uint f [[thread_position_in_grid]]) {
+inline void pp_guards(device const uint* guarded, device const uint* dir_bases, device const ulong* dir_keys, device ulong* guards, uint n_files, uint f) {
     if (f >= n_files) return;
     guards[f] = guarded[f] != 0u ? dir_keys[dir_bases[f]] : 0ul;
 }
