@@ -2404,14 +2404,16 @@ function listsBranches(args: readonly string[]): boolean {
 /**
  * Has a command at work meanwhile run `acts` in turn as the next walk asks Git about its changes: each just before a Git
  * process `at` names, once the walk's Git verdicts have read `HEAD` (the walk reads it as it starts, then its verdicts
- * read it again).
+ * read it again). Returns the acts not run yet, which a case expects none of once its walk is done: a file the command
+ * left staged and uncommitted is audited as well, so the case would pass with no commit made while Git was read.
  */
-function whileVerdictsRead(at: (args: readonly string[]) => boolean, ...acts: Array<() => void>): void {
+function whileVerdictsRead(at: (args: readonly string[]) => boolean, ...acts: Array<() => void>): ReadonlyArray<() => void> {
   let heads = 0;
   asyncGitCalls.before = args => {
     if (readsHead(args)) heads += 1;
     else if (heads >= 2 && at(args)) acts.shift()?.();
   };
+  return acts;
 }
 /** `path` relative to `root` as the bridge names a file, with `/` between its parts on every platform. */
 function repositoryPath(root: string, path: string): string {
@@ -3493,11 +3495,13 @@ describe("CodeRuleBridge and Git's own writes", () => {
   ])("keeps auditing a file its command committed %s", async (_when, at) => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
+    let left: ReadonlyArray<() => void> = [];
     await shell(bridge, async () => {
       await writeFile(join(root, "src", "mine.py"), "mine\n");
       git(root, "add", "src/mine.py");
-      whileVerdictsRead(at, () => git(root, "commit", "--quiet", "-m", "mine"));
+      left = whileVerdictsRead(at, () => git(root, "commit", "--quiet", "-m", "mine"));
     });
+    expect(left).toEqual([]);
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "src/mine.py", language: "python", generatedText: "mine\n" }],
     ]);
@@ -3515,8 +3519,9 @@ describe("CodeRuleBridge and Git's own writes", () => {
     await writeFile(join(root, "src", "mine.py"), "mine\n");
     git(root, "add", "src/a.py", "src/mine.py");
     await bridge.begin("shell-2", "shell", { command: "ls" });
-    whileVerdictsRead(listsBranches, () => git(root, "commit", "--quiet", "-m", "mine"));
+    const left = whileVerdictsRead(listsBranches, () => git(root, "commit", "--quiet", "-m", "mine"));
     await bridge.finish("shell-2");
+    expect(left).toEqual([]);
     await bridge.finish("shell-1");
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "src/mine.py", language: "python", generatedText: "mine\n" }],
@@ -3529,16 +3534,18 @@ describe("CodeRuleBridge and Git's own writes", () => {
   it("keeps auditing a file its command committed in each of the walk's first two readings of Git", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
+    let left: ReadonlyArray<() => void> = [];
     await shell(bridge, async () => {
       await writeFile(join(root, "src", "mine.py"), "mine\n");
       await writeFile(join(root, "src", "two.py"), "two\n");
       git(root, "add", "src/mine.py");
-      whileVerdictsRead(
+      left = whileVerdictsRead(
         listsBranches,
         () => git(root, "commit", "--quiet", "-m", "mine"),
         () => { git(root, "add", "src/two.py"); git(root, "commit", "--quiet", "-m", "two"); },
       );
     });
+    expect(left).toEqual([]);
     const edits = auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits);
     expect(edits).toHaveLength(2);
     expect(edits).toEqual(expect.arrayContaining([
@@ -3553,12 +3560,14 @@ describe("CodeRuleBridge and Git's own writes", () => {
   it("keeps auditing a file its command committed beside one it restored from another branch", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
+    let left: ReadonlyArray<() => void> = [];
     await shell(bridge, async () => {
       await writeFile(join(root, "src", "new.py"), "violation\n");
       await writeFile(join(root, "src", "mine.py"), "mine\n");
       git(root, "add", "src/mine.py");
-      whileVerdictsRead(listsBranches, () => git(root, "commit", "--quiet", "-m", "mine"));
+      left = whileVerdictsRead(listsBranches, () => git(root, "commit", "--quiet", "-m", "mine"));
     });
+    expect(left).toEqual([]);
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "src/mine.py", language: "python", generatedText: "mine\n" }],
     ]);
@@ -3580,17 +3589,19 @@ describe("CodeRuleBridge and Git's own writes", () => {
   it("audits what its first reading of Git found the command's own when HEAD moves through every reading", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
+    let left: ReadonlyArray<() => void> = [];
     await shell(bridge, async () => {
       await writeFile(join(root, "src", "mine.py"), "mine\n");
       await writeFile(join(root, "src", "late.py"), "late\n");
       git(root, "add", "src/mine.py");
-      whileVerdictsRead(
+      left = whileVerdictsRead(
         listsBranches,
         () => git(root, "commit", "--quiet", "-m", "mine"),
         () => { git(root, "add", "src/late.py"); git(root, "commit", "--quiet", "-m", "late"); },
         () => git(root, "commit", "--quiet", "--allow-empty", "-m", "more"),
       );
     });
+    expect(left).toEqual([]);
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
       { path: "src/late.py", language: "python", generatedText: "late\n" },
     ]);
@@ -3604,13 +3615,13 @@ describe("CodeRuleBridge and Git's own writes", () => {
     await bridge.begin("shell-1", "shell", { command: "./run.sh" });
     await writeFile(join(root, "src", "mine.py"), "mine\n");
     git(root, "add", "src/mine.py");
-    const close: { committed?: boolean; gitStarted?: number; closing?: Promise<void> } = {};
-    whileVerdictsRead(listsBranches, () => { git(root, "commit", "--quiet", "-m", "mine"); close.committed = true; });
+    const close: { gitStarted?: number; closing?: Promise<void> } = {};
+    const left = whileVerdictsRead(listsBranches, () => git(root, "commit", "--quiet", "-m", "mine"));
     const verdicts = asyncGitCalls.before;
     asyncGitCalls.before = args => {
       verdicts?.(args);
       // The first read of `HEAD` after the commit is the one that finds it moved.
-      if (close.committed !== true || close.closing !== undefined || !readsHead(args)) return;
+      if (left.length > 0 || close.closing !== undefined || !readsHead(args)) return;
       close.gitStarted = asyncGitCalls.args.length;
       close.closing = bridge.close();
     };
@@ -3667,12 +3678,14 @@ describe("CodeRuleBridge and Git's own writes", () => {
     const { root, nested, extra } = await nestedCheckout();
     git(nested, "config", "core.autocrlf", "false");
     const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    let left: ReadonlyArray<() => void> = [];
     await shell(bridge, async () => {
       await writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n");
       await writeFile(join(nested, "src", "mine.py"), "mine\n");
       git(nested, "add", "src/mine.py");
-      whileVerdictsRead(listsBranches, () => git(nested, "commit", "--quiet", "-m", "mine"));
+      left = whileVerdictsRead(listsBranches, () => git(nested, "commit", "--quiet", "-m", "mine"));
     });
+    expect(left).toEqual([]);
     await shell(bridge, () => git(nested, "restore", "src/gone.py"));
     expect(auditGeneratedEdits.mock.calls.at(-1)?.[1]).toMatchObject({
       mode: "log",
