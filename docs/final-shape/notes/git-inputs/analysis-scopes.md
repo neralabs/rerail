@@ -227,6 +227,11 @@ Already running scans keep their original generations.
 A numbered stop from a home also releases older directory owners that have no home.
 The store records its last acquisition number at delivery. An earlier writer without a home cannot publish under that stop's cutoff.
 A later acquisition can use the directory again. Replaying the receipt keeps the original acquisition boundary.
+A numbered parent stop covers earlier child stops in the same home. The store can then discard their receipts.
+It keeps a child receipt if the child has a higher cutoff. It also keeps receipts for other homes.
+Replaying a covered child stop after restart must preserve all work acquired after the parent stop.
+During upgrade, an older child receipt can cover more unqualified acquisitions than its parent.
+The store keeps that receipt until another stop covers both its generation and its acquisition number.
 An older receipt has no acquisition number. Upgrade uses the store's current acquisition number to fence outstanding writers before accepting new ones.
 The native run and workspace APIs accept nonnegative safe integer generation numbers.
 A numbered stop receipt contains its cutoff, a delivery ID, and an optional home, separated by colons.

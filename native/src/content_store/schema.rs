@@ -203,6 +203,20 @@ CREATE TABLE IF NOT EXISTS analysis_scope_release (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS analysis_scope_release_by_scope ON analysis_scope_release(scope,before);
 CREATE INDEX IF NOT EXISTS analysis_scope_release_legacy ON analysis_scope_release(legacy_scope,before) WHERE legacy_scope IS NOT NULL;
+-- A compacted child receipt can still arrive through an older writer. Ignore its insert before
+-- its delivery captures a new acquisition number or releases memberships. Probe the cutoff
+-- index at each path boundary, including a root that ends in the separator.
+CREATE TRIGGER IF NOT EXISTS analysis_skip_covered_directory_stop BEFORE INSERT ON analysis_scope_release
+WHEN NEW.scope<>'' AND EXISTS (
+    SELECT 1 FROM analysis_scope_release WHERE before>=NEW.before AND scope IN (RR_NEW_DIRECTORY_ANCESTORS)
+) BEGIN SELECT RAISE(IGNORE); END;
+-- A previous writer deletes a lower exact cutoff before inserting its replacement. If an
+-- ancestor will suppress the insert, retain any later acquisition boundary the child carries.
+CREATE TRIGGER IF NOT EXISTS analysis_keep_legacy_directory_fence BEFORE DELETE ON analysis_scope_release
+WHEN OLD.legacy_acquisition > (
+    SELECT max(legacy_acquisition) FROM analysis_scope_release WHERE id<>OLD.id AND before>=OLD.before
+        AND scope IN (RR_OLD_DIRECTORY_ANCESTORS)
+) BEGIN SELECT RAISE(IGNORE); END;
 CREATE TABLE IF NOT EXISTS analysis_history_scope (
     scope TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -911,11 +925,8 @@ impl ContentStore {
                                     SELECT last_run FROM corpus_manifests m WHERE m.manifest_id=analysis_scope_manifest.manifest_id)")?;
                             }
                         }
-                        transaction.execute_batch(SCHEMA)?;
-                        // Each numbered receipt also covers all earlier stops for the same directory.
-                        transaction.execute_batch("DELETE FROM analysis_scope_release AS old WHERE scope<>'' AND EXISTS (
-                            SELECT 1 FROM analysis_scope_release newer WHERE newer.scope=old.scope
-                            AND (newer.before, newer.id) > (old.before, old.id))")?;
+                        apply_schema(&transaction)?;
+                        super::analysis_scope::compact_existing_directory_receipts(&transaction)?;
                         if version != SCHEMA_VERSION {
                             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                         }
@@ -953,6 +964,21 @@ impl ContentStore {
         }
         Ok(connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
     }
+}
+
+fn apply_schema(connection: &Connection) -> rusqlite::Result<()> {
+    // The trigger also runs in connections from earlier binaries. Embed the same path
+    // boundaries as analysis_scope::receipt_scopes using only SQLite's own functions.
+    let ancestors = "WITH RECURSIVE boundaries(pos) AS (
+        VALUES(0) UNION ALL
+        SELECT pos+instr(substr(INPUT_SCOPE,pos+1),'PATH_SEP') FROM boundaries
+        WHERE instr(substr(INPUT_SCOPE,pos+1),'PATH_SEP')>0
+    ) SELECT INPUT_SCOPE UNION ALL SELECT substr(INPUT_SCOPE,1,pos-1) FROM boundaries WHERE pos>0
+      UNION ALL SELECT substr(INPUT_SCOPE,1,pos) FROM boundaries WHERE pos>0"
+        .replace("PATH_SEP", std::path::MAIN_SEPARATOR_STR);
+    connection.execute_batch(&SCHEMA
+        .replace("RR_NEW_DIRECTORY_ANCESTORS", &ancestors.replace("INPUT_SCOPE", "NEW.scope"))
+        .replace("RR_OLD_DIRECTORY_ANCESTORS", &ancestors.replace("INPUT_SCOPE", "OLD.scope")))
 }
 
 /// The store's floor, refused when it is newer than this build's.
@@ -1115,7 +1141,7 @@ mod schema_object_tests {
     #[test]
     fn schema_objects_are_what_schema_creates() {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(SCHEMA).unwrap();
+        apply_schema(&connection).unwrap();
         let fts: Vec<String> = schema_objects(SCHEMA).into_iter().filter(|(_, n)| n.ends_with("_fts")).map(|(_, n)| n).collect();
         let mut applied: Vec<(String, String)> = schema_object_names(&connection)
             .unwrap()

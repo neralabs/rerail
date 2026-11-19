@@ -620,18 +620,37 @@ impl ContentStore {
     }
 }
 
-fn release_analysis_scopes(tx: &rusqlite::Connection, scope: &str, subtree: Option<&str>, release: Option<&str>, before: Option<i64>, legacy: Option<&str>) -> StoreResult<usize> {
-    if let Some(cutoff) = before {
-        let covered: bool = tx.query_row_cached("SELECT EXISTS (SELECT 1 FROM analysis_scope_release
-            WHERE scope=?1 AND before>=?2)", (scope, cutoff), |row| row.get(0))?;
-        if covered { return Ok(0); }
-        tx.execute_cached("DELETE FROM analysis_scope_release WHERE scope=?1 AND before<?2", (scope, cutoff))?;
+// SQLite orders scope keys by bytes. Advancing the final separator gives the exclusive
+// upper bound of the subtree, even for a volume root or a name containing glob characters.
+fn compact_directory_receipts(tx: &rusqlite::Connection, scope: &str, receipt: &str) -> rusqlite::Result<()> {
+    let prefix = scope_prefix(scope);
+    let mut upper = prefix.clone();
+    upper.pop();
+    upper.push(char::from(std::path::MAIN_SEPARATOR as u8 + 1));
+    tx.execute_cached("DELETE FROM analysis_scope_release WHERE id<>?1
+        AND (scope=?2 OR (scope>=?3 AND scope<?4))
+        AND before<=(SELECT before FROM analysis_scope_release WHERE id=?1)
+        AND (legacy_acquisition IS NULL OR legacy_acquisition<=
+            (SELECT legacy_acquisition FROM analysis_scope_release WHERE id=?1))", (receipt, scope, prefix, upper))?;
+    Ok(())
+}
+
+pub(super) fn compact_existing_directory_receipts(tx: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let mut statement = tx.prepare("SELECT scope,id FROM analysis_scope_release WHERE scope<>'' ORDER BY scope,before DESC")?;
+    let receipts = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (scope, receipt) in receipts {
+        compact_directory_receipts(tx, &scope, &receipt)?;
     }
-    if let Some(release) = release
-        && tx.execute_cached("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES (?1,?2,?3)",
-            (release, if before.is_some() { scope } else { "" }, before.unwrap_or_default()))? == 0
-    {
-        return Ok(0);
+    Ok(())
+}
+
+fn release_analysis_scopes(tx: &rusqlite::Connection, scope: &str, subtree: Option<&str>, release: Option<&str>, before: Option<i64>, legacy: Option<&str>) -> StoreResult<usize> {
+    if let Some(release) = release {
+        let inserted = tx.execute_cached("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES (?1,?2,?3)",
+            (release, if before.is_some() { scope } else { "" }, before.unwrap_or_default()))?;
+        if inserted == 0 { return Ok(0); }
+        if before.is_some() { compact_directory_receipts(tx, scope, release)?; }
     }
     const RELEASING: &str = "(scope=?1 OR (?2 IS NOT NULL AND substr(scope,1,length(?2))=?2))";
     if let Some(before) = before {

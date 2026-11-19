@@ -456,6 +456,99 @@ fn numbered_directory_stops_keep_one_cutoff_per_directory() {
 }
 
 #[test]
+fn a_parent_receipt_replaces_covered_children_and_survives_replay() {
+    use crate::content_store::analysis_scope;
+    let (file, store) = store("scope-parent-receipt");
+    let parent = file.parent().unwrap().canonicalize().unwrap().join("project[1]");
+    let sibling = parent.with_file_name("project[1]-other");
+    let child = parent.join("0");
+    let ahead = parent.join("ahead");
+    for i in 0..30 {
+        store.delete_directory_analysis_scopes(&parent.join(i.to_string()), Some(&format!("10:old-{i}:home"))).unwrap();
+    }
+    for (dir, receipt) in [(&ahead, "40:newer:home"), (&child, "10:elsewhere:other"), (&sibling, "10:sibling:home")] {
+        store.delete_directory_analysis_scopes(dir, Some(receipt)).unwrap();
+    }
+    let qualified = analysis_scope::directory_in(&child, Some("home"));
+    let unqualified = analysis_scope::directory(&child);
+    let old = store.begin_analysis_scope_at(&qualified, 18).unwrap();
+    let old_legacy = store.begin_analysis_scope_at(&unqualified, 0).unwrap();
+    store.delete_directory_analysis_scopes(&parent, Some("20:parent:home")).unwrap();
+    drop(store);
+    let reopened = ContentStore::open(&file).unwrap();
+    let fresh_legacy = reopened.begin_analysis_scope_at(&unqualified, 0).unwrap();
+    let fresh = reopened.begin_analysis_scope_at(&qualified, 21).unwrap();
+    let still_stopped = reopened.begin_analysis_scope_at(&analysis_scope::directory_in(&ahead, Some("home")), 35).unwrap();
+    reopened.delete_directory_analysis_scopes(&child, Some("10:old-0:home")).unwrap();
+    let receipts = |db: &rusqlite::Connection| db.prepare("SELECT id FROM analysis_scope_release ORDER BY id").unwrap()
+        .query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+    let db = reopened.connection.lock().unwrap();
+    // An earlier binary checks just the exact scope, then attempts this same insert.
+    assert_eq!(db.execute("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES ('10:old-1:home',?1,10)",
+        [analysis_scope::directory_in(&parent.join("1"), Some("home"))]).unwrap(), 0);
+    assert_eq!(receipts(&db), ["10:elsewhere:other", "10:sibling:home", "20:parent:home", "40:newer:home"]);
+    for owner in [&old, &old_legacy, &still_stopped] { assert!(!owner.current(&db).unwrap()); }
+    for owner in [&fresh, &fresh_legacy] { assert!(owner.current(&db).unwrap()); }
+    drop(db);
+    let volume = parent.ancestors().last().unwrap();
+    reopened.delete_directory_analysis_scopes(volume, Some("50:root:home")).unwrap();
+    reopened.delete_directory_analysis_scopes(&ahead, Some("40:newer:home")).unwrap();
+    let db = reopened.connection.lock().unwrap();
+    assert_eq!(receipts(&db), ["10:elsewhere:other", "50:root:home"]);
+}
+
+#[test]
+fn upgrading_directory_receipts_preserves_both_legacy_cutoffs() {
+    use crate::content_store::analysis_scope;
+    let (file, store) = store("scope-parent-receipt-upgrade");
+    let parent = file.parent().unwrap().join("project");
+    let child = parent.join("child");
+    let sibling = parent.join("covered");
+    let bare_child = analysis_scope::directory(&child);
+    let early = store.begin_analysis_scope_at(&bare_child, 5).unwrap();
+    let middle = store.begin_analysis_scope_at(&bare_child, 5).unwrap();
+    let late = store.begin_analysis_scope_at(&bare_child, 5).unwrap();
+    {
+        let db = store.connection.lock().unwrap();
+        db.execute_batch("DROP TRIGGER analysis_skip_covered_directory_stop").unwrap();
+        // Before compaction, an older child stop could arrive after its parent. It fenced
+        // a later set of unqualified writers even though its control generation was lower.
+        for (dir, id, cutoff, acquired) in [
+            (&parent, "20:parent:home", 20, early.acquisition),
+            (&child, "10:child:home", 10, middle.acquisition),
+            (&sibling, "12:covered:home", 12, early.acquisition),
+        ] {
+            db.execute("INSERT INTO analysis_scope_release(id,scope,before) VALUES (?1,?2,?3)",
+                (id, analysis_scope::directory_in(dir, Some("home")), cutoff)).unwrap();
+            db.execute("UPDATE analysis_scope_release SET legacy_acquisition=?2 WHERE id=?1", (id, acquired)).unwrap();
+        }
+    }
+    drop(store);
+    let reopened = ContentStore::open(&file).unwrap();
+    {
+        let db = reopened.connection.lock().unwrap();
+        let ids = db.prepare("SELECT id FROM analysis_scope_release ORDER BY id").unwrap()
+            .query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(ids, ["10:child:home", "20:parent:home"]);
+        assert!(!early.current(&db).unwrap());
+        assert!(!middle.current(&db).unwrap());
+        assert!(late.current(&db).unwrap());
+        // An older writer deletes its exact, lower cutoff before trying to insert its
+        // delivery. The covering parent will reject that insert. Keep the stronger fence.
+        let qualified_child = analysis_scope::directory_in(&child, Some("home"));
+        db.execute("DELETE FROM analysis_scope_release WHERE scope=?1 AND before<11", [&qualified_child]).unwrap();
+        assert_eq!(db.execute("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES ('11:delayed:home',?1,11)",
+            [&qualified_child]).unwrap(), 0);
+        assert!(!middle.current(&db).unwrap());
+        assert!(late.current(&db).unwrap());
+    }
+    reopened.delete_directory_analysis_scopes(&parent, Some("21:renewed:home")).unwrap();
+    let db = reopened.connection.lock().unwrap();
+    assert!(!late.current(&db).unwrap());
+    assert_eq!(db.query_row("SELECT count(*) FROM analysis_scope_release", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+}
+
+#[test]
 fn a_numbered_home_stop_revokes_older_unqualified_directory_writers_once() {
     use crate::content_store::analysis_scope::{self, AnalysisRun, RunSource};
     let (path, store) = store("scope-legacy-pending-stop");
