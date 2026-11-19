@@ -11,14 +11,15 @@
 // `t.s(x)` or `t.si(x)`. x is a model instance when it is `self` in a model's method, `request.user`, a model
 // constructor `M(...)`, `M.objects.get/create/first/...(...)` (not after values()/values_list()),
 // `get_object_or_404(M, ...)`, a parameter annotated with a model class, or a name the same function assigns from one
-// of those or loops over a queryset with. Not through calls: `x = make_order()` is not followed (the typing program's
-// proven_type would, at the cost of running it on every file; README.md lists this under the rule's Gaps).
+// of those or loops over a queryset with, or a value the type program proves is a model instance (python/types'
+// proven_type: `x = make_order()` where make_order returns `Order(...)`).
 //   order = Order.objects.get(pk=pk); ship_order.delay(order)           reported
 //   ship_order.delay(request.user)                                      reported
 //   ship_order.delay(order.pk)                                          not reported
 //   send_report.delay(order)   # send_report is a plain function        not reported
 
 #include "python/django.rerail"
+#include "python/types.rerail"
 
 .violation TaskArgModelInstance(at: node, task: symbol, arg: symbol) "`{arg}` is a model instance passed to the Celery task `{task}`: the JSON serializer cannot encode it (EncodeError), and with pickle the worker gets a snapshot that may be stale by the time it runs, so saving it overwrites newer changes. Pass `{arg}.pk` and re-fetch the row in the task."
 TaskArgModelInstance(a, t, x) :- tam_task_call(c, t), tam_arg(c, a), tam_instance(a), text(a, x), docof(c, d),
@@ -53,6 +54,8 @@ tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, "self"), look(e
     param(f, "self", 0).
 tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, f), asg(f, x, v, _), unparen(v, w),
     tam_instance_value(w).
+// A value the type program proves is a model instance: `made = make_order()`, `make_order()` itself.
+tam_instance(a) :- unparen(a, e), proven_type(e, t), class_def(k, t), dj_model(k).
 // A parameter annotated with a model class: `def notify(order: Order)`.
 tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, f), sig_param(f, _, nm, _, _, t, _),
     text(nm, x), (m = t ; child(t, m, 0)), sym_of(m, q), class_def(k, q), dj_model(k).
@@ -79,6 +82,8 @@ tam_instance_value(v) :- attr_of(v, o, "user"), unparen(o, r), (text(r, "request
     .fixture "shop/tests/test_tasks.py" from "cases/django-practice-task-arg-model-instance/shop/tests/test_tasks.py"
     .fixture "shop/views.py" from "cases/django-practice-task-arg-model-instance/shop/views.py"
     .expect _ at "shop/models.py":11
+    .expect _ at "shop/services.py":19
+    .expect _ at "shop/services.py":20
     .expect _ at "shop/services.py":21
     .expect _ at "shop/services.py":26
     .expect _ at "shop/views.py":11

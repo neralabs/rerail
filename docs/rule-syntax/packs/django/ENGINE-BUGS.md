@@ -6,20 +6,21 @@ Paths are relative to the repository root. Each section is self-contained: sympt
 code, evidence, the workaround used, and a suggested fix. "Not confirmed" marks what was inferred and not proven.
 
 The last column is each bug on main after the final-shape engine landed (2026-11-19): read from the code, and for 3, 4,
-7, 8 and 10 run as a probe rule with its own test (`rerail-engine test-rr`). Bug 10 appeared with the final-shape
-engine and is fixed on main by #862.
+7, 8 and 10 run as a probe rule with its own test (`rerail-engine test-rr`), and for 2, 6 and 9 measured with release
+builds on the apps they name (each section's "On main"). Bug 10 appeared with the final-shape engine and is fixed on
+main by #862.
 
 | # | Bug | Area | Status | On main, 2026-11-19 |
 |---|---|---|---|---|
 | 1 | Runs deadlock at 0% CPU | engine: `logic/strings.rs`, rayon | Reproduced many times; mechanism partly inferred | Fixed: `Vocabulary::rows` releases `seen` before it evaluates, and takes it again to insert |
-| 2 | A huge module of string literals never finishes | engine guests / `python/names.rerail` annotations | Reproduced | Likely fixed: python/names asks for annotation guests only in annotation contexts (`ann_ctx`); not re-run on netbox |
+| 2 | A huge module of string literals never finishes | engine guests / `python/names.rerail` annotations | Reproduced | Fixed: with `un_locode.py`, the probe finishes on netbox in 15 s and the whole pack in 164 s (measured) |
 | 3 | Module names are taken from the repository root (src layouts) | engine `doc` facts vs Python imports | Reproduced with a 3-file probe | Fixed: a module is named from its package root (probe passes); a folder without `__init__.py` keeps its path's name |
 | 4 | `sym_of` drops relative imports of two or more dots | `lib/python/imports.rerail` | Reproduced; root cause found | Fixed: `impmod` resolves any number of dots through `rel_base` (probe passes) |
 | 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced | Partly: the default store is per build and working directory; runs started from one directory still share it |
-| 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog) | Not re-measured |
+| 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog); two causes found | Fixed by #878 and #882: the whole pack finishes on PostHog in 100 min (main: killed out of memory at 376 s); its 57 GiB peak is open |
 | 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rerail` | Reproduced with a probe; cause found | Present (probe fails as described) |
 | 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rerail` | Reproduced with a probe | Fixed by #875: the call targets the def and stays open (probe passes); workaround removed |
-| 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Observed; not profiled | Not re-measured; the typing program is unchanged |
+| 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Measured; cause found | Minutes on main (107-380 s a rule on the three largest apps); #878 cuts them to 40-70% |
 | 10 | A negated tree axis is read wrong below a node a sym_of relation found | engine: lowering or demand of `!inside`/`within_stop` | Reproduced with a probe; bisected to a merge | Fixed by #862; the three rules it broke pass their cases |
 
 ---
@@ -106,6 +107,10 @@ possible annotation guest. Not confirmed: which rule in `python/names.rerail` (`
 **Suggested fix.** Parse annotation guests only for strings that sit in an annotation position (a parameter, return or
 variable annotation, or the arguments of `TypeVar`, `cast`, `NewType`), never for every string literal of a module;
 and bound guest work per document so one file cannot take a run down.
+
+**On main, 2026-11-19: fixed.** With `un_locode.py` in place, a release build of main (`c219472639`), 16 threads: the
+probe above finishes in 15 s (38 s CPU, 0.8 GiB, 203 findings), and the whole pack in one `run-policies` call in 164 s
+(564 s CPU, 4.5 GiB). python/names now asks for an annotation guest only in an annotation context (`ann_ctx`).
 
 ---
 
@@ -251,6 +256,25 @@ and bug 1 may account for it.
 **Suggested fix.** Profile with `RERAIL_PROFILE=<dir>` first. Note that `RERAIL_PROFILE=1` writes the profile into a
 directory named `1` under the working directory.
 
+**On main, 2026-11-19: two causes found and fixed (#878, #882); PostHog finishes.** Release builds, 16 threads of a
+32-core Linux machine with 61 GiB. count-not-len alone, the run above, finishes on main in 314 s (717 s CPU,
+6.5 GiB). The whole pack in one `run-policies` call:
+
+| Engine | Result | Wall | CPU | Peak |
+|---|---|---|---|---|
+| main (`c219472639`) | killed by the out-of-memory killer | 376 s | 2,370 s | 51.2 GiB |
+| with #878 | stopped, on one thread in `held_sorted` | 1,856 s | 5,196 s | 18.4 GiB |
+| with #878 and #882 | finishes, 1,264 findings | 5,998 s | 21,955 s | 57.3 GiB |
+
+#878 is bug 9's cause (every builtin reference times every document, here 29,771 documents). #882: a tagged order
+walked the span of rows sharing a leading value to its end for each new row a fixpoint wave checked (`tag_span` in
+`Run::held_sorted`), 92% of the samples of a 30 s `perf` record. What remains is a question for the engine's owner, not
+a bug found: the run's 57.3 GiB peak, at the limit of the machine, and its length. The typing program is done by 900 s;
+after it, a `perf` record at 13 minutes put 46% of the samples in `Run::find_at` and 25% in `first_print` (whole-key
+probes scanning a span's key prints), and the hot relations at 900 s were select-for-update-outside-atomic's own
+`sfu_built_for_atomic` (454k rows to 128M in one step, 88 s CPU) and `proven_type`. Not attributed further: the
+profile a combined run writes covers its last part only.
+
 ---
 
 ## 7. `sym_of` has no row for an attribute of a class of the same module
@@ -338,6 +362,29 @@ call graph, not the rules' own relations, dominates. The same program runs for a
 
 **Suggested fix.** Profile the typing program on one large repository (`RERAIL_PROFILE=<dir>`); running several
 call-graph rules in one `run-policies` call may share its cost (not measured).
+
+**On main, 2026-11-19: minutes, not hours; one cause found and fixed (#878).** Release builds, 16 threads of a
+32-core Linux machine, nothing else on those cores. Each call-graph rule alone, wall s (peak GiB), on main
+(`c219472639`) and with #878; the findings are the same in every pair:
+
+| Rule | edx-platform (4,459 files) | saleor (4,385) | DefectDojo (2,549) |
+|---|---|---|---|
+| `call_target` alone (probe) | 172 (11.1) → 66 (2.0) | 202 (14.0) → 61 (2.0) | 85 (5.3) → 39 (1.4) |
+| get-handler-writes | 243 → 128 | 233 → 91 | 112 → 60 |
+| dispatch-in-atomic-request | 229 → 111 | 264 → 108 | 110 → 65 |
+| select-for-update-outside-atomic | 280 → 170 | 380 → 256 | 168 → 122 |
+| sync-orm-reached-from-async | 252 → 146 | 237 → 94 | 107 → 64 |
+| the four in one `run-policies` | 383 → 275 | 453 → 298 | 207 → 166 |
+
+The cause (#878): the demand split of decision 0048 cut `docof(n, d)` out of the typing program's `builtin_ref`, and
+its guard against a cross product skipped `exists_0(d)` (simplify's `modnode(d, m), !star(m)`), an atom of documents
+only. `pre_168(d, n, x)` was every builtin reference times every document: 260M rows of work and `demand_docof` 129M
+on edx-platform, 55 of the typing program's 100 s of join CPU; 88 of 127 s on saleor. The rows grow as the files
+squared. The hours of the first runs are not reproduced: they were on a machine at load 15 to 50, with restarts after
+bug 1. Running the four rules in one call shares the typing program: 275 s against 555 s one by one (edx-platform).
+
+The `proven_type` version of task-arg-model-instance on DefectDojo: 104 s on main (5.3 GiB), 60 s with #878 and #882
+(1.6 GiB), against 21 s without it; same findings. The rule reads `proven_type` again.
 
 ---
 

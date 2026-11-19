@@ -16,8 +16,8 @@ def order_id(pk):
 
 def use(pk):
     made = make_order()
-    ship_order.delay(made)
-    ship_order.delay(make_order())
+    ship_order.delay(made)  # caught
+    ship_order.delay(make_order())  # caught
     ship_order.delay(Order(email="z"))  # caught
     ship_order.delay(order_id(pk))
 
