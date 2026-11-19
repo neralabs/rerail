@@ -13,6 +13,7 @@ pub mod files;
 pub mod macros;
 pub mod sink;
 pub mod stream;
+pub mod tape;
 pub mod tokens;
 
 // The oracle's profile reads the crate by its name, as the example that includes it does.

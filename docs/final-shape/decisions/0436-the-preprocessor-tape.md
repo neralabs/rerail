@@ -46,42 +46,52 @@ is a directive, a conditional group, or a text line.
 
 ```
 pp
-├─ line                      a logical line of text: its tokens
+├─ code                      a line of text: its tokens
 │   ├─ identifier            foo
 │   ├─ punct                 (
 │   └─ …
 ├─ define                    #define F(a, ...) a + 1
+│   ├─ hash                  #
+│   ├─ identifier            define
 │   ├─ name: identifier      F
-│   ├─ params: params
+│   ├─ params: params        (a, ...)
+│   │   ├─ punct             (
 │   │   ├─ param: identifier a
-│   │   └─ variadic: ellipsis
-│   └─ body: body            the replacement list's tokens
-│       ├─ identifier        a
-│       ├─ punct             +
-│       └─ number            1
+│   │   ├─ punct             ,
+│   │   ├─ variadic: punct   ...
+│   │   └─ punct             )
+│   └─ body: operands        a + 1
+│       └─ …
 ├─ group                     #if … #endif, nested
-│   ├─ if                    expr: expr (its tokens)
-│   ├─ line …                the first branch's items
+│   ├─ if                    # if, then expr: operands
+│   ├─ code …                the first branch's items
 │   ├─ elif / else …         each further branch, then its items
 │   └─ endif
-└─ include                   spelled: string | header | macro_header
+└─ include                   # include, then spelled: literal | header | macro_header
 ```
 
-- **Tokens** are leaves of the tokens grammar's kinds, in every part of the file:
+- **Every token is a leaf, exactly once, in order,** of the tokens grammar's kinds:
   `identifier`, `number`, `literal`, `punct`, `digraph`, `hash`, `hashhash`, `other`. A
-  punctuator is read by longest match in a directive too, as the lexer reads it. A `#define`'s
-  body is the tokens its expansion copies.
-- **A token's flags** are the lean lexer's: `BOL` is the first token of its line node, and `SPACE`
-  is a blank byte before it, read from the source byte before the token.
-- **Directives** are named by their word, as `06-raw` names them (`null`, `line_marker`,
-  `unknown` otherwise). Their operands are fields: `name`, `params`, `param`, `variadic`, `body`,
-  `spelled`, `expr`, `text`, `first`, `second`, `n`, `file`, `rest`. A directive's word and an
-  implied `#` are not written: the kind implies them (format 14).
-- **Groups** are nodes from the `#if`, `#ifdef` or `#ifndef` to its `#endif`. Their chain is the
-  group's own directive children (`c_cond_next`), and the directives are those children. An
-  `#elif`, `#else` or `#endif` with no open group is a directive at the level where it stands.
-- **A text line** is a logical line (with `\`-newlines spliced) that is not a directive, holding
-  its tokens. Comments are blanks, never nodes.
+  directive's `#` and its word are leaves too. A punctuator is read by longest match in a
+  directive too, as the lexer reads it. So the leaves alone are the file's token stream, and
+  the nodes above them only group it.
+- **A token's flags** are the lean lexer's. `BOL` is the first token of a `code` node or of a
+  directive. `SPACE` is a blank byte before the token, read from the source.
+- **Directives** are named by their word (`null` for none, `line_marker` for a number,
+  `unknown` for anything else), from the `#` to the line's last token.
+- **Operands** are fields:
+  - on the leaf itself, where the operand is one token: `name`, `param`, `variadic`, a quoted
+    `spelled`, `first`, `second`, `n`, `file`;
+  - on a node over the tokens otherwise: `params: params`, `spelled: header` (`<…>`) or
+    `spelled: macro_header`, `body`/`expr`/`text: operands`, a pragma's `text: pragma_text`, and
+    `rest: line_rest` (`#line`) or `rest: marker_rest` (a line marker).
+- **Groups** are nodes from the `#if`, `#ifdef` or `#ifndef` to its `#endif` (to the file's end
+  where there is none). Its chain is its own conditional directive children; its other children
+  are its branches' items. An `#elif`, `#else` or `#endif` with no open group is a directive at
+  the level where it stands.
+- **A `code` node** is a line of text: the tokens from one at a line's start (the lexer's `BOL`:
+  a line break outside a block comment since the token before) to the next such, or to a
+  directive. Comments are blanks, never nodes.
 - **C and C++** differ in a few tokens (C++'s `::`, `.*`, `->*`, `<=>`). A tape is kept by the
   file's content and its language.
 
@@ -99,8 +109,8 @@ bytes on the device in one pass.
 
 ## The two parsers
 
-- **The lean parser** (`rerail_c_pp::tape`) writes the tape with the tape writer
-  (`rerail_tape_format::Writer`). It is built from the lean scan (`directives`) and the lean pp
+- **The lean parser** (`rerail_c_pp::tape::image`) writes the tape with the engine's tape
+  writer (`rerail_tape_format::Writer`), narrowest widths first, as every lean parser does. It is built from the lean scan (`directives`) and the lean pp
   lexer (`rerail_c_lean::pp::PpLexer`), which are already held to `clang -E` through the serial
   pass (0327). It is the reference.
 - **The Bitlex parser** (`rerail_c_directives`, `bitlex_pp/pp.bitlex`) merges `06-raw`'s
@@ -138,7 +148,7 @@ passes' arrays (user, 2026-11-18). The serial pass is the reference for the outp
 
 | | Requirement | Test |
 |---|---|---|
-| R1 | The tape is a v9np image every reader reads; no new format version. | `the_pp_tape_is_a_v9np_image` |
+| R1 | The tape is a v9np image every reader reads; no new format version. | `the_pp_tape_is_a_v9np_image`; over the corpus, `the_corpus_pp_tapes_lean` (ignored) |
 | R2 | The tape's tokens, their bytes and their flags are the lean lexer's, in every part of the file. | `the_pp_tape_has_the_lexers_tokens` |
 | R3 | The tape's directives, operands and groups give mode (a)'s rows, equal to the lean scan's. | `the_pp_tape_gives_mode_a_rows` |
 | R4 | The Bitlex parser's tape equals the lean parser's, or the file is refused; on the corpus, 0 differ (interpreter, Cranelift, Metal tier 1). | `the_corpus_pp_tapes` (ignored) |
@@ -153,3 +163,11 @@ passes' arrays (user, 2026-11-18). The serial pass is the reference for the outp
 4. The evaluator, pass by pass, each pass checked against the serial pass and the spike's
    arrays; R5.
 5. R6 on the corpus, then timing through `quiet-run`, warm, with the GPU and the host apart.
+
+## Built
+
+- **Step 2, the lean parser** (`rerail_c_pp::tape`): `tokens` (the lean lexer's tokens at the
+  file's bytes, which `rerail_c_directives::tokens::lean` now reads too), `image`, and the
+  reader `rows` (each directive and its group's parent) and `leaves`. R1–R3 hold on all 3,135
+  files of the C and C++ corpora (`the_corpus_pp_tapes_lean`, 3.3 s under Relax), with the
+  writer's nesting assert on.

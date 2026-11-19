@@ -282,3 +282,4 @@ fn every_ladder_step_compiles() {
     }
     assert_eq!(std::fs::read_to_string(steps.last().unwrap()).unwrap(), GRAMMAR, "the last step is the grammar");
 }
+

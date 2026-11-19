@@ -8,6 +8,8 @@ description = "The C and C++ preprocessor (decision 0327): every directive of a 
 [dependencies]
 # The shared lexer: the preprocessor's reading (`pp`) and the parser's tokens.
 rerail-c-lean = { path = "../c_lean" }
+# The preprocessor tape (decision 0436), written by the engine's tape writer.
+rerail-tape-format = { path = "../tape_format" }
 
 [dependencies.rerail-simd8]
 path = "../simd8"
