@@ -213,6 +213,26 @@ The 50-unit batch's dispatches by kernel: scans 12,630 (a scan of more than 256 
 three launches or more), maps 8,448, gathers 6,271, radix passes 3,506, a scatter's parts
 about 4,400. That is about 250 operations a round, 30 rounds, one launch or more each.
 
+**Timed** under a quiet-run lease on an M1 Max, `--profile profiling`, the first 200 C units,
+the calls on the words (rustc's build of them on the CPU), every unit the same. The passes'
+time only; settling each file under clang's profile comes before it.
+
+| Executor | Wall | CPU (this thread) | Of it |
+|---|---:|---:|---|
+| Interpreter | 20.4 s | 20.4 s | |
+| Cranelift | 15.7 s | 15.7 s | the words 2.5 s, the elements' files 0.6 s |
+| Metal, the words on the device | 63.6 s | 41.6 s | GPU: the programs 3.9 s, the words 11.0 s; the words' host side 44.8 s |
+
+Against 0408's gate (about 0.15 s for the whole corpus on one core, the serial pass), every
+executor is two orders of magnitude or more away. Where the time goes:
+- **Cranelift**, sampled: the round program's elementwise operations (maps, selects, gathers,
+  copies) take about a quarter of the samples. Each round recomputes every moved operation
+  over the unit's whole arrays, one pass over memory an operation, scalar loops. The rest is
+  the host: the spike's unit tables (hashing, `reaching`, the lexer) that the calls read.
+- **Metal**: the words' host side, laying out and finishing about 260,000 readings
+  (`pp_on`'s prepare, copies and `complete`), and the M1 Max's budget: 50 units of a batch
+  are past 512 MB, so the passes run 12 a batch (`Runner::cap`).
+
 **Found on the way** (each by the device oracle, `RERAIL_PP_ORACLE=1`, which checks each
 device run against the interpreter, unit by unit, and with `RERAIL_PP_ORACLE_OPS` names the
 first operation whose value differs):
@@ -220,17 +240,24 @@ first operation whose value differs):
 - the words handed a test's looked-at pairs back in a hash map's order, so the same test's
   pairs came back in another order call by call; the memo compares them in order;
 - the corpus harness kept one directory of stub headers, remade for each file, so a batch
-  settled before it was read lost its earlier units' stubs.
+  settled before it was read lost its earlier units' stubs;
+- a lease past the device's budget between launches left a command encoder open, and Metal
+  aborted the process (an M1 Max): the executor ends it when dropped, and the passes split
+  the batch.
 
 ## What is left
 
 1. ~~Every unit of a batch in the same launches~~ (built, above).
-2. **Fewer launches and syncs:** scans in one launch (a single-pass scan), elementwise runs
+2. **Less work a round**, on every executor: elementwise runs fused into one pass; only the
+   elements a round changed recomputed, not the unit's whole arrays; on the CPU, more than
+   one element a step. And the words' host side on the device: the element's layout made
+   once, not prepared and finished a reading at a time.
+3. **Fewer launches and syncs:** scans in one launch (a single-pass scan), elementwise runs
    fused into one kernel, a sort's varying bytes and a fixed point's verdict kept on the
    device.
-3. ~~The calls on the device, through 0408's lockstep batch~~ (built, above). The element's
+4. ~~The calls on the device, through 0408's lockstep batch~~ (built, above). The element's
    files are still made on the host; making them by array operations is next.
-4. ~~Cranelift, the CPU path~~ (built, above). Fused elementwise runs are not built yet:
+5. ~~Cranelift, the CPU path~~ (built, above). Fused elementwise runs are not built yet:
    each operation is a loop of its own.
-5. **Timing** through `quiet-run`, warm, against rustc's build of the serial pass.
-6. P0 (each file's tables) on the device; merges; an expansion cache.
+6. ~~Timing through `quiet-run`~~ (above): the gap is two orders of magnitude.
+7. P0 (each file's tables) on the device; merges; an expansion cache.
