@@ -7,8 +7,10 @@
 //! Watches are a budget every program of the user shares (`fs.inotify.max_user_watches`), so the
 //! engine takes at most a quarter of it, and at most 131,072: a root past that is not watched. The
 //! folders above the roots, a handful each and shared between them, are watched past the budget,
-//! and count toward a later root's. A root on a file system inotify cannot see others' writes on
-//! (NFS, SMB, FUSE, 9p) is not watched either.
+//! and count toward a later root's. A spare root (`watch_spare`) takes only room the budget has
+//! left, and gives it up to a root watched with `watch` that needs it: its watch ends, so each
+//! such root fits as it would with no spare root watched. A root on a file system inotify cannot
+//! see others' writes on (NFS, SMB, FUSE, 9p) is not watched either.
 //!
 //! A watch follows its folder, not its path. The root's own delete, move or unmount ends its
 //! watch, and so does that of any folder above it up to `/`: each is watched for its own going
@@ -106,13 +108,14 @@ impl Owner {
 }
 
 /// Every watch: who each descriptor stands for (one folder may be under two roots, a nested
-/// worktree's, or above one root and under another), each root's descriptor per folder, and the
-/// descriptors of the folders above each root.
+/// worktree's, or above one root and under another), each root's descriptor per folder, the
+/// descriptors of the folders above each root, and the spare roots (`watch_spare`).
 #[derive(Default)]
 struct Watches {
     owners: HashMap<i32, Vec<Owner>>,
     roots: HashMap<String, HashMap<String, i32>>,
     above: HashMap<String, Vec<i32>>,
+    spare: HashSet<String>,
 }
 
 impl Watches {
@@ -144,6 +147,7 @@ impl Watches {
 
     /// Releases every watch of `root`.
     fn release_root(&mut self, instance: RawFd, root: &str) {
+        self.spare.remove(root);
         for (folder, descriptor) in self.roots.remove(root).unwrap_or_default() {
             self.release(instance, descriptor, &Owner::under(root, &folder));
         }
@@ -485,22 +489,49 @@ impl Inotify {
     }
 }
 
-impl Backend for Inotify {
-    fn watch(&mut self, root: &str, folders: &[String]) -> bool {
+impl Inotify {
+    /// Watches `root` with `folders` within the budget; a `spare` root only with room left.
+    fn watch_as(&mut self, root: &str, folders: &[String], spare: bool) -> bool {
         if self.shared.failed.load(Ordering::Acquire) || !local_filesystem(root) {
             return false;
         }
         let mut wanted: HashSet<&str> = folders.iter().map(String::as_str).collect();
         wanted.insert("");
         let mut watches = self.shared.watches();
-        let fits = watches.count_with(root, wanted.len()) <= self.budget;
-        if fits && self.add_wanted(&mut watches, root, &wanted) {
+        if self.room_for(&mut watches, root, wanted.len(), spare)
+            && self.add_wanted(&mut watches, root, &wanted)
+        {
             self.drop_unwanted(&mut watches, root, &wanted);
             self.watch_above(&mut watches, root);
+            watches.spare.extend(spare.then(|| root.to_owned()));
             return true;
         }
         watches.release_root(self.shared.instance.as_raw_fd(), root);
         false
+    }
+
+    /// Whether `root` fits the budget watching `folders` folders. A root that is not spare makes
+    /// room by ending spare roots, one at a time, until it fits or none is left.
+    fn room_for(&self, watches: &mut Watches, root: &str, folders: usize, spare: bool) -> bool {
+        while watches.count_with(root, folders) > self.budget {
+            let other = watches.spare.iter().find(|other| *other != root).cloned();
+            let Some(other) = other.filter(|_| !spare) else {
+                return false;
+            };
+            self.shared.notices.ended(&other);
+            watches.release_root(self.shared.instance.as_raw_fd(), &other);
+        }
+        true
+    }
+}
+
+impl Backend for Inotify {
+    fn watch(&mut self, root: &str, folders: &[String]) -> bool {
+        self.watch_as(root, folders, false)
+    }
+
+    fn watch_spare(&mut self, root: &str, folders: &[String]) -> bool {
+        self.watch_as(root, folders, true)
     }
 
     fn unwatch(&mut self, root: &str) {
@@ -626,7 +657,7 @@ mod tests {
     use super::{Inotify, drain, local_filesystem, parse};
     use crate::tree_watch::notices::Notices;
     use crate::tree_watch::tests::{Scratch, wait_for};
-    use crate::tree_watch::{Backend, TreeNotice};
+    use crate::tree_watch::{Backend, TreeNotice, TreeWatcher};
     use std::os::fd::AsRawFd;
     use std::sync::Arc;
 
@@ -848,6 +879,87 @@ mod tests {
             "a refused root holds no watch"
         );
         backend.close();
+    }
+
+    /// `scratch`'s folders `names`, made, by their paths.
+    fn folders_of<const N: usize>(scratch: &Scratch, names: [&str; N]) -> [String; N] {
+        names.map(|name| {
+            std::fs::create_dir_all(scratch.path(name)).expect("create folder");
+            scratch.path(name).to_string_lossy().into_owned()
+        })
+    }
+
+    /// The watches the `roots`, each with its folders, take together, the folders above them
+    /// included: the budget they just fit in.
+    fn just_fits(roots: &[(&String, Vec<String>)]) -> usize {
+        let notices = Arc::new(Notices::default());
+        let mut backend =
+            Inotify::open_with_budget(Arc::clone(&notices), usize::MAX).expect("inotify opens");
+        for (root, folders) in roots {
+            notices.start(root);
+            assert!(backend.watch(root, folders));
+        }
+        let taken = backend.shared.watches().owners.len();
+        backend.close();
+        taken
+    }
+
+    #[test]
+    fn a_spare_root_gives_its_room_to_a_root_the_budget_counts() {
+        let scratch = Scratch::new("spare");
+        let [w1, w2, registry] = folders_of(&scratch, ["w1", "w2", "registry"]);
+        folders_of(&scratch, ["w1/a", "w2/a", "w2/b", "registry/e1", "registry/e2"]);
+        let worktrees = [
+            (&w1, ["", "a"].map(str::to_owned).to_vec()),
+            (&w2, ["", "a", "b"].map(str::to_owned).to_vec()),
+        ];
+        // The last worktree just fits when no spare root is watched.
+        let notices = Arc::new(Notices::default());
+        let mut backend = Inotify::open_with_budget(Arc::clone(&notices), just_fits(&worktrees))
+            .expect("inotify opens");
+        let entries = ["", "e1", "e2"].map(str::to_owned).to_vec();
+        notices.start(&registry);
+        assert!(backend.watch_spare(&registry, &entries), "room is left");
+        for (root, folders) in &worktrees {
+            notices.start(root);
+            assert!(backend.watch(root, folders), "{root} fits as with no spare root");
+        }
+        assert!(notice_of(&notices, &registry).ended);
+        assert!(!backend.watch_spare(&registry, &entries), "no room is left");
+        backend.close();
+    }
+
+    #[test]
+    fn a_spare_root_ends_no_other_spare_root() {
+        let scratch = Scratch::new("spare-two");
+        let [one, two] = folders_of(&scratch, ["one", "two"]);
+        let folders = vec![String::new()];
+        let notices = Arc::new(Notices::default());
+        let budget = just_fits(&[(&one, folders.clone())]);
+        let mut backend = Inotify::open_with_budget(Arc::clone(&notices), budget).expect("opens");
+        for root in [&one, &two] {
+            notices.start(root);
+        }
+        assert!(backend.watch_spare(&one, &folders));
+        assert!(!backend.watch_spare(&two, &folders), "no room is left");
+        assert!(notices.take().is_empty(), "the first spare root's watch goes on");
+        backend.close();
+    }
+
+    #[test]
+    fn the_watcher_watches_a_spare_root_only_with_room_left() {
+        let scratch = Scratch::new("spare-watcher");
+        let [spare, root] = folders_of(&scratch, ["spare", "root"]);
+        let notices = Arc::new(Notices::default());
+        let budget = just_fits(&[(&root, vec![String::new()])]);
+        let backend = Inotify::open_with_budget(Arc::clone(&notices), budget).expect("opens");
+        let mut watcher = TreeWatcher::over(notices, Box::new(backend));
+        let folders = vec![String::new()];
+        assert!(watcher.watch_spare(spare.clone(), folders.clone()).expect("watch"));
+        assert!(watcher.watch(root, folders).expect("watch"));
+        let taken = watcher.take().expect("take");
+        assert!(taken.iter().any(|notice| notice.root == spare && notice.ended), "{taken:?}");
+        watcher.close().expect("close");
     }
 
     #[test]

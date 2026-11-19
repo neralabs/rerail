@@ -44,8 +44,8 @@ class ScriptedWatch implements TreeWatch {
   readonly overBudget = new Set<string>();
   closed = false;
 
-  watch(root: string, folders: readonly string[]): boolean {
-    this.calls.push(`watch ${root} [${folders.join(",")}]`);
+  watch(root: string, folders: readonly string[], spare?: boolean): boolean {
+    this.calls.push(`watch ${root} [${folders.join(",")}]${spare === true ? " spare" : ""}`);
     if (!this.refused.has(root) && !folders.some(folder => this.overBudget.has(folder))) return true;
     // As the engine does, a refused root's queued notices go with it.
     this.queued.splice(0, this.queued.length, ...this.queued.filter(notice => notice.root !== root));
@@ -252,7 +252,7 @@ describe("WorktreeNotices", () => {
     const { notices: subject } = notices(watch);
     subject.watchRegistry("/r");
     subject.watchRegistry("/r");
-    expect([watch.calls, subject.watchingAny()]).toEqual([["watch /r []"], true]);
+    expect([watch.calls, subject.watchingAny()]).toEqual([["watch /r [] spare"], true]);
     watch.notice("/r", { changed: ["w1", "w1/index", "w1/HEAD"], renamed: ["w1/index.lock", "w1/logs/HEAD"] });
     subject.collect();
     expect(subject.noticed()).toEqual(new Set());
@@ -263,7 +263,7 @@ describe("WorktreeNotices", () => {
     }
     // Its watch ended: watched again as the next walk names it.
     subject.watchRegistry("/r");
-    expect(watch.calls).toEqual(["watch /r []", "watch /r []"]);
+    expect(watch.calls).toEqual(["watch /r [] spare", "watch /r [] spare"]);
     subject.retain(new Set());
     expect([watch.calls.at(-1), subject.watchingAny()]).toEqual(["unwatch /r", false]);
   });
@@ -281,7 +281,7 @@ describe("WorktreeNotices", () => {
       subject.collect();
       watch.notice(folder, { renamed: ["w2"] });
       subject.collect();
-      expect(watch.calls).toEqual([`watch ${folder} [,w1]`, `watch ${folder} [,w1,w2]`]);
+      expect(watch.calls).toEqual([`watch ${folder} [,w1] spare`, `watch ${folder} [,w1,w2] spare`]);
       // One the watch refuses to follow is let go, and watched again as the next walk names it.
       watch.refused.add(folder);
       watch.notice(folder, { lost: true });
@@ -289,7 +289,7 @@ describe("WorktreeNotices", () => {
       expect(subject.watchingAny()).toBe(false);
       watch.refused.delete(folder);
       subject.watchRegistry(folder);
-      expect([watch.calls.at(-1), subject.watchingAny()]).toEqual([`watch ${folder} [,w1,w2]`, true]);
+      expect([watch.calls.at(-1), subject.watchingAny()]).toEqual([`watch ${folder} [,w1,w2] spare`, true]);
     } finally {
       await removeFolder(folder);
     }
@@ -347,6 +347,17 @@ describe("SharedTreeWatch", () => {
     expect(watch.calls.at(-1)).toBe("unwatch /both");
     shared.close();
     expect(watch.closed).toBe(true);
+  });
+
+  it("watches a root spare while each walk on it watches it spare, also once one of them lets go", () => {
+    const watch = new ScriptedWatch();
+    const shared = new SharedTreeWatch(watch);
+    const [first, second] = [shared.user(), shared.user()];
+    first.watch("/r", [""], true);
+    second.watch("/r", ["", "x"], true);
+    second.unwatch("/r");
+    first.watch("/w", [""]);
+    expect(watch.calls).toEqual(["watch /r [] spare", "watch /r [,x] spare", "watch /r [] spare", "watch /w []"]);
   });
 
   it("lets go of a root a walk was refused, so another walk's watch of it ends as that walk lets go", () => {

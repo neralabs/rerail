@@ -207,7 +207,9 @@ export class WorktreeNotices {
    * Watches `folder` (physical), where Git registers a repository's linked worktrees, unless it is watched; on Linux with
    * each worktree's entry, so Git's writing of an entry's `gitdir` and `locked` is a notice too. Once a notice there may
    * change what Git lists (`registryNoticeCounts`), `noticed` hands on `folder`. A folder that is not there, or that the
-   * watch refuses, is tried again at the next call.
+   * watch refuses, is tried again at the next call. It is watched spare (`TreeWatch.watch`): on Linux it takes only room
+   * the watch budget has left, so every worktree fits as it would with no registry watched, and its watch ends once a
+   * worktree needs that room.
    */
   watchRegistry(folder: string): void {
     if (this.#watch === undefined || this.#registries.has(folder)) return;
@@ -301,10 +303,10 @@ export class WorktreeNotices {
     return ended !== undefined && this.#now() - ended.at < REWATCH_MS && folder === ended.folder;
   }
 
-  /** Watches the registry `folder` with the folders it follows now (`registryFolders` on Linux); one the watch refuses is let go. */
+  /** Watches the registry `folder`, spare, with the folders it follows now (`registryFolders` on Linux); one the watch refuses is let go. */
   #followRegistry(folder: string): void {
     const folders = this.#byFolder ? registryFolders(folder) : [""];
-    if (this.#watch!.watch(folder, folders)) this.#registries.set(folder, folders);
+    if (this.#watch!.watch(folder, folders, true)) this.#registries.set(folder, folders);
     else this.#registries.delete(folder);
   }
 
@@ -401,15 +403,22 @@ function mergedNotice(queued: TreeNotice | undefined, notice: TreeNotice): TreeN
   return { root: notice.root, changed, renamed, lost: false, ended };
 }
 
+/** What one user of a `SharedTreeWatch` asked of a root: the folders it follows, and whether it watches the root spare. */
+interface Asked {
+  readonly folders: readonly string[];
+  readonly spare: boolean;
+}
+
 /**
  * One engine `TreeWatch` shared by the walks of every repository of an engine service (`RepositoryWorktreeWalks`):
  * each walk watches through a user of its own and takes only the notices of the roots it watches. A root several users
- * watch is watched once, with every folder any of them follows, until the last lets go of it.
+ * watch is watched once, with every folder any of them follows, spare while each of them watches it spare, until the
+ * last lets go of it.
  */
 export class SharedTreeWatch {
   readonly #watch: TreeWatch;
-  /** By root, the folders each user watches it with. */
-  readonly #roots = new Map<string, Map<object, readonly string[]>>();
+  /** By root, what each user watching it asked. */
+  readonly #roots = new Map<string, Map<object, Asked>>();
   /**
    * By user, the notices taken from the watch for it and not yet taken by it, one per root as the engine's take hands
    * them: a walk that takes them rarely holds no more than the engine would. A user that watches nothing and has taken
@@ -426,7 +435,7 @@ export class SharedTreeWatch {
   user(): TreeWatch {
     const user = {};
     return {
-      watch: (root, folders) => this.#watchFor(user, root, folders),
+      watch: (root, folders, spare) => this.#watchFor(user, root, { folders, spare: spare === true }),
       unwatch: root => this.#unwatchFor(user, root),
       take: () => this.#takeFor(user),
       close: () => this.#closeFor(user),
@@ -442,12 +451,12 @@ export class SharedTreeWatch {
     this.#watch.close();
   }
 
-  #watchFor(user: object, root: string, folders: readonly string[]): boolean {
+  #watchFor(user: object, root: string, asked: Asked): boolean {
     if (this.#closed) return false;
-    const users = this.#roots.get(root) ?? new Map<object, readonly string[]>();
-    users.set(user, folders);
+    const users = this.#roots.get(root) ?? new Map<object, Asked>();
+    users.set(user, asked);
     this.#roots.set(root, users);
-    if (this.#watch.watch(root, unionOf(users))) {
+    if (this.#engineWatch(root, users)) {
       if (!this.#queues.has(user)) this.#queues.set(user, new Map());
       return true;
     }
@@ -468,7 +477,7 @@ export class SharedTreeWatch {
   }
 
   /** Watches `root` with the folders of the `users` left on it, or lets go of it when none is. */
-  #release(root: string, users: ReadonlyMap<object, readonly string[]>): void {
+  #release(root: string, users: ReadonlyMap<object, Asked>): void {
     if (users.size > 0) {
       this.#watchLeft(root, users);
       return;
@@ -481,11 +490,16 @@ export class SharedTreeWatch {
    * Watches `root` with the folders of the `users` left on it; true when the engine holds it. When it refuses, it let go
    * of the root and of its notices: no user holds the root any more, and each is told its watch ended.
    */
-  #watchLeft(root: string, users: ReadonlyMap<object, readonly string[]>): boolean {
-    if (this.#watch.watch(root, unionOf(users))) return true;
+  #watchLeft(root: string, users: ReadonlyMap<object, Asked>): boolean {
+    if (this.#engineWatch(root, users)) return true;
     this.#roots.delete(root);
     this.#queue(users.keys(), lostNotice(root, true));
     return false;
+  }
+
+  /** Watches `root` with every folder its `users` follow, spare while each of them watches it spare. */
+  #engineWatch(root: string, users: ReadonlyMap<object, Asked>): boolean {
+    return this.#watch.watch(root, unionOf(users), [...users.values()].every(asked => asked.spare));
   }
 
   /** Queues `notice` for each of `users` still watching anything, merged with what it has not taken of that root. */
@@ -525,8 +539,8 @@ export class SharedTreeWatch {
 }
 
 /** Every folder any user watches a root with. */
-function unionOf(users: ReadonlyMap<object, readonly string[]>): string[] {
-  return [...new Set([...users.values()].flat())];
+function unionOf(users: ReadonlyMap<object, Asked>): string[] {
+  return [...new Set([...users.values()].flatMap(asked => asked.folders))];
 }
 
 /** A notice that `root`'s queued notices were lost, and with `ended` that its watch ended. */
