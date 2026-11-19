@@ -9,8 +9,9 @@
 // SHIPBAR_ENGINE_TMPDIR becomes TMPDIR (and TMP and TEMP, which Windows reads) before the engine loads, so the
 // engine's temporary stores start in the run's fresh directory while tsx keeps its transpile cache where it was. Corpus
 // paths are '/'-separated on every platform, as the recordings name them. Writes { files, rules, compiled,
-// compileErrors, findings: [rule, path, line, code][], failures: { rule, code, message }[], loadMs, compileMs,
-// evaluateMs }.
+// compileErrors, findings: [rule, path, line, code, column][], failures: { rule, code, message }[], loadMs, compileMs,
+// evaluateMs }; line and column (bytes into the line) are 1-based, 0 for a finding without a span. The translation suite
+// (scripts/ship/translations.ts) runs it too, as the original side of each rule's comparison.
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -19,7 +20,7 @@ import { pathToFileURL } from "node:url";
 interface Violation {
   ruleId: string;
   path?: string;
-  span?: { startLine: number };
+  span?: { startLine: number; startColumn: number };
   code: string;
 }
 
@@ -83,7 +84,7 @@ const compileMs = performance.now() - compileStarted;
 console.error("shipbar: phase evaluate");
 const evaluation = await evaluateWorkspace(compiled, files, corpus);
 console.error("shipbar: phase write");
-const findings = (evaluation.violations as Violation[]).map((v) => [policyToRule.get(v.ruleId) ?? v.ruleId, v.path ?? "", (v.span?.startLine ?? -1) + 1, v.code]);
+const findings = (evaluation.violations as Violation[]).map((v) => [policyToRule.get(v.ruleId) ?? v.ruleId, v.path ?? "", (v.span?.startLine ?? -1) + 1, v.code, (v.span?.startColumn ?? -1) + 1]);
 const failures = (evaluation.failures as Failure[]).map((f) => ({
   rule: (f.ruleId === undefined ? undefined : policyToRule.get(f.ruleId)) ?? f.ruleId ?? "",
   code: f.code,

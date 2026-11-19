@@ -1,0 +1,343 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "react",
+  "equivalent": false,
+  "untranslated": {
+    "react-button-has-type": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-button-has-type.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
+    "react-iframe-missing-sandbox": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-iframe-missing-sandbox.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
+    "react-jsx-no-constructed-context-values": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-jsx-no-constructed-context-values.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
+    "react-no-array-index-key": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-no-array-index-key.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
+    "react-no-children-prop": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-no-children-prop.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
+    "react-no-direct-mutation-state": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-no-direct-mutation-state.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
+    "react-no-object-type-as-default-prop": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-no-object-type-as-default-prop.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
+    "react-no-unstable-nested-components": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-no-unstable-nested-components.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
+    "react-practice-cache-update-in-mutate-call": "no .rerail translation; recorded by the suite, not yet explained",
+    "react-practice-callback-for-dom-only": "no .rerail translation; recorded by the suite, not yet explained",
+    "react-practice-fresh-dependency": "no .rerail translation; recorded by the suite, not yet explained",
+    "react-practice-hoist-static-value": "no .rerail translation; recorded by the suite, not yet explained",
+    "react-practice-lifecycle-hook": "no .rerail translation; recorded by the suite, not yet explained",
+    "react-practice-memo-trivial-expression": "no .rerail translation; recorded by the suite, not yet explained",
+    "react-practice-mounted-ref-never-reset": "no .rerail translation; recorded by the suite, not yet explained",
+    "react-practice-request-beside-data-library": "no .rerail translation; recorded by the suite, not yet explained",
+    "react-practice-selector-returns-new-collection": "no .rerail translation; recorded by the suite, not yet explained",
+    "react-practice-side-effect-in-render": "no .rerail translation; recorded by the suite, not yet explained",
+    "react-practice-then-without-stale-guard": "no .rerail translation; recorded by the suite, not yet explained",
+    "react-void-dom-elements-no-children": "failed: examples, fixtures, samples-react: the translation failed: rerail-engine: docs/rule-syntax/packs/react/react-void-dom-elements-no-children.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)"
+  },
+  "different": {
+    "react-hooks-error-boundaries": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 6,
+          "translationOnly": 0
+        }
+      }
+    },
+    "react-hooks-exhaustive-deps": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 7,
+          "translationOnly": 2
+        },
+        "samples-react": {
+          "originalOnly": 8,
+          "translationOnly": 32
+        }
+      }
+    },
+    "react-hooks-globals": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "react-hooks-immutability": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 0
+        },
+        "samples-react": {
+          "originalOnly": 23,
+          "translationOnly": 68
+        }
+      }
+    },
+    "react-hooks-purity": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 5,
+          "translationOnly": 4
+        }
+      }
+    },
+    "react-hooks-refs": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 98,
+          "translationOnly": 16
+        }
+      }
+    },
+    "react-hooks-rules-of-hooks": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 0,
+          "translationOnly": 23
+        }
+      }
+    },
+    "react-hooks-set-state-in-effect": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "examples": {
+          "originalOnly": 2,
+          "translationOnly": 0
+        },
+        "fixtures": {
+          "originalOnly": 8,
+          "translationOnly": 0
+        },
+        "samples-react": {
+          "originalOnly": 155,
+          "translationOnly": 0
+        }
+      }
+    },
+    "react-hooks-set-state-in-render": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 1,
+          "translationOnly": 2
+        }
+      }
+    },
+    "react-hooks-static-components": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "examples": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        },
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 2
+        },
+        "samples-react": {
+          "originalOnly": 4,
+          "translationOnly": 40
+        }
+      }
+    },
+    "react-jsx-key": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 4,
+          "translationOnly": 36
+        }
+      }
+    },
+    "react-jsx-no-comment-textnodes": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "react-jsx-no-leaked-render": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 3,
+          "translationOnly": 0
+        }
+      }
+    },
+    "react-jsx-no-target-blank": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        },
+        "samples-react": {
+          "originalOnly": 1,
+          "translationOnly": 1
+        }
+      }
+    },
+    "react-jsx-no-undef": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "react-no-access-state-in-setstate": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        },
+        "samples-react": {
+          "originalOnly": 39,
+          "translationOnly": 2
+        }
+      }
+    },
+    "react-no-danger": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 2,
+          "translationOnly": 7
+        }
+      }
+    },
+    "react-no-deprecated": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        },
+        "samples-react": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "react-no-did-mount-set-state": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "react-no-did-update-set-state": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 0,
+          "translationOnly": 15
+        }
+      }
+    },
+    "react-no-find-dom-node": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 0,
+          "translationOnly": 11
+        }
+      }
+    },
+    "react-no-render-return-value": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "react-no-string-refs": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "react-no-unescaped-entities": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 10,
+          "translationOnly": 20
+        }
+      }
+    },
+    "react-no-unknown-property": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 2,
+          "translationOnly": 24
+        }
+      }
+    },
+    "react-no-unsafe": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "examples": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        },
+        "fixtures": {
+          "originalOnly": 12,
+          "translationOnly": 0
+        },
+        "samples-react": {
+          "originalOnly": 21,
+          "translationOnly": 0
+        }
+      }
+    },
+    "react-self-closing-comp": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-react": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    }
+  }
+}

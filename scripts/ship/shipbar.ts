@@ -129,7 +129,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { dirname, join, matchesGlob, relative, resolve, sep } from "node:path";
+import { dirname, join, matchesGlob, relative, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -139,6 +139,7 @@ import { cachedWorkload, type CellCost, cellCost, engineBinary, type Phases, rea
 import { busiest, cpuList, LINUX_METHOD, type MachineInfo, methodCounts, openPlatform, parseProcStat, type Platform, type RunMethod } from "./platform.js";
 import { buildReport, type RunMeta } from "./report-model.js";
 import { renderReport } from "./report.js";
+import { hashTree, listFiles } from "./corpus-tree.js";
 import { SCENARIOS, scenarioId } from "./waits-model.js";
 import { loadSession, prepareSession, type WaitsManifest } from "./waits-session.js";
 import { SHAPES } from "./waits-steps.js";
@@ -210,28 +211,6 @@ function readJson<T>(path: string): T {
 function lastLine(text: string): string {
   const lines = text.split("\n").map((line) => line.trim()).filter((line) => line !== "");
   return (lines.at(-1) ?? "").slice(0, 300);
-}
-
-/** Every file under `root`, as sorted paths relative to it. */
-function listFiles(root: string): string[] {
-  const out: string[] = [];
-  const walk = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const full = join(directory, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.isFile()) out.push(relative(root, full).split(sep).join("/"));
-    }
-  };
-  if (existsSync(root)) walk(root);
-  return out.sort();
-}
-
-/** A tree's identity: its file count, and the sha256 of each sorted path with its content's sha256. */
-function hashTree(root: string): { files: number; sha256: string } {
-  const files = listFiles(root);
-  const hash = createHash("sha256");
-  for (const path of files) hash.update(`${path}\u0000${createHash("sha256").update(readFileSync(join(root, path))).digest("hex")}\n`);
-  return { files: files.length, sha256: hash.digest("hex") };
 }
 
 function copyInto(source: string, destination: string): void {

@@ -106,6 +106,14 @@ export const GROUPS = {
     // Claude Code and Cursor load this checkout as a plugin directory, Codex its hooks file.
     reads: [...PACKAGE_READS, "hooks/codex.json", ".claude-plugin/plugin.json", ".cursor-plugin/plugin.json", ".codex-plugin/plugin.json", "skills/rerail-create/SKILL.md"],
   },
+  translations: {
+    jobs: ["translations"],
+    // The suite, and what product-run.ts imports at run time from the checkout it is given (src/engine/index.ts,
+    // conformance/engine.ts and the runner): the product's path, which esbuild cannot follow from a computed import.
+    entries: ["scripts/ship/translations.ts", "scripts/ship/product-run.ts", "src/engine/index.ts", "conformance/engine.ts", "conformance/languages/runner.ts"],
+    // The pack's rules, examples and declaration, the corpora pins, the engine's crate.
+    reads: ["packs/rerail/pack.json", "docs/rule-syntax/packs/rerail/equivalence.json", "scripts/ship/corpora.json", "native/Cargo.toml", "languages/python.json", "tsconfig.json"],
+  },
 };
 
 /** Outputs of the `changes` job this check leaves alone, and why. */
