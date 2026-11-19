@@ -1241,12 +1241,7 @@ fn policy_command_report(report: serde_json::Value) -> Result<String, String> {
 /// Each engine command prints one line to stderr: its CPU (user + sys) and the process's footprint, now and at most.
 #[cfg(not(target_family = "wasm"))]
 fn repeat_command(script: &str) -> Result<String, String> {
-    let cpu = || {
-        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-        let time = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
-        (time(usage.ru_utime), time(usage.ru_stime))
-    };
+    use crate::code_rule_dsl::logic::plan::corpus::usage;
     let mut out = String::new();
     // The session the script's commands keep (`RERAIL_SESSION`), from its first command to its last.
     let mut kept = crate::code_rule_dsl::logic::plan::corpus::session::Kept::default();
@@ -1275,9 +1270,9 @@ fn repeat_command(script: &str) -> Result<String, String> {
             }
             _ => {
                 let args: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
-                let (u0, s0) = cpu();
+                let (u0, s0, _) = usage();
                 let result = cli_in(&args, &mut kept);
-                let (u1, s1) = cpu();
+                let (u1, s1, _) = usage();
                 eprintln!(
                     "repeat line {n}: {:.2} s CPU ({:.2} user + {:.2} sys); footprint {} MB, at most {} MB; {}",
                     (u1 - u0) + (s1 - s0),

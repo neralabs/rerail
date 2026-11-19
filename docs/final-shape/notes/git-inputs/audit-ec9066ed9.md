@@ -10,6 +10,7 @@ Joining file names to native paths let Rust read the inputs. MSVC then rejected 
 The build must pass the ordinary absolute paths from Cargo's package directory to the compiler.
 The build then reached the JSON parser. Its SHA-256 code used GCC byte-swap and target intrinsics that MSVC rejected.
 The MSVC build needs its own compiler intrinsics. The parser must produce the same digest and tape through each supported kernel.
+The engine's `repeat` command also called Unix `getrusage` on Windows. It must read user and kernel time from the existing platform profiler.
 
 The headless regression for case 102 reproduced the permission change before the repair.
 After the repair, each scan reported the expected violation and published its scope. The existing parents kept modes `0755` and `1777`.
