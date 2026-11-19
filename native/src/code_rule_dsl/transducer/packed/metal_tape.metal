@@ -42,6 +42,9 @@ inline uint tape_parent(device const uchar* s,DocView d,uint i){return clif_tape
 inline uint tape_next_in(device const uchar* s,DocView d,uint i,uint end){return clif_tape_next_in(TAPE_READ(s,d),i,end);}
 inline uint tape_end_of(device const uchar* s,DocView d,uint i){return clif_tape_end_of(TAPE_READ(s,d),i);}
 inline uint tape_next(device const uchar* s,DocView d,uint i){return clif_tape_next(TAPE_READ(s,d),i);}
+// The end of a node's siblings (its parent's subtree; 0 at the root): one parent read, a search (CLIF's `parent`), for
+// a walk over the siblings by `tape_next_in`. `tape_next` reads the parent at each hop (0440).
+inline uint tape_siblings_end(device const uchar* s,DocView d,uint i){uint p=tape_parent(s,d,i);return p==TAPE_NONE?0u:tape_end_of(s,d,p);}
 inline uint tape_next_named_in(device const uchar* s,DocView d,uint i,uint end){uint j=tape_next_in(s,d,i,end);while(j!=TAPE_NONE&&!tape_named(s,d,j))j=tape_next_in(s,d,j,end);return j;}
 inline uint tape_next_named(device const uchar* s,DocView d,uint i){uint p=tape_parent(s,d,i);if(p==TAPE_NONE)return TAPE_NONE;return tape_next_named_in(s,d,i,tape_end_of(s,d,p));}
 inline uint tape_first_child(device const uchar* s,DocView d,uint i){return clif_tape_first_child(TAPE_READ(s,d),i);}

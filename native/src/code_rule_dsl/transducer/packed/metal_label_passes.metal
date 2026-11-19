@@ -826,8 +826,8 @@ kernel void label_leaves(device const DocView* docs [[buffer(0)]],device const u
       for(uint l=0u;l<shape.targetCount;l++){
         uint test=tests[l],op=test&255u,arg=test>>8u;bool hit;
         if(op==18u)hit=tape_next(chunk,d,n)!=TAPE_NONE;
-        else if(op==22u){hit=false;for(uint c=tape_next(chunk,d,n);c!=TAPE_NONE;c=tape_next(chunk,d,c))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
-        else if(op==21u){hit=false;for(uint c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next(chunk,d,c))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
+        else if(op==22u){hit=false;uint end=tape_siblings_end(chunk,d,n);for(uint c=tape_next_in(chunk,d,n,end);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
+        else if(op==21u){hit=false;uint end=tape_end_of(chunk,d,n);for(uint c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
         else if(op==19u)hit=tape_size(chunk,d,n)>1u;
         else if(op==1u)hit=code.kind==arg;
         else if(op==2u)hit=code.field==arg;
@@ -975,7 +975,7 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
       }else if(down){
         // Each candidate's children (a child step) or next siblings (following): one in the inner set keeps it.
         FORMULA_EACH(cand,fw,lane,width,n){
-          for(uint k=op==14u?tape_first_child(chunk,d,n):tape_next(chunk,d,n);k!=TAPE_NONE;k=tape_next(chunk,d,k)){
+          for(uint end=op==14u?tape_end_of(chunk,d,n):tape_siblings_end(chunk,d,n),k=op==14u?tape_first_child(chunk,d,n):tape_next_in(chunk,d,n,end);k!=TAPE_NONE;k=tape_next_in(chunk,d,k,end)){
             childs++;
             if(formula_get(from,k)&&formula_named(t,k,named)){formula_set(out,n);break;}
           }
@@ -994,9 +994,9 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
           FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint p=tape_parent(chunk,d,n);if(p!=TAPE_NONE)formula_set(parentSet,p);}
           threadgroup_barrier(mem_flags::mem_device);
           FORMULA_EACH(parentSet,fw,lane,width,p){
-            uint last=TAPE_NONE;
-            for(uint k=tape_first_child(chunk,d,p);k!=TAPE_NONE;k=tape_next(chunk,d,k)){childs++;if(formula_get(from,k)&&formula_named(t,k,named))last=k;}
-            if(last!=TAPE_NONE)for(uint k=tape_first_child(chunk,d,p);k!=last;k=tape_next(chunk,d,k)){childs++;formula_set(out,k);}
+            uint last=TAPE_NONE,end=tape_end_of(chunk,d,p);
+            for(uint k=tape_first_child(chunk,d,p);k!=TAPE_NONE;k=tape_next_in(chunk,d,k,end)){childs++;if(formula_get(from,k)&&formula_named(t,k,named))last=k;}
+            if(last!=TAPE_NONE)for(uint k=tape_first_child(chunk,d,p);k!=last;k=tape_next_in(chunk,d,k,end)){childs++;formula_set(out,k);}
           }
         }
         threadgroup_barrier(mem_flags::mem_device);
@@ -1025,16 +1025,16 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
         FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){for(uint p=tape_parent(chunk,d,n);p!=TAPE_NONE;p=tape_parent(chunk,d,p)){parents++;if(formula_set(out,p))break;}}
       }else if(op==9u){
         // The children of the members.
-        FORMULA_EACH(from,fw,lane,width,n)for(uint c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next(chunk,d,c)){childs++;formula_set(out,c);}
+        FORMULA_EACH(from,fw,lane,width,n){uint end=tape_end_of(chunk,d,n);for(uint c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end)){childs++;formula_set(out,c);}}
       }else if(op==10u){
         // The earlier siblings of the members: the members' parents, then each such parent's children before its last member.
         device atomic_uint* parentSet=SLOT(at+1u);
         FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint p=tape_parent(chunk,d,n);if(p!=TAPE_NONE)formula_set(parentSet,p);}
         threadgroup_barrier(mem_flags::mem_device);
         FORMULA_EACH(parentSet,fw,lane,width,p){
-          uint last=TAPE_NONE;
-          for(uint c=tape_first_child(chunk,d,p);c!=TAPE_NONE;c=tape_next(chunk,d,c)){childs++;if(formula_get(from,c)&&formula_named(t,c,named))last=c;}
-          if(last!=TAPE_NONE)for(uint c=tape_first_child(chunk,d,p);c!=last;c=tape_next(chunk,d,c)){childs++;formula_set(out,c);}
+          uint last=TAPE_NONE,end=tape_end_of(chunk,d,p);
+          for(uint c=tape_first_child(chunk,d,p);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end)){childs++;if(formula_get(from,c)&&formula_named(t,c,named))last=c;}
+          if(last!=TAPE_NONE)for(uint c=tape_first_child(chunk,d,p);c!=last;c=tape_next_in(chunk,d,c,end)){childs++;formula_set(out,c);}
         }
       }else if(op==23u){
         // A targets image (0365 §10): the members' proper descendants. In preorder a node is one where a member before
@@ -1059,7 +1059,7 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
         }
       }else if(op==24u){
         // The members' later siblings: each member's next siblings, until one another member's run has set.
-        FORMULA_EACH(from,fw,lane,width,n)for(uint c=tape_next(chunk,d,n);c!=TAPE_NONE;c=tape_next(chunk,d,c)){childs++;if(formula_set(out,c))break;}
+        FORMULA_EACH(from,fw,lane,width,n){uint end=tape_siblings_end(chunk,d,n);for(uint c=tape_next_in(chunk,d,n,end);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end)){childs++;if(formula_set(out,c))break;}}
       }else if(op==25u){
         // A chain's reach, as the CPU's `Reader` reads it: a node is reached where its parent is a member, or is in
         // `through` and reached. So a node is reached where its nearest ancestor that is a member or not in `through`

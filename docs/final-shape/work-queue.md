@@ -2009,6 +2009,9 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   member, a size read each, and its levels follow how deeply members nest. Measure that against spreading a member's
   children over the lanes (its child count, `tape_child_count`, and `tape_child`).
 - **Done when:** op 9's pass is near the dispatch floor (about 100 µs), with the rows the same as native.
+- **Closed** (2026-11-19, 0440): the cost was not the shape but the read. `tape_next` searches for the parent at each
+  hop. The walks take the parent's end once and hop by `tape_next_in`. The op-9 formulas went from 431–846 µs to
+  133–212 µs, at the leaf-only floor, with the rows the same as native.
 
 ### Q252. (Q220 until the hub merge) A chain's reach climbs a node at a time in each (file, formula) group
 
