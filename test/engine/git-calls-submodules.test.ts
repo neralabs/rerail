@@ -153,6 +153,8 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const work = await repository(root, "work", { "top.txt": "top\n" });
     git(work, "submodule", "add", "--quiet", source, "sub");
     git(work, "commit", "--quiet", "-m", "submodule");
+    // Git for Windows hides a submodule's `.git` file, and Windows refuses to open a hidden file for writing.
+    unlinkSync(join(work, "sub", ".git"));
     await writeFile(join(work, "sub", ".git"), "gitdir: ../missing\n");
 
     const audit = runGit(work, AUDIT_DIFF);
@@ -181,6 +183,7 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const { work, placed } = await submoduleWithPlacedCopy(root, marker);
     const kept = join(root, "kept");
     renameSync(placed, kept);
+    unlinkSync(join(work, "sub", ".git"));
     await writeFile(join(work, "sub", ".git"), "gitdir: ../placed\n");
 
     const audit = await afterSubmoduleListing(root, work, `cp -R '${kept}' '${placed}'`);
