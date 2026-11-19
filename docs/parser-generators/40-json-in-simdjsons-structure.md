@@ -506,6 +506,62 @@ What follows, in order:
 Later, not now: the CLIF-to-Rust translator (`rerail_clif::rust`, `clif_rust`) was never meant
 to exist, and is to be deleted.
 
+## Step 13, done: `rust_stream` generates the simdjson form
+
+`rust_stream` now writes this program's tier 2 as Rust. What it gained:
+- **Tier 2 makes the records.** `TOKEN` takes the next start, tier 1's structural index. The
+  switch on the token's first byte makes the token's record in each arm (`fetched_arms`):
+  - a token of one byte gets its code and its place at once;
+  - the opening quote is a token of its own, with the string's parts pending after it;
+  - a number's arm tests each atom as simdjson does, `str4ncmp`, then checks that the byte
+    after is not in the run's class. Otherwise it finds the run's end, 16 bytes a vector
+    (`run_R`).
+  - A token switched on again (after a call returns, `again`) takes the switch on its kind, as
+    before.
+- **A string's parts are read as `parse_string`** (`part_plan`). It finds the next quote or
+  backslash, 16 bytes a vector (`part_stop`, `copy_and_find`'s compares), then branches once:
+  the content before it, the closer, or an escape. An escape's code comes from its second
+  byte (`CODES2`, `escape_map`). The `TOKEN` and its switch are one piece of code.
+- **Token checks** (`token_check`): over the token's bytes, 64 bytes a step, word-parallel.
+  Byte sets are tier 1's nibble classes, a `prev` carries its last word, a `fill` its carry.
+- **Supertype classes** in the tape's codes, as `native_cpu_tape::commit` and `finish` write
+  them.
+
+`simdjson_forms_rust_trees_are_the_jits` builds the source with rustc into a library, loads it
+in place of the JIT's tier 2, and gives the JIT's trees on every file of the trees test: 108
+with the corpus (81 parsed, 27 refused). A mutation fails it: the content's next part one byte
+late.
+
+## The generated Rust next to simdjson's stage 2
+
+The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` writes it as
+`simdjson.rs`). simdjson's side is `json_iterator::walk_document`, `parse_string`,
+`parse_number` and the atoms.
+
+| simdjson | the generated Rust | the same? |
+|---|---|---|
+| `walk_document`: one function, its states labels (`object_begin`, `object_continue`, `scope_end`) | a function per grammar rule (`r0`, the document; `r32`, the object; `r46`, the array) | no |
+| nesting on a stack of its own (`is_array[depth]`); `scope_end` goes back to the state of the scope it returns to | nesting by recursion (`r46(s)?`, `s.depth`). A call returns `Ok(again)`, and the caller then switches on the same token again | no |
+| `advance()`: the next index | `token_all()`: a room check on the tape each token, the end's test, `last_end`, `live` | no |
+| `switch (*value)` | `match s.byte(s.start)`, the record made in the arm | yes |
+| one switch a value | the arms meet at a word they share, `open(10)` (the value's node), then `match d` takes them apart again; and an `else` path switches on the kind, for a token switched on again | no |
+| `case ','`, `case ']'` in the continue states | each punctuation byte straight to its place, every other byte refused | yes |
+| atoms: `str4ncmp(src, "true")`, then the byte after not structural or white space | the same test, a word load | yes |
+| `parse_number`: the digits read once, validated as they are read | `run_0` finds the end, then `check_0` reads the bytes again in 64-byte windows and classifies them by the check's sets | no: read twice |
+| `parse_string`: `copy_and_find`, then one branch: quote, backslash or neither | `part_stop`, then one branch: closer, escape or content | yes |
+| an escape: `escape_map[c]`, the `\u` work only after a `u` | `CODES2[c]`, then a `match` of nine words that all go to one place, then both `\u` checks at every escape | no |
+| the closing quote ends the string | the closer's arm tests its span's length again | no |
+| the tape: a word a value | the node rows (`open`, `leaf`, `close`, the supertype's record), committed to the tape's columns | the output's form, not a difference to remove |
+
+What follows, in order, each change made in `rust_stream` or in the compiler, and judged on
+the Rust it writes:
+1. A number read once: the check made in the pass that finds its end, as `parse_number`.
+2. One dispatch a value: no shared word between the switch and the value's place, and no
+   switch on the kind where a token is switched on once.
+3. The `\u` checks only after a `u`; one test for the escape's words.
+4. No room check a token: the tape sized from the input once, as the JIT's.
+5. One function, the nesting on a stack of its own, as `walk_document`.
+
 ## Order
 
 1. Done: step 1, above.

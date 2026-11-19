@@ -394,10 +394,15 @@ pub(crate) fn words_read(native: &Structure, pushes: &[u16], word_kinds: &[u8], 
 /// the opener alone); under one, the token is a part or the closer, and the closer's kind (its
 /// bytes') ends it, every other kind keeps it. A switch with an offset keeps what it had.
 pub(crate) fn parts_pending(native: &Structure, pushes: &[u16], ft: &Fetch) -> Vec<bool> {
+    let seen = parts_pending_seen(native, pushes, ft);
+    (0..native.structural.len()).map(|pc| matches!(native.structural[pc].operation, Op::Token { .. }) && seen[pc][1]).collect()
+}
+
+/// As `parts_pending`, each word's two states: reached with no part pending, and with one.
+pub(crate) fn parts_pending_seen(native: &Structure, pushes: &[u16], ft: &Fetch) -> Vec<[bool; 2]> {
     let n = native.structural.len();
     let opener = |b: usize| ft.seq_bytes[b / 64] >> (b % 64) & 1 == 1;
     let closing: Vec<bool> = (0..256).map(|b| (0..256).any(|x| opener(x) && ft.kinds[x] == ft.kinds[b])).collect();
-    let mut pend = vec![false; n];
     let mut seen = vec![[false; 2]; n];
     let mut work = vec![(0usize, false)];
     while let Some((pc, p)) = work.pop() {
@@ -405,10 +410,7 @@ pub(crate) fn parts_pending(native: &Structure, pushes: &[u16], ft: &Fetch) -> V
             continue;
         }
         match native.structural[pc].operation {
-            Op::Token { .. } => {
-                pend[pc] |= p;
-                work.push((pc + 1, p));
-            }
+            Op::Token { .. } => work.push((pc + 1, p)),
             Op::Switch { table } => {
                 let sw = &native.switches[usize::from(table)];
                 if sw.offset != 0 {
@@ -428,7 +430,7 @@ pub(crate) fn parts_pending(native: &Structure, pushes: &[u16], ft: &Fetch) -> V
             _ => work.extend(successors(native, pushes, pc).into_iter().map(|t| (t, p))),
         }
     }
-    pend
+    seen
 }
 
 /// Each word's successors, as `stream::validate` reads them, `TOKEN`'s cut.
@@ -2123,28 +2125,28 @@ struct Table<'a> {
 /// output and its bytes, the shortest first), and the record pass's tables for the parts' codes
 /// (`native_cpu_block::plain_code`), which the code reads by address.
 pub(crate) struct SplitParts {
-    opener: u16,
-    off: i8,
-    parts: Vec<(u16, u8)>,
-    tables: crate::native_cpu_block::RecordTables,
+    pub(crate) opener: u16,
+    pub(crate) off: i8,
+    pub(crate) parts: Vec<(u16, u8)>,
+    pub(crate) tables: crate::native_cpu_block::RecordTables,
     /// Where the region reads as simdjson's `parse_string` (`sequential`): its closer's byte
     /// test and its part's (instructions of tier 1's block, read from the bytes in tier 2).
-    seq: Option<Seq>,
+    pub(crate) seq: Option<Seq>,
 }
 
 /// A region read in parts whose next token, from a clean place, is decided by the first byte of
 /// two classes (`sequential`): `x`, the closer's, and `e`, the part's first.
 #[derive(Clone)]
 pub(crate) struct Seq {
-    x: usize,
-    e: usize,
+    pub(crate) x: usize,
+    pub(crate) e: usize,
     /// The bytes of `X` (the closer's), and of `X` or `E` (where the scan stops): a closer's
     /// first byte is in the first, a content token's in neither.
-    xs: [u64; 4],
-    stops: [u64; 4],
+    pub(crate) xs: [u64; 4],
+    pub(crate) stops: [u64; 4],
     /// Where `E` is one byte: a part's code by its second byte (`records::pass` of the two
     /// bytes), as simdjson's `escape_map[escape_char]`.
-    codes2: Option<Box<[u32; 256]>>,
+    pub(crate) codes2: Option<Box<[u32; 256]>>,
 }
 
 /// Whether a region read in parts needs no escape carry in tier 2, as simdjson's `parse_string`
@@ -2213,7 +2215,7 @@ pub(crate) fn sequential(block: &crate::block_native::BlockNative, a: &crate::re
 /// The region tier 2 splits (`SplitParts`), where a reader says so; refused where its parts'
 /// codes need what `plain_code` does not give (marks, retags, words past sixteen bytes) or the
 /// program has more than one such reader.
-fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error> {
+pub(crate) fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error> {
     let Some(block) = native.block_programs.first() else { return Ok(None) };
     let Some(r) = &block.records else { return Ok(None) };
     let late: Vec<&crate::records::Reader> = r.readers.iter().filter(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2).collect();
@@ -2251,35 +2253,35 @@ fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error> {
 /// its address read by the code), the rules, the readers, and the record pass's tables for its
 /// code (`native_cpu_block::plain_code`).
 pub(crate) struct Fetch {
-    ends: Box<[u8; 256]>,
-    rules: Vec<crate::records::EndRule>,
-    readers: Vec<crate::records::Reader>,
-    tables: crate::native_cpu_block::RecordTables,
+    pub(crate) ends: Box<[u8; 256]>,
+    pub(crate) rules: Vec<crate::records::EndRule>,
+    pub(crate) readers: Vec<crate::records::Reader>,
+    pub(crate) tables: crate::native_cpu_block::RecordTables,
     /// Each pair table (`EndRule::Next`): its rows by first byte (256 bytes), then its sets by
     /// row (4 words each, row 0 none), as `PairTable::holds` reads them.
-    nexts: Vec<(Box<[u8; 256]>, Vec<[u64; 4]>)>,
+    pub(crate) nexts: Vec<(Box<[u8; 256]>, Vec<[u64; 4]>)>,
     /// By first byte: its kind, whether a word begins with it, and the code of the token of that
     /// byte alone (`records::pass`'s), for a `SWITCH` edge's record (page 40).
-    kinds: [u8; 256],
-    worded: [bool; 256],
-    codes1: Box<[u32; 256]>,
+    pub(crate) kinds: [u8; 256],
+    pub(crate) worded: [bool; 256],
+    pub(crate) codes1: Box<[u32; 256]>,
     /// The words (`Records::words`), each with its code as a token of its bytes alone.
-    words: Vec<(Vec<u8>, u32)>,
+    pub(crate) words: Vec<(Vec<u8>, u32)>,
     /// By rule: where it is a run (`EndRule::Run`) whose output is a byte class (its bit at a
     /// byte the byte's being in a set), that set as a table of 256 bytes (1: in it), as
     /// simdjson's `structural_or_whitespace` table.
-    run_class: Vec<Option<Box<[u8; 256]>>>,
+    pub(crate) run_class: Vec<Option<Box<[u8; 256]>>>,
     /// By reader: whether it reads as simdjson's `parse_string` (`sequential`): its token's
     /// record is its opener alone, its parts split from there.
-    seq: Vec<bool>,
+    pub(crate) seq: Vec<bool>,
     /// The first bytes whose rule is a sequential reader's, a bit each.
-    seq_bytes: [u64; 4],
+    pub(crate) seq_bytes: [u64; 4],
 }
 
 /// The records tier 2 makes (`Fetch`), where the program says so; refused where a token's code
 /// or last needs what `plain_code` and the rules below do not give (marks, retags, gap marks,
 /// token tests, pair tables, a reader of more than one region, words past sixteen bytes).
-fn fetch_of(native: &Structure) -> Result<Option<Box<Fetch>>, Error> {
+pub(crate) fn fetch_of(native: &Structure) -> Result<Option<Box<Fetch>>, Error> {
     let Some(block) = native.block_programs.first() else { return Ok(None) };
     let Some(r) = block.records.as_ref().filter(|r| r.fetched_in_tier2()) else { return Ok(None) };
     if !r.marks.is_empty() || !r.retags.is_empty() || r.gaps != 0 || !r.checks.is_empty() || r.readers.iter().any(|rd| rd.arms.len() != 1) {
@@ -2540,7 +2542,7 @@ fn emit_rule(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, ft: &Fetch, bw: &crat
 
 /// Whether rule `rule` ends every token at its first byte: a pair table with no pairs
 /// (`pair empty`).
-fn one_byte(ft: &Fetch, rule: &crate::records::EndRule) -> bool {
+pub(crate) fn one_byte(ft: &Fetch, rule: &crate::records::EndRule) -> bool {
     matches!(*rule, crate::records::EndRule::Next(i) if ft.nexts[usize::from(i)].1.iter().all(|s| s.iter().all(|&w| w == 0)))
 }
 

@@ -144,6 +144,22 @@ fn simdjson_forms_starts_are_simdjsons_indexes() {
 #[test]
 fn simdjson_forms_trees_are_14_jsons() {
     let (sj, j14) = (simdjson_form(), form("14-json"));
+    let inputs = tree_inputs();
+    let (mut parsed, mut refused) = (0, 0);
+    for (k, f) in inputs.iter().enumerate() {
+        let show = || String::from_utf8_lossy(&f[..f.len().min(80)]).into_owned();
+        let want = ours(&j14, f);
+        let by_interp = stream::run(&sj.program, f, &sj.program.block_programs[0].run(f)).ok().map(|n| n.iter().map(|x| (x.kind, x.start, x.end)).collect::<Vec<_>>());
+        let want_interp = stream::run(&j14.program, f, &j14.program.block_programs[0].run(f)).ok().map(|n| n.iter().map(|x| (x.kind, x.start, x.end)).collect::<Vec<_>>());
+        assert_eq!(by_interp.is_some(), want_interp.is_some(), "file {k} ({:?}): the interpreter's verdict", show());
+        assert_eq!(ours(&sj, f), want, "file {k} ({:?}): Cranelift's nodes", show());
+        if want.is_some() { parsed += 1 } else { refused += 1 }
+    }
+    eprintln!("{} files: {parsed} parsed, {refused} refused, by both forms alike", inputs.len());
+}
+
+/// The trees test's files: the made-up cases, then the corpus (`RERAIL_JSON_CORPUS`) where set.
+fn tree_inputs() -> Vec<Vec<u8>> {
     let mut inputs: Vec<Vec<u8>> = vec![
         br#"{"a": [1, -2.5e3, true, null], "b\n": {"c": "dAx"}}"#.to_vec(),
         br#"["", "\\", "a\"b", "\\\"", "x", "\n\t", "true", "\u00e9\ud83d\ude00"]"#.to_vec(),
@@ -203,17 +219,56 @@ fn simdjson_forms_trees_are_14_jsons() {
     if std::env::var("RERAIL_JSON_CORPUS").is_ok() {
         inputs.extend(files_in("RERAIL_JSON_CORPUS").iter().map(|p| std::fs::read(p).expect("reads")));
     }
+    inputs
+}
+
+/// The trees test's form: tier 2 as `rust_stream` writes it, compiled by rustc and run on the JIT's
+/// harness in place of Cranelift's code, gives the JIT's trees, file for file (page 40: the
+/// comparison with simdjson is made on this Rust).
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn simdjson_forms_rust_trees_are_the_jits() {
+    let (jit, mut aot) = (simdjson_form(), simdjson_form());
+    let native = rerail_compiler::native_ir::lower(&aot.program, 0, 0).expect("lowers");
+    let (widths, tag) = aot.parser.tier2.widths_tag();
+    let src = rerail_compiler::rust_stream::rust_source_at(&native, widths, tag).expect("tier 2 as Rust");
+    let entry = aot_entry(&src);
+    // SAFETY: the source is this program's tier 2 (from its own native IR), reading and writing
+    // `Ctx` as the JIT's does; it counts its calls open itself.
+    unsafe { aot.parser.tier2.set_entry(entry, 4) };
+    let inputs = tree_inputs();
     let (mut parsed, mut refused) = (0, 0);
     for (k, f) in inputs.iter().enumerate() {
         let show = || String::from_utf8_lossy(&f[..f.len().min(80)]).into_owned();
-        let want = ours(&j14, f);
-        let by_interp = stream::run(&sj.program, f, &sj.program.block_programs[0].run(f)).ok().map(|n| n.iter().map(|x| (x.kind, x.start, x.end)).collect::<Vec<_>>());
-        let want_interp = stream::run(&j14.program, f, &j14.program.block_programs[0].run(f)).ok().map(|n| n.iter().map(|x| (x.kind, x.start, x.end)).collect::<Vec<_>>());
-        assert_eq!(by_interp.is_some(), want_interp.is_some(), "file {k} ({:?}): the interpreter's verdict", show());
-        assert_eq!(ours(&sj, f), want, "file {k} ({:?}): Cranelift's nodes", show());
+        let want = ours(&jit, f);
+        assert_eq!(ours(&aot, f), want, "file {k} ({:?}): the Rust's nodes", show());
         if want.is_some() { parsed += 1 } else { refused += 1 }
     }
-    eprintln!("{} files: {parsed} parsed, {refused} refused, by both forms alike", inputs.len());
+    eprintln!("{} files: {parsed} parsed, {refused} refused, by the Rust and the JIT alike", inputs.len());
+}
+
+/// `src`, tier 2's Rust, built by rustc (optimized, as the ahead-of-time build) into a library
+/// and loaded: its entry.
+#[cfg(target_arch = "aarch64")]
+fn aot_entry(src: &str) -> rerail_compiler::native_cpu_stream::Entry {
+    let dir = std::env::temp_dir().join(format!("rerail-json-aot-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a directory");
+    let (rs, lib) = (dir.join("tier2.rs"), dir.join("libtier2.dylib"));
+    std::fs::write(&rs, format!("{src}\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn rerail_tier2_entry(ctx: u64) -> u64 {{\n    unsafe {{ tier2_entry(ctx) }}\n}}\n")).expect("writes");
+    let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=3", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
+    assert!(out.status.success(), "rustc: {}", String::from_utf8_lossy(&out.stderr));
+    let path = std::ffi::CString::new(lib.to_str().expect("a path")).expect("a path");
+    // SAFETY: a library rustc just built from the source above; kept loaded for the process.
+    let f = unsafe {
+        let h = libc::dlopen(path.as_ptr(), libc::RTLD_NOW);
+        assert!(!h.is_null(), "dlopen");
+        let f = libc::dlsym(h, c"rerail_tier2_entry".as_ptr());
+        assert!(!f.is_null(), "dlsym");
+        std::mem::transmute::<*mut libc::c_void, rerail_compiler::native_cpu_stream::Entry>(f)
+    };
+    // Loaded: the files are no longer needed.
+    let _ = std::fs::remove_dir_all(&dir);
+    f
 }
 
 fn ours(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
