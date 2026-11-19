@@ -22,8 +22,9 @@
 //       [--packs a,b] [--corpus fixtures|real|all] [--runs 1] [--rule-runs 2] [--file-runs 3] [--confirm 3]
 //       [--cpus 8-11] [--mem-cap 24G] [--time-cap 2700] [--pack-cap <pack>=<memory>,<seconds>]... [--rr-chunk 50]
 //       [--candidates ships] [--gate ships] [--build]
-//       Measures the three slices of every pack it is given, always (Method), the shipped packs only by default (add
-//       `--candidates ships,rr` for the `.rerail` rewrites, which measure slice A only and so never PASS).
+//       Measures the three slices of every pack it is given, always (Method), for each candidate: the shipped packs
+//       only by default, `--candidates ships,rr` for the `.rerail` rewrites too (rr needs the candidate's
+//       `rerail-engine` release binary as well).
 //       Linux, macOS or Windows (platform.ts: how each pins, caps and measures, recorded in every run row): prepares what
 //       is missing, measures every pack and corpus, then writes the report. Resumable: a run already in a cell's logs is
 //       not made again. --packs and --corpus narrow the run: its verdict is then PARTIAL, never PASS.
@@ -39,13 +40,14 @@
 //       --out <dir> [--candidate <dir>] [--corpora <dir>] [--packs a,b] [--name <work dir on the hosts>]
 //       [--workers 0-3/4-7/8-11/12-15] [--stores /dev/shm/shipbar-<name>] [--runs 3] [--rule-runs 2] [--file-runs 3]
 //       [--confirm 3] [--mem-cap 24G] [--time-cap 2700] [--pack-cap <pack>=<memory>,<seconds>]... [--poll 180] [--from <phase>]
-//       [--ssh "<remote shell command>"]
+//       [--candidates ships] [--ssh "<remote shell command>"]
 //       From the Mac, the whole bar over Linux hosts (fanout.ts): prepare (as `prepare`); plan every unit (A by
-//       repetition, B by chunks of rules, C by file, none longer than about fanout.ts UNIT_BUDGET_S) and assign them to
-//       the hosts longest first; sync the baseline, the candidate, the corpora and this harness to ~/work/<name>/ on
-//       each host (rsync over the remote shell: `ssh`, or --ssh / SHIPBAR_SSH, a wrapper taking `<host> <command>` as
-//       ssh does); build both sides on the first host (`npm ci --ignore-scripts && npm
-//       run build:native`); copy the two engines to the others (sha256 checked) and `npm ci` there; on each host one
+//       repetition, B by chunks of rules, C by file, each unit timing every candidate beside main, none longer than
+//       about fanout.ts UNIT_BUDGET_S) and assign them to the hosts longest first; sync the baseline, the candidate,
+//       the corpora and this harness to ~/work/<name>/ on each host (rsync over the remote shell: `ssh`, or --ssh /
+//       SHIPBAR_SSH, a wrapper taking `<host> <command>` as ssh does); build both sides on the first host (`npm ci
+//       --ignore-scripts && npm run build:native`, and the candidate's `rerail-engine` with rr); copy the engines to
+//       the others (sha256 checked) and `npm ci` there; on each host one
 //       detached `host` process measures (then confirms) with a worker per CPU set; pull every host's out/ and merge it
 //       into <out>/runs; report. Each phase's start and end are in <out>/fanout/state.json, and a finished phase is not
 //       made again when the command is run again (--from <phase> makes it and every later one again). Both checkouts
@@ -69,12 +71,16 @@
 //       `npm run build:js` beside the native engine), then the report with a waits section.
 //
 // Exit status of run and verdict: 0 only when every candidate in --gate (default: every one in --candidates) passes.
+// rr's verdict on a pack counts toward it only where the candidate's docs/rule-syntax/packs/<pack>/equivalence.json
+// (rerail.translation-equivalence/v1, written by the translation suite) says `equivalent: true`: every translated rule
+// finds what the original does, but for the rules it lists as different, each with why. On any other pack rr is
+// measured and judged alike, and reported only: it never fails the run (verdict.ts translationGate).
 //
 // Method. The benchmark is three slices per pack, all always measured, candidate against main:
 //
 //   A  all rules × all files: per corpus (fixtures, real code), runs/<pack>/<corpus>/runs.jsonl;
-//   B  one rule × all files: per corpus, the empty rule set and every rule main ships that the candidate ships, each
-//      alone, runs/<pack>/<corpus>/one-rule.jsonl;
+//   B  one rule × all files: per corpus, the empty rule set and every rule main ships that a candidate has (ships:
+//      ships too; rr: has a runnable `.rerail` rewrite), each alone, runs/<pack>/<corpus>/one-rule.jsonl;
 //   C  all rules × one file: three files of the pack's real-code corpus by bytes among its source extensions
 //      (verdict.ts SOURCE_EXTENSIONS): the largest, the median and a small one (5th percentile),
 //      runs/<pack>/one-file/<label>/runs.jsonl, the files named in runs/<pack>/one-file/files.json.
@@ -95,8 +101,14 @@
 //      and moved by at least 20 ms (verdict.ts RULE_FLOOR_MS; a rule moved by less is not confirmed: it cannot count).
 //      The empty rule set is the fixed cost: its cold wall and its load, compile and evaluate times, each judged
 //      alike. Each rule's findings must be the same set on both sides, and the candidate may not fail a rule main runs.
+//      rr runs each rule main ships that has a runnable rewrite (rr-rules.json) through `run-policies <corpus> <out>
+//      <rule.rerail>`, its findings mapped back from policy to rule. run-policies reports no phase times (its JSON is
+//      the findings and each policy's run), so rr's time is its net wall: the rule's cold wall less the median cold
+//      wall of rr's empty rule set, a policy of the pack's language with no rules generated into the cell
+//      (one-rule.empty.rerail; run-policies takes at least one policy), judged against main's compile + evaluate
+//      (verdict.ts netWalls). rr's fixed cost is judged on its cold wall only.
 //   C  each file --file-runs times per side, cold then warm on the same store, judged as A's metrics are; its findings
-//      must be the same set on both sides.
+//      must be the same set on both sides (rr: all of its runnable rewrites, against main's findings of those rules).
 //
 // Anything over the bar runs --confirm more repetitions per side (A: the cell, confirm.jsonl; B: the rule,
 // one-rule-confirm.jsonl; C: the file, confirm.jsonl): a figure passing them is noisy, reported and not counted. Every
@@ -149,13 +161,16 @@ import {
   median,
   missingRules,
   needsConfirmation,
+  netWalls,
   newRuleFailures,
   pickFiles,
+  RR_RULE_TIME,
   type RunOutcome,
   scoreFindings,
   SOURCE_EXTENSIONS,
   type TimeVerdict,
   SLICES_TOLERANCE_PERCENT,
+  translationGate,
 } from "./verdict.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -534,30 +549,40 @@ function requireBuilt(checkout: string, needs: { product: boolean; engine: boole
 // ---------------------------------------------------------------- the .rerail side's rules
 
 interface RrRules {
-  /** Per rule main ships: its `.rerail` path and policy name, or why it cannot run. */
-  rules: Record<string, { path?: string; policy?: string; unavailable: string | null }>;
+  /**
+   * Per rule main ships: its `.rerail` translation's files and policy name (the rule id), or why it cannot run. A rule
+   * whose clauses span languages is several full policies of one name, one a language (`<id>.rerail`, `<id>.<lang>.rerail`).
+   */
+  rules: Record<string, { paths?: string[]; policy?: string; unavailable: string | null }>;
 }
 
-/** Each rule main ships, mapped to its `.rerail` rewrite on the candidate, checked by the candidate's `check-rr`. */
-function rrRules(candidate: string, engine: string, mainRules: readonly string[], pack: string): RrRules {
-  const rules: RrRules["rules"] = {};
-  const present: string[] = [];
-  for (const rule of mainRules) {
-    const path = join(candidate, "docs", "rule-syntax", "packs", pack, `${rule}.rerail`);
-    if (!existsSync(path)) {
-      rules[rule] = { unavailable: "no .rerail counterpart" };
-      continue;
-    }
-    const policy = /^\.policy\s+"([^"]+)"/m.exec(readFileSync(path, "utf8"))?.[1];
-    if (policy === undefined) {
-      rules[rule] = { path, unavailable: "the .rerail has no .policy line" };
-      continue;
-    }
-    rules[rule] = { path, policy, unavailable: null };
-    present.push(rule);
+/**
+ * Each rule main ships, mapped to its `.rerail` translation on the candidate, before `check-rr` (what a plan can know):
+ * every `.rerail` of docs/rule-syntax/packs/<pack>/ whose `.policy` line names the rule id. A file with no `.policy`
+ * line is a table others #include, never run alone.
+ */
+function rrRewrites(candidate: string, mainRules: readonly string[], pack: string): RrRules {
+  const directory = join(candidate, "docs", "rule-syntax", "packs", pack);
+  const byPolicy = new Map<string, string[]>();
+  for (const name of existsSync(directory) ? readdirSync(directory).filter((file) => file.endsWith(".rerail")).sort() : []) {
+    const policy = /^\.policy\s+"([^"]+)"/m.exec(readFileSync(join(directory, name), "utf8"))?.[1];
+    if (policy !== undefined) byPolicy.set(policy, [...(byPolicy.get(policy) ?? []), join(directory, name)]);
   }
+  const rules: RrRules["rules"] = {};
+  for (const rule of mainRules) {
+    const paths = byPolicy.get(rule);
+    if (paths !== undefined) rules[rule] = { paths, policy: rule, unavailable: null };
+    else rules[rule] = { unavailable: existsSync(join(directory, `${rule}.rerail`)) ? `${rule}.rerail declares no .policy "${rule}"` : "no .rerail counterpart" };
+  }
+  return { rules };
+}
+
+/** Each rule main ships, mapped to its `.rerail` translation on the candidate, every file checked by the candidate's `check-rr`. */
+function rrRules(candidate: string, engine: string, mainRules: readonly string[], pack: string): RrRules {
+  const { rules } = rrRewrites(candidate, mainRules, pack);
+  const present = Object.keys(rules).filter((rule) => rules[rule]!.unavailable === null);
   if (present.length > 0) {
-    const checked = run(engine, ["check-rr", ...present.map((rule) => rules[rule]!.path!)], { cwd: candidate });
+    const checked = run(engine, ["check-rr", ...present.flatMap((rule) => rules[rule]!.paths!)], { cwd: candidate });
     let rows: { path: string; status: string; error?: string }[] = [];
     try {
       rows = engineJson<typeof rows>(checked.stdout);
@@ -566,12 +591,66 @@ function rrRules(candidate: string, engine: string, mainRules: readonly string[]
     }
     const byPath = new Map(rows.map((row) => [resolve(candidate, row.path), row]));
     for (const rule of present) {
-      const row = byPath.get(resolve(rules[rule]!.path!));
-      if (row === undefined) rules[rule]!.unavailable = "check-rr did not report it";
-      else if (row.status !== "reader-passed") rules[rule]!.unavailable = `check-rr ${row.status}: ${(row.error ?? "").slice(0, 200)}`;
+      for (const path of rules[rule]!.paths!) {
+        const row = byPath.get(resolve(path));
+        const file = relative(candidate, path);
+        if (row === undefined) rules[rule]!.unavailable = `check-rr did not report ${file}`;
+        else if (row.status !== "reader-passed") rules[rule]!.unavailable = `check-rr ${row.status} on ${file}: ${(row.error ?? "").slice(0, 200)}`;
+        if (rules[rule]!.unavailable !== null) break;
+      }
     }
   }
   return { rules };
+}
+
+/**
+ * runs/<pack>/rr-rules.json: the pack's `.rerail` rules as the candidate's `check-rr` finds them, made once (by
+ * whichever process measures the pack first: a fan-out's workers may race, so it is written whole, then renamed).
+ */
+function packRrRules(settings: Settings, pack: string): RrRules {
+  const path = join(settings.out, "runs", pack, "rr-rules.json");
+  if (!existsSync(path)) {
+    if (settings.engine === undefined) fail(`${pack}: the .rerail side needs the candidate's rerail-engine (${ENGINE_BUILD})`);
+    mkdirSync(dirname(path), { recursive: true });
+    const temporary = `${path}.${process.pid}`;
+    writeFileSync(temporary, JSON.stringify(rrRules(settings.candidate.dir, settings.engine, shippedRules(settings.baseline.dir, pack), pack), null, 1));
+    renameSync(temporary, path);
+  }
+  return readJson<RrRules>(path);
+}
+
+/** The `.rerail` rules that run: every rewrite `check-rr` reads. */
+function rrRunnable(rr: RrRules): string[] {
+  return Object.entries(rr.rules).filter(([, rule]) => rule.unavailable === null).map(([id]) => id);
+}
+
+/**
+ * Slice B's empty rule set on the `.rerail` side, generated into the cell: run-policies takes at least one policy and a
+ * policy at least one `.violation`, so a policy declaring one and no rule, in the language most of the pack's
+ * rewrites name (`.language`) and the scope most of those name (`.scope`), so it is given the files they are.
+ */
+function rrEmptyPolicy(cell: string, rr: RrRules): string {
+  const path = join(cell, "one-rule.empty.rerail");
+  if (existsSync(path)) return path;
+  const heads = rrRunnable(rr).flatMap((id) =>
+    rr.rules[id]!.paths!.map((file) => {
+      const text = readFileSync(file, "utf8");
+      return { language: /^\.language\s+(\S+)/m.exec(text)?.[1], scope: /^\.scope\s.*$/m.exec(text)?.[0] };
+    }),
+  );
+  const mostCommon = (values: readonly (string | undefined)[]): string | undefined => {
+    const counts = new Map<string, number>();
+    for (const value of values) if (value !== undefined) counts.set(value, (counts.get(value) ?? 0) + 1);
+    return [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0];
+  };
+  const language = mostCommon(heads.map((head) => head.language));
+  if (language === undefined) fail(`${cell}: no runnable .rerail rewrite names its .language`);
+  const scope = mostCommon(heads.filter((head) => head.language === language).map((head) => head.scope)) ?? '.scope include "**/*"';
+  mkdirSync(cell, { recursive: true });
+  const temporary = `${path}.${process.pid}`;
+  writeFileSync(temporary, `.policy "shipbar-empty-rule-set"\n.description "No rules: the fixed cost of a run-policies run."\n.language ${language}\n.mode steer\n${scope}\n.violation shipbar_empty_rule_set(at: loc) code "shipbar-empty-rule-set" "never found"\n`);
+  renameSync(temporary, path);
+  return path;
 }
 
 // ---------------------------------------------------------------- measuring
@@ -697,6 +776,8 @@ interface Process {
   log: string;
   /** run-policies: the rule ids it runs, in order. */
   rules: readonly string[];
+  /** run-policies: the policy files to run instead of `rules`' rewrites (slice B's empty rule set). */
+  policies?: readonly string[];
   /** The product path: a directory holding the rules to run instead of the pack's. */
   rulesDir?: string;
   /** Slice B: the rule this run times alone, "(none)" for the empty rule set. */
@@ -723,7 +804,9 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   const result = join(cell, `${tag}.json`);
   const rundir = join(cell, `${tag}.out`);
   rmSync(rundir, { recursive: true, force: true });
-  const { command, cwd } = sideCommand(settings, side, pack, corpus, result, rundir, p.rules.map((id) => rr!.rules[id]!.path!), p.rulesDir);
+  // run-policies: each rule's files in order (a rule of several languages is several policies), and the rule of each.
+  const policyRules = p.policies === undefined ? p.rules.flatMap((id) => rr!.rules[id]!.paths!.map((path) => ({ path, id }))) : p.policies.map((path) => ({ path, id: null }));
+  const { command, cwd } = sideCommand(settings, side, pack, corpus, result, rundir, policyRules.map((policy) => policy.path), p.rulesDir);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined && !key.startsWith("RERAIL_") && !key.startsWith("SHIPBAR_")) env[key] = value;
   env.RERAIL_TAPE_CACHE = join(store, "store.sqlite");
@@ -771,10 +854,11 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
         : `exit ${exit}: ${lastLine(errorText)}`;
     if (side === "rr") {
       const started = existsSync(rundir) ? readdirSync(rundir).filter((name) => /^\d+$/.test(name)).length : 0;
-      const named = /[\\/]([^\\/]+)\.rerail: /.exec(errorText)?.[1];
-      culprit = named !== undefined && p.rules.includes(named) ? named : (p.rules[started - 1] ?? null);
-      stoppedOn = `${culprit ?? "before the first policy"} (policy ${started} of ${p.rules.length})`;
-      progress = { started, of: p.rules.length };
+      const named = /([^\s"']+\.rerail): /.exec(errorText)?.[1];
+      const namedRule = named === undefined ? undefined : policyRules.find((policy) => resolve(cwd, named) === resolve(policy.path))?.id;
+      culprit = namedRule ?? policyRules[started - 1]?.id ?? null;
+      stoppedOn = `${culprit ?? "before the first policy"} (policy ${started} of ${policyRules.length})`;
+      progress = { started, of: policyRules.length };
     } else {
       stoppedOn = [...errorText.matchAll(/^shipbar: phase (\S+)/gm)].at(-1)?.[1] ?? "start-up";
     }
@@ -947,10 +1031,19 @@ const NO_RULE = "(none)";
 /** Slice B's files in a pack and corpus's cell: its first runs, its confirmation runs and each run's kept findings. */
 const ONE_RULE = { runs: "one-rule.jsonl", confirm: "one-rule-confirm.jsonl", findings: "one-rule.findings" } as const;
 
-/** Slice B's rules of a pack: the empty rule set, then every rule main ships that the candidate ships too. */
-function oneRuleSet(settings: { baseline: Checkout; candidate: Checkout }, pack: string): string[] {
-  const candidate = new Set(shippedRules(settings.candidate.dir, pack));
-  return [NO_RULE, ...shippedRules(settings.baseline.dir, pack).filter((rule) => candidate.has(rule))];
+/**
+ * A candidate's slice B rules of a pack: the empty rule set, then every rule main ships that the candidate has (ships:
+ * ships too; rr: a rewrite in `rr`, check-rr's runnable ones, or every rewrite where a plan made before check-rr asks).
+ */
+function oneRuleSet(settings: { baseline: Checkout; candidate: Checkout }, pack: string, candidate: Candidate, rr: RrRules | undefined): string[] {
+  const has = new Set(candidate === "ships" ? shippedRules(settings.candidate.dir, pack) : rr === undefined ? [] : rrRunnable(rr));
+  return [NO_RULE, ...shippedRules(settings.baseline.dir, pack).filter((rule) => has.has(rule))];
+}
+
+/** Slice B's rules of a pack over every candidate measured: the empty rule set, then each rule any candidate has. */
+function oneRuleUnion(settings: { baseline: Checkout; candidate: Checkout }, pack: string, candidates: readonly Candidate[], rr: RrRules | undefined): string[] {
+  const wanted = new Set(candidates.flatMap((candidate) => oneRuleSet(settings, pack, candidate, rr)));
+  return [NO_RULE, ...shippedRules(settings.baseline.dir, pack).filter((rule) => wanted.has(rule))];
 }
 
 /** Slice B's rows grouped by the rule they timed. */
@@ -966,24 +1059,38 @@ function byRule(rows: readonly RunRow[]): Map<string, RunRow[]> {
 }
 
 /**
- * Slice B's judged times of one rule from its first and confirmation runs: its compile + evaluate time; for the empty
- * rule set (the fixed cost) its cold wall and each of its load, compile and evaluate times.
+ * Slice B's judged times of one rule from its first and confirmation runs, main against `candidate`. ships: its compile
+ * + evaluate time; for the empty rule set (the fixed cost) its cold wall and each of its load, compile and evaluate
+ * times. rr (run-policies reports no phases): its net wall, the cold wall less `rrEmptyWalls`' median (rr's empty rule
+ * set's cold walls), against main's compile + evaluate; for the empty rule set its cold wall.
  */
-function oneRuleTimes(rule: string, rows: readonly RunRow[], confirm: readonly RunRow[]): TimeVerdict[] {
-  const values = (from: readonly RunRow[], side: Side, pick: (row: RunRow) => number): number[] => from.filter((row) => row.side === side && row.completed && row.phases != null).map(pick);
-  const time = (name: string, pick: (row: RunRow) => number): TimeVerdict => judgeTime(name, values(rows, "main", pick), values(rows, "ships", pick), values(confirm, "main", pick), values(confirm, "ships", pick));
-  if (rule !== NO_RULE) return [time("compile+evaluate", (row) => row.phases!.compile_ms + row.phases!.evaluate_ms)];
-  return [time("wall-cold", (row) => row.wallMs), time("load", (row) => row.phases!.load_ms), time("compile", (row) => row.phases!.compile_ms), time("evaluate", (row) => row.phases!.evaluate_ms)];
+function oneRuleTimes(rule: string, candidate: Candidate, rows: readonly RunRow[], confirm: readonly RunRow[], rrEmptyWalls: readonly number[]): TimeVerdict[] {
+  const values = (from: readonly RunRow[], side: Side, pick: (row: RunRow) => number): number[] => from.filter((row) => row.side === side && row.completed && (side === "rr" || row.phases != null)).map(pick);
+  const time = (name: string, pick: (row: RunRow) => number): TimeVerdict => judgeTime(name, values(rows, "main", pick), values(rows, candidate, pick), values(confirm, "main", pick), values(confirm, candidate, pick));
+  const wall = (row: RunRow): number => row.wallMs;
+  const compileEvaluate = (row: RunRow): number => row.phases!.compile_ms + row.phases!.evaluate_ms;
+  if (candidate === "rr") {
+    if (rule === NO_RULE) return [time("wall-cold", wall)];
+    return [judgeTime(RR_RULE_TIME, values(rows, "main", compileEvaluate), netWalls(values(rows, "rr", wall), rrEmptyWalls), values(confirm, "main", compileEvaluate), netWalls(values(confirm, "rr", wall), rrEmptyWalls))];
+  }
+  if (rule !== NO_RULE) return [time("compile+evaluate", compileEvaluate)];
+  return [time("wall-cold", wall), time("load", (row) => row.phases!.load_ms), time("compile", (row) => row.phases!.compile_ms), time("evaluate", (row) => row.phases!.evaluate_ms)];
+}
+
+/** The `.rerail` side's empty rule set's completed cold walls among a cell's slice B rows. */
+function rrEmptyWallsOf(rows: ReadonlyMap<string, readonly RunRow[]>): number[] {
+  return (rows.get(NO_RULE) ?? []).filter((row) => row.side === "rr" && row.completed).map((row) => row.wallMs);
 }
 
 /**
- * Slice B on one pack and corpus: the empty rule set and each rule both sides ship (or `rules` of them: a fan-out's
- * chunk), alone, --rule-runs cold runs per side, the side order alternating, each on a fresh store and with a rules
- * directory holding only that rule, into one-rule.jsonl; the first run's findings kept in
- * one-rule.findings/<side>.<rule>.json. A time over the bar by at least the floor runs --confirm more such runs per side
- * (one-rule-confirm.jsonl). A side whose run of a rule fails makes no further run of it.
+ * Slice B on one pack and corpus: the empty rule set and each rule a candidate has (or `rules` of them: a fan-out's
+ * chunk), alone, --rule-runs cold runs per side (main and each candidate that has the rule), the side order rotating,
+ * each on a fresh store: the product path with a rules directory holding only that rule, run-policies with only that
+ * rule's rewrite (the empty rule set: one-rule.empty.rerail). Into one-rule.jsonl; the first run's findings kept in
+ * one-rule.findings/<side>.<rule>.json. A time over the bar by at least the floor runs --confirm more such runs of main
+ * and of each candidate over (one-rule-confirm.jsonl). A side whose run of a rule fails makes no further run of it.
  */
-function measureOneRule(settings: Settings, pack: string, corpus: Corpus, rules: readonly string[] = oneRuleSet(settings, pack)): void {
+function measureOneRule(settings: Settings, pack: string, corpus: Corpus, candidates: readonly Candidate[], rr: RrRules | undefined, rules: readonly string[] = oneRuleUnion(settings, pack, candidates, rr)): void {
   if (rules.length === 0) return;
   const cell = join(settings.out, "runs", pack, corpus);
   const dir = corpusDirectory(settings.corpora, pack, corpus);
@@ -991,21 +1098,29 @@ function measureOneRule(settings: Settings, pack: string, corpus: Corpus, rules:
   const scratch = join(cell, "one-rule.scratch", rules[0]!);
   const stores = storeDir(settings, cell, join("one-rule.stores", rules[0]!));
   mkdirSync(join(cell, ONE_RULE.findings), { recursive: true });
+  const sets = new Map(candidates.map((c) => [c, new Set(oneRuleSet(settings, pack, c, rr))]));
+  const emptyPolicy = sets.has("rr") ? rrEmptyPolicy(cell, rr!) : undefined;
   const logged = { [ONE_RULE.runs]: byRule(readRows(join(cell, ONE_RULE.runs))), [ONE_RULE.confirm]: byRule(readRows(join(cell, ONE_RULE.confirm))) };
-  const runRule = (rule: string, log: typeof ONE_RULE.runs | typeof ONE_RULE.confirm, reps: number): void => {
+  const runRule = (rule: string, log: typeof ONE_RULE.runs | typeof ONE_RULE.confirm, reps: number, sides: readonly Side[]): void => {
     const confirming = log === ONE_RULE.confirm;
     for (let rep = 1; rep <= reps; rep += 1) {
-      for (const side of (rep % 2 === 1 ? ["main", "ships"] : ["ships", "main"]) as Side[]) {
+      for (const side of sides.map((_, i) => sides[(i + rep - 1) % sides.length]!)) {
         const tag = `${confirming ? "one-confirm" : "one"}.${side}.${rule}.${rep}`;
         const rows = (logged[log].get(rule) ?? []).filter((row) => row.side === side);
         if (rows.some((row) => row.tag === tag || !row.completed)) continue;
-        const rulesDir = join(scratch, `${side}.rules`);
-        rmSync(rulesDir, { recursive: true, force: true });
-        mkdirSync(rulesDir, { recursive: true });
-        if (rule !== NO_RULE) copyFileSync(join(side === "main" ? settings.baseline.dir : settings.candidate.dir, "packs", pack, "rules", `${rule}.json`), join(rulesDir, `${rule}.json`));
         const store = join(stores, `${side}.store`);
         const findingsAs = rep === 1 && !confirming && rule !== NO_RULE ? { findingsAs: join(ONE_RULE.findings, `${side}.${rule}.json`) } : {};
-        const row = measure(settings, cell, { side, mode: "cold", rep, tag, store, log, rules: [], rulesDir, rule, ...findingsAs }, pack, dir, undefined);
+        let proc: Process;
+        if (side === "rr") {
+          proc = { side, mode: "cold", rep, tag, store, log, rules: rule === NO_RULE ? [] : [rule], ...(rule === NO_RULE ? { policies: [emptyPolicy!] } : {}), rule, ...findingsAs };
+        } else {
+          const rulesDir = join(scratch, `${side}.rules`);
+          rmSync(rulesDir, { recursive: true, force: true });
+          mkdirSync(rulesDir, { recursive: true });
+          if (rule !== NO_RULE) copyFileSync(join(side === "main" ? settings.baseline.dir : settings.candidate.dir, "packs", pack, "rules", `${rule}.json`), join(rulesDir, `${rule}.json`));
+          proc = { side, mode: "cold", rep, tag, store, log, rules: [], rulesDir, rule, ...findingsAs };
+        }
+        const row = measure(settings, cell, proc, pack, dir, rr);
         const list = logged[log].get(rule);
         if (list === undefined) logged[log].set(rule, [row]);
         else list.push(row);
@@ -1013,11 +1128,17 @@ function measureOneRule(settings: Settings, pack: string, corpus: Corpus, rules:
       }
     }
   };
+  // A fan-out's chunk without the empty rule set still needs rr's to judge its rules' net walls: timed here first.
+  if (!rules.includes(NO_RULE) && rules.some((rule) => sets.get("rr")?.has(rule)) && !(logged[ONE_RULE.runs].get(NO_RULE) ?? []).some((row) => row.side === "rr")) runRule(NO_RULE, ONE_RULE.runs, settings.ruleRuns, ["rr"]);
   for (const rule of rules) {
-    runRule(rule, ONE_RULE.runs, settings.ruleRuns);
+    const here = candidates.filter((c) => sets.get(c)!.has(rule));
+    if (here.length === 0) continue;
+    runRule(rule, ONE_RULE.runs, settings.ruleRuns, ["main", ...here]);
+    if (settings.confirm === 0) continue;
     const first = logged[ONE_RULE.runs].get(rule) ?? [];
     const confirmed = logged[ONE_RULE.confirm].get(rule) ?? [];
-    if (settings.confirm > 0 && first.every((row) => row.completed) && oneRuleTimes(rule, first, confirmed).some((time) => needsConfirmation(time))) runRule(rule, ONE_RULE.confirm, settings.confirm);
+    const over = here.filter((c) => first.every((row) => row.completed || (row.side !== "main" && row.side !== c)) && oneRuleTimes(rule, c, first, confirmed, rrEmptyWallsOf(logged[ONE_RULE.runs])).some((time) => needsConfirmation(time)));
+    if (over.length > 0) runRule(rule, ONE_RULE.confirm, settings.confirm, ["main", ...over]);
   }
   rmSync(scratch, { recursive: true, force: true });
   rmSync(stores, { recursive: true, force: true });
@@ -1055,15 +1176,15 @@ function pickOneFiles(settings: { out: string; corpora: string }, pack: string):
 
 /**
  * Slice C on one file of a pack: alone in a corpus directory of its own (runs/<pack>/one-file/<label>/corpus, at its
- * path in the real-code corpus), all of the pack's rules, --file-runs repetitions per side, cold then warm on the same
- * store, the side order alternating; anything over the bar confirmed as an A cell is.
+ * path in the real-code corpus), all of the pack's rules (rr: all of its runnable rewrites), --file-runs repetitions per
+ * side, cold then warm on the same store, the side order rotating; anything over the bar confirmed as an A cell is.
  */
-function measureOneFile(settings: Settings, pack: string, file: OneFile): void {
+function measureOneFile(settings: Settings, pack: string, file: OneFile, candidates: readonly Candidate[], rr: RrRules | undefined): void {
   const cell = join(settings.out, "runs", pack, "one-file", file.label);
   const dir = join(cell, "corpus");
   if (!existsSync(join(dir, file.path))) copyInto(join(corpusDirectory(settings.corpora, pack, "real"), file.path), join(dir, file.path));
-  measureCell(settings, cell, dir, pack, repetitions(settings.fileRuns), ["main", "ships"], undefined);
-  confirmCell(settings, cell, dir, pack, ["ships"], undefined);
+  measureCell(settings, cell, dir, pack, repetitions(settings.fileRuns), ["main", ...candidates], rr);
+  confirmCell(settings, cell, dir, pack, candidates, rr);
 }
 
 /** Repetitions 1..n. */
@@ -1202,12 +1323,15 @@ export interface PackVerdict {
   extra: string[];
   /** Slice A: all rules × all files, one cell per corpus in scope. */
   cells: CellVerdict[];
-  /** Slice B: one rule × all files, one per corpus in scope; empty where the candidate does not measure it. */
+  /** Slice B: one rule × all files, one per corpus in scope. */
   oneRule: OneRuleVerdict[];
   /** Slice C: all rules × one file, the three files of the real-code corpus; empty where not measured. */
   oneFile: OneFileVerdict[];
-  /** Why this candidate measures no slice B or C by design (the `.rerail` rewrites: slice A only); null otherwise. */
-  slicesNote: string | null;
+  /**
+   * Whether this pack's verdict counts toward the exit status, and why (the `.rerail` side: its equivalence.json,
+   * verdict.ts translationGate); null where it always counts (the shipped packs).
+   */
+  gate: { counted: boolean; reason: string } | null;
 }
 
 export interface CandidateVerdict {
@@ -1346,66 +1470,80 @@ function loadSummary(rows: readonly RunRow[]): LoadSummary {
   };
 }
 
-/** Slice B on one pack and corpus, from one-rule.jsonl and one-rule-confirm.jsonl. */
-function oneRuleVerdict(settings: { baseline: Checkout; candidate: Checkout; out: string }, lock: CorporaLock, pack: string, corpus: Corpus): OneRuleVerdict {
+/** Slice B of one candidate on one pack and corpus, from one-rule.jsonl and one-rule-confirm.jsonl. */
+function oneRuleVerdict(settings: { baseline: Checkout; candidate: Checkout; out: string }, lock: CorporaLock, pack: string, corpus: Corpus, candidate: Candidate, rr: RrRules | undefined): OneRuleVerdict {
   const empty: OneRuleVerdict = { corpus, note: "", unmeasured: [], runs: 0, fixed: null, rules: [], load: loadSummary([]) };
   const fixtures = lock.fixtures[pack];
   if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) return { ...empty, note: `no fixtures corpus: ${fixtures.absent}` };
   const cell = join(settings.out, "runs", pack, corpus);
-  const all = readRows(join(cell, ONE_RULE.runs));
-  if (all.length === 0) return { ...empty, note: "not measured" };
+  const all = readRows(join(cell, ONE_RULE.runs)).filter((row) => row.side === "main" || row.side === candidate);
+  if (!all.some((row) => row.side === candidate)) return { ...empty, note: "not measured" };
   const rows = byRule(all);
-  const confirm = byRule(readRows(join(cell, ONE_RULE.confirm)));
+  const confirmRows = readRows(join(cell, ONE_RULE.confirm)).filter((row) => row.side === "main" || row.side === candidate);
+  const confirm = byRule(confirmRows);
   const runs = Math.max(...all.map((row) => row.rep));
-  const expected = oneRuleSet(settings, pack);
+  const expected = oneRuleSet(settings, pack, candidate, rr);
+  const rrEmpty = rrEmptyWallsOf(rows);
   const timing = (rule: string): OneRuleTiming => {
     const mine = rows.get(rule) ?? [];
-    const times = oneRuleTimes(rule, mine, confirm.get(rule) ?? []);
+    const times = oneRuleTimes(rule, candidate, mine, confirm.get(rule) ?? [], rrEmpty);
     const main = mine.filter((row) => row.side === "main");
-    const candidate = mine.filter((row) => row.side === "ships");
+    const theirs = mine.filter((row) => row.side === candidate);
     const medianOf = (side: readonly RunRow[], pick: (row: RunRow) => number): number | null => (side.some((row) => row.completed) ? median(side.filter((row) => row.completed).map(pick)) : null);
     const file = (side: Side): string => join(ONE_RULE.findings, `${side}.${rule}.json`);
+    let locator: string | null = null;
+    if (times.some((t) => t.overBefore)) {
+      // run-policies reports no phases: the `.rerail` side's time is its wall.
+      if (candidate === "rr") locator = rule === NO_RULE ? "startup: the empty rule set's cold wall (run-policies reports no phases)" : "evaluate: the rule's net wall (run-policies reports no phases)";
+      else locator = locate("wall-cold", main, theirs, rule === NO_RULE ? {} : { only: ["compile", "evaluate"] });
+    }
     return {
       rule,
       times,
-      locator: times.some((t) => t.overBefore) ? locate("wall-cold", main, candidate, rule === NO_RULE ? {} : { only: ["compile", "evaluate"] }) : null,
-      completion: compareCompletion(outcomes(main), outcomes(candidate), runs),
-      findings: rule === NO_RULE ? null : sameFindings(sideFindings(cell, "main", undefined, file("main")), sideFindings(cell, "ships", undefined, file("ships"))),
-      ruleFailure: rule === NO_RULE ? null : (newRuleFailures(ruleFailuresOf(cell, "main", file("main")), ruleFailuresOf(cell, "ships", file("ships")))[0]?.reason ?? null),
-      wallMs: { main: medianOf(main, (row) => row.wallMs), candidate: medianOf(candidate, (row) => row.wallMs) },
-      rssKB: { main: medianOf(main, (row) => row.rssKB), candidate: medianOf(candidate, (row) => row.rssKB) },
+      locator,
+      completion: compareCompletion(outcomes(main), outcomes(theirs), runs),
+      findings: rule === NO_RULE ? null : sameFindings(sideFindings(cell, "main", undefined, file("main")), sideFindings(cell, candidate, rr, file(candidate))),
+      ruleFailure: rule === NO_RULE ? null : (newRuleFailures(ruleFailuresOf(cell, "main", file("main")), ruleFailuresOf(cell, candidate, file(candidate)))[0]?.reason ?? null),
+      wallMs: { main: medianOf(main, (row) => row.wallMs), candidate: medianOf(theirs, (row) => row.wallMs) },
+      rssKB: { main: medianOf(main, (row) => row.rssKB), candidate: medianOf(theirs, (row) => row.rssKB) },
     };
   };
   return {
     corpus,
     note: "",
-    unmeasured: expected.filter((rule) => !(["main", "ships"] as const).every((side) => rows.get(rule)?.some((row) => row.side === side))),
+    unmeasured: expected.filter((rule) => !(["main", candidate] as const).every((side) => rows.get(rule)?.some((row) => row.side === side))),
     runs,
     fixed: rows.has(NO_RULE) ? timing(NO_RULE) : null,
     rules: expected.filter((rule) => rule !== NO_RULE && rows.has(rule)).map(timing),
-    load: loadSummary([...all, ...[...confirm.values()].flat()]),
+    load: loadSummary([...all, ...confirmRows]),
   };
 }
 
-/** Slice C on one pack: each of its three files, from runs/<pack>/one-file/<label>/. */
-function oneFileVerdicts(settings: { out: string }, pack: string): OneFileVerdict[] {
+/**
+ * Slice C of one candidate on one pack: each of its three files, from runs/<pack>/one-file/<label>/. The `.rerail`
+ * side's findings are compared over the rules it ran there, main's restricted alike (a rule it cannot run fails
+ * coverage once, as in slice A).
+ */
+function oneFileVerdicts(settings: { out: string }, pack: string, candidate: Candidate, rr: RrRules | undefined): OneFileVerdict[] {
   const path = oneFilesPath(settings.out, pack);
   if (!existsSync(path)) return [];
   return readJson<OneFile[]>(path).map((file): OneFileVerdict => {
     const cell = join(settings.out, "runs", pack, "one-file", file.label);
-    const all = readRows(join(cell, "runs.jsonl"));
+    const all = readRows(join(cell, "runs.jsonl")).filter((row) => row.side === "main" || row.side === candidate);
     const main = all.filter((row) => row.side === "main");
-    const mine = all.filter((row) => row.side === "ships");
+    const mine = all.filter((row) => row.side === candidate);
     const base: OneFileVerdict = { ...file, note: "", completion: null, metrics: [], findings: null, ruleFailures: [], load: { main: [], candidate: [] }, siblingBusyMax: null, runs: { main: main.length, candidate: mine.length } };
     if (main.length === 0 || mine.length === 0) return { ...base, note: "not measured" };
-    const confirm = readRows(join(cell, "confirm.jsonl"));
+    const confirm = readRows(join(cell, "confirm.jsonl")).filter((row) => row.side === "main" || row.side === candidate);
     const measured = [...all, ...confirm];
+    const ran = candidate === "rr" && rr !== undefined ? new Set(rrIds(rr, cell)) : undefined;
+    const only = (keys: Set<string> | undefined): Set<string> | undefined => (keys === undefined || ran === undefined ? keys : new Set([...keys].filter((key) => ran.has(key.slice(0, key.indexOf("\u0000"))))));
     return {
       ...base,
       completion: { ...compareCompletion(outcomes(main), outcomes(mine), 2 * Math.max(...all.map((row) => row.rep))), stoppedOn: mine.find((row) => !row.completed)?.stoppedOn ?? null },
-      metrics: withLocators(measuredMetrics(main, mine, confirm.filter((row) => row.side === "main"), confirm.filter((row) => row.side === "ships")), main, mine, undefined),
-      findings: sameFindings(sideFindings(cell, "main", undefined), sideFindings(cell, "ships", undefined)),
-      ruleFailures: newRuleFailures(ruleFailuresOf(cell, "main"), ruleFailuresOf(cell, "ships")),
+      metrics: withLocators(measuredMetrics(main, mine, confirm.filter((row) => row.side === "main"), confirm.filter((row) => row.side === candidate)), main, mine, undefined),
+      findings: sameFindings(only(sideFindings(cell, "main", undefined)), only(sideFindings(cell, candidate, rr))),
+      ruleFailures: newRuleFailures(ruleFailuresOf(cell, "main"), ruleFailuresOf(cell, candidate)),
       load: { main: main.map((row) => row.load), candidate: mine.map((row) => row.load) },
       siblingBusyMax: measured.some((row) => row.siblingBusy !== null) ? Math.max(0, ...measured.map((row) => row.siblingBusy ?? 0)) : null,
     };
@@ -1516,6 +1654,17 @@ function sliceRows(out: string, pack: string, corpusKinds: readonly Corpus[]): R
   ];
 }
 
+/** The candidate's docs/rule-syntax/packs/<pack>/equivalence.json, parsed (null where it is not JSON); undefined when absent. */
+function equivalenceDeclaration(candidate: string, pack: string): unknown {
+  const path = join(candidate, "docs", "rule-syntax", "packs", pack, "equivalence.json");
+  if (!existsSync(path)) return undefined;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; corpora: string; out: string; runs: number }, packs: readonly string[], candidateOnly: readonly string[], corpusKinds: readonly Corpus[], candidates: readonly Candidate[], gate: readonly Candidate[], partial: readonly string[]): Verdict {
   const lock = readJson<CorporaLock>(join(settings.corpora, "corpora.lock.json"));
   const rows = packs.flatMap((pack) => sliceRows(settings.out, pack, corpusKinds));
@@ -1543,12 +1692,12 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
         missing,
         extra,
         cells: corpusKinds.map((corpus) => cellVerdict(settings, lock, pack, corpus, candidate, rr)),
-        oneRule: candidate === "ships" ? corpusKinds.map((corpus) => oneRuleVerdict(settings, lock, pack, corpus)) : [],
-        oneFile: candidate === "ships" && corpusKinds.includes("real") ? oneFileVerdicts(settings, pack) : [],
-        slicesNote: candidate === "rr" ? "the .rerail rewrites measure slice A only" : null,
+        oneRule: corpusKinds.map((corpus) => oneRuleVerdict(settings, lock, pack, corpus, candidate, rr)),
+        oneFile: corpusKinds.includes("real") ? oneFileVerdicts(settings, pack, candidate, rr) : [],
+        gate: candidate === "rr" ? translationGate(pack, equivalenceDeclaration(settings.candidate.dir, pack)) : null,
       };
     });
-    for (const pack of candidateOnly) packVerdicts.push({ pack, noBaseline: true, missing: [], extra: [], cells: [], oneRule: [], oneFile: [], slicesNote: null });
+    for (const pack of candidateOnly) packVerdicts.push({ pack, noBaseline: true, missing: [], extra: [], cells: [], oneRule: [], oneFile: [], gate: null });
     return { candidate, description: CANDIDATES[candidate], packs: packVerdicts };
   });
   const machinesDir = join(settings.out, "machines");
@@ -1650,18 +1799,19 @@ function openSettings(base: SettingsBase, platform: Platform, engine: string | u
   return { ...base, engine, cpus, siblings, platform, memCap: o.memCap, timeCapS: o.timeCapS, packCaps, confirm: o.confirm, ruleRuns: o.ruleRuns, fileRuns: o.fileRuns, rrChunk: o.rrChunk, stores: o.stores };
 }
 
-/** One unit of a fan-out's plan, through run's own code into the same cell logs. */
-function runUnit(settings: Settings, u: PlannedUnit): void {
+/** One unit of a fan-out's plan, for every candidate the plan measures, through run's own code into the same cell logs. */
+function runUnit(settings: Settings, u: PlannedUnit, candidates: readonly Candidate[]): void {
+  const rr = candidates.includes("rr") ? packRrRules(settings, u.pack) : undefined;
   if (u.slice === "A") {
     const dir = corpusDirectory(settings.corpora, u.pack, u.corpus);
     if (u.rep === 1) cachedWorkload(settings.out, relative(settings.corpora, dir), dir, engineBinary(settings.candidate.dir));
-    measureCell(settings, join(settings.out, "runs", u.pack, u.corpus), dir, u.pack, [u.rep!], ["main", "ships"], undefined);
-    measureFixed(settings, u.pack, u.corpus, ["main", "ships"], [u.rep!]);
+    measureCell(settings, join(settings.out, "runs", u.pack, u.corpus), dir, u.pack, [u.rep!], ["main", ...candidates], rr);
+    measureFixed(settings, u.pack, u.corpus, ["main", ...candidates], [u.rep!]);
   } else if (u.slice === "B") {
-    measureOneRule(settings, u.pack, u.corpus, u.rules!);
+    measureOneRule(settings, u.pack, u.corpus, candidates, rr, u.rules!);
   } else {
     const file = pickOneFiles(settings, u.pack).find((f) => f.label === u.label) ?? fail(`${u.id}: no such file in ${oneFilesPath(settings.out, u.pack)}`);
-    measureOneFile(settings, u.pack, file);
+    measureOneFile(settings, u.pack, file, candidates, rr);
   }
 }
 
@@ -1674,8 +1824,8 @@ function workUnits(settings: Settings, plan: Plan, host: string, worker: number,
   mkdirSync(claims, { recursive: true });
   const todo: { id: string; est: number | null; run: () => void }[] =
     phase === "measure"
-      ? plan.units.filter((u) => u.host === host).map((u) => ({ id: u.id, est: u.est, run: () => runUnit(settings, u) }))
-      : plan.confirm.filter((c) => c.host === host).map((c) => ({ id: c.id, est: null, run: () => confirmCell(settings, join(settings.out, "runs", c.pack, c.corpus), corpusDirectory(settings.corpora, c.pack, c.corpus), c.pack, ["ships"], undefined) }));
+      ? plan.units.filter((u) => u.host === host).map((u) => ({ id: u.id, est: u.est, run: () => runUnit(settings, u, plan.candidates) }))
+      : plan.confirm.filter((c) => c.host === host).map((c) => ({ id: c.id, est: null, run: () => confirmCell(settings, join(settings.out, "runs", c.pack, c.corpus), corpusDirectory(settings.corpora, c.pack, c.corpus), c.pack, plan.candidates, plan.candidates.includes("rr") ? packRrRules(settings, c.pack) : undefined) }));
   for (const unit of todo) {
     const claim = join(claims, claimName(unit.id));
     try {
@@ -1699,7 +1849,7 @@ async function hostRun(base: SettingsBase, plan: Plan, host: string, workers: re
   const packs = [...new Set(plan.units.filter((u) => u.host === host).map((u) => u.pack))];
   verifyCorpora(base.corpora, packs, CORPORA);
   requireBuilt(base.baseline.dir, { product: true, engine: false }, false);
-  requireBuilt(base.candidate.dir, { product: true, engine: false }, false);
+  requireBuilt(base.candidate.dir, { product: true, engine: plan.candidates.includes("rr") }, false);
   const platform = requirePlatform(base.out);
   mkdirSync(join(base.out, "machines"), { recursive: true });
   writeFileSync(join(base.out, "machines", `${hostname()}.json`), JSON.stringify(platform.machine(), null, 1));
@@ -1757,6 +1907,8 @@ interface FanoutOptions {
   from: string | undefined;
   /** The remote shell, as words: `ssh`, or --ssh / SHIPBAR_SSH (fanout.ts remoteShell). */
   shell: string[];
+  /** The candidates measured beside main (`--candidates`). */
+  candidates: Candidate[];
   command: string;
 }
 
@@ -1765,6 +1917,14 @@ const FANOUT_PHASES = ["prepare", "plan", "sync", "build", "distribute", "measur
 
 /** What a checkout's sync leaves out: history, dependencies and builds (each host installs and builds its own). */
 const CHECKOUT_EXCLUDES = ["--exclude=/.git", "--exclude=/node_modules", "--exclude=/target", "--exclude=/native/target", "--exclude=/native/*.node", "--exclude=/dist", "--exclude=/.rerail/pack-data", "--exclude=/.worktrees"];
+
+/** Where a fan-out builds the candidate's `rerail-engine` (with rr), under its checkout on the hosts: target/ there. */
+const FANOUT_RR_ENGINE = "candidate/target/release/rerail-engine";
+
+/** The engines a fan-out builds on its first host and copies to the others, as paths under ~/work/<name>/ there. */
+function fanoutEngines(candidates: readonly Candidate[]): string[] {
+  return ["baseline/native/rerail_engine.linux-*.node", "candidate/native/rerail_engine.linux-*.node", ...(candidates.includes("rr") ? [FANOUT_RR_ENGINE] : [])];
+}
 
 /** The host scripts a fan-out starts detached; each marks its start and writes its exit status for the Mac to poll. */
 function hostScripts(o: FanoutOptions): Record<string, string> {
@@ -1776,8 +1936,9 @@ function hostScripts(o: FanoutOptions): Record<string, string> {
   ];
   const head = (step: string): string => `#!/bin/bash\ncd "$(dirname "$0")/.." || exit 1\nrm -f fanout/${step}.exit\ndate -u +%FT%TZ > fanout/${step}.started\n`;
   return {
-    // Both sides at once, through the host's compiler cache; then the engines' sha256, for the other hosts to check.
-    "build.sh": `${head("build")}side() { ( cd "$1" && npm ci --ignore-scripts && npm run build:native ) > "fanout/build-$1.log" 2>&1; }\nside baseline & b=$!\nside candidate & c=$!\nwait $b; eb=$?\nwait $c; ec=$?\nsha256sum baseline/native/rerail_engine.linux-*.node candidate/native/rerail_engine.linux-*.node > fanout/build.sha 2> fanout/build-sha.log\necho "$eb $ec" > fanout/build.exit\n`,
+    // Both sides at once, through the host's compiler cache (with rr, the candidate's rerail-engine too, into its own
+    // target/); then the engines' sha256, for the other hosts to check.
+    "build.sh": `${head("build")}side() { ( cd "$1" && sh -c "$2" ) > "fanout/build-$1.log" 2>&1; }\nside baseline ${quote(PRODUCT_BUILD)} & b=$!\nside candidate ${quote(o.candidates.includes("rr") ? `${PRODUCT_BUILD} && CARGO_TARGET_DIR=target ${ENGINE_BUILD}` : PRODUCT_BUILD)} & c=$!\nwait $b; eb=$?\nwait $c; ec=$?\nsha256sum ${fanoutEngines(o.candidates).join(" ")} > fanout/build.sha 2> fanout/build-sha.log\necho "$eb $ec" > fanout/build.exit\n`,
     // The engines built on the first host are in place: install the dependencies and check the engines.
     "install.sh": `${head("install")}side() { ( cd "$1" && npm ci --ignore-scripts ) > "fanout/install-$1.log" 2>&1; }\nside baseline & b=$!\nside candidate & c=$!\nwait $b; eb=$?\nwait $c; ec=$?\nsha256sum -c fanout/build.sha > fanout/install-sha.log 2>&1; es=$?\necho "$eb $ec $es" > fanout/install.exit\n`,
     "host.sh": `${head("host")}cd candidate\nnode --import tsx ../harness/scripts/ship/shipbar.ts host --host "$1" --workers ${quote(o.workers.join("/"))} ${options.map(quote).join(" ")} > ../fanout/host.log 2>&1\necho $? > ../fanout/host.exit\n`,
@@ -1880,9 +2041,11 @@ async function fanoutRun(o: FanoutOptions): Promise<number> {
     const lock = verifyCorpora(o.corpora, packs, CORPORA);
     const inputs: PackInput[] = packs.map((pack) => {
       const fixtures = lock.fixtures[pack];
-      return { pack, corpora: CORPORA.filter((c) => c === "real" || (fixtures !== undefined && !("absent" in fixtures))), rules: oneRuleSet(settings, pack), files: pickOneFiles(settings, pack).map((f) => f.label) };
+      // The `.rerail` rules as a plan knows them, before check-rr (which runs on the hosts): every rewrite.
+      const rr = o.candidates.includes("rr") ? rrRewrites(o.candidate.dir, shippedRules(baseline!.dir, pack), pack) : undefined;
+      return { pack, corpora: CORPORA.filter((c) => c === "real" || (fixtures !== undefined && !("absent" in fixtures))), rules: oneRuleUnion(settings, pack, o.candidates, rr), files: pickOneFiles(settings, pack).map((f) => f.label) };
     });
-    const plan = planFanout(inputs, o.hosts, o.workers, { runs: o.runs, ruleRuns: o.ruleRuns, fileRuns: o.fileRuns });
+    const plan = planFanout(inputs, o.hosts, o.workers, { runs: o.runs, ruleRuns: o.ruleRuns, fileRuns: o.fileRuns, candidates: o.candidates });
     writeFileSync(planPath, JSON.stringify(plan, null, 1));
     const count = (slice: string): number => plan.units.filter((u) => u.slice === slice).length;
     log(`plan: ${plan.units.length} units (A ${count("A")}, B ${count("B")}, C ${count("C")}), longest ${Math.round(plan.units[0]!.est)} s, planned per host ${JSON.stringify(plan.load)} s`);
@@ -1924,7 +2087,8 @@ async function fanoutRun(o: FanoutOptions): Promise<number> {
   await phase("distribute", async () => {
     const sums = await ssh(builder, `cat ${remote}/fanout/build.sha`);
     const engines = sums.stdout.split("\n").filter((l) => l.trim() !== "").map((line) => ({ sha256: line.slice(0, 64), path: line.slice(64).trim() }));
-    if (sums.status !== 0 || engines.length !== 2) fail(`fanout distribute: ${builder}'s fanout/build.sha names ${engines.length} engines, not 2`);
+    const expected = fanoutEngines(o.candidates).length;
+    if (sums.status !== 0 || engines.length !== expected) fail(`fanout distribute: ${builder}'s fanout/build.sha names ${engines.length} engines, not ${expected}`);
     const local = join(root, "engines");
     for (const engine of engines) {
       mkdirSync(dirname(join(local, engine.path)), { recursive: true });
@@ -1934,6 +2098,8 @@ async function fanoutRun(o: FanoutOptions): Promise<number> {
     }
     writeFileSync(join(local, "build.sha"), sums.stdout);
     await onHosts(others, "distribute", async (host) => {
+      // The rr engine's directory (target/release) is not synced: made first.
+      if (!(await step(`${host} engine directories`, () => ssh(host, `cd ${remote} && mkdir -p ${[...new Set(engines.map((engine) => dirname(engine.path)))].join(" ")}`)))) return false;
       for (const engine of engines) if (!(await step(`${host} ${engine.path}`, () => rsync(join(local, engine.path), at(host, engine.path), [], 900)))) return false;
       if (!(await step(`${host} build.sha`, () => rsync(join(local, "build.sha"), at(host, "fanout/build.sha"), [], 300)))) return false;
       return start(host, "install.sh");
@@ -1965,7 +2131,7 @@ async function fanoutRun(o: FanoutOptions): Promise<number> {
   writeFileSync(join(o.out, "settings.json"), JSON.stringify({ hosts: o.hosts, workers: o.workers, runs: o.runs, confirm: o.confirm, ruleRuns: o.ruleRuns, fileRuns: o.fileRuns, memCap: o.memCap, timeCapS: o.timeCapS, packCaps: o.packCaps, stores: o.stores, invokedBy: caller.status === 0 ? caller.stdout.trim() : null, command: o.command }, null, 1));
   const partial = discovered.packs.some((pack) => !packs.includes(pack)) ? [`--packs ${o.requested!.join(",")}: ${packs.length} of main's ${discovered.packs.length} packs`] : [];
   const candidateOnly = discovered.candidateOnly.filter((pack) => o.requested === undefined || o.requested.includes(pack));
-  return writeReport(computeVerdict(settings, packs, candidateOnly, CORPORA, ["ships"], ["ships"], partial), o.out, runMeta(o.out, packs, CORPORA));
+  return writeReport(computeVerdict(settings, packs, candidateOnly, CORPORA, o.candidates, o.candidates, partial), o.out, runMeta(o.out, packs, CORPORA));
 }
 
 // ---------------------------------------------------------------- the command line
@@ -2062,7 +2228,7 @@ function main(): void {
       hosts, name, workers, baselineSpec: values.baseline!, packDataCache: values["pack-data-cache"], candidate: { dir: candidateDir, sha: checkoutSha(candidateDir) }, out,
       corpora: resolve(values.corpora ?? join(out, "corpora")), requested: values.packs?.split(",").map((p) => p.trim()), runs, confirm, ruleRuns, fileRuns,
       memCap: values["mem-cap"], timeCapS: Number(values["time-cap"]), packCaps: values["pack-cap"], stores: values.stores ?? `/dev/shm/shipbar-${name}`,
-      pollS: count("poll", values.poll, 10), from: values.from, shell: remoteShell(values.ssh), command: ["npm run bench:ship --", ...process.argv.slice(2)].join(" "),
+      pollS: count("poll", values.poll, 10), from: values.from, shell: remoteShell(values.ssh), candidates, command: ["npm run bench:ship --", ...process.argv.slice(2)].join(" "),
     }).then((code) => {
       process.exitCode = code;
     });
@@ -2100,7 +2266,7 @@ function main(): void {
     if (command === "work") {
       const worker = count("worker", values.worker ?? "", 0);
       if (values.phase !== "measure" && values.phase !== "confirm") fail(`--phase ${values.phase}: measure or confirm`);
-      workUnits(openSettings(settingsBase, platform!, undefined, packs, measureOptions(values.cpus)), plan, values.host, worker, values.phase);
+      workUnits(openSettings(settingsBase, platform!, plan.candidates.includes("rr") ? engineBinary(candidate.dir) : undefined, packs, measureOptions(values.cpus)), plan, values.host, worker, values.phase);
       return;
     }
     const forward = [
@@ -2177,13 +2343,7 @@ function main(): void {
     writeFileSync(join(out, "machines", `${hostname()}.json`), JSON.stringify(platform!.machine(), null, 1));
     const sides: Side[] = ["main", ...candidates];
     for (const pack of packs) {
-      let rr: RrRules | undefined;
-      if (candidates.includes("rr")) {
-        const path = join(out, "runs", pack, "rr-rules.json");
-        mkdirSync(dirname(path), { recursive: true });
-        if (!existsSync(path)) writeFileSync(path, JSON.stringify(rrRules(candidate.dir, engine!, shippedRules(baseline.dir, pack), pack), null, 1));
-        rr = readJson<RrRules>(path);
-      }
+      const rr = candidates.includes("rr") ? packRrRules(settings, pack) : undefined;
       for (const corpus of corpusKinds) {
         const fixtures = lock.fixtures[pack];
         if (corpus === "fixtures" && fixtures !== undefined && "absent" in fixtures) continue;
@@ -2193,9 +2353,9 @@ function main(): void {
         measureCell(settings, cell, dir, pack, repetitions(runs), sides, rr);
         measureFixed(settings, pack, corpus, sides, repetitions(runs));
         confirmCell(settings, cell, dir, pack, candidates, rr);
-        if (candidates.includes("ships")) measureOneRule(settings, pack, corpus);
+        measureOneRule(settings, pack, corpus, candidates, rr);
       }
-      if (candidates.includes("ships") && corpusKinds.includes("real")) for (const file of pickOneFiles(settings, pack)) measureOneFile(settings, pack, file);
+      if (corpusKinds.includes("real")) for (const file of pickOneFiles(settings, pack)) measureOneFile(settings, pack, file, candidates, rr);
     }
   }
   // A directory with waits and no pack runs reports the waits alone.

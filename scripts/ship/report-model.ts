@@ -4,13 +4,15 @@
 // raw runs, ratio and status under a stable id, so runs compare across nights; each failing item names the phase that
 // moved (its locator), and each level names its biggest contributor one level down, so a reader can stop at the pack
 // table. A figure that fails at the median and passes its confirmation runs is noisy: reported, not counted. A pack
-// missing any slice is incomplete and never passes; a run narrowed by --packs or --corpus is PARTIAL, never PASS. Pure
+// missing any slice is incomplete and never passes; a run narrowed by --packs or --corpus is PARTIAL, never PASS. A
+// pack whose verdict does not count (the `.rerail` side's, without an equivalence.json saying equivalent) is judged
+// alike and reported only: the candidate's counted status, the one the exit status reads, leaves it out. Pure
 // functions; report.ts renders the Markdown.
 
 import { methodGaps, type RunMethod } from "./platform.js";
 import type { Candidate, CellVerdict, Corpus, LoadSummary, MeasuredMetric, OneFileVerdict, OneRuleTiming, OneRuleVerdict, PackVerdict, RuleTiming, SameFindings, Verdict } from "./shipbar.js";
 import { type CellCost, KNOWN_GAPS, type RuleMultiple, ruleMultiples } from "./metric.js";
-import { type FileLabel, median, RULE_ALERT_RATIO, RULE_FLOOR_MS, ruleSliceStats, SLICES_TOLERANCE_PERCENT, spread, type TimeVerdict } from "./verdict.js";
+import { type FileLabel, median, RR_RULE_TIME, RULE_ALERT_RATIO, RULE_FLOOR_MS, ruleSliceStats, SLICES_TOLERANCE_PERCENT, spread, type TimeVerdict } from "./verdict.js";
 import type { WaitsSection } from "./waits-model.js";
 
 export const SCHEMA = "ship-no-ship/report/v2";
@@ -74,7 +76,7 @@ export interface SameItem {
 }
 
 export interface RuleItem extends Attribution {
-  /** compile + evaluate: the rule's time alone. */
+  /** The rule's time alone: compile + evaluate, or the `.rerail` side's net wall (verdict.ts RR_RULE_TIME). */
   time: TimeItem;
   status: ItemStatus;
   locator: string | null;
@@ -117,6 +119,8 @@ export interface OneRuleItem {
   /** Why it is not compared. */
   reason: string | null;
   unmeasured: string[];
+  /** What each rule's judged time is (ruleTimeLabel): compile + evaluate, or the `.rerail` side's net wall. */
+  rule_time: string;
   runs_per_side: number;
   /** The empty rule set: cold wall, load, compile and evaluate. */
   fixed: { status: ItemStatus; times: TimeItem[]; locator: string | null; completion: { status: ItemStatus; kind: string; reason: string } } | null;
@@ -216,6 +220,10 @@ export interface PackItem {
   candidate: Candidate;
   pack: string;
   status: ItemStatus | "incomplete" | "no_baseline";
+  /** Whether the pack's verdict counts toward its candidate's counted status (the exit status); false: reported only. */
+  counted: boolean;
+  /** Why it counts or not (the `.rerail` side's equivalence.json); null where it always counts. */
+  gate_reason: string | null;
   summary: PackSummary;
   coverage: { missing: { rule: string; reason: string }[]; extra: string[] };
   /** Slice A. */
@@ -235,6 +243,8 @@ export interface FailureItem {
   id: string;
   candidate: Candidate;
   pack: string;
+  /** Whether its pack's verdict counts (PackItem.counted); false: reported only. */
+  counted: boolean;
   slice: Slice | null;
   corpus: Corpus | null;
   item: string;
@@ -247,8 +257,11 @@ export interface FailureItem {
 export interface CandidateItem {
   candidate: Candidate;
   description: string;
+  /** Over every pack, counted or reported only. */
   status: VerdictStatus;
-  counts: { packs: number; failing_packs: number; noisy_packs: number; incomplete_packs: number; failing_items: number; noisy_items: number };
+  /** Over the packs whose verdict counts: what the exit status reads; null when none counts. */
+  counted_status: VerdictStatus | null;
+  counts: { packs: number; failing_packs: number; noisy_packs: number; incomplete_packs: number; reported_packs: number; failing_items: number; noisy_items: number };
   failures: FailureItem[];
   noisy: FailureItem[];
   packs: PackItem[];
@@ -280,7 +293,7 @@ export interface Report {
     gate: Candidate[];
     /** How the run was narrowed: a partial verdict is never PASS. */
     partial: string[];
-    candidates: Partial<Record<Candidate, { status: CandidateItem["status"]; failing_packs: number; failing_items: number }>>;
+    candidates: Partial<Record<Candidate, { status: CandidateItem["status"]; counted_status: CandidateItem["counted_status"]; failing_packs: number; failing_items: number }>>;
     waits: WaitsSection["status"] | null;
   };
   candidates: CandidateItem[];
@@ -442,6 +455,7 @@ function oneRuleItem(candidate: Candidate, pack: string, b: OneRuleVerdict): One
     status,
     reason: b.note === "" ? null : b.note,
     unmeasured: b.unmeasured,
+    rule_time: ruleTimeLabel(candidate === "rr" ? RR_RULE_TIME : "compile+evaluate"),
     runs_per_side: b.runs,
     fixed,
     rules,
@@ -513,13 +527,12 @@ function cellItem(candidate: Candidate, pack: string, cell: CellVerdict, oneRule
 /**
  * What a pack lacks of the three slices, within the run's scope (the corpora its A cells cover; a pack without a
  * fixtures corpus has no fixtures cell to lack): an A cell not measured, a B corpus not measured or with rules not timed
- * on both sides, fewer than C's three files measured, or a candidate that measures slice A only.
+ * on both sides, or fewer than C's three files measured.
  */
 export function missingSlices(p: PackVerdict, cells: readonly CellItem[]): MissingSlice[] {
   if (p.noBaseline) return [];
   const absent = (cell: CellItem): boolean => (cell.reason ?? "").startsWith("no fixtures corpus");
   const missing: MissingSlice[] = cells.filter((cell) => cell.status === "not_compared" && !absent(cell)).map((cell) => ({ slice: "A", reason: `${cell.corpus}: ${cell.reason ?? "not compared"}` }));
-  if (p.slicesNote !== null) return [...missing, { slice: "B", reason: p.slicesNote }, { slice: "C", reason: p.slicesNote }];
   for (const cell of cells.filter((c) => !absent(c))) {
     const b = p.oneRule.find((o) => o.corpus === cell.corpus);
     if (b === undefined || b.note !== "") missing.push({ slice: "B", reason: `${cell.corpus}: ${b?.note ?? "not measured"}` });
@@ -610,13 +623,18 @@ function packItem(candidate: Candidate, p: PackVerdict, reproduce: ReproduceSett
   const summary = packSummary(cells, oneRule, oneFile, incomplete, packRuleStats(p.oneRule));
   if (summary.hint === null && p.missing.length > 0) summary.hint = `${p.missing.length} rule${p.missing.length === 1 ? "" : "s"} cannot run: ${p.missing[0]!.rule} (${p.missing[0]!.reason})`;
   if (summary.hint === null && incomplete.length > 0) summary.hint = `incomplete: slice ${incomplete[0]!.slice} ${incomplete[0]!.reason}`;
-  return { id: `${candidate}/${p.pack}`, candidate, pack: p.pack, status, summary, coverage: { missing: p.missing, extra: p.extra }, cells, one_rule: oneRule, one_file: oneFile, incomplete };
+  return { id: `${candidate}/${p.pack}`, candidate, pack: p.pack, status, counted: p.gate?.counted ?? true, gate_reason: p.gate?.reason ?? null, summary, coverage: { missing: p.missing, extra: p.extra }, cells, one_rule: oneRule, one_file: oneFile, incomplete };
 }
 
 const LABELS: Record<string, string> = { "wall-cold": "wall cold", "wall-warm": "wall warm", "cpu-cold": "CPU cold", "cpu-warm": "CPU warm", "rss-cold": "peak RSS cold", "rss-warm": "peak RSS warm" };
 
 export function metricLabel(metric: string): string {
   return LABELS[metric] ?? metric;
+}
+
+/** What a slice B rule's time is, as the report names it: the product path's compile + evaluate, or the `.rerail` side's net wall against it. */
+export function ruleTimeLabel(name: string): string {
+  return name === RR_RULE_TIME ? "compile + evaluate → net wall (cold wall less the empty rule set's)" : "compile + evaluate";
 }
 
 /** The phase a run stopped in, from a completion reason ("…; stopped on <phase>"). */
@@ -639,12 +657,12 @@ function items(packs: readonly PackItem[], wanted: ItemStatus): FailureItem[] {
     for (const m of metrics) {
       if (m.status !== wanted) continue;
       const confirmed = m.confirm === null ? "" : `; confirmation ${ratio(m.confirm.ratio)}`;
-      out.push({ id: m.id, candidate: p.candidate, pack: p.pack, slice, corpus, item: m.metric, reason: `${ratio(m.ratio)} baseline (bar ${bar}x)${confirmed}${note}`, locator: m.locator, hint });
+      out.push({ id: m.id, candidate: p.candidate, pack: p.pack, counted: p.counted, slice, corpus, item: m.metric, reason: `${ratio(m.ratio)} baseline (bar ${bar}x)${confirmed}${note}`, locator: m.locator, hint });
     }
   };
   for (const p of packs) {
-    const push = (item: Omit<FailureItem, "candidate" | "pack">): void => {
-      out.push({ candidate: p.candidate, pack: p.pack, ...item });
+    const push = (item: Omit<FailureItem, "candidate" | "pack" | "counted">): void => {
+      out.push({ candidate: p.candidate, pack: p.pack, counted: p.counted, ...item });
     };
     if (wanted === "fail") for (const m of p.coverage.missing) push({ id: `${p.id}/coverage/${m.rule}`, slice: null, corpus: null, item: "coverage", reason: `${m.rule}: ${m.reason}`, locator: null, hint: null });
     for (const cell of p.cells) {
@@ -666,7 +684,7 @@ function items(packs: readonly PackItem[], wanted: ItemStatus): FailureItem[] {
       for (const r of b.rules) {
         if (r.time.status === wanted) {
           const confirmed = r.time.confirm === null ? "" : `; confirmation ${formatMs(r.time.confirm.baseline_ms)} → ${formatMs(r.time.confirm.candidate_ms)} ${ratio(r.time.confirm.ratio)}`;
-          push({ id: `${b.id}/${r.rule}/time`, slice: "B", corpus: b.corpus, item: "rule time", reason: `\`${r.rule}\` compile + evaluate ${formatMs(r.time.baseline_ms ?? 0)} → ${formatMs(r.time.candidate_ms ?? 0)}, ${ratio(r.time.ratio)} baseline (bar ${bar}x, floor ${RULE_FLOOR_MS} ms)${confirmed}`, locator: r.locator, hint: null });
+          push({ id: `${b.id}/${r.rule}/time`, slice: "B", corpus: b.corpus, item: "rule time", reason: `\`${r.rule}\` ${ruleTimeLabel(r.time.name)} ${formatMs(r.time.baseline_ms ?? 0)} → ${formatMs(r.time.candidate_ms ?? 0)}, ${ratio(r.time.ratio)} baseline (bar ${bar}x, floor ${RULE_FLOOR_MS} ms)${confirmed}`, locator: r.locator, hint: null });
         }
         if (wanted !== "fail") continue;
         if (r.completion.status === "fail") push({ id: `${b.id}/${r.rule}/completion`, slice: "B", corpus: b.corpus, item: "completion", reason: `\`${r.rule}\`: ${r.completion.reason}`, locator: stoppedIn(r.completion.reason), hint: null });
@@ -702,20 +720,30 @@ export function buildReport(verdict: Verdict, meta: RunMeta, waits: WaitsSection
     const packs = c.packs.map((p) => packItem(c.candidate, p, reproduce));
     const failures = items(packs, "fail");
     const noisy = items(packs, "noisy");
-    const incompletePacks = packs.filter((p) => p.incomplete.length > 0).length;
-    const status: VerdictStatus = failures.length > 0 ? "FAIL" : incompletePacks > 0 ? "INCOMPLETE" : partial.length > 0 ? "PARTIAL" : "PASS";
+    const statusOf = (subset: readonly PackItem[]): VerdictStatus => (items(subset, "fail").length > 0 ? "FAIL" : subset.some((p) => p.incomplete.length > 0) ? "INCOMPLETE" : partial.length > 0 ? "PARTIAL" : "PASS");
+    const counted = packs.filter((p) => p.counted);
     return {
       candidate: c.candidate,
       description: c.description,
-      status,
-      counts: { packs: packs.filter((p) => p.status !== "no_baseline").length, failing_packs: packs.filter((p) => p.status === "fail").length, noisy_packs: packs.filter((p) => p.status === "noisy").length, incomplete_packs: incompletePacks, failing_items: failures.length, noisy_items: noisy.length },
+      status: statusOf(packs),
+      counted_status: counted.length === 0 ? null : statusOf(counted),
+      counts: {
+        packs: packs.filter((p) => p.status !== "no_baseline").length,
+        failing_packs: packs.filter((p) => p.status === "fail").length,
+        noisy_packs: packs.filter((p) => p.status === "noisy").length,
+        incomplete_packs: packs.filter((p) => p.incomplete.length > 0).length,
+        reported_packs: packs.filter((p) => !p.counted).length,
+        failing_items: failures.length,
+        noisy_items: noisy.length,
+      },
       failures,
       noisy,
       packs,
     };
   });
+  // A gated candidate counts by its counted packs only (none counted: it cannot fail the run); a narrowed run is never PASS.
   const gated = candidates.filter((c) => verdict.gate.includes(c.candidate));
-  const statuses: VerdictStatus[] = [...gated.map((c) => c.status), ...(waits === null ? [] : [waits.status])];
+  const statuses: VerdictStatus[] = [...gated.flatMap((c) => (c.counted_status === null ? [] : [c.counted_status])), ...(waits === null ? [] : [waits.status]), ...(partial.length > 0 && candidates.length > 0 ? (["PARTIAL"] as const) : [])];
   const overallStatus: VerdictStatus = (["FAIL", "INCOMPLETE", "PARTIAL"] as const).find((s) => statuses.includes(s)) ?? "PASS";
   return {
     schema: SCHEMA,
@@ -737,14 +765,14 @@ export function buildReport(verdict: Verdict, meta: RunMeta, waits: WaitsSection
       threads: verdict.machine.threads,
       methods: verdict.machine.methods.map((m) => ({ ...m, gaps: methodGaps(m.method) })),
     },
-    verdict: { status: overallStatus, gate: verdict.gate, partial: candidates.length > 0 ? [...partial] : [], candidates: Object.fromEntries(candidates.map((c) => [c.candidate, { status: c.status, failing_packs: c.counts.failing_packs, failing_items: c.counts.failing_items }])), waits: waits?.status ?? null },
+    verdict: { status: overallStatus, gate: verdict.gate, partial: candidates.length > 0 ? [...partial] : [], candidates: Object.fromEntries(candidates.map((c) => [c.candidate, { status: c.status, counted_status: c.counted_status, failing_packs: c.counts.failing_packs, failing_items: c.counts.failing_items }])), waits: waits?.status ?? null },
     candidates,
     waits,
     scope: {
       measured: [
         ...(candidates.length > 0
           ? [
-              "every pack the baseline ships in three slices: A, all of its rules on its upstream fixtures and one pinned real-code corpus (wall, CPU and peak RSS, cold and warm; findings; completion; coverage); B, the empty rule set and each rule alone on both corpora (compile + evaluate per rule, the fixed cost's wall and phases; findings per rule); C, all of its rules on three files of the real-code corpus (wall, CPU and peak RSS, cold and warm; findings)",
+              "every pack the baseline ships in three slices: A, all of its rules on its upstream fixtures and one pinned real-code corpus (wall, CPU and peak RSS, cold and warm; findings; completion; coverage); B, the empty rule set and each rule alone on both corpora (compile + evaluate per rule, the `.rerail` side's net wall against it, the fixed cost's wall and phases; findings per rule); C, all of its rules on three files of the real-code corpus (wall, CPU and peak RSS, cold and warm; findings)",
             ]
           : []),
         ...(waits === null ? [] : [`user waits through hooks, daemon and CLI: ${[...new Set(waits.items.map((i) => i.wait))].join(", ")}`]),
