@@ -52,8 +52,8 @@ import {
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
 import { LOCKS_DIR, processStartedAt } from "../../src/engine/index.js";
-import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
-import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/daemon/engine-pipe.js";
+import { engineCapabilityProof } from "../../src/runtime/daemon/engine-proof.js";
 import { DEAD_PID, olderDaemon, until } from "../support/processes/daemon-home.js";
 import { type ProbeLaunch, type StartedProbe, runConsoleProbe } from "../support/platform/console-probe.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";

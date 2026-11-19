@@ -1,0 +1,1 @@
+On Windows, a set-up question in the terminal waits for an answer given once it is on screen, as on macOS and Linux. Enter pressed while set-up was busy, such as during the download or the scan, no longer answers the next question with its first answer.
