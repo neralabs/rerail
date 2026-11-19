@@ -85,8 +85,8 @@ impl Defs {
     /// S1 (`pd_defs`, one thread a row), the scans of the counts, S2 (`pd_params`, one thread a
     /// parameter list's leaf) and S4 (`pd_items`, one thread a body leaf).
     pub fn encode(&self, enc: &Enc<'_>, unit: &Unit, front: &Front) -> Result<(), Error> {
-        let n32 = unit.table.len() as u32;
-        let (u_files, u_data) = (&unit.files.buffer as &metal::BufferRef, &unit.data.buffer as &metal::BufferRef);
+        let n32 = unit.len() as u32;
+        let (u_files, u_data) = (&unit.files.buffer as &metal::BufferRef, unit.data());
         let dir_total = &front.dir_total().buffer;
         let row_args = &self.row_args;
         enc.run("pb_args", None, &[dir_total, &row_args.buffer], &[0], Grid::Groups(1))?;
@@ -342,8 +342,8 @@ impl Vis {
     /// - the stretches: `pe_gap_counts` (a stretch each), a scan;
     /// - `pe_lookups`, a stretch token each, sized by that scan.
     pub fn encode(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs) -> Result<(), Error> {
-        let n32 = unit.table.len() as u32;
-        let (u_files, u_data) = (&unit.files.buffer as &BufferRef, &unit.data.buffer as &BufferRef);
+        let n32 = unit.len() as u32;
+        let (u_files, u_data) = (&unit.files.buffer as &BufferRef, unit.data());
         let total = &front.total().buffer;
         let dir_total = &front.dir_total().buffer;
         let by_node = Grid::Indirect(&front.node_args().buffer, 0);
@@ -481,8 +481,7 @@ const WORKER_GROUPS: u64 = 64;
 const WORK_LAUNCHES: usize = 3;
 /// The close table's keys: a biased depth (16 bits) above a position (24 bits).
 const CLOSE_BITS: u32 = 40;
-/// The line index's blocks (`pp_expand.metal`'s `LINE_BLOCK`), and a string literal's tape kind.
-const LINE_BLOCK: usize = 4096;
+/// A string literal's tape kind.
 const K_LITERAL: u32 = 30;
 
 /// The expansion's stores (0448 §2), placed before the command buffer, at a rung:
@@ -532,12 +531,6 @@ pub struct Exp {
     /// The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth and the
     /// origin (the list whose substitution wrote it).
     tokens: MappedBuffer,
-    /// The line index: each 4 KB block's newlines, and their scan.
-    line_counts: MappedBuffer,
-    lines: MappedBuffer,
-    line_scan: Scan,
-    line_words: [u32; 2],
-    n_blocks: MappedBuffer,
     args: MappedBuffer,
     slots: MappedBuffer,
     qctl: MappedBuffer,
@@ -563,7 +556,7 @@ impl Exp {
         // The scratch: bytes (64 KB at rung 0, doubling) and tokens, in one buffer: the tokens (an
         // even number, so the bytes after them are 8-byte aligned), then the bytes. The first of
         // each are the files' `__FILE__` literals, placed here.
-        let nf = unit.table.len() + 3;
+        let nf = unit.len() + 3;
         let lit_bytes: usize = (0..nf).map(|f| lay.file_literals.get(f).map_or(2, Vec::len)).sum();
         let (sb, st) = (((64usize << 10) << rung) + lit_bytes, (tok / 4 + 256 + nf).next_multiple_of(2));
         let mut scratch = vec![0u8; st * 12 + sb + 16];
@@ -581,10 +574,7 @@ impl Exp {
         let mut ctl = [0u32; 8];
         ctl[4] = lit_bytes as u32;
         ctl[5] = nf as u32;
-        // The line index over the unit's bytes.
-        let words_n = unit.data.byte_length().div_ceil(8);
-        let blocks = words_n.div_ceil(LINE_BLOCK / 8).max(1);
-        let words = [unit.table.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options];
+        let words = [unit.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options];
         Ok(Exp {
             list_cap: lists as u32,
             out_cap: out as u32,
@@ -620,11 +610,6 @@ impl Exp {
             vscan: Scan::new(top)?,
             lists: zeroed(lists * LIST_WORDS)?,
             tokens: zeroed(tok * 5)?,
-            line_counts: zeroed(blocks)?,
-            lines: zeroed(blocks)?,
-            line_scan: Scan::new(blocks)?,
-            line_words: [words_n as u32, blocks as u32],
-            n_blocks: MappedBuffer::from_slice(&device, &[blocks as u32])?,
             args: zeroed(args * ARG_WORDS)?,
             slots: zeroed(q)?,
             qctl: zeroed(4)?,
@@ -639,18 +624,14 @@ impl Exp {
     /// SUBST, flattening PLACE items, to every list's final); the top level's places (a scan of
     /// the pieces); the queue's second phase (PLACE items to the output), and the check.
     pub fn encode(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis) -> Result<(), Error> {
-        let n32 = unit.table.len() as u32;
-        let (u_files, u_data) = (&unit.files.buffer as &BufferRef, &unit.data.buffer as &BufferRef);
+        let n32 = unit.len() as u32;
+        let (u_files, u_data) = (&unit.files.buffer as &BufferRef, unit.data());
         let n_toks = &vis.gscan.total.buffer;
         let by_top = Grid::Indirect(&vis.targs.buffer, 0);
         let top_in = [u_files, u_data, &front.bases.buffer, &vis.text_nodes.buffer, &vis.gat.buffer, &vis.n_gaps.buffer, &vis.gfirsts.buffer, n_toks];
         let mut parens = top_in.to_vec();
         parens.extend([&self.theads.buffer as &BufferRef, &self.delta.buffer, &self.close.buffer]);
         enc.run("px_top_parens", None, &parens, &[n32], by_top)?;
-        // The line index (`__LINE__`): each block's newlines, one thread a block, and their scan.
-        let [nw, nb] = self.line_words;
-        enc.run("px_line_blocks", None, &[u_data, &self.line_counts.buffer], &[nw, nb], Grid::Groups((nb as u64).div_ceil(TG)))?;
-        self.line_scan.encode(enc, &self.n_blocks.buffer, 0, &self.line_counts.buffer, &self.lines.buffer)?;
         self.depth_scan.encode(enc, SegOp::Add, n_toks, 0, &self.delta.buffer, &self.theads.buffer, &self.depth.buffer)?;
         self.close_scan.encode(enc, n_toks, 0, &self.close.buffer, &self.close_at.buffer)?;
         enc.run("px_close_keys", None, &[&self.depth.buffer, &self.close.buffer, &self.close_at.buffer, n_toks, &self.close_keys.buffer, &self.ctl.buffer], &[], by_top)?;
@@ -732,7 +713,7 @@ impl Exp {
                 None,
                 &[
                     &unit.files.buffer,
-                    &unit.data.buffer,
+                    unit.data(),
                     &front.bases.buffer,
                     &front.keys.buffer,
                     &defs.defs.buffer,
@@ -759,7 +740,6 @@ impl Exp {
                     &self.scratch.buffer,
                     closes,
                     &self.close_scan.total.buffer,
-                    &self.lines.buffer,
                 ],
                 &[],
                 Grid::Groups(WORKER_GROUPS),

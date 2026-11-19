@@ -1,5 +1,6 @@
-use rerail_c_pp::tape::{IDENTIFIER, image};
-use rerail_metal::pp_eval::{Unit, evaluate, name_key};
+use rerail_c_pp::tape::{IDENTIFIER, image, image_16};
+use rerail_metal::pp_eval::{Unit, evaluate, name_key, placement};
+use rerail_metal::slabs;
 use rerail_tape_format::View;
 
 /// `a == b`, or the difference printed and a panic (Relax keeps no assert's message).
@@ -12,8 +13,28 @@ fn same<T: PartialEq + std::fmt::Debug>(a: T, b: T, what: impl std::fmt::Display
 }
 
 /// Files of the corpora (`RERAIL_PP_COUNT` of each language, 40 by default), each with its tape.
-fn corpus() -> Vec<(Vec<u8>, Vec<u8>)> {
-    corpus_in().into_iter().map(|(s, t, _)| (s, t)).collect()
+/// A unit of `files` (each a source and whether it is C++), as the evaluator reads it: each
+/// file's format 16 tape (`image_16`) and its source placed in the slab residency, where the
+/// device reads them (decision 0460 §1). The bytes written into each room stand in for the
+/// store's load of a stored tape (0353 step 4a).
+fn place(files: &[(&[u8], bool)]) -> Unit {
+    use sha2::{Digest as _, Sha256};
+    let tapes: Vec<_> = files.iter().map(|&(s, cpp)| image_16(s, crate::pp::options(cpp))).collect();
+    let digests: Vec<[u8; 32]> = files.iter().zip(&tapes).map(|(&(s, _), t)| Sha256::new().chain_update(t.as_bytes()).chain_update(s).finalize().into()).collect();
+    let misses = slabs::misses(&digests).unwrap();
+    let mut parts = Vec::new();
+    for (k, d) in digests.iter().enumerate() {
+        if !misses.contains(d) || parts.iter().any(|p: &slabs::Placement<'_>| p.0 == *d) {
+            continue;
+        }
+        let (tape, src) = (tapes[k].as_bytes(), files[k].0);
+        parts.push(placement(tape.len(), src.len(), *d, rerail_c_pp::tape::lang(), move |t: &mut [u8], s: &mut [u8]| {
+            t.copy_from_slice(tape);
+            s.copy_from_slice(src);
+        }));
+    }
+    slabs::insert(&digests, parts).unwrap();
+    Unit::of(slabs::resident(&digests).unwrap()).unwrap()
 }
 
 /// `corpus`'s files, each with whether it is C++.
@@ -34,24 +55,44 @@ fn corpus_in() -> Vec<(Vec<u8>, Vec<u8>, bool)> {
     out
 }
 
+/// R2 of decision 0460: the evaluator reads its files where the residency placed them. Its source
+/// copies no tape and no source into a buffer of its own (0448's `Unit::load` did), reads no tape
+/// through a reader of its own (the kernels' reads are the CLIF reads), and keeps no line index of
+/// its own (R3: `__LINE__` is the tape's newline index's).
+#[test]
+fn the_evaluator_copies_no_tape() {
+    let rust = include_str!("../../../metal/src/pp_eval.rs");
+    let msl = [include_str!("../../../metal/src/pp_eval.metal"), include_str!("../../../metal/src/pp_expand.metal")].concat();
+    for line in rust.lines().filter(|l| !l.trim_start().starts_with("//")) {
+        let copies = ["copy_nonoverlapping", "copy_from_slice", "extend_from_slice", "MappedBuffer::from_slice(&device, &data", "fn load("];
+        if copies.iter().any(|c| line.contains(c)) {
+            assert!(line.contains("copy: not block data"), "pp_eval.rs copies: {line}");
+        }
+    }
+    for gone in ["HEADER_BYTES", "rd32(", "px_newlines", "px_line_blocks", "LINE_BLOCK"] {
+        assert!(!msl.contains(gone), "the evaluator's MSL still has `{gone}`");
+    }
+    assert!(msl.contains("clif_tape_start") && msl.contains("clif_tape_line"), "the evaluator reads through the CLIF reads");
+}
+
 /// The device's reader gives every node of every file as `View` does, and each identifier leaf's
 /// key is its bytes' (`name_key`), every other node's 0; the unit's node bases are the files'
 /// counts' prefix sum.
 #[test]
 fn the_names_pass_reads_the_tapes_in_place() {
     let mut files = vec![
-        (b"#define F(a) a + x\nint y = F(abcdefghijklmnopq);\n".to_vec(), Vec::new()),
-        (b"".to_vec(), Vec::new()),
-        (b"x\n".to_vec(), Vec::new()),
+        (b"#define F(a) a + x\nint y = F(abcdefghijklmnopq);\n".to_vec(), Vec::new(), true),
+        (b"".to_vec(), Vec::new(), true),
+        (b"x\n".to_vec(), Vec::new(), true),
     ];
     for f in &mut files {
         f.1 = image(&f.0, crate::pp::options(true));
     }
-    files.extend(corpus());
-    let unit = Unit::load(&files.iter().map(|(s, t)| (s.as_slice(), t.as_slice())).collect::<Vec<_>>()).unwrap();
+    files.extend(corpus_in());
+    let unit = place(&files.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>());
     let got = evaluate(&unit, true).unwrap();
     let mut g = 0usize;
-    for (f, (src, tape)) in files.iter().enumerate() {
+    for (f, (src, tape, _)) in files.iter().enumerate() {
         let v = View::new(tape).unwrap();
         same(got.bases[f] as usize, g, format!("file {f}'s first node"));
         for i in 0..v.len() {
@@ -91,7 +132,7 @@ fn the_directives_pass_gives_the_spikes_tables() {
     ];
     let mut files: Vec<(Vec<u8>, Vec<u8>, bool)> = shapes.iter().map(|s| (s.to_vec(), image(s, crate::pp::options(false)), false)).collect();
     files.extend(corpus_in());
-    let unit = Unit::load(&files.iter().map(|(s, t, _)| (s.as_slice(), t.as_slice())).collect::<Vec<_>>()).unwrap();
+    let unit = place(&files.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>());
     let got = evaluate(&unit, false).unwrap();
     let mut rows = 0usize;
     for (f, (src, tape, cpp)) in files.iter().enumerate() {
@@ -147,7 +188,7 @@ fn the_definitions_are_the_serial_passes() {
     // Units of 500 files: a batch's buffers stay inside the device's budget (0448 §2).
     let (mut defines, mut malformed) = (0usize, 0usize);
     for (c, chunk) in files.chunks(500).enumerate() {
-    let unit = Unit::load(&chunk.iter().map(|(s, t, _)| (s.as_slice(), t.as_slice())).collect::<Vec<_>>()).unwrap();
+    let unit = place(&chunk.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>());
     let (got, d) = definitions(&unit).unwrap();
     let mut rows = 0usize;
     for (f, (src, tape, cpp)) in chunk.iter().enumerate() {
@@ -245,7 +286,7 @@ fn the_paste_relexer_is_the_lexers() {
 fn unit_of(p1: &rerail_c_pp::stream::parallel::P1, cpp: bool) -> (Unit, rerail_metal::pp_expand::Layout, Vec<Vec<u8>>) {
     use rerail_metal::pp_expand::{Layout, PpInst};
     let tapes: Vec<Vec<u8>> = p1.files.iter().map(|s| image(s, crate::pp::options(cpp))).collect();
-    let unit = Unit::load(&p1.files.iter().zip(&tapes).map(|(s, t)| (s.as_slice(), t.as_slice())).collect::<Vec<_>>()).unwrap();
+    let unit = place(&p1.files.iter().map(|s| (s.as_slice(), cpp)).collect::<Vec<_>>());
     let mut lay = Layout { insts: Vec::new(), dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), builtins: p1.builtins.iter().map(|n| name_key(n)).collect(), relex_options: {
         let o = crate::pp::options(cpp);
         rerail_metal::pp_expand::relex_options(o.cpp, o.colons, o.digit_separators, o.raw_strings)

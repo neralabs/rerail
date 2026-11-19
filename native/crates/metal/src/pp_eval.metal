@@ -1,82 +1,62 @@
 // The preprocessor's evaluator over tapes (decision 0436): plain MSL passes over a unit's files,
-// each a source's bytes and its preprocessor tape (a v9np image, read in place: no node is
-// decoded into another array). The host loads the files into `data` and lists them in `files`;
-// every size a pass needs after that is made on the device (counts, a prefix sum, and the next
-// dispatch's arguments).
-#include <metal_stdlib>
-using namespace metal;
+// each a source's bytes and its preprocessor tape (format 16, decision 0460 §1), both where the
+// slab residency placed them: `data` is the slab the unit's documents were gathered into, and
+// `files` their views (`DocView`, the residency's layout). The tape is read through the reads
+// written once in CLIF (`<ukl/reads/tape.h>`, decision 0310), each node where it lies: nothing is
+// decoded into another array. Every size a pass needs is made on the device (counts, a prefix
+// sum, and the next dispatch's arguments).
+//
+// Preprocessed before Metal compiles it (`rerail_ukl::metal_source`): the view's definition and
+// the reads come first (`pp_eval::source`), the view read where the batch holds it.
 
-// A file of the unit: its source's bytes and its tape's, at byte offsets in `data` (16-aligned).
-struct PpFile { uint src, src_len, tape, tape_len; };
+// A file of the unit: its document's view. Its parts are offsets from its `at` in `data`.
+typedef DocView PpFile;
 
 // The tape's kinds the passes read (`rerail_c_pp::tape`).
 constant uint K_IDENTIFIER = 28u;
 
-// --- A v9np image read in place (`rerail_tape_format::View`) -------------------------------------
+// --- A format 16 tape, read through the CLIF reads ---------------------------------------------
 
-constant uint HEADER_BYTES = 64u;
-constant uint STRIDE = 16u;
-
+// A document: its first byte in the slab, and its view.
 struct Tape {
     device const uchar* d;
-    uint n, codes;
-    uint ws, wo, wt;
-    bool from_start;
-    uint code_col, size_col, base_col, off_col, tail_col, table;
+    device const DocView* v;
+    device const uchar* codes;
 };
 
-inline uint pad16(uint x) { return (x + 15u) & ~15u; }
-inline uint rd16(device const uchar* d, uint a) { return *(device const ushort*)(d + a); }
-inline uint rd32(device const uchar* d, uint a) { return *(device const uint*)(d + a); }
-
-// The image at `at` of `data` (16-aligned, so every column is aligned to its width).
-inline Tape tape_at(device const uchar* data, uint at) {
+inline Tape tape_at(device const uchar* data, device const PpFile* files, uint f) {
     Tape t;
-    t.d = data + at;
-    t.n = rd32(t.d, 24u);
-    t.codes = rd32(t.d, 32u);
-    t.ws = t.d[9];
-    t.wo = t.d[10];
-    t.wt = t.d[11] & 0x7fu;
-    t.from_start = (t.d[11] & 0x80u) != 0u;
-    uint c = HEADER_BYTES;
-    t.code_col = c; c = pad16(c + 2u * t.n);
-    t.size_col = c; c = pad16(c + t.ws * t.n);
-    t.base_col = c; c = pad16(c + 4u * ((t.n + STRIDE - 1u) / STRIDE));
-    t.off_col = c; c = pad16(c + t.wo * t.n);
-    t.tail_col = c; c = pad16(c + t.wt * t.n);
-    t.table = c;
+    t.v = files + f;
+    t.d = data + t.v->at;
+    // The language's table: `at + codes`, modulo 2^32 (`slabs::codes_offset`).
+    t.codes = data + (t.v->at + t.v->codes);
     return t;
 }
 
-inline uint cell(Tape t, uint col, uint w, uint i) { return w == 2u ? rd16(t.d, col + 2u * i) : rd32(t.d, col + 4u * i); }
+// A file's source: its first byte's offset in `data`, and its length.
+inline uint pf_src(PpFile f) { return f.at + f.source; }
 
-// Node `i`'s key: `kf | flags << 16`. A code is 6 bytes where it has no supertype classes, as a
-// preprocessor tape's never has (`pp_check` says so).
+// Node `i`'s key: its code's kind and field (`kind | field << 10`; a preprocessor tape's codes
+// have no flags), from its number in the language's table (`DeviceCode`s, 24 bytes each).
 inline uint node_key(Tape t, uint i) {
-    uint e = t.table + 6u * rd16(t.d, t.code_col + 2u * i);
-    return rd16(t.d, e) | uint(t.d[e + 2u]) << 16;
+    device const ushort* c = (device const ushort*)(t.codes + 24u * clif_tape_number(t.d, (device const uint*)t.v, i));
+    return uint(c[0]) | uint(c[1]) << 10;
 }
 inline uint node_kind(Tape t, uint i) { return node_key(t, i) & 0x3ffu; }
-inline uint node_size(Tape t, uint i) { return max(cell(t, t.size_col, t.ws, i), 1u); }
-inline uint node_start(Tape t, uint i) { return rd32(t.d, t.base_col + 4u * (i / STRIDE)) + cell(t, t.off_col, t.wo, i); }
-inline uint node_end(Tape t, uint i) {
-    uint from = t.from_start ? node_start(t, i) : node_start(t, i + node_size(t, i) - 1u);
-    return from + cell(t, t.tail_col, t.wt, i);
-}
+inline uint node_size(Tape t, uint i) { return clif_tape_size(t.d, (device const uint*)t.v, i); }
+inline uint node_start(Tape t, uint i) { return clif_tape_start(t.d, (device const uint*)t.v, i); }
+inline uint node_end(Tape t, uint i) { return clif_tape_end(t.d, (device const uint*)t.v, i); }
+// The line (from 0) of byte `x` of the file: by its tape's newline index.
+inline uint tape_line_of(Tape t, uint x) { return clif_tape_line(t.d, (device const uint*)t.v, x); }
 
 // --- The unit's nodes: a count a file, a prefix sum, a node's file --------------------------------
 
-// Each file's node count, and whether its codes are all 6 bytes (bit 31 of `bad` where not).
+// Each file's node count (its view's).
 kernel void pp_counts(device const PpFile* files [[buffer(0)]], device const uchar* data [[buffer(1)]],
                       device uint* counts [[buffer(2)]], device atomic_uint* bad [[buffer(3)]],
                       constant uint& n_files [[buffer(4)]], uint f [[thread_position_in_grid]]) {
     if (f >= n_files) return;
-    Tape t = tape_at(data, files[f].tape);
-    counts[f] = t.n;
-    // The code table's length is 6 bytes a code exactly when no code has a class.
-    uint code_bytes = rd32(t.d, 40u);
-    if (code_bytes != 6u * t.codes) atomic_fetch_or_explicit(bad, 1u << 31, memory_order_relaxed);
+    counts[f] = files[f].nodes;
 }
 
 // The file of the unit's node `g`: the last whose first node is at or before it.
@@ -175,12 +155,12 @@ kernel void pp_names(device const PpFile* files [[buffer(0)]], device const ucha
                      uint g [[thread_position_in_grid]]) {
     if (g >= total[0]) return;
     uint f = file_of(bases, n_files, g);
-    Tape t = tape_at(data, files[f].tape);
+    Tape t = tape_at(data, files, f);
     uint i = g - bases[f];
     ulong key = 0ul;
     if (node_kind(t, i) == K_IDENTIFIER) {
         uint s = node_start(t, i);
-        key = name_key((device const ulong*)data, files[f].src + s, node_end(t, i) - s);
+        key = name_key((device const ulong*)data, pf_src(files[f]) + s, node_end(t, i) - s);
     }
     keys[g] = key;
 }
@@ -192,7 +172,7 @@ kernel void pp_nodes(device const PpFile* files [[buffer(0)]], device const ucha
                      uint g [[thread_position_in_grid]]) {
     if (g >= total[0]) return;
     uint f = file_of(bases, n_files, g);
-    Tape t = tape_at(data, files[f].tape);
+    Tape t = tape_at(data, files, f);
     uint i = g - bases[f];
     out[g] = uint4(node_key(t, i), node_start(t, i), node_end(t, i), node_size(t, i));
 }
@@ -231,7 +211,7 @@ inline uint walk_dirs(Tape t, device PpDir* out, uint at, thread uint& groups, t
     bool first_ok = false, more_arms = false, last_violates = false;
     uint outside = 0u, last_kind = 0u, last_after = 0u, last_text = 0u;
     // Node 0 is the file's root (`pp`).
-    for (uint i = 1u; i < t.n;) {
+    for (uint i = 1u; i < t.v->nodes;) {
         while (depth > 0u && i >= ends[depth - 1u]) {
             depth--;
             cur = outer[depth];
@@ -303,7 +283,7 @@ kernel void pp_dir_counts(device const PpFile* files [[buffer(0)]], device const
     if (f >= n_files) return;
     uint groups;
     bool guarded;
-    counts[f] = walk_dirs(tape_at(data, files[f].tape), (device PpDir*)nullptr, 0u, groups, guarded, bad);
+    counts[f] = walk_dirs(tape_at(data, files, f), (device PpDir*)nullptr, 0u, groups, guarded, bad);
 }
 
 // Each file's rows from its first (the scan's), its groups, and whether it has a guard's shape.
@@ -315,7 +295,7 @@ kernel void pp_dirs(device const PpFile* files [[buffer(0)]], device const uchar
     if (f >= n_files) return;
     uint g;
     bool shaped;
-    walk_dirs(tape_at(data, files[f].tape), rows, dir_bases[f], g, shaped, bad);
+    walk_dirs(tape_at(data, files, f), rows, dir_bases[f], g, shaped, bad);
     groups[f] = g;
     guarded[f] = shaped ? 1u : 0u;
 }
@@ -334,7 +314,7 @@ kernel void pp_dir_keys(device const PpFile* files [[buffer(0)]], device const u
                         constant uint& n_files [[buffer(8)]], uint r [[thread_position_in_grid]]) {
     if (r >= dir_total[0]) return;
     uint f = file_of(dir_bases, n_files, r);
-    Tape t = tape_at(data, files[f].tape);
+    Tape t = tape_at(data, files, f);
     PpDir d = rows[r];
     bool named = d.kind == K_DEFINE || d.kind == K_UNDEF || d.kind == K_IFDEF || d.kind == K_IFNDEF
                  || ((d.kind == K_ELIFDEF || d.kind == K_ELIFNDEF) && d.chain != NO_CHAIN);

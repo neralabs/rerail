@@ -30,7 +30,7 @@ inline uint node_field(Tape t, uint i) { return (node_key(t, i) >> 10) & 63u; }
 // Whether the bytes between two tokens are white space or a comment to the lexer (`SPACE`):
 // anything but line splices is.
 inline bool gap_is_space(device const uchar* data, PpFile f, uint end, uint start) {
-    device const uchar* b = data + f.src;
+    device const uchar* b = data + pf_src(f);
     for (uint i = end; i < start;) {
         if (b[i] != uchar('\\')) return true;
         uint e = splice_end(b, i, start);
@@ -42,11 +42,11 @@ inline bool gap_is_space(device const uchar* data, PpFile f, uint end, uint star
 
 // A punctuator leaf spelled `c` (one byte).
 inline bool punct_is(Tape t, device const uchar* data, PpFile f, uint i, uchar c) {
-    return node_kind(t, i) == K_PUNCT && node_end(t, i) - node_start(t, i) == 1u && data[f.src + node_start(t, i)] == c;
+    return node_kind(t, i) == K_PUNCT && node_end(t, i) - node_start(t, i) == 1u && data[pf_src(f) + node_start(t, i)] == c;
 }
 inline bool is_dots(Tape t, device const uchar* data, PpFile f, uint i) {
     uint s = node_start(t, i);
-    return node_kind(t, i) == K_PUNCT && node_end(t, i) - s == 3u && data[f.src + s] == uchar('.');
+    return node_kind(t, i) == K_PUNCT && node_end(t, i) - s == 3u && data[pf_src(f) + s] == uchar('.');
 }
 
 // S1: each row's definition, and the leaves of its parameters and its body (to be scanned).
@@ -61,7 +61,7 @@ kernel void pd_defs(device const PpFile* files [[buffer(0)]], device const uchar
     PpDir row = rows[r];
     if (row.kind == K_DEFINE) {
         uint f = file_of(dir_bases, n_files, r);
-        Tape t = tape_at(data, files[f].tape);
+        Tape t = tape_at(data, files, f);
         uint g = bases[f];
         uint end = row.node + node_size(t, row.node);
         uint j = row.node + 3u;
@@ -108,7 +108,7 @@ kernel void pd_params(device const PpFile* files [[buffer(0)]], device const uch
     uint r = pb_item_of(pfirst, dir_total[0], s);
     uint k = s - pfirst[r];
     uint f = file_of(dir_bases, n_files, r);
-    Tape t = tape_at(data, files[f].tape);
+    Tape t = tape_at(data, files, f);
     PpFile pf = files[f];
     PpDef d = defs[r];
     if (k == 0u) defs[r].pfirst = pfirst[r];
@@ -173,7 +173,7 @@ kernel void pd_items(device const PpFile* files [[buffer(0)]], device const ucha
     uint r = pb_item_of(ifirst, dir_total[0], s);
     uint k = s - ifirst[r];
     uint f = file_of(dir_bases, n_files, r);
-    Tape t = tape_at(data, files[f].tape);
+    Tape t = tape_at(data, files, f);
     PpDef d = defs[r];
     if (k == 0u) defs[r].ifirst = ifirst[r];
     uint i = d.body - bases[f] + k;
@@ -352,7 +352,7 @@ kernel void pe_owner_in(device const PpFile* files [[buffer(0)]], device const u
                         uint g [[thread_position_in_grid]]) {
     if (g >= total[0]) return;
     uint f = file_of(bases, n_files, g);
-    Tape t = tape_at(data, files[f].tape);
+    Tape t = tape_at(data, files, f);
     out[g] = node_size(t, g - bases[f]) > 1u ? g : 0u;
 }
 
@@ -363,7 +363,7 @@ kernel void pe_text_flag(device const PpFile* files [[buffer(0)]], device const 
                          constant uint& n_files [[buffer(6)]], uint g [[thread_position_in_grid]]) {
     if (g >= total[0]) return;
     uint f = file_of(bases, n_files, g);
-    Tape t = tape_at(data, files[f].tape);
+    Tape t = tape_at(data, files, f);
     uint i = g - bases[f];
     flag[g] = node_size(t, i) == 1u && node_kind(t, owner[g] - bases[f]) == K_CODE ? 1u : 0u;
 }
@@ -520,7 +520,7 @@ kernel void pe_lookups(device const PpFile* files [[buffer(0)]], device const uc
     uint j = pb_item_of(gap_at, n_gaps[0], s);
     uint g = text_nodes[firsts[j] + (s - gap_at[j])];
     uint f = file_of(bases, n_files, g);
-    Tape t = tape_at(data, files[f].tape);
+    Tape t = tape_at(data, files, f);
     if (node_kind(t, g - bases[f]) != K_IDENTIFIER) {
         out[s] = L_NOT_NAME;
         return;
@@ -613,7 +613,7 @@ inline At node_at(device const PpFile* files, device const uchar* data, device c
     uint f = file_of(bases, n_files, g);
     At a;
     a.f = files[f];
-    a.t = tape_at(data, a.f.tape);
+    a.t = tape_at(data, files, f);
     a.i = g - bases[f];
     return a;
 }
@@ -637,7 +637,6 @@ struct Ux {
     device const uint* tdepth; ulong va_opt;
     device const uchar* sbytes; device const PxScratch* stoks; uint relex_options;
     device const ulong* closes; uint n_close;
-    device const uint* lines;
 };
 
 // Whether `p[0..n)` holds a line splice (`\`, blanks, a newline): its phase-2 spelling differs.
@@ -663,7 +662,7 @@ inline Span ref_span(Ux u, uint g) {
     }
     At a = node_at(u.files, u.data, u.bases, u.n_files, g);
     uint st = node_start(a.t, a.i);
-    r.p = u.data + a.f.src + st; r.len = node_end(a.t, a.i) - st; r.kind = node_kind(a.t, a.i);
+    r.p = u.data + pf_src(a.f) + st; r.len = node_end(a.t, a.i) - st; r.kind = node_kind(a.t, a.i);
     return r;
 }
 
@@ -1569,40 +1568,11 @@ inline Vo px_va_opts(Ux u, Ar a, PpDef d, device PxList& L, uint lane) {
 
 // --- The built-ins ---------------------------------------------------------------------------------
 
-// The line index's blocks: 4 KB of the unit's bytes each.
-constant uint LINE_BLOCK = 4096u;
-
-// The newlines in a word, a word at a time (the zero bytes of `w ^ "\n"*8`, exactly).
-inline uint px_nl(ulong w) {
-    ulong t = w ^ 0x0a0a0a0a0a0a0a0aul, h = 0x7f7f7f7f7f7f7f7ful;
-    return popcount(~(((t & h) + h) | t | h));
-}
-
-// Each block's newlines, one thread a block (512 words), for the index's scan.
-kernel void px_line_blocks(device const ulong* data [[buffer(0)]], device uint* counts [[buffer(1)]],
-                           constant uint& n_words [[buffer(2)]], constant uint& n_blocks [[buffer(3)]],
-                           uint b [[thread_position_in_grid]]) {
-    if (b >= n_blocks) return;
-    uint k0 = b * (LINE_BLOCK / 8u), k1 = min(k0 + LINE_BLOCK / 8u, n_words), c = 0u;
-    for (uint k = k0; k < k1; k++) c += px_nl(data[k]);
-    counts[b] = c;
-}
-
-// The newlines before byte `x` of the unit's bytes: its block's (the index) and the words of its
-// block before it (the 32 lanes).
-inline uint px_newlines(Ux u, uint x, uint lane) {
-    device const ulong* w = (device const ulong*)u.data;
-    uint b = x / LINE_BLOCK, kn = x / 8u, c = 0u;
-    for (uint k = b * (LINE_BLOCK / 8u) + lane; k < kn; k += 32u) c += px_nl(w[k]);
-    if (lane == 0u && (x & 7u) != 0u) c += px_nl(w[kn] & ((1ul << (8u * (x & 7u))) - 1ul));
-    return u.lines[b] + simd_sum(c);
-}
-
-// The physical line of tape node `g` (from 1): the newlines before it in its file.
-inline uint px_line(Ux u, uint g, uint lane) {
+// The physical line of tape node `g` (from 1): by its file's tape's newline index (decision
+// 0460 §2).
+inline uint px_line(Ux u, uint g) {
     At at = node_at(u.files, u.data, u.bases, u.n_files, g);
-    uint o = at.f.src + node_start(at.t, at.i);
-    return px_newlines(u, o, lane) - px_newlines(u, at.f.src, lane) + 1u;
+    return tape_line_of(at.t, node_start(at.t, at.i)) + 1u;
 }
 
 // A built-in's use, list `l` (an object-like call), by the 32 lanes: `__LINE__` the line of the
@@ -1627,7 +1597,7 @@ inline void px_builtin(Ux u, Ar a, uint l, uint lane) {
             x = par_exp(a, p, k);
         }
         uint g = par_ref(u, a, p, k);
-        uint line = (g & SCRATCH) == 0u ? px_line(u, g, lane) : 0u;
+        uint line = (g & SCRATCH) == 0u ? px_line(u, g) : 0u;
         uint nd = 1u;
         for (uint v = line; v >= 10u; v /= 10u) nd++;
         uint base = 0u, id = 0u;
@@ -1882,7 +1852,6 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
                     device atomic_uint* qctl [[buffer(22)]], device atomic_uint* ctl [[buffer(23)]],
                     constant uint* words [[buffer(24)]], device PxScratch* scratch [[buffer(25)]],
                     device const ulong* closes [[buffer(26)]], device const uint* n_close [[buffer(27)]],
-                    device const uint* lines [[buffer(28)]],
                     uint lane [[thread_index_in_simdgroup]]) {
     // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high), the scratch
     // bytes' and tokens' capacities.
@@ -1895,7 +1864,7 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
     device PxScratch* stoks = scratch;
     device uchar* sbytes = (device uchar*)(scratch + words[9]);
     u.sbytes = sbytes; u.stoks = stoks; u.relex_options = words[10];
-    u.closes = closes; u.n_close = n_close[0]; u.lines = lines;
+    u.closes = closes; u.n_close = n_close[0];
     Ar a;
     // The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth, the origin.
     uint tc = words[1];

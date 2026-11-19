@@ -12,9 +12,25 @@ use crate::launch::CheckedComputeEncoder;
 use crate::runtime::{MappedBuffer, pipeline_named_constant};
 use metal::{BufferRef, CommandBufferRef, MTLSize};
 
-/// The evaluator's one source: the tape reader and the front passes (`pp_eval.metal`), these
-/// blocks, the work queue (`work_queue.metal`) and the expansion (`pp_expand.metal`).
-pub const SOURCE: &str = concat!(include_str!("pp_eval.metal"), "\n", include_str!("pp_blocks.metal"), "\n", include_str!("work_queue.metal"), "\n", include_str!("pp_expand.metal"));
+/// The evaluator's one source: the tape's view and its reads written once in CLIF
+/// (`<ukl/reads/tape.h>`, the view read where the batch holds it), the front passes
+/// (`pp_eval.metal`), these blocks, the work queue (`work_queue.metal`) and the expansion
+/// (`pp_expand.metal`); preprocessed for Metal once (`rerail_ukl::metal_source`, decision 0440
+/// §3.3) until the passes are UKL themselves (decision 0460 §5).
+pub fn source() -> Result<&'static str, Error> {
+    static SOURCE: std::sync::LazyLock<Result<String, String>> = std::sync::LazyLock::new(|| {
+        let text = format!(
+            "#include <metal_stdlib>\nusing namespace metal;\n#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n{}\n{}\n{}\n{}",
+            rerail_clif::view::ukl(),
+            include_str!("pp_eval.metal"),
+            include_str!("pp_blocks.metal"),
+            include_str!("work_queue.metal"),
+            include_str!("pp_expand.metal")
+        );
+        rerail_ukl::metal_source("pp.metal", &text).map_err(|e| e.to_string())
+    });
+    SOURCE.as_ref().map(String::as_str).map_err(|_| Error::BackendFailure)
+}
 
 /// A dispatch's size: groups known to the host, or indirect arguments at a byte offset.
 #[derive(Clone, Copy)]

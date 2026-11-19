@@ -167,3 +167,30 @@ with the unit, because each primitive's number of levels was chosen by its capac
 6. 0448's and 0436's sections brought up to date.
 
 ## Built
+
+- **Step 2a** (c20304d20): `rerail_c_pp::tape::image_16` writes the preprocessor tape in format
+  16, with its newline index. Its language table is the crate's static `lang()`: a code for each
+  kind and field, tape tag 0, which no language's dialect takes. Every node's kind, field, start,
+  end and subtree end, and every node's line, equal the format 15 image's and the source's
+  newlines (R1, `the_pp_tape_is_a_format_16_image`). All 3,135 corpus files pass.
+- **Step 2b and 2c** (this commit):
+  - A unit is its documents in the slab residency. `pp_eval::placement` is a document's
+    placement (`slabs::insert`): its tape, then its source, and the pp language's `DeviceCode`
+    table, held once a slab under key `revision << 8` (tag 0). Its view is the tape's own
+    (`f16::Placement::view`). `Unit::of` gathers the documents into one slab (`slabs::gather`)
+    and lists their views, and the kernels bind that slab and the views (`PpFile` is
+    `DocView`).
+  - Writing a tape into its room is its loader's: the store's load (0353 step 4a) or, in the
+    tests, `eval::tests::place`.
+  - `Unit::load` and its copy are gone.
+  - The kernels read each node through the CLIF reads (`clif_tape_number`, `start`, `end`,
+    `size`, `line`), with `<ukl/reads/tape.h>` preprocessed for Metal
+    (`pp_blocks::source`, `rerail_ukl::metal_source`). The hand-written v9np reader is gone.
+  - `__LINE__` is `clif_tape_line` of its token's start, plus 1. `px_line_blocks`,
+    `px_newlines`, the line index's buffers and its scan are gone (R3,
+    `line_and_file_are_the_serial_passes`).
+  - R2's guard is `the_evaluator_copies_no_tape`.
+  - Results: the 13 evaluator tests pass, as do the 5 pp block tests. The corpus's first slice
+    (`RERAIL_PP_COUNT=500`) gives 999 units the serial pass's tokens, with 1 refused for `#line`,
+    as before. That slice still takes up to 146 launches, which steps 3–5 bring down to a fixed
+    handful.

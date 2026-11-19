@@ -1,10 +1,12 @@
 //! The preprocessor's evaluator over tapes (decision 0436), plain MSL passes (`pp_eval.metal`).
 //!
 //! A unit is its files: each a source's bytes and its preprocessor tape (`rerail_c_pp::tape`,
-//! a v9np image), which the device reads in place. The host's part is the loading: it copies
-//! the files into one buffer and lists where each is (`Unit::load`). It then encodes the passes
-//! and waits; every size a pass needs is made on the device, and no pass's result comes back to
-//! the host to decide the next.
+//! format 16, decision 0460 §1), documents of the slab residency. The evaluator reads them where
+//! they are: the unit's documents gathered into one slab (`slabs::gather`), their views listed
+//! (`Unit::of`). Writing a tape into its room is its loader's (the store's load, 0353 step 4a;
+//! a test's stand-in for it): `placement` says where the parts go and makes the view. The host
+//! then encodes the passes and waits; every size a pass needs is made on the device, and no
+//! pass's result comes back to the host to decide the next.
 //!
 //! Built so far: the unit's nodes (a count a file, their prefix sum, and from it the next
 //! dispatch's size), the names (each identifier leaf's key), the directives (each file's P0
@@ -15,65 +17,132 @@ use crate::launch::{commit_checked, wait_checked};
 use crate::pp_blocks::{Enc, Grid, Scan, TG};
 use crate::runtime::MappedBuffer;
 
-/// The passes' source: the tape reader and the front passes, the blocks, and the expansion.
-pub const SOURCE: &str = crate::pp_blocks::SOURCE;
-
-/// A file of the unit (`PpFile` in the MSL): its source's bytes and its tape's, at byte offsets
-/// in the unit's data.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PpFile {
-    pub src: u32,
-    pub src_len: u32,
-    pub tape: u32,
-    pub tape_len: u32,
+/// The passes' source, preprocessed for Metal (`crate::pp_blocks::source`).
+pub fn source() -> Result<&'static str, Error> {
+    crate::pp_blocks::source()
 }
 
-/// A unit's files on the device.
+pub use crate::slabs::DocView;
+
+/// A unit's files on the device: its documents, in one slab, and their views.
 pub struct Unit {
-    pub data: MappedBuffer,
+    /// The documents, gathered into one slab: the lease the kernels read through.
+    pub documents: Vec<Arc<Resident>>,
+    /// Their views, in the unit's file order (`PpFile` in the MSL).
     pub files: MappedBuffer,
-    pub table: Vec<PpFile>,
-    /// The unit's nodes: each tape's header says its own.
+    pub views: Vec<DocView>,
+    /// The unit's nodes: each view's.
     pub node_bound: usize,
     /// At least the unit's directives: a directive is a node over its `#`, so a file has at most
     /// half its nodes.
     pub dir_bound: usize,
-    /// Each file's nodes (its tape's header).
+    /// Each file's nodes.
     pub file_nodes: Vec<u32>,
 }
 
-/// Bytes past the last file, so that a word read at a source's last byte stays in the buffer.
-const SLACK: usize = 16;
+use crate::slabs::{Placed, Placement, Resident, Table, TableAt};
+use std::sync::Arc;
+
+/// The bytes a preprocessor document takes in its slab: its tape, then its source (each 16-byte
+/// aligned, the source with the margin a word read past its end needs).
+fn document_bytes(tape: usize, source: usize) -> usize {
+    crate::slabs::aligned(tape) + crate::slabs::aligned(source + crate::slabs::SOURCE_MARGIN)
+}
+
+/// A preprocessor document's placement in the residency (`slabs::insert`): its digest (the
+/// tape's and its source's together, as a resident tape's identity is), its room, and its
+/// language's table (`DeviceCode`s of `lang`'s, a code a kind and field, held by the slab once,
+/// key `tag | revision << 8`: tag 0 is no language's, so the preprocessor tape's alone). `write`
+/// is the loader's: it fills the room's tape and source (`tape_len` and `source_len` bytes) as a
+/// load does; the view is made from the bytes there.
+pub fn placement<'a>(
+    tape_len: usize,
+    source_len: usize,
+    digest: [u8; 32],
+    lang: &'static rerail_tape_format::f16::Lang,
+    write: impl FnOnce(&mut [u8], &mut [u8]) + 'a,
+) -> Placement<'a> {
+    let codes = lang.table().len();
+    let table = Table { key: u32::from(rerail_tape_format::f16::Lang::revision(lang)) << 8, len: 24 * codes };
+    let bytes = document_bytes(tape_len, source_len);
+    let place = move |slab: &Arc<crate::slabs::Slab>, offset: usize, table_at: Option<TableAt>| -> Result<Placed, Error> {
+        let base = slab.host();
+        let source_at = offset + crate::slabs::aligned(tape_len);
+        // SAFETY: `insert` gave `offset..offset + bytes` of the slab to this document alone.
+        let (tape, source) = unsafe { (std::slice::from_raw_parts_mut(base.add(offset), tape_len), std::slice::from_raw_parts_mut(base.add(source_at), source_len)) };
+        write(tape, source);
+        let p = rerail_tape_format::f16::placement(tape).map_err(|_| Error::BackendFailure)?;
+        let placed = p.view(lang, 0).map_err(|_| Error::BackendFailure)?;
+        let table_at = table_at.ok_or(Error::BackendFailure)?;
+        let new_table = (!table_at.held).then(|| {
+            let mut t = vec![0u8; 24 * codes];
+            for (n, e) in lang.table().entries().iter().enumerate() {
+                // `DeviceCode`: kind, field (u16s), flags, class count, then room for its classes.
+                t[24 * n..24 * n + 2].copy_from_slice(&e.kind.to_le_bytes()); // copy: not block data
+                t[24 * n + 2..24 * n + 4].copy_from_slice(&e.field.to_le_bytes()); // copy: not block data
+            }
+            t
+        });
+        let count = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
+        let view = DocView {
+            at: count(offset)?,
+            nodes: count(p.n)?,
+            format: 16,
+            widths: placed.widths,
+            columns: placed.columns,
+            stride: placed.stride,
+            side: placed.side,
+            parts: placed.parts,
+            cut: placed.cut,
+            per: placed.per,
+            lines: placed.lines,
+            line_count: placed.line_count,
+            codes: crate::slabs::codes_offset(offset, table_at.at),
+            source: count(source_at - offset)?,
+            source_len: count(source_len)?,
+            code_count: count(codes)?,
+            ..DocView::default()
+        };
+        let document = Resident {
+            digest,
+            slab: Arc::clone(slab),
+            view,
+            at: offset,
+            len: bytes,
+            bytes: [crate::slabs::aligned(tape_len), crate::slabs::aligned(source_len + crate::slabs::SOURCE_MARGIN), 0],
+            tape_length: tape_len,
+            table: Some(table),
+        };
+        Ok(Placed { document, table: new_table })
+    };
+    (digest, bytes, Some(table), Box::new(place))
+}
 
 impl Unit {
-    /// `files` (each its source and its tape) copied into one buffer, each at 16 bytes.
-    pub fn load(files: &[(&[u8], &[u8])]) -> Result<Unit, Error> {
+    /// The unit of `documents` (in its file order): gathered into one slab, which the kernels
+    /// read, and their views listed.
+    pub fn of(documents: Vec<Arc<Resident>>) -> Result<Unit, Error> {
         let device = crate::device()?;
-        let pad = |x: usize| (x + 15) & !15;
-        let mut table = Vec::with_capacity(files.len());
-        let mut at = 0;
-        for (src, tape) in files {
-            let s = at;
-            at = pad(at + src.len());
-            let t = at;
-            at = pad(at + tape.len());
-            table.push(PpFile { src: s as u32, src_len: src.len() as u32, tape: t as u32, tape_len: tape.len() as u32 });
-        }
-        let data = MappedBuffer::zeroed::<u8>(&device, at + SLACK)?;
-        for ((src, tape), f) in files.iter().zip(&table) {
-            // SAFETY: the buffer holds `at` bytes, every file's placed inside them, apart.
-            unsafe {
-                std::ptr::copy_nonoverlapping(src.as_ptr(), data.host().add(f.src as usize), src.len());
-                std::ptr::copy_nonoverlapping(tape.as_ptr(), data.host().add(f.tape as usize), tape.len());
-            }
-        }
-        // A tape's node count, from its header (`rerail_tape_format`: bytes 24..28).
-        let nodes = |t: &[u8]| t.get(24..28).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
-        let node_bound = files.iter().map(|f| nodes(f.1)).sum::<usize>().max(1);
-        let dir_bound = files.iter().map(|f| nodes(f.1) / 2).sum::<usize>().max(1);
-        let file_nodes = files.iter().map(|f| nodes(f.1) as u32).collect();
-        Ok(Unit { data, files: MappedBuffer::from_slice(&device, &table)?, table, node_bound, dir_bound, file_nodes })
+        let documents = crate::slabs::gather(documents)?;
+        let views: Vec<DocView> = documents.iter().map(|d| d.view).collect();
+        let file_nodes: Vec<u32> = views.iter().map(|v| v.nodes).collect();
+        let node_bound = file_nodes.iter().map(|&n| n as usize).sum::<usize>().max(1);
+        let dir_bound = file_nodes.iter().map(|&n| n as usize / 2).sum::<usize>().max(1);
+        Ok(Unit { files: MappedBuffer::from_slice(&device, &views)?, views, documents, node_bound, dir_bound, file_nodes })
+    }
+
+    /// The unit's files.
+    pub fn len(&self) -> usize {
+        self.views.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.views.is_empty()
+    }
+
+    /// The slab the unit's documents are in, as the kernels bind it.
+    pub fn data(&self) -> &metal::BufferRef {
+        self.documents.first().map_or(&*self.files.buffer, |d| d.slab.buffer())
     }
 }
 
@@ -136,7 +205,7 @@ pub struct Front {
 impl Front {
     pub fn new(unit: &Unit, nodes: bool) -> Result<Front, Error> {
         let device = crate::device()?;
-        let n = unit.table.len();
+        let n = unit.len();
         let per_file = || MappedBuffer::zeroed::<u32>(&device, n.max(1));
         let one = |k: usize| MappedBuffer::zeroed::<u32>(&device, k);
         Ok(Front {
@@ -188,7 +257,7 @@ impl Front {
     pub fn encode(&self, enc: &Enc<'_>, unit: &Unit) -> Result<(), Error> {
         let n32 = self.n as u32;
         let files = Grid::Groups((self.n as u64).div_ceil(TG));
-        let (u_files, u_data) = (&unit.files.buffer as &metal::BufferRef, &unit.data.buffer as &metal::BufferRef);
+        let (u_files, u_data) = (&unit.files.buffer as &metal::BufferRef, unit.data());
         enc.run("pp_counts", None, &[u_files, u_data, &self.counts.buffer, &self.bad.buffer], &[n32], files)?;
         self.scan.encode(enc, &self.n_files.buffer, 0, &self.counts.buffer, &self.bases.buffer)?;
         enc.run("pb_args", None, &[&self.scan.total.buffer, &self.args.buffer], &[0], Grid::Groups(1))?;
@@ -240,7 +309,7 @@ pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error
     let queue = crate::pool::queue(&device)?;
     let command = queue.new_command_buffer();
     command.set_label("Rerail pp evaluator");
-    let encoded = f(&Enc { command, source: SOURCE });
+    let encoded = f(&Enc { command, source: source()? });
     if let Err(e) = encoded {
         command.commit();
         command.wait_until_completed();
@@ -275,7 +344,7 @@ pub fn name_key(bytes: &[u8]) -> u64 {
     let mut h = 0x9e37_79b9_7f4a_7c15u64 ^ spelled.len() as u64;
     for chunk in spelled.chunks(8) {
         let mut w = [0u8; 8];
-        w[..chunk.len()].copy_from_slice(chunk);
+        w[..chunk.len()].copy_from_slice(chunk); // copy: not block data (a word of a name being hashed)
         h = (h ^ u64::from_le_bytes(w)).wrapping_mul(0xff51_afd7_ed55_8ccd);
         h ^= h >> 32;
     }
