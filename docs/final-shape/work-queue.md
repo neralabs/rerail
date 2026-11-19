@@ -2374,7 +2374,16 @@ holds the design, its requirements (R1–R12) and its steps.
   (R13–R16), and tier 2 writes format 16 by them as it parses on the CPU (R17, 438506218). Tier 2 writing on the
   device waits on tier 2 on Metal, its own track (the user: steps 5 and 6 first).
 - **Measured, not taken** (2026-11-18, step 5, 2552b14d8): node-range LZ4 for 16z is 16–32% over HC 9; HC 9 stays.
-- **Next**: step 6 (the store keeps the presence; the planner leaves out documents and blocks); SQL commits at its statements once `claim` decides a program's held tokens as they come; C, C++, Go,
+- **Done** (2026-11-18, step 6): every producer's image holds its presence; a clause none of whose root kinds a
+  document has does not run, on the CPU and on Metal by file; the store keeps each tape's presence on 0402's kept
+  facts (merged, 75078a7e7), and a stored tape is given it, read in place (5941bdab2); the workspace selects a stored
+  file by it before the search index (3fcb06e0b).
+- **Open** (merge, 2026-11-18): three FSEvents journal tests of rerail-store (`a_watched_root_is_not_statted...`,
+  `an_inner_root_is_answered...`, `rerails_own_files_are_outside_the_observer`) fail with the crate's 30 observer
+  tests run at once on a fully loaded host, and pass run alone; a flake of the journal's delivery, not of 0400's
+  listings, which they never reach.
+- **Next**: the device's block skip (a warm tape's kept presence loaded into its room beside it, read by the label
+  kernels before each block); SQL commits at its statements once `claim` decides a program's held tokens as they come; C, C++, Go,
   Kotlin, Scala and Swift take a `Sink` when their tables come; simdjson's index writer (a CPU no
   kernel runs on) on the ops.
 

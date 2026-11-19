@@ -409,7 +409,28 @@ the device's sweeps, which would read each block's presence words before its 1,0
 what lies in the residency slabs, so the block presence must be laid there beside the tape, not uploaded from the
 image's `Vec` (0353); that is part 3's layout, so the device's block skip comes with it.
 
-Next: part 3, once 0402's kept facts are merged here.
+**Done (2026-11-18): part 3, the store keeps it.** 0402's branch is merged here (75078a7e7). The presence is an entry
+of a kept-facts space of its own (`content_store::kept_facts::presence`), keyed by the tape's write-back key
+(`core::tape_key`: its source's digest, language, grammar and format versions), its rows the words in their order
+(the document's, then each block's), one column kept as given. A wave's presences are gathered and written as one
+file of the chain, behind the run, with the tapes; a read of a queued tape's presence meanwhile gets the writer's own.
+A corpus run maps the space once, before the first wave, beside the tapes it reads then, and a tape read from the
+store is given `TapePresence::Kept`, which reads its words by position (`Packed::get`) in the mapped file: nothing is
+decoded and no `Presence` is made of it (`a_stored_tape_is_given_the_presence_its_writer_made`,
+`a_runs_tapes_are_kept_with_their_presences`). `placed_parse` had dropped the parse's presence when it made the image
+again from its room: carried.
+
+The workspace keeps a published file's presence under the same key and selects a stored file by it before the search
+index (`persisted::presence_selects`): every candidate clause none of whose root kinds the tape has is ruled out, with
+no index built and no tape decoded. A tape with an error node rules out none, as the index's syntax errors do not: an
+error entry's kind is `ERROR_CODE` (0, tree-sitter's end symbol, never a node's), so its bit says the tape has one.
+Where the presence cannot tell (none kept, a clause over a derived document, project evidence, no root kinds) the
+index is asked as before (`kept_presences_skip_only_error_free_tapes_that_cannot_match`).
+
+**Next: the device's block skip.** A kept entry is one contiguous range with relative references only (0402: a roll-up
+moves it by `memcpy`), so a warm tape's presence is loaded into its room beside the tape, as the tape's stored frame
+is (a load of the stored bytes into their home, not a copy: 0353), and the label kernels read each block's words
+there through the packed column's read (`col_get`, written once in CLIF) before its 1,024 nodes.
 
 ## Requirements, each with its test
 
