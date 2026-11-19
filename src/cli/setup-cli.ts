@@ -34,7 +34,7 @@ import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
-  daemonUsesPackageRoot,
+  daemonServesPackage,
   lookupDaemon,
   MACHINE_WITHOUT_ENGINE,
   mainInstanceHolderRuns,
@@ -43,6 +43,7 @@ import {
   startDaemon,
   STOP_ANSWERS,
   stopDaemon,
+  type DaemonLookup,
   type DaemonMachine,
   type DaemonState,
   type StopDaemonResult,
@@ -984,22 +985,33 @@ const DASHBOARD_ROUTES: Record<DashboardPage, string> = { rules: "rules" };
 
 /**
  * The daemon of the active install; it serves every repository. A running daemon from another package (an older
- * version), or on another port than `port` names, is replaced, on the port it had unless `port` names one. A daemon
- * that does not answer is never killed here; its pid may belong to another process by now, so `startDaemon`'s
- * refusal (with how to stop it) is the answer. `RERAIL_AUTOSTART=0` or `false` ({@link autostartOff}; the updater's
- * health check sets `0`) uses only a daemon already running from this install, and starts or replaces none.
+ * version), of a release before the engine's proof wherever it ran from ({@link daemonServesPackage}), or on another
+ * port than `port` names, is replaced, on the port it had unless `port` names one. A daemon that does not answer is
+ * never killed here; its pid may belong to another process by now, so `startDaemon`'s refusal (with how to stop it) is
+ * the answer. `RERAIL_AUTOSTART=0` or `false` ({@link autostartOff}; the updater's health check sets `0`) uses only a
+ * daemon already running from this install, and starts or replaces none.
  */
 async function activeDaemon(context: SetupContext, port: number | undefined): Promise<DaemonState> {
   // The version directory, not the current link: the daemon and its SQLite binding belong to this install.
   const packageRoot = await realpath(registrationRoot(context));
   const lookup = await lookupDaemon(context.home);
-  if (lookup.status === "running" && await daemonUsesPackageRoot(lookup.state, packageRoot) && (port === undefined || lookup.state.port === port)) {
-    return lookup.state;
-  }
+  if (lookup.status === "running" && await keepsDaemon(lookup, packageRoot, port)) return lookup.state;
   if (autostartOff()) throw new Error(`RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps set-up from starting it`);
-  if (lookup.status === "running") await stopDaemon(context.home);
-  const listen = port ?? (lookup.status === "running" ? lookup.state.port : undefined);
+  const stopped = await stoppedPort(context.home, lookup);
+  const listen = port ?? stopped;
   return (await startDaemon({ home: context.home, packageRoot }, { dev: false, ...(listen === undefined ? {} : { port: listen }) })).daemon.state;
+}
+
+/** Whether set-up keeps the daemon it `found` running: one that serves its package, on `port` when that names one. */
+async function keepsDaemon(found: Extract<DaemonLookup, { status: "running" }>, packageRoot: string, port: number | undefined): Promise<boolean> {
+  return await daemonServesPackage(found, packageRoot) && (port === undefined || found.state.port === port);
+}
+
+/** Stops the daemon `lookup` found running, set-up's start taking its place, and gives the port it had. */
+async function stoppedPort(home: string, lookup: DaemonLookup): Promise<number | undefined> {
+  if (lookup.status !== "running") return undefined;
+  await stopDaemon(home);
+  return lookup.state.port;
 }
 
 /** `<origin>/?repository=<key>&checkout=<path>#<page>`: the page, scoped to the repository and checkout set-up ran for. */
