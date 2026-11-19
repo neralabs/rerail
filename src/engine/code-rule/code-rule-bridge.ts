@@ -376,18 +376,29 @@ async function modifiedSince(absolute: string, modifiedAt: number): Promise<numb
  * the walk read. With none, none the walk holds sources back for began before the bytes were read. The original `stamp`
  * is kept either way, so the next walk reads the file again. A file such a walk cannot stamp after its read (gone, as
  * when the command emptied and then removed it) is stamped now, so the command holds it back too. So is one whose times
- * after the read do not date the bytes it read (`undated`, `undatedRead`).
+ * after the read do not date the bytes it read (`undated`, `undatedRead`). A baseline walk gives such a read no stamp
+ * and keeps what was seen of the file before (`baselineStamp`).
  */
-async function stampOfRead(walk: SourceWalk, absolute: string, modifiedAt: number, undated: (at: number) => boolean): Promise<number> {
-  if (!walk.captureChanges) return await modifiedSince(absolute, modifiedAt);
+async function stampOfRead(walk: SourceWalk, absolute: string, modifiedAt: number, undated: (at: number) => boolean): Promise<number | undefined> {
+  if (!walk.captureChanges) return baselineStamp(walk, await modifiedSince(absolute, modifiedAt), undated);
   if (walk.commandRuns?.() !== true) return modifiedAt;
   const after = await modifiedSince(absolute, modifiedAt).catch(() => undefined);
   return after === undefined || undated(after) ? Math.max(modifiedAt, await filesystemClock()) : after;
 }
 /**
- * Whether a walk read other bytes than those the session last observed of the file, `previous`, though the file's times,
- * `at`, have not moved past that observation's. Those times do not say when the bytes were written: a file system can
- * show a change before it stamps it, as Linux empties a file it truncates before it gives the file its new times.
+ * A baseline walk's stamp of what it read: the file's times after the read, `after`; none where a command of the session
+ * runs and those times do not date the bytes (`undated`). The walk then keeps what was seen of the file before
+ * (`#readObservedFile`): what the session saw before a quiet spell, or what the folder's shared observations hold. It
+ * cannot hold the file back as a later walk does (`#toolChanges`) where the session has seen nothing of its own.
+ */
+function baselineStamp(walk: SourceWalk, after: number, undated: (at: number) => boolean): number | undefined {
+  return walk.commandRuns?.() === true && undated(after) ? undefined : after;
+}
+/**
+ * Whether a walk read other bytes than `previous`, the observation of the file it compares with (the session's last, or
+ * in a baseline walk the folder's shared one), though the file's times, `at`, have not moved past that observation's.
+ * Those times do not say when the bytes were written: a file system can show a change before it stamps it, as Linux
+ * empties a file it truncates before it gives the file its new times.
  */
 function undatedRead(previous: ObservedSource | undefined, bytes: Buffer, at: number): boolean {
   return previous?.stamp !== undefined && at <= stampTime(previous.stamp) && previous.digest !== sha256(bytes);
@@ -3143,6 +3154,8 @@ export class CodeRuleBridge {
     if (walk.discovery.cancelled) return undefined;
     const modifiedAt = await stampOfRead(walk, location.absolute, stamped.modifiedAt, at => undatedRead(previous, read.bytes, at));
     if (walk.discovery.cancelled) return undefined;
+    // A baseline walk keeps what was seen of a file a command may be writing, and leaves the file to the walk after.
+    if (modifiedAt === undefined) return previous;
     const content = nonText(location, read.bytes);
     return content === undefined ? observedText(walk, { ...stamped, modifiedAt }, previous, read) : { ...stamped, modifiedAt, ...content };
   }

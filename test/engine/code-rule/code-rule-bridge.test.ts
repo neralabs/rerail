@@ -1591,6 +1591,158 @@ describe("CodeRuleBridge", () => {
     expect(edits()).toHaveLength(3);
   });
 
+  /**
+   * A session that edited `src/a.py` to `x = 2` and was then suspended, with the times of that write, and what it kept
+   * for its runtime to open it again; `observations` is the folder's shared cache, if any.
+   */
+  async function quietAfterEdit(observations?: SourceObservationCache) {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    await awaitClockAfter(path);
+    const first = createBridge(root, auditor(async (_sessionId, batch) => response(batch)), observations === undefined ? {} : { observations });
+    await first.openWorkspace("session-1");
+    await first.checkpoint("turn");
+    await first.begin("write-1", "write", { path: "src/a.py" });
+    await writeFile(path, "x = 2\n");
+    await first.finish("write-1");
+    // The session's last walk before the quiet comes after the write, as a turn's end does.
+    await awaitClockAfter(path);
+    await first.checkpoint("turn");
+    const resume = await first.walkResume();
+    await first.close();
+    const written = await lstat(path);
+    await awaitClockAfter(path);
+    return { root, path, written, resume: resume === undefined ? {} : { resume } };
+  }
+
+  /** Holds the next walk of `root`'s `src` folder before it lists the folder, until `release`. */
+  function holdWalkAtSource(root: string): { release(): void } {
+    const listed = Promise.withResolvers<void>();
+    discovery.directories.set(join(root, "src"), [async () => await listed.promise]);
+    releases.push(listed.resolve);
+    return { release: listed.resolve };
+  }
+
+  // After a quiet spell the agent's first command can rewrite a file it edited before, while the reopened session's
+  // first walk reads it. Linux empties a file it truncates before it gives the file its new times, so that walk found it
+  // empty with the times of the agent's write before the quiet: it took the empty file as what the file held, and the
+  // command's result measured its whole text as the agent's. Here the file keeps those times while that walk reads it.
+  it("leaves a file a command empties to the walk after it ends, though the reopened session's first walk reads it with the times of the write before the quiet", async () => {
+    const { root, path, written, resume } = await quietAfterEdit();
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const second = createBridge(root, auditor(auditGeneratedEdits), resume);
+    const firstWalk = holdWalkAtSource(root);
+    await second.openWorkspace("session-1");
+    await second.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await second.begin("shell-2", "Bash", { command: "ls" });
+    const stamping = holdTimes(path, written);
+    await writeFile(path, "");
+    firstWalk.release();
+    // Its result waits for the first walk and the one after it, both of which read the emptied file.
+    await second.finish("shell-2");
+    stamping.release();
+    await writeFile(path, "x = 2\ny = 3\n");
+    await second.finish("shell-1");
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
+      { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n" },
+    ]);
+  });
+
+  // Only a file the times do not date waits for the command: another program's change, made while the session was
+  // quiet, is recorded by the reopened session's first walk, as before, though a command of the agent runs.
+  it("records another program's change made while the session was quiet at the reopened session's first walk, while a command runs", async () => {
+    const { root, path, resume } = await quietAfterEdit();
+    await writeFile(path, "x = 3\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const second = createBridge(root, auditor(auditGeneratedEdits), resume);
+    const firstWalk = holdWalkAtSource(root);
+    await second.openWorkspace("session-1");
+    await second.begin("shell-1", "Bash", { command: "sleep 60" });
+    await second.begin("shell-2", "Bash", { command: "ls" });
+    firstWalk.release();
+    await second.finish("shell-2");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => ({ mode: batch.mode, edits: batch.edits.map(({ generatedText, previousText }) => ({ generatedText, previousText })) }))).toEqual([
+      { mode: "log", edits: [{ generatedText: "x = 3\n", previousText: "x = 3\n" }] },
+    ]);
+    await second.finish("shell-1");
+    expect(auditGeneratedEdits).toHaveBeenCalledTimes(1);
+  });
+
+  // A session opened fresh holds no sight of its own, and the folder's shared observations date its first walk's read
+  // instead: there the file a command empties is still what an earlier session saw, which Git holds, and the command's
+  // result measures its change from that text, as an open session's would.
+  it("leaves a file a command empties to the walk after it ends, though a fresh session's first walk reads it with the times the folder's shared observations saw", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 2\n");
+    commitAll(root);
+    await awaitClockAfter(path);
+    const observations: SourceObservationCache = new Map();
+    const earlier = createBridge(root, auditor(async (_sessionId, batch) => response(batch)), { observations });
+    await earlier.openWorkspace("session-1");
+    await earlier.checkpoint("turn");
+    await earlier.close();
+    const written = await lstat(path);
+    await awaitClockAfter(path);
+
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const fresh = createBridge(root, auditor(auditGeneratedEdits), { observations });
+    const firstWalk = holdWalkAtSource(root);
+    await fresh.openWorkspace("session-2");
+    await fresh.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await fresh.begin("shell-2", "Bash", { command: "ls" });
+    const stamping = holdTimes(path, written);
+    await writeFile(path, "");
+    firstWalk.release();
+    await fresh.finish("shell-2");
+    stamping.release();
+    await writeFile(path, "x = 2\ny = 3\n");
+    await fresh.finish("shell-1");
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
+      { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n" },
+    ]);
+  });
+
+  // Another program that rewrote a file within the clock tick of an earlier session's sight of it, before a fresh
+  // session, left times that do not date its bytes either: that first walk keeps the earlier sight, and the walk at the
+  // command's result, with no command running, dates the change by its times, before the session: never the agent's.
+  it("never takes another program's change from before a fresh session as the agent's, though its first walk reads it while a command runs with the times the shared observations saw", async () => {
+    const observations: SourceObservationCache = new Map();
+    const { root, path, written } = await quietAfterEdit(observations);
+    // The rewrite keeps the times of the write before it for good, as one within that write's clock tick does.
+    holdTimes(path, written);
+    await writeFile(path, "x = 22\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const fresh = createBridge(root, auditor(auditGeneratedEdits), { observations });
+    const firstWalk = holdWalkAtSource(root);
+    await fresh.openWorkspace("session-2");
+    await fresh.begin("shell-1", "Bash", { command: "sleep 60" });
+    await fresh.begin("shell-2", "Bash", { command: "ls" });
+    firstWalk.release();
+    await fresh.finish("shell-2");
+    await fresh.finish("shell-1");
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    expect(fresh.observedDigest("src/a.py")).toBe(createHash("sha256").update("x = 22\n").digest("hex"));
+  });
+
+  // A file whose times moved past the shared observations' sight of it is a fresh session's baseline at its first walk,
+  // as before, though a command runs.
+  it("takes a file another program changed before a fresh session as that session's baseline at its first walk, while a command runs", async () => {
+    const observations: SourceObservationCache = new Map();
+    const { root, path } = await quietAfterEdit(observations);
+    await writeFile(path, "x = 3\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const fresh = createBridge(root, auditor(auditGeneratedEdits), { observations });
+    await fresh.openWorkspace("session-2");
+    await fresh.begin("shell-1", "Bash", { command: "sleep 60" });
+    await fresh.finish("shell-1");
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    expect(fresh.observedDigest("src/a.py")).toBe(createHash("sha256").update("x = 3\n").digest("hex"));
+  });
+
   it("delivers committed full-file snapshots in deterministic batches", async () => {
     const root = await workspace();
     await writeFile(join(root, "src", "a.py"), "before\n");
