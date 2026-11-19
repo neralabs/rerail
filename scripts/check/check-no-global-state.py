@@ -10,12 +10,14 @@ different trust (a security boundary), never reach each other's state. What a st
 - everything else is listed by where it moves, and the list only shrinks:
   - `run`: a run's own data, settings or measurement (`logic::run::Run`);
   - `connection`: a connection's own state (on the connection's object);
-  - `shared`: shared by design (one-per-store resources, learned models, pools, interners): from the explicit
-    shared object a caller makes and passes in;
+  - `shared`: shared by design (one-per-store resources, interners, caches): from the explicit shared object a
+    caller makes and passes in (`profile::Shared`);
+  - `machine`: the machine's resources (the job pool and its queues, the device, the learned cost and price model,
+    the memory budget): from the machine object every shared object is made on (`Machine`);
   - `review`: not yet classified by hand.
 
-Every non-constant `static` in the engine's source (native/src, native/crates/*/src; test files and examples left
-out) must be in `global-state.txt` beside this script, as `path::NAME<TAB>class<TAB>why`. A static not listed is
+Every non-constant `static` in the engine's source (native/src, native/crates/*/src, accel/src; test files and
+examples left out) must be in `global-state.txt` beside this script, as `path::NAME<TAB>class<TAB>why`. A static not listed is
 refused; a listed one that is gone must be cut from the list (it is printed). Thread-locals have their own check
 (`check-thread-state.py`, `run_state::STATE`).
 
@@ -28,7 +30,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "global-state.txt")
-BASES = ["native/src", "native/crates"]
+BASES = ["native/src", "native/crates", "accel/src"]
 STATIC = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+(?:mut\s+)?([A-Z_][A-Z_0-9]*)\s*:\s*([^=;]+)", re.M)
 
 
@@ -88,7 +90,7 @@ def listed():
     return out
 
 
-CLASSES = ("stays", "run", "connection", "shared", "review")
+CLASSES = ("stays", "run", "connection", "shared", "machine", "review")
 
 
 def main():

@@ -98,3 +98,9 @@ by any caller in the process, so two callers of different trust could not be kep
   different trust can share one pool and one model of the machine while holding different `Shared` objects. A job on
   the pool carries its own caller's run and `Shared`, so nothing crosses between callers through the pool. A `Shared`
   made with none has a machine of its own.
+- Step 6 (classification by hand): the check now covers the accel crate too (`accel/src`: the pool, the device, the
+  price and cost tables), and has a `machine` class. Every entry was read and classed: of 482, 249 stay (constants
+  computed once from the engine's own files, code registered at load, id counters, test locks), 51 are run data
+  (mostly the profile's counters and settings), 89 are shared by design (interners, caches of callers' programs, the
+  store's registries) and 93 are the machine's (the pool, the device's pipelines and memory ledger, the learned cost
+  and price model, the process's sampler). The three moving classes are moved group by group (step 5).
