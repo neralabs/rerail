@@ -174,13 +174,12 @@ passes' arrays (user, 2026-11-18). The serial pass is the reference for the outp
 - **Step 3, the Bitlex grammar** (`rerail_c_directives::pp`, `bitlex_pp/pp.bitlex`): the token
   grammar's lexer, with the directive grammar's tree over its tokens. The tree tells tokens of
   one kind apart by soft keywords (a directive's word, `(`, `)`, `,`, `<`, `>`, `...`, each written
-  `as` its kind again) and by hidden marks (a `(` touching a macro's name, a header's `"`). Every
-  directive's `#`, and a conditional one by its word, is a mask mark: a token mark cannot tell
-  `#` from `##`, which share a first byte. A conditional's word is found at most 16 bytes past its
-  `#`, with blanks between (further sends the file to the lean writer). Two rules of the tier-2
-  compiler shaped the tree: a called level ends only at a token it takes, so each directive's
-  tail takes its line's end; and a level that can return having taken no token is refused, so
-  each tail takes a token first.
+  `as` its kind again) and by hidden marks (a `(` touching a macro's name, a header's `"`). A
+  conditional directive is a mark at its `#` with its word after it on its line (`dir_hash,
+  before hash "if" | … without cline`), and a directive is its word, its optional tail, then its
+  line's end. (This grammar first worked around three limits of the tier-2 compiler: a 16-byte
+  bound on a conditional's word, and tails that took their line's end and a token first. 0445
+  fixed the compiler and removed them.)
   - **R4 on the corpora** (`the_corpus_pp_tapes`, ignored; 62 s under Relax): 3,073 of 3,135
     files give the lean writer's tape byte for byte on Cranelift, and Metal's tapes (tier 1 on
     the device) are Cranelift's; 62 are refused, and go to the lean writer; 0 differ. The
