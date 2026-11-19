@@ -5161,3 +5161,34 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
     stores the cursor of a sync taken after the edit, which is what a merged event amounts to.
   - All 34 `observe` and journal tests pass on this Mac, twice. On the M3 at load 35, four more failed on timing:
     a run there sees the journal late.
+
+### Q242. The data layer's 9,010-file ladder (0364 Scale)
+
+- **Where it stands** (2026-11-19): at 2,410 files a session's edits take 44-59 s, with findings equal to cold
+  (t43 step 20). The whole tree (`tmp/dl-whole`, 9,618 `.py` files; `dl-history.sh` with no scope) is next.
+- **Why not yet:** a cold run there is about 4 times the 2,410-file one (515 s of CPU on the M1 Max), 35-40 min
+  for one step, outside a light share of the machine and a bounded wait. Run it on an idle farm host, cold and as a
+  session over steps 00-03, capped (`CAP_MB` 12000), with step 01 profiled. Check θ there (0.25 against 0.5).
+
+### Q243. At 2,410 files the mode is priced above a derive for deltas of 0.1% of the rows read
+
+- **Found** (2026-11-19, t43 step 20): at steps 02-03, `rr_agg37` (mode 98,707 against a derive's 70,337) and
+  `rr_demand_agg_rr_agg37` (252,165 against 247,433) are derived again by §4's second clause, 16 s of a 46 s edit,
+  with deltas of 9,576-15,534 rows of 10-17 million read. `ca_alias_at`'s lines are priced at 217,777,417 against
+  793,332, which no 14,000-row delta should cost.
+- **To do:** print the mode's lines for `ca_alias_at` (`RERAIL_MODE_TRACE`, the plans `mode_costs` prices) and see
+  which line's estimate is past its rows; a delta-led line should cost in proportion to its delta (R4).
+
+### Q244. 0364's open items not taken up on 2026-11-19, and why
+
+- **Levels as a column of the relation's block** (0328 decision 1; now a `Vec<u32>` beside the rows): the kept
+  blocks' format is being aligned on the phased-facts and rr-align branches (0401 step 7, 0402). Levels go into the
+  block with that format, once it is in.
+- **The static check's string length and tree helpers** (`plan/wellfounded.rs`): no running program's component
+  fails the check for them now; take it when one does, with that program as its test.
+- **The dump artifact** (210 `dotted_expr` rows at the data layer's first state): to look at with the 9,010-file
+  runs (Q242), which split into chunks the same way.
+- **A cross-file recursive `min` lattice:** only if the least-route item is closed with one; no program has one.
+- **Inputs found by hashing** (`doc_key`, `observer__source_file`): 2 of a session edit's inputs, a few hundred
+  rows; no measurable cost at 2,410 files.
+
