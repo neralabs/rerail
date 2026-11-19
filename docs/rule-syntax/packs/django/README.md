@@ -483,9 +483,9 @@ Saleor's `traced_atomic_transaction()`; no nested def, lambda or class in betwee
 `<x>.apply_async(...)`, `<x>.send_task(...)`, `<x>.enqueue(...)`/`<x>.aenqueue(...)` (Django 6 tasks; also
 `task.using(...).enqueue`), django-q `async_task(...)`, `django.core.mail.send_mail`/`send_mass_mail`/`mail_admins`/
 `mail_managers`, and `.send()` on an `EmailMessage`/`EmailMultiAlternatives` built inline or bound to a name in the
-same function. The message names the call. A task method needs a receiver that can be a task: a name bound by an
-import (resolved or not) or an attribute of one, other than a plain undecorated function of the run, or a call on one
-(`t.s(...)`, `t.using(...)`).
+same function. The message names the call. A task method needs a receiver that can be a task: a name an import
+binds and `sym_of` resolves, or an attribute of one, other than a plain undecorated function of the run, or a call on
+one (`t.s(...)`, `t.using(...)`).
 
 It leaves alone: what a `transaction.on_commit(...)` argument defers (`partial(...)`, a lambda, `task.s(...).delay`;
 a call written as the argument itself, `on_commit(task.delay(1))`, runs at once and is reported);
