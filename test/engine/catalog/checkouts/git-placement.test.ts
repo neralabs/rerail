@@ -4,7 +4,7 @@ import { chmod, mkdtemp, open, readFile, rename, rm, unlink, writeFile } from "n
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
+import { checkoutRealpath, physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
 import {
   repositoryIdentityLocation,
@@ -23,6 +23,11 @@ import { removeFolder } from "../../../support/platform/remove-folder.js";
 vi.mock("../../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/git.js")>();
   return { ...actual, runGit: vi.fn(actual.runGit), gitText: vi.fn(actual.gitText) };
+});
+
+vi.mock("../../../../src/engine/catalog/checkout-control.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../../../src/engine/catalog/checkout-control.js")>();
+  return { ...actual, checkoutRealpath: vi.fn(actual.checkoutRealpath) };
 });
 
 vi.mock("../../../../src/engine/native/native.js", async importOriginal => {
@@ -671,6 +676,18 @@ function listedByGit(checkout: string): string[] | undefined {
   return gitsAnswer(checkout).git ? gitsRegistry(checkout) : undefined;
 }
 
+/** Has Rerail's real path of `folder` refused, as Windows refuses one for a folder the user is denied. */
+function realPathRefused(folder: string): void {
+  const actual = vi.mocked(checkoutRealpath).getMockImplementation()!;
+  vi.mocked(checkoutRealpath).mockImplementation(path => {
+    if (resolve(path) === resolve(folder)) throw Object.assign(new Error(`EPERM: operation not permitted, realpath '${path}'`), { code: "EPERM" });
+    return actual(path);
+  });
+  cleanups.push(async () => {
+    vi.mocked(checkoutRealpath).mockImplementation(actual);
+  });
+}
+
 /** Asks the registry of `checkout` three times, each against Git's list; returns how many Git processes placed it. */
 function registryPlacements(checkout: string): number {
   const before = locateCalls(checkout);
@@ -1012,6 +1029,20 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     repository(middle);
     expectGitsRegistries(inner);
     expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
+  });
+
+  it("lists as Git does once the .git link of a checkout whose real path cannot be read names another repository's Git folder", async () => {
+    const root = await temporaryRoot();
+    const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
+    const other = await gitFolderLinked(join(root, "other"), join(root, "other.git"));
+    git(other, "worktree", "add", "--quiet", "-b", "o", join(root, "o"));
+    // With no real path the checkout's facts cannot be read, and Git's acceptance is kept with no stamp.
+    realPathRefused(main);
+    expect(registryPlacements(main)).toBe(1);
+
+    await relink(join(main, ".git"), join(root, "other.git"));
+    expectGitsRegistries(main);
+    expect(worktreeRegistry(main)?.worktrees).toHaveLength(2);
   });
 
   it("lists as Git does a bare repository's worktree, a work tree whose Git folder is kept apart, a submodule, a folder in a checkout and a checkout whose .git is a link", async () => {

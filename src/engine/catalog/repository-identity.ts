@@ -343,12 +343,13 @@ const ANOTHER_REGISTRY = Symbol("another registry");
 
 /** {@link worktreeRegistry} of `checkout` as it is placed now, the kept acceptance included. */
 function registryAsPlaced(checkout: string): WorktreeRegistry | undefined | typeof ANOTHER_REGISTRY {
-  const commonDirectory = registryCommonDirectory(checkout);
-  if (commonDirectory === undefined) return undefined;
+  const place = registryPlace(checkout);
+  if (place === undefined) return undefined;
+  const { commonDirectory } = place;
   // Read before Git runs: a worktree added meanwhile changes it, and Git is asked again next time.
   const contents = registryContents(commonDirectory);
-  const known = worktreeRegistries.get(commonDirectory);
-  if (known !== undefined && known.contents === contents) return known;
+  const known = storedList(place, contents);
+  if (known !== undefined) return known;
   const registry = listWorktrees(checkout, commonDirectory, contents);
   // A checkout where Git cannot answer keeps nothing: what is kept is bounded by what answers.
   if (registry === undefined) forget(checkout, commonDirectory);
@@ -356,6 +357,16 @@ function registryAsPlaced(checkout: string): WorktreeRegistry | undefined | type
   else if (!listsRegistryOf(registry)) return ANOTHER_REGISTRY;
   else worktreeRegistries.set(commonDirectory, registry);
   return registry;
+}
+
+/**
+ * The list stored for the registry `place` names while its contents are `contents`. None for a checkout placed by an
+ * acceptance kept with no stamp: no fact ends that acceptance, so Git lists the registry at each ask and
+ * {@link listsRegistryOf} judges the list.
+ */
+function storedList(place: RegistryPlace, contents: string): WorktreeRegistry | undefined {
+  const known = worktreeRegistries.get(place.commonDirectory);
+  return known !== undefined && known.contents === contents && !place.unstamped ? known : undefined;
 }
 
 /**
@@ -379,6 +390,13 @@ function forget(checkout: string, commonDirectory: string): void {
   gitAcceptances.delete(resolve(checkout));
 }
 
+/** Where a checkout's registry is, and whether Git's acceptance that placed the checkout is kept with no stamp. */
+interface RegistryPlace {
+  /** The physical common directory Git reads for the checkout. */
+  readonly commonDirectory: string;
+  readonly unstamped: boolean;
+}
+
 /**
  * The physical common directory Git reads for `checkout` now; undefined when the folder is gone or not in Git. Placed at
  * every call, and a placement is kept only while what Git reads at the folder is unchanged: a recorded checkout's folder
@@ -389,13 +407,23 @@ function forget(checkout: string, commonDirectory: string): void {
  * ({@link keptForRegistry}). A folder that is gone keeps no acceptance, as the registry kept nothing for it before: one
  * made again at its path is asked of Git.
  */
-function registryCommonDirectory(checkout: string): string | undefined {
+function registryPlace(checkout: string): RegistryPlace | undefined {
+  const requested = resolve(checkout);
   if (!existsSync(checkout)) {
-    gitAcceptances.delete(resolve(checkout));
+    gitAcceptances.delete(requested);
     return undefined;
   }
-  const location = placed(resolve(checkout), true);
-  return location.git ? physicalPath(dirname(location.identityPath)) : undefined;
+  const location = placed(requested, true);
+  return location.git ? { commonDirectory: physicalPath(dirname(location.identityPath)), unstamped: keptUnstamped(requested) } : undefined;
+}
+
+/**
+ * Whether the acceptance that placed `requested` is kept with no stamp: one kept so is always taken ({@link
+ * keptForRegistry}), so one there is the one in force.
+ */
+function keptUnstamped(requested: string): boolean {
+  const kept = gitAcceptances.get(requested);
+  return kept !== undefined && kept.stamp === undefined;
 }
 
 /**
@@ -403,8 +431,8 @@ function registryCommonDirectory(checkout: string): string | undefined {
  * Git again: of folders the files cannot describe ({@link gitEntryFacts}), of every folder while the environment moves
  * Git's lookup, and of folders Git places in a repository above them. Each is kept under the facts of the folder's own
  * `.git` and what Git's search reads in each folder from it up to the top level Git named (`searched`, {@link
- * keepAcceptance}), or, when the folder's own facts cannot be read, with no stamp, as the registry kept every checkout's
- * before: until a placement asks Git again, Git cannot list the registry or the folder is gone. A refusal is not kept.
+ * keepAcceptance}), or, when the folder's own facts cannot be read, with no stamp: the registry then has Git list it at
+ * each ask ({@link storedList}). A refusal is not kept.
  */
 const gitAcceptances = new Map<string, {
   readonly stamp: string | undefined;
