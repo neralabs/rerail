@@ -396,6 +396,16 @@ Progress (2026-11-18):
   store written before images) is not read: `stored` leaves it out, the run compiles it again, and its source stays
   named (`sources`) so collection keeps it with the run that named it. Plan choices and the combined program are
   written by `encode_version` and opened from their images.
+- **Step 6 done** (2026-11-18): `front::Program` is gone, with its encoding (`Builder::of_program`,
+  `set_program_header`, `about_of`, `program_facts::write`/`program`), its decoder (`Version::program`,
+  `Tree::program`), `print(Program)`, the tree decoders of `rr` (`parse`, `parse_own`, `parse_file`, `lower`,
+  `lower_in`, `Library::program`, `with_cone`), `front`'s text parser and tree passes, the planner's tree keys
+  (`Versions::with`, `key`, `body`; `Placed::of_program`, `program`, `made`), the converter's tree overlay and the
+  tree's `sources_on_request` and `undo_on_request`. Each one's explanations moved onto its version twin (a field's
+  onto its `program_facts::Field` variant). Every test reads versions; `examples/versions.rs`, which measured the
+  tree against versions, went (0173 names its last commit). §6's guard is `front::tests::no_tree_program_comes_back`.
+  Left: the intermediate forms (stage 6): the clause lowering still builds `front::Rule`s for `Builder::add`, reads
+  back its helpers through `program_image::Tree::rule`, and walks `rr/from_tape.rs`'s statements.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 

@@ -422,3 +422,55 @@ fn regex_group_gaps() {
     assert_eq!(gap("^(?:(?<r>a)b|cde)$", "r"), Some(1));
     assert_eq!(gap("^(?:(?<r>a))$", "s"), None);
 }
+
+/// Decision 0276 §6: a program is written through the builder and read as a version, never held as a tree. The tree
+/// program (`front`'s `Program`) and the lowered program's tree (`lower`'s `Tree`) are gone, and this refuses either in the
+/// engine's sources (`native/src` and each crate's `src`): a path naming one, an import of one from `front`, or a
+/// definition of one where they lived. The names are built at run time, so this file does not name them itself.
+#[test]
+fn no_tree_program_comes_back() {
+    fn files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                files(&path, out);
+            } else if path.extension().is_some_and(|x| x == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let native = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+    let mut all = Vec::new();
+    files(&native.join("src"), &mut all);
+    for krate in std::fs::read_dir(native.join("crates")).unwrap() {
+        let src = krate.unwrap().path().join("src");
+        if src.is_dir() {
+            files(&src, &mut all);
+        }
+    }
+    assert!(all.len() > 100, "the engine's sources are read: {} files", all.len());
+    let (program, tree) = (["Pro", "gram"].concat(), ["Tr", "ee"].concat());
+    let paths = [format!("front::{program}"), format!("front::ast::{program}"), format!("lower::{tree}")];
+    // An import from `front` (or `front::ast`) that lists the tree program.
+    let imports = |line: &str| {
+        line.match_indices("front::").any(|(at, _)| {
+            let rest = line[at + "front::".len()..].trim_start_matches("ast::");
+            rest.strip_prefix('{').and_then(|r| r.split('}').next()).is_some_and(|list| list.split(',').any(|item| item.trim() == program))
+        })
+    };
+    let mut found = Vec::new();
+    for path in &all {
+        let text = std::fs::read_to_string(path).unwrap();
+        let rel = path.strip_prefix(native).unwrap_or(path).display().to_string();
+        let home = rel.ends_with("logic/front/ast.rs") || rel.ends_with("logic/front.rs");
+        let lowering = rel.contains("logic/rr/lower");
+        for (n, line) in text.lines().enumerate() {
+            let named = paths.iter().any(|p| line.contains(p.as_str()) && !line.contains(&format!("{p}_")) && !line.contains(&format!("{p}A")));
+            let defined = (home && line.contains(&format!("struct {program} "))) || (lowering && line.contains(&format!("struct {tree} ")));
+            if named || imports(line) || defined {
+                found.push(format!("{rel}:{}: {}", n + 1, line.trim()));
+            }
+        }
+    }
+    assert!(found.is_empty(), "the tree program is back (decision 0276 §6):\n{}", found.join("\n"));
+}
