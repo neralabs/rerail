@@ -372,6 +372,36 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     expect(await stored(ws)).toEqual({ lastScan: null, scanning: false, conflicts: [] });
   });
 
+  it("lets a scan that `gh` answers right after a stop with no wait, whose caller closed the database without awaiting it, write nothing and start no Git", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    addPeers(ws);
+    await ws.service().setEnabled(ws.repo, true);
+    const github = new HeldGithub();
+    const { service, close } = ownConnection(ws, github);
+    const asked = Promise.withResolvers<void>();
+    github.onHeld = () => asked.resolve();
+    const scan = service.openSession(ws.repo, "claude-code", "session-1");
+    await asked.promise;
+    const started: string[] = [];
+    vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
+      if (isGit(args)) started.push(commandLine(args));
+      return actualSpawn(...args);
+    });
+    try {
+      // As `DatabaseApiStores.close()` does: the stop, then the database closed in the same call.
+      const stopped = service.stop(0);
+      close();
+      github.release();
+      await scan;
+      await stopped;
+    } finally {
+      vi.mocked(spawn).mockImplementation(actualSpawn);
+    }
+
+    expect(started).toEqual([]);
+    expect(await stored(ws)).toEqual({ lastScan: null, scanning: false, conflicts: [] });
+  });
+
   it("ends a session's locating of its checkout still running when the stop's wait is over: no Git runs once the stop resolves, and nothing is written", async () => {
     const ws = await workspace();
     addPeers(ws);

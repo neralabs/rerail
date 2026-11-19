@@ -192,7 +192,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   /**
    * Each Git read of the detection passes in this process, scans or not, and of a session's or an edit's locating of
    * its checkout. {@link stop} stops them once its wait is over: a read running ends with its Git, no other starts, and
-   * a pass stores nothing. While they are not stopped the stop has not resolved, so the database is open.
+   * a pass stores nothing. While they are not stopped, the database is open: its owner closes it once the stop has
+   * resolved, or as soon as a stop with no wait returns, which stops them in its call.
    */
   readonly #reads = new GitReads();
   /**
@@ -620,6 +621,9 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     this.#listeners.clear();
     // No queued handler starts from now on, so none starts a command after the running ones are ended.
     this.#hook.stop();
+    // With no wait, the passes end in this call, before it awaits anything: its caller may close the database as soon
+    // as it returns, as `DatabaseApiStores.close()` does.
+    if (waitMs <= 0) void this.#endPasses();
     const started = Date.now();
     await this.#commands.stop(Math.min(STOP_KILL_GRACE_MS, waitMs / 2));
     const timer = Promise.withResolvers<void>();
@@ -631,14 +635,20 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     } finally {
       clearTimeout(timeout);
     }
-    // A pass still running ends at its next Git read and stores nothing. The stop waits for the Git it ends to exit, so
-    // none runs on in the checkout, and not for the pass itself: a file read on a drive that stopped answering would
-    // hold it until the drive answers. Such a pass ends by itself later: it stores nothing, starts no Git, and gives up
-    // its scan mark only while the database is open (`#releaseMark`).
-    await this.#reads.stop();
-    // A scan still running, waiting for `gh` or a file read, gives up its mark while the database is open, so the next
-    // process scans at once.
+    await this.#endPasses();
+  }
+
+  /**
+   * Ends every pass still running at its next Git read, so it stores nothing, and gives up the scan marks of the scans
+   * among them while the database is open, so the next process scans at once. Resolves once the Git it ended has
+   * exited, so none runs on in the checkout, and not once the passes have: a file read on a drive that stopped
+   * answering would hold one until the drive answers. Such a pass ends by itself later: it stores nothing, starts no
+   * Git, and gives up its scan mark only while the database is open (`#releaseMark`).
+   */
+  #endPasses(): Promise<void> {
+    const ended = this.#reads.stop();
     for (const [path, { mark }] of this.#scans) this.#releaseMark(path, mark);
+    return ended;
   }
 }
 
