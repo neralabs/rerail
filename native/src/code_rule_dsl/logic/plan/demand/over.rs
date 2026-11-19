@@ -194,15 +194,32 @@ fn disconnected(r: &R<'_>, cut: &dyn Fn(usize) -> bool) -> bool {
         };
         documents.extend(terms.into_iter().filter_map(|t| t.var()).map(|s| r.name(s).to_owned()));
     }
+    let joins = |j: usize| match r.lits[j].view() {
+        Lit::Atom(a) => !a.neg() && !cut(j),
+        Lit::Cmp { op: CmpOp::Eq, .. } => true,
+        _ => false,
+    };
+    // A document is tied to nodes where a kept atom reads it beside a node (`docof($n, $d)`, `node($d, $n, …)`). A part
+    // that meets the rest only at a document no kept atom ties is a row for every document: with `docof($n, $d)` cut,
+    // simplify's `exists_0($d)` (`modnode($d, $m), !star($m)`) made python/calls' `builtin_ref` split every builtin
+    // reference times every document (129.7M rows on edx-platform's 4,459 files). Such a part is a group of its own.
+    let tied: BTreeSet<String> = (0..r.lits.len())
+        .filter(|&j| matches!(r.lits[j].view(), Lit::Atom(_)) && joins(j))
+        .map(|j| r.lit_vars(j))
+        .filter(|vs| vs.iter().any(|v| !documents.contains(v)))
+        .flat_map(|vs| vs.into_iter().filter(|v| documents.contains(v)))
+        .collect();
     let mut groups: Vec<BTreeSet<String>> = Vec::new();
     for j in 0..r.lits.len() {
-        let joins = match r.lits[j].view() {
-            Lit::Atom(a) => !a.neg() && !cut(j),
-            Lit::Cmp { op: CmpOp::Eq, .. } => true,
-            _ => false,
-        };
-        let vars: BTreeSet<String> = r.lit_vars(j).into_iter().filter(|v| !documents.contains(v)).collect();
-        if !joins || vars.is_empty() {
+        if !joins(j) {
+            continue;
+        }
+        let own = r.lit_vars(j);
+        let mut vars: BTreeSet<String> = own.iter().filter(|v| !documents.contains(*v)).cloned().collect();
+        if vars.is_empty() && matches!(r.lits[j].view(), Lit::Atom(_)) {
+            vars = own.into_iter().filter(|v| !tied.contains(v)).collect();
+        }
+        if vars.is_empty() {
             continue;
         }
         let (mut joined, rest): (Vec<_>, Vec<_>) = groups.into_iter().partition(|g| !g.is_disjoint(&vars));
@@ -459,5 +476,24 @@ mod tests {
             "#;
         assert!(apart(p, 0, "uinst"), "cutting uinst leaves a product by documents");
         assert!(!apart(p, 0, "rr_cx_reach"), "the rest still joins by t and c");
+    }
+
+    /// A part that meets the rest only at a document the cut read binds is apart: cutting `docof` leaves `ex($d)` a
+    /// row for every document against every `walk` row (python/calls' `builtin_ref`, its `exists_0($d)` simplify's).
+    /// Kept, `docof` ties `$d` to `$n`, and the part only filters.
+    #[test]
+    fn a_part_that_meets_the_rest_only_at_a_cut_document_is_disconnected() {
+        let p = r#"
+            .decl walk(n: node, x: number, m: node)
+            .decl builtin(x: number)
+            .decl docof(n: node, d: number)
+            .decl ex(d: number)
+            .decl out(n: node, x: number)
+            .input walk, builtin, docof, ex
+            .output out
+            out($n, $x) :- walk($n, $x, $m), builtin($x), docof($n, $d), ex($d).
+            "#;
+        assert!(apart(p, 0, "docof"), "cutting docof leaves ex($d) a product with every document");
+        assert!(!apart(p, 0, "builtin"), "docof kept ties $d to $n");
     }
 }
