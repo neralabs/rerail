@@ -52,7 +52,7 @@ impl WorktreeStat {
     #[cfg(all(test, windows))]
     pub(super) fn as_if(path: &Path, times: Option<(i64, i64)>, attributes: u32) -> Self {
         let (metadata, change) = platform::read(path).unwrap();
-        let change = change.as_if(times, attributes);
+        let change = change.with_facts(times, attributes);
         Self { metadata, change }
     }
 }
@@ -398,7 +398,7 @@ mod platform {
     #[cfg(test)]
     impl Change {
         /// This change with `times` and `attributes` in place of what the file gave.
-        pub(super) fn as_if(self, times: Option<(i64, i64)>, attributes: u32) -> Self {
+        pub(super) fn with_facts(self, times: Option<(i64, i64)>, attributes: u32) -> Self {
             Self {
                 times,
                 attributes,
