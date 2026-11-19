@@ -447,6 +447,7 @@ describe("a package.json edit alone", () => {
     const applies = vi.spyOn(loadNativeBinding().CodeRuleDslWorkspace.prototype, "applyBufferAsync");
     try {
       expect(await edit()).toEqual(both(["PROGRAM", "REQUIRE"]));
+      applies.mockClear();
       await writeFile(join(root, "package.json"), manifest);
       await writeFile(join(root, "lib/own.ts"), "export const own = 1;\n");
       const before = auditCount();
