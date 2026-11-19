@@ -32,6 +32,13 @@ from its stored tape, as a chunk makes one. Nothing keeps a base relation's rows
   chunks, so a node's id is the same in both (0083 §3, 0094 §2). A file the chunks evaluated hands its document on;
   a file read from the memo has its document made from its stored tape and source (a load, not a copy, 0353 rule 3).
   Everything it needs from the store is found before the first wave (0104).
+- **A document is made when first read.** A batch makes each document's projection as it is built
+  (`Batch::build`); the corpus batch makes a document's when the cross part first reads that document. An edit's
+  maintain mode reads by probes of the changed rows' nodes, so it makes the documents those name, not all of them.
+  A scan of a base relation reads every document, as it read every row before.
+- **Guests' tapes are stored again,** named by the run's manifest. Q30 stopped writing them because no later run
+  read them ("named by the manifest, if a later run reads them"); the corpus batch is that reader. A file read from
+  the memo has its guests' documents made from their stored tapes, not parsed again.
 - **An edit.** A base relation's change is the changed files' documents: its old rows are their old tapes' rows,
   its new rows their new tapes'. The maintain mode takes them as the given versions of the read (0364 R1, R2):
   `Minus` over the old documents, `Plus` over the new, `Old` the batch before the edit. No rows are diffed.
@@ -59,8 +66,8 @@ Each has its test before the code that meets it.
 
 ## Steps
 
-1. The corpus batch: every file's documents, a memo hit's made from its stored tape, found before the first wave.
-   R2.
+1. The corpus batch: every file's documents, a memo hit's (and its guests') made from their stored tapes, found
+   before the first wave; each document's projection made when first read. R2.
 2. The cross part binds its base relations over the corpus batch, in place of the gathered columns; copy 1 goes.
    R1, R5.
 3. An edit's versions of a base relation from its old and new documents. R3.
