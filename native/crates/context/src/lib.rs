@@ -30,7 +30,8 @@ pub trait RunOwn: Send + Sync {
 
 /// The run under way on this thread (`RUN`), if any.
 pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
-    RUN.with(|r| r.borrow().clone())
+    // A thread-local's drop, as its thread ends, may ask after this one's: then no run.
+    RUN.try_with(|r| r.borrow().clone()).ok().flatten()
 }
 
 pub type AnyArc = std::sync::Arc<dyn std::any::Any + Send + Sync>;
@@ -106,20 +107,32 @@ pub fn default_shared() -> std::sync::Arc<Shared> {
     Shared::new()
 }
 
-/// The shared object a read outside any run takes. A product build's entry points, and every thread the engine
-/// makes, hold a run or a shared object (`enter`, `within`), so such a read is a miss: it takes one of its own, which
-/// nothing keeps, and `RERAIL_STRICT_RUN=1` makes it a panic (for a check that none happens). A test build takes the
-/// tests' one.
+/// The shared object a read of `what` outside any run takes. A product build's entry points, and every thread the
+/// engine makes, hold a run or a shared object (`enter`, `within`), so such a read is a miss: it takes one of its own,
+/// which nothing keeps. A test build takes the tests' one.
 #[cold]
-fn outside_a_run() -> std::sync::Arc<Shared> {
+fn outside_a_run(what: &'static str) -> std::sync::Arc<Shared> {
+    missed(what);
     #[cfg(feature = "test-hooks")]
     return std::sync::Arc::clone(&TESTS);
     #[cfg(not(feature = "test-hooks"))]
-    {
-        if std::env::var_os("RERAIL_STRICT_RUN").is_some_and(|v| v == "1") {
-            panic!("a shared or machine value read outside any run (RERAIL_STRICT_RUN=1): its thread holds no run");
-        }
-        Shared::new()
+    Shared::new()
+}
+
+/// A read of `what` (a type's name) outside any run: with `RERAIL_STRICT_RUN=1`, said once a type on stderr, so that
+/// one run lists every miss (a check that a product path holds its run everywhere: a pool's parallel loop that does
+/// not carry it, a thread started without it).
+#[cold]
+fn missed(what: &'static str) {
+    if !std::env::var_os("RERAIL_STRICT_RUN").is_some_and(|v| v == "1") {
+        return;
+    }
+    // The types said so far: a check's report, never read by the engine.
+    static SAID: parking_lot::Mutex<Vec<&'static str>> = parking_lot::Mutex::new(Vec::new());
+    let mut said = SAID.lock();
+    if !said.contains(&what) {
+        said.push(what);
+        eprintln!("rerail: outside any run: {what} (RERAIL_STRICT_RUN=1)\n{}", std::backtrace::Backtrace::force_capture());
     }
 }
 
@@ -131,10 +144,12 @@ static TESTS: std::sync::LazyLock<std::sync::Arc<Shared>> = std::sync::LazyLock:
 /// Outside a run: `outside_a_run`'s.
 #[inline]
 pub fn shared<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
-    let held = SEEN.with(|seen| {
+    let held = SEEN.try_with(|seen| {
         let seen = seen.borrow();
         if seen.is_current() { seen.shared.get(&std::any::TypeId::of::<T>()).cloned() } else { None }
-    });
+    })
+    .ok()
+    .flatten();
     match held {
         Some(v) => v.downcast::<T>().expect("a shared value's type is its key"),
         None => shared_slow::<T>(),
@@ -143,9 +158,9 @@ pub fn shared<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
 
 #[cold]
 fn shared_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
-    let Some(run) = run_own() else { return outside_a_run().get::<T>() };
+    let Some(run) = run_own() else { return outside_a_run(std::any::type_name::<T>()).get::<T>() };
     let v = run.shared().get::<T>();
-    SEEN.with(|seen| seen.borrow_mut().of(&run).shared.insert(std::any::TypeId::of::<T>(), v.clone()));
+    let _ = SEEN.try_with(|seen| seen.borrow_mut().of(&run).shared.insert(std::any::TypeId::of::<T>(), v.clone()));
     v
 }
 
@@ -153,10 +168,12 @@ fn shared_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
 /// Outside a run: `outside_a_run`'s machine's.
 #[inline]
 pub fn machine<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
-    let held = SEEN.with(|seen| {
+    let held = SEEN.try_with(|seen| {
         let seen = seen.borrow();
         if seen.is_current() { seen.machine.get(&std::any::TypeId::of::<T>()).cloned() } else { None }
-    });
+    })
+    .ok()
+    .flatten();
     match held {
         Some(v) => v.downcast::<T>().expect("a machine value's type is its key"),
         None => machine_slow::<T>(),
@@ -165,9 +182,9 @@ pub fn machine<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
 
 #[cold]
 fn machine_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
-    let Some(run) = run_own() else { return outside_a_run().machine().get::<T>() };
+    let Some(run) = run_own() else { return outside_a_run(std::any::type_name::<T>()).machine().get::<T>() };
     let v = run.shared().machine().get::<T>();
-    SEEN.with(|seen| seen.borrow_mut().of(&run).machine.insert(std::any::TypeId::of::<T>(), v.clone()));
+    let _ = SEEN.try_with(|seen| seen.borrow_mut().of(&run).machine.insert(std::any::TypeId::of::<T>(), v.clone()));
     v
 }
 
@@ -179,7 +196,7 @@ pub fn shared_object() -> Option<std::sync::Arc<Shared>> {
 /// The shared object a thread reads by: its run's, else `outside_a_run`'s (for a thread that hands it on: a service
 /// it starts, a machine's own thread).
 pub fn shared_here() -> std::sync::Arc<Shared> {
-    shared_object().unwrap_or_else(outside_a_run)
+    shared_object().unwrap_or_else(|| outside_a_run("the shared object"))
 }
 
 /// Puts `run` on this thread (a job of it, on another thread) until the guard drops, then what the thread had.
@@ -188,10 +205,10 @@ pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
     impl Drop for Back {
         fn drop(&mut self) {
             let was = self.0.take().flatten();
-            RUN.with(|r| *r.borrow_mut() = was);
+            let _ = RUN.try_with(|r| *r.borrow_mut() = was);
         }
     }
-    Back(Some(RUN.with(|r| r.replace(run))))
+    Back(Some(RUN.try_with(|r| r.replace(run)).ok().flatten()))
 }
 
 /// Puts a run of its own on this thread, on `shared`, until the guard drops: for a thread that outlives the run that
@@ -226,10 +243,12 @@ pub fn setting<T: Clone + Send + Sync + 'static>(read: impl FnOnce() -> T) -> T 
     let at = std::panic::Location::caller();
     // This thread's copy of the run's settings (`SEEN`): a read on a hot path takes no lock.
     let site = at as *const std::panic::Location<'static> as usize;
-    let hit = SEEN.with(|seen| {
+    let hit = SEEN.try_with(|seen| {
         let seen = seen.borrow();
         if seen.is_current() { seen.settings.get(&site).and_then(|v| v.downcast_ref::<T>()).cloned() } else { None }
-    });
+    })
+    .ok()
+    .flatten();
     match hit {
         Some(v) => v,
         None => setting_slow(at, site, read),
@@ -249,7 +268,7 @@ fn setting_slow<T: Clone + Send + Sync + 'static>(at: &'static std::panic::Locat
             run.values().settings.lock().entry(key).or_insert_with(|| std::sync::Arc::new(v.clone())).downcast_ref::<T>().expect("a setting's type is its key's").clone()
         }
     };
-    SEEN.with(|seen| seen.borrow_mut().of(&run).settings.insert(site, Box::new(v.clone())));
+    let _ = SEEN.try_with(|seen| seen.borrow_mut().of(&run).settings.insert(site, Box::new(v.clone())));
     v
 }
 
@@ -258,10 +277,12 @@ fn setting_slow<T: Clone + Send + Sync + 'static>(at: &'static std::panic::Locat
 #[inline]
 pub fn local<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
     // This thread's copy of the run's locals (`SEEN`) first: no lock.
-    let held = SEEN.with(|seen| {
+    let held = SEEN.try_with(|seen| {
         let seen = seen.borrow();
         if seen.is_current() { seen.locals.get(&std::any::TypeId::of::<T>()).cloned() } else { None }
-    });
+    })
+    .ok()
+    .flatten();
     match held {
         Some(v) => v.downcast::<T>().expect("a local's type is its key"),
         None => local_slow::<T>(),
@@ -270,9 +291,12 @@ pub fn local<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
 
 #[cold]
 fn local_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
-    let Some(run) = run_own() else { return std::sync::Arc::new(T::default()) };
+    let Some(run) = run_own() else {
+        missed(std::any::type_name::<T>());
+        return std::sync::Arc::new(T::default());
+    };
     let v = std::sync::Arc::clone(run.values().locals.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
-    SEEN.with(|seen| seen.borrow_mut().of(&run).locals.insert(std::any::TypeId::of::<T>(), v.clone()));
+    let _ = SEEN.try_with(|seen| seen.borrow_mut().of(&run).locals.insert(std::any::TypeId::of::<T>(), v.clone()));
     v.downcast::<T>().expect("a local's type is its key")
 }
 
@@ -280,13 +304,15 @@ fn local_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
 /// (`SEEN`) answers with no lock and no count of references. Outside a run, `f` of a value of its own.
 #[inline]
 pub fn with_local<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R) -> R {
-    let held = SEEN.with(|seen| {
+    let held = SEEN.try_with(|seen| {
         let seen = seen.borrow();
         if !seen.is_current() {
             return None;
         }
         seen.locals.get(&std::any::TypeId::of::<T>()).and_then(|v| v.downcast_ref::<T>()).map(|t| t as *const T)
-    });
+    })
+    .ok()
+    .flatten();
     match held {
         // SAFETY: `SEEN` holds the value (an `Arc` of the run's own, the run's `locals` another) while the run under
         // way on this thread is the one it was copied from; nothing `f` runs ends that run (a run nested in it joins it).
@@ -326,10 +352,11 @@ impl Seen {
     /// Whether the copy is of the run under way on this thread.
     #[inline]
     fn is_current(&self) -> bool {
-        RUN.with(|r| match (r.borrow().as_ref(), self.run.as_ref()) {
+        RUN.try_with(|r| match (r.borrow().as_ref(), self.run.as_ref()) {
             (Some(now), Some(was)) => std::ptr::addr_eq(std::sync::Arc::as_ptr(now), was.as_ptr()),
             _ => false,
         })
+        .unwrap_or(false)
     }
 
     /// The copy for `run`, emptied first if it was another's.

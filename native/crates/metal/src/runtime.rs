@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::mem::size_of_val;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 use crate::launch;
 
@@ -24,22 +24,40 @@ use crate::launch;
 pub fn metal_buffer_limit() -> usize {
     rerail_accel::budget::metal()
 }
-#[cfg(not(any(test, feature = "test-hooks")))]
-static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
-/// The most `METAL_BUFFER_BYTES` has held.
-#[cfg(not(any(test, feature = "test-hooks")))]
-static METAL_BUFFER_PEAK: AtomicUsize = AtomicUsize::new(0);
+/// The device's state on this machine (decision 0442: the machine's): the pool's ledger and the most it held, the
+/// bytes of private buffers, the allocations' lock, the compiled pipelines and libraries and the compiles under way.
+/// A reservation holds the ledger it charged, so its drop on any thread goes back to it.
+#[derive(Default)]
+pub(crate) struct DeviceState {
+    /// The pool's ledger and its most (a test build's are its thread's: `test_pool`).
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    pool: Arc<AtomicUsize>,
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    peak: Arc<AtomicUsize>,
+    private: AtomicUsize,
+    allocation: Mutex<()>,
+    // So the residency's drop (`residency::slabs`, two minutes after a full execution) releases every compiled
+    // pipeline with the slabs.
+    pipelines: Mutex<HashMap<[u8; 32], ComputePipelineState>>,
+    libraries: Mutex<HashMap<[u8; 32], metal::Library>>,
+    /// The keys of pipelines a background thread is compiling (`pipeline_ready`).
+    compiling: Mutex<std::collections::HashSet<[u8; 32]>>,
+}
+
+pub(crate) fn state() -> Arc<DeviceState> {
+    rerail_context::machine::<DeviceState>()
+}
 
 /// The pool's ledger: the bytes reserved now.
 #[cfg(not(any(test, feature = "test-hooks")))]
-fn pool() -> &'static AtomicUsize {
-    &METAL_BUFFER_BYTES
+fn pool() -> Arc<AtomicUsize> {
+    Arc::clone(&state().pool)
 }
 
 /// The most the pool's ledger has held.
 #[cfg(not(any(test, feature = "test-hooks")))]
-fn pool_peak() -> &'static AtomicUsize {
-    &METAL_BUFFER_PEAK
+fn pool_peak() -> Arc<AtomicUsize> {
+    Arc::clone(&state().peak)
 }
 
 /// What the driver has allocated for the device, beside the pool's own reservations.
@@ -93,8 +111,6 @@ pub fn peak_mb() -> usize {
 pub fn driver_mb() -> usize {
     crate::METAL_DEVICE.as_ref().map_or(0, |device| (device.current_allocated_size() >> 20) as usize)
 }
-static METAL_PRIVATE_BYTES: AtomicUsize = AtomicUsize::new(0);
-static METAL_ALLOCATION_LOCK: Mutex<()> = Mutex::new(());
 static PRIVATE_RESERVATION_KEY: u8 = 0;
 const METAL_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -107,7 +123,7 @@ pub fn available_buffer_bytes(device: &Device) -> usize {
 pub fn buffer_usage() -> (usize, usize) {
     (
         pool().load(Ordering::Acquire),
-        METAL_PRIVATE_BYTES.load(Ordering::Acquire),
+        state().private.load(Ordering::Acquire),
     )
 }
 
@@ -144,7 +160,9 @@ fn retain_buffer_owner<T: 'static>(buffer: &metal::BufferRef, owner: T) {
 
 struct BufferReservation {
     bytes: usize,
-    ledger: &'static AtomicUsize,
+    ledger: Arc<AtomicUsize>,
+    /// The machine's device state it counts its private bytes in.
+    on: Arc<DeviceState>,
     private: bool,
     /// Admitted to the tests' weighted bound (`test_pool`).
     #[cfg(any(test, feature = "test-hooks"))]
@@ -154,11 +172,11 @@ struct BufferReservation {
 }
 
 impl BufferReservation {
-    fn acquire(bytes: usize, ledger: &'static AtomicUsize, limit: usize) -> Result<Self, Error> {
+    fn acquire(bytes: usize, ledger: Arc<AtomicUsize>, limit: usize) -> Result<Self, Error> {
         // The device pool's ledger shares the one Metal budget with the pool's live leases (the residency's slabs,
         // the device blocks, relational work: 0266 §16), so a reservation counts them; room is made in the pool's one
         // order (idle buffers, then the residency's least recently used slabs).
-        let pooled = std::ptr::eq(ledger, pool());
+        let pooled = Arc::ptr_eq(&ledger, &pool());
         let take = || {
             // A test's ledger is its thread's, the pool's leases the process's: tests are bounded by `test_pool`.
             let live = if pooled && !cfg!(any(test, feature = "test-hooks")) { rerail_accel::gpu::shared::held_bytes().0 } else { 0 };
@@ -202,6 +220,7 @@ impl BufferReservation {
         Ok(Self {
             bytes,
             ledger,
+            on: state(),
             private: false,
             #[cfg(any(test, feature = "test-hooks"))]
             admitted: pooled,
@@ -215,7 +234,7 @@ impl BufferReservation {
     }
 
     fn private(mut self) -> Self {
-        METAL_PRIVATE_BYTES.fetch_add(self.bytes, Ordering::AcqRel);
+        self.on.private.fetch_add(self.bytes, Ordering::AcqRel);
         self.private = true;
         self
     }
@@ -229,7 +248,7 @@ impl Drop for BufferReservation {
             test_pool::release(self.bytes);
         }
         if self.private {
-            METAL_PRIVATE_BYTES.fetch_sub(self.bytes, Ordering::AcqRel);
+            self.on.private.fetch_sub(self.bytes, Ordering::AcqRel);
         }
     }
 }
@@ -440,7 +459,8 @@ impl MappedBuffer {
             rerail_prof::count_named(format!("alloc_kb.{}", std::panic::Location::caller()), mapping.length >> 10);
         }
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
-        let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let st_ = state();
+        let _allocation = st_.allocation.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if mapping.length as u64 > device.max_buffer_length()
             || driver_bytes(device)
                 .saturating_add(mapping.length as u64)
@@ -506,7 +526,8 @@ impl MappedBuffer {
         storage: MTLResourceOptions,
     ) -> Result<Self, Error> {
         // A lock over no data: a panic elsewhere while it was held leaves nothing to distrust.
-        let _allocation = METAL_ALLOCATION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let st_ = state();
+        let _allocation = st_.allocation.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if length as u64 > device.max_buffer_length()
             || driver_bytes(device)
                 .saturating_add(length as u64)
@@ -697,20 +718,18 @@ pub fn evaluation_scope() -> launch::LaunchScope {
     launch::LaunchScope::enter()
 }
 
-// Process-wide, so the residency's drop (`residency::slabs`, two minutes after a full execution)
-// releases every compiled pipeline with the slabs.
-static PIPELINES: LazyLock<Mutex<HashMap<[u8; 32], ComputePipelineState>>> = LazyLock::new(Default::default);
-static LIBRARIES: LazyLock<Mutex<HashMap<[u8; 32], metal::Library>>> = LazyLock::new(Default::default);
 
 /// Releases the compiled pipelines and libraries (the residency's drop).
 pub fn drop_pipelines() {
-    if let Ok(mut pipelines) = PIPELINES.lock() {
+    let st_ = state();
+    if let Ok(mut pipelines) = st_.pipelines.lock() {
         pipelines.clear();
     }
-    if let Ok(mut libraries) = LIBRARIES.lock() {
+    let st_ = state();
+    if let Ok(mut libraries) = st_.libraries.lock() {
         libraries.clear();
     }
-    if let Ok(mut kernels) = crate::block_program::serial::KERNELS.lock() {
+    if let Ok(mut kernels) = crate::block_program::serial::kernels().0.lock() {
         kernels.clear();
     }
 }
@@ -735,8 +754,6 @@ fn pipeline_key(device: &metal::Device, source: &str, name: &str, constant: Opti
     digest.finalize().into()
 }
 
-/// The keys of pipelines a background thread is compiling (`pipeline_ready`).
-static COMPILING: LazyLock<Mutex<std::collections::HashSet<[u8; 32]>>> = LazyLock::new(Default::default);
 
 /// `source`'s pipeline `name` when it is compiled; otherwise `None` at once, its compile started on a thread of its
 /// own (once per source, however often asked), so a caller with another form of the work (a pipeline compiled
@@ -744,23 +761,25 @@ static COMPILING: LazyLock<Mutex<std::collections::HashSet<[u8; 32]>>> = LazyLoc
 pub fn pipeline_ready(source: &str, name: &str) -> Option<ComputePipelineState> {
     let device = crate::device().ok()?;
     let key = pipeline_key(&device, source, name, None);
-    if let Some(cached) = PIPELINES.lock().ok()?.get(&key).cloned() {
+    let st_ = state();
+    if let Some(cached) = st_.pipelines.lock().ok()?.get(&key).cloned() {
         return Some(cached);
     }
     let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
     rerail_accel::forms::interpreted("msl-pipeline", &hex, name, 1);
-    if COMPILING.lock().ok()?.insert(key) {
+    if state().compiling.lock().ok()?.insert(key) {
         let (source, name) = (source.to_owned(), name.to_owned());
         let spawned = rerail_accel::exec::service("rerail-msl-compile", None, move || {
             let started = std::time::Instant::now();
             let ok = pipeline_named(&source, &name).is_ok();
             rerail_accel::forms::compiled("msl-pipeline", &hex, &name, started.elapsed().as_secs_f64(), ok);
-            if let Ok(mut compiling) = COMPILING.lock() {
+            let st_ = state();
+            if let Ok(mut compiling) = st_.compiling.lock() {
                 compiling.remove(&key);
             }
         });
         if spawned.is_err()
-            && let Ok(mut compiling) = COMPILING.lock()
+            && let Ok(mut compiling) = state().compiling.lock()
         {
             compiling.remove(&key);
         }
@@ -775,14 +794,16 @@ pub fn pipeline_named_constant(
 ) -> Result<ComputePipelineState, Error> {
     let device = crate::device()?;
     let key = pipeline_key(&device, source, name, constant);
-    if let Some(cached) = PIPELINES.lock().map_err(|_| Error::BackendFailure)?.get(&key).cloned() {
+    let st_ = state();
+    if let Some(cached) = st_.pipelines.lock().map_err(|_| Error::BackendFailure)?.get(&key).cloned() {
         return Ok(cached);
     }
     let mut library_digest = Sha256::new();
     library_digest.update(device.registry_id().to_le_bytes());
     library_digest.update(source.as_bytes());
     let library_key: [u8; 32] = library_digest.finalize().into();
-    let cached = LIBRARIES.lock().map_err(|_| Error::BackendFailure)?.get(&library_key).cloned();
+    let st_ = state();
+    let cached = st_.libraries.lock().map_err(|_| Error::BackendFailure)?.get(&library_key).cloned();
     let library = if let Some(library) = cached {
         library
     } else {
@@ -792,7 +813,8 @@ pub fn pipeline_named_constant(
                 eprintln!("Metal library compilation failed: {error}");
                 Error::BackendFailure
             })?;
-        if let Ok(mut libraries) = LIBRARIES.lock() {
+        let st_ = state();
+        if let Ok(mut libraries) = st_.libraries.lock() {
             if libraries.len() >= 16
                 && let Some(oldest) = libraries.keys().next().copied()
             {
@@ -820,7 +842,8 @@ pub fn pipeline_named_constant(
     let pipeline = device
         .new_compute_pipeline_state(&descriptor)
         .map_err(|_| Error::BackendFailure)?;
-    if let Ok(mut pipelines) = PIPELINES.lock() {
+    let st_ = state();
+    if let Ok(mut pipelines) = st_.pipelines.lock() {
         if pipelines.len() >= 512
             && let Some(oldest) = pipelines.keys().next().copied()
         {
@@ -841,7 +864,7 @@ thread_local! {
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn pipeline_cache_len() -> usize {
-    PIPELINES.lock().map_or(0, |pipelines| pipelines.len())
+    state().pipelines.lock().map_or(0, |pipelines| pipelines.len())
 }
 
 /// The pipelines this thread has compiled, not found in the cache: a test's own, whatever other tests compile.
@@ -915,22 +938,22 @@ mod memory_budget_tests {
 
     #[test]
     fn reservations_enforce_aggregate_limit_and_release_on_drop() {
-        static LEDGER: AtomicUsize = AtomicUsize::new(0);
-        let first = BufferReservation::acquire(60, &LEDGER, 100).unwrap();
+        let ledger = Arc::new(AtomicUsize::new(0));
+        let first = BufferReservation::acquire(60, Arc::clone(&ledger), 100).unwrap();
         assert!(matches!(
-            BufferReservation::acquire(41, &LEDGER, 100),
+            BufferReservation::acquire(41, Arc::clone(&ledger), 100),
             Err(Error::BackendCapacity)
         ));
-        let second = BufferReservation::acquire(40, &LEDGER, 100).unwrap();
+        let second = BufferReservation::acquire(40, Arc::clone(&ledger), 100).unwrap();
         assert!(matches!(
-            BufferReservation::acquire(usize::MAX, &LEDGER, 100),
+            BufferReservation::acquire(usize::MAX, Arc::clone(&ledger), 100),
             Err(Error::BackendCapacity)
         ));
-        assert_eq!(LEDGER.load(Ordering::Acquire), 100);
+        assert_eq!(ledger.load(Ordering::Acquire), 100);
         drop(first);
-        let third = BufferReservation::acquire(60, &LEDGER, 100).unwrap();
+        let third = BufferReservation::acquire(60, Arc::clone(&ledger), 100).unwrap();
         drop((second, third));
-        assert_eq!(LEDGER.load(Ordering::Acquire), 0);
+        assert_eq!(ledger.load(Ordering::Acquire), 0);
     }
 
     #[test]
@@ -1040,24 +1063,24 @@ mod memory_budget_tests {
 
     #[test]
     fn owned_metal_reference_keeps_its_budget_reservation() {
-        static LEDGER: AtomicUsize = AtomicUsize::new(0);
+        let ledger = Arc::new(AtomicUsize::new(0));
         let device = Device::system_default().unwrap();
         for storage in [
             MTLResourceOptions::StorageModePrivate,
             MTLResourceOptions::StorageModeShared,
         ] {
             let reservation =
-                Arc::new(BufferReservation::acquire(16_384, &LEDGER, 16_384).unwrap());
+                Arc::new(BufferReservation::acquire(16_384, Arc::clone(&ledger), 16_384).unwrap());
             let weak = Arc::downgrade(&reservation);
             let buffer =
                 MappedBuffer::owned_allocation(&device, 16_384, reservation, storage).unwrap();
             let retained = buffer.buffer.clone();
             drop(buffer);
             assert!(weak.upgrade().is_some());
-            assert_eq!(LEDGER.load(Ordering::Acquire), 16_384);
+            assert_eq!(ledger.load(Ordering::Acquire), 16_384);
             drop(retained);
             assert!(weak.upgrade().is_none());
-            assert_eq!(LEDGER.load(Ordering::Acquire), 0);
+            assert_eq!(ledger.load(Ordering::Acquire), 0);
         }
     }
 

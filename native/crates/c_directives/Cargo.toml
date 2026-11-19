@@ -7,7 +7,7 @@ description = "C's and C++'s directives as a Bitlex grammar (decision 0327, mode
 
 [features]
 # The compiler's and Metal's test hooks, for a build with `--features test-hooks` (scripts/check/check-dev-features.py).
-test-hooks = ["rerail-compiler/test-hooks", "rerail-metal/test-hooks"]
+test-hooks = ["rerail-c-pp/test-hooks", "rerail-c-lean/test-hooks", "rerail-tape-format/test-hooks", "rerail-compiler/test-hooks", "rerail-metal/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }

@@ -1200,8 +1200,11 @@ fn stage1_cost_per_block() {
         // look-back runs out of polls; repeated launches are timed, and counted).
         let mut masks = native.clone();
         masks.extracts.clear();
-        use metal_program_backend::block_program::REPEATED_LAUNCHES;
-        let before = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed);
+        use metal_program_backend::block_program::RepeatedLaunches;
+        // The count is the run's (decision 0442).
+        let _run = rerail_context::test_run();
+        let repeated = rerail_context::local::<RepeatedLaunches>();
+        let before = repeated.0.load(std::sync::atomic::Ordering::Relaxed);
         for (what, program) in [("masks", &masks), ("masks + extract", &native)] {
             for strategy in ClassStrategy::ALL {
                 for width in LaneWidth::ALL {
@@ -1216,7 +1219,7 @@ fn stage1_cost_per_block() {
                 }
             }
         }
-        let repeats = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed) - before;
+        let repeats = repeated.0.load(std::sync::atomic::Ordering::Relaxed) - before;
         println!("repeated launches: {repeats} over 60 runs");
     }
 }

@@ -1,5 +1,5 @@
 # Decision 0442: every non-constant static in the engine, by where it goes (check-no-global-state.py).
-# path::NAME<TAB>class<TAB>why; classes: stays, run, connection, shared, review. Only shrinks.
+# path::NAME<TAB>class<TAB>why; classes: stays, run, connection, shared, machine, review. Only shrinks.
 accel/src/ane/mod.rs::INSTANCE	stays	an id counter: append-only, the same meaning in every run
 accel/src/cost_model.rs::NEXT	stays	an id counter: append-only (model versions no two machines share)
 accel/src/exec.rs::MADE	stays	rayon's global pool, built once: rayon keeps one per process, and every parallel loop reaches it; a caller's jobs on it carry their run (decision 0442)
@@ -18,9 +18,8 @@ accel/src/score.rs::NEXT	stays	an id counter: append-only
 accel/src/sharded.rs::NEXT	stays	an id counter: append-only
 accel/src/upkeep.rs::NEXT_ID	stays	an id counter: append-only
 accel/src/upkeep.rs::SERIAL	stays	a test lock
-native/crates/blocks/src/alloc.rs::POLICY	machine	the machine's allocation policy, set once by its caller
-native/crates/blocks/src/block.rs::ZEROED	run	a measurement read by a run (two runs at once mix it)
-native/crates/blocks/src/mem.rs::RESERVED	machine	the machine's reserved address space, for the memory account
+native/crates/blocks/src/alloc.rs::POLICY	stays	code registered at load: the one policy accel installs, the first installed staying
+native/crates/blocks/src/mem.rs::RESERVED	stays	the process's own mappings, counted as the OS counts them (address space is the process's)
 native/crates/c_directives/src/expand.rs::C	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/expand.rs::CPP	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/lib.rs::LOWERED	stays	computed once from the engine's own grammar
@@ -29,13 +28,7 @@ native/crates/c_directives/src/tokens.rs::C	stays	computed once from the engine'
 native/crates/c_directives/src/tokens.rs::CPP	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::CPP_WORDS	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::C_WORDS	stays	computed once from the engine's own grammar
-native/crates/compiler/src/native_cpu_block.rs::FORM	run	a setting; the compiler crate is below the run: it goes with the compile's options
-native/crates/compiler/src/native_cpu_codegen.rs::OPTIMIZE_TIER1	run	a setting: goes with the compile's options
-native/crates/compiler/src/native_cpu_codegen.rs::OPTIMIZE_TIER2	run	a setting: goes with the compile's options
-native/crates/compiler/src/native_cpu_codegen.rs::PARALLEL_TIMES	run	a measurement: the run's compile times
-native/crates/compiler/src/native_cpu_lanes.rs::BIT_TEST	run	a setting: goes with the compile's options
-native/crates/compiler/src/native_cpu_stream.rs::KEEP_IR	run	a setting: goes with the compile's options
-native/crates/compiler/src/native_cpu_stream.rs::ROOM_RETRIES	run	a measurement for the profile
+native/crates/context/src/lib.rs::SAID	stays	the strict check's report (RERAIL_STRICT_RUN=1): the types said, never read by the engine
 native/crates/context/src/lib.rs::TESTS	stays	test builds only (`test-hooks`): the tests' shared object, for a test that models no caller
 native/crates/device_metal/src/lib.rs::ONCE	stays	registers the engine's languages once (code registered at load)
 native/crates/kotlin_lean/src/lex.rs::BIN	stays	a byte class of a literal
@@ -44,40 +37,19 @@ native/crates/kotlin_lean/src/lex.rs::HEX	stays	a byte class of a literal
 native/crates/kotlin_lean/src/lex.rs::TICK_BODY	stays	a byte class of a literal
 native/crates/kotlin_parser/src/lib.rs::PARSER	stays	computed once from the engine's own grammar
 native/crates/metal/src/block_program.rs::INTERPRETER	stays	computed once from the engine's own source
-native/crates/metal/src/block_program.rs::REPEATED_LAUNCHES	run	a measurement for the profile
-native/crates/metal/src/block_serial.rs::COMPILES	run	a measurement a benchmark reads around its runs
-native/crates/metal/src/block_serial.rs::KERNELS	machine	the device's compiled kernels
-native/crates/metal/src/block_serial.rs::LEARNED	shared	what runs learned of callers' programs, by program: the caller's
-native/crates/metal/src/block_serial.rs::PASSES	shared	a cache of callers' programs' passes
-native/crates/metal/src/block_serial.rs::SETTLED	shared	what runs learned of callers' programs, by program: the caller's
-native/crates/metal/src/block_serial.rs::SHAPES	shared	a cache of callers' programs' shapes
-native/crates/metal/src/block_serial.rs::SOURCES	shared	a cache of callers' programs' generated sources
 native/crates/metal/src/launch.rs::RATIO	stays	the OS's timebase ratio: a constant of the machine read once
 native/crates/metal/src/lib.rs::METAL_DEVICE	stays	the device (code registered at load)
-native/crates/metal/src/pool.rs::MADE	machine	the device's buffer pool account
-native/crates/metal/src/pool.rs::MADE_BYTES	machine	the device's buffer pool account
-native/crates/metal/src/runtime.rs::COMPILING	machine	the device's pipelines being compiled
-native/crates/metal/src/runtime.rs::LEDGER	machine	the device's memory ledger
-native/crates/metal/src/runtime.rs::LIBRARIES	machine	the device's compiled libraries
-native/crates/metal/src/runtime.rs::METAL_ALLOCATION_LOCK	machine	the device's allocation lock
-native/crates/metal/src/runtime.rs::METAL_BUFFER_BYTES	machine	the device's memory account
-native/crates/metal/src/runtime.rs::METAL_BUFFER_PEAK	machine	the device's memory account
-native/crates/metal/src/runtime.rs::METAL_PRIVATE_BYTES	machine	the device's memory account
-native/crates/metal/src/runtime.rs::PIPELINES	machine	the device's compiled pipelines
-native/crates/metal/src/slabs.rs::DROPPER	machine	the device residency's dropper thread, started once
 native/crates/metal/src/slabs.rs::ONE	stays	a test lock
-native/crates/metal/src/slabs.rs::STATE	machine	the device's residency
-native/crates/prof/src/lib.rs::DROPPED	machine	the process's signal sampler (one per process)
-native/crates/prof/src/lib.rs::KEYS	machine	the process's signal sampler (one per process)
-native/crates/prof/src/lib.rs::NAMES	machine	the process's signal sampler (one per process)
-native/crates/prof/src/lib.rs::SIZES	machine	the process's signal sampler (one per process)
-native/crates/prof/src/lib.rs::SPANS	machine	the process's signal sampler (one per process)
-native/crates/prof/src/lib.rs::STAGES	run	a measurement: the run's stage times
+native/crates/prof/src/lib.rs::DROPPED	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
+native/crates/prof/src/lib.rs::KEYS	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
+native/crates/prof/src/lib.rs::NAMES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
+native/crates/prof/src/lib.rs::SIZES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
+native/crates/prof/src/lib.rs::SPANS	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::START	stays	the process's start: a clock origin
-native/crates/prof/src/lib.rs::STATE	machine	the process's signal sampler (one per process)
-native/crates/prof/src/lib.rs::TABLE	machine	the process's signal sampler (one per process)
+native/crates/prof/src/lib.rs::STATE	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
+native/crates/prof/src/lib.rs::TABLE	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::THREADS	stays	an id counter: append-only
-native/crates/prof/src/lib.rs::THREAD_NAMES	machine	the pool threads' names
+native/crates/prof/src/lib.rs::THREAD_NAMES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/rr_parser/src/lib.rs::PARSER	stays	the compiled parser of the engine's own grammar
 native/crates/scala_lean/src/lex.rs::BIN_	stays	a byte class of a literal
 native/crates/scala_lean/src/lex.rs::DEC	stays	a byte class of a literal

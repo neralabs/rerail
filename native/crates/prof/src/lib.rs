@@ -15,7 +15,13 @@ use std::time::Duration;
 fn stages_on() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PROF").is_some() || std::env::var_os("RERAIL_PROFILE").is_some())
 }
-static STAGES: Mutex<BTreeMap<String, (Duration, usize)>> = Mutex::new(BTreeMap::new());
+/// The run's stages (decision 0442: a run's measurement), by name: CPU time and calls.
+#[derive(Default)]
+struct Stages(std::sync::Arc<parking_lot::Mutex<BTreeMap<String, (Duration, usize)>>>);
+
+fn held() -> parking_lot::ArcMutexGuard<parking_lot::RawMutex, BTreeMap<String, (Duration, usize)>> {
+    rerail_context::local::<Stages>().0.lock_arc()
+}
 
 pub fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T {
     if !stages_on() {
@@ -27,7 +33,7 @@ pub fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T {
     let cpu = top.then(process_cpu);
     let out = f();
     let elapsed = thread_cpu().saturating_sub(start);
-    let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut stages = held();
     if let Some(cpu) = cpu {
         let entry = stages.entry(format!("cpu_ms.{stage}")).or_default();
         entry.1 += ((process_cpu() - cpu).as_secs_f64() * 1e3) as usize;
@@ -134,7 +140,7 @@ pub fn report(title: &str) {
     if !stages_on() {
         return;
     }
-    let stages = std::mem::take(&mut *STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+    let stages = std::mem::take(&mut *held());
     eprintln!("prof {title}:");
     for (stage, (elapsed, calls)) in stages {
         eprintln!("  {stage:<40} {:>10.1} ms {calls:>7} calls", elapsed.as_secs_f64() * 1e3);
@@ -153,7 +159,7 @@ impl Stage {
 impl Drop for Stage {
     fn drop(&mut self) {
         if let Some((stage, start, cpu)) = self.0.take() {
-            let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut stages = held();
             if let Some(cpu) = cpu {
                 stages.entry(format!("cpu_ms.{stage}")).or_default().1 += ((process_cpu() - cpu).as_secs_f64() * 1e3) as usize;
             }
@@ -167,7 +173,7 @@ impl Drop for Stage {
 /// Adds `amount` (bytes, records) to `stage`'s count, shown as its calls.
 pub fn count(stage: &'static str, amount: usize) {
     if stages_on() {
-        let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stages = held();
         stages.entry(stage.to_owned()).or_default().1 += amount;
     }
 }
@@ -180,15 +186,15 @@ pub fn on() -> bool {
 /// `count` with a name made at run time.
 pub fn count_named(stage: String, amount: usize) {
     if stages_on() {
-        let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stages = held();
         stages.entry(stage).or_default().1 += amount;
     }
 }
 
 /// The stages, locked: for a reading of its own (the engine's memory peaks), kept as the
 /// largest seen.
-pub fn stages() -> std::sync::MutexGuard<'static, BTreeMap<String, (Duration, usize)>> {
-    STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+pub fn stages() -> parking_lot::ArcMutexGuard<parking_lot::RawMutex, BTreeMap<String, (Duration, usize)>> {
+    held()
 }
 
 /// A sampling heap profiler (`RERAIL_HEAP_SAMPLE`): which spans allocated the heap that is live at the footprint's
