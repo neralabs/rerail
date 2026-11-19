@@ -592,7 +592,7 @@ impl Observer {
         }
         let e = self.known(path)?;
         // Recorded within the journal's settle window: its silence may hide a merged event (Q189).
-        if self.settling(&e) {
+        if self.settling(&e) && !self.listed_over(path) {
             return None;
         }
         self.counts.trusted += 1;
@@ -602,6 +602,14 @@ impl Observer {
     /// Whether `e` was recorded within the journal's settle window ([`JOURNAL_SETTLE_NS`]).
     fn settling(&self, e: &Entry) -> bool {
         now_ns().saturating_sub(e.recorded_ns) < self.settle_ns
+    }
+
+    /// Whether `path` is under a root this run checked by its directories' listings (decision 0400): each answer under
+    /// it was compared with the listing's stat of its path, so the journal's silence is not what trusts it, and the
+    /// settle window (Q189) is not needed. Applied there too, no answer recorded in the last two minutes was trusted,
+    /// and every small root's second run stated each of its files (Q250).
+    fn listed_over(&self, path: &Path) -> bool {
+        self.roots.iter().any(|r| r.trusted && r.listed && r.asked == self.flushes && under(&path, &r.path))
     }
 
     fn stat(&mut self, path: &Path) -> Option<(Kind, Stat)> {
@@ -682,7 +690,7 @@ impl Observer {
             return false;
         }
         // A listing recorded within the journal's settle window is not trusted for an absence (Q189): `stat` says.
-        if self.known(dir).is_some_and(|e| self.settling(&e)) {
+        if self.known(dir).is_some_and(|e| self.settling(&e)) && !self.listed_over(dir) {
             return false;
         }
         let listing = match self.known(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
@@ -2367,6 +2375,9 @@ mod tests {
         let run = |settle: i64| {
             let mut o = Observer::open(Some(&store));
             o.settle_ns = settle;
+            // The journal's path: a root this small is checked by its listings otherwise (decision 0400), which
+            // name the edit whatever the journal says.
+            o.list_max = 0;
             o.wait_least_ns = 2_000_000_000;
             o.begin();
             o.watch(std::slice::from_ref(&root));
@@ -2383,11 +2394,19 @@ mod tests {
         let edit_and_hide = |text: &str| {
             std::fs::write(&file, text).unwrap();
             aged(&file);
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            // The journal's cursor past the edit's events: asked from the stored one, its cookie delivered after them
+            // (`journal::since`). The id of the moment after a sleep was not, on a loaded host: FSEvents gave the
+            // edit's events later ids, and the next run was told of them (Q250).
             let volume = super::super::journal::volume(&root).expect("a volume");
-            let id = super::super::journal::current_id().to_string();
             let db = Connection::open(&store).unwrap();
-            db.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![cursor_key(&root, volume), id]).unwrap();
+            let key = cursor_key(&root, volume);
+            let stored: String = db.query_row("SELECT value FROM observer_meta WHERE key = ?1", [&key], |r| r.get::<_, rusqlite::types::Value>(0)).ok().and_then(|v| text_cursor(&v)).expect("the root's cursor");
+            // A new epoch: the journal is synced once an epoch, and the last run's would answer from before the edit.
+            super::super::journal::next_epoch();
+            let super::super::journal::Since::Changed { cursor, .. } = super::super::journal::since(std::slice::from_ref(&root), Some(&stored), &cookie_dir(&store), std::time::Duration::from_secs(10)) else {
+                panic!("the journal answers from the root's cursor")
+            };
+            db.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]).unwrap();
         };
         edit_and_hide("x = 22\n");
         let (missed, stale) = run(0);

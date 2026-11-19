@@ -5262,3 +5262,13 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
     asserted.
   All four are decision 0400's listing checks, and 27 of the 31 observer tests pass. Not PR #508's.
 - **Done when**: all four pass.
+- **Done** (2026-11-19): two causes, neither the hosts'.
+  - Q189's settle window (6c7467af5) was applied to every trusted root, also to one its listings checked (decision
+    0400). There each answer is compared with the listing's stat, so the journal's silence is not what trusts it. A
+    small root's second run stated every file it had recorded in the last two minutes. The window now applies only
+    to paths under no listed root (`Observer::listed_over`), which fixes the three listing tests.
+  - The Q189 test means the journal's path, but its root is small enough to be checked by listings, which name the
+    edit. It sets `list_max = 0` now. It also hid the edit with `current_id()` after a 500 ms sleep, in an epoch
+    already synced; it now asks `journal::since` from the stored cursor in a new epoch, whose cookie follows the
+    edit's events.
+  All 31 observer tests pass on the M1 Max, twice, with the engine's warm-run tests (4 of 4).
