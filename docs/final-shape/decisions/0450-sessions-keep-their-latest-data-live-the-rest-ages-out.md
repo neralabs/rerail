@@ -195,6 +195,16 @@ it: the `cross_rows` store" and 0083's "the mechanism stays for any program that
      `tape_frames_with_hashes`, `get_source`, `get_sources_by_hash_bulk`, `objects_bulk`, `get_tape`) places the
      archived rows it met back first (`placed_again`). Their frames are decompressed into one new segment (`Placing`),
      and in one transaction the rows are pointed at it and their archive rows removed. Then the reader reads again, in
-     place (§1 item 3). A put of an archived object places the caller's bytes (`seg < 0`, as for an absent one).
+     place (§1 item 3). So does a clean file's restore by its blob alias (`sources_by_alias_in_place`). A SQL module's
+     reader, inside its statement on its own connection (the prefilter's `StoreTapes`, the pure-SQL `nera_tree`),
+     places the tape back from a connection of its own (`place_archived_tape_at`) and reads it at its new place; it
+     had failed on one ("a tape whose segment is not there"). A put of an archived object places the caller's bytes
+     (`seg < 0`, as for an absent one). The one reader that does not place back is the search index's background
+     builder: placing a tape back only to index it would undo the archive. An index made before the archive is kept,
+     and a run that reads the tape places it back, after which it is indexed.
+   - **Nothing a warm run reads is recomputed.** Its latest data is never archived, and archived data it meets is
+     placed back, not made again. Results and pages are not archived, and they are not dropped for being aged
+     either: they stay in their segments while their source (results) or name binding (pages) is kept, and
+     compaction copies them. They go only with their source or binding, or if their segment file is gone.
    - **Archive rows** whose object went or was placed again are removed at the start of each archive pass.
    - Test: `aged_objects_are_archived_and_placed_back_in_a_segment_when_read`.

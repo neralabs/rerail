@@ -1709,7 +1709,8 @@ fn aged_objects_are_archived_and_placed_back_in_a_segment_when_read() {
         .put_snapshot(published_tree(&store, HashKey::git_sha1([80; 20])), 1, HashKey::sha256(b"grammar"), 1)
         .unwrap();
     let (text, tape_bytes) = (b"x = 1\n".repeat(200), b"tape ".repeat(200));
-    let source = store.put_source(&text, &[]).unwrap();
+    let alias = HashKey::git_sha1([81; 20]);
+    let source = store.put_source(&text, &[alias]).unwrap();
     let tape = store.put_tape(source, 1, 1, 1, &tape_bytes).unwrap();
     store.put_snapshot_file(snapshot, "a.py", source, Some(tape)).unwrap();
     let live = store.put_source(b"live", &[]).unwrap();
@@ -1726,10 +1727,16 @@ fn aged_objects_are_archived_and_placed_back_in_a_segment_when_read() {
     assert_eq!((source_seg(source.0), tape_seg(tape.0)), (super::archive::ARCHIVED, super::archive::ARCHIVED));
     assert!(source_seg(live.0) > 0);
     assert!(store.compact_object_segments(0).unwrap() > 0, "the archived bytes are freed from their segments");
-    assert_eq!(store.get_source(source).unwrap(), text, "read again, placed back");
+    // A clean file's restore by its blob alias places its source back, and reads it there.
+    let by_alias = store.sources_by_alias_in_place(&[alias]).unwrap();
+    assert_eq!(&by_alias[0].as_ref().expect("the source")[..], &text[..], "read again, placed back");
     assert!(source_seg(source.0) > 0);
+    assert_eq!(store.get_source(source).unwrap(), text);
+    // A SQL module's reader places a tape back from a connection of its own.
+    let place = super::place_archived_tape_at(store.database_path(), tape.0).unwrap().expect("placed");
+    assert_eq!(place[0], tape_seg(tape.0));
+    assert!(super::place_archived_tape_at(store.database_path(), tape.0).unwrap().is_none(), "no longer archived");
     assert_eq!(&**store.get_tape(tape).unwrap(), &tape_bytes[..]);
-    assert!(tape_seg(tape.0) > 0);
     let archived: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM object_archive", [], |r| r.get(0)).unwrap();
     assert_eq!(archived, 0);
 }

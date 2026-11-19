@@ -21,7 +21,7 @@ use rusqlite::{OptionalExtension as _, params};
 use std::collections::HashSet;
 
 /// A row's `seg` once its object is archived.
-pub(super) const ARCHIVED: i64 = -2;
+pub const ARCHIVED: i64 = -2;
 
 /// The two archived kinds: their table and key column (`object_archive.kind` is `object_pins`' object kind).
 const TABLES: [(i64, &str, &str); 2] = [(OBJECT_SOURCE, "source_objects", "source_id"), (OBJECT_TAPE, "tape_objects", "tape_id")];
@@ -150,25 +150,61 @@ impl ContentStore {
     /// frames decompressed into it, their rows pointed at it and their archive rows removed, in one transaction.
     /// Returns how many; ids not archived are left as they are.
     pub(super) fn place_archived(&self, kind: i64, ids: &[i64]) -> StoreResult<usize> {
+        let unpacked = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            Unpacked::read(&connection, &self.database_path, kind, ids)?
+        };
+        let Some(mut unpacked) = unpacked else { return Ok(0) };
+        let (seg, placed) = self.immediate_transaction_once(|tx| unpacked.point(tx))?;
+        unpacked.placing.name(seg)?;
+        Ok(placed)
+    }
+}
+
+/// For a reader on a connection of its own that cannot write through it (a SQL module's, inside its statement):
+/// places the archived tape `tape_id` of the store at `database` back in a segment, from a connection of its own,
+/// and returns its new place (`seg`, `seg_at`, `seg_len`); `None` when it is not archived.
+pub fn place_archived_tape_at(database: &std::path::Path, tape_id: i64) -> StoreResult<Option<[i64; 3]>> {
+    let mut connection = rusqlite::Connection::open_with_flags(database, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    connection.busy_timeout(std::time::Duration::from_secs(10))?;
+    let Some(mut unpacked) = Unpacked::read(&connection, database, OBJECT_TAPE, &[tape_id])? else { return Ok(None) };
+    let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let (seg, _) = unpacked.point(&tx)?;
+    tx.commit()?;
+    unpacked.placing.name(seg)?;
+    Ok(connection
+        .query_row("SELECT seg, seg_at, seg_len FROM tape_objects WHERE tape_id=?1 AND seg > 0", [tape_id], |r| Ok([r.get(0)?, r.get(1)?, r.get(2)?]))
+        .optional()?)
+}
+
+/// Archived objects decompressed into one segment written before the transaction that points their rows at it.
+struct Unpacked {
+    kind: i64,
+    table: &'static str,
+    key: &'static str,
+    ids: Vec<i64>,
+    placing: Placing,
+}
+
+impl Unpacked {
+    /// The archived among `ids` of `kind`, read on `connection` and written to a segment; `None` when none is.
+    fn read(connection: &rusqlite::Connection, database: &std::path::Path, kind: i64, ids: &[i64]) -> StoreResult<Option<Unpacked>> {
         let Some(&(_, table, key)) = TABLES.iter().find(|t| t.0 == kind) else {
             return Err(StoreError::Invalid(format!("no archived kind {kind}")));
         };
         if ids.is_empty() {
-            return Ok(0);
+            return Ok(None);
         }
         let list = serde_json::to_string(ids).expect("integers");
-        let frames: Vec<(i64, Vec<u8>, i64)> = {
-            let connection = self.connection.lock().expect("content store mutex poisoned");
-            connection
-                .prepare(&format!(
-                    "SELECT a.id, a.frame, x.seg_len FROM object_archive a JOIN {table} x ON x.{key}=a.id \
-                     WHERE a.kind=?1 AND x.seg={ARCHIVED} AND a.id IN (SELECT value FROM json_each(?2))"
-                ))?
-                .query_map(params![kind, list], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                .collect::<Result<_, _>>()?
-        };
+        let frames: Vec<(i64, Vec<u8>, i64)> = connection
+            .prepare(&format!(
+                "SELECT a.id, a.frame, x.seg_len FROM object_archive a JOIN {table} x ON x.{key}=a.id \
+                 WHERE a.kind=?1 AND x.seg={ARCHIVED} AND a.id IN (SELECT value FROM json_each(?2))"
+            ))?
+            .query_map(params![kind, list], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<Result<_, _>>()?;
         if frames.is_empty() {
-            return Ok(0);
+            return Ok(None);
         }
         let mut bytes = Vec::with_capacity(frames.len());
         for (_, frame, len) in &frames {
@@ -178,21 +214,23 @@ impl ContentStore {
             }
             bytes.push(raw);
         }
-        let mut placing = Placing::write(&self.database_path, &bytes.iter().map(Vec::as_slice).collect::<Vec<_>>())?;
-        let update = format!("UPDATE {table} SET seg=?2, seg_at=?3, seg_len=?4 WHERE {key}=?1 AND seg={ARCHIVED}");
-        let (seg, placed) = self.immediate_transaction_once(|tx| {
-            let seg = placing.number(tx)?;
-            let mut placed = 0;
-            for (i, (id, _, _)) in frames.iter().enumerate() {
-                let place = placing.place(seg.expect("a segment for the frames"), i);
-                if tx.execute_cached(&update, params![id, place.seg, place.at as i64, place.len as i64])? == 1 {
-                    placed += 1;
-                }
-                tx.execute_cached("DELETE FROM object_archive WHERE kind=?1 AND id=?2", params![kind, id])?;
+        let placing = Placing::write(database, &bytes.iter().map(Vec::as_slice).collect::<Vec<_>>())?;
+        Ok(Some(Unpacked { kind, table, key, ids: frames.iter().map(|f| f.0).collect(), placing }))
+    }
+
+    /// In the write transaction `tx`: numbers the segment, points each still-archived row at its entry and removes
+    /// its archive row. Returns the segment's number and how many rows were placed.
+    fn point(&self, tx: &rusqlite::Connection) -> StoreResult<(Option<i64>, usize)> {
+        let seg = self.placing.number(tx)?;
+        let update = format!("UPDATE {} SET seg=?2, seg_at=?3, seg_len=?4 WHERE {}=?1 AND seg={ARCHIVED}", self.table, self.key);
+        let mut placed = 0;
+        for (i, id) in self.ids.iter().enumerate() {
+            let place = self.placing.place(seg.expect("a segment for the frames"), i);
+            if tx.execute_cached(&update, params![id, place.seg, place.at as i64, place.len as i64])? == 1 {
+                placed += 1;
             }
-            Ok((seg, placed))
-        })?;
-        placing.name(seg)?;
-        Ok(placed)
+            tx.execute_cached("DELETE FROM object_archive WHERE kind=?1 AND id=?2", params![self.kind, id])?;
+        }
+        Ok((seg, placed))
     }
 }

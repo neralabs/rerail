@@ -47,6 +47,7 @@ mod private_files;
 mod publication;
 mod read_cache;
 mod archive;
+pub use archive::{ARCHIVED, place_archived_tape_at};
 mod reclamation;
 pub use reclamation::Ageing;
 pub mod record;

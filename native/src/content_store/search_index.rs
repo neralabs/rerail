@@ -187,7 +187,9 @@ impl ContentStore {
                 .collect::<Result<Vec<_>, _>>()?
         };
         // A source is checked against its hash; its tape against its identity (`HashKey::tape_identity`).
-        // In a segment (decision 0295 step 5): read there; one whose segment is gone is not indexed.
+        // In a segment (decision 0295 step 5): read there; one whose segment is gone is not indexed, nor an archived
+        // one (decision 0450 step 4): placed back to be indexed in the background, it would undo the archive. An index
+        // made before its archive is kept; a run that reads the tape places it back, and it is indexed after.
         let mut maps = super::segments::SegmentMaps::new(super::object_segments::object_dir(&self.database_path));
         let mut decode = |(length, hash, [seg, at, len]): Frame, identity: &dyn Fn(&[u8]) -> HashKey| -> StoreResult<Option<super::ObjectBytes>> {
             let Some(frame) = super::object_segments::row_frame(&mut maps, seg, at, len) else { return Ok(None) };

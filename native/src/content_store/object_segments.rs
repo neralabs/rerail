@@ -461,10 +461,10 @@ impl ContentStore {
     /// (`ObjectBytes::in_place`): not decompressed, hashed or copied, its segment's check (when mapped) the check.
     /// `None` where no source has the alias, or its segment is gone.
     pub fn sources_by_alias_in_place(&self, aliases: &[HashKey]) -> StoreResult<Vec<Option<ObjectBytes>>> {
-        let rows: Vec<Option<(i64, [i64; 3])>> = {
+        let rows: Vec<Option<(i64, [i64; 3], i64)>> = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             let mut st = connection.prepare_cached(
-                "SELECT s.raw_length, s.seg, s.seg_at, s.seg_len \
+                "SELECT s.raw_length, s.seg, s.seg_at, s.seg_len, s.source_id \
                  FROM hashes h JOIN source_aliases a ON a.alias_hash_id = h.hash_id JOIN source_objects s ON s.source_id = a.source_id \
                  WHERE h.algorithm_id=?1 AND h.lane0=?2 AND h.lane1=?3 AND h.lane2=?4 AND h.lane3=?5",
             )?;
@@ -472,17 +472,21 @@ impl ContentStore {
                 .iter()
                 .map(|alias| {
                     st.query_row(super::rows::hash_params(*alias), |r| {
-                        Ok((r.get(0)?, [r.get(1)?, r.get(2)?, r.get(3)?]))
+                        Ok((r.get(0)?, [r.get(1)?, r.get(2)?, r.get(3)?], r.get(4)?))
                     })
                     .optional()
                     .map_err(StoreError::from)
                 })
                 .collect::<StoreResult<_>>()?
         };
+        // Archived ones (decision 0450 step 4) are placed back first, then read in place.
+        if self.placed_again(rows.iter().flatten().map(|&(_, [seg, ..], source)| (super::reclamation::OBJECT_SOURCE, source, seg)))? {
+            return self.sources_by_alias_in_place(aliases);
+        }
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let Some((raw_length, [seg, seg_at, seg_len])) = row else {
+            let Some((raw_length, [seg, seg_at, seg_len], _)) = row else {
                 out.push(None);
                 continue;
             };
