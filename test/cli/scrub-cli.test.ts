@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { type FileHandle, mkdtemp, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { rewriteAppendedFile, runScrubCommand, scrubHintOnce } from "../../src/cli/scrub-cli.js";
 import { openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { withPendingFileLock } from "../../src/harness/index.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -262,6 +263,25 @@ describe("rerail scrub alongside running sessions", () => {
       expect(readFileSync(join(home, "daemon.log"), "utf8")).not.toContain(token);
       erase.failure = undefined;
       expect(await runScrubCommand([], () => "usage")).toBe(0);
+    } finally {
+      live.$client.close();
+    }
+  });
+
+  it("scrubs the ledgers of the sessions it records in a records folder this account may not list", async ({ skip }) => {
+    skip(!POSIX_MODES, NO_POSIX_MODES);
+    const { sessions, ledger, token, live } = await scrubFixture();
+    try {
+      writeFileSync(ledger, sampleLine(`GITHUB_TOKEN=${token}`));
+      // As a records folder another account shares is to this one: it may pass through and make a folder, not list.
+      chmodSync(sessions, 0o311);
+      expect(() => readdirSync(sessions)).toThrow(/EACCES/u);
+      try {
+        expect(await runScrubCommand([], () => "usage")).toBe(0);
+      } finally {
+        chmodSync(sessions, 0o700);
+      }
+      expect(readFileSync(ledger, "utf8")).not.toContain(token);
     } finally {
       live.$client.close();
     }

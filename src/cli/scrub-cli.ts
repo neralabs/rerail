@@ -20,7 +20,7 @@ import { type HookHost, scrubbedPendingText, withPendingFileLock } from "../harn
 import { preUpdateSnapshotPath } from "./project-cli.js";
 import { DAEMON_LOG_FILE } from "../runtime/daemon-control.js";
 import { scrubbedLedgerLine } from "../runtime/runtime.js";
-import { defaultStorageRoot } from "../runtime/session-paths.js";
+import { defaultStorageRoot, sessionDirectory } from "../runtime/session-paths.js";
 
 /** Rows read and rewritten per transaction: a running daemon waits on at most one batch. */
 const BATCH_ROWS = 500;
@@ -402,20 +402,42 @@ async function scrubPending(sessions: string, report: SessionFilesReport): Promi
   }
 }
 
+/** What the database records that `rerail scrub` finds session files by: its checkouts and its sessions' ids. */
+interface RecordedSessions {
+  readonly checkouts: readonly string[];
+  readonly sessionIds: readonly string[];
+}
+
+/**
+ * The session folders in `sessions`, a checkout's records folder: those it lists, or, where this account may not list
+ * it, those of the sessions the database records that are there. A records folder another account shares lets this one
+ * make its sessions' folders there and hides the names (`keepFoundFolderPrivate`).
+ */
+async function sessionFolders(sessions: string, sessionIds: readonly string[]): Promise<string[]> {
+  const listed: string[] = [];
+  try {
+    for await (const entry of await opendir(sessions)) if (entry.isDirectory()) listed.push(join(sessions, entry.name));
+    return listed;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EACCES" && code !== "EPERM") throw error;
+    return sessionIds.map(id => sessionDirectory(sessions, id)).filter(folder => realDirectory(folder));
+  }
+}
+
 /**
  * Scrubs the session ledgers (`<checkout>/.rerail/sessions/<session>/events.jsonl`, `rewriteAppendedFile`) and held
  * steers (`scrubPending`) of every checkout the database records. A checkout, `.rerail`, `sessions` or session folder
  * that is a link, or not a folder, is skipped, never followed; so is a ledger that is a link.
  */
-async function scrubSessionFiles(checkoutPaths: readonly string[]): Promise<SessionFilesReport> {
+async function scrubSessionFiles(recorded: RecordedSessions): Promise<SessionFilesReport> {
   const report: SessionFilesReport = { lines: 0, files: 0, pendingFiles: 0, checkouts: 0, skipped: [] };
-  for (const checkout of checkoutPaths) {
+  for (const checkout of recorded.checkouts) {
     const sessions = defaultStorageRoot(checkout);
     if (!isAbsolute(checkout) || !realDirectory(checkout) || !realDirectory(join(checkout, ".rerail")) || !realDirectory(sessions)) continue;
     report.checkouts += 1;
-    for await (const entry of await opendir(sessions)) {
-      if (!entry.isDirectory()) continue;
-      const path = join(sessions, entry.name, "events.jsonl");
+    for (const folder of await sessionFolders(sessions, recorded.sessionIds)) {
+      const path = join(folder, "events.jsonl");
       try {
         const lines = await rewriteAppendedFile(flags => openLedgerFile(path, flags), ledgerLine);
         if (lines === undefined) report.skipped.push(`${path} (a session kept writing to it)`);
@@ -525,19 +547,21 @@ export async function runScrubCommand(args: readonly string[], usage: () => stri
   const path = join(home, RERAIL_DATABASE_FILE);
   markHintShown(home);
   let complete = true;
-  let checkouts: string[] = [];
+  let recorded: RecordedSessions = { checkouts: [], sessionIds: [] };
   if (existsSync(path)) {
-    // The checkouts are read first, so the ledgers are scrubbed even when the database cannot be.
+    // The checkouts and sessions are read first, so the ledgers are scrubbed even when the database cannot be.
     complete = scrubDatabaseFile(path, () => openRerailDatabase(path), db => {
-      checkouts = (db.$client.prepare("SELECT checkout_path AS path FROM checkouts ORDER BY checkout_path").all() as Array<{ path: string }>)
-        .map(row => row.path);
+      recorded = {
+        checkouts: db.$client.prepare("SELECT checkout_path FROM checkouts ORDER BY checkout_path").pluck().all() as string[],
+        sessionIds: db.$client.prepare("SELECT session_id FROM sessions ORDER BY session_id").pluck().all() as string[],
+      };
     });
   } else process.stdout.write(`No Rerail database at ${path}; no stored history to scrub.\n`);
   // The copy `rerail update` took before switching versions: opened without this build's schema, so it stays the
   // earlier version's file.
   const copy = preUpdateSnapshotPath(path);
   if (existsSync(copy)) complete = scrubDatabaseFile(copy, () => openSqliteDatabase(copy)) && complete;
-  const files = await scrubSessionFiles(checkouts);
+  const files = await scrubSessionFiles(recorded);
   const daemonLogLines = await scrubDaemonLog(home, files);
   process.stdout.write(
     `Scrubbed ${plural(files.lines, "line")} in ${plural(files.files, "session ledger")} and ${plural(files.pendingFiles, "held steer file")} `

@@ -4,7 +4,7 @@
  * ignores `mkdir`'s and `open`'s modes: there it is the folder's access control list (`windows-acl.ts`). Callers make
  * one call for either system and never branch on the platform.
  */
-import { chmodSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, type Stats } from "node:fs";
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -98,8 +98,8 @@ function repairUnderWay(folder: string, acl: WindowsAcl): FoundFolderRepair {
 }
 
 /**
- * Keeps a folder that another program may have made its owner's alone. Elsewhere than Windows, as
- * {@link keepFolderPrivate} does. On Windows, outside the profile folder, it reads the folder's ACL (one `icacls`) and,
+ * Keeps a folder that another program may have made its owner's alone. Elsewhere than Windows, takes away what lets
+ * other accounts list it ({@link keepNamesPrivate}). On Windows, outside the profile folder, it reads the folder's ACL (one `icacls`) and,
  * when the folder still takes entries from its parent's, as one Git, `mkdir` or an earlier release made does, gives it
  * the owner-only ACL, which everything already in it then inherits. An entry set on the folder itself for another
  * account is someone's choice and stays, and a folder with an ACL of its own is left as it is.
@@ -111,7 +111,7 @@ function repairUnderWay(folder: string, acl: WindowsAcl): FoundFolderRepair {
 export async function keepFoundFolderPrivate(folder: string, machine: PrivateMachine = {}): Promise<FoundFolderRepair> {
   const { acl = WINDOWS_ACL, platform = process.platform, profile = homedir() } = machine;
   if (platform !== "win32") {
-    keepPrivate(folder);
+    keepNamesPrivate(folder);
     return NOTHING_TO_REPAIR;
   }
   if (insideProfile(folder, profile)) return NOTHING_TO_REPAIR;
@@ -152,18 +152,39 @@ export async function openToOthers(path: string, reader: AccessReader = {}): Pro
  * there the folder's ACL does this ({@link keepFolderPrivate}).
  */
 function keepPrivate(path: string): void {
-  if (process.platform === "win32") return;
+  const stats = ownStats(path);
+  if (stats === undefined || (stats.mode & 0o077) === 0) return;
+  if (stats.isDirectory()) chmodSync(path, 0o700);
+  else if (stats.isFile()) chmodSync(path, 0o600);
+}
+
+/**
+ * Takes the group's and others' read from a folder this user owns, which is what lets another account list it, and
+ * keeps what lets one pass through it and make a folder of its own there: `2775` becomes `2731`, `0755` `0711`. A
+ * records folder Git or a person made may be shared with another account that records its own sessions there; each
+ * session's folder is `0700`, so names are hidden and each account's records stay its own.
+ */
+function keepNamesPrivate(folder: string): void {
+  const stats = ownStats(folder);
+  if (stats?.isDirectory() !== true || (stats.mode & 0o044) === 0) return;
+  chmodSync(folder, stats.mode & 0o7777 & ~0o044);
+}
+
+/**
+ * `path`'s `lstat` when this user owns it; undefined when it is missing, out of reach or another user's, and on Windows,
+ * which has no modes to change.
+ */
+function ownStats(path: string): Stats | undefined {
+  if (process.platform === "win32") return undefined;
   let stats;
   try {
     stats = lstatSync(path);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "EACCES") return;
+    if (code === "ENOENT" || code === "EACCES") return undefined;
     throw error;
   }
-  if (stats.uid !== process.geteuid!() || (stats.mode & 0o077) === 0) return;
-  if (stats.isDirectory()) chmodSync(path, 0o700);
-  else if (stats.isFile()) chmodSync(path, 0o600);
+  return stats.uid === process.geteuid!() ? stats : undefined;
 }
 
 /**

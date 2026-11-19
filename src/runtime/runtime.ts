@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -61,7 +61,7 @@ import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type S
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
 import { checkoutPathBoundary } from "../engine/path-boundary.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
-import { isDefaultStorageRoot } from "./session-paths.js";
+import { isDefaultStorageRoot, sessionDirectory } from "./session-paths.js";
 import type {
   ContentItem,
   ContentSnapshot,
@@ -910,10 +910,6 @@ async function appendJsonLine(path: string, value: unknown, state: JsonlAppendSt
   state.truncateTo = null;
 }
 
-function sessionDirectory(root: string, sessionId: string): string {
-  return join(root, createHash("sha256").update(sessionId).digest("hex"));
-}
-
 /**
  * What the session store keeps of a result whose call named a secret-like path: that its output was left out, and how
  * large it was. People read the transcript whole, but a `cat .env` output is a secret Rerail recognizes, so it is never
@@ -941,16 +937,29 @@ const SESSION_RECORDS_GITIGNORE = "# Created by Rerail: session records stay out
  * repository's own ignores. Only the default root is Rerail's alone: a custom one (`RERAIL_STORAGE_ROOT`) may hold the
  * person's own files, so it is left as it is. In Rerail's own folder the file is rewritten whenever it holds anything
  * else, or is no regular file: a repository that commits one with `!*` would otherwise have the person's next
- * `git add -A` commit their prompts and pre-edit source.
+ * `git add -A` commit their prompts and pre-edit source. One this account may not read was written by another account
+ * that records its own sessions in the same folder, private to it, and that account's Rerail keeps it.
  */
 async function ignoreInGit(storageRoot: string): Promise<void> {
   const path = join(storageRoot, ".gitignore");
-  const stats = await lstat(path).catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  });
-  if (stats?.isFile() === true && await readLedgerFile(path, storageRoot) === SESSION_RECORDS_GITIGNORE) return;
+  const text = await gitignoreText(path, storageRoot);
+  if (text === SESSION_RECORDS_GITIGNORE || text === ANOTHER_ACCOUNTS) return;
   await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE);
+}
+
+/** What {@link gitignoreText} gives for a file this account may not read. */
+const ANOTHER_ACCOUNTS = Symbol("another account's file");
+
+/** The text of the `.gitignore` at `path`; undefined when it is missing or no regular file. */
+async function gitignoreText(path: string, storageRoot: string): Promise<string | undefined | typeof ANOTHER_ACCOUNTS> {
+  try {
+    return (await lstat(path)).isFile() ? await readLedgerFile(path, storageRoot) : undefined;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return undefined;
+    if (code === "EACCES" || code === "EPERM") return ANOTHER_ACCOUNTS;
+    throw error;
+  }
 }
 
 /** Replays a session ledger into its registry and returns the turn the session had reached. */
@@ -2160,9 +2169,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
   async #openLedger(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
+    // Written before the folder's repair starts, so on Windows the new ACL Windows passes on reaches it too.
+    if (this.#storageRootIsDefault) await ignoreInGit(this.#storageRoot);
     await makeLedgerFolder(directory, { repair: true });
     keepFolderPrivate(directory);
-    if (this.#storageRootIsDefault) await ignoreInGit(this.#storageRoot);
     const path = join(directory, "events.jsonl");
     const { values, appendState } = await readLines(path);
     const entries = validatedLedger(values);

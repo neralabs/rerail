@@ -5,6 +5,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
+import { makeLedgerFolder } from "../../../src/engine/storage/ledger-paths.js";
 import { keepFilesPrivate, keepFolderPrivate, makeRerailHome, openToOthers } from "../../../src/engine/storage/private-files.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
@@ -37,6 +38,21 @@ describe.skipIf(process.platform === "win32")("what Rerail keeps private", () =>
     await chmod(folder, 0o755);
     keepFolderPrivate(folder);
     expect(await mode(folder)).toBe(0o700);
+  });
+
+  it("takes only the list from a session records folder another program made, so an account it let in still makes its own folder there", async () => {
+    const root = await temporaryDirectory();
+    // 2775: a folder a person shares with their group (setgid, group-writable); 777 and 755, as Git or `mkdir` leave one
+    // under a loose umask; 700, as Rerail makes one.
+    for (const [found, kept] of [[0o2775, 0o2731], [0o777, 0o733], [0o755, 0o711], [0o700, 0o700]] as const) {
+      const sessions = join(root, found.toString(8), ".rerail", "sessions");
+      await mkdir(sessions, { recursive: true });
+      await chmod(sessions, found);
+      const session = join(sessions, "a".repeat(64));
+      await makeLedgerFolder(session, { repair: true });
+      expect((await lstat(sessions)).mode & 0o7777, found.toString(8)).toBe(kept);
+      expect(await mode(session)).toBe(0o700);
+    }
   });
 
   it("is a secret with no group or other permission, and one with any is named with its mode", async () => {

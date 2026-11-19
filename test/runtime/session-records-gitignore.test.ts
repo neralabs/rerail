@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -11,6 +12,19 @@ import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 import { symlinkOrSkip } from "../support/platform/links.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-session-records-gitignore-");
+
+/** Each records folder whose repair a session started, and whether its .gitignore was there then. */
+const repairs = vi.hoisted(() => [] as Array<{ folder: string; gitignore: boolean }>);
+vi.mock("../../src/engine/storage/private-files.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/storage/private-files.js")>("../../src/engine/storage/private-files.js");
+  return {
+    ...actual,
+    keepFoundFolderPrivate: (folder: string, machine?: Parameters<typeof actual.keepFoundFolderPrivate>[1]) => {
+      repairs.push({ folder, gitignore: existsSync(join(folder, ".gitignore")) });
+      return actual.keepFoundFolderPrivate(folder, machine);
+    },
+  };
+});
 
 /** A Git checkout with no ignores of its own, and the session storage root where hooks put it by default. */
 async function checkoutWithSessionStorage(): Promise<{ checkout: string; storageRoot: string; databasePath: string }> {
@@ -44,15 +58,31 @@ async function openToOtherAccounts(folder: string): Promise<void> {
 }
 
 /**
- * Whether accounts beyond the owner may read `path`: elsewhere than Windows, any group or other bit; on Windows, an
- * entry of its ACL, read in SDDL, that lets Users (BU), Authenticated Users (AU) or Everyone (WD) read it itself.
+ * Whether accounts beyond the owner may read `path`, or list it when it is a folder: elsewhere than Windows, the group's
+ * or others' read bit; on Windows, an entry of its ACL, read in SDDL, that lets Users (BU), Authenticated Users (AU) or
+ * Everyone (WD) read it itself.
  */
 async function readableByOthers(path: string): Promise<boolean> {
-  if (process.platform !== "win32") return ((await stat(path)).mode & 0o077) !== 0;
+  if (process.platform !== "win32") return ((await stat(path)).mode & 0o044) !== 0;
   const sddl = execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:ACL_PATH).Sddl"], {
     encoding: "utf8", env: { ...process.env, ACL_PATH: path },
   });
   return /\(A;(?![^;]*IO)[^)]*;(?:BU|AU|WD)\)/u.test(sddl);
+}
+
+/**
+ * Makes `file` one this account may not read, as one another account wrote private is to it: elsewhere than Windows
+ * mode 000; on Windows an ACL of its own granting SYSTEM alone, so its owner keeps only the right to change the ACL.
+ */
+async function closeToThisAccount(file: string): Promise<void> {
+  if (process.platform === "win32") execFileSync("icacls.exe", [file, "/inheritance:r", "/grant:r", "*S-1-5-18:F", "/q"]);
+  else await chmod(file, 0o000);
+}
+
+/** Gives `file` back to this account, so the test's folder can be removed. */
+async function openToThisAccount(file: string): Promise<void> {
+  if (process.platform === "win32") execFileSync("icacls.exe", [file, "/reset", "/q"]);
+  else await chmod(file, 0o600);
 }
 
 describe("session records in a checkout", () => {
@@ -60,6 +90,12 @@ describe("session records in a checkout", () => {
     const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
     await openOneSession(checkout, storageRoot, databasePath);
     expect(execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: checkout, encoding: "utf8" })).toBe("");
+  });
+
+  it("write the .gitignore before the records folder's repair starts, so on Windows the ACL it passes on reaches it", async () => {
+    const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
+    await openOneSession(checkout, storageRoot, databasePath);
+    expect(repairs.filter(({ folder }) => folder === storageRoot)).toEqual([{ folder: storageRoot, gitignore: true }]);
   });
 
   it("rewrite a .gitignore a repository planted in the storage root, so its !* cannot commit them", async () => {
@@ -100,16 +136,35 @@ describe("session records in a checkout", () => {
     if (POSIX_MODES) await openToOtherAccounts(storageRoot);
     expect(await readableByOthers(storageRoot)).toBe(true);
     await openOneSession(checkout, storageRoot, databasePath);
-    // The session's own record is private at once; on Windows the folder's repair goes on after the session opens.
+    // The session's own record is private; on Windows the folder's repair goes on after the session opens, and the
+    // held-repair case in windows-acl.test.ts shows the record is private before it ends.
     expect(await readableByOthers(join(storageRoot, createHash("sha256").update("gitignore").digest("hex"), "events.jsonl"))).toBe(false);
     await vi.waitFor(async () => {
       expect(await readableByOthers(storageRoot)).toBe(false);
-      // Elsewhere than Windows the folder's 0700 keeps other users from reaching a record in it; on Windows the record
-      // takes the folder's new ACL.
-      if (process.platform === "win32") expect(await readableByOthers(earlier)).toBe(false);
+      // Elsewhere than Windows each session's folder is 0700 and no other user lists the records folder; on Windows the
+      // record and the .gitignore, written before the repair starts, take the folder's new ACL.
+      if (process.platform === "win32") {
+        expect(await readableByOthers(earlier)).toBe(false);
+        expect(await readableByOthers(join(storageRoot, ".gitignore"))).toBe(false);
+      }
     }, { timeout: 30_000, interval: 200 });
     // Windows PowerShell's Get-Acl, which reads each ACL, can take seconds to start on a cold machine.
   }, 60_000);
+
+  it("are kept where another account that records there wrote the .gitignore, which this one may not read", async () => {
+    const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
+    const gitignore = join(storageRoot, ".gitignore");
+    await mkdir(storageRoot, { recursive: true });
+    await writeFile(gitignore, "# Created by Rerail: session records stay out of Git.\n*\n");
+    await closeToThisAccount(gitignore);
+    try {
+      await openOneSession(checkout, storageRoot, databasePath);
+    } finally {
+      await openToThisAccount(gitignore);
+    }
+    const ledger = await readFile(join(storageRoot, createHash("sha256").update("gitignore").digest("hex"), "events.jsonl"), "utf8");
+    expect(ledger).toContain("Add a priority score to each todo");
+  });
 
   it("leave a custom storage root outside a .rerail folder without a .gitignore, since it may hold the person's files", async () => {
     const { checkout, databasePath } = await checkoutWithSessionStorage();
