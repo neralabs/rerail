@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b603-subprocess-without-shell-equals-true",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Validate untrusted input passed to subprocess.Popen and subprocess.call even without a shell; the program still runs with whatever arguments it gets.",
+  "description": "Validate untrusted input passed to subprocess.Popen, call, check_call, check_output and run even without a shell; the program still runs with whatever arguments it gets.",
   "scope": {
     "include": [
       "**/*.py"
@@ -20,19 +20,13 @@
             "pattern": "$F($$$ARGS)",
             "arguments": {
               "signature": [
-                "args",
-                "bufsize",
-                "executable",
-                "stdin",
-                "stdout",
-                "stderr",
-                "preexec_fn",
-                "close_fds",
+                "*",
                 "shell"
               ],
               "absent": [
                 "shell"
-              ]
+              ],
+              "mode": "syntactic"
             }
           },
           "constraints": {
@@ -40,7 +34,10 @@
               "resolves": {
                 "import": [
                   "subprocess.Popen",
-                  "subprocess.call"
+                  "subprocess.call",
+                  "subprocess.check_call",
+                  "subprocess.check_output",
+                  "subprocess.run"
                 ]
               }
             }
@@ -69,19 +66,13 @@
             "pattern": "$F($$$ARGS)",
             "arguments": {
               "signature": [
-                "args",
-                "bufsize",
-                "executable",
-                "stdin",
-                "stdout",
-                "stderr",
-                "preexec_fn",
-                "close_fds",
+                "*",
                 "shell"
               ],
               "bind": {
                 "SHELL": "shell"
-              }
+              },
+              "mode": "syntactic"
             }
           },
           "constraints": {
@@ -89,7 +80,10 @@
               "resolves": {
                 "import": [
                   "subprocess.Popen",
-                  "subprocess.call"
+                  "subprocess.call",
+                  "subprocess.check_call",
+                  "subprocess.check_output",
+                  "subprocess.run"
                 ]
               }
             },

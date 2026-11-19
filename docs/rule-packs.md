@@ -99,7 +99,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 
 1. **Fetch** every listed pack into a staging folder. Nothing in the repository is read until the person allows it.
 2. **Keep newer versions** the computer already has installed.
-3. **Ask** which fitting packs to install.
+3. **Ask** which suggested packs to install.
 4. **Install only what the answer carries:** "Yes", "Change rule packs…" (`--answer choose`), "Not now" (`--answer not-now`) or "Skip, I'll pick packs".
 5. **Verify** the catalog still loads every pack; otherwise put the change back and ask again.
 
@@ -250,6 +250,14 @@ A rule document is a `rerail.policy/v1` code rule or a conversation rule; no `pa
 - **Trust.** The folder comes from the working tree, so whatever a branch commits there runs in every started checkout of that branch and reaches the coding agent. Rerail has not reviewed it, so approval is needed again after each edit ([approval](rule-scoping.md#approval)). To keep rules to one worktree, exclude the folder from Git (`.git/info/exclude`).
 
 </details>
+
+## Packs a repository lists
+
+In [internal testing](internal-testing.md): a repository can list the packs it runs in `.rerail/packs.json`, by
+published pack and exact version or by a folder in the repository, each for the whole repository or only the
+`folders` it names, so every machine scanning a commit runs the same rules. Today only the headless `rerail scan`
+reads it ([headless scan](headless-scan.md#packs-the-repository-lists));
+a session still runs the packs its machine attaches ([design](repository-packs.md)).
 
 ## Where a pack's rules live
 
