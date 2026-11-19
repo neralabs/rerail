@@ -263,8 +263,8 @@ gitlink (submodule) is recorded as a nested path, not descended into.
   transaction and requires a published root tree (test: `snapshots_require_a_published_root_tree`).
 - **`workspaces`:** root, repository (Git common directory), owner (`rerail:<pid>:<worktree>`),
   snapshot, lease and state (1 active, 2 ended and aged, 3 released).
-- **`store_sessions`:** one row per durable owner (decision 0450 §2): a workspace's, keyed by its
-  root. It records the latest generation, when it was last registered or renewed, and, once it
+- **`store_sessions`:** one row per durable owner (decision 0450 §2): a workspace, keyed by its
+  root; a corpus lane; a pin's owner. It records the latest generation, when it was last registered or renewed, and, once it
   ended, when and how many bytes its snapshot and overlay held.
 
 A clean file's committed blob is its alias, found without reading the file (`clean_source_alias`).
@@ -464,10 +464,11 @@ Database relationships are the only liveness authority; there are no reference c
 `collect(now, batch)` takes at most `MAX_COLLECTION_BATCH` (256) rows per statement, in one
 `BEGIN IMMEDIATE` transaction, in this order:
 
-1. Expired `object_pins`.
-2. Workspaces whose lease expired end (state 2), and their sessions record when and how many bytes.
-   Ended workspaces past the age budget are released (state 3); their overlay rows go, then the
-   workspace, its session and its `completed_workspace_revisions` row.
+1. Workspaces whose lease expired end (state 2), and a pin owner whose last pin lapsed ends; their
+   sessions record when and how many bytes. Ended workspaces past the age budget are released
+   (state 3): their overlay rows go, then the workspace, its session and its
+   `completed_workspace_revisions` row.
+2. Expired `object_pins`, except a source's or tape's whose owner is aged.
 3. The files of one snapshot no workspace references, then the snapshot once empty.
 4. Tapes no snapshot file, overlay, pin or `file_documents.document_tape_id` references. A deleted
    primary tape takes its `file_documents` rows, search index set and FTS document with it, so a

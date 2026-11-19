@@ -1,7 +1,7 @@
 # 0450: Sessions keep their latest data live in segments; the rest ages out, and may be kept compressed
 
 Status: decided by the user (2026-11-19): items 1–4 of §1, §2 (two sessions, how a store session ends, and its
-shape: "go ahead with 0450"). Step 2 built (floor 8); step 3's slices A and B built. §3 (the cross-file memo): its history traced; its removal
+shape: "go ahead with 0450"). Step 2 built (floor 8); step 3 built (slices A–C). §3 (the cross-file memo): its history traced; its removal
 decided by the user (2026-11-19, "go ahead with that split") and done. Follows 0295 (segments and the archive), 0053 (collection),
 0353 (blocks are never copied) and the store's floor 7 (0295 step 5: no source or tape in a row).
 
@@ -166,7 +166,29 @@ it: the `cross_rows` store" and 0083's "the mechanism stays for any program that
      takes what is left under 0053's marks. Tests: `ended_workspaces_aged_data_comes_first_under_the_one_budget`,
      `each_lane_keeps_its_last_runs_plans` (six lanes, six live sessions).
    - **C. A pin's owner is a store session** (kind 3): its lease keeps it alive.
+     **Built (2026-11-19):** keyed by the owner's `strings` id; `pin_source` and `pin_tape` keep it live. Its session
+     ends when its last pin lapses, with the segment bytes its source and tape pins name; the lapsed pins are then
+     kept, and protect what they pin, until the session is released under the one budget with ended workspaces
+     (`aged_sessions!`: kinds 1 and 3 ranked together by when they ended), and the corpus decision counts their bytes
+     first as it does the workspaces'. Not aged: a live owner's lapsed pins (not its latest data); a plan's hold
+     (`hold_corpus_plan`), whose lapse makes a keep decision due, so one kept would make every pass due; and an
+     owner's explicit release (`release_pins`: a run's end, a gone process's holds), which ends its session with
+     nothing aged. Test: `a_lapsed_owners_pins_are_aged_and_a_released_owners_are_not`. In production the rr images'
+     pins (7-day leases) and combined programs' (6 hours, when no run released them) now age past their lease.
    - **The budget**, one for every kind: 0053 §3's marks (512 MB high, 384 MB low) and backstop (30 days), until
      the user sets others (§2 left the marks open).
 4. The archive: aged data moved to zstd rows by upkeep, segments rewritten (§1 item 2), and placed again in a segment
    when read (§1 item 3).
+   Planned:
+   - **What is archived:** a source or tape in a segment that no session's latest data names: no live workspace's
+     snapshot or overlay, no live pin, no `file_documents` row, no protected corpus run (`corpus_live.latest`,
+     written by the keep decision). Results and pages are not archived: they are computed again, and compaction drops
+     them with their segment.
+   - **How:** an upkeep job (`Archive`, idle work) takes a batch, compresses each object to a zstd frame outside the
+     write transaction, then in one transaction writes `object_archive(kind, id, frame)` and marks the row `seg` -2
+     where it is unchanged. Compaction, which copies only rows in a segment, then drops the bytes (§1 item 2).
+   - **Read again:** a reader that meets `seg` -2 places the objects back first, in bulk: decompressed into one
+     segment (`Placing`), the rows pointed at it and their archive rows removed in one transaction, then read in place
+     (§1 item 3). A put of an archived object places the caller's bytes, as for one marked absent (-1). A reader that
+     cannot place (none so far) treats it as absent.
+   - **Collection** deletes an object's archive row with the object.

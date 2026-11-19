@@ -709,8 +709,8 @@ impl ContentStore {
             };
             let mut aged = Aged {
                 bytes: tx.query_row(
-                    "SELECT coalesce(sum(aged_bytes),0) FROM store_sessions WHERE kind=?1 AND ended IS NOT NULL",
-                    [super::reclamation::SESSION_WORKSPACE],
+                    "SELECT coalesce(sum(aged_bytes),0) FROM store_sessions WHERE kind IN (?1,?2) AND ended IS NOT NULL",
+                    [super::reclamation::SESSION_WORKSPACE, super::reclamation::SESSION_PINS],
                     |r| r.get::<_, i64>(0),
                 )? as u64,
                 ..Aged::default()
@@ -722,9 +722,13 @@ impl ContentStore {
                      WHERE w.state_id=2 \
                      UNION SELECT v.source_id, t.source_id, t.grammar_version, t.tape_format_version FROM workspaces w \
                      JOIN workspace_overlay v ON v.workspace_id=w.workspace_id LEFT JOIN tape_objects t ON t.tape_id=v.tape_id \
-                     WHERE w.state_id=2",
+                     WHERE w.state_id=2 \
+                     UNION SELECT CASE p.object_kind_id WHEN ?2 THEN p.object_id END, t.source_id, t.grammar_version, t.tape_format_version \
+                     FROM store_sessions e JOIN object_pins p ON p.owner_string_id=e.key \
+                     LEFT JOIN tape_objects t ON p.object_kind_id=?3 AND t.tape_id=p.object_id \
+                     WHERE e.kind=?1 AND e.ended IS NOT NULL",
                 )?;
-                let mut q = rows.query([])?;
+                let mut q = rows.query([super::reclamation::SESSION_PINS, super::reclamation::OBJECT_SOURCE, super::reclamation::OBJECT_TAPE])?;
                 while let Some(r) = q.next()? {
                     if let Some(source) = r.get::<_, Option<i64>>(0)? {
                         aged.sources.insert(source);
@@ -980,7 +984,7 @@ struct Decided {
     history: u64,
 }
 
-/// What ended workspaces hold while they are aged (decision 0450 step 3): one budget holds every store session's aged
+/// What ended workspaces and pin owners hold while they are aged (decision 0450 step 3): one budget holds every store session's aged
 /// data, and theirs is counted first. Its bytes count against the history's marks, and its sources and tapes count for
 /// no manifest again.
 #[derive(Default)]

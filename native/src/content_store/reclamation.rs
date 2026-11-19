@@ -12,11 +12,22 @@ use super::{
 use rusqlite::{Connection, OptionalExtension, Params, TransactionBehavior, params};
 use std::fs;
 
-const OBJECT_TAPE: i64 = 1;
+pub(super) const OBJECT_TAPE: i64 = 1;
 /// A store session's kind (`store_sessions.kind`, decision 0450 §2): a workspace, keyed by its root's path.
 pub(super) const SESSION_WORKSPACE: i64 = 1;
 /// A corpus lane, keyed by a digest of its root and lane (`corpus_runs::lane_session`).
 pub(super) const SESSION_LANE: i64 = 2;
+/// A pin's owner, keyed by its name's `strings` id: its source and tape pins are its data.
+pub(super) const SESSION_PINS: i64 = 3;
+
+/// The ended sessions of the kinds collection ages (workspaces and pin owners) with the aged bytes of those ended
+/// since, newest first, them included: one budget for both (decision 0450 step 3).
+macro_rules! aged_sessions {
+    () => {
+        "(SELECT kind, key, ended, sum(aged_bytes) OVER (ORDER BY ended DESC, kind, key ROWS UNBOUNDED PRECEDING) held \
+         FROM store_sessions WHERE kind IN (1,3) AND ended IS NOT NULL)"
+    };
+}
 
 /// How long an ended store session's data is kept (decision 0450 step 3; 0053 §3's marks and backstop until the user
 /// sets others): the sessions ended last keep theirs while together they hold at most `bytes`, and none past
@@ -57,7 +68,7 @@ impl ContentStore {
         *self.session_ageing.0.lock() = ageing;
     }
 }
-const OBJECT_SOURCE: i64 = 2;
+pub(super) const OBJECT_SOURCE: i64 = 2;
 pub(super) const STORE_SOFT_LIMIT: u64 = 7 * 1024 * 1024 * 1024;
 pub(super) const STORE_HARD_LIMIT: u64 = 9 * 1024 * 1024 * 1024;
 pub(super) const STORE_ABSOLUTE_LIMIT: u64 = 10 * 1024 * 1024 * 1024;
@@ -122,6 +133,12 @@ impl ContentStore {
              ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
             params![object_kind, object_id, owner_id, lease_until],
         )?;
+        // Its owner is a store session (decision 0450 §2), live while one of its pins is.
+        transaction.execute_cached(
+            "INSERT INTO store_sessions(kind,key,latest,last_used,ended,aged_bytes) VALUES (?1,?2,?3,?4,NULL,0) \
+             ON CONFLICT(kind,key) DO UPDATE SET latest=excluded.latest,last_used=excluded.last_used,ended=NULL,aged_bytes=0",
+            params![SESSION_PINS, owner_id, generation(&transaction)?, super::unix_seconds()?],
+        )?;
         self.commit(transaction)?;
         Ok(())
     }
@@ -136,14 +153,17 @@ impl ContentStore {
     pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
         // A write: it waits out other writers as every store write does, the connection held by each attempt alone.
         retry_busy(&mut BusyRetries::default(), || {
-            self.connection
-                .lock()
-                .expect("content store mutex poisoned")
-                .execute(
-                    "DELETE FROM object_pins WHERE owner_string_id IN (SELECT string_id FROM strings WHERE domain_id=?1 AND value=?2)",
-                    params![STRING_OWNER, owner],
-                )
-                .map_err(StoreError::from)
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let Some(owner_id) = connection
+                .query_row_cached("SELECT string_id FROM strings WHERE domain_id=?1 AND value=?2", params![STRING_OWNER, owner], |r| r.get::<_, i64>(0))
+                .optional()?
+            else {
+                return Ok(0);
+            };
+            let released = connection.execute_cached("DELETE FROM object_pins WHERE owner_string_id=?1", [owner_id])?;
+            // Released by its owner, what it pinned is not aged (decision 0450 step 3): its session goes with its pins.
+            connection.execute_cached("DELETE FROM store_sessions WHERE kind=?1 AND key=?2", params![SESSION_PINS, owner_id])?;
+            Ok(released)
         })
     }
 
@@ -236,17 +256,7 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
-        let expired_pins = execute_collect(
-            &transaction,
-            "DELETE FROM object_pins WHERE (object_kind_id,object_id,owner_string_id) IN (\
-             SELECT object_kind_id,object_id,owner_string_id FROM object_pins WHERE lease_until < ?1 \
-             ORDER BY object_kind_id,object_id,owner_string_id LIMIT ?2)",
-            params![now, limit],
-        )?;
-        let mut report = CollectionReport {
-            expired_pins,
-            ..CollectionReport::default()
-        };
+        let mut report = CollectionReport::default();
         execute_collect(
             &transaction,
             "UPDATE workspaces SET state_id=2 WHERE state_id=1 AND lease_until < ?1",
@@ -265,16 +275,51 @@ impl ContentStore {
              AND w.state_id=2",
             [SESSION_WORKSPACE],
         )?;
+        // A pin owner's session ends when its last source or tape pin lapses, with the bytes they hold.
+        execute_collect(
+            &transaction,
+            "UPDATE store_sessions SET ended=coalesce((SELECT max(p.lease_until) FROM object_pins p WHERE p.owner_string_id=store_sessions.key),?2), \
+             aged_bytes=coalesce((SELECT sum(o.seg_len) FROM object_pins p JOIN source_objects o ON o.source_id=p.object_id \
+                                  WHERE p.owner_string_id=store_sessions.key AND p.object_kind_id=?3),0)\
+             +coalesce((SELECT sum(t.seg_len) FROM object_pins p JOIN tape_objects t ON t.tape_id=p.object_id \
+                        WHERE p.owner_string_id=store_sessions.key AND p.object_kind_id=?4),0) \
+             WHERE kind=?1 AND ended IS NULL \
+             AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.owner_string_id=store_sessions.key AND p.lease_until>=?2)",
+            params![SESSION_PINS, now, OBJECT_SOURCE, OBJECT_TAPE],
+        )?;
         // An ended workspace is released (state 3) once it ended `backstop` ago, or once the sessions that ended after
         // it hold the budget; one with no session (a store of an older binary) at once.
         let ageing = self.session_ageing.get();
         execute_collect(
             &transaction,
-            "UPDATE workspaces SET state_id=3 WHERE state_id=2 AND workspace_id IN (SELECT w.workspace_id FROM workspaces w \
-             LEFT JOIN (SELECT key, ended, sum(aged_bytes) OVER (ORDER BY ended DESC, key ROWS UNBOUNDED PRECEDING) held \
-                        FROM store_sessions WHERE kind=?1 AND ended IS NOT NULL) r ON r.key=w.root_path_id \
-             WHERE w.state_id=2 AND (r.key IS NULL OR r.ended <= ?2 - ?3 OR r.held > ?4))",
+            concat!(
+                "UPDATE workspaces SET state_id=3 WHERE state_id=2 AND workspace_id IN (SELECT w.workspace_id FROM workspaces w \
+                 LEFT JOIN ",
+                aged_sessions!(),
+                " r ON r.kind=?1 AND r.key=w.root_path_id \
+                 WHERE w.state_id=2 AND (r.key IS NULL OR r.ended <= ?2 - ?3 OR r.held > ?4))"
+            ),
             params![SESSION_WORKSPACE, now, ageing.backstop_secs, i64::try_from(ageing.bytes).unwrap_or(i64::MAX)],
+        )?;
+        // A lapsed pin goes at once unless it is a source's or tape's and its owner's session is aged: a live owner's
+        // lapsed pins are not its latest data, and a plan's hold lapses (`corpus_runs::lapsed_plan_hold`).
+        report.expired_pins = execute_collect(
+            &transaction,
+            concat!(
+                "DELETE FROM object_pins WHERE (object_kind_id,object_id,owner_string_id) IN (\
+                 SELECT p.object_kind_id,p.object_id,p.owner_string_id FROM object_pins p LEFT JOIN ",
+                aged_sessions!(),
+                " r ON r.kind=?1 AND r.key=p.owner_string_id \
+                 WHERE p.lease_until < ?2 AND (p.object_kind_id NOT IN (?5,?6) OR r.key IS NULL OR r.ended <= ?2 - ?3 OR r.held > ?4) \
+                 ORDER BY p.object_kind_id,p.object_id,p.owner_string_id LIMIT ?7)"
+            ),
+            params![SESSION_PINS, now, ageing.backstop_secs, i64::try_from(ageing.bytes).unwrap_or(i64::MAX), OBJECT_SOURCE, OBJECT_TAPE, limit],
+        )?;
+        execute_collect(
+            &transaction,
+            "DELETE FROM store_sessions WHERE kind=?1 AND ended IS NOT NULL \
+             AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.owner_string_id=store_sessions.key)",
+            [SESSION_PINS],
         )?;
         execute_collect(
             &transaction,

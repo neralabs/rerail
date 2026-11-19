@@ -1996,6 +1996,32 @@ fn pins_protect_unpublished_objects() {
     assert!(store.get_source(source).is_err());
 }
 
+/// A pin's owner is a store session (decision 0450 step 3): once its last source or tape pin lapses, what it pinned is
+/// aged under the budget ended workspaces share, the oldest released first, none past the backstop. An owner that
+/// releases its pins ends with nothing aged.
+#[test]
+fn a_lapsed_owners_pins_are_aged_and_a_released_owners_are_not() {
+    let (_path, store) = store("pin-ageing");
+    store.set_session_ageing(super::Ageing { bytes: 1500, backstop_secs: 1000 });
+    let source = |n: u8| store.put_source(&[b'p' + n; 1000], &[]).unwrap();
+    let (old, new, released) = (source(0), source(1), source(2));
+    store.pin_source(old, "old", 100).unwrap();
+    store.pin_source(new, "new", 101).unwrap();
+    let passes = |now| (0..4).for_each(|_| {
+        store.collect(now, 100).unwrap();
+    });
+    let held = |source| store.get_source(source).is_ok();
+    passes(200);
+    assert!(!held(old), "the owner whose pins lapsed first is past the budget");
+    assert!(held(new), "the owner whose pins lapsed last is aged");
+    passes(1_101);
+    assert!(!held(new), "past the backstop");
+    store.pin_source(released, "released", 10_000).unwrap();
+    assert_eq!(store.release_pins("released").unwrap(), 1);
+    passes(1_101);
+    assert!(!held(released));
+}
+
 #[test]
 fn git_tree_entries_use_interned_integer_keys() {
     let (_path, store) = store("tree-entries");
