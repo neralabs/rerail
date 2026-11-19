@@ -78,6 +78,7 @@ native/crates/compiler/src/native_cpu_codegen.rs::PARALLEL_TIMES	run	a measureme
 native/crates/compiler/src/native_cpu_lanes.rs::BIT_TEST	run	a setting: goes with the compile's options
 native/crates/compiler/src/native_cpu_stream.rs::KEEP_IR	run	a setting: goes with the compile's options
 native/crates/compiler/src/native_cpu_stream.rs::ROOM_RETRIES	run	a measurement for the profile
+native/crates/context/src/lib.rs::TESTS	stays	test builds only (`test-hooks`): the tests' shared object, for a test that models no caller
 native/crates/device_metal/src/lib.rs::ONCE	stays	registers the engine's languages once (code registered at load)
 native/crates/kotlin_lean/src/lex.rs::BIN	stays	a byte class of a literal
 native/crates/kotlin_lean/src/lex.rs::DEC	stays	a byte class of a literal

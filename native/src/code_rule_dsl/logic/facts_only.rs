@@ -345,10 +345,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANNED"),
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
-    // The run under way on the thread: its own state (decision 0441), carried to its jobs.
-    ("code_rule_dsl/logic/profile.rs", "RUN"),
-    // This thread's copy of the settings its run read (decision 0442), held with that run.
-    ("code_rule_dsl/logic/profile.rs", "SEEN"),
     // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
     ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),

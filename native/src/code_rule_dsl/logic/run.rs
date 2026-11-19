@@ -99,12 +99,12 @@ pub fn scope(settings: impl FnOnce() -> width::Settings) -> Scope {
 }
 
 /// `scope`, a new run sharing by design what `shared` holds with every other run handed it (decision 0442). A run
-/// handed none (`None`) has one of its own. A nested scope joins the run under way, whose object it is.
+/// handed none (`None`) has `profile::default_shared`'s: its own in a product build, the tests' in a test build. A nested scope joins the run under way, whose object it is.
 pub fn scope_in(shared: Option<&Arc<Shared>>, settings: impl FnOnce() -> width::Settings) -> Scope {
     if let Some(run) = current() {
         return Scope { run, outer: false, was: None };
     }
-    let run = Arc::new(Run::new(settings(), shared.map_or_else(Shared::new, Arc::clone)));
+    let run = Arc::new(Run::new(settings(), shared.map_or_else(super::profile::default_shared, Arc::clone)));
     width::watch(&run);
     let was = super::profile::RUN.with(|r| r.replace(Some(Arc::clone(&run) as Arc<dyn super::profile::RunOwn>)));
     Scope { run, outer: true, was }
@@ -161,7 +161,7 @@ mod tests {
     }
 
     /// Decision 0442: what is shared by design reaches only the runs handed the same object. Two runs handed one see
-    /// one value; a run handed another, or none, sees its own; a nested run sees its outer run's.
+    /// one value; a run handed another sees its own; a nested run sees its outer run's.
     #[test]
     fn a_shared_value_reaches_only_the_runs_handed_its_object() {
         #[derive(Default)]
@@ -180,10 +180,6 @@ mod tests {
         {
             let _c = scope_in(Some(&Shared::new()), cutting(10));
             assert_eq!(*shared::<Model>().0.lock(), 0, "a run handed another object sees none of it");
-        }
-        {
-            let _d = scope(cutting(10));
-            assert_eq!(*shared::<Model>().0.lock(), 0, "a run handed none has its own");
         }
         // On another thread at once, handed another object: apart.
         let other = std::thread::spawn(|| {
