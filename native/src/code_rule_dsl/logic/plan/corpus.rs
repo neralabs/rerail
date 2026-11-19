@@ -122,6 +122,8 @@ pub const PREPARING: &[&str] = &[
     // `run_observed`'s preparation.
     "RERAIL_TEXT_TESTS",
     "RERAIL_DEMAND",
+    "RERAIL_READER_DEMAND",
+    "RERAIL_PUSH_EQUAL_COLUMNS",
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
     "RERAIL_RULE_ORDER",
@@ -134,6 +136,7 @@ pub mod cross_memo;
 pub mod switches;
 pub mod matchers;
 pub mod preparation;
+pub(super) mod product_demand;
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
 pub use matchers::columns as ast_columns;
@@ -4034,6 +4037,11 @@ fn run_observed(
                             p
                         }
                         "prune" | "prune again" => front::prune(p),
+                        "products" => {
+                            let mut p = p;
+                            product_demand::rewrite(&mut p, preparation::reader_demand()).expect("the tree's product demand, as the version's");
+                            p
+                        }
                         "simplify" => {
                             let mut p = p;
                             crate::code_rule_dsl::logic::simplify::simplify(&mut p);

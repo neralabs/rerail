@@ -2,7 +2,7 @@
 //! program's version, run in one pipeline after the program's one image, from the last of the tree's passes
 //! backward as they move.
 
-use crate::code_rule_dsl::logic::program_image::manager::{Run, Cx, Pipeline, ProgramPass, ProgramW};
+use crate::code_rule_dsl::logic::program_image::manager::{self, Run, Cx, Pipeline, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::Version;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
@@ -118,8 +118,14 @@ pub struct Front {
     pub vocabulary: crate::code_rule_dsl::logic::strings::Vocabulary,
 }
 
+/// `RERAIL_READER_DEMAND=off` (a measurement aid): a node product is bounded by its direct readers' demand only,
+/// not by demand projected from their own readers (`product_demand::rewrite`).
+pub fn reader_demand() -> bool {
+    !std::env::var("RERAIL_READER_DEMAND").is_ok_and(|v| v == "off")
+}
+
 /// The stages of `front`, in order, at which a debug build checks the version against the tree's passes.
-pub const STAGES: [&str; 10] = ["inputs", "prune", "simplify", "prune again", "reach", "negated demand", "demand", "undo", "rank", "text"];
+pub const STAGES: [&str; 11] = ["inputs", "prune", "simplify", "prune again", "products", "reach", "negated demand", "demand", "undo", "rank", "text"];
 
 /// `version` pruned to the rules its outputs read (`front::prune`): what the bridged programs' check reads
 /// (`bridge::wanted`), before the run prepares the program.
@@ -155,6 +161,31 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
     at(&mut p, "simplify")?;
     p.program(&mut prune::Prune::default());
     at(&mut p, "prune again")?;
+    // A rule whose head pairs node ranges no join connects (a Cartesian product of the corpus's nodes) is bounded by
+    // the tuples its readers can use, or refused (`product_demand`). Found on the version; the rewrite reads the
+    // tree, decoded only for a program with such a product. A part prepared alone (`parts`) lacks its readers.
+    if !parts::on() {
+        let v = p.current()?.clone();
+        let d = p.get::<crate::code_rule_dsl::logic::plan::fields::FieldsData>()?;
+        if super::product_demand::has_products(&v, &crate::code_rule_dsl::logic::plan::fields::Fields::over(&v, &d)) {
+            let narrow = reader_demand();
+            p.made("node products bound by their readers' demand", 1, &[u8::from(narrow)], |v| {
+                let mut prog = v.program(&Default::default())?;
+                let r = super::product_demand::rewrite(&mut prog, narrow)?;
+                let mut decided = Vec::new();
+                let pass = std::borrow::Cow::Borrowed("node products bound by their readers' demand");
+                if !r.products.is_empty() {
+                    decided.push(manager::Decided { pass: pass.clone(), what: "node Cartesian products".into(), detail: format!("restricted to connected reader demands: {}", r.products.into_iter().collect::<Vec<_>>().join(", ")) });
+                }
+                if !r.readers.is_empty() {
+                    decided.push(manager::Decided { pass, what: "projected reader demand".into(), detail: format!("{} ({} ordered node and {} present location witnesses)", r.readers.into_iter().collect::<Vec<_>>().join(", "), r.order_witnesses, r.present_witnesses) });
+                }
+                let (out, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish())?;
+                Ok((out, decided))
+            });
+        }
+    }
+    at(&mut p, "products")?;
     let mut reach = demand::ReachForm::default();
     p.program(&mut reach);
     at(&mut p, "reach")?;

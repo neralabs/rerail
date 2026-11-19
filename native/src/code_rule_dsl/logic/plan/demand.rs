@@ -221,9 +221,11 @@ fn overlaid(base: &Placed, candidates: &BTreeSet<&str>, splits: &BTreeMap<usize,
         if own {
             rb = rb.atom(demand.as_str(), &own_args);
         }
-        for (i, l) in r.body().enumerate() {
-            if !s.cut.contains(&i) {
-                rb = rb.lit(v, r, l);
+        let body = super::body::Body::of(v, r);
+        let kept: Vec<usize> = (0..body.len()).filter(|i| !s.cut.contains(i)).collect();
+        for &i in &kept {
+            if !body.implied_read(i, &kept) {
+                rb = rb.lit(v, r, body.lit(i));
             }
         }
         if own {
@@ -284,4 +286,33 @@ fn demand_terms<'a>(v: &'a Version, r: RuleRef<'a>, fresh: &'a [String]) -> (Vec
         })
         .collect::<Vec<_>>();
     (args, computed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_demand_prefix_keeps_only_reads_not_already_proved() {
+        let program = crate::code_rule_dsl::logic::front::parse(
+            "
+            .decl relation(k: number, value: number, tag: number)
+            .decl veto(value: number)
+            .decl result(k: number, value: number)
+            .input relation, veto
+            .output result
+            result($k, $value) :- relation($k, _, _), relation($k, $value, _), relation($k, _, 1), !veto($value).
+            ",
+        )
+        .unwrap();
+        let base = Placed::of_program(&program).unwrap();
+        let split = Split { pre: "pre_0".into(), vars: vec!["k".into(), "value".into()], cut: BTreeSet::from([3]) };
+        let decls = [("pre_0".into(), vec![("k".into(), "int".into()), ("value".into(), "int".into())])];
+        let actual = overlaid(&base, &BTreeSet::from(["veto"]), &BTreeMap::from([(0, split)]), &decls, &[]).unwrap();
+        let pre = actual.v.program(&Default::default()).unwrap().rules.into_iter().find(|rule| rule.head.rel == "pre_0").unwrap();
+        assert_eq!(pre.to_string(), "pre_0($k, $value) :- relation($k, $value, _), relation($k, _, 1)");
+
+        let body = super::super::body::Body::of(&base.v, base.v.rule(base.id(0)).unwrap());
+        assert!(!body.implied_read(0, &[0, 3]), "a cut read cannot prove a kept read");
+    }
 }

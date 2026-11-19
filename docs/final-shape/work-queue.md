@@ -3816,3 +3816,13 @@ native join it falls back to the planner's whole-rule order.
 - **Done when**: two fresh stores give the same rules one identity, and a test lowers them on two numberings and
   finds the same keys.
 
+### Q186. The node-product rewrite on the version (0393)
+
+- **Found** (2026-11-18, while porting Release-debugging's product demand): `product_demand::rewrite` and its
+  `upstream`/`nullable` passes edit the front tree. On the version path (0281) it runs as a `Pipeline::made` step
+  that decodes the tree, rewrites it, and builds a new version. Finding the products is already on the version, so
+  a program with no product decodes nothing; SLF001 and any rule with a product decode once.
+- **Next**: write the rewrite as a `ProgramPass` over the version (`ProgramW::rule`), as `push.rs` did for the
+  local joins.
+- **Done when**: a run with a product decodes no tree (`trees_decoded` 0), and a test compares the pass with the
+  tree's rewrite on the module's programs.
