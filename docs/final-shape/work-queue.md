@@ -1533,6 +1533,23 @@ pass.
   only ever ran once.
 - **Done when**: the observer's functions take what they dereference safely, or are `unsafe` with their callers'
   contract written down, and `cargo clippy -p rerail-engine --lib --tests` runs to the end.
+- **Done** (2026-11-19): `Observed::start` and `end` are `unsafe fn`, their contract written (`# Safety`: a live
+  statement of the observed connection, for the call's length), and both callers (the admission's and the
+  profiler's trace callbacks, the only holders of a live statement) state why they keep it. The same run stopped
+  next in `rerail-device-metal` on Q218. `cargo clippy -p rerail-engine --lib --tests` runs to the end (rc 0, 1,527
+  warnings); the 6 `sql_admission` tests pass.
+
+### Q264. (Q218 on final-rerail-shape-rr-align) metal_join's `Words` made a `&mut [u32]` from `&self`, over a buffer the GPU writes too
+
+- **Found** (2026-11-19, by clippy's `mut_from_ref`, deny by default): `Words::slice_mut(&self) -> &mut [u32]` over
+  the shared Metal buffer, called by `set` and `get` and `zeroed`. `Words` are shared through `Rc` (a stratum's
+  flag word, `setfix/device.rs`), so two holders could each hold a `&mut` to the same words: undefined behaviour,
+  in safe code. The device writes the same words between submissions.
+- **Done** (2026-11-19): no reference to the buffer is made. A word is read and written through its address
+  (`Words::word`, bounds-checked), one access at a time, and `zeroed` clears the new buffer with one `write_bytes`.
+  The other slices over Metal buffers in metal_join are local to one function (a buffer filled before its first
+  submission, or read after its command buffers completed), so none outlives an access. The device tests
+  (`rerail-logic` 17, `rerail-device-metal` 11, on the M1 Max) pass.
 
 ### Q158. (a second Q21 until 2026-11-18; Q89 on Typing-support) Red tests that predate 0281 step 4
 
@@ -5156,8 +5173,23 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   - `every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved`: `guest_keys`, `observed_changes`;
   - `every_kept_map_is_state_or_listed`: `lanes.rs OPEN`, `setfix/device.rs OWN_TEXTS`, `keptstats.rs`
     `COUNTING`, `KEPT_DOCS` and `KEPT_ROWS`, and more.
-- **Next**: classify each by its decision (0103, 0104), or move it where the guard says. A table or map that is a
-  cache is to be rules, not a list entry ([[caches-are-ordinary-rules]]).
+- **Tables done** (2026-11-18, 0443 steps 1–3): `frame_segments` and `object_segments` are where rows lie
+  (fact store, as `memo_packs`); `guest_keys` is names (0391); `observed_changes` is the observer's journal
+  (0400). Both table guards pass.
+- **Maps done** (2026-11-18). Each map the guard named is a call's or a run's open state, not a cache, and is
+  listed in `STATE` with why: `device.rs OWN_TEXTS` (a text a call owns, until it returns), `lanes.rs OPEN` (the
+  open wave), `memory.rs AT`, `version.rs DECODED`, `keptstats.rs` `LISTED`, `KEPT_DOCS`, `KEPT_ROWS` and
+  `COUNTING` (a run's counters, read at its end), `rr/lower.rs ALL`, `record.rs KINDS`, `upkeep.rs GONE`. Two
+  entries named maps that were gone (`device.rs WAVE`, `guests.rs KEPT`): cut, the pin at 22. The scan
+  (`maps()`) read a file's inline `#[cfg(test)] mod` as code; it blanks it now, as it skips a test file. All four
+  guards pass.
+- **With it**: `c_lean`'s clippy error (`cpp.rs` 1440, a `while` that ran once) and the rest of `c_lean`, `c_pp`,
+  `simd8` and `tape_format`'s warnings. On the way, `c_directives`' two Metal tests failed: the device refused
+  every program whose start reads ahead (`early`, 0330; `prefix`, 0335), and `metal_read` returned `None` for it,
+  so the corpus test counted a refusal as agreement. Metal runs both now (0330, 0335: a shift in the file's first
+  word; its first bytes compared there), `metal_read` returns the device's error, and the corpus test fails on
+  it: 3,075 files the same, 60 refused, Metal differs on 0. Every ladder step runs on Metal (0 refused, was 14
+  and 15). `parser_tests`' `a_files_start_on_metal_is_the_interpreters`.
 
 ### Q234. (Q213 on Swift-Kotlin-Scala-support) The engine keeps the grammars' proof answers as it keeps images (0414)
 
@@ -5235,3 +5267,25 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Done when**: the test hides an edit from the journal in a way 0400 keeps (an edit before the stream's last
   sync, or a new process's stream), so the window's leg is what decides the check again; un-ignored.
 - **Record**: ignored with this reason.
+
+### Q263. (Q217 on final-rerail-shape-rr-align) Relations that declare their output sorted (decision 0443 K7)
+
+- **Asked** (the user, 2026-11-18): "we may eventually want to allow the relations to say if they output sorted
+  results or not, a lot is faster when sorted".
+- **Now**: the keep checks each put's rows for canonical order in one pass and skips the sort when they are
+  (`packed::prepare`, `Prepared::in_order`). Nothing declares an order, and nothing reads one. (An input's granule
+  is kept as given, by owner: its readers' ranges are positions.)
+- **Done** (2026-11-18): `.decl r(…) sorted` (0443 K7). The engine lays a declared relation's rows out in canonical
+  order when its component is done and knows them sorted on its leading columns, so later strata probe them in
+  place; the keep finds them in order and sorts nothing; the next run reads them in place, the leading column a
+  range (step 6b: every canonical entry records its order, `Packed::leads`, K-R10). K-R11.
+- **Done** (2026-11-18, 0443 K7): merge joins. The engine had a scan in order and a probe with a cursor; a kept
+  relation read in place now records its order (`Source::order`, known sorted over every row) and a probe of its
+  leading column reads forward from the last one's start (`sorted_range_at`, `equal_range_from`). K-R12, K-R13.
+- **Decided** (2026-11-18, 0443 K7, from ep2's traces): no ep2 relation declares `sorted`. k0 builds 4,985 orders
+  in 1.5 s of 191 s, the costly ones on a second column; every sort is under 2% of its CPU; k1–k3 sort nothing.
+  An order nobody declared is not kept past what the run takes as known sorted now, for the same numbers.
+- **Found on the way** (0443 K2): order columns were never relative to column 0, so a kept entry (ordered on
+  every column) kept none relative; the split store's columns took 117.8 MB against 94.7 MB best. An order column
+  after column 0 is now relative and searched within column 0's range (`ColDec::held`): ep2's facts file 140 →
+  120 MB, rows 0 differ.

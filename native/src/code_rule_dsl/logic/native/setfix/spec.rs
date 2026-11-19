@@ -187,6 +187,9 @@ pub enum Line {
     Produced(usize),
     /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
     Stats(usize),
+    /// The relations declared sorted (`.decl … sorted`, decision 0443 K7): laid out in canonical order when done
+    /// (`sorted <rels>`).
+    Sorted(Vec<usize>),
     Seed { head: usize, join: Arc<JoinSpec> },
     Join { head: usize, delta: usize, join: Arc<JoinSpec>, whole: Option<Arc<JoinSpec>> },
     Probe { head: usize, delta: usize, sql: String },
@@ -498,6 +501,7 @@ impl std::fmt::Display for Line {
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Stats(r) => write!(f, "stats {r}"),
+            Line::Sorted(rels) => write!(f, "sorted {}", comma(rels)),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
             Line::Remove { head, join } => write!(f, "remove {head} {}", hex(&join.to_text())),
             Line::AddChecked { head, join } => write!(f, "addchecked {head} {}", hex(&join.to_text())),
@@ -595,6 +599,7 @@ impl ComponentSpec {
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
                 "stats" => Line::Stats(num(at(1)?)?),
+                "sorted" => Line::Sorted(list(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },
                 "remove" => Line::Remove { head: num(at(1)?)?, join: join(at(2)?)? },
                 "addchecked" => Line::AddChecked { head: num(at(1)?)?, join: join(at(2)?)? },

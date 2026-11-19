@@ -24,25 +24,25 @@ fn oracle() {
     let diffs_path = std::env::var("RERAIL_C_DIFFS").ok().filter(|s| !s.is_empty());
     // Beside the differences, `<diffs>.snippet`: a text read on each run, its tape (or refusal and
     // the text there) written to `<diffs>.snippet.out`, for a construct's quick check.
-    if let Some(d) = &diffs_path {
-        if let Ok(text) = std::fs::read_to_string(format!("{d}.snippet")) {
-            // Texts apart by `----` lines, each read on its own.
-            let mut out = String::new();
-            for one in text.split("\n----\n") {
-                out += &format!("==== {}\n", one.lines().next().unwrap_or(""));
-                match tape(one.as_bytes(), "") {
-                    Ok(t) => out += &tape_text(&t),
-                    Err(r) => {
-                        let at = match r {
-                            crate::Refusal::Parse(p) | crate::Refusal::Lex(p) => p as usize,
-                            _ => 0,
-                        };
-                        out += &format!("refused {r:?} at {:?}\n", &one[at.min(one.len())..]);
-                    }
+    if let Some(d) = &diffs_path
+        && let Ok(text) = std::fs::read_to_string(format!("{d}.snippet"))
+    {
+        // Texts apart by `----` lines, each read on its own.
+        let mut out = String::new();
+        for one in text.split("\n----\n") {
+            out += &format!("==== {}\n", one.lines().next().unwrap_or(""));
+            match tape(one.as_bytes(), "") {
+                Ok(t) => out += &tape_text(&t),
+                Err(r) => {
+                    let at = match r {
+                        crate::Refusal::Parse(p) | crate::Refusal::Lex(p) => p as usize,
+                        _ => 0,
+                    };
+                    out += &format!("refused {r:?} at {:?}\n", &one[at.min(one.len())..]);
                 }
             }
-            std::fs::write(format!("{d}.snippet.out"), out).unwrap();
         }
+        std::fs::write(format!("{d}.snippet.out"), out).unwrap();
     }
     let mut diffs = diffs_path.map(|p| std::fs::File::create(p).unwrap());
     // With `RERAIL_C_ONLY`, the oracle files whose names are in it (comma-separated) alone.

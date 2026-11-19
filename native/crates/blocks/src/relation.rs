@@ -155,69 +155,6 @@ impl Relation {
         Some(rel)
     }
 
-    /// A copy of this full relation in open `block`: its descriptor made again, then its rows' and kills' chunks,
-    /// dead bits, indexes and statistics copied whole by `memcpy` (no row decoded or re-sorted, no index rebuilt),
-    /// each reference set to its copy. A reader of the copy reads what a reader of this reads (0401 F2, F6). It is
-    /// frozen or not (a run's part, its rows in any order, with the indexes the run added); nothing writes it
-    /// meanwhile, and an open relation's set test (`pending`) is not copied. `None` when `block` has no room.
-    pub fn try_copy_into<'b>(&self, block: &'b Block) -> Option<&'b Relation> {
-        assert!(!self.is_delta(), "only a full relation is copied");
-        let spec = Spec {
-            widths: (0..self.arity as usize).map(|c| self.rows.col(c).width).collect(),
-            order: self.okey[..self.nokey as usize].to_vec(),
-            indexes: Vec::new(),
-            min_log: self.rows.min_log,
-        };
-        let rel = Relation::try_create(block, &spec, None)?;
-        if !rel.rows.try_copy_from(block, &self.rows) || !rel.killed.try_copy_from(block, &self.killed) {
-            return None;
-        }
-        /// `src`'s items in `block`, `dst` set to them.
-        fn copy_span<T>(block: &Block, dst: &Span<T>, src: &Span<T>) -> Option<()> {
-            if src.is_empty() {
-                return Some(());
-            }
-            let p: *mut T = block.try_alloc_t(src.len())?;
-            // SAFETY: `p` holds `src.len()` items, just allocated in open `block`, where `dst` lies too; the items are
-            // plain data (`Pod`), copied as bytes.
-            unsafe {
-                std::ptr::copy_nonoverlapping(src.as_ptr(), p, src.len());
-                Span::set(dst, p, src.len());
-            }
-            Some(())
-        }
-        copy_span(block, &rel.dead, &self.dead)?;
-        copy_span(block, &rel.stats, &self.stats)?;
-        if !self.indexes.is_empty() {
-            let n = self.indexes.len();
-            let dir: *mut Index = block.try_alloc_t(n)?;
-            // SAFETY: `dir` holds `n` zeroed entries in open `block`, as `rel` is; each index's spans are copied
-            // after its fixed fields.
-            unsafe {
-                Span::set(&rel.indexes, dir, n);
-                for (i, ix) in self.indexes.as_slice().iter().enumerate() {
-                    let to = &*dir.add(i);
-                    let w = dir.add(i);
-                    (*w).ncols = std::ptr::read_volatile(&raw const ix.ncols);
-                    (*w).ordered = ix.ordered;
-                    (*w).key = ix.key;
-                    (*w).mask = ix.mask;
-                    copy_span(block, &to.offs, &ix.offs)?;
-                    copy_span(block, &to.rows, &ix.rows)?;
-                }
-            }
-        }
-        // SAFETY: `rel` is this block's and not yet given to anyone: its counters are ours to set.
-        unsafe {
-            let me = std::ptr::from_ref(rel).cast_mut();
-            (*me).base_rows = 0;
-        }
-        rel.live.store(self.live.load(Acquire), Relaxed);
-        rel.nindex.store(self.nindex.load(Acquire), Relaxed);
-        rel.flags.store(self.flags.load(Acquire), Release);
-        Some(rel)
-    }
-
     /// Gives its chunks back to the block's free list (decision 0342), when the block keeps one. Returns the bytes
     /// given to the OS with them (`Block::free_chunk`).
     ///

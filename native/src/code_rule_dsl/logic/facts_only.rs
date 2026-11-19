@@ -47,8 +47,8 @@ const FACT_STORE: &[&str] = &[
     "tape",
     "node_type",
     "frames",
-    // A space's kept facts as blocks (decision 0401): which base and delta files it has.
-    "facts_blocks",
+    // A space's kept facts (decisions 0401, 0443): which files its chain has.
+    "facts_chain",
     "frame_spaces",
     // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
     "frame_confirmed",
@@ -59,6 +59,13 @@ const FACT_STORE: &[&str] = &[
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
     "memo_entries",
     "memo_packs",
+    // The segments frames, sources and tapes lie in (decision 0295 step 5): where the rows are, as `memo_packs`.
+    "frame_segments",
+    "object_segments",
+    // Each guest's key by its identity (decision 0391): a name, as `strings`.
+    "guest_keys",
+    // The observer's journal of what it saw change (decision 0400): observations, not a result kept for later.
+    "observed_changes",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
@@ -222,12 +229,17 @@ const STATE: &[(&str, &str)] = &[
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
     ("code_rule_dsl/logic/lanes.rs", "SQL"),
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
-    // The device's wave on this thread (decision 0113 §3): its open command buffer, the waves flushed, the strata
-    // waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a result kept.
-    ("code_rule_dsl/logic/native/setfix/device.rs", "WAVE"),
+    // The device's waves on this thread (decision 0113 §3; the open one is the job's, `lanes::OPEN`): the waves
+    // flushed, the strata waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a
+    // result kept.
     ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
+    // The component being compiled's own columns of arena texts (decision 0307), set around its plans' compile
+    // (`own_texts`): a call's context, as `BINDER` and `ARENA`.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
+    // The job's open device submission its strata share (`lanes::open`): an open thing, as `WAVE`.
+    ("code_rule_dsl/logic/lanes.rs", "OPEN"),
     // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
     ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
     // Each live connection's path and symbols, by its scope; dropped when it closes (`setfix::forget_scope`).
@@ -253,6 +265,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "COMPONENTS"),
     ("code_rule_dsl/logic/native/setfix.rs", "DERIVATIONS"),
     ("code_rule_dsl/logic/native/setfix.rs", "DERIVED"),
+    // The versions a maintain mode's run hands the engine on its connection (`give_versions`, 0364), until it takes
+    // them back (`take_versions`) or the connection closes (`forget_engine`).
+    ("code_rule_dsl/logic/native/setfix.rs", "GIVEN"),
     ("code_rule_dsl/logic/native/setfix.rs", "INPUTS"),
     ("code_rule_dsl/logic/native/setfix.rs", "LOADS"),
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
@@ -320,6 +335,18 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
+    // Debugging aids, each under its switch, and the switches read once: `RERAIL_HEAP_AT`'s text; the trees a thread
+    // decoded from versions (a count and the last's place); `RERAIL_KEPT_DOCS`'s exports, the rows it counted in and
+    // out by document and by file, and the file being counted. Records of a run, no result read back.
+    ("code_rule_dsl/logic/profile/memory.rs", "AT"),
+    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "LISTED"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_DOCS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_ROWS"),
+    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "COUNTING"),
+    // The world's rows (`rr::lower::World`), made once the languages are installed: a registry of what is
+    // installed, as `FUNCTORS`.
+    ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
     ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
@@ -357,6 +384,11 @@ const STATE: &[(&str, &str)] = &[
     // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
     // once before a run's first wave, not a cache of anything else.
     ("content_store/frames.rs", "SNAPSHOTS"),
+    // Each record kind's apply function, registered by its kind: a registry.
+    ("content_store/record.rs", "KINDS"),
+    // The stores forgotten (`ContentStore::forget`), by path and file, so the frames job leaves them: state of the
+    // stores' lifetimes, no result.
+    ("content_store/upkeep.rs", "GONE"),
     // The device's automata and test tables for regex and text stages, held while the thread runs (a command buffer
     // may read them).
     ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
@@ -401,7 +433,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "COMBINED", "2"),
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
     ("code_rule_dsl/logic/plan/choices.rs", "KEPT", "2"),
-    ("code_rule_dsl/logic/plan/corpus/guests.rs", "KEPT", "3"),
     // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
     // process's): what it keeps between runs is still a cache to move.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND", "3"),
@@ -421,7 +452,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 24;
+const NOT_YET_MAPS_PIN: usize = 22;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
@@ -491,7 +522,26 @@ fn maps() -> BTreeSet<(String, String)> {
     let mut out = BTreeSet::new();
     for f in fs {
         let text = std::fs::read_to_string(&f).unwrap_or_default();
-        let lines: Vec<&str> = text.lines().collect();
+        let mut lines: Vec<&str> = text.lines().collect();
+        // A file's inline tests (`#[cfg(test)] mod … {`, to its closing brace) are tests, as a test file is: blanked.
+        let mut i = 0;
+        while i + 1 < lines.len() {
+            if lines[i].trim() == "#[cfg(test)]" && lines[i + 1].trim_start().starts_with("mod ") && lines[i + 1].trim_end().ends_with('{') {
+                let mut depth = 0i64;
+                let mut j = i + 1;
+                while j < lines.len() {
+                    depth += lines[j].matches('{').count() as i64 - lines[j].matches('}').count() as i64;
+                    lines[j] = "";
+                    j += 1;
+                    if depth <= 0 {
+                        break;
+                    }
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
         for (i, l) in lines.iter().enumerate() {
             let Some(c) = head.captures(l) else { continue };
             // The declaration up to its `=`, over a few lines.
@@ -532,4 +582,30 @@ fn every_kept_map_is_state_or_listed() {
     assert!(gone.is_empty(), "listed maps no longer there (cut them from the list, and lower the pin if moved):\n{}", gone.join("\n"));
     assert!(NOT_YET_MAPS.len() <= NOT_YET_MAPS_PIN, "a cache map added to the list (it may only shrink): {} > {NOT_YET_MAPS_PIN}", NOT_YET_MAPS.len());
     assert_eq!(NOT_YET_MAPS.len(), NOT_YET_MAPS_PIN, "a cache map moved: lower NOT_YET_MAPS_PIN to {}", NOT_YET_MAPS.len());
+}
+
+/// Decision 0443: every place that writes a frame puts its kept entry too, until the frames are retired (step 6). A
+/// frame written alone leaves the kept chain behind it (a later empty frame of `p0_absent`, its old entry kept).
+/// Each call of the engine's (the store's own delegations aside) that queues frames has a `queue_kept` within 40 lines.
+#[test]
+fn every_frame_write_puts_its_kept_entry() {
+    const WRITES: [&str; 6] = [".queue_frames(", ".queue_encoded(", ".queue_frames_retagged(", ".queue_encoded_retagged(", ".queue_placed_retagged(", ".queue_encoded_keyed_by_symbols("];
+    let mut all = Vec::new();
+    files(&src(), &mut all);
+    let mut alone = Vec::new();
+    for p in all.iter().filter(|p| !rel(p).starts_with("content_store")) {
+        let text = std::fs::read_to_string(p).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, l) in lines.iter().enumerate() {
+            let code = l.trim_start();
+            if code.starts_with("//") || !WRITES.iter().any(|w| code.contains(w)) {
+                continue;
+            }
+            let near = &lines[i.saturating_sub(40)..(i + 40).min(lines.len())];
+            if !near.iter().any(|n| n.contains(".queue_kept(")) {
+                alone.push(format!("{}:{}", rel(p), i + 1));
+            }
+        }
+    }
+    assert!(alone.is_empty(), "frames written with no kept entry (decision 0443): {alone:?}");
 }

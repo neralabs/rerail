@@ -9261,8 +9261,7 @@ fn run_observed(
                         }
                         let Some(held) = crate::code_rule_dsl::logic::native::component::held(&db, rel) else { return Ok(false) };
                         let Some(placer) = &placer else { return Ok(false) };
-                        let was = was_frames.as_ref().and_then(|w| w.derived_digest(rel));
-                        let Some(h) = retain::Handed::of(store, &cross_placed, &cross.domains, rel, &held, was, placer) else { return Ok(false) };
+                        let Some(h) = retain::Handed::of(store, &cross_placed, &cross.domains, rel, &held, was_frames.as_ref(), placer) else { return Ok(false) };
                         handed.borrow_mut().insert(rel.to_owned(), h);
                         Ok(true)
                     };
@@ -9592,6 +9591,10 @@ fn run_observed(
                         if crate::code_rule_dsl::logic::native::component::probed::on() {
                             eprintln!("{}", next.index_report(&crate::code_rule_dsl::logic::native::component::probed::take()));
                         }
+                    }
+                    // `RERAIL_SPIKE_PRESORTED`: the run's sorts, and the rows of them already in order (decision 0187).
+                    if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() {
+                        eprintln!("presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report());
                     }
                     // A session's run reports its strata here; a new process's, as `cross_kept` (above, or here when kept
                     // in the frames).
