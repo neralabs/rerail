@@ -2803,6 +2803,16 @@ submitted" now hold device memory at once.
     9.4 -> 25.3 s at the same step rows (325.1 M in, 413.2 M out in both), every join internal 1.3-1.5x in the
     samples: a slower rate, not more work. So (ii) as written fixes about 5% of a chunk's cost; it is not done
     yet, as the rest's cause (the joins' rate, and the spread at a fixed chunking) is not known.
+  - (3, the spread) In ab72 a run's instructions fall as the host's load rises, whatever the chunking: 720.3 G at
+    load 7.5, 667.9 at 9.4, 660.6 at 14.3, 604.8 at 16.3, 601.5 at 20.9. So the instructions a run retires depend on
+    how much of the machine it gets, and a 7-vs-16 pair on a shared host measures load as much as chunks. Ruled out
+    by ab71's samples and ab68's profiles: rayon's idle loop (1% of running samples, its yields 0.9%); our polling
+    waits (`recv_timeout(100 µs)`, `sleep(50 µs)`, `help_until`'s naps: under 0.1%); work run twice (`Claims::claim`
+    is exclusive, `take_late` takes only unclaimed launches); the lanes (0.2 s CPU of launches in all); join morsels
+    (cut by `threads::max()`, not by steals). Not found yet: what in a run depends on timing (chunks at once by
+    headroom, plans replanned when slow, the vocabulary's racing batches, `declines` by job walls). Next: two
+    profiled runs at one forced chunking, a quiet host and a loaded one, and a diff of their decisions and spans'
+    calls; then an A/B is meaningful only on an idle host or with that cause removed.
   - (accounting) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
