@@ -235,9 +235,9 @@ mask solid      = (code | opens) & ~ws
 # inserts no semicolon before these (`scan_automatic_semicolon`). `by` and `constructor` go on
 # everywhere here: they are keywords of this grammar, so a line they start where the scanner
 # would end the one before is refused.
-# A class's header, from `class` to its `(`, `{` or `=`: the scanner's `constructor` context, where
-# a line starting with `constructor` goes on the one before (a primary constructor). In a class
-# body it starts a member: a secondary constructor.
+# A class's header, from `class` to its `(`, `{` or `=`: where a block comment before a primary
+# constructor's line goes on (`goes_now`, `ann_ctor`). The constructor's line itself is the class
+# rule's (`head_ctor`).
 mask class_kw   = kw_start & text("class") & ~next(w, 5) & ~prev(text("::"), 2)
 # A class's header, and the run back from `constructor`, stop at a declaration's keyword: in `class A` then `internal
 # class B private constructor(…)`, A's header ends at its line.
@@ -303,15 +303,12 @@ escape "a block comment before `else ->`" when arrow_asked
 # The word after a swallowed comment, where the semicolon drops it.
 mask swallow_at = awe_word & after_asked
 # The first token of each line, and the bytes of a line from an `@` or a visibility modifier
-# that starts it: `constructor` there may be a primary constructor's (the scanner's
-# `check_modifier_then_constructor`), not read yet.
+# that starts it (an accessor's, `acc_word`).
 mask line_first = solid & prev(fill(lf & code, solid))
 escape "a `;` that starts a line" when code & semicolon & line_first
 # No solid byte after it, at the file's last byte.
 escape "a `;` that ends the file" when last_byte & fill(code & semicolon, solid)
 mask line_mod   = fill(line_first & (at_sign | text("private") | text("protected") | text("internal") | text("public")), lf | head_stop)
-mask ctor_reach = ctor_w & class_head & prev(fill(line_first & (at_sign | vis_w) & class_head, ctor_stop))
-escape "`constructor` after modifiers at a line's start" when ctor_w & line_mod & class_head & ~ctor_reach
 # `@Test // c` before a declaration: the annotation takes the line's semicolon, so the comment
 # would be the annotation's, where the lean parser keeps it the declaration's: not read yet.
 mask at_line    = fill(line_first & at_sign, lf)
@@ -438,8 +435,15 @@ skip ws
 # `}`, `semi_close`. In a class's header (the scanner's `constructor` context), `constructor` goes
 # on too, and so does an annotation or a visibility modifier before it. The comments before it
 # are the statement's (`settles`).
-mark semi       = lf & code & ~class_head unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends, drops swallow_at
-mark semi       = lf & code & class_head unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, unless before "constructor", unless before "@" | "public" | "private" | "internal" | "protected" (simple_identifier | "." | "@")* "constructor", end, settles, ends, drops swallow_at
+# After a class's name (or its type parameters), the scanner's `constructor` context: a line
+# that starts with `constructor`, or with annotations or a visibility modifier before it, goes
+# on, a primary constructor (the lean parser's one `asi` with `AsiCtx::ctor`). The class's rule
+# takes this mark there, before `semi` (declared first). After it, `semi` ends no level at that
+# token: the level has made the line break's one decision, as the lean parser's. A modifier has
+# `constructor` on its line (`without semi`), as the lean lexer reads them; annotations may end
+# theirs.
+mark head_ctor  = lf & code, before "constructor", before "public" | "private" | "internal" | "protected" "constructor" without semi, before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor" | "public" | "private" | "internal" | "protected"))* nest ("(" to ")") "constructor", before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor"))* nest ("(" to ")") ending ("public" | "private" | "internal" | "protected") "constructor" without semi
+mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends, drops swallow_at
 mark semi_close = close_at, before "}", settles, ends
 # A receiver's `.`, where the name's loop of `.`s must stop (with the receiver's first token,
 # where the optional part opens), and a delegation's `{`. Before `generic`, which holds at a
@@ -566,8 +570,8 @@ tree kotlin {
   choice function_rest  = 'fun' [type_parameters] [receiver] name function_value_parameters [':' type] [function_body]
   choice property_rest  = binding_pattern_kind [receiver] (variable_declaration | multi_variable_declaration) ['=' expression | property_delegate | getter_inline]
   node property_delegate = 'by' expression
-  choice class_rest     = ('class' | 'interface') type_name [type_parameters] [primary_constructor] [':' delegation_specifier (',' delegation_specifier)*] [class_body]
-                        | enum_class 'enum' 'class' type_name [type_parameters] [primary_constructor] [':' delegation_specifier (',' delegation_specifier)*] [enum_class_body]
+  choice class_rest     = ('class' | 'interface') type_name [type_parameters] [head_ctor] [primary_constructor] [':' delegation_specifier (',' delegation_specifier)*] [class_body]
+                        | enum_class 'enum' 'class' type_name [type_parameters] [head_ctor] [primary_constructor] [':' delegation_specifier (',' delegation_specifier)*] [enum_class_body]
   # An enum's entries, `,` between them, a line break where one may come; then after a `;`, the
   # members.
   node enum_class_body  = '{' [enum_entry (',' [semi] enum_entry)*] (trail_brace | [semi_close] [';' [semi] [class_member ((semi | ';') class_member)* [semi_close]]] '}')
@@ -825,6 +829,6 @@ tree kotlin {
   implied when_subject '(' ')' 'val' '='
   implied when_entry ',' 'else'
   implied callable_reference '::' 'class'
-  hidden semi semi_close named cref trail lam_params lam_bare blk use_site file_at real ann_expr
+  hidden semi semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr
   extra line_comment multiline_comment
 }

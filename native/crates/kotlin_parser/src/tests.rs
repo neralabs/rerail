@@ -460,6 +460,10 @@ fn constructor_lines_are_the_lean_parsers() {
         "class A\n@Inject constructor(x: Int)\n",
         "class A\n\ninternal class B private constructor(x: Int)\n",
         "class A\n@Inject\nclass B @Inject constructor(x: Int)\n",
+        "class A\nprivate fun f() {}\n",
+        "class A\n@Named(\"a(\") @B.C(1, f(2)) constructor(x: Int)\n",
+        "class A<T>\nconstructor(x: T)\n",
+        "enum class E\nconstructor(val v: Int) { X(1) }\n",
     ]);
 }
 
@@ -543,6 +547,13 @@ fn what_step_30_does_not_read_is_refused() {
         "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
         "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
     ]);
+}
+
+/// A visibility modifier and `constructor` on two lines after a class's name: the lean lexer
+/// reads them on one line only (`modifier_then_constructor`), and refuses (a token's `without`).
+#[test]
+fn a_constructor_off_its_modifiers_line_is_refused() {
+    refused(&["class A\nprivate\nconstructor(x: Int)\n", "class A\n@Inject private\nconstructor(x: Int)\n"]);
 }
 
 #[test]
@@ -1276,5 +1287,30 @@ fn reference_probe() {
     match c.parser.image(text.as_bytes()) {
         Ok(i) => eprintln!("compiled: {}", image_text(&i).expect("an image")),
         Err(e) => eprintln!("compiled refuses: {e:?}\n{}", c.explain(&text)),
+    }
+}
+
+/// Each record mark's lowering on the CPU: its output, word, and the flags that decide whether
+/// tier 2 reads it from the bytes itself (`native_cpu_block::lazy_marks`).
+#[test]
+#[ignore = "a probe: prints each mark's flags"]
+fn lazy_probe() {
+    let c = compiled().expect("compiles");
+    let b = &c.program.block_programs[0];
+    let r = b.records.as_ref().expect("records");
+    let native = rerail_compiler::block_native::BlockNative::lower(b);
+    let bw = rerail_compiler::native_cpu_bytes::Bytewise::of(&native);
+    let lazy = rerail_compiler::native_cpu_block::lazy_marks(r, &|o| bw.can(o));
+    let coded = rerail_compiler::native_cpu_block::lazy_coded(r);
+    for (k, &(o, w)) in r.marks.iter().enumerate() {
+        let bit = |x: u32| x >> k & 1;
+        eprintln!(
+            "mark {k}: output {o} word {w} gap {} tested_only {} alone {} unplaced {} extra {} coded {} unless {} bytewise {} lazy {}",
+            bit(r.gaps), bit(r.tested_only), bit(r.alone), bit(r.unplaced), r.extra == Some(k as u8), bit(coded),
+            r.unless.iter().any(|&(m, _)| m as usize == k), o != rerail_compiler::records::WORD_ALONE && bw.can(o), lazy.iter().any(|&(m, _)| m as usize == k)
+        );
+    }
+    for ch in &r.checks {
+        eprintln!("check: {ch:?}");
     }
 }

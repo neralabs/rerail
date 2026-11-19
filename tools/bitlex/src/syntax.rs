@@ -30,6 +30,11 @@ pub enum TokenElem {
     Not(Vec<TokenElem>),
     End,
     Many(Vec<TokenElem>, Vec<Nest>, Vec<TokenElem>),
+    /// `E without M`, among an element's choices: the element holds only at a token without
+    /// mark `M`'s bit (a mark of a mask, its bits lifted to the next grammar token, its `unless
+    /// after` applied: the bit a token's record holds), as the lean parser asks
+    /// `!peek_at(j).nl`.
+    Without(String),
 }
 
 /// A depth a run counts (`(C)* nest (O to C) …`, Q222), as the lean parsers' forward scans count
@@ -1138,7 +1143,15 @@ impl P {
     fn token_seq(&mut self) -> R<Vec<Vec<TokenElem>>> {
         let mut seq = vec![];
         while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_) | Tok::P("~") | Tok::P("("))) {
-            seq.push(self.token_choices()?);
+            let mut c = self.token_choices()?;
+            // `without M`: of an element of kinds and words.
+            if self.eat_kw("without") {
+                if !c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_))) {
+                    return self.err("`without` after an element of kinds and words");
+                }
+                c.push(TokenElem::Without(self.ident()?));
+            }
+            seq.push(c);
         }
         let run = |c: &[TokenElem]| matches!(c, [TokenElem::Many(..)]);
         let runs: Vec<usize> = (0..seq.len()).filter(|&i| run(&seq[i])).collect();

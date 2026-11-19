@@ -1230,13 +1230,34 @@ impl<'a> Ev<'a> {
         let one = |i: usize, c: &TokenElem| match c {
             TokenElem::Kind(k) => &toks[i].kind == k || &lexed[i] == k,
             TokenElem::Word(w) => toks[i].kind.as_bytes() == w.as_slice() || toks[i].soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
-            TokenElem::Not(_) | TokenElem::End | TokenElem::Many(..) => false,
+            TokenElem::Not(_) | TokenElem::End | TokenElem::Many(..) | TokenElem::Without(_) => false,
         };
+        // Each mark's bit at each grammar token, as its record holds it (`TokenElem::Without`):
+        // its mask's bits (and its tests') lifted to the next grammar token, its `unless after`
+        // applied; no `before`.
+        let mut coded: Vec<Vec<bool>> = vec![vec![false; self.marks.len()]; toks.len()];
+        for (k, (_, m, _)) in self.marks.iter().enumerate() {
+            let unless: Vec<&Vec<u8>> = self.unless.get(&k).map_or(vec![], |ws| ws.iter().collect());
+            for i in m.ones_iter().chain(checked.iter().filter(|c| c.0 == k).map(|c| c.1)) {
+                let g = grammar.partition_point(|&t| toks[t].start < i);
+                if g > 0 && unless.iter().any(|w| toks[grammar[g - 1]].kind.as_bytes() == w.as_slice() || toks[grammar[g - 1]].soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice())) {
+                    continue;
+                }
+                if let Some(&t) = grammar.get(g) {
+                    coded[t][k] = true;
+                }
+            }
+        }
+        let names: Vec<&String> = self.marks.iter().map(|(kind, _, _)| kind).collect();
+        let without = |t: usize, e: &[TokenElem]| e.iter().all(|c| match c {
+            TokenElem::Without(m) => !names.iter().position(|n| *n == m).is_some_and(|k| coded[t][k]),
+            _ => true,
+        });
         let is = |t: Option<usize>, e: &[TokenElem]| match (e, t) {
             ([TokenElem::Not(inner)], Some(t)) => !inner.iter().any(|c| one(t, c)),
             ([TokenElem::Not(_)], None) => false,
             (_, None) => e.contains(&TokenElem::End),
-            (_, Some(t)) => e.iter().any(|c| one(t, c)),
+            (_, Some(t)) => e.iter().any(|c| one(t, c)) && without(t, e),
         };
         // A run of elements from the grammar token `g` on: each at the next grammar token, a run
         // (`Many`) any number of its choices and the elements after it from any of them on.

@@ -157,6 +157,88 @@ tree t {
     assert_eq!(check_documents("nest", &c, b"ab<>(), ", &[], &fixed, &|_, _, _, _| None), None);
 }
 
+/// A level that took a mark at a token does not end there at a hidden `ends` mark (0430 step
+/// 1b, Q228): the line break's one decision is made, as the lean parser asks `asi` once. `goes`,
+/// declared before `semi`, says a line that starts with `c` goes on a declaration; after it is
+/// taken, `semi` (live at the same token) ends no level, and `c()` is the declaration's. Elsewhere
+/// `semi` ends the declaration. Bitlex's reference does not implement `ends` (Q229): the
+/// interpreter's nodes are the expected ones, and every executor's equal them.
+#[test]
+fn a_taken_mark_is_the_line_breaks_decision() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+class punct     = '(' ')'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name & ~punct
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start punct
+keywords simple_identifier { "k" } soft { "c" }
+keywords punct { "(" ")" } required
+skip ws
+mark goes       = lf, before "c" "("
+mark semi       = lf, end, ends
+tree t {
+  node source_file whole = (statement semi)*
+  choice statement nested = decl | simple_identifier
+  node decl             = 'k' simple_identifier [goes] [ctor]
+  node ctor             = 'c' '(' ')'
+  hidden goes semi
+}
+"#;
+    let c = compile_step("decided", source);
+    let decl = c.ids.of("decl");
+    let ctor = c.ids.of("ctor");
+    let count = |d: &str, k: u16| -> usize {
+        let run = c.program.block_programs[0].run_files(&[d.as_bytes()]).remove(0);
+        crate::stream::run(&c.program, d.as_bytes(), &run).map(|n| as_ids(n).iter().filter(|x| x.0 == k).count()).unwrap_or(usize::MAX)
+    };
+    let fixed = ["k a\nc()\n", "k a\nb\n", "k a c()\nb\n", "k a\nc\nb\n", "b\nk a\nc()"];
+    assert_eq!(fixed.iter().map(|d| (count(d, decl), count(d, ctor))).collect::<Vec<_>>(), [(1, 1), (1, 0), (1, 1), (1, 0), (1, 1)]);
+    // Cranelift's nodes and tape: the interpreter's.
+    for d in fixed {
+        let run = c.program.block_programs[0].run_files(&[d.as_bytes()]).remove(0);
+        let nodes = crate::stream::run(&c.program, d.as_bytes(), &run).expect("the interpreter parses");
+        let want = crate::stream::image(&nodes, &c.program.readings.extras, c.parser.tier2.widths_tag().1, d.as_bytes());
+        assert_eq!(c.parser.parse(d.as_bytes()).ok().map(as_ids), Some(as_ids(nodes)), "{d:?}");
+        assert_eq!(c.parser.image(d.as_bytes()).ok(), Some(want), "{d:?}");
+    }
+}
+
+/// `without M` (0430): an element holds only at a token whose record has no bit of mark `M`, as
+/// the lean parser asks `!peek_at(j).nl`. A name and a `(` with a line break between are no
+/// call; with blanks, one. Bitlex's reference and every executor.
+#[test]
+fn a_token_without_a_mark() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+class punct     = '(' ')'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name & ~punct
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start punct
+keywords punct { "(" ")" } required
+skip ws
+mark brk        = lf
+mark call       = tokens simple_identifier "(" without brk
+tree t {
+  node source_file whole = (item)*
+  choice item           = called | simple_identifier | '(' | ')'
+  node called           = call simple_identifier
+  hidden brk
+}
+"#;
+    let c = compile_step("without", source);
+    let fixed = ["f(x)", "f (x)", "f\n(x)", "a b\n(c) d(e)", "a\n\n(", "(a)(b\n)"];
+    let called = c.ids.of("called");
+    let calls: Vec<usize> = fixed.iter().map(|d| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == called).count()).collect();
+    assert_eq!(calls, [1, 1, 0, 1, 0, 0]);
+    assert_eq!(check_documents("without", &c, b"ab() \n", &[], &fixed, &|_, _, _, _| None), None);
+}
+
 /// A run's `ending (C)` (Q225): the rest is tried only where the run's last token, or the token
 /// before it where it took none, is one of `C`, in Bitlex's reference and every executor.
 #[test]

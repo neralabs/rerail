@@ -1634,6 +1634,14 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
     // The element's test on a code: a kind of its set, or a word of its; a `not` element, none.
     // Where it fails, to `fail`.
     let test = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem, fail: Block| {
+        // `without M`: a code with one of the marks' bits fails (`TokenElem::without`).
+        if el.without != 0 {
+            let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
+            let x = f.ins().band_imm(x, i64::from(el.without));
+            let on = f.create_block();
+            f.ins().brif(x, fail, &[], on, &[]);
+            f.switch_to_block(on);
+        }
         let (ok, miss) = (f.create_block(), f.create_block());
         let ok_to = if el.not { miss } else { ok };
         if el.kinds != 0 {

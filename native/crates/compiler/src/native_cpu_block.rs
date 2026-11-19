@@ -6228,10 +6228,10 @@ const REREAD_FLAG: i64 = i64::MIN;
 /// chooses by the target, the GPU's tier 1 making every mark at once.
 pub fn lazy_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> Vec<(u8, u16)> {
     // A mark with tests and an `unless after` stays the loop's: the word before holds its
-    // tests' hits too.
+    // tests' hits too. So does one a token pattern's `without` reads (`Records::read`).
     let coded = lazy_coded(r);
     let held = |k: u8| coded >> k & 1 == 1 && r.unless.iter().any(|&(m, _)| m == k);
-    loop_marks(r, bytewise).0.into_iter().filter(|&(k, _)| r.tested_only >> k & 1 == 0 && r.alone >> k & 1 == 0 && r.unplaced >> k & 1 == 0 && r.extra != Some(k) && !held(k)).collect()
+    loop_marks(r, bytewise).0.into_iter().filter(|&(k, _)| r.tested_only >> k & 1 == 0 && r.alone >> k & 1 == 0 && r.read >> k & 1 == 0 && r.unplaced >> k & 1 == 0 && r.extra != Some(k) && !held(k)).collect()
 }
 
 /// The code bits of `block`'s gap marks tier 2 on the CPU tests itself (`lazy_marks`): the

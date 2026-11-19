@@ -143,8 +143,8 @@ enum Pre {
 /// names, its words (strings), whether it is a `~`, whether the file's end takes it, and
 /// whether it is a run of its choices (`program::TokenElem`), a run's depths' sides: each its
 /// counter, whether it opens, its kinds' names and its words (`program::Nest`), and a run's
-/// `ending`'s kinds and words.
-pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>, Option<(Vec<String>, Vec<u16>)>);
+/// `ending`'s kinds and words, and the marks it holds without (`without M`: their names).
+pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>, Option<(Vec<String>, Vec<u16>)>, Vec<String>);
 
 /// One side of a run's depth, as `TokenElemRow` holds it: counter, opens, kinds, words.
 pub type NestRow = (u8, bool, Vec<String>, Vec<u16>);
@@ -896,6 +896,13 @@ impl Emit<'_> {
         // hidden that it does not take, and each its level refuses, a test that refuses. A mark
         // that ends levels (`Mark::ends`), or one not hidden, where this nested level may end
         // and takes none: a test that ends it.
+        // Entered only by taking a mark, at the token it was taken at: the level has made the
+        // gap's decision there, so a hidden mark that ends levels does not end it, as the lean
+        // parser asks `asi` once at a line break.
+        let mark_kinds: Vec<u16> = self.marks.iter().map(|m| m.kind).collect();
+        let into: Vec<&ArmRow> = self.arms.iter().filter(|a| usize::from(a.to) == s).collect();
+        let returned_to = self.arms.iter().any(|a| a.push.iter().any(|&p| usize::from(p) == s));
+        let after_mark_only = !into.is_empty() && !returned_to && into.iter().all(|a| !a.call && mark_kinds.contains(&a.token));
         let tests: Vec<(usize, AtMark)> = (0..self.marks.len())
             .filter_map(|k| {
                 let m = &self.marks[k];
@@ -909,7 +916,7 @@ impl Emit<'_> {
                 match arm {
                     Some(a) => Some((k, AtMark::Arm(a))),
                     None if st.refuses.contains(&m.kind) => Some((k, AtMark::Refuse)),
-                    None if (m.ends || !m.hidden) && nested && st.end.is_some() => Some((k, AtMark::End)),
+                    None if (m.ends && !after_mark_only || !m.hidden) && nested && st.end.is_some() => Some((k, AtMark::End)),
                     None if !m.hidden => Some((k, AtMark::Refuse)),
                     None => None,
                 }
@@ -1166,7 +1173,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
             let mut elems = Vec::new();
             let at = std::iter::once((-1i8, before)).filter(|(_, b)| !b.is_empty()).chain(seq.iter().enumerate().map(|(i, x)| (i as i8, x)));
             for (offset, choices) in at {
-                let (mut kinds, mut words, mut end) = (Vec::new(), Vec::new(), false);
+                let (mut kinds, mut words, mut end, mut without) = (Vec::new(), Vec::new(), false, Vec::new());
                 let none_nest = Vec::new();
                 let none_ending = Vec::new();
                 let (not, run, choices, nests, ending) = match choices.as_slice() {
@@ -1212,12 +1219,13 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                         ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
                         ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
                         ::bitlex::syntax::TokenElem::End => end = true,
+                        ::bitlex::syntax::TokenElem::Without(m) => without.push(m.clone()),
                         ::bitlex::syntax::TokenElem::Not(_) | ::bitlex::syntax::TokenElem::Many(..) => return Err("a `~` or a run inside a `~` or a run".into()),
                     }
                 }
                 // The token before, `~`: it holds with no token before too (`end` there).
                 let end = end || (offset == -1 && not);
-                elems.push((offset, kinds, words, not, end, run, nest_rows, ending_row));
+                elems.push((offset, kinds, words, not, end, run, nest_rows, ending_row, without));
             }
             // A refusing one's word: its bit in the record is the word's alone (no state tests
             // it, so no `MARK` names the word).

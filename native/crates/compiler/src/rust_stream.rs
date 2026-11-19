@@ -1238,7 +1238,9 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
         }
         let t = if t.is_empty() { "false".into() } else { t.join(" || ") };
         // A `not` element: none of its choices.
-        if el.not { format!("!({t})") } else { t }
+        let t = if el.not { format!("!({t})") } else { t };
+        // `without M`: none of the marks' bits in the code (`TokenElem::without`).
+        if el.without != 0 { format!("({t}) && c >> {} & {:#x} == 0", crate::records::MARK_SHIFT, el.without) } else { t }
     };
     // The next record that is no extra, after `at`: past the last, `past`.
     let advance = |past: &str| format!("        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n");

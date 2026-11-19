@@ -3298,6 +3298,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                             }
                         }
                     }
+                    // A token's bytes are the same with or without the mark: tier 2 tests it.
+                    TokenElem::Without(_) => {}
                     // Refused by the syntax in a mark's first element.
                     TokenElem::Not(_) | TokenElem::End | TokenElem::Many(..) => return Err("a `~`, an `end` or a run as a token mark's first token".into()),
                 }
@@ -3825,7 +3827,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
         extra_mark.map_or(0, |e| 1u32 << e) | extra_kind_bits.iter().filter(|(k, _)| k == kind).fold(0, |m, &(_, b)| m | 1u32 << b)
     };
-    // The token marks, their kinds the records' (`Words::token_marks`).
+    // The token marks, their kinds the records' (`Words::token_marks`). The marks their
+    // `without`s read (`Records::read`).
+    let mut token_read = 0u32;
     if !lowered.token_marks.is_empty() {
         // Extras between a mark's tokens are placed in the token step only; a grammar with none
         // has nothing to place.
@@ -3857,8 +3861,19 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 }
                 Ok((set, except))
             };
-            for (offset, names, words, not, end, run, nest_rows, ending_row) in elems {
+            for (offset, names, words, not, end, run, nest_rows, ending_row, without_names) in elems {
                 let (set, except) = kind_set(names)?;
+                // `without M`: mark `M`'s bit in the record's code, so a mark of a mask the code
+                // holds (not a token mark's, which tier 2 tests itself).
+                let mut without = 0u32;
+                for m in without_names {
+                    let k = low.marks.iter().position(|x| &x.0 == m).ok_or_else(|| format!("`without {m}`: no such mark"))?;
+                    if !records || k >= code_marks.min(crate::records::MARKS) || low.token_marks.contains_key(&k) {
+                        return Err(format!("`without {m}`: a mark of a mask whose bit the records hold"));
+                    }
+                    without |= 1 << k;
+                }
+                token_read |= without;
                 let mut nests = Vec::new();
                 for (counter, open, ns, ws) in nest_rows {
                     let (kinds, except) = kind_set(ns)?;
@@ -3872,7 +3887,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     }
                     None => None,
                 };
-                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests, ending });
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests, ending, without });
             }
             tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses, unless: *unless });
         }
@@ -4160,7 +4175,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         Some(v) => Some(mask_of_val(v, &mut mark_masks)),
         None => None,
     };
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), alone: token_alone & ((1u32 << crate::records::MARKS) - 1), check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), alone: token_alone & ((1u32 << crate::records::MARKS) - 1), read: token_read, check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
     crate::records::WordTable::new(&records.words)?;
     // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
     // loop knows it only where the reader gives it (`Reader::retag`).

@@ -1930,3 +1930,19 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Done when**: the compiled tier 2 equals the reference on that grammar and text (a ladder
   test of two hidden gap marks at one token, the first taken), and 0429's class header step can
   use it.
+- **Done** (2026-11-18, 0430 step 1b): in a state the level enters only by taking a mark, a
+  hidden mark that ends levels does not end it (the line break's one decision is made). With it,
+  `class A⏎constructor(x: Int)` is the lean parser's tape on every executor, and Kotlin's class
+  header is the class rule's (`head_ctor`). `ladder_tests::a_taken_mark_is_the_line_breaks_decision` checks the
+  rule on the interpreter and Cranelift (it fails without it), and Kotlin's
+  `constructor_lines_are_the_lean_parsers` the class header.
+
+### Q229. Bitlex's reference does not implement a mark's `, ends`
+
+- **What**: `, ends` (a hidden mark where a nested level that may end and does not take it
+  ends) is parsed but read nowhere in `tools/bitlex/src/tree.rs`. The reference's nested levels
+  skip every hidden mark they cannot take (`past_marks`, follow none). So the reference accepts
+  `class A⏎private⏎constructor(x: Int)`, which the compiled side and the lean parser refuse: its
+  `primary_constructor` reads over the line break.
+- **Done when**: the reference ends a nested level at an `ends` mark as the compiled side does
+  (0430 step 1b's rule included), and Kotlin's refused texts are refused by the reference too.
