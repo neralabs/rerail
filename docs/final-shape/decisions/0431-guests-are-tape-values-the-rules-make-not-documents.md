@@ -76,6 +76,12 @@ code may be named by which rules asked for it, or in what order.
    none of the script's unless their keys change. The table answers which tape a slot is of, so a node id resolves to
    (file, program, node) in place. In the batch a program is a document with its file's key and its own tape and rank
    index; it has no span slots (its positions are the file's, through its map) and no `doc` row of its own.
+   It stays a document of its own tape for every per-tape reader, as the branches building them have them
+   (Native-and-GPU-strata 4498abe77, oscar 6bc56ac57, read 2026-11-18): 0353 step 4c's `child` probe reads within
+   one document's tape (a host node reaches its program through `parsed`, never `child`); 0399 step 6's presence is
+   a tape's, so a script's kinds are never ruled out by its HTML file's; the device's `ViewDoc`s are rows, found by
+   index, not key. Only the host's lookup of a document by id (`Batch::doc`, `Batch::node`) learns the slot table.
+   No CLIF tape read and no format 16 code changes.
 5. **Format 16 does not change** (0426): a tape is one text, one tree, one grammar. A file's programs are each a tape of
    their own grammar; a tape value is a tape. Around them:
    - a file's record of its programs (each one's tape key, host node, grammar, first id, the map from its text to the
