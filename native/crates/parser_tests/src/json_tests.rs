@@ -358,9 +358,11 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     let entry16 = aot_entry(&src16);
     // SAFETY: as the format 15 entry's, on the format 16 run's harness (`write16`: the writer and numbers set).
     unsafe { aot.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(entry16, 4) };
-    let bytes_of = |w: &rerail_tape_format::f16::Written| match w {
-        rerail_tape_format::f16::Written::F16(t) => t.as_bytes().to_vec(),
-        rerail_tape_format::f16::Written::F16Z(t) => t.as_bytes().to_vec(),
+    // The tape's home: the tape, then its presence (the document's and each block's), which the
+    // ops make as they write.
+    let bytes_of = |w: &rerail_tape_format::f16::Written| {
+        assert!(w.presence_bytes().is_some(), "a format 16 run's presence");
+        w.extent().to_vec()
     };
     let mut written = 0;
     for (k, f) in inputs.iter().enumerate() {

@@ -7928,7 +7928,8 @@ impl CompiledStream {
         let (mut depth, mut full) = (64, false);
         loop {
             let nodes = tape.room_nodes();
-            let mut w = rerail_tape_format::f16::Writer::new(lang, source, self.tag, z, false, nodes);
+            // With each block's presence, as every other producer's writer (decision 0434 §4, step 6).
+            let mut w = rerail_tape_format::f16::Writer::new(lang, source, self.tag, z, true, nodes);
             w.reserve_run(nodes, depth.min(nodes));
             tape.writer = w.state_address();
             tape.numbers = numbers.0.as_ptr();

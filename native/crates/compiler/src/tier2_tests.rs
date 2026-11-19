@@ -136,6 +136,8 @@ fn tier2_writes_format_16_by_the_ops() {
         Written::F16(t) => t.as_bytes().to_vec(),
         Written::F16Z(t) => t.as_bytes().to_vec(),
     };
+    // The tape's home: the tape, then its presence (the document's and each block's).
+    let home_of = |w: &Written| w.extent().to_vec();
     let mut docs: Vec<String> = DOCUMENTS.iter().map(|d| d.to_string()).collect();
     for d in DOCUMENTS {
         if let Some(at) = d.find([';', ',']) {
@@ -172,8 +174,9 @@ fn tier2_writes_format_16_by_the_ops() {
             let number = f16::numbers(&lang, &table).expect("numbers");
             let numbers = sixteen.numbers(&lang);
             for z in [false, true] {
-                let want = f16::write_from(&lang, &t, &number, bytes, structure.tag, z).expect("the writer's tape");
+                let want = f16::write_from_with_presence(&lang, &t, &number, bytes, structure.tag, z).expect("the writer's tape").tape;
                 let got = parser.image16(bytes, &lang, &numbers, z).unwrap_or_else(|e| panic!("{name}: {shown:?} (16z {z}): {e}"));
+                assert!(got.presence_bytes().is_some() && home_of(&got) == home_of(&want), "{name}: {shown:?} (16z {z}): the presence, the document's and each block's");
                 let (got, want) = (bytes_of(&got), bytes_of(&want));
                 let first = (0..got.len().min(want.len())).find(|&k| got[k] != want[k]);
                 assert!(got == want, "{name}: {shown:?} (16z {z}): format 16 by tier 2's passes: lengths {} and {}, first differing at {first:?}", got.len(), want.len());
