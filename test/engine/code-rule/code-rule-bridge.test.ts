@@ -3997,19 +3997,6 @@ describe("CodeRuleBridge and another session's writes", () => {
 });
 
 describe("ToolCallWindows", () => {
-  it("says a call named a file and ran when it was written, from its start to its end, and only for the files it named", () => {
-    const windows = new ToolCallWindows();
-    windows.begin("write", 10, false, ["src/a.py"]);
-    windows.begin("command", 10, true);
-    expect(windows.namedAt("src/a.py", 9)).toBe(false);
-    expect(windows.namedAt("src/a.py", 10)).toBe(true);
-    expect(windows.namedAt("src/b.py", 12)).toBe(false);
-    windows.finish("write", 20);
-    expect(windows.namedAt("src/a.py", 20)).toBe(true);
-    expect(windows.namedAt("src/a.py", 21)).toBe(false);
-    expect(windows.namedAt("src/a.py", 9)).toBe(false);
-  });
-
   it("forgets the calls that ended before a walk began, never one that ended since or still runs, and ends an interrupted call at a turn's end", () => {
     const windows = new ToolCallWindows();
     windows.begin("answered", 10);
@@ -4056,6 +4043,19 @@ describe("ToolCallWindows", () => {
     expect(windows.ranDuring(0, 0)).toBe(false);
     expect(windows.ranDuring(10, 10)).toBe(true);
     expect(windows.ranDuring(MAX_FINISHED_CALLS * 10, MAX_FINISHED_CALLS * 10)).toBe(true);
+  });
+
+  it("says a call named a file and ran when it was written, from its start to its end, and only for the files it named", () => {
+    const windows = new ToolCallWindows();
+    windows.begin("write", 10, false, ["src/a.py"]);
+    windows.begin("command", 10, true);
+    expect(windows.namedAt("src/a.py", 9)).toBe(false);
+    expect(windows.namedAt("src/a.py", 10)).toBe(true);
+    expect(windows.namedAt("src/b.py", 12)).toBe(false);
+    windows.finish("write", 20);
+    expect(windows.namedAt("src/a.py", 20)).toBe(true);
+    expect(windows.namedAt("src/a.py", 21)).toBe(false);
+    expect(windows.namedAt("src/a.py", 9)).toBe(false);
   });
 });
 
