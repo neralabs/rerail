@@ -24,7 +24,6 @@
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
-#define UKL_METHOD inline
 #define UKL_GLOBAL device
 #define UKL_COHERENT device coherent(device)
 #define UKL_LOCAL threadgroup
@@ -90,7 +89,6 @@ UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v) { return simd_prefix
 #ifndef UKL_COLD
 #define UKL_COLD static __device__ __noinline__
 #endif
-#define UKL_METHOD __device__ __forceinline__
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
 #define UKL_LOCAL
@@ -144,7 +142,6 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v) { return __reduce_max_sync(0xf
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
-#define UKL_METHOD inline
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
 #define UKL_LOCAL
@@ -207,4 +204,14 @@ UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { re
 
 #else
 #  error "the UKL library has no intrinsics for this backend (ukl/backend.h)"
+#endif
+
+// Written once for every backend whose language is C++ (Metal, CUDA, the CPU); a C backend (OpenCL) defines them in
+// its section. A function defined for several types (by a macro over the type) is `UKL_OVERLOAD`, so its callers
+// need not name the type; a check on types and layouts is `UKL_STATIC_ASSERT`.
+#ifndef UKL_OVERLOAD
+#define UKL_OVERLOAD
+#endif
+#ifndef UKL_STATIC_ASSERT
+#define UKL_STATIC_ASSERT(c, m) static_assert(c, m)
 #endif

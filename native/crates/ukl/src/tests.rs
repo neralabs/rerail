@@ -63,7 +63,8 @@ fn same_as_clang(backend: Backend, main: &str, min_tokens: usize) {
 fn every_library_header_stands_alone_on_every_backend() {
     let dir = format!("{}/lib", env!("CARGO_MANIFEST_DIR"));
     for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Cpu] {
-        for (name, _) in LIBRARY {
+        // A body is included by its header, with its parameters, and refuses to stand alone.
+        for (name, _) in LIBRARY.iter().filter(|(n, _)| !n.starts_with("ukl/body/")) {
             // The shim's tokens, at least, and the header's own.
             same_as_clang(backend, &format!("{dir}/{name}"), 300);
         }

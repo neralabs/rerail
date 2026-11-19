@@ -71,15 +71,15 @@ pub fn ukl() -> String {
         ("uint32_t", "line_base", offset_of!(TapeView, line_base)),
         ("uint32_t", "tape", offset_of!(TapeView, tape)),
     ];
-    let mut s = String::from("struct TapeView {\n");
+    let mut s = String::from("#include <ukl/backend.h>\ntypedef struct TapeView {\n");
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");
     }
-    s += "};\ntypedef TapeView DocView;\n";
-    s += &format!("static_assert(sizeof(TapeView) == {}, \"TapeView: size\");\n", std::mem::size_of::<TapeView>());
+    s += "} TapeView;\ntypedef TapeView DocView;\n";
+    s += &format!("UKL_STATIC_ASSERT(sizeof(TapeView) == {}, \"TapeView: size\");\n", std::mem::size_of::<TapeView>());
     for (_, name, at) in fields.iter() {
         let name = name.split('[').next().unwrap_or(name);
-        s += &format!("static_assert(__builtin_offsetof(TapeView, {name}) == {at}, \"TapeView.{name}\");\n");
+        s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(TapeView, {name}) == {at}, \"TapeView.{name}\");\n");
     }
     s
 }

@@ -163,16 +163,16 @@ pub fn ukl() -> String {
         ("Run", "rank_ends[2]", offset_of!(Numbering, rank_ends)),
         ("Run", "jumps[2]", offset_of!(Numbering, jumps)),
     ];
-    let mut s = String::from("struct Run {\n    int64_t off;\n    uint64_t len;\n};\nstatic_assert(sizeof(Run) == 16, \"Run: size\");\n");
-    s += "struct Numbering {\n";
+    let mut s = String::from("#include <ukl/backend.h>\ntypedef struct Run {\n    int64_t off;\n    uint64_t len;\n} Run;\nUKL_STATIC_ASSERT(sizeof(Run) == 16, \"Run: size\");\n");
+    s += "typedef struct Numbering {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");
     }
-    s += "};\n";
-    s += &format!("static_assert(sizeof(Numbering) == {}, \"Numbering: size\");\n", std::mem::size_of::<Numbering>());
+    s += "} Numbering;\n";
+    s += &format!("UKL_STATIC_ASSERT(sizeof(Numbering) == {}, \"Numbering: size\");\n", std::mem::size_of::<Numbering>());
     for (_, name, at) in fields.iter() {
         let name = name.split('[').next().unwrap_or(name);
-        s += &format!("static_assert(__builtin_offsetof(Numbering, {name}) == {at}, \"Numbering.{name}\");\n");
+        s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, {name}) == {at}, \"Numbering.{name}\");\n");
     }
     s
 }

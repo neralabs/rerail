@@ -51,6 +51,10 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/memory.h", include_str!("../lib/ukl/memory.h")),
     ("ukl/simd.h", include_str!("../lib/ukl/simd.h")),
     ("ukl/group.h", include_str!("../lib/ukl/group.h")),
+    // A body over a type (decision 0400 §3.5): its header includes it once per type, with its parameters defined.
+    ("ukl/body/lz4_decode.h", include_str!("../lib/ukl/body/lz4_decode.h")),
+    ("ukl/body/histogram_part.h", include_str!("../lib/ukl/body/histogram_part.h")),
+    ("ukl/body/radix_tile.h", include_str!("../lib/ukl/body/radix_tile.h")),
     ("ukl/lz4.h", include_str!("../lib/ukl/lz4.h")),
     ("ukl/scan.h", include_str!("../lib/ukl/scan.h")),
     ("ukl/compact.h", include_str!("../lib/ukl/compact.h")),

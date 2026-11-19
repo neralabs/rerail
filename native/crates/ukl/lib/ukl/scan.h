@@ -18,13 +18,13 @@
 // Values a thread scans.
 #define UKL_SCAN_ITEMS 4u
 
-struct UklScanArgs {
+typedef struct UklScanArgs {
     uint32_t n;
     // Whether `offsets` holds the tiles' offsets (else every tile starts at 0: one tile).
     uint32_t hasOffsets;
     // Whether each value counts as its set bits.
     uint32_t popcount;
-};
+} UklScanArgs;
 UKL_REFLECT_STRUCT(UklScanArgs, n, hasOffsets, popcount)
 
 // Value `i` as the scan counts it; zero past `n`.

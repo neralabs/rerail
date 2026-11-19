@@ -8,8 +8,14 @@
 
 // The lesser and the greater of two values of one type (the backend's `min` and `max`, which not every backend has
 // for every width).
-template <typename T> UKL_INLINE T ukl_min(T a, T b) { return a < b ? a : b; }
-template <typename T> UKL_INLINE T ukl_max(T a, T b) { return a < b ? b : a; }
+#define UKL_DEFINE_MIN_MAX(T)                                                                                   \
+    UKL_INLINE UKL_OVERLOAD T ukl_min(T a, T b) { return a < b ? a : b; }                                       \
+    UKL_INLINE UKL_OVERLOAD T ukl_max(T a, T b) { return a < b ? b : a; }
+UKL_DEFINE_MIN_MAX(uint32_t)
+UKL_DEFINE_MIN_MAX(int32_t)
+UKL_DEFINE_MIN_MAX(uint64_t)
+UKL_DEFINE_MIN_MAX(int64_t)
+UKL_DEFINE_MIN_MAX(float)
 
 // The `n` lowest bits set (all of them from 32 or 64 up).
 UKL_INLINE uint32_t ukl_mask32(uint32_t n) { return n >= 32u ? 0xffffffffu : (1u << n) - 1u; }

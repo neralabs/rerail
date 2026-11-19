@@ -57,10 +57,10 @@ UKL_INLINE uint32_t ukl_hash_find(UKL_GLOBAL const uint32_t* keys, uint32_t mask
     return UKL_NONE;
 }
 
-struct UklHashArgs {
+typedef struct UklHashArgs {
     uint32_t n;
     uint32_t mask;
-};
+} UklHashArgs;
 UKL_REFLECT_STRUCT(UklHashArgs, n, mask)
 
 // Row `i`'s key into the table: the key's first row (`first`, starting at `UKL_NONE`) and its count (from 0). A row

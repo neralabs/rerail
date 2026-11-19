@@ -5,9 +5,9 @@
 #pragma once
 #include <ukl/scan.h>
 
-struct UklCompactArgs {
+typedef struct UklCompactArgs {
     uint32_t n;
-};
+} UklCompactArgs;
 UKL_REFLECT_STRUCT(UklCompactArgs, n)
 
 // Value `i` goes to its slot when its flag set (its offset steps).

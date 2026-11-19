@@ -29,11 +29,11 @@
 // A take's attempts at most.
 #define UKL_WQ_TURNS 100000000u
 
-struct UklWorkQueue {
+typedef struct UklWorkQueue {
     UKL_GLOBAL uint32_t* slots;
     UKL_GLOBAL uint32_t* control;
     uint32_t capacity;
-};
+} UklWorkQueue;
 
 // Pushes `item`. False when the queue is full (the overflow flag is set).
 UKL_INLINE bool ukl_wq_push(UklWorkQueue q, uint32_t item)
@@ -54,7 +54,7 @@ UKL_INLINE bool ukl_wq_push(UklWorkQueue q, uint32_t item)
 }
 
 // Takes an item into `item`; false when there was none to take now.
-UKL_INLINE bool ukl_wq_take(UklWorkQueue q, UKL_PRIVATE uint32_t& item)
+UKL_INLINE bool ukl_wq_take(UklWorkQueue q, UKL_PRIVATE uint32_t* item)
 {
     uint32_t head = ukl_atomic_load(&q.control[0]);
     bool claimed = false;
@@ -72,12 +72,12 @@ UKL_INLINE bool ukl_wq_take(UklWorkQueue q, UKL_PRIVATE uint32_t& item)
     uint32_t value = ukl_atomic_exchange(&q.slots[head], UKL_WQ_TAKEN);
     if (value == UKL_WQ_EMPTY)
         return false;
-    item = value - 1u;
+    *item = value - 1u;
     return true;
 }
 
 // A SIMD group's take: lane `lane` gets an item into `item` (true) or none. Convergent: every lane calls it.
-UKL_INLINE bool ukl_wq_take_sg(UklWorkQueue q, uint32_t lane, UKL_PRIVATE uint32_t& item)
+UKL_INLINE bool ukl_wq_take_sg(UklWorkQueue q, uint32_t lane, UKL_PRIVATE uint32_t* item)
 {
     // Lane 0 claims `count` items from `head` at once.
     uint32_t head = 0u, count = 0u;
@@ -104,7 +104,7 @@ UKL_INLINE bool ukl_wq_take_sg(UklWorkQueue q, uint32_t lane, UKL_PRIVATE uint32
     uint32_t value = ukl_atomic_exchange(&q.slots[head + lane], UKL_WQ_TAKEN);
     if (value == UKL_WQ_EMPTY)
         return false;
-    item = value - 1u;
+    *item = value - 1u;
     return true;
 }
 
@@ -112,20 +112,20 @@ UKL_INLINE bool ukl_wq_take_sg(UklWorkQueue q, uint32_t lane, UKL_PRIVATE uint32
 UKL_INLINE void ukl_wq_done(UklWorkQueue q) { ukl_atomic_sub(&q.control[2], 1u); }
 
 // Whether a worker that found nothing should stop: nothing is active, or it has polled `limit` times.
-UKL_INLINE bool ukl_wq_idle(UklWorkQueue q, UKL_PRIVATE uint32_t& polls, uint32_t limit)
+UKL_INLINE bool ukl_wq_idle(UklWorkQueue q, UKL_PRIVATE uint32_t* polls, uint32_t limit)
 {
     if (ukl_atomic_load(&q.control[2]) == 0u)
         return true;
-    return ++polls >= limit;
+    return ++*polls >= limit;
 }
 
 // A SIMD group's idle test, after a take in which `got` says whether this lane took an item: the same answer in every
 // lane (a group's worker loop stays uniform). Convergent.
-UKL_INLINE bool ukl_wq_idle_sg(UklWorkQueue q, bool got, UKL_PRIVATE uint32_t& polls, uint32_t limit)
+UKL_INLINE bool ukl_wq_idle_sg(UklWorkQueue q, bool got, UKL_PRIVATE uint32_t* polls, uint32_t limit)
 {
     if (ukl_sg_count(got) != 0u) {
-        polls = 0u;
+        *polls = 0u;
         return false;
     }
-    return ukl_sg_broadcast(ukl_atomic_load(&q.control[2]), 0u) == 0u || ++polls >= limit;
+    return ukl_sg_broadcast(ukl_atomic_load(&q.control[2]), 0u) == 0u || ++*polls >= limit;
 }

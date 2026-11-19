@@ -10,10 +10,10 @@
 #define UKL_TG_SCRATCH UKL_SIMD_WIDTH
 
 // A thread's part of a scan: the sum of the threads before it, and of the whole group.
-struct UklScan {
+typedef struct UklScan {
     uint32_t exclusive;
     uint32_t total;
-};
+} UklScan;
 
 // The group's sum (wrapping), in every thread.
 UKL_INLINE uint32_t ukl_tg_sum(uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch)

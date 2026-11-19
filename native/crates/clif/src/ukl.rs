@@ -567,7 +567,7 @@ fn cond(cc: IntCC, a: &str, b: &str, u: &str, s: &str) -> String {
         IntCC::SignedGreaterThanOrEqual => (">=", true),
     };
     let t = if signed { s } else { u };
-    format!("uint8_t(({t})({a}){op}({t})({b}))")
+    format!("((uint8_t)(({t})({a}){op}({t})({b})))")
 }
 
 fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, named: &dyn Fn(u32) -> Result<String, String>, low: &std::collections::HashSet<ir::Value>, family: Family) -> Result<String, String> {
@@ -600,7 +600,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
     let args: Vec<String> = dfg
         .inst_args(inst)
         .iter()
-        .map(|&v| if result_low && modular && !low.contains(&dfg.resolve_aliases(v)) && dfg.value_type(v) == types::I64 { format!("uint32_t({})", name(v)) } else { name(v) })
+        .map(|&v| if result_low && modular && !low.contains(&dfg.resolve_aliases(v)) && dfg.value_type(v) == types::I64 { format!("((uint32_t)({}))", name(v)) } else { name(v) })
         .collect();
     let r = results.first().map(|&v| name(v));
     let rt = results.first().map(|&v| dfg.value_type(v));
@@ -616,14 +616,14 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         }
     };
     // An immediate as a value of the result's type (its low bits).
-    let k = |x: i64| format!("{u}({}ul)", x as u64);
+    let k = |x: i64| format!("(({u})({}ul))", x as u64);
     let shift = |a: &str, b: &str, op: &str, signed: bool| {
         let t = if signed { s } else { u };
         if result_low && op == "<<" {
             // The low word of a 64-bit left shift: 0 past 31.
-            return format!("((uint32_t({b})&63u)<32u?uint32_t({a})<<(uint32_t({b})&31u):0u)");
+            return format!("((((uint32_t)({b}))&63u)<32u?((uint32_t)({a}))<<(((uint32_t)({b}))&31u):0u)");
         }
-        format!("{u}(({t})({a}){op}(uint32_t({b})&{}u))", bits - 1)
+        format!("(({u})(({t})({a}){op}(((uint32_t)({b}))&{}u)))", bits - 1)
     };
     let addr = |p: &str| -> String {
         let off = data.load_store_offset().unwrap_or(0);
@@ -631,15 +631,15 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         if off == 0 {
             p.to_string()
         } else if address_low {
-            format!("({p}+uint32_t({}u))", off as i64 as u64 as u32)
+            format!("({p}+((uint32_t)({}u)))", off as i64 as u64 as u32)
         } else {
-            format!("({p}+uint64_t(int64_t({off})))")
+            format!("({p}+((uint64_t)(((int64_t)({off})))))")
         }
     };
     // A cache's address (decision 0353 step 4b): 64 bits, its offset added as a signed one.
     let wide_addr = |p: &str| -> String {
         let off = data.load_store_offset().unwrap_or(0);
-        if off == 0 { format!("uint64_t({p})") } else { format!("(uint64_t({p})+uint64_t(int64_t({off})))") }
+        if off == 0 { format!("((uint64_t)({p}))") } else { format!("(((uint64_t)({p}))+((uint64_t)(((int64_t)({off})))))") }
     };
     Ok(match op {
         Opcode::Iconst => set(k(imm()?)),
@@ -656,7 +656,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Ushr | Opcode::Sshr if result_low => {
             let (wu, ws) = ty(at.unwrap_or(types::I64))?;
             let t = if op == Opcode::Sshr { ws } else { wu };
-            set(format!("uint32_t(({t})({}){}(uint32_t({})&63u))", name(dfg.inst_args(inst)[0]), ">>", args[1]))
+            set(format!("((uint32_t)(({t})({}){}(((uint32_t)({}))&63u)))", name(dfg.inst_args(inst)[0]), ">>", args[1]))
         }
         Opcode::Ushr => set(shift(&args[0], &args[1], ">>", false)),
         Opcode::Sshr => set(shift(&args[0], &args[1], ">>", true)),
@@ -670,7 +670,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::UshrImm | Opcode::SshrImm if result_low => {
             let (wu, ws) = ty(at.unwrap_or(types::I64))?;
             let t = if op == Opcode::SshrImm { ws } else { wu };
-            set(format!("uint32_t(({t})({})>>{}u)", name(dfg.inst_args(inst)[0]), imm()? as u64 & 63))
+            set(format!("((uint32_t)(({t})({})>>{}u))", name(dfg.inst_args(inst)[0]), imm()? as u64 & 63))
         }
         Opcode::UshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", false)),
         Opcode::SshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", true)),
@@ -682,23 +682,23 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 _ => "ctz",
             };
             let w = if at == Some(types::I64) { 64 } else { 32 };
-            set(format!("{u}(ukl_{f}{w}({}))", args[0]))
+            set(format!("(({u})(ukl_{f}{w}({})))", args[0]))
         }
         Opcode::Umin => set(format!("ukl_min({},{})", args[0], args[1])),
         Opcode::Umax => set(format!("ukl_max({},{})", args[0], args[1])),
-        Opcode::Smin => set(format!("{u}(ukl_min({s}({}),{s}({})))", args[0], args[1])),
-        Opcode::Smax => set(format!("{u}(ukl_max({s}({}),{s}({})))", args[0], args[1])),
+        Opcode::Smin => set(format!("(({u})(ukl_min((({s})({})),(({s})({})))))", args[0], args[1])),
+        Opcode::Smax => set(format!("(({u})(ukl_max((({s})({})),(({s})({})))))", args[0], args[1])),
         Opcode::Icmp | Opcode::IcmpImm => {
             let cc = match data {
                 InstructionData::IntCompare { cond, .. } | InstructionData::IntCompareImm { cond, .. } => *cond,
                 _ => return Err("a comparison of no condition".into()),
             };
-            let b = if op == Opcode::IcmpImm { format!("{au}({}ul)", imm()? as u64) } else { args[1].clone() };
+            let b = if op == Opcode::IcmpImm { format!("(({au})({}ul))", imm()? as u64) } else { args[1].clone() };
             set(cond(cc, &args[0], &b, au, as_))
         }
         Opcode::Select => set(format!("{}!=0?{}:{}", args[0], args[1], args[2])),
-        Opcode::Uextend | Opcode::Ireduce => set(format!("{u}({})", args[0])),
-        Opcode::Sextend => set(format!("{u}({s}({as_}({})))", args[0])),
+        Opcode::Uextend | Opcode::Ireduce => set(format!("(({u})({}))", args[0])),
+        Opcode::Sextend => set(format!("(({u})((({s})((({as_})({}))))))", args[0])),
         Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32 => {
             let aligned = data.memflags().is_some_and(|m| m.aligned());
             let size = match op {
@@ -719,21 +719,21 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                     32 => "uint32_t",
                     _ => "uint64_t",
                 };
-                set(format!("{u}(*(UKL_GLOBAL const {t}*)(t+{}))", addr(&args[0])))
+                set(format!("(({u})(*(UKL_GLOBAL const {t}*)(t+{})))", addr(&args[0])))
             } else if aligned {
                 // The view: its u32 fields.
                 if size != 32 {
                     return Err(format!("a load of the view of {size} bits"));
                 }
-                set(format!("{u}(clif_view(v,{}))", addr(&args[0])))
+                set(format!("(({u})(clif_view(v,{})))", addr(&args[0])))
             } else if !readonly {
                 // A cache's (decision 0353 step 4b), which other threads write: coherent across the device.
-                set(format!("{u}(ukl_ldc_u{size}(clif_coherent(t),{}))", wide_addr(&args[0])))
+                set(format!("(({u})(ukl_ldc_u{size}(clif_coherent(t),{})))", wide_addr(&args[0])))
             } else if result_low && size == 64 {
                 // The low word of a little-endian 64-bit load is the 32-bit load at its address.
-                set(format!("uint32_t(ukl_ld_u32(t,{}))", addr(&args[0])))
+                set(format!("((uint32_t)(ukl_ld_u32(t,{})))", addr(&args[0])))
             } else {
-                set(format!("{u}(ukl_ld_u{size}(t,{}))", addr(&args[0])))
+                set(format!("(({u})(ukl_ld_u{size}(t,{})))", addr(&args[0])))
             }
         }
         // A cache's stores, atomics and fences (decision 0353 step 4b): of the tape's family, at offsets from `t`.
@@ -744,15 +744,15 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 Opcode::Istore32 => 32,
                 _ => dfg.value_type(dfg.inst_args(inst)[0]).bits(),
             };
-            format!("ukl_stc_u{bits}(clif_written(t),{},uint64_t({}));", wide_addr(&args[1]), args[0])
+            format!("ukl_stc_u{bits}(clif_written(t),{},((uint64_t)({})));", wide_addr(&args[1]), args[0])
         }
         Opcode::AtomicLoad => set(format!("ukl_atomic_load_at(t,{})", wide_addr(&args[0]))),
-        Opcode::AtomicStore => format!("ukl_atomic_store_at(t,{},uint32_t({}));", wide_addr(&args[1]), args[0]),
+        Opcode::AtomicStore => format!("ukl_atomic_store_at(t,{},((uint32_t)({})));", wide_addr(&args[1]), args[0]),
         Opcode::AtomicRmw => {
             let InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } = data else { return Err("an atomic other than an add".into()) };
-            set(format!("ukl_atomic_add_at(t,{},uint32_t({}))", wide_addr(&args[0]), args[1]))
+            set(format!("ukl_atomic_add_at(t,{},((uint32_t)({})))", wide_addr(&args[0]), args[1]))
         }
-        Opcode::AtomicCas => set(format!("ukl_atomic_cas_at(t,{},uint32_t({}),uint32_t({}))", wide_addr(&args[0]), args[1], args[2])),
+        Opcode::AtomicCas => set(format!("ukl_atomic_cas_at(t,{},((uint32_t)({})),((uint32_t)({})))", wide_addr(&args[0]), args[1], args[2])),
         Opcode::Fence => "ukl_fence_device();".to_owned(),
         Opcode::Call => {
             let InstructionData::Call { func_ref, .. } = data else { return Err("a call of no function".into()) };

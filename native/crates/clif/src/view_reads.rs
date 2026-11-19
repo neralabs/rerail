@@ -151,21 +151,21 @@ pub fn ukl() -> String {
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
     ];
     let mut s = String::from(
-        "struct ViewRow {\n    uint64_t entry;\n    UKL_GLOBAL const uint8_t* tape;\n    UKL_GLOBAL const uint8_t* lines;\n    uint32_t rows[9];\n    uint32_t view[29];\n};\n\
-         struct ViewDir {\n    UKL_GLOBAL const uint8_t* chunk;\n    uint32_t ndocs;\n    uint32_t pad;\n    UKL_GLOBAL const ViewRow* rows;\n};\n",
+        "#include <ukl/backend.h>\ntypedef struct ViewRow {\n    uint64_t entry;\n    UKL_GLOBAL const uint8_t* tape;\n    UKL_GLOBAL const uint8_t* lines;\n    uint32_t rows[9];\n    uint32_t view[29];\n} ViewRow;\n\
+         typedef struct ViewDir {\n    UKL_GLOBAL const uint8_t* chunk;\n    uint32_t ndocs;\n    uint32_t pad;\n    UKL_GLOBAL const ViewRow* rows;\n} ViewDir;\n",
     );
-    s += &format!("static_assert(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
-    s += &format!("static_assert(__builtin_offsetof(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
-    s += &format!("static_assert(sizeof(ViewDir) == {}, \"ViewDir: size\");\n", std::mem::size_of::<ViewDir>());
-    s += &format!("static_assert(__builtin_offsetof(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
-    s += "struct ViewDoc {\n";
+    s += &format!("UKL_STATIC_ASSERT(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
+    s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
+    s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDir) == {}, \"ViewDir: size\");\n", std::mem::size_of::<ViewDir>());
+    s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
+    s += "typedef struct ViewDoc {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");
     }
-    s += "};\n";
-    s += &format!("static_assert(sizeof(ViewDoc) == {}, \"ViewDoc: size\");\n", std::mem::size_of::<ViewDoc>());
+    s += "} ViewDoc;\n";
+    s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDoc) == {}, \"ViewDoc: size\");\n", std::mem::size_of::<ViewDoc>());
     for (_, name, at) in fields.iter() {
-        s += &format!("static_assert(__builtin_offsetof(ViewDoc, {name}) == {at}, \"ViewDoc.{name}\");\n");
+        s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, {name}) == {at}, \"ViewDoc.{name}\");\n");
     }
     s
 }

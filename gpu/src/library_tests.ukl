@@ -6,10 +6,10 @@
 #include <ukl/lz4.h>
 #include <ukl/workqueue.h>
 
-struct TestArgs {
+typedef struct TestArgs {
     uint32_t n;
     uint32_t w;
-};
+} TestArgs;
 UKL_REFLECT_STRUCT(TestArgs, n, w)
 
 // ukl/memory.h: loads at every byte address, and bit fields of width `w` from bit `i * w + i % 5`.
@@ -158,9 +158,7 @@ DEFINE_KERNEL2(tests, t_lz4,
     if (j >= args.n)
         return;
     ROBUFFER(uint32_t) job = jobs + j * 4u;
-    UklLz4Contiguous out;
-    out.dst = outData + job[2];
-    uint32_t got = ukl_lz4_decode_sg(in + job[0], job[1], out, job[3], lane);
+    uint32_t got = ukl_lz4_decode_sg(in + job[0], job[1], outData + job[2], job[3], lane);
     if (lane == 0u)
         lengths[j] = got;
 }
@@ -197,10 +195,10 @@ DEFINE_KERNEL2(tests, t_workqueue,
     uint32_t polls = 0u;
     for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
         uint32_t item = 0u;
-        if (ukl_wq_take(q, item)) {
+        if (ukl_wq_take(q, &item)) {
             visit(q, visits, args.w, item);
             polls = 0u;
-        } else if (ukl_wq_idle(q, polls, args.n)) {
+        } else if (ukl_wq_idle(q, &polls, args.n)) {
             break;
         }
     }
@@ -217,10 +215,10 @@ DEFINE_KERNEL2(tests, t_workqueue_sg,
     uint32_t polls = 0u;
     for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
         uint32_t item = 0u;
-        bool got = ukl_wq_take_sg(q, lane, item);
+        bool got = ukl_wq_take_sg(q, lane, &item);
         if (got)
             visit(q, visits, args.w, item);
-        if (ukl_wq_idle_sg(q, got, polls, args.n))
+        if (ukl_wq_idle_sg(q, got, &polls, args.n))
             break;
     }
 }

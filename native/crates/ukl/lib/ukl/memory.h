@@ -12,84 +12,99 @@
 // `UKL_COHERENT` memory, which another threadgroup of the same dispatch writes. A write of a value at an unaligned
 // address is a read-modify-write of its words: not atomic with another thread's write to the same word.
 //
-// The address type `A` is the caller's: 32-bit where a buffer is under 4 GB (cheaper on a GPU), else 64-bit.
+// The address type is the caller's: 32-bit where a buffer is under 4 GB (cheaper on a GPU), else 64-bit. Each
+// function is defined for both (`UKL_OVERLOAD`), by a macro over the address type `A`.
 
 #pragma once
 #include <ukl/bits.h>
 
-#define UKL_DEFINE_BYTE_LOADS(Ld, Space)                                                                                \
+#define UKL_DEFINE_BYTE_LOADS(Ld, Space, A)                                                                             \
     /* The 64 bits from byte `a` up, of which the low `n` bytes are wanted. */                                          \
-    template <typename A> UKL_INLINE uint64_t Ld##_window(Space const uint8_t* t, A a, uint32_t n)                      \
+    UKL_INLINE UKL_OVERLOAD uint64_t Ld##_window(Space const uint8_t* t, A a, uint32_t n)                               \
     {                                                                                                                   \
         Space const uint64_t* w = (Space const uint64_t*)(t + (a & ~(A)7));                                             \
         uint32_t s = (uint32_t)(a & (A)7) * 8u;                                                                         \
         uint64_t lo = w[0] >> s;                                                                                        \
         return s != 0u && s + n * 8u > 64u ? lo | (w[1] << (64u - s)) : lo;                                             \
     }                                                                                                                   \
-    template <typename A> UKL_INLINE uint8_t Ld##_u8(Space const uint8_t* t, A a) { return t[a]; }                      \
-    template <typename A> UKL_INLINE uint16_t Ld##_u16(Space const uint8_t* t, A a)                                     \
+    UKL_INLINE UKL_OVERLOAD uint8_t Ld##_u8(Space const uint8_t* t, A a) { return t[a]; }                               \
+    UKL_INLINE UKL_OVERLOAD uint16_t Ld##_u16(Space const uint8_t* t, A a)                                              \
     {                                                                                                                   \
         return (a & (A)1) == 0 ? *(Space const uint16_t*)(t + a) : (uint16_t)Ld##_window(t, a, 2u);                     \
     }                                                                                                                   \
-    template <typename A> UKL_INLINE uint32_t Ld##_u32(Space const uint8_t* t, A a)                                     \
+    UKL_INLINE UKL_OVERLOAD uint32_t Ld##_u32(Space const uint8_t* t, A a)                                              \
     {                                                                                                                   \
         return (a & (A)3) == 0 ? *(Space const uint32_t*)(t + a) : (uint32_t)Ld##_window(t, a, 4u);                     \
     }                                                                                                                   \
-    template <typename A> UKL_INLINE uint64_t Ld##_u64(Space const uint8_t* t, A a)                                     \
+    UKL_INLINE UKL_OVERLOAD uint64_t Ld##_u64(Space const uint8_t* t, A a)                                              \
     {                                                                                                                   \
         return (a & (A)7) == 0 ? *(Space const uint64_t*)(t + a) : Ld##_window(t, a, 8u);                               \
     }                                                                                                                   \
     /* `n` bits (at most 57) from bit `b` up: a bit-packed field. */                                                    \
-    template <typename A> UKL_INLINE uint64_t Ld##_bits(Space const uint8_t* t, A b, uint32_t n)                        \
+    UKL_INLINE UKL_OVERLOAD uint64_t Ld##_bits(Space const uint8_t* t, A b, uint32_t n)                                 \
     {                                                                                                                   \
         uint32_t r = (uint32_t)(b & (A)7);                                                                              \
         return (Ld##_window(t, b >> 3, (r + n + 7u) / 8u) >> r) & ukl_mask64(n);                                        \
-    }                                                                                                                   \
-    /* Entry `i` of an array of `n`-bit entries packed from bit 0 (`n` at most 57). */                                  \
+    }
+
+// Entry `i` of an array of `n`-bit entries packed from bit 0 (`n` at most 57).
+#define UKL_DEFINE_PACKED_LOAD(Ld, Space)                                                                               \
     UKL_INLINE uint64_t Ld##_packed(Space const uint8_t* t, uint64_t i, uint32_t n) { return Ld##_bits(t, i * n, n); }
 
-UKL_DEFINE_BYTE_LOADS(ukl_ld, UKL_GLOBAL)
-UKL_DEFINE_BYTE_LOADS(ukl_ldc, UKL_COHERENT)
+UKL_DEFINE_BYTE_LOADS(ukl_ld, UKL_GLOBAL, uint32_t)
+UKL_DEFINE_BYTE_LOADS(ukl_ld, UKL_GLOBAL, uint64_t)
+UKL_DEFINE_BYTE_LOADS(ukl_ldc, UKL_COHERENT, uint32_t)
+UKL_DEFINE_BYTE_LOADS(ukl_ldc, UKL_COHERENT, uint64_t)
+UKL_DEFINE_PACKED_LOAD(ukl_ld, UKL_GLOBAL)
+UKL_DEFINE_PACKED_LOAD(ukl_ldc, UKL_COHERENT)
 
 // The low `n` bits of `x` written from byte `a` up (`n` a multiple of 8, at most 64).
-template <typename A> UKL_INLINE void ukl_stc_window(UKL_COHERENT uint8_t* t, A a, uint64_t x, uint32_t n)
-{
-    UKL_COHERENT uint64_t* w = (UKL_COHERENT uint64_t*)(t + (a & ~(A)7));
-    uint32_t s = (uint32_t)(a & (A)7) * 8u;
-    uint64_t m = ukl_mask64(n);
-    x &= m;
-    w[0] = (w[0] & ~(m << s)) | (x << s);
-    if (s != 0u && s + n > 64u) {
-        uint32_t r = 64u - s;
-        w[1] = (w[1] & ~(m >> r)) | (x >> r);
+#define UKL_DEFINE_STORES(A)                                                                                            \
+    UKL_INLINE UKL_OVERLOAD void ukl_stc_window(UKL_COHERENT uint8_t* t, A a, uint64_t x, uint32_t n)                   \
+    {                                                                                                                   \
+        UKL_COHERENT uint64_t* w = (UKL_COHERENT uint64_t*)(t + (a & ~(A)7));                                           \
+        uint32_t s = (uint32_t)(a & (A)7) * 8u;                                                                         \
+        uint64_t m = ukl_mask64(n);                                                                                     \
+        x &= m;                                                                                                         \
+        w[0] = (w[0] & ~(m << s)) | (x << s);                                                                           \
+        if (s != 0u && s + n > 64u) {                                                                                   \
+            uint32_t r = 64u - s;                                                                                       \
+            w[1] = (w[1] & ~(m >> r)) | (x >> r);                                                                       \
+        }                                                                                                               \
+    }                                                                                                                   \
+    UKL_INLINE UKL_OVERLOAD void ukl_stc_u8(UKL_COHERENT uint8_t* t, A a, uint64_t x) { t[a] = (uint8_t)x; }            \
+    UKL_INLINE UKL_OVERLOAD void ukl_stc_u16(UKL_COHERENT uint8_t* t, A a, uint64_t x)                                  \
+    {                                                                                                                   \
+        if ((a & (A)1) == 0)                                                                                            \
+            *(UKL_COHERENT uint16_t*)(t + a) = (uint16_t)x;                                                             \
+        else                                                                                                            \
+            ukl_stc_window(t, a, x, 16u);                                                                               \
+    }                                                                                                                   \
+    UKL_INLINE UKL_OVERLOAD void ukl_stc_u32(UKL_COHERENT uint8_t* t, A a, uint64_t x)                                  \
+    {                                                                                                                   \
+        if ((a & (A)3) == 0)                                                                                            \
+            *(UKL_COHERENT uint32_t*)(t + a) = (uint32_t)x;                                                             \
+        else                                                                                                            \
+            ukl_stc_window(t, a, x, 32u);                                                                               \
+    }                                                                                                                   \
+    UKL_INLINE UKL_OVERLOAD void ukl_stc_u64(UKL_COHERENT uint8_t* t, A a, uint64_t x)                                  \
+    {                                                                                                                   \
+        if ((a & (A)7) == 0)                                                                                            \
+            *(UKL_COHERENT uint64_t*)(t + a) = x;                                                                       \
+        else                                                                                                            \
+            ukl_stc_window(t, a, x, 64u);                                                                               \
     }
-}
-template <typename A> UKL_INLINE void ukl_stc_u8(UKL_COHERENT uint8_t* t, A a, uint64_t x) { t[a] = (uint8_t)x; }
-template <typename A> UKL_INLINE void ukl_stc_u16(UKL_COHERENT uint8_t* t, A a, uint64_t x)
-{
-    if ((a & (A)1) == 0)
-        *(UKL_COHERENT uint16_t*)(t + a) = (uint16_t)x;
-    else
-        ukl_stc_window(t, a, x, 16u);
-}
-template <typename A> UKL_INLINE void ukl_stc_u32(UKL_COHERENT uint8_t* t, A a, uint64_t x)
-{
-    if ((a & (A)3) == 0)
-        *(UKL_COHERENT uint32_t*)(t + a) = (uint32_t)x;
-    else
-        ukl_stc_window(t, a, x, 32u);
-}
-template <typename A> UKL_INLINE void ukl_stc_u64(UKL_COHERENT uint8_t* t, A a, uint64_t x)
-{
-    if ((a & (A)7) == 0)
-        *(UKL_COHERENT uint64_t*)(t + a) = x;
-    else
-        ukl_stc_window(t, a, x, 64u);
-}
+
+UKL_DEFINE_STORES(uint32_t)
+UKL_DEFINE_STORES(uint64_t)
 
 // Relaxed atomics on the aligned 32-bit word at byte `a` of a block.
-template <typename A> UKL_INLINE UKL_GLOBAL uint32_t* ukl_word_at(UKL_GLOBAL const uint8_t* t, A a) { return (UKL_GLOBAL uint32_t*)(t + a); }
-template <typename A> UKL_INLINE uint32_t ukl_atomic_load_at(UKL_GLOBAL const uint8_t* t, A a) { return ukl_atomic_load(ukl_word_at(t, a)); }
-template <typename A> UKL_INLINE void ukl_atomic_store_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { ukl_atomic_store(ukl_word_at(t, a), x); }
-template <typename A> UKL_INLINE uint32_t ukl_atomic_add_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { return ukl_atomic_add(ukl_word_at(t, a), x); }
-template <typename A> UKL_INLINE uint32_t ukl_atomic_cas_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t e, uint32_t n) { return ukl_atomic_cas(ukl_word_at(t, a), e, n); }
+#define UKL_DEFINE_ATOMICS_AT(A)                                                                                        \
+    UKL_INLINE UKL_OVERLOAD UKL_GLOBAL uint32_t* ukl_word_at(UKL_GLOBAL const uint8_t* t, A a) { return (UKL_GLOBAL uint32_t*)(t + a); } \
+    UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_load_at(UKL_GLOBAL const uint8_t* t, A a) { return ukl_atomic_load(ukl_word_at(t, a)); } \
+    UKL_INLINE UKL_OVERLOAD void ukl_atomic_store_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { ukl_atomic_store(ukl_word_at(t, a), x); } \
+    UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_add_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t x) { return ukl_atomic_add(ukl_word_at(t, a), x); } \
+    UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_cas_at(UKL_GLOBAL const uint8_t* t, A a, uint32_t e, uint32_t n) { return ukl_atomic_cas(ukl_word_at(t, a), e, n); }
+
+UKL_DEFINE_ATOMICS_AT(uint32_t)
+UKL_DEFINE_ATOMICS_AT(uint64_t)

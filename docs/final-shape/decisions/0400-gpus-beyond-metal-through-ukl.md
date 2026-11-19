@@ -334,6 +334,34 @@ SPIR-V):
   - On a discrete device the driver may stage it, and that would be a copy. So a discrete OpenCL device needs SVM
     or does not take blocks.
 
+**The choice (the user, 2026-11-18): A.** UKL source, the library and the generated reads included, is a C subset
+that OpenCL C 1.2 accepts. It also keeps compile times down: no templates to instantiate. The rules:
+
+- **No templates.** A function over several types is written once in a macro that defines it per type, or, where
+  call sites must not name the type (the loads and stores take a `uint32_t` or a `uint64_t` address), each variant
+  is marked `UKL_OVERLOAD`: nothing in C++ (Metal, CUDA, the CPU), `__attribute__((overloadable))` in OpenCL C.
+- **No references, methods, namespaces, `auto` or `constexpr`.** Pointers, functions, `#define`d constants.
+- **Casts are C casts:** `(uint32_t)(x)`, not `uint32_t(x)`.
+- **`UKL_STATIC_ASSERT(cond, msg)`**, not `static_assert`.
+- Only `backend.h`'s sections use their own languages: they are where each system's primitives are written.
+
+**Done (2026-11-18): the library is in the subset.**
+- **Templates.** `memory.h`'s loads, stores and atomics are defined per address type by macros (`uint32_t`,
+  `uint64_t`), and marked `UKL_OVERLOAD`; `ukl_min` and `ukl_max` are defined the same way per scalar type.
+  `radix.h`, `histogram.h` and `lz4.h` include a body once per type (`ukl/body/radix_tile.h`, `histogram_part.h`,
+  `lz4_decode.h`), whose parameters are its names (`UKL_RADIX_NAME(f)`, `f##_u32`) and its type. The decoder's
+  output is a `UKL_GLOBAL uint8_t*`, or any output a body instance gives an address macro (`UKL_LZ4_AT`).
+- **References** are pointers (`ukl_wq_take`, `ukl_wq_idle`, `ukl_lz4_length`); **structs** are `typedef struct`.
+- **The generated reads** (`clif/src/ukl.rs`, and the structs of `view`, `view_reads` and `ids`) write C casts and
+  `UKL_STATIC_ASSERT`. A struct's text includes `<ukl/backend.h>` first, as it is also pasted into hand-written
+  kernels ahead of the library. The five headers have no functional cast left (there were 5,616).
+- **Unchanged behaviour:** the library's 16 tests on Metal, CUDA (V100) and the CPU; the reads' gate on all three;
+  the engine's reads tests, the device join tests and the label kernels on Metal.
+
+The gate: every library header compiles as OpenCL C 1.2 (clang's front end, `-x cl -cl-std=CL1.2`), and still
+preprocesses and compiles as before on Metal, CUDA and the CPU. Then an OpenCL section of `backend.h`, the
+OpenCL shim and runtime, and the library's tests on Apple's OpenCL.
+
 ## 4. The C preprocessor
 
 The kernels are preprocessed in-process by `rerail-c-pp`, never by the host's `cc`:
