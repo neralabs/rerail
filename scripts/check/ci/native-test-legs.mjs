@@ -157,7 +157,18 @@ function list(binary, args) {
   return new Set(parseList(run.stdout));
 }
 
-function build(dir) {
+/**
+ * The cargo arguments that pick the packages: `npm run test:native`'s `--workspace`, or the packages
+ * NATIVE_TESTS_CARGO_ARGS selects (`-p <package>` each: a pull request's changed crates and the crates that depend on
+ * them, ci.yml's `changes` job).
+ */
+function cargoSelection() {
+  const selected = (process.env.NATIVE_TESTS_CARGO_ARGS ?? "").split(/\s+/u).filter(Boolean);
+  return selected.length === 0 ? ["--workspace"] : selected;
+}
+
+/** Runs `cargo test` with this script as the target runner, which records each test binary; returns the record's path. */
+function compileCaptured(dir) {
   mkdirSync(dir, { recursive: true });
   const captured = join(dir, "captured.jsonl");
   const parentEnv = join(dir, "parent-env.json");
@@ -166,37 +177,46 @@ function build(dir) {
   const env = { ...process.env, [runner]: `node ${SELF} capture`, NATIVE_TESTS_CAPTURE: captured, NATIVE_TESTS_PARENT_ENV: parentEnv };
   writeFileSync(parentEnv, JSON.stringify(env));
   const started = Date.now();
-  // `npm run test:native`'s command, or the packages NATIVE_TESTS_CARGO_ARGS selects (`-p <package>` each: a pull
-  // request's changed crates and the crates that depend on them, ci.yml's `changes` job).
-  const selected = (process.env.NATIVE_TESTS_CARGO_ARGS ?? "").split(/\s+/u).filter(Boolean);
-  const selection = selected.length === 0 ? ["--workspace"] : selected;
-  const cargo = spawnSync("cargo", ["test", "--manifest-path", "Cargo.toml", ...selection], { cwd: ROOT, stdio: "inherit", env });
+  const cargo = spawnSync("cargo", ["test", "--manifest-path", "Cargo.toml", ...cargoSelection()], { cwd: ROOT, stdio: "inherit", env });
   if (cargo.status !== 0) process.exit(cargo.status ?? 1);
   console.log(`cargo test (compile, doc tests): ${((Date.now() - started) / 60000).toFixed(1)} min`);
+  return captured;
+}
 
+/** The test binaries the runner recorded, each with an absolute path; throws on what `run` could not replay. */
+function capturedBinaries(captured) {
   const binaries = readFileSync(captured, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
   for (const binary of binaries) {
     if (binary.args.length > 0) throw new Error(`cargo passed ${binary.exe} arguments: ${binary.args.join(" ")}`);
     if (!binary.path) throw new Error(`cargo changed PATH for ${binary.exe}; run keeps the leg's own`);
     if (!isAbsolute(binary.exe)) binary.exe = resolve(binary.cwd, binary.exe);
   }
-  const all = new Map(binaries.map((binary) => [binary.exe, list(binary, [])]));
-  const byLeg = new Map(LEGS.map((leg) => [
-    leg.id,
-    new Map(binaries.map((binary) => [binary.exe, legRuns(leg, binary.exe) ? list(binary, legArgs(leg)) : new Set()])),
-  ]));
+  return binaries;
+}
+
+/** The tests `leg` selects in each binary, by the binary's path. */
+function legTests(leg, binaries) {
+  return new Map(binaries.map((binary) => [binary.exe, legRuns(leg, binary.exe) ? list(binary, legArgs(leg)) : new Set()]));
+}
+
+/** The number of tests in a map of binary to tests. */
+function testCount(tests) {
+  return [...tests.values()].reduce((sum, names) => sum + names.size, 0);
+}
+
+/** Prints the tests each leg selects, and exits unless each test is in exactly one leg. */
+function checkCover(binaries, all, byLeg) {
   const problems = coverProblems(all, byLeg);
-  const total = [...all.values()].reduce((sum, tests) => sum + tests.size, 0);
-  console.log(`${binaries.length} test binaries, ${total} tests`);
-  for (const leg of LEGS) {
-    const count = [...byLeg.get(leg.id).values()].reduce((sum, tests) => sum + tests.size, 0);
-    console.log(`  ${leg.id}: ${count} tests (${leg.name})`);
-  }
+  console.log(`${binaries.length} test binaries, ${testCount(all)} tests`);
+  for (const leg of LEGS) console.log(`  ${leg.id}: ${testCount(byLeg.get(leg.id))} tests (${leg.name})`);
   if (problems.length > 0) {
     console.error(`Each test must be in exactly one leg (scripts/check/ci/native-test-legs.mjs LEGS):\n${problems.join("\n")}`);
     process.exit(1);
   }
+}
 
+/** Writes the manifest and packs it with the binaries it names into `<dir>/native-tests.tar.zst`; returns the manifest. */
+function pack(dir, binaries, all, byLeg) {
   // A binary with no test to run (cargo's empty harnesses) stays behind.
   const manifest = {
     binaries: binaries.filter((binary) => all.get(binary.exe).size > 0).map((binary) => ({
@@ -212,9 +232,21 @@ function build(dir) {
   // 0.79 GB for 44383070532's (level 3; level 9 saves 0.07 GB more at twice the time).
   const tar = spawnSync("tar", ["-I", `zstd -T0 -3 ${LONG}`, "-cf", join(dir, "native-tests.tar.zst"), ...files], { cwd: ROOT, stdio: "inherit" });
   if (tar.status !== 0) process.exit(tar.status ?? 1);
-  // The `rust` job's matrix: the legs with a test to run.
+  return manifest;
+}
+
+/** Writes the `rust` job's matrix, the legs with a test to run, to $GITHUB_OUTPUT when there is one. */
+function writeLegs(manifest) {
   const legs = LEGS.filter((leg) => manifest.binaries.some((binary) => binary.tests[leg.id] > 0)).map(({ id, name }) => ({ leg: id, name }));
   if (process.env.GITHUB_OUTPUT !== undefined) appendFileSync(process.env.GITHUB_OUTPUT, `legs=${JSON.stringify(legs)}\n`);
+}
+
+function build(dir) {
+  const binaries = capturedBinaries(compileCaptured(dir));
+  const all = new Map(binaries.map((binary) => [binary.exe, list(binary, [])]));
+  const byLeg = new Map(LEGS.map((leg) => [leg.id, legTests(leg, binaries)]));
+  checkCover(binaries, all, byLeg);
+  writeLegs(pack(dir, binaries, all, byLeg));
 }
 
 function runBinary(binary, args) {
@@ -242,24 +274,52 @@ function runBinary(binary, args) {
   });
 }
 
-async function run(id, dir) {
+/** The leg `id` names; throws, listing the legs, when there is none. */
+function findLeg(id) {
   const leg = LEGS.find((candidate) => candidate.id === id);
   if (leg === undefined) throw new Error(`no leg ${id}: ${LEGS.map((candidate) => candidate.id).join(", ")}`);
+  return leg;
+}
+
+/** Unpacks the artifact in `dir` into the checkout; returns the binaries its manifest names. */
+function unpack(dir) {
   const tar = spawnSync("tar", ["-I", `zstd -d ${LONG}`, "-xf", join(dir, "native-tests.tar.zst")], { cwd: ROOT, stdio: "inherit" });
   if (tar.status !== 0) process.exit(tar.status ?? 1);
-  const { binaries } = JSON.parse(readFileSync(join(ROOT, "target", "native-tests.json"), "utf8"));
+  return JSON.parse(readFileSync(join(ROOT, "target", "native-tests.json"), "utf8")).binaries;
+}
+
+/** Adds a binary's summary counts, when it printed one, to the leg's totals. */
+function addTotals(totals, result) {
+  if (result === undefined) return;
+  for (const key of Object.keys(totals)) totals[key] += result[key];
+}
+
+/** How a binary's run failed: its exit, or a test count other than the `expected` the build listed; else undefined. */
+function binaryFailure(binary, expected, { code, signal, result }) {
+  const name = relative(ROOT, binary.exe);
+  if (code !== 0) return `${name}: ${signal === null ? `exit status ${code}` : `signal ${signal}`}`;
+  if (result !== undefined && result.passed + result.failed + result.ignored + result.measured === expected) return undefined;
+  return `${name}: ran ${result === undefined ? "no" : result.passed + result.failed + result.ignored} tests, the build listed ${expected}`;
+}
+
+/** Runs each binary with a test in `leg`, in turn; returns the failures and the summed counts. */
+async function runLeg(leg, binaries) {
   const args = legArgs(leg);
   const failures = [];
   const totals = { passed: 0, failed: 0, ignored: 0 };
   for (const binary of binaries.filter((candidate) => candidate.tests[leg.id] > 0)) {
     console.log(`     Running ${relative(ROOT, binary.exe)} (${relative(ROOT, binary.cwd) || "."})`);
-    const { code, signal, result } = await runBinary(binary, args);
-    if (result !== undefined) for (const key of Object.keys(totals)) totals[key] += result[key];
-    if (code !== 0) failures.push(`${relative(ROOT, binary.exe)}: ${signal === null ? `exit status ${code}` : `signal ${signal}`}`);
-    else if (result === undefined || result.passed + result.failed + result.ignored + result.measured !== binary.tests[leg.id]) {
-      failures.push(`${relative(ROOT, binary.exe)}: ran ${result === undefined ? "no" : result.passed + result.failed + result.ignored} tests, the build listed ${binary.tests[leg.id]}`);
-    }
+    const outcome = await runBinary(binary, args);
+    addTotals(totals, outcome.result);
+    const failure = binaryFailure(binary, binary.tests[leg.id], outcome);
+    if (failure !== undefined) failures.push(failure);
   }
+  return { failures, totals };
+}
+
+async function run(id, dir) {
+  const leg = findLeg(id);
+  const { failures, totals } = await runLeg(leg, unpack(dir));
   console.log(`\n${leg.name}: ${totals.passed} passed; ${totals.failed} failed; ${totals.ignored} ignored`);
   if (failures.length > 0) {
     console.error(`\nFailed:\n${failures.join("\n")}`);
