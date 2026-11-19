@@ -41,7 +41,9 @@ from its stored tape, as a chunk makes one. Nothing keeps a base relation's rows
   the memo has its guests' documents made from their stored tapes, not parsed again.
 - **An edit.** A base relation's change is the changed files' documents: its old rows are their old tapes' rows,
   its new rows their new tapes'. The maintain mode takes them as the given versions of the read (0364 R1, R2):
-  `Minus` over the old documents, `Plus` over the new, `Old` the batch before the edit. No rows are diffed.
+  `Minus` the old documents' rows their new ones do not hold, `Plus` the reverse, each picked where it lies in its
+  version (`InRel::picked`). Only the changed documents' rows are compared, one version against the other; no
+  unchanged document is read.
 - **What is kept of a base relation.** Its documents' digests, so the next run knows which changed, and its
   statistics (0120 §3). No rows, in the chain or in a memo entry.
 - **A session** (0077) holds its corpus batch from run to run, its changed files' documents replaced.
@@ -73,6 +75,19 @@ Each has its test before the code that meets it.
 3. An edit's versions of a base relation from its old and new documents. R3.
 4. The memo entries' base rows and the base inputs' granules go; copies 2 and 3 go. R4.
 5. Measured. R6.
+
+## Built
+
+- **Steps 1–3** (2026-11-19). The chunks keep their documents for the corpus batch (`Evaluated::documents`,
+  `keep_docs`); a hit's tape is read with the misses' before the first wave (`hit_tapes`) and its document made
+  once the chunks are done (`doc_of`, `with_guests`). The cross part binds the batch's sources; the chunks gather
+  no base rows. On the kept route the base relations are no kept inputs: each is the batch's, and its `Plus` and
+  `Minus` come from the changed files' new documents and their old ones, made from the old sources and tapes read
+  before the first wave (`old_inputs`). The kept route's base-relation patching (`patch_owners`' `holders`
+  `None`) went with it.
+- **Not yet:** a session (0077) still digests a base relation by its rows (`retain::kept_source`), and holds no
+  corpus batch from run to run; the memo entries still keep base rows, and the keep still writes the base inputs'
+  granules (step 4).
 
 ## Open
 
