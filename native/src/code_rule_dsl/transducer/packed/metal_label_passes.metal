@@ -815,28 +815,49 @@ static bool formula_named(thread const Tree& t,uint n,bool named){return !named|
 // The members of a slot: `FORMULA_EACH(slot, fw, lane, width, n) { ... }`, a word a thread.
 #define FORMULA_EACH(SLOT_,FW,LANE,WIDTH,N) for(uint formulaW=(LANE);formulaW<(FW);formulaW+=(WIDTH))for(uint formulaBits=atomic_load_explicit(&(SLOT_)[formulaW],memory_order_relaxed);formulaBits!=0u;formulaBits&=formulaBits-1u)for(uint N=formulaW*32u+ctz(formulaBits),formulaOnce=0u;formulaOnce==0u;formulaOnce=1u)
 
-kernel void label_leaves(device const DocView* docs [[buffer(0)]],device const uint* tests [[buffer(1)]],device atomic_uint* leaves [[buffer(2)]],constant Shape& shape [[buffer(3)]],device const uchar* chunk [[buffer(27)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]]){
-  DocView d=docs[file];
-  uint nodes=d.nodes,fw=(nodes+31u)/32u,region=FORMULA_REGION(d,file);
-  for(uint w=lane;w<fw;w+=width){
-    for(uint l=0u;l<shape.targetCount;l++)atomic_store_explicit(&leaves[l*shape.recursive+region+w],0u,memory_order_relaxed);
-    for(uint k=0u;k<32u&&w*32u+k<nodes;k++){
+// A thread a word of the batch's leaf rows (`FORMULA_REGION`'s numbering, a file's words then its two spare): each leaf
+// test's 32 bits made in a register and stored once. The word is this thread's alone, so no atomic; and a file is not
+// one group, so the largest file does not set the pass's time (Q281: a group a file, an atomic a hit, took 2.7 ms a
+// pass at s1000).
+kernel void label_leaves(device const DocView* docs [[buffer(0)]],device const uint* tests [[buffer(1)]],device uint* leaves [[buffer(2)]],constant Shape& shape [[buffer(3)]],device const uchar* chunk [[buffer(27)]],uint tid [[thread_position_in_grid]]){
+  if(shape.fileCount==0u)return;
+  // The file whose region holds word `tid`: the last whose region starts at or before it.
+  uint first=0u,last=shape.fileCount;
+  while(last-first>1u){uint middle=(first+last)/2u;if(FORMULA_REGION(docs[middle],middle)<=tid)first=middle;else last=middle;}
+  DocView d=docs[first];
+  uint region=FORMULA_REGION(d,first);
+  if(tid<region)return;
+  uint w=tid-region,nodes=d.nodes;
+  if(w*32u>=nodes)return;
+  uint count=min(32u,nodes-w*32u);
+  // The tests a block of `LEAF_BLOCK`, each block's bits in registers: a node's code is read once a block, not once a
+  // test (a code read is two dependent loads, its number then the code).
+  #define LEAF_BLOCK 8u
+  for(uint from=0u;from<shape.targetCount;from+=LEAF_BLOCK){
+    uint bits[LEAF_BLOCK];
+    for(uint j=0u;j<LEAF_BLOCK;j++)bits[j]=0u;
+    for(uint k=0u;k<count;k++){
       uint n=w*32u+k;
       device const DeviceCode& code=tape_code(chunk,d,n);
-      for(uint l=0u;l<shape.targetCount;l++){
-        uint test=tests[l],op=test&255u,arg=test>>8u;bool hit;
-        if(op==18u)hit=tape_next(chunk,d,n)!=TAPE_NONE;
+      for(uint j=0u;j<LEAF_BLOCK;j++){
+        uint l=from+j;
+        if(l>=shape.targetCount)break;
+        uint test=tests[l],op=test&255u,arg=test>>8u;
+        bool hit;
+        if(op==1u)hit=code.kind==arg;
+        else if(op==2u)hit=code.field==arg;
+        else if(op==3u){uint m=arg&255u,a=arg>>8u;hit=(code.flags&m)==m&&(code.flags&a)==0u;}
+        else if(op==18u)hit=tape_next(chunk,d,n)!=TAPE_NONE;
         else if(op==22u){hit=false;uint end=tape_siblings_end(chunk,d,n);for(uint c=tape_next_in(chunk,d,n,end);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
         else if(op==21u){hit=false;uint end=tape_end_of(chunk,d,n);for(uint c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end))if((tape_flags(chunk,d,c)&1u)!=0u){hit=true;break;}}
         else if(op==19u)hit=tape_size(chunk,d,n)>1u;
-        else if(op==1u)hit=code.kind==arg;
-        else if(op==2u)hit=code.field==arg;
-        else if(op==3u){uint m=arg&255u,a=arg>>8u;hit=(code.flags&m)==m&&(code.flags&a)==0u;}
         else{hit=false;for(uint c=0u;c<code.classCount;c++){if(code.classes[c]==arg){hit=true;break;}if(code.classes[c]>arg)break;}}
-        if(hit)atomic_fetch_or_explicit(&leaves[l*shape.recursive+region+w],1u<<k,memory_order_relaxed);
+        bits[j]|=uint(hit)<<k;
       }
     }
+    for(uint j=0u;j<LEAF_BLOCK&&from+j<shape.targetCount;j++)leaves[(from+j)*shape.recursive+region+w]=bits[j];
   }
+  #undef LEAF_BLOCK
 }
 
 // A chain's reach's level (`REACH_CHAIN`): the descendants of `level`'s members, as a targets image reads them (a

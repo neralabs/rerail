@@ -2682,13 +2682,21 @@ impl Runner<'_> {
         encoder.set_label(KERNELS[LEAVES_KERNEL]);
         crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[LEAVES_KERNEL]), 1);
         crate::code_rule_dsl::prof::count("gpu.anchor_leaves", tests.len());
+        if crate::code_rule_dsl::prof::on() {
+            for test in tests {
+                crate::code_rule_dsl::prof::count_named(format!("gpu.anchor_leaves.op{}", test & 255), 1);
+            }
+        }
         encoder.set_compute_pipeline_state(&self.kernels[LEAVES_KERNEL]);
         for (index, buffer) in [&docs, &tests_buffer, leaves].into_iter().enumerate() {
             encoder.set_buffer(index as u64, Some(buffer), 0);
         }
         encoder.set_bytes(3, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
         self.bind_slabs(encoder);
-        encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, 1, 1), MTLSize::new(FORMULA_WIDTH, 1, 1));
+        // A thread a word of the rows' region (`region`: the files' words, two spare a file, two at the end).
+        let threads = self.region() as u64;
+        let width = FORMULA_WIDTH.min(self.kernels[LEAVES_KERNEL].max_total_threads_per_threadgroup());
+        encoder.checked_dispatch_threads(&self.command, MTLSize::new(threads, 1, 1), MTLSize::new(width.min(threads), 1, 1));
         encoder.end_encoding();
         self.outcome.dispatches += 1;
         self.encoded = true;
