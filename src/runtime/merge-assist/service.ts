@@ -655,13 +655,16 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     this.#listeners.clear();
     // No queued handler starts from now on, so none starts a command after the running ones are ended.
     this.#hook.stop();
-    // The hook hears no event from now on: those a turn-off has not handed yet are kept, before anything is awaited.
-    this.#keepTaken(waitMs > 0);
+    // The hook hears no event from now on. With no wait, the events a turn-off has not handed yet are kept now.
+    if (waitMs <= 0) this.#keepTaken(false);
     // With no wait, the passes end in this call, before it awaits anything: its caller may close the database as soon
     // as it returns, as `DatabaseApiStores.close()` does. Nor does it wait for another process's write lock.
     if (waitMs <= 0) void this.#endPasses(false);
     const started = Date.now();
     await this.#commands.stop(Math.min(STOP_KILL_GRACE_MS, waitMs / 2));
+    // With a wait, once the hook commands are ended, since keeping them waits for another process's write lock. A
+    // turn-off whose branch read answers meanwhile hands nothing and leaves them taken (`setEnabled`).
+    if (waitMs > 0) this.#keepTaken(true);
     const timer = Promise.withResolvers<void>();
     const timeout = setTimeout(timer.resolve, Math.max(0, waitMs - (Date.now() - started)));
     const running = [this.#hook.settled(), ...this.#hookWork, ...[...this.#scans.values()].map(scan => scan.work)];
