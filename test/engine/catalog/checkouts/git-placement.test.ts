@@ -467,6 +467,22 @@ describe.runIf(process.platform === "win32")("on Windows, where Node reads no ow
     expect(vi.mocked(pathsOwnedByCurrentUser).mock.lastCall?.[0]).toHaveLength(3);
     expect(vi.mocked(pathsOwnedByCurrentUser).mock.lastCall?.[0].slice(0, 2)).toEqual([join(root, "own"), join(root, "own", ".git")]);
   });
+
+  it("lists a checkout as Git does once a folder Git placed above while no engine could tell owners becomes a repository and is placed", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    const inner = join(outer, "inner");
+    mkdirSync(inner);
+    // With no owner read the folder's facts cannot be read, and Git's acceptance is kept with no stamp.
+    vi.mocked(pathsOwnedByCurrentUser).mockReturnValue(undefined);
+    expect(registryPlacements(inner)).toBe(1);
+
+    repository(inner);
+    expect(repositoryIdentityLocation(inner)).toEqual(gitsAnswer(inner));
+    expect(worktreeRegistry(inner)?.worktrees).toEqual(gitsRegistry(inner));
+    expect(gitsRegistry(inner)).toHaveLength(1);
+  });
 });
 
 /**
@@ -724,6 +740,7 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     symlinkSync(join(root, "main.git", "refs", "heads", "other"), head);
     expect(gitsAnswer(main).git).toBe(false);
     expect(worktreeRegistry(main)).toBeUndefined();
+
   });
 
   it("places a worktree whose .git file names a link to its Git folder once, and again once the link names another", async () => {
@@ -883,6 +900,28 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(worktreeRegistry(inner)?.worktrees).toEqual(gitsRegistry(inner));
     expect(worktreeRegistry(inner)?.worktrees).toHaveLength(1);
   });
+
+  it("lists as Git does once a folder Git places in the repository above becomes a repository of its own, with no placement between", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    const inner = join(outer, "inner");
+    const emptied = join(outer, "emptied");
+    mkdirSync(inner);
+    mkdirSync(join(emptied, ".git"), { recursive: true });
+    expect(registryPlacements(inner)).toBe(1);
+    expect(registryPlacements(emptied)).toBe(1);
+    expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
+
+    repository(inner);
+    await removeFolder(join(emptied, ".git"));
+    repository(emptied);
+    for (const checkout of [inner, emptied]) expect(worktreeRegistry(checkout)?.worktrees, checkout).toEqual(gitsRegistry(checkout));
+    expect(gitsRegistry(inner)).toHaveLength(1);
+    git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    expect(worktreeRegistry(inner)?.worktrees).toEqual(gitsRegistry(inner));
+    for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
+  });
+
 });
 
 describe("an entry Git reads through a link is read through it", () => {
