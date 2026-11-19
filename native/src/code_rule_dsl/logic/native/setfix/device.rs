@@ -74,16 +74,12 @@ enum Kind {
     Own { rel: usize, delta: bool, cols: Vec<usize> },
     /// A text test of a symbol by its table, its verdicts in the store's one rolling cache (decision 0450 step 2d).
     Verdict { table: Arc<crate::code_rule_dsl::text::table::Table>, test: u32 },
-    /// A stage that reads names (`str_cmp`, a cat compared): the texts of the columns that bound its slots and of its
-    /// constants, on the device together.
-    Names { cols: Vec<(Arc<InRel>, usize)>, consts: Vec<i64> },
-    /// Text functions `ops`, in order, of the distinct symbols of column `col` of `rel`: their texts made on the
-    /// device a SIMD group a symbol, 32 bytes at a time (`mj::Batch::text_map`, `replace`), kept with the relation;
-    /// the stage copies a binding's into the arena.
-    Mapped { rel: Arc<InRel>, col: usize, ops: Vec<TextOp> },
-    /// A made text per row (`mj::ROWTEXT`: a cat, a regex's replacement, a text test of one), a SIMD group a row:
-    /// over the names of `cols`' symbols and `consts` (as `Names`), with its automaton.
-    RowText { cols: Vec<(Arc<InRel>, usize)>, consts: Vec<i64>, auto: RowAuto },
+    /// A stage that reads names (`str_cmp`, a cat compared): its symbols' bytes read in place through the batch's
+    /// atoms directory (decision 0450 step 2e).
+    Names,
+    /// A made text per row (`mj::ROWTEXT`: a cat, a regex's replacement, a text test of one), a SIMD group a row,
+    /// its symbols' bytes read in place (decision 0450 step 2e), with its automaton.
+    RowText { auto: RowAuto },
     /// The rule's steps past the one that binds the head (`setfix::tail`): an atom over `rel` (by its key columns
     /// `cols`) and the atoms after it (`rest`: each relation, its key columns and its probe), run as one witness per
     /// binding (`mj::WITNESS`, decision 0277), as the CPU's walk runs them (decision 0229).
@@ -105,22 +101,29 @@ fn makes_text(mode: u32) -> bool {
     mode == mj::ROWTEXT
 }
 
+/// Whether a stage of `mode` reads symbols' texts (through the batch's atoms directory, decision 0450 step 2e): a made
+/// text, a text op, `str_cmp`. Each has a counter word for what it finds the host's.
+fn reads_names(mode: u32) -> bool {
+    matches!(mode, mj::ROWTEXT | mj::TEXTOP | mj::STRCMP)
+}
+
+/// The batch's atoms directory, made (or made again, the store's atoms grown) for a stage that reads symbols' texts.
+fn dev_atoms(batch: &mut mj::Batch, names: &Interner) -> Result<(), String> {
+    let atoms = &names.atoms;
+    let runs = atoms.runs();
+    let end = runs.iter().map(|(r, _)| r.end).max().unwrap_or(0);
+    batch.atoms(end, || mj::DevAtoms::new(runs)).map_err(|e| format!("{e:?}: the atoms directory"))
+}
+
 /// A `ROWTEXT` stage of op `op` (`mj::ROW_*`, with a test's verdict wanted at bit 8) over operands `x` and `y` (a
 /// symbol, a held cat's text, an arena text).
 fn row_stage(first: usize, op: u32, x: Key, y: Key, auto: RowAuto, deferred: &HashMap<usize, (Key, Key, u32)>, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
     let mut st = text_stage(mj::ROWTEXT, first, op, x, y, deferred, origin, known)?;
-    let Kind::Names { cols, consts } = std::mem::replace(&mut st.kind, Kind::Pass) else { return Err("a made text's operands of no names".into()) };
-    st.kind = Kind::RowText { cols, consts, auto };
+    if !matches!(st.kind, Kind::Names) {
+        return Err("a made text's operands of no names".into());
+    }
+    st.kind = Kind::RowText { auto };
     Ok(st)
-}
-
-/// A text function of constant arguments, made once per distinct symbol (`Kind::Mapped`).
-#[derive(Clone, Debug, PartialEq)]
-enum TextOp {
-    /// `mj::TEXTFN_*` `f` of numbers `n0`, `n1` (`text_map`).
-    Map { f: u32, n0: i64, n1: i64 },
-    /// `replace_all` of a regex by a literal (symbols), or (`literal`) of the pattern's text itself.
-    Replace { pattern: i64, with: i64, literal: bool },
 }
 
 thread_local! {
@@ -205,7 +208,9 @@ fn text_keys(d: &mut mj::Stage, keys: &[Key], origin: &[Option<(Arc<InRel>, usiz
             }
         }
     }
-    Ok(Kind::Names { cols, consts })
+    // The symbols' bytes are read where the atoms blocks hold them: nothing of the columns is uploaded.
+    let _ = (cols, consts);
+    Ok(Kind::Names)
 }
 
 #[derive(Clone)]
@@ -433,7 +438,6 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
     ARENA.with_borrow_mut(Vec::clear);
     // Slots whose texts are text functions of an input column's symbols, made once per symbol: the column, the slot
     // that bound the symbol, and the functions.
-    let mut mapped: HashMap<usize, (Arc<InRel>, usize, usize, Vec<TextOp>)> = HashMap::new();
     // `cat`s held back, by the slot they bind: each read only by an `eq` or `ne` after, which compares names.
     let mut deferred: HashMap<usize, (Key, Key, u32)> = HashMap::new();
     let mut stages = Vec::new();
@@ -762,44 +766,10 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 stages.push(st);
                 i += 1;
             }
-            Step::Func { name, args, out, bind: true, .. } if per_symbol(name, args, &known, &origin, &mapped, &deferred).is_some() => {
-                // A text function of constant arguments of an input column's symbol (or of such a function's text):
-                // made once per distinct symbol of the column, 32 bytes at a time, the binding's copied into the arena.
-                let (op, x) = per_symbol(name, args, &known, &origin, &mapped, &deferred).expect("a text function per symbol");
-                let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
-                if let Some(s) = later.iter().find(|s| !arena_reader(s, *out)) {
-                    return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
-                }
-                if j.out.iter().any(|t| matches!(*t, Term::Cat(a, b) if a == *out || b == *out)) {
-                    return Err(format!("cat of the function {name}'s text has no device form"));
-                }
-                let (rel, col, src, mut ops) = match mapped.get(&x) {
-                    Some(m) => m.clone(),
-                    None => {
-                        let (rel, col) = origin[x].clone().expect("an input column's symbol");
-                        (rel, col, x, Vec::new())
-                    }
-                };
-                ops.extend(op);
-                let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
-                d.key_kind[0] = mj::SLOT;
-                d.key_slot[0] = src as u32;
-                d.agg = [mj::ROW_MAP | mj::TEXTFN_COPY << 16, mj::OPND_SYM];
-                d.bind_slot[0] = *out as u32;
-                if *out >= bound.len() {
-                    bound.resize(*out + 1, false);
-                }
-                bound[*out] = true;
-                ARENA.with_borrow_mut(|a| a.push(*out));
-                mapped.insert(*out, (rel.clone(), col, src, ops.clone()));
-                stages.push(PStage { first: i, span: 1, kind: Kind::Mapped { rel, col, ops }, desc: d, npassed: 0 });
-                i += 1;
-            }
-            Step::Func { name: name @ ("replace_all" | "rx_replace"), args, out, bind: true, .. }
-                if args.len() == 3 && matches!(args[0], Key::Slot(x) if is_arena(x) || deferred.contains_key(&x)) =>
-            {
-                // A regex's replacement in a made text (an arena text, a held cat's): per row, a SIMD group a row, 32
-                // bytes at a time (`ROWTEXT`), into the arena.
+            Step::Func { name: name @ ("replace_all" | "rx_replace"), args, out, bind: true, .. } if args.len() == 3 && matches!(args[0], Key::Slot(_)) => {
+                // A regex's replacement in a symbol's text (read in place, decision 0450 step 2e) or a made text (an
+                // arena text, a held cat's): per row, a SIMD group a row, 32 bytes at a time (`ROWTEXT`), into the
+                // arena.
                 let konst = |k: Key| match k {
                     Key::Const(c) => Some(c),
                     Key::Slot(x) => known.get(&x).copied(),
@@ -825,7 +795,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 i += 1;
             }
             Step::Func { name: name @ ("replace_all" | "rx_replace"), .. } => {
-                return Err(format!("the function {name} of a text no input relation's column bound, or of a regex or replacement not a constant, has no device form (it is made per distinct name)"));
+                return Err(format!("the function {name} of a constant text, or of a regex or replacement not a constant, has no device form"));
             }
             Step::Func { name, args, out, bind: true, .. } if text_function(name).is_some() => {
                 // A text function: its text made into the batch's arena (or a range of its argument's), its value
@@ -865,7 +835,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                     }
                     text_keys(&mut d, &keys, &origin, &known, &format!("the function {name}"))?
                 } else {
-                    Kind::Names { cols: Vec::new(), consts: Vec::new() }
+                    Kind::Names
                 };
                 // The numbers (keys 5 and 6).
                 for (n, a) in args[ntexts..].iter().enumerate() {
@@ -1060,36 +1030,6 @@ fn arena_reader(step: &Step, x: usize) -> bool {
     }
 }
 
-/// A text function step made once per distinct symbol (`Kind::Mapped`): its function (none: the identity, as
-/// `sql_replace` of an empty pattern) and the slot of its text, when that text is an input column's symbol (or a
-/// mapped text) and its other arguments are constants.
-fn per_symbol(name: &str, args: &[Key], known: &HashMap<usize, i64>, origin: &[Option<(Arc<InRel>, usize)>],
-              mapped: &HashMap<usize, (Arc<InRel>, usize, usize, Vec<TextOp>)>, deferred: &HashMap<usize, (Key, Key, u32)>) -> Option<(Option<TextOp>, usize)> {
-    let konst = |k: &Key| match *k {
-        Key::Const(c) => Some(c),
-        Key::Slot(x) => known.get(&x).copied(),
-    };
-    let Some(&Key::Slot(x)) = args.first() else { return None };
-    let column = mapped.contains_key(&x) || (!is_arena(x) && !deferred.contains_key(&x) && origin.get(x).is_some_and(Option::is_some));
-    if !column {
-        return None;
-    }
-    let consts: Option<Vec<i64>> = args[1..].iter().map(konst).collect();
-    let consts = consts?;
-    let op = match name {
-        "replace_all" | "rx_replace" if consts.len() == 2 => TextOp::Replace { pattern: consts[0], with: consts[1], literal: false },
-        "sql_replace" if consts.len() == 2 => TextOp::Replace { pattern: consts[0], with: consts[1], literal: true },
-        _ => {
-            let (f, nt, nn) = text_function(name)?;
-            if nt != 1 || f == mj::TEXTFN_TO_STRING || consts.len() != nn {
-                return None;
-            }
-            TextOp::Map { f, n0: consts.first().copied().unwrap_or(0), n1: consts.get(1).copied().unwrap_or(0) }
-        }
-    };
-    Some((Some(op), x))
-}
-
 /// A `TEXTFN_COPY` stage: the text of `a` and `b` by `form` (`cat`'s or `str_concat`'s) made into the arena, its
 /// value into slot `out`.
 fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
@@ -1192,10 +1132,6 @@ struct Entry {
     dev: Option<Rc<mj::DevRel>>,
     /// Its sorts, by the owner's key columns.
     indexes: Vec<(Vec<usize>, Rc<mj::DevIndex>)>,
-    /// Per column a text function read, its distinct symbols' names (the owner's columns).
-    texts: Vec<(usize, Rc<mj::DevText>)>,
-    /// Per (column, text functions), the column's symbols' texts made (`mapped_text`), with `lower`'s check.
-    mapped: Vec<((usize, String), (Rc<mj::DevText>, Option<Rc<mj::Words>>))>,
     bytes: usize,
     used: u64,
 }
@@ -1203,8 +1139,6 @@ struct Entry {
 #[derive(Default)]
 struct Resident {
     entries: Vec<Entry>,
-    /// The texts of several columns and constants together (`str_cmp`'s), by the columns and the constants.
-    unions: Vec<(Vec<(Weak<InRel>, usize)>, Vec<i64>, Rc<mj::DevText>)>,
     bytes: usize,
     clock: u64,
 }
@@ -1220,10 +1154,6 @@ impl Resident {
     /// Drops entries whose relation the engine dropped, then the least recently used while over the budget.
     fn trim(&mut self, room: usize) {
         self.entries.retain(|e| e.owner.live());
-        self.unions.retain(|(cols, _, _)| cols.iter().all(|(r, _)| r.strong_count() > 0));
-        if self.bytes() + room > resident_max() {
-            self.unions.clear();
-        }
         while self.bytes() + room > resident_max() && !self.entries.is_empty() {
             let at = self.entries.iter().enumerate().min_by_key(|(_, e)| e.used).map(|(k, _)| k).expect("an entry");
             self.entries.swap_remove(at);
@@ -1232,7 +1162,7 @@ impl Resident {
     }
 
     fn bytes(&self) -> usize {
-        self.entries.iter().map(|e| e.bytes).sum::<usize>() + self.unions.iter().map(|u| u.2.bytes()).sum::<usize>()
+        self.entries.iter().map(|e| e.bytes).sum::<usize>()
     }
 }
 
@@ -1243,7 +1173,6 @@ fn unrun<T>(r: Result<T, String>) -> Result<T, String> {
     if r.is_err() {
         RESIDENT.with_borrow_mut(|res| {
             res.entries.clear();
-            res.unions.clear();
             res.bytes = 0;
         });
         crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "device caches dropped after a refusal", 1);
@@ -1257,7 +1186,6 @@ fn unrun<T>(r: Result<T, String>) -> Result<T, String> {
 pub(in crate::code_rule_dsl) fn forget_dropped() {
     RESIDENT.with_borrow_mut(|res| {
         res.entries.retain(|e| e.owner.live());
-        res.unions.retain(|(cols, _, _)| cols.iter().all(|(r, _)| r.strong_count() > 0));
         res.bytes = res.bytes();
     });
 }
@@ -1314,8 +1242,6 @@ struct Run<'p> {
     uniq_cols: Vec<usize>,
     /// The text arena its text functions made their texts into (its batch's, shared with the batch's other jobs).
     arena: Option<Rc<mj::Arena>>,
-    /// Words its texts made per symbol set when `lower` met a name past ASCII (`mapped_text`).
-    checks: Vec<Rc<mj::Words>>,
 }
 
 /// `rel`'s rows where they lie in a block, and the columns there: a flat relation's (its dead rows marked by its
@@ -1326,22 +1252,6 @@ fn placed(rel: &Arc<InRel>) -> Option<(crate::code_rule_dsl::facts::rows::InBloc
         (Owner::Src(_), None) => None,
         (Owner::Rel(_), _) => rel.in_block().map(|b| (b, rel.k)),
     }
-}
-
-/// The entry that holds `rel`'s texts: its copy's, or one of texts alone for a relation read in place (until decision
-/// 0450 step 2 moves the texts to the one cache).
-fn texts_entry<'r>(res: &'r mut Resident, rel: &Arc<InRel>) -> &'r mut Entry {
-    let owner = Owner::of(rel);
-    let at = match res.entries.iter().position(|e| e.owner.same(&owner)) {
-        Some(at) => at,
-        None => {
-            res.clock += 1;
-            let used = res.clock;
-            res.entries.push(Entry { owner, cols: (0..rel.k).map(|c| owner_col(rel, c)).collect(), dev: None, indexes: Vec::new(), texts: Vec::new(), mapped: Vec::new(), bytes: 0, used });
-            res.entries.len() - 1
-        }
-    };
-    &mut res.entries[at]
 }
 
 /// The device's copy of `rel`'s columns `need` and `cols`, its sort by `cols` (none when it has no keys), and where
@@ -1415,9 +1325,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     rep.in_place += 1;
                     // By the view's device code (`device_chunk::VIEW_*`), as `view_made` counts them.
                     crate::code_rule_dsl::prof::count(["device.view_read.node", "device.view_read.child", "device.view_read.field", "device.view_read.core", "device.view_read.axis", "device.view_read.line", "device.view_read.end_line", "device.view_read.col", "device.view_read.docof", "device.view_read.tline"].get(view as usize).copied().unwrap_or("device.view_read.other"), n);
-                    let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
-                    let (texts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.mapped));
-                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, mapped, bytes, used: clock });
+                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Some(Rc::new(dev)), indexes: Vec::new(), bytes: 0, used: clock });
                     res.bytes = res.bytes();
                     res.entries.len() - 1
                 } else if let Some(d) = made {
@@ -1432,9 +1340,8 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     crate::code_rule_dsl::prof::count(["device.view_made.node", "device.view_made.child", "device.view_made.field", "device.view_made.core", "device.view_made.axis", "device.view_made.line", "device.view_made.end_line", "device.view_made.col", "device.view_made.docof", "device.view_made.tline"].get(d.view as usize).copied().unwrap_or("device.view_made.other"), dev.bytes());
                     by.0 += dev.bytes() as u64;
                     by.1 += thread_cpu() - c0;
-                    let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
-                    let (texts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.mapped));
-                    res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, mapped, bytes, used: clock });
+                    let bytes = dev.bytes();
+                    res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), bytes, used: clock });
                     res.bytes = res.bytes();
                     res.entries.len() - 1
                 } else {
@@ -1479,9 +1386,8 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 let by = &mut rep.upload_by[if rel.view.is_some() { profile::UPLOAD_VIEW } else { profile::UPLOAD_FLAT }];
                 by.0 += dev.bytes() as u64;
                 by.1 += thread_cpu() - c0;
-                let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
-                let (texts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.mapped));
-                res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), texts, mapped, bytes, used: clock });
+                let bytes = dev.bytes();
+                res.entries.push(Entry { owner, cols: want, dev: Some(Rc::new(dev)), indexes: Vec::new(), bytes, used: clock });
                 res.bytes = res.bytes();
                 res.entries.len() - 1
                 }
@@ -1577,25 +1483,6 @@ fn column_values(rel: &InRel, col: usize) -> Vec<i64> {
     }
 }
 
-/// The names of column `col`'s distinct symbols on the device, kept with the relation's entry `e` (copied once).
-fn column_text(e: &mut Entry, rel: &InRel, col: usize, rep: &mut Report, names: &Interner) -> Result<Rc<mj::DevText>, String> {
-    let oc = owner_col(rel, col);
-    if let Some((_, t)) = e.texts.iter().find(|(c, _)| *c == oc) {
-        return Ok(t.clone());
-    }
-    let c0 = thread_cpu();
-    let ids = column_symbols(rel, col);
-    let t = Rc::new(mj::DevText::upload(&ids, |v, out| out.extend_from_slice(names.name(v).as_bytes())).map_err(|e| format!("{e:?}: the names of {} symbols", ids.len()))?);
-    rep.uploads += 1;
-    rep.upload_bytes += t.bytes() as u64;
-    rep.upload_cpu += thread_cpu() - c0;
-    rep.upload_by[profile::UPLOAD_NAMES].0 += t.bytes() as u64;
-    rep.upload_by[profile::UPLOAD_NAMES].1 += thread_cpu() - c0;
-    e.bytes += t.bytes();
-    e.texts.push((oc, t.clone()));
-    Ok(t)
-}
-
 /// Regex `regex`'s automata for its replacements on the device (`text::table::Replacer`), where the automata block
 /// holds them (decision 0450 step 2c), and their states. Refused for a regex the device has no automata for.
 fn automata(regex: &str) -> Result<(Rc<mj::DevBytes>, u32), String> {
@@ -1622,65 +1509,6 @@ fn row_automaton(auto: &RowAuto, names: &Interner) -> Result<Option<(Rc<mj::DevB
     })
 }
 
-/// Text functions `ops` of the distinct symbols of column `col` of `rel`, in order: their texts as a text buffer by
-/// symbol (`DevText`'s), made on the device (`Batch::text_map`, `Batch::replace`: a SIMD group a symbol, 32 bytes at a
-/// time) the first time a stage asks, and kept with the relation; with the word `lower` sets past ASCII (the run's
-/// check). Refused (the stratum runs on the CPU) for a regex the device has no automata for, or a replacement naming a
-/// group (`$`).
-fn mapped_text(rel: &Arc<InRel>, col: usize, ops: &[TextOp], batch: &mut mj::Batch, rep: &mut Report, names: &Interner)
-    -> Result<(Rc<mj::DevRel>, Option<Rc<mj::Words>>), String> {
-    // The functions with their texts, as the key they are kept by.
-    let mut steps = Vec::new();
-    for op in ops {
-        steps.push(match *op {
-            TextOp::Map { f, n0, n1 } => (format!("{f}({n0},{n1})"), None),
-            TextOp::Replace { pattern, with, literal } => {
-                let (p, w) = (names.name(pattern), names.name(with));
-                if !literal && w.contains('$') {
-                    return Err("replace_all with a replacement naming a group ($) has no device form".into());
-                }
-                if literal && p.is_empty() {
-                    // SQLite's replace of an empty pattern: the text itself.
-                    continue;
-                }
-                let regex = if literal { regex_syntax::escape(&p) } else { p };
-                let automata = automata(&regex)?;
-                (format!("rx({regex:?},{w:?})"), Some((automata, w)))
-            }
-        });
-    }
-    // The relation's entry holds its texts (no column of it need be uploaded for them).
-    resident(rel, &[], &[], batch, rep)?;
-    RESIDENT.with_borrow_mut(|res| {
-        let e = texts_entry(res, rel);
-        let key = (owner_col(rel, col), steps.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";"));
-        if let Some((_, (t, flag))) = e.mapped.iter().find(|(k, _)| *k == key) {
-            rep.sort_hits += 1;
-            return Ok((t.rel(), flag.clone()));
-        }
-        let mut text = column_text(e, rel, col, rep, names)?;
-        let mut flag = None;
-        for ((what, rx), op) in steps.iter().zip(ops.iter().filter(|op| !matches!(op, TextOp::Replace { pattern, literal: true, .. } if names.name(*pattern).is_empty()))) {
-            let next = match (rx, op) {
-                (Some(((automata, states), with)), _) => batch.replace(&text, automata, *states, with.as_bytes()),
-                (None, TextOp::Map { f, n0, n1 }) => {
-                    let w = flag.get_or_insert_with(|| Rc::new(mj::Words::zeroed(1).expect("a word")));
-                    batch.text_map(&text, *f, *n0, *n1, w)
-                }
-                (None, TextOp::Replace { .. }) => unreachable!("a replacement has its automata"),
-            };
-            text = Rc::new(next.map_err(|e| format!("{e:?}: {what} over {} names", text.terms))?);
-            rep.sorts += 1;
-            rep.per_symbol += 1;
-            rep.per_symbol_names += text.terms as u64;
-        }
-        e.bytes += text.bytes();
-        let flag = flag.filter(|_| ops.iter().any(|op| matches!(op, TextOp::Map { f: mj::TEXTFN_LOWER, .. })));
-        e.mapped.push((key, (text.clone(), flag.clone())));
-        Ok((text.rel(), flag))
-    })
-}
-
 /// Column `col`'s distinct values, of its live rows.
 fn column_symbols(rel: &InRel, col: usize) -> Vec<i64> {
     let mut seen = std::collections::HashSet::new();
@@ -1697,37 +1525,6 @@ fn column_symbols(rel: &InRel, col: usize) -> Vec<i64> {
     ids
 }
 
-/// The texts of columns `cols`' symbols and of `consts`, on the device together (`str_cmp` reads them), copied once
-/// and kept while the relations are.
-// copy (0353 step 6): symbols' names copied for the device. They go: the kernels read the strings block
-// (decision 0353).
-fn texts(cols: &[(Arc<InRel>, usize)], consts: &[i64], rep: &mut Report, names: &Interner) -> Result<Rc<mj::DevText>, String> {
-    RESIDENT.with_borrow_mut(|res| {
-        let found = res.unions.iter().find(|(cs, ks, _)| {
-            ks == consts && cs.len() == cols.len() && cs.iter().zip(cols).all(|((w, c), (r, c2))| c == c2 && Weak::ptr_eq(w, &Arc::downgrade(r)))
-        });
-        if let Some((_, _, t)) = found {
-            rep.resident_hits += 1;
-            return Ok(t.clone());
-        }
-        let c0 = thread_cpu();
-        let mut ids: Vec<i64> = consts.to_vec();
-        for (rel, col) in cols {
-            ids.extend(column_symbols(rel, *col));
-        }
-        let t = Rc::new(mj::DevText::upload(&ids, |v, out| out.extend_from_slice(names.name(v).as_bytes())).map_err(|e| format!("{e:?}: the names of {} symbols", ids.len()))?);
-        rep.uploads += 1;
-        rep.upload_bytes += t.bytes() as u64;
-        rep.upload_cpu += thread_cpu() - c0;
-        rep.upload_by[profile::UPLOAD_NAMES].0 += t.bytes() as u64;
-        rep.upload_by[profile::UPLOAD_NAMES].1 += thread_cpu() - c0;
-        res.trim(t.bytes());
-        res.unions.push((cols.iter().map(|(r, c)| (Arc::downgrade(r), *c)).collect(), consts.to_vec(), t.clone()));
-        res.bytes = res.bytes();
-        Ok(t)
-    })
-}
-
 impl<'p> Run<'p> {
     fn new(plan: &Plan) -> Result<Run<'p>, String> {
         let mut io = Vec::new();
@@ -1737,13 +1534,14 @@ impl<'p> Run<'p> {
         for s in &plan.stages {
             match s.kind {
                 Kind::Pass | Kind::Map => io.push((slot, slot)),
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Verdict { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } | Kind::Witness { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Verdict { .. } | Kind::Names | Kind::RowText { .. } | Kind::Witness { .. } => {
                     io.push((slot, slot + 1));
                     slot += 1;
                 }
             }
-            if s.desc.mode == mj::AGG || makes_text(s.desc.mode) {
-                // Its word: set when a sum passed 64 bits, or a made text's part is past what a made value holds.
+            if s.desc.mode == mj::AGG || reads_names(s.desc.mode) {
+                // Its word: set when a sum passed 64 bits, a made text's part is past what a made value holds, or a
+                // symbol's text is the host's (`TEXTFN_*`).
                 counter.push(Some(ncounters));
                 ncounters += 1;
             } else if s.npassed > 0 {
@@ -1769,7 +1567,7 @@ impl<'p> Run<'p> {
         if uniq_cols.len() > 16 {
             return Err("a head of more than 16 slots".into());
         }
-        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None, checks: Vec::new() })
+        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -1800,15 +1598,8 @@ impl<'p> Run<'p> {
                     let t = self.tables[i].as_ref().expect("the map's table");
                     batch.map(s.desc, t, i, &self.totals).map_err(|e| format!("{e:?}"))?;
                 }
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Verdict { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } | Kind::Witness { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Verdict { .. } | Kind::Names | Kind::RowText { .. } | Kind::Witness { .. } => {
                     match (&s.kind, &self.rels[k]) {
-                        (Kind::Names { cols, consts }, None) => {
-                            let t = texts(cols, consts, rep, names)?;
-                            if s.desc.mode == mj::TEXTOP && s.desc.agg[0] & mj::TEXT_SPLIT != 0 && t.sep {
-                                return Err("a text test of a name holding the set separator (a set of patterns) has no device form".into());
-                            }
-                            self.rels[k] = Some((t.rel(), None));
-                        }
                         (Kind::Atom { rel, cols }, None) => {
                             let (dev, ix, place) = resident(rel, &right_cols(&s.desc), cols, batch, rep)?;
                             self.rels[k] = Some((dev, ix));
@@ -1836,12 +1627,6 @@ impl<'p> Run<'p> {
                             self.places[k] = Some(place);
                             self.probes[k] = Some(probes);
                         }
-                        (Kind::RowText { cols, consts, .. }, None) => self.rels[k] = Some((texts(cols, consts, rep, names)?.rel(), None)),
-                        (Kind::Mapped { rel, col, ops }, None) => {
-                            let (t, flag) = mapped_text(rel, *col, ops, batch, rep, names)?;
-                            self.checks.extend(flag);
-                            self.rels[k] = Some((t, None));
-                        }
                         (Kind::Own { rel, delta, cols }, None) => {
                             self.rels[k] = Some(own.get(*rel, *delta, cols, batch, rep)?.ok_or("an own relation with no rows")?);
                         }
@@ -1858,7 +1643,7 @@ impl<'p> Run<'p> {
                     }
                     let out = mj::Table::new(self.plan.nslots, cap).map_err(|e| format!("{e:?}: a binding table of {cap} rows, {} slots", self.plan.nslots))?;
                     if let Some(c) = self.counter[k] {
-                        for w in c..c + 1 + if s.desc.mode == mj::AGG || makes_text(s.desc.mode) { 0 } else { s.npassed } {
+                        for w in c..c + 1 + if s.desc.mode == mj::AGG || reads_names(s.desc.mode) { 0 } else { s.npassed } {
                             self.counters.set(w, 0);
                         }
                     }
@@ -1866,22 +1651,21 @@ impl<'p> Run<'p> {
                         // Its texts, and those of the text functions after it, go into this batch's arena.
                         self.arena = Some(batch.arena().map_err(|e| format!("{e:?}"))?);
                     }
+                    if reads_names(s.desc.mode) {
+                        dev_atoms(batch, names)?;
+                    }
                     let left = self.tables[i].as_ref().expect("the stage's input");
                     if s.desc.mode == mj::ROWTEXT {
                         let (auto, verdicts) = match &s.kind {
                             Kind::RowText { auto, .. } => (row_automaton(auto, names)?, None),
                             Kind::Verdict { table, test } => {
                                 let a = Rc::new(mj::DevBytes::of(&table.automaton).map_err(|e| format!("{e:?}"))?);
-                                let v = mj::DevVerdicts::new(names.atoms.verdicts(), names.atoms.runs(), *test).map_err(|e| format!("{e:?}: a text test's verdicts"))?;
+                                let v = mj::DevVerdicts::new(names.atoms.verdicts(), *test).map_err(|e| format!("{e:?}: a text test's verdicts"))?;
                                 (Some((a, [table.states, table.states, table.classes, table.start])), Some(v))
                             }
                             _ => (None, None),
                         };
-                        let names_rel = right.map(|r| r.0);
-                        if names_rel.is_none() && verdicts.is_none() {
-                            return Err("a made text's stage with no names".into());
-                        }
-                        batch.row_stage(s.desc, left, names_rel, auto.as_ref().map(|(b, p)| (&**b, *p)), verdicts.as_ref(), i, o, &self.totals, &self.counters, self.counter[k], &out)
+                        batch.row_stage(s.desc, left, auto.as_ref().map(|(b, p)| (&**b, *p)), verdicts.as_ref(), i, o, &self.totals, &self.counters, self.counter[k], &out)
                     } else {
                         let desc = self.places[k].as_deref().map_or(s.desc, |at| narrowed(s.desc, at));
                         if let Some(probes) = &self.probes[k] {
@@ -1922,16 +1706,19 @@ impl<'p> Run<'p> {
         if set(mj::AGG) {
             return Some("an aggregate's sum past 64 bits".to_owned());
         }
-        if self.checks.iter().any(|w| w.get(0) != 0)
-            || self.plan.stages.iter().zip(&self.counter).any(|(s, c)| makes_text(s.desc.mode) && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_HOST != 0))
+        if self.plan.stages.iter().zip(&self.counter).any(|(s, c)| makes_text(s.desc.mode) && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_HOST != 0))
         {
             return Some("lower of a name past ASCII (Unicode's mapping is the host's)".to_owned());
         }
         if self.arena_full() {
             return Some(format!("its texts past the device's text arena of {} bytes", arena_max()));
         }
-        if self.plan.stages.iter().zip(&self.counter).any(|(s, c)| makes_text(s.desc.mode) && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_UNHELD != 0)) {
-            return Some("a text test of a symbol the atoms directory does not hold".to_owned());
+        let bit = |b: u32| self.plan.stages.iter().zip(&self.counter).any(|(s, c)| reads_names(s.desc.mode) && c.is_some_and(|c| self.counters.get(c) & b != 0));
+        if bit(mj::TEXTFN_UNHELD) {
+            return Some("a text read of a symbol the atoms directory does not hold".to_owned());
+        }
+        if self.plan.stages.iter().zip(&self.counter).any(|(s, c)| s.desc.mode == mj::TEXTOP && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_HOST != 0)) {
+            return Some("a text test of a bound pattern holding the set separator (a set of patterns)".to_owned());
         }
         // A 16z view's blocks: a read that found no room in its batch's cache read the dead entry (0353 step 4b).
         #[cfg(target_os = "macos")]

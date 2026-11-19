@@ -208,7 +208,7 @@ pending into a new buffer.
   its work completes, though the store lets a pending block go meanwhile.
 - Gone: `Kind::Text`, mode `TEXT` (5) and its `text_pass`, the `text_verdicts` kernel, `Batch::verdicts`,
   `DevTable`, `setfix::device::verdicts` and the entries' `verdicts`. The column's names for a text test are no longer
-  uploaded (`column_text` stays for the text functions, 2e).
+  uploaded (`column_text` stayed for the text functions until step 2e's second part).
 - `row_scatter` binds no value for a verdict stage, as for `ROW_TEST`: a first build wrote the stage's (unwritten)
   value into slot 0, so a later join on that slot, or a head reading it, saw 0 (`text_tests_on_the_device_are_the_
   cpus` and `a_stratum_run_apart_beside_an_open_wave_reads_what_the_wave_made` caught it).
@@ -255,3 +255,31 @@ that size came from the cache's first use, a 16z block decoded, and nothing else
   block cache's own runs): 102.9 B against 101.8 B, peak 2,297 MB against 2,232 MB; no lookup failed, none turned
   a generation, 6,155 misses against 5,898. Left out: each build's first run of each format, which compiles the
   kernels whose reads changed (180 B and 124 s; 124 B).
+
+## Built (2026-11-19, step 2e, symbols read in place by every text kernel)
+
+- **One directory a batch.** The atoms directory (`DevAtoms`: its block's wrap at its root, the atoms blocks' wraps
+  it reaches, made resident where a kernel reads through it) is the batch's, made at the first stage that reads a
+  symbol's text and made again only when the store's atoms have grown past it (the one before kept until the work
+  that read it completes). `DevVerdicts` keeps the cache and the test alone.
+- **Every text kernel reads a symbol's bytes through it** (`sym_text`: `clif_atoms_len`, `clif_atoms_at`): the text
+  ops (`TEXTOP`), `str_cmp` and `strlen` (`STRCMP`), and every made text per row (`ROWTEXT`). A symbol the directory
+  does not hold reads as empty and sets the stage's `TEXTFN_UNHELD`: the stratum runs on the host. These stages now
+  each have a counter word.
+- **A bound pattern holding the set separator** (`\u1f`) was refused when its column's names were uploaded; nothing
+  is uploaded now, so the kernel finds it and sets `TEXTFN_HOST` on the text op's word: the stratum runs on the host,
+  named (`a_bound_pattern_holding_the_set_separator_runs_on_the_host`).
+- **The text functions of constant arguments run per row**, as every other text function does, a SIMD group a row
+  into the batch's arena. They were made once per distinct symbol of the column (`Kind::Mapped`), over the column's
+  names uploaded (`column_text`). Kept per (functions, symbol) in the rolling cache is the next part.
+- Gone: `texts` (0353 row 5's names), `DevText`, `Kind::Mapped`, `TextOp`, `per_symbol`, `mapped_text`,
+  `column_text`, the entries' `texts` and `mapped`, `Resident::unions`, the run's `checks`, `Batch::replace`,
+  `Batch::text_map`, and the kernels `text_replace` and `text_map` with the text buffer's reads (`text_find`,
+  `text_chars`).
+- Tests: the 19 setfix device tests and the `metal_join` tests pass on Metal. `text_functions_on_the_device_are_the_
+  cpus` (17 rules, 2,000 names, the arena filled and run again) now asserts that no names are uploaded and no
+  per-symbol table is made; its rows are the CPU's.
+- hogql cold, Metal, profiling, format 15, load 28-33, interleaved with the build before (d9ea6f1ec), 1,629 findings
+  in every run: 75.9-77.2 B against 77.5-80.4 B, peak 1,365-1,416 MB against 1,443-1,494 MB. No stratum ran on the
+  host for an unheld symbol or the separator; the refusals at run time are the device's room (Q261) in both builds.
+  Left out: the new binary's first run, which compiles the changed kernels (89 B, 25 s).

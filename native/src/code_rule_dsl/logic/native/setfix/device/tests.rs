@@ -456,6 +456,45 @@
         assert_eq!((verdicts.get(test, foo1), verdicts.get(test, longs), verdicts.get(test, bar)), (PASSES, PASSES, FAILS), "the device's verdicts, kept for the CPU");
     }
 
+    /// A literal test of a bound pattern, its symbols read in place (decision 0450 step 2e): a pattern holding the set
+    /// separator is no set, so the stratum runs on the host, named, and its rows are the CPU's.
+    #[test]
+    fn a_bound_pattern_holding_the_set_separator_runs_on_the_host() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE m (c0); INSERT INTO m VALUES ('fo'), ('ba' || char(31) || 'zz'); \
+                          CREATE TEMP TABLE n (c0, c1); INSERT INTO n VALUES ('foo', 1), ('bar', 2), ('zzz', 3), ('qq', 4);").unwrap();
+        let m = format!("t:x:{}:{}:s", hex("temp.m"), hex("c0"));
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let rule = format!("pos {m} v0\npos {n} v1 v2\ntest prefix v1 v0 1\nhead v1 v2");
+        let mut got = Vec::new();
+        for device in [true, false] {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+            let mut spec = vec!["name dev_sep".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel h0 si empty".to_owned(), format!("seed 0 {}", hex(&rule))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "dev_sep", 0).unwrap();
+            let report = super::take_report();
+            if device {
+                let why = report.as_ref().and_then(|r| r.refused.clone()).unwrap_or_default();
+                assert!(why.contains("separator"), "the stratum ran on the host, named: {report:?}");
+            }
+            super::super::close(&db, "dev_sep").unwrap();
+            got.push(stratum_rows(&db, "h0"));
+        }
+        assert_eq!(got[0], got[1], "the host's rows");
+        assert_eq!(got[1].iter().map(|r| r.1).collect::<Vec<_>>(), [1, 2, 3], "foo by fo; bar by ba, zzz by zz (a set)");
+    }
+
     /// Every symbol's verdict the device keeps is the CPU's matcher's, for 2,000 names read through SQL (the atoms
     /// in more than one block): a symbol it got wrong is named with the run and the block that hold it.
     #[test]
@@ -848,7 +887,9 @@
                     assert_eq!(r.refused.is_none(), on_device, "{case}: {r:?}");
                     if on_device {
                         assert!(r.made > 2000 && r.arena_reruns >= 1, "{case}: texts made in an arena that filled once: {r:?}");
-                        assert!(r.per_symbol >= 12, "{case}: text functions made once per distinct name, chunked: {r:?}");
+                        // Symbols' texts read in place through the atoms directory (decision 0450 step 2e): no names
+                        // uploaded, no per-symbol table made.
+                        assert_eq!((r.per_symbol, r.upload_by[super::profile::UPLOAD_NAMES].0), (0, 0), "{case}: symbols read in place: {r:?}");
                     }
                 }
                 let counts = super::super::step_counts(&db, "dev_fn").unwrap();
