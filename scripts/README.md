@@ -138,8 +138,10 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   JSON original (through `product-run.ts`), compared per rule as sets of (rule, path, line, code), with the column where
   both sides give one, on the pack's examples, its recorded fixtures and its real-code corpora (`corpora.json`
   `translations[<pack>]`, else the benchmark's `packs[<pack>]`; a git corpus is exported and checked against its pin,
-  `translations.ts pin <corpus>` pins one). Each rule is `same`, `different` (counts and samples per corpus),
-  `untranslated` or `failed` (the engine's message); `--out` gets each pack's JSON. A pack's
+  `translations.ts pin <corpus>` pins one). A tool-call rule is compared on its examples as tool calls instead: the
+  original through the runtime's matcher, the translation through `run-policies --tool-calls`, a finding the call.
+  Each rule is `same`, `different` (counts and samples per corpus), `untranslated` or `failed` (the engine's
+  message); `--out` gets each pack's JSON. A pack's
   `equivalence.json` declares its differences; one declaring `equivalent: true` fails the run when the run disagrees
   (docs/rule-syntax/packs/CONVENTIONS.md, "Checking against the original"); `--write-differences` rewrites the lists.
   CI's `translations` job runs it for the `rerail` pack.

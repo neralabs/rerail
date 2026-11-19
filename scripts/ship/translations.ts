@@ -19,8 +19,14 @@
 // original does not compile; the original's failures on single files (syntax errors, a spent work budget) are
 // recorded beside the comparison, as the product reports them and carries on.
 //
+// A tool-call rule (`sample.boundary: "tool-call"`) matches a coding agent's tool call, not files: it is compared on
+// the tool-calls corpus only. Its original is matched against each call as the runtime matches one
+// (ConversationRuleRegistry, repeats not held back, as pack validation checks examples); its translation runs through
+// `run-policies --tool-calls <calls.json>`. A finding is (rule, call): the original names no code, so none is compared.
+//
 // The corpora, each compared on its own:
 //   examples   pack.json's `rules[].examples` that are files, laid out as few directories as hold them;
+//   tool-calls the pack's tool-call rules' pack.json examples, each a call (translations-model.ts exampleToolCalls);
 //   fixtures   the pack's recorded upstream fixtures, <corpora>/recorded/<pack>/files, as the shippability bar's
 //              `prepare` makes them (checked against <corpora>/corpora.lock.json when it is there);
 //   <name>     each real-code corpus of scripts/ship/corpora.json for the pack: its `translations[<pack>]`, else the
@@ -42,6 +48,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { ConversationRuleRegistry } from "../../src/engine/catalog/registry.js";
+import { stableJsonText } from "../../src/engine/stable-json.js";
+import { resolveModelPath } from "../../src/runtime/session-paths.js";
 import { hashTree } from "./corpus-tree.js";
 import { engineJson } from "./engine-json.js";
 import { engineBinary } from "./metric.js";
@@ -50,7 +59,9 @@ import {
   type Declaration,
   emptyDeclaration,
   EXAMPLES_CORPUS,
+  type ExampleToolCall,
   exampleFiles,
+  exampleToolCalls,
   type Finding,
   FIXTURES_CORPUS,
   gateProblems,
@@ -62,6 +73,7 @@ import {
   type RuleInput,
   ruleResult,
   summarize,
+  TOOL_CALLS_CORPUS,
   writeDifferences,
 } from "./translations-model.js";
 
@@ -192,21 +204,54 @@ async function runOriginal(dir: string, rulesDir: string, work: string, ruleIds:
   return { findings, failures, incidents, notes };
 }
 
-/** A run-policies document's findings, each mapped to its rule by its policy's name. */
-function translationFindings(stdout: string, policies: ReadonlySet<string>, notes: string[]): Finding[] {
-  const report = engineJson<{ diagnostics: { policy: string; path: string; line: number; code: string; column?: unknown }[] }>(stdout);
+/**
+ * The original side on tool calls: the tool-call rules' JSON documents matched against each call through the product's
+ * matcher, as the runtime samples a call (its input as stable JSON) and as pack validation checks examples (repeats
+ * not held back). A finding is the call: its id as the path, no line, no code.
+ */
+function runOriginalCalls(calls: readonly ExampleToolCall[], documents: ReadonlyMap<string, unknown>): SideRun {
+  const failures = new Map<string, string>();
+  let registry: ConversationRuleRegistry;
+  try {
+    registry = new ConversationRuleRegistry({ modelPath: resolveModelPath(SELF) });
+  } catch (error) {
+    const why = `the conversation engine does not load: ${error instanceof Error ? error.message : String(error)}`;
+    return { findings: [], failures: new Map([...documents.keys()].map((rule) => [rule, why])), incidents: new Map(), notes: [] };
+  }
+  for (const [rule, document] of documents) {
+    try {
+      registry.upsert(document);
+    } catch (error) {
+      failures.set(rule, `the original does not compile: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const findings = calls.flatMap((call) => {
+    const input = stableJsonText(call.input)!;
+    const matches = registry.match({ source: `tool:${call.tool}`, boundary: "tool-call", text: input, input }, { respectRepeat: false });
+    return matches.map((m): Finding => ({ rule: m.ruleId, path: call.id, line: 0, code: "" }));
+  });
+  return { findings, failures, incidents: new Map(), notes: [] };
+}
+
+/** A run-policies document's findings, each mapped to its rule by its policy's name; on tool calls, each is its call's. */
+function translationFindings(stdout: string, policies: ReadonlySet<string>, notes: string[], onCalls: boolean): Finding[] {
+  const report = engineJson<{ diagnostics: { policy: string; path: string; line: number; code: string; column?: unknown; at?: unknown }[] }>(stdout);
   const findings: Finding[] = [];
   let unknown = 0;
   for (const d of report.diagnostics) {
     if (!policies.has(d.policy)) unknown += 1;
+    else if (onCalls) findings.push({ rule: d.policy, path: String(d.at), line: 0, code: "" });
     else findings.push({ rule: d.policy, path: d.path, line: d.line, code: d.code, ...(typeof d.column === "number" && d.column > 0 ? { column: d.column } : {}) });
   }
   if (unknown > 0) notes.push(`the translations' run reported ${unknown} finding(s) of a policy that names no rule of the pack`);
   return findings;
 }
 
-/** The translation side: every rule's `.rerail` files in one run, else each rule's alone, `jobs` at once. */
-async function runTranslations(engine: string, dir: string, rules: ReadonlyMap<string, readonly string[]>, work: string, jobs: number, timeoutS: number): Promise<Omit<SideRun, "incidents">> {
+/**
+ * The translation side: every rule's `.rerail` files in one run, else each rule's alone, `jobs` at once; with `calls`
+ * (a tool calls file), over those calls (`dir` an empty root).
+ */
+async function runTranslations(engine: string, dir: string, rules: ReadonlyMap<string, readonly string[]>, work: string, jobs: number, timeoutS: number, calls?: string): Promise<Omit<SideRun, "incidents">> {
   const notes: string[] = [];
   const failures = new Map<string, string>();
   if (rules.size === 0) return { findings: [], failures, notes };
@@ -216,12 +261,13 @@ async function runTranslations(engine: string, dir: string, rules: ReadonlyMap<s
     // pack's tapes and memo entries across runs until its hard limit refused new ones.
     const store = `${out}.store`;
     mkdirSync(store, { recursive: true });
-    const run = await spawnAsync(engine, ["run-policies", dir, out, ...paths], { cwd: SELF, env: { ...ENGINE_ENV, RERAIL_TAPE_CACHE: join(store, "store.sqlite") }, timeoutS });
+    const input = calls === undefined ? [dir] : ["--tool-calls", calls, dir];
+    const run = await spawnAsync(engine, ["run-policies", ...input, out, ...paths], { cwd: SELF, env: { ...ENGINE_ENV, RERAIL_TAPE_CACHE: join(store, "store.sqlite") }, timeoutS });
     rmSync(out, { recursive: true, force: true });
     rmSync(store, { recursive: true, force: true });
     if (run.status !== 0) return { failure: failureText(run, timeoutS) };
     try {
-      return { findings: translationFindings(run.stdout, policies, notes) };
+      return { findings: translationFindings(run.stdout, policies, notes, calls !== undefined) };
     } catch (error) {
       return { failure: `run-policies wrote no report: ${error instanceof Error ? error.message : String(error)}` };
     }
@@ -333,11 +379,12 @@ function realCorpus(manifest: Manifest, name: string, corpora: string): { dir: s
   return { dir, files: now.files };
 }
 
-/** The pack's corpora, and why any it should have is not compared. */
-function packCorpora(pack: string, o: Options, work: string, notes: string[]): { corpora: Corpus[]; incomplete: Record<string, string> } {
+/** The pack's corpora of files, and why any it should have is not compared; `callRules`' examples are calls, not files. */
+function packCorpora(pack: string, o: Options, work: string, notes: string[], callRules: ReadonlySet<string>): { corpora: Corpus[]; incomplete: Record<string, string> } {
   const corpora: Corpus[] = [];
   const incomplete: Record<string, string> = {};
-  const examples = exampleFiles(readJson(join(SELF, "packs", pack, "pack.json")));
+  const packJson = readJson<Parameters<typeof exampleFiles>[0]>(join(SELF, "packs", pack, "pack.json"));
+  const examples = exampleFiles({ rules: (packJson.rules ?? []).filter((rule) => !callRules.has(rule.id)) });
   for (const skipped of examples.skipped) notes.push(`example not compared: ${skipped}`);
   const bins = layOutExamples(examples.files);
   if (bins.length > 0) {
@@ -401,10 +448,19 @@ async function checkPack(pack: string, o: Options): Promise<PackReport> {
   mkdirSync(work, { recursive: true });
   const refused = checkRr(o.engine, translated, work);
   const runnable = new Map([...translated].filter(([rule]) => !refused.has(rule)));
+  // A tool-call rule matches a coding agent's calls, not files: it runs on the tool-calls corpus alone.
+  const documents = new Map(ruleIds.map((rule) => [rule, readJson<{ sample?: { source?: string; boundary?: string } }>(join(SELF, "packs", pack, "rules", `${rule}.json`))]));
+  const callSources = new Map(ruleIds.flatMap((rule) => {
+    const sample = documents.get(rule)!.sample;
+    return sample?.boundary === "tool-call" && sample.source !== undefined ? [[rule, sample.source] as const] : [];
+  }));
+  const codeIds = ruleIds.filter((rule) => !callSources.has(rule));
+  const runnableCode = new Map([...runnable].filter(([rule]) => !callSources.has(rule)));
+  const runnableCalls = new Map([...runnable].filter(([rule]) => callSources.has(rule)));
   const rulesDir = join(work, "rules");
   mkdirSync(rulesDir);
-  for (const rule of ruleIds) writeFileSync(join(rulesDir, `${rule}.json`), readFileSync(join(SELF, "packs", pack, "rules", `${rule}.json`)));
-  const { corpora, incomplete } = packCorpora(pack, o, work, notes);
+  for (const rule of codeIds) writeFileSync(join(rulesDir, `${rule}.json`), readFileSync(join(SELF, "packs", pack, "rules", `${rule}.json`)));
+  const { corpora, incomplete } = packCorpora(pack, o, work, notes, new Set(callSources.keys()));
 
   const inputs = new Map<string, RuleInput>(ruleIds.map((rule) => {
     const refusal = refused.get(rule);
@@ -418,8 +474,8 @@ async function checkPack(pack: string, o: Options): Promise<PackReport> {
     for (const [i, { dir, prefix }] of corpus.dirs.entries()) {
       const runWork = join(work, "runs", `${corpus.name}-${i + 1}`);
       mkdirSync(runWork, { recursive: true });
-      console.log(`translations: ${pack} on ${corpus.name}${corpus.dirs.length > 1 ? ` (${i + 1}/${corpus.dirs.length})` : ""}: ${ruleIds.length} originals, ${runnable.size} translations`);
-      const [o1, t1] = await Promise.all([runOriginal(dir, rulesDir, runWork, ruleIds, o.timeoutS), runTranslations(o.engine, dir, runnable, runWork, o.jobs, o.timeoutS)]);
+      console.log(`translations: ${pack} on ${corpus.name}${corpus.dirs.length > 1 ? ` (${i + 1}/${corpus.dirs.length})` : ""}: ${codeIds.length} originals, ${runnableCode.size} translations`);
+      const [o1, t1] = await Promise.all([runOriginal(dir, rulesDir, runWork, codeIds, o.timeoutS), runTranslations(o.engine, dir, runnableCode, runWork, o.jobs, o.timeoutS)]);
       for (const [rule, why] of [...o1.failures, ...t1.failures]) if (!failures.has(rule)) failures.set(rule, why);
       for (const [rule, list] of o1.incidents) incidents.set(rule, [...(incidents.get(rule) ?? []), ...list]);
       for (const note of [...o1.notes, ...t1.notes]) notes.push(`${corpus.name}: ${note}`);
@@ -428,15 +484,37 @@ async function checkPack(pack: string, o: Options): Promise<PackReport> {
     }
     const originalBy = byRule(original);
     const translationBy = byRule(translation);
-    for (const rule of runnable.keys()) {
+    for (const rule of runnableCode.keys()) {
       const why = failures.get(rule);
       const run = { original: originalBy.get(rule) ?? [], translation: translationBy.get(rule) ?? [], ...(incidents.has(rule) ? { originalFailures: incidents.get(rule)! } : {}) };
       inputs.get(rule)!.corpora[corpus.name] = why === undefined ? run : { failure: why };
     }
   }
+  const ran = corpora.map((c) => c.name);
+  const compared = corpora.map((c) => ({ name: c.name, dir: c.dirs.map((d) => d.dir).join(", "), files: c.files }));
+  if (runnableCalls.size > 0) {
+    const { calls, skipped } = exampleToolCalls(readJson(join(SELF, "packs", pack, "pack.json")), callSources);
+    for (const s of skipped) notes.push(`example not compared: ${s}`);
+    const runWork = join(work, "runs", TOOL_CALLS_CORPUS);
+    const root = join(runWork, "root");
+    mkdirSync(root, { recursive: true });
+    const callsPath = join(runWork, "calls.json");
+    writeFileSync(callsPath, `${JSON.stringify(calls, null, 1)}\n`);
+    console.log(`translations: ${pack} on ${TOOL_CALLS_CORPUS}: ${calls.length} calls, ${callSources.size} originals, ${runnableCalls.size} translations`);
+    const o1 = runOriginalCalls(calls, new Map([...callSources.keys()].map((rule) => [rule, documents.get(rule)!])));
+    const t1 = await runTranslations(o.engine, root, runnableCalls, runWork, o.jobs, o.timeoutS, callsPath);
+    for (const note of [...o1.notes, ...t1.notes]) notes.push(`${TOOL_CALLS_CORPUS}: ${note}`);
+    const originalBy = byRule(o1.findings);
+    const translationBy = byRule(t1.findings);
+    for (const rule of runnableCalls.keys()) {
+      const why = o1.failures.get(rule) ?? t1.failures.get(rule);
+      inputs.get(rule)!.corpora[TOOL_CALLS_CORPUS] = why === undefined ? { original: originalBy.get(rule) ?? [], translation: translationBy.get(rule) ?? [] } : { failure: why };
+    }
+    ran.push(TOOL_CALLS_CORPUS);
+    compared.push({ name: TOOL_CALLS_CORPUS, dir: callsPath, files: calls.length });
+  }
 
   const results = ruleIds.map((rule) => ruleResult(inputs.get(rule)!));
-  const ran = corpora.map((c) => c.name);
   const problems = gateProblems(declaration, results, ran, shipped);
   if (declaration.equivalent) for (const [corpus, why] of Object.entries(incomplete)) problems.push(`not compared on ${corpus}: ${why}`);
   if (o.writeDifferences) {
@@ -446,7 +524,7 @@ async function checkPack(pack: string, o: Options): Promise<PackReport> {
   const report: PackReport = {
     pack,
     equivalent: declaration.equivalent,
-    corpora: corpora.map((c) => ({ name: c.name, dir: c.dirs.map((d) => d.dir).join(", "), files: c.files })),
+    corpora: compared,
     incomplete,
     notes,
     summary: summarize(results),

@@ -9,6 +9,7 @@ import {
   DECLARATION_FORMAT,
   emptyDeclaration,
   exampleFiles,
+  exampleToolCalls,
   type Finding,
   gateProblems,
   layOutExamples,
@@ -195,5 +196,22 @@ describe("a pack's examples", () => {
     const e = (path: string, text: string): { rule: string; kind: string; path: string; text: string } => ({ rule: "r", kind: "caught", path, text });
     const bins = layOutExamples([e("a.ts", "1"), e("a.ts", "1"), e("a.ts", "2"), e("b.ts", "3"), e("a.ts/c.ts", "4"), e("a.ts", "5")]);
     expect(bins.map((bin) => Object.fromEntries(bin))).toEqual([{ "a.ts": "1", "b.ts": "3" }, { "a.ts": "2" }, { "a.ts/c.ts": "4" }, { "a.ts": "5" }]);
+  });
+
+  it("are tool calls for a tool-call rule, its source's tool, Bash for any", () => {
+    const pack = {
+      rules: [
+        { id: "a", examples: { caught: { text: "npm run fixtures:push" }, passes: { text: "npm run fixtures:stage" } } },
+        { id: "b", examples: { caught: { text: "rm -rf /" }, passes: {} } },
+        { id: "c", examples: { caught: { path: "src/x.ts", text: "x" } } },
+      ],
+    };
+    const { calls, skipped } = exampleToolCalls(pack, new Map([["a", "tool:*"], ["b", "tool:Shell"]]));
+    expect(calls).toEqual([
+      { id: "a caught", tool: "Bash", input: { command: "npm run fixtures:push" } },
+      { id: "a passes", tool: "Bash", input: { command: "npm run fixtures:stage" } },
+      { id: "b caught", tool: "Shell", input: { command: "rm -rf /" } },
+    ]);
+    expect(skipped).toEqual(["b passes: no text"]);
   });
 });
