@@ -1,0 +1,30 @@
+// php/phpdoc: the PHPDoc comment of a PHP declaration or statement, and the type tags PHPStan and Psalm read in it.
+//
+// A PHPDoc is a `/** … */` comment; `/* … */`, `//` and `#` comments are not. It belongs to the declaration or
+// statement right after it, with only other comments between (tree-sitter-php makes comments siblings of the code).
+// PHPStan reads `@return T` and `@var T [$x]`, and their `@phpstan-` and `@psalm-` forms, which win over the plain
+// ones; a tag without a type (`@return` alone) is an invalid tag to PHPStan, not a type.
+//
+//   /** @return int */            doc_comment(f, c), doc_type(c, "return", "int")
+//   function f() {}
+//   /** @var Foo $x */            doc_type(c, "var", "Foo") on the comment before the statement
+//   $x = make();
+//
+// What a rule gets from this library:
+//   doc_comment(n, c)     c is a PHPDoc comment right before n, with only comments between
+//   doc_type(c, t, ty)    PHPDoc c has tag @t ("return" or "var"), or its @phpstan-/@psalm- form, with type ty
+//
+// Builds on core only. The type is the tag's first word: generics with spaces (`array<int, string>`) are cut at the
+// first space, which is enough to tell a typed tag from an empty one. A comment with several such tags gives the
+// last one's type.
+
+.decl doc_comment(n: node, c: node)
+doc_comment(n, c) :- kind(c, "comment"), prefix("/**", c), precedes_stop(c, n, doc_code_kind).
+.decl doc_code_kind(k: symbol)  // every kind but comment: what ends the run of comments before n
+doc_code_kind(k) :- kind(_, k), k != "comment".
+
+.decl doc_type(c: node, t: symbol, ty: symbol)
+doc_type(c, "return", ty) :- kind(c, "comment"), text(c, s), prefix("/**", s),
+    match("[\\s\\S]*@(phpstan-|psalm-)?return[ \\t]+(?<ty>[^\\s*][^\\s]*)[\\s\\S]*", s).
+doc_type(c, "var", ty) :- kind(c, "comment"), text(c, s), prefix("/**", s),
+    match("[\\s\\S]*@(phpstan-|psalm-)?var[ \\t]+(?<ty>[^\\s*$][^\\s]*)[\\s\\S]*", s).

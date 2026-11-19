@@ -1,8 +1,7 @@
 use super::unsupported_semantic;
 use crate::code_rule_dsl::json::{bounded_text, invalid, object, reject_unknown};
-use crate::code_rule_dsl::language::adapter::{
-    Adapter, ValueFeature, ValueRules, gate, with_adapter,
-};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
+use crate::code_rule_dsl::language::adapter::{ValueFeature, gate};
 use crate::code_rule_dsl::language::{CodeRuleLanguage, Semantic};
 use crate::code_rule_dsl::matcher::{
     Digits, Reading, Separator, Source, StringCase, Trans, Transform,
@@ -191,12 +190,10 @@ fn trans(
         "toPrecision" => {
             reject_unknown(body, &["source", "default", "value", "digits"], &at)?;
             reads_values(&at, "toPrecision", language)?;
-            gate(
-                &at,
-                with_adapter!(reading.family, A => <<A as Adapter>::Value as ValueRules>::feature(
-                    ValueFeature::ToPrecision
-                )),
-            )?;
+            gate(&at, {
+                let pack = language_pack::pack(reading.family);
+                pack.value_feature(ValueFeature::ToPrecision)
+            })?;
             let digits = match body.get("digits") {
                 Some(Value::Number(number)) => match number.as_u64() {
                     Some(digits @ 1..=100) => Digits::Fixed(digits as u32),

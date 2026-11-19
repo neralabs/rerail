@@ -1,0 +1,330 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt020-pytest-deprecated-yield-fixture",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the pytest fixture decorator instead of the deprecated yield_fixture alias; fixtures can already yield, so the rename changes nothing else.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "deprecated-yield-fixture",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "yield-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.yield_fixture"
+                ]
+              }
+            },
+            "yield-callee": {
+              "any": [
+                {
+                  "matches": "yield-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "yield-callee"
+                  }
+                }
+              ]
+            },
+            "yield-expr": {
+              "any": [
+                {
+                  "matches": "yield-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "yield-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "yield-expr"
+                  }
+                }
+              ]
+            },
+            "fixture-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.fixture",
+                  "pytest.yield_fixture"
+                ]
+              }
+            },
+            "fixture-callee": {
+              "any": [
+                {
+                  "matches": "fixture-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-callee"
+                  }
+                }
+              ]
+            },
+            "fixture-expr": {
+              "any": [
+                {
+                  "matches": "fixture-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "fixture-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-expr"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "yield-expr"
+            },
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fixture-expr"
+                }
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "field": "definition",
+                "kind": "function_definition"
+              }
+            },
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "kind": "comment",
+                    "stopBy": "neighbor"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT020",
+        "message": "Replace `yield_fixture` with `fixture` (`pytest.fixture`, or `fixture` imported from pytest); it is a deprecated alias of the same function, so nothing else changes.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT020"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "deprecated-yield-fixture-trailing-comment",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "yield-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.yield_fixture"
+                ]
+              }
+            },
+            "yield-callee": {
+              "any": [
+                {
+                  "matches": "yield-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "yield-callee"
+                  }
+                }
+              ]
+            },
+            "yield-expr": {
+              "any": [
+                {
+                  "matches": "yield-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "yield-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "yield-expr"
+                  }
+                }
+              ]
+            },
+            "fixture-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.fixture",
+                  "pytest.yield_fixture"
+                ]
+              }
+            },
+            "fixture-callee": {
+              "any": [
+                {
+                  "matches": "fixture-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-callee"
+                  }
+                }
+              ]
+            },
+            "fixture-expr": {
+              "any": [
+                {
+                  "matches": "fixture-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "fixture-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-expr"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "yield-expr"
+            },
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fixture-expr"
+                }
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "field": "definition",
+                "kind": "function_definition"
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "kind": "comment",
+                  "stopBy": "neighbor"
+                }
+              }
+            ],
+            "regex": "^(?P<span>(?:\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"(?:[^\"\\\\]|\\\\[\\s\\S])|\"\"(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|'(?:[^'\\\\]|\\\\[\\s\\S])|''(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)[ \\t]*#[^\\n]*$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.span",
+        "code": "PT020",
+        "message": "Replace `yield_fixture` with `fixture` (`pytest.fixture`, or `fixture` imported from pytest); it is a deprecated alias of the same function, so nothing else changes.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT020"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

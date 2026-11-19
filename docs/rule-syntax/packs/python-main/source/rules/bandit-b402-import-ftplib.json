@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b402-import-ftplib",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove imports of ftplib; FTP sends credentials and data unencrypted, so use SFTP, SCP, or another encrypted protocol.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B402",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "import ftplib"
+              },
+              {
+                "pattern": "import ftplib as $ALIAS"
+              },
+              {
+                "pattern": "from ftplib import $$$NAMES"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "B402",
+        "anchor": "witness.span",
+        "message": "Remove this ftplib import and use SFTP, SCP, or another encrypted protocol instead.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B402"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

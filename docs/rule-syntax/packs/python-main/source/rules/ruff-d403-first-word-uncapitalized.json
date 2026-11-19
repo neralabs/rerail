@@ -1,0 +1,110 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d403-first-word-uncapitalized",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Capitalize the first word of every function docstring.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "first-word-uncapitalized",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "doc-stmt": {
+              "kind": "expression_statement",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "doc-holder": {
+              "any": [
+                {
+                  "matches": "doc-stmt"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "doc-holder"
+                  }
+                }
+              ]
+            },
+            "docstring": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[bBfFtT]"
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "doc-holder"
+              }
+            }
+          },
+          "rule": {
+            "matches": "docstring",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_content",
+              "regex": "\\A\\s*[a-z][A-Za-z']*[.!?]*(?:\\s|\\z)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "D403",
+        "anchor": "witness.span",
+        "message": "Capitalize the first word of this docstring, for example `Return the total.` instead of `return the total.`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D403"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

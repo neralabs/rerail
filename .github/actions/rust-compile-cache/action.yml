@@ -1,0 +1,87 @@
+name: Rust compile cache
+description: >-
+  Puts every rustc compile of the job, and every C and C++ compile a build script makes through the `cc` crate, through
+  sccache with a store on the runner's disk, keyed on each compile's inputs (sources, flags, dependencies, compiler).
+  The store starts from the newest one a run on main saved as an artifact (`./.github/actions/rust-compile-cache/save`),
+  when one exists: a crate main compiled the same way is fetched, not compiled. Without one the job compiles cold; it
+  never fails for want of it. The Actions cache is not used. cc-rs wraps its C and C++ compiler in RUSTC_WRAPPER when
+  that is sccache, so CC and CXX stay as they are. Use it after the Rust toolchain's set-up and before the first cargo
+  or napi command; the job needs `actions: read` to find main's store. Its post-job step prints the hit statistics.
+
+  Upstream sccache caches what rustc does not link: libraries (rlib, staticlib) and C objects. A crate rustc links
+  (the engine's cdylib with its thin LTO, proc macros, build scripts, test harnesses, binaries) compiles every time,
+  and a build script runs every time. Incremental compiles are never cached, so CARGO_INCREMENTAL is 0.
+
+inputs:
+  name:
+    description: >-
+      The store's name: one per kind of build (profile, target, features), since each kind compiles different objects.
+      Jobs that build the same kind on the same OS and arch share it.
+    required: true
+  warm:
+    description: Start from main's newest store. "false" starts empty.
+    default: "true"
+  size:
+    description: The store's size limit, as SCCACHE_CACHE_SIZE (least recently used objects go first).
+    default: 4G
+
+outputs:
+  dir:
+    description: The store's directory (SCCACHE_DIR).
+    value: ${{ steps.env.outputs.dir }}
+  artifact:
+    description: The artifact name main's runs save the store under.
+    value: ${{ steps.env.outputs.artifact }}
+
+runs:
+  using: composite
+  steps:
+    # Downloads the release, checks its sha256, puts it on PATH, exports SCCACHE_PATH; its post-job step shows the
+    # statistics.
+    - name: Set up sccache
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      with:
+        version: v0.19.0
+
+    # The server would stop after 10 idle minutes and lose the job's statistics (a long link or test run is idle for
+    # sccache), so it never stops.
+    - id: env
+      name: Route compiles through sccache
+      shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+        SIZE: ${{ inputs.size }}
+      run: |
+        dir="$RUNNER_TEMP/sccache"
+        mkdir -p "$dir"
+        {
+          echo "RUSTC_WRAPPER=sccache"
+          echo "SCCACHE_DIR=$dir"
+          echo "SCCACHE_CACHE_SIZE=$SIZE"
+          echo "SCCACHE_IDLE_TIMEOUT=0"
+          echo "CARGO_INCREMENTAL=0"
+        } >> "$GITHUB_ENV"
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        echo "artifact=rust-compile-cache-$RUNNER_OS-$RUNNER_ARCH-$NAME" >> "$GITHUB_OUTPUT"
+
+    # The newest unexpired artifact of that name from a run on main (this repository's: a fork's branch may be named
+    # main too). Any failure leaves the store empty.
+    - name: Start from main's store
+      if: inputs.warm == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        ARTIFACT: ${{ steps.env.outputs.artifact }}
+        DIR: ${{ steps.env.outputs.dir }}
+      run: |
+        id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$ARTIFACT&per_page=30" \
+          --jq '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == "main" and .workflow_run.head_repository_id == .workflow_run.repository_id)][0].id // empty' || true)
+        if [ -z "$id" ]; then echo "No store from main: compiling cold."; exit 0; fi
+        if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/sccache.zip" \
+          && { unzip -q -o "$RUNNER_TEMP/sccache.zip" -d "$DIR" || 7z x -y -o"$DIR" "$RUNNER_TEMP/sccache.zip" > /dev/null; }; then
+          echo "Store from main's artifact $id: $(du -sh "$DIR" | cut -f1)."
+        else
+          echo "::warning::rust-compile-cache: main's store $id did not download; compiling cold."
+          rm -rf "$DIR" && mkdir -p "$DIR"
+        fi
+        rm -f "$RUNNER_TEMP/sccache.zip"

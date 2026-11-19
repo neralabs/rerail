@@ -1,0 +1,12 @@
+^(?:Any|str)$
+^(?:SqlDeferredRenderable|SqlFragment|SqlPreRenderedFragment)$
+^(?:SqlDeferredRenderable|SqlPreRenderedFragment)$
+^(?:SqlFragment)$
+^(?:Sql|_Sql)
+^(?:__init__)$
+^(?:casefold|format|format_map|join|lower|lstrip|removeprefix|removesuffix|replace|rstrip|strip|translate|upper)$
+^(?:cls|self)$
+^(?:render)$
+^(?:self)$
+^(?:static|with_params)$
+^(?:str)$

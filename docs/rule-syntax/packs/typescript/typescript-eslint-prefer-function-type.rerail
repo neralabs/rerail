@@ -1,0 +1,81 @@
+.policy "typescript-eslint-prefer-function-type" revision 3
+.description "Use a function type instead of an interface or type literal that holds only a call signature; it is shorter and reads as what it is."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+// typescript-eslint's prefer-function-type: an interface or type literal whose one member is a call (or construct)
+// signature with a return type is a function type in disguise. An interface counts only if it extends nothing,
+// or only `Function`. Reported at the signature.
+//   type F = { (a: number): string };           → `type F = (a: number) => string`
+//   interface G { <T>(x: T): T; }               → `type G = <T>(x: T) => T;`
+//   interface H { (): void; a: 1 }   interface I extends J { (): void }   { (): void } with no return type   fine
+// An interface whose type mentions `this` (outside a nested type literal) cannot become a function type: then the
+// first `this` is reported, with a hint to use a `this` parameter. No options.
+// The fix writes the function type for a call signature, wrapped in parentheses inside a union, intersection or
+// array type. It is not offered for a construct signature, beside comments, or on `export default interface`.
+.violation prefer_function_type(at: node, msg: symbol) code "@typescript-eslint/prefer-function-type" "{msg}"
+    suppress eslint "@typescript-eslint/prefer-function-type"
+    suppress oxlint "prefer-function-type"
+    suppress biome "lint/style/useShorthandFunctionType"
+    fix safe to_function_type "Use a function type"
+prefer_function_type(s, "Type literal only has a call signature, you should use a function type instead.") :-
+    sole_signature(o, s), kind(o, "object_type").
+prefer_function_type(s, "Interface only has a call signature, you should use a function type instead.") :-
+    sole_signature(i, s), kind(i, "interface_declaration"), !first_this(i, _).
+prefer_function_type(t, cat("Replace `this` in '", cat(x, "' with a generic this parameter, like `<Self>(this: Self, ...) => Self`."))) :-
+    sole_signature(i, _), first_this(i, t), field(i, "name", n), text(n, x).
+
+// sole_signature(o, s): s is the one member of type literal o, or of interface o's body, and has a return type.
+.decl sole_signature(o: node, s: node)
+sole_signature(o, s) :- kind(o, "object_type"), one_member(o, s), returns(s, _).
+sole_signature(i, s) :- kind(i, "interface_declaration"), field(i, "body", b), one_member(b, s), returns(s, _),
+    !other_super(i).
+.decl one_member(b: node, s: node)  // comments are not members
+one_member(b, s) :- child(b, s, _), !kind(s, "comment"), count : { child(b, m, _), !kind(m, "comment") } = 1.
+.decl returns(s: node, r: node)  // r is signature s's return type (the type, a predicate or `asserts …`)
+returns(s, r) :- kind(s, "call_signature"), field(s, "return_type", a), child(a, r, 0).
+returns(s, r) :- kind(s, "construct_signature"), field(s, "type", a), child(a, r, 0).
+.decl other_super(i: node)  // interface i extends something besides one plain `Function`
+other_super(i) :- child(i, e, _), kind(e, "extends_type_clause"), child(e, f, 0), !text(f, "Function").
+other_super(i) :- child(i, e, _), kind(e, "extends_type_clause"), child(e, _, 1).
+// first_this(i, t): the first `this` type in interface i that no nested type literal holds (`asserts this` and
+// `this is T` name it too).
+.decl this_in(i: node, t: node)
+this_in(i, t) :- this_type_in(i, t), !inside(t, _, "object_type").
+this_in(i, t) :- this_type_in(i, t), inside(t, o, "object_type"), !within(o, i).
+// this_type_in(i, t): TSThisType t in interface i. A `this: T` parameter is an Identifier in TSESTree, not a type.
+.decl this_type_in(i: node, t: node)
+this_type_in(i, t) :- kind(i, "interface_declaration"), sole_signature(i, _), has(i, t, "this_type").
+this_type_in(i, t) :- kind(i, "interface_declaration"), sole_signature(i, _), has(i, t, "this"),
+    child(p, t, _), (kind(p, "asserts") ; kind(p, "type_predicate")).
+.decl first_this(i: node, t: node)
+first_this(i, t) :- this_in(i, t), node(_, t, _, a, _), a = min b : { this_in(i, u), node(_, u, _, b, _) }.
+
+// ---- the fix ----
+to_function_type(s, m) :- prefer_function_type(s, m), sole_signature(o, s), kind(o, "object_type"), fn_text(s, f),
+    !wrapped(o) => replace(o, f).
+to_function_type(s, m) :- prefer_function_type(s, m), sole_signature(o, s), kind(o, "object_type"), fn_text(s, f),
+    wrapped(o) => replace(o, cat("(", cat(f, ")"))).
+to_function_type(s, m) :- prefer_function_type(s, m), sole_signature(i, s), kind(i, "interface_declaration"),
+    fn_text(s, f), !default_export(i), field(i, "name", n), text(n, x), head_params(i, p), semi(s, e)
+    => replace(i, cat("type ", cat(x, cat(p, cat(" = ", cat(f, e)))))).
+// fn_text(s, f): call signature s as a function type: `<T>(a: T): R` gives `<T>(a: T) => R`. None beside comments.
+.decl fn_text(s: node, f: symbol)
+fn_text(s, f) :- kind(s, "call_signature"), field(s, "parameters", ps), text(ps, pt), returns(s, r), text(r, rt),
+    child(b, s, _), !has(b, _, "comment"), tparams(s, tp), f = cat(tp, cat(pt, cat(" => ", rt))).
+.decl tparams(s: node, tp: symbol)  // s's `<…>` as written, or ""
+tparams(s, tp) :- returns(s, _), field(s, "type_parameters", t), text(t, tp).
+tparams(s, "") :- returns(s, _), !field(s, "type_parameters", _).
+.decl head_params(i: node, p: symbol)  // the interface's own type parameters, kept on the alias
+head_params(i, p) :- kind(i, "interface_declaration"), field(i, "type_parameters", t), text(t, p).
+head_params(i, "") :- kind(i, "interface_declaration"), !field(i, "type_parameters", _).
+.decl semi(s: node, e: symbol)  // ";" when the member ends in one
+semi(s, ";") :- returns(s, _), ends_semi(s).
+semi(s, "") :- returns(s, _), !ends_semi(s).
+.decl ends_semi(s: node)
+ends_semi(s) :- returns(s, _), token_after(s, t), text(t, ";").
+.decl wrapped(o: node)  // TSUnionType, TSIntersectionType and TSArrayType need parentheses around a function type
+wrapped(o) :- child(p, o, _), (kind(p, "union_type") ; kind(p, "intersection_type") ; kind(p, "array_type")).
+.decl default_export(i: node)
+default_export(i) :- child(e, i, _), kind(e, "export_statement"), op(e, "default").

@@ -45,8 +45,7 @@ impl GitIgnore {
     /// The exclude stack of the Git worktree around `root`; `None` when `root` is in no Git
     /// worktree (a plain folder or a bare repository), where nothing is ignored.
     pub fn open(root: &Path) -> std::result::Result<Option<Self>, String> {
-        let root = root
-            .canonicalize()
+        let root = dunce::canonicalize(root)
             .map_err(|error| format!("cannot resolve {}: {error}", root.display()))?;
         let Some((repository, worktree)) = discover_worktree(&root)? else {
             return Ok(None);
@@ -207,8 +206,7 @@ fn discover_worktree(
     let Some(worktree) = repository.workdir() else {
         return Ok(None);
     };
-    let worktree = worktree
-        .canonicalize()
+    let worktree = dunce::canonicalize(worktree)
         .map_err(|error| format!("cannot resolve Git worktree: {error}"))?;
     Ok(Some((repository, worktree)))
 }
@@ -574,7 +572,7 @@ pub struct GitIgnoreMatcher {
 impl GitIgnoreMatcher {
     /// The matcher for paths below `root`, opened on a thread of its own under the Git read time
     /// limit; `None` when `root` is in no Git worktree.
-    pub(crate) fn open(root: String) -> std::result::Result<Option<Self>, pool::GitReadError> {
+    pub fn open(root: String) -> std::result::Result<Option<Self>, pool::GitReadError> {
         let key = std::path::PathBuf::from(&root);
         let opened = pool::run(
             "opening Git's ignore rules",
@@ -644,7 +642,7 @@ impl GitIgnoreMatcher {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use std::time::{Duration, SystemTime};
 
@@ -661,6 +659,8 @@ mod tests {
 
     fn run_git(mut command: std::process::Command, directory: &Path, arguments: &[&str]) {
         let output = command
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .arg("-C")
             .arg(directory)
             .args(arguments)
@@ -886,7 +886,7 @@ mod tests {
         );
         git(&root, &["init", "--initial-branch=main"]);
         std::fs::write(root.join(".git/info/exclude"), "# local\n\nlocal.py\n").unwrap();
-        let root = root.canonicalize().unwrap();
+        let root = dunce::canonicalize(root).unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         let source = |path: &str| Some(root.join(path).to_string_lossy().into_owned());
         let matched = |pattern: &str, path: &str, line: u32| GitIgnoreMatch {
@@ -971,7 +971,7 @@ mod tests {
             ],
         );
         git(&root, &["init", "--initial-branch=main"]);
-        let root = root.canonicalize().unwrap();
+        let root = dunce::canonicalize(root).unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(ignore.sources_unchanged(), "nothing changed");
         git(&root, &["config", "branch.main.remote", "origin"]);
@@ -1025,7 +1025,7 @@ mod tests {
             &[(".gitignore", "gen/\n"), ("a.py", ""), ("b.py", "")],
         );
         git(&root, &["init", "--initial-branch=main"]);
-        let root = root.canonicalize().unwrap();
+        let root = dunce::canonicalize(root).unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(!ignore.ignored("a.py", false).unwrap());
         assert!(ignore.sources_unchanged(), "nothing changed");
@@ -1052,7 +1052,7 @@ mod tests {
             &[(".gitignore", "gen/\n"), ("a.py", ""), ("b.py", "")],
         );
         git(&root, &["init", "--initial-branch=main"]);
-        let root = root.canonicalize().unwrap();
+        let root = dunce::canonicalize(root).unwrap();
         let exclude = root.join(".git").join("info").join("exclude");
         std::fs::create_dir_all(exclude.parent().unwrap()).unwrap();
         std::fs::write(&exclude, "# none\n").unwrap();
@@ -1080,7 +1080,7 @@ mod tests {
         let root = fixture("index-again", &[(".gitignore", "gen/\n"), ("gen/x.py", "")]);
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["add", ".gitignore"]);
-        let root = root.canonicalize().unwrap();
+        let root = dunce::canonicalize(root).unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(ignore.ignored("gen/x.py", false).unwrap());
         let index = root.join(".git").join("index");
@@ -1117,7 +1117,7 @@ mod tests {
             &["update-index", "--skip-worktree", "docs/.gitignore"],
         );
         std::fs::remove_file(root.join("docs/.gitignore")).unwrap();
-        let root = root.canonicalize().unwrap();
+        let root = dunce::canonicalize(root).unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         let answers = |ignore: &mut GitIgnore| {
             (
@@ -1217,7 +1217,7 @@ mod tests {
         let path = linked.to_string_lossy().into_owned();
         git(&root, &["worktree", "add", "--quiet", "--detach", &path]);
         std::fs::write(linked.join("c.py"), "").unwrap();
-        let linked = linked.canonicalize().unwrap();
+        let linked = dunce::canonicalize(linked).unwrap();
         let mut ignore = GitIgnore::open(&linked).unwrap().expect("a Git worktree");
         assert!(!ignore.ignored("c.py", false).unwrap());
         assert!(ignore.sources_unchanged(), "nothing changed");
@@ -1244,7 +1244,7 @@ mod tests {
             &[(".gitignore", "$local.py\n"), ("local.py", "")],
         );
         git(&root, &["init", "--initial-branch=main"]);
-        let root = root.canonicalize().unwrap();
+        let root = dunce::canonicalize(root).unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(!ignore.ignored("local.py", false).unwrap());
         assert!(ignore.sources_unchanged(), "nothing changed");
@@ -1274,7 +1274,7 @@ mod tests {
             ],
         );
         git(&root, &["init", "--initial-branch=main"]);
-        let root = root.canonicalize().unwrap();
+        let root = dunce::canonicalize(root).unwrap();
         let sub = root.join("sub");
         let mut ignore = GitIgnore::open(&sub).unwrap().expect("a Git worktree");
         assert!(ignore.ignored("local.py", false).unwrap());
@@ -1370,7 +1370,7 @@ mod tests {
         let root = fixture("open", &[(".gitignore", "gen/\n"), ("gen/t.py", "")]);
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["add", ".gitignore"]);
-        let root = root.canonicalize().unwrap();
+        let root = dunce::canonicalize(root).unwrap();
         let none = Vec::<PathBuf>::new();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         assert!(ignore.ignored("gen/t.py", false).unwrap());
