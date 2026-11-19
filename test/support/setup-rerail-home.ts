@@ -1,4 +1,4 @@
-import { afterAll } from "vitest";
+import { afterAll, inject } from "vitest";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
@@ -10,7 +10,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 const priorRerailHome = process.env.RERAIL_HOME;
 const priorContentStorePath = process.env.RERAIL_CONTENT_STORE_PATH;
 const rerailHome = mkdtempSync(join(tmpdir(), "rerail-vitest-home-"));
-const contentStoreDirectory = mkdtempSync(join(tmpdir(), "rerail-vitest-store-"));
+const windowsStoreRoot = process.platform === "win32" ? inject("windowsStoreRoot") : undefined;
+const contentStoreDirectory = mkdtempSync(join(windowsStoreRoot ?? tmpdir(), "rerail-vitest-store-"));
 
 process.env.RERAIL_HOME = rerailHome;
 // A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v5.sqlite`, shared by
@@ -71,6 +72,6 @@ afterAll(async () => {
     if (priorContentStorePath === undefined) delete process.env.RERAIL_CONTENT_STORE_PATH;
     else process.env.RERAIL_CONTENT_STORE_PATH = priorContentStorePath;
     rmSync(rerailHome, { recursive: true, force: true });
-    rmSync(contentStoreDirectory, { recursive: true, force: true });
+    if (windowsStoreRoot === undefined) rmSync(contentStoreDirectory, { recursive: true, force: true });
   }
 });

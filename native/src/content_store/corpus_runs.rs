@@ -137,7 +137,7 @@ fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>>
 }
 
 /// Whether no process `pid` exists on this host.
-fn process_gone(pid: i32) -> bool {
+pub fn process_gone(pid: i32) -> bool {
     if pid <= 0 || pid as u32 == std::process::id() {
         return false;
     }
@@ -147,7 +147,20 @@ fn process_gone(pid: i32) -> bool {
         let r = unsafe { libc::kill(pid, 0) };
         r != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+        // An unknown PID gives ERROR_INVALID_PARAMETER. Access denied can mean a live protected process.
+        unsafe {
+            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid as u32);
+            if handle.is_null() { return GetLastError() == ERROR_INVALID_PARAMETER; }
+            let exited = WaitForSingleObject(handle, 0) == WAIT_OBJECT_0;
+            CloseHandle(handle);
+            exited
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         false
     }

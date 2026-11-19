@@ -1105,7 +1105,8 @@ fn only_protected_runs_keep_plans_and_a_dead_process_holds_nothing() {
     assert_eq!(manifests, 3, "under the high-water mark every manifest is kept");
     assert_eq!(plans.map(live), [Some(0), Some(0), Some(1)], "only the protected run's plan is live");
     // A process that has exited: its hold is an orphan.
-    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap()).arg("--help")
+        .stdout(std::process::Stdio::null()).spawn().unwrap();
     let pid = child.id();
     child.wait().unwrap();
     store.hold_corpus_plan(plans[0], &format!("corpus-run:{pid}:0:0"), 9_000).unwrap();

@@ -4,6 +4,17 @@ The original [twenty cases and their regression tests](audit-c1b588f91.md) cover
 
 Seventeen of the 28 follow-up findings have verified results. Eleven remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
 
+## Windows test execution and store lifetime
+
+The Windows 11 ARM64 guest in Parallels built the native store tests and the Node addon with test hooks.
+Four NTFS tests passed for tree eviction, symlink retargeting, cross-process leases and reclamation after a process exits.
+The tree cache retained 1,964 bytes after each oversized directory read. The Windows process check distinguished a live child from the same child after termination.
+
+The six headless Git tests passed together in 42.58 seconds. They covered message selectors, NTFS invalidation, file-name spelling, skipped paths and checked reads.
+The selector comparison starts Git 38 times and now allows 30 seconds. Earlier runs exceeded five seconds.
+The test runner now removes its Windows store directories after the worker processes close their SQLite handles. The successful run left zero store directories.
+The standalone rule loader has a separate regression for its library paths. [Store tests](../../../../native/src/content_store/collection_guard/tests.rs) · [Headless tests](../../../../test/cli/headless-scan.test.ts)
+
 ## Paths that share a display label
 
 Case 75 put two entries at the root and below `nested`. One name had the bytes `ff 2e 70 79`. The other was the text `[hex:ff2e7079]`.

@@ -2253,8 +2253,13 @@ mod tests {
 
     /// A path's canonical form is resolved once: under a root the journal says is unchanged, the next run answers it
     /// with no `realpath`, and a symlink retargeted under the root is resolved again.
+    #[cfg(any(unix, windows))]
     #[test]
     fn a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change() {
+        #[cfg(unix)]
+        use std::os::unix::fs::symlink as symlink_file;
+        #[cfg(windows)]
+        use std::os::windows::fs::symlink_file;
         let base = std::env::temp_dir().join(format!("rerail-canonical-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("root");
@@ -2263,7 +2268,13 @@ mod tests {
             std::fs::write(root.join(format!("pkg/m{i}.py")), "x = 1\n").unwrap();
         }
         let link = root.join("pkg/alias.py");
-        std::os::unix::fs::symlink("m0.py", &link).unwrap();
+        let created = symlink_file("m0.py", &link);
+        #[cfg(windows)]
+        if created.as_ref().is_err_and(|e| e.raw_os_error() == Some(1314)) {
+            std::fs::remove_dir_all(&base).unwrap();
+            return;
+        }
+        created.unwrap();
         let store = base.join("store.files");
         let asked = [root.join("pkg/m1.py"), link.clone(), root.join("pkg/../pkg/m2.py")];
         let run = || {
@@ -2272,21 +2283,25 @@ mod tests {
             o.watch(std::slice::from_ref(&root));
             let got: Vec<Option<PathBuf>> = asked.iter().map(|p| o.canonical(p)).collect();
             o.flush();
-            (o.counts, got)
+            (o.counts, got, o.roots.iter().any(|r| r.trusted))
         };
-        let (first, got) = run();
+        let (first, got, _) = run();
         assert_eq!(first.resolved, 3, "{first}");
         let real = std::fs::canonicalize(&root).unwrap();
         assert_eq!(got, vec![Some(real.join("pkg/m1.py")), Some(real.join("pkg/m0.py")), Some(real.join("pkg/m2.py"))]);
         std::thread::sleep(std::time::Duration::from_millis(300));
         run();
-        let (second, same) = run();
+        let (second, same, trusted_root) = run();
         // The path through `..` is resolved each time: it is not a name its directory's listing holds.
-        assert_eq!((second.resolved, second.trusted), (1, 2), "nothing changed: {second}");
+        if trusted_root {
+            assert_eq!((second.resolved, second.trusted), (1, 2), "nothing changed: {second}");
+        } else {
+            assert_eq!((second.resolved, second.trusted), (3, 0), "no journal cursor: {second}");
+        }
         assert_eq!(same, got);
         std::fs::remove_file(&link).unwrap();
-        std::os::unix::fs::symlink("m2.py", &link).unwrap();
-        let (third, after) = run();
+        symlink_file("m2.py", &link).unwrap();
+        let (third, after, _) = run();
         assert!(third.resolved >= 2, "the retargeted symlink is resolved again: {third}");
         assert_eq!(after[1], Some(real.join("pkg/m2.py")));
         let _ = std::fs::remove_dir_all(&base);

@@ -35,6 +35,7 @@ export default defineConfig({
     // The setup file mutates process.env to give every test file its own catalog home. Forked
     // workers prevent that environment from racing with concurrently executing test files.
     pool: "forks",
+    globalSetup: process.platform === "win32" ? ["./test/support/windows-store-cleanup.ts"] : [],
     setupFiles: ["./test/support/setup-rerail-home.ts"],
     // Not vitest suites: upstream tools' copied tests are fixture data for the expected findings, real-code samples
     // extracted under .rerail/ include upstream projects' test files, and ensure-sqlite's and the SQL profiling tests run

@@ -164,7 +164,8 @@ mod watchman {
         Since::Changed { paths, cursor: clock }
     }
 
-    #[cfg(test)]
+    // The protocol fixture below starts a POSIX shell executable.
+    #[cfg(all(test, unix))]
     mod tests {
         use super::super::Since;
 

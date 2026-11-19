@@ -143,7 +143,7 @@ fn process_exit_releases_the_lease_and_aliases_share_it() {
         alias
     };
     #[cfg(not(unix))]
-    let child_path = path.clone();
+    let child_path = path.to_path_buf();
     let mut child = KillOnDrop(
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", CHILD_TEST, "--nocapture"])
@@ -170,8 +170,12 @@ fn process_exit_releases_the_lease_and_aliases_share_it() {
         "a reader in another process protects this store"
     );
     assert_eq!(collector.collect(100, 100).unwrap().sources, 0);
+    let pid = child.0.id() as i32;
+    assert!(!crate::content_store::process_gone(pid));
     // Kill rather than exiting normally: a crashed analysis must not leave persistent pins.
     drop(child);
+    #[cfg(any(unix, windows))]
+    assert!(crate::content_store::process_gone(pid));
     assert_eq!(collector.collect(100, 100).unwrap().sources, 1);
     #[cfg(unix)]
     std::fs::remove_file(child_path).unwrap();

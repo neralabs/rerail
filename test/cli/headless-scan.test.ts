@@ -1173,7 +1173,7 @@ Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
         else expect(select, selector).toThrow();
       }
     }
-  });
+  }, 30_000);
 
   it("matches Git's choice among equally recent message matches across refs and HEAD", async () => {
     const root = checkout(), tree = git(root, "rev-parse", "HEAD^{tree}");
