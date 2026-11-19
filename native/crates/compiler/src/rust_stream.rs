@@ -73,6 +73,38 @@ struct Facts<'a> {
     unchecked: bool,
     /// Where the program is one function, as `walk_document` (`OneFn`): its calls and returns.
     one: Option<OneFn>,
+    /// The stream's end as a start: past the last token, `TOKEN` gives the file's length as its
+    /// start, with no branch (`sentinel`), as simdjson's index ends with one past the last.
+    sentinel: bool,
+}
+
+impl Facts<'_> {
+    /// The test that the stream has ended, at the run's state `who` (`s`, `self`).
+    fn at_end(&self, who: &str) -> String {
+        if self.sentinel { format!("({who}.start == {who}.len)") } else { format!("{who}.at_end") }
+    }
+}
+
+/// Whether the end can be a start (`Facts::sentinel`): records made in tier 2, no marks (their
+/// `live` at the end is its own), and no `TOKEN` after a switch takes the end (a token taken
+/// past the end refuses, where the end as a start would be the end again).
+fn sentinel(x: &Facts<'_>) -> bool {
+    let words = &x.native.structural;
+    if x.fetch.is_none() || x.flagged || words.iter().any(|w| matches!(w.operation, Op::Mark { .. })) {
+        return false;
+    }
+    let mut seen = vec![false; words.len()];
+    let mut work: Vec<usize> = x.native.switches.iter().map(|sw| usize::from(sw.end)).filter(|&t| t < words.len()).collect();
+    while let Some(pc) = work.pop() {
+        if std::mem::replace(&mut seen[pc], true) {
+            continue;
+        }
+        if matches!(words[pc].operation, Op::Token { .. }) {
+            return false;
+        }
+        work.extend(plain_succ(x, pc));
+    }
+    true
 }
 
 /// A program written as one function, as simdjson's `walk_document`: a call (`PUSH`) stores its
@@ -207,7 +239,8 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
     let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
-    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None };
+    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false };
+    facts.sentinel = sentinel(&facts);
     // Where tier 2 makes the records, the program is one function, as `walk_document`.
     if facts.fetch.is_some() && !facts.context {
         let one = OneFn::of(native, &|w| plain_succ(&facts, w));
@@ -1170,7 +1203,7 @@ fn accept(out: &mut String, x: &Facts<'_>) {
     let src = r#"    /// `ACCEPT`.
     #[inline(never)]
     fn accept(&mut self) -> R {
-        if !self.at_end || self.nopen != 1 {
+        if !$AT_END || self.nopen != 1 {
             return Err(false);
         }
         let nodes = self.nodes;
@@ -1262,7 +1295,7 @@ $PROVISIONAL        if self.wide != 0 {
         .enumerate()
         .map(|(j, cl)| format!("\n                (place as *mut u16).write_unaligned({cl});\n                if key >> {} & 1 != 0 {{\n                    place = place.add(2);\n                    count += 1;\n                }}", 16 + j))
         .collect();
-    out.push_str(&src.replace("$PROVISIONAL", &provisional).replace("$FEW", few).replace("$IS_EXTRA", &is_extra).replace("$CLASS_PUT", &put));
+    out.push_str(&src.replace("$AT_END", &x.at_end("self")).replace("$PROVISIONAL", &provisional).replace("$FEW", few).replace("$IS_EXTRA", &is_extra).replace("$CLASS_PUT", &put));
 }
 
 /// `RETAG m=3`: reading `i` over the node made last at the innermost level and the nodes inside
@@ -1670,8 +1703,15 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
     if let Some(b) = &by_byte
         && fresh(x, sw)
     {
+        // The end as a start refused by the byte switch (its byte past the file, 0, has no
+        // arm): no test of the end, as simdjson's switch takes the index past the last.
+        let refuses = sw.end == REFUSE || x.native.structural.get(usize::from(sw.end)).is_some_and(|w| matches!(w.operation, Op::Stop));
+        if x.sentinel && refuses && x.fetch.as_ref().is_some_and(|fx| zero_refused(x, fx, sw)) {
+            p.code = b.clone();
+            return p;
+        }
         let j = p.to(sw.end);
-        p.code = format!("if s.at_end {{ {j} }} else {{\n{b}}}\n");
+        p.code = format!("if {} {{ {j} }} else {{\n{b}}}\n", x.at_end("s"));
         return p;
     }
     if let (true, Some(reps)) = (on_kinds(x, sw), &x.kind_reps) {
@@ -1681,7 +1721,7 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
         }
         let head = if x.end_kind.is_none() {
             let j = p.to(sw.end);
-            format!("if s.at_end {{ {j} }} else ")
+            format!("if {} {{ {j} }} else ", x.at_end("s"))
         } else {
             String::new()
         };
@@ -1704,15 +1744,20 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
         }
         let rest = arms(&mut p, "kind", &values);
         let body = if by_word.is_empty() { rest } else { format!("match kind {{\n{by_word}_ => {{ {rest} }}\n}}\n") };
-        let by_kind = format!("{head}{{ let kind = s.code & 0xff;\n{body}}}");
+        // The end's kind: the record's, or (the end as a start) the end's own.
+        let kind = match x.end_kind {
+            Some(k) if x.sentinel => format!("if {} {{ {k} }} else {{ s.code & 0xff }}", x.at_end("s")),
+            _ => "s.code & 0xff".into(),
+        };
+        let by_kind = format!("{head}{{ let kind = {kind};\n{body}}}");
         p.code = match by_byte {
-            Some(b) => format!("if s.rec_end == 0 && !s.at_end {{\n{b}}} else {{\n{by_kind}}}\n"),
+            Some(b) => format!("if s.rec_end == 0 && !{} {{\n{b}}} else {{\n{by_kind}}}\n", x.at_end("s")),
             None => by_kind,
         };
         return p;
     }
     let j = p.to(sw.end);
-    let mut out = format!("if s.at_end {{ {j} }} else {{\n");
+    let mut out = format!("if {} {{ {j} }} else {{\n", x.at_end("s"));
     if sw.offset == 0 && !sw.words.is_empty() {
         out.push_str("match s.word() {\n");
         for &(w, t) in &sw.words {
@@ -1738,6 +1783,8 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         "s.end"
     } else if taken {
         "s.rec_end"
+    } else if x.sentinel {
+        "(if s.start == s.len { s.rec_end } else { s.start })"
     } else {
         "(if s.at_end { s.rec_end } else { s.start })"
     };
@@ -1933,6 +1980,29 @@ fn fetched_token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>) -> Resul
     let end_code = x.end_kind.map_or(String::new(), |k| format!("\n            self.code = {k};"));
     // The tape's room for the path to the next token, unless the tape is sized from the input.
     let room = if x.unchecked { "" } else { "        self.room()?;\n" };
+    if x.sentinel {
+        // Past the last token, the file's length as the start, the stream's two slots past its
+        // count readable: a select, no branch; the byte there (0, padding) no switch takes.
+        writeln!(
+            out,
+            "    /// `TOKEN`: the next token's start (past the last, the file's length, as simdjson's index
+    /// past its last); its record is made where it is switched on.
+    #[inline(always)]
+    fn {name}(&mut self) -> R {{
+{room}        self.last_end = self.rec_end;
+        let i = self.next.min(self.n as u32);
+        let st = unsafe {{ *self.starts.add(i as usize * self.rs) }};
+        self.start = if i as usize == self.n {{ self.len }} else {{ st }};
+        self.rec_end = 0;
+        self.next = i + 1;
+        self.live = {live};
+        Ok(())
+    }}
+"
+        )
+        .unwrap();
+        return Ok(());
+    }
     writeln!(
         out,
         "    /// `TOKEN`: the next token's start; its record is made where it is switched on.
@@ -2305,6 +2375,21 @@ fn fresh(x: &Facts<'_>, sw: &ByteSwitch) -> bool {
         return false;
     }
     (0..words.len()).all(|pc| pc == here - 1 || !plain_succ(x, pc).contains(&here))
+}
+
+/// Whether the byte past the file (0, padding) is refused by `sw`'s switch on the first byte, and
+/// by the switch it gives its other bytes to (`delegate_of`).
+fn zero_refused(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch) -> bool {
+    let ft = &fx.ft;
+    let named = sw.words.iter().any(|&(y, _)| ft.words.get(usize::from(y)).is_some_and(|(w, _)| w.first() == Some(&0)));
+    let code = match ft.rules.get(usize::from(ft.ends[0])) {
+        Some(&crate::records::EndRule::Run(_)) => u32::from(ft.kinds[0]),
+        _ => ft.codes1[0],
+    };
+    if named || kind_target(x, fx, sw, code) != REFUSE {
+        return false;
+    }
+    delegate_of(x, fx, sw).is_none_or(|(_, other)| zero_refused(x, fx, other))
 }
 
 /// Whether word `to` is reached from word `from` in the same function (`succ`, the plain

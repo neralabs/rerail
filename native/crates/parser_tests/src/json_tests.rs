@@ -284,13 +284,18 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         .filter_map(|w| if let rerail_compiler::native_ir::StructuralOperation::Push { target, .. } = w.operation { Some(usize::from(target) + 1) } else { None })
         .filter(|&t| matches!(native.structural.get(t).map(|w| w.operation), Some(rerail_compiler::native_ir::StructuralOperation::Switch { .. })))
         .collect();
-    assert_eq!(src.matches("if s.rec_end == 0 && !s.at_end {").count(), again.len(), "the kind path only where a call returns: {again:?}");
+    let kind_paths = src.matches("if s.rec_end == 0 && !s.at_end {").count() + src.matches("if s.rec_end == 0 && !(s.start == s.len) {").count();
+    assert_eq!(kind_paths, again.len(), "the kind path only where a call returns: {again:?}");
     // The `\u` checks only after a `u`, as simdjson's `\u` work: every call of them in the arm of
     // the escape `\u`; every other escape goes past them.
     let words = &aot.program.block_programs[0].records.as_ref().expect("records").words;
     let u = words.iter().position(|w| w.as_slice() == b"\\u").expect("the escape \\u") + 1;
     let calls = src.matches("s.check_1()?;").count();
     assert!(calls > 0 && src.matches(&format!("{u} => {{ s.check_1()?;")).count() == calls, "the \\u checks in the \\u arm alone");
+    // The end tested only where it is taken: `TOKEN` gives the file's length as the start past
+    // the last token, and the value switches refuse its byte, as simdjson's switch the index past
+    // its last. No `at_end` field is read.
+    assert!(!src.contains("s.at_end") && !src.contains("self.at_end") && !src.contains("if (s.start == s.len) { return Err(false); }"), "no end test where the switch refuses the end");
     // No dispatch's arm only sets `d` again for its own loop (`Shape::threaded`).
     let resets = dispatch_resets(&src);
     assert!(resets.is_empty(), "a dispatch's arm only re-sets d: {resets:?}");

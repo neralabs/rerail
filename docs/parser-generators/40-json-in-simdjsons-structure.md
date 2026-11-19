@@ -593,6 +593,28 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 20, done: the end tested only where it is taken, in the generated Rust
+
+Each token tested the end three times: `token_all`'s `at_end`, its `i == n`, and the value
+switch's `if s.at_end`. simdjson tests none of them mid-document: the index past the last is the
+file's end, and the switch on its byte refuses it.
+
+The inputs already allow the same. Every caller has the file's padding zero (`run`, the batch's
+64 bytes, the slab's `SOURCE_MARGIN`), and two readable slots past the starts' count. So where
+the records are made in tier 2 (`Facts::sentinel`):
+- `token_all` loads the next slot, at most the one past the last. Past the last, its start is the
+  file's length: a select, no branch.
+- A switch whose end refuses, and whose arms (and its delegate's) take no `0x00`, has no end test
+  (`zero_refused`): the padding byte goes to its default arm.
+- Where the end is taken, at the document's end, the test is `s.start == s.len`, and the kind
+  path reads the end's kind from that.
+
+This holds only where no `TOKEN` follows a switch's end, and with no marks, whose `live` at the end
+is the end's own. Otherwise the field stays.
+
+The Rust trees test asserts no `at_end` is read, and no end test is a refusal. Taking the slot's
+value past the last token, in place of the length, fails it on the first file.
+
 ## Step 19, done: no dispatch arm only sets `d` again, in the generated Rust
 
 A loop's dispatch had an arm with no code of its own (`1 => { d = 3; continue 'b151; }`): its
@@ -643,9 +665,9 @@ The source is `rust_stream::rust_source` of the form (`json_tier2_by_word` write
 
 | simdjson | the generated Rust | the same? |
 |---|---|---|
-| `walk_document`: one function, its states labels (`object_begin`, `object_continue`, `scope_end`) | a function per grammar rule (`r0`, the document; `r32`, the object; `r46`, the array) | no |
+| `walk_document`: one function, its states labels (`object_begin`, `object_continue`, `scope_end`) | one function, `r0`, its states loops and labelled blocks | yes, since step 18 |
 | nesting on a stack of its own (`is_array[depth]`); `scope_end` goes back to the state of the scope it returns to | one function, `r0`: a call stores its kind of scope on `s.ret[depth]` (the document, an array's value, an object's value: three numbers); a `RETURN` matches on it and goes on at that scope's place. The loops a value is entered at from those three are a `match d` each: Rust has no `goto` | yes, since step 18; the dispatches are the `goto`s |
-| `advance()`: the next index | `token_all()`: the end's test, the next start, `last_end` | yes, since step 17 (no room check: the tape sized from the input once) |
+| `advance()`: the next index; the index past the last is the file's end, which the switch refuses | `token_all()`: the next start, past the last the file's length (a select); the value switches refuse its byte, the end tested only where it is taken | yes, since step 20 (no room check since step 17) |
 | `switch (*value)` | `match s.byte(s.start)`, the record made in the arm | yes |
 | one switch a value; `case '['`: `]` peeked for, then `array_begin` and the one value switch | the array's loop was entered at each value's place from two switches (the first value's, which also takes `]`, and the one after `,`), so the arms set `d` and the loop's `match d` took them apart again; every switch also had a path on the kind | yes, since step 15: the first value's switch takes `]`, then sends every other byte to the one value switch; the kind path only where a call returns to switch on its token again |
 | `case ','`, `case ']'` in the continue states | each punctuation byte straight to its place, every other byte refused | yes |
@@ -664,6 +686,15 @@ the Rust it writes:
 4. Done in step 17.
 5. Done in step 18.
 6. Done in step 19.
+
+The next six, from reading the Rust after step 19 (each a step, its assertion and a mutation):
+1. Done in step 20.
+2. No record field written that no later word reads (`s.code`, `s.live`, `s.rec_end = 0`,
+   `s.last_end`).
+3. One stack for the nesting: the return's number in the open node's entry, one depth, one test.
+4. No test of the string opener's length right after it is set.
+5. `part_stop` 32 bytes a step, and which stop it found from its masks, not the byte read again.
+6. The tape written once: each node's code as it is made, the columns where the image has them.
 
 ## Order
 
