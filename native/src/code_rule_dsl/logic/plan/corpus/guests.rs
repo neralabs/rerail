@@ -22,8 +22,9 @@
 //! - `embed_value`'s text, standing at `at`.
 //!
 //! A grammar name is a dialect label (`python`, `sql`, `typescript`, …) or `annotation`: Python's expression, parsed
-//! as `( … )` with the expression inside the parentheses as its root, as rrlab does. A guest's tape is not stored (Q30):
-//! no later process reads one. Equal texts in one process are parsed once (`parse`).
+//! as `( … )` with the expression inside the parentheses as its root, as rrlab does. A text a rule parses is a tape value
+//! (decision 0431): equal texts in one run are parsed once (`parse`), and its tape is stored with its text, so a later
+//! run finds it and parses nothing (R6). A program's tape (`taped`) is not stored yet (step 3).
 
 use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::facts::vtab::syntax::{self, Document, Guest, Made, Placement};
@@ -322,6 +323,29 @@ impl Seen {
 /// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
 /// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
 /// against the widened bound, and the other guests (other grammars, values) never.
+/// The tape tags of the grammars `v`'s requests name (decision 0431 R6: the tags whose tapes a run reads before its
+/// first wave); `None` where a request's grammar is not a constant, so any grammar may be asked.
+pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Version) -> Option<std::collections::BTreeSet<i64>> {
+    use crate::code_rule_dsl::logic::program_image::TermRef;
+    let mut tags = std::collections::BTreeSet::new();
+    for r in v.rules() {
+        let column = match v.rel_name(r.head().rel()) {
+            "embed" | "embed_value" => 2,
+            DEMAND | PARSE => 1,
+            _ => continue,
+        };
+        match r.head().args().nth(column) {
+            Some(TermRef::Str(a)) => {
+                if let Some(tag) = grammar(v.text(a)).and_then(|(label, _)| core::label_tag(label)) {
+                    tags.insert(tag);
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(tags)
+}
+
 pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
     use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
@@ -388,7 +412,7 @@ impl Guests {
 
     /// The documents `requests` ask for that are not made yet, added to `docs` (which holds their hosts), and the
     /// tape values made before that gained a place (decision 0431): the keys of both, which changed.
-    pub(super) fn make(&mut self, requests: Vec<Request>, docs: &mut Vec<Document>, parses: &Parses) -> Result<Vec<u32>, String> {
+    pub(super) fn make(&mut self, requests: Vec<Request>, docs: &mut Vec<Document>, parses: &Parses<'_>) -> Result<Vec<u32>, String> {
         let mut places: Vec<(u32, syntax::TapePlace)> = Vec::new();
         let mut out = {
             let docs: &[Document] = docs;
@@ -412,7 +436,7 @@ impl Guests {
     }
 
     /// The documents `requests` ask for that are not made yet; a tape value's further places, in `places`.
-    fn made_from(&mut self, requests: Vec<Request>, docs: &[Document], parses: &Parses, places: &mut Vec<(u32, syntax::TapePlace)>) -> Result<Vec<Document>, String> {
+    fn made_from(&mut self, requests: Vec<Request>, docs: &[Document], parses: &Parses<'_>, places: &mut Vec<(u32, syntax::TapePlace)>) -> Result<Vec<Document>, String> {
         let by_key: HashMap<u32, &Document> = docs.iter().map(|d| (d.key, d)).collect();
         let mut out: Vec<Document> = Vec::new();
         for r in requests {
@@ -468,7 +492,7 @@ impl Guests {
     /// (`tape`), made a tape value (decision 0431): one per grammar and text, its places the strings it was parsed
     /// at; a text made already gains a place.
     #[allow(clippy::too_many_arguments)]
-    fn guest(&mut self, by_key: &HashMap<u32, &Document>, tape: bool, at: i64, grammar_name: &str, role: &str, text: Option<String>, parses: &Parses) -> Result<Got, String> {
+    fn guest(&mut self, by_key: &HashMap<u32, &Document>, tape: bool, at: i64, grammar_name: &str, role: &str, text: Option<String>, parses: &Parses<'_>) -> Result<Got, String> {
         let host_key = (at >> 32) as u32;
         let Some(host) = by_key.get(&host_key).copied() else { return Ok(Got::Not) };
         if let Some(via) = embedding(host, grammar_name) {
@@ -525,7 +549,7 @@ impl Guests {
     /// text, not its place. A text made already in this chunk gains the place; else it is parsed (once a run,
     /// `parse`) and made. Its rows are the files' that hold it (`files`, as a value's).
     #[allow(clippy::too_many_arguments)]
-    fn tape_value(&mut self, host: &Document, host_key: u32, at: i64, grammar_name: &str, role: &str, label: &str, wrap: bool, text: String, place: Placement, range: Range, parses: &Parses) -> Result<Got, String> {
+    fn tape_value(&mut self, host: &Document, host_key: u32, at: i64, grammar_name: &str, role: &str, label: &str, wrap: bool, text: String, place: Placement, range: Range, parses: &Parses<'_>) -> Result<Got, String> {
         let identity = format!("tape:{wrap}:{text}");
         let files = self.files_of(i64::from(host_key));
         let here = syntax::TapePlace { host: host_key, at, place };
@@ -591,7 +615,7 @@ impl Guests {
     /// A value document (decision 0058 §4): `text` parsed as `grammar_name`, with no host, in the hidden documents,
     /// asked for by document `asker`. Its places are its own text's. It is its askers' files' (O96): `memo` keeps its
     /// rows with each, and its path is the first's.
-    fn value(&mut self, by_key: &HashMap<u32, &Document>, asker: i64, grammar_name: &str, text: String, made: Made, parses: &Parses) -> Result<Option<Document>, String> {
+    fn value(&mut self, by_key: &HashMap<u32, &Document>, asker: i64, grammar_name: &str, text: String, made: Made, parses: &Parses<'_>) -> Result<Option<Document>, String> {
         let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
         let (identity, known_as) = match &made {
             Made::Splice { node, with, .. } => (format!("splice:{node}:{with}"), String::new()),
@@ -672,18 +696,39 @@ type Parsed = (Arc<core::Facts>, u32, [u8; 32]);
 
 /// The guests' trees by grammar and text, for one run: a pack's guests repeat their texts (one annotation in many files,
 /// the same guests in every chunk and round), and the facts are a function of the two alone, so each distinct text is
-/// parsed and digested once a run. Held by the run, not the process (no static memo). A guest's tape is not stored
-/// (Q30): it is made in a wave, where no run reads the store (decision 0104), and parsing it costs less than storing
-/// and reading it (on ep2 about 0.01 s a run, against a 1 MB write and read).
+/// parsed and digested once a run. Held by the run, not the process (no static memo). Decision 0431 R6 (it replaces Q30,
+/// which judged a parse cheaper than a store's write and read, about 0.01 s a run on ep2): a text's tape is found among
+/// the tapes the last runs named, read before the first wave (decision 0104), or queued for the store behind the run,
+/// so a text a run parsed is not parsed again.
 #[derive(Default)]
-pub(super) struct Parses {
+pub(super) struct Parses<'a> {
     kept: std::sync::Mutex<(usize, HashMap<(String, bool, String), Option<Parsed>>)>,
     /// The texts parsed, not found kept (`Report::guest_parses`): decision 0431 R6, a text a run parsed is not
     /// parsed again.
     parsed: std::sync::atomic::AtomicUsize,
+    /// Where a text's tape is found or kept (decision 0431 R6); `None` in a run with no store, which parses each text
+    /// once a run.
+    store: Option<ValueStore<'a>>,
 }
 
-impl Parses {
+/// A run's tapes of the texts its rules parse (decision 0431 R6): found by the text's SHA-256 and its grammar's tag
+/// among the tapes the root's last runs named (read before the first wave, decision 0104: the run's grammar's in
+/// `by_text`, the files' map, the others in `others`), else queued for the store behind the run and named in its
+/// manifest, so the next run finds them.
+pub(super) struct ValueStore<'a> {
+    pub(super) cache: &'a crate::content_store::ContentStore,
+    pub(super) run_tag: Option<i64>,
+    pub(super) by_text: &'a HashMap<crate::content_store::HashKey, (crate::content_store::SourceId, crate::content_store::TapeFrame)>,
+    pub(super) others: HashMap<(crate::content_store::HashKey, i64), (crate::content_store::SourceId, crate::content_store::TapeFrame)>,
+    pub(super) late: &'a super::Late,
+}
+
+impl<'a> Parses<'a> {
+    /// The parses of a run whose tapes are kept in `store`.
+    pub(super) fn new(store: Option<ValueStore<'a>>) -> Self {
+        Self { store, ..Self::default() }
+    }
+
     /// The texts this run parsed.
     pub(super) fn parsed(&self) -> usize {
         self.parsed.load(std::sync::atomic::Ordering::Relaxed)
@@ -692,7 +737,7 @@ impl Parses {
 
 /// `text` parsed as `label`, its root (a wrapped expression's) and its facts' digest; `None` when the parser gives no
 /// facts. Kept for the run by grammar and text (`Parses`).
-fn parse(path: &str, label: &str, wrap: bool, text: String, parses: &Parses) -> Result<Option<Parsed>, String> {
+fn parse(path: &str, label: &str, wrap: bool, text: String, parses: &Parses<'_>) -> Result<Option<Parsed>, String> {
     /// The texts kept, in bytes, before the memo starts again (the facts kept are a small multiple of it).
     const KEPT_BYTES: usize = 8 << 20;
     let key = (label.to_owned(), wrap, text);
@@ -700,9 +745,30 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, parses: &Parses) -> 
         crate::code_rule_dsl::prof::count("guests.parse_kept", 1);
         return Ok(hit.clone());
     }
-    parses.parsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(key.2.clone()) };
-    let built = core::build(&file).map_err(|e| format!("{path}: {e}"))?;
+    let built = match (&parses.store, core::label_tag(label)) {
+        // Decision 0431 R6: found among the last runs' tapes by its text, or queued earlier in this run; else parsed,
+        // and queued for the store with its source, which the manifest names.
+        (Some(s), Some(tag)) if cfg!(feature = "tape-cache") => {
+            use sha2::Digest as _;
+            let digest: [u8; 32] = sha2::Sha256::digest(key.2.as_bytes()).into();
+            let hash = crate::content_store::HashKey::from_sha256_digest(digest);
+            let found = if s.run_tag == Some(tag) { s.by_text.get(&hash) } else { s.others.get(&(hash, tag)) };
+            match found {
+                Some((source, _)) => s.late.lock().expect("the late sources").push(*source),
+                None if core::tape_queued(s.cache, &file, &digest) => {}
+                None => {
+                    parses.parsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            core::build_in_wave_with_tape(&file, s.cache, Some(digest), found.map(|(_, f)| f), true, false).map(|(b, _)| b)
+        }
+        _ => {
+            parses.parsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            core::build(&file)
+        }
+    };
+    let built = built.map_err(|e| format!("{path}: {e}"))?;
     let parsed = match built {
         Built::Facts(facts) => {
             let root = if wrap { wrapped_root(&facts, label) } else { 0 };

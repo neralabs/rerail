@@ -5092,6 +5092,9 @@ fn run_observed(
     // The same tapes by their text's hash (Q22), for a file the run knows by its digest alone (no memo, or one named
     // by digest in a wave).
     let mut by_text: HashMap<crate::content_store::HashKey, (crate::content_store::SourceId, crate::content_store::TapeFrame)> = HashMap::new();
+    // Decision 0431 R6: the tapes of the texts the rules parse in a grammar other than the run's, by text and tag.
+    let mut value_frames: HashMap<(crate::content_store::HashKey, i64), (crate::content_store::SourceId, crate::content_store::TapeFrame)> = HashMap::new();
+    let run_tag = crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag).map(i64::from);
     // The files built with a tape read before the first wave, and those parsed (`Report::file_tapes`).
     let file_tapes = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
     // Files looked up together: stat each, find the entries of those the stat index knows in one statement, read and
@@ -5430,7 +5433,7 @@ fn run_observed(
         // The tapes the root's last runs named (Q22), of any lane: a lane is the programs' texts, and a rule's edit
         // starts a new one with no run, where the files are as they were. The last few, for the phases' runs over the
         // root record between. One read, before the first wave (decision 0104), for the waves' builds (a load's files,
-        // a file the memo misses). A guest's tape is not stored (Q30).
+        // a file the memo misses), and the tapes of the texts the rules parsed (decision 0431 R6).
         if let (Some(cache), Some(tag)) = (
             tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")),
             crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag),
@@ -5448,9 +5451,24 @@ fn run_observed(
             }
             let _ = wave_tapes.set(frames.iter().map(|(s, _, f)| (*s, f.clone())).collect());
             by_text = frames.into_iter().map(|(source, hash, frame)| (hash, (source, frame))).collect();
+            // The texts the rules parse in other grammars (decision 0431 R6): the tags the program's requests name, or
+            // every tag where a request's grammar is not a constant. The run's own are `by_text`'s.
+            let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
+            let tags = slice.as_ref().map_or(Some(BTreeSet::new()), |s| guests::grammar_tags(&s.version));
+            let found: Vec<(crate::content_store::SourceId, crate::content_store::HashKey, i64, crate::content_store::TapeFrame)> = match tags {
+                Some(tags) => {
+                    let mut all = Vec::new();
+                    for t in tags.into_iter().filter(|&t| t != i64::from(tag)) {
+                        all.extend(cache.tape_frames_with_hashes(&wanted, t, gv, fv).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(|(s, h, f)| (s, h, t, f)));
+                    }
+                    all
+                }
+                None => cache.tape_frames_any_grammar(&wanted, gv, fv).map_err(|e| Error::Plan(e.to_string()))?.into_iter().filter(|(_, _, t, _)| *t != i64::from(tag)).collect(),
+            };
+            value_frames = found.into_iter().map(|(source, hash, t, frame)| ((hash, t), (source, frame))).collect();
         }
     }
-    let guest_parses = guests::Parses::default();
+    let guest_parses = guests::Parses::new(tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")).map(|cache| guests::ValueStore { cache, run_tag, by_text: &by_text, others: value_frames, late: &late_sources }));
     // The roots its requests may read, watched before the first wave (`World::watch`): a `World` made inside the
     // fixpoint would otherwise read the observer's store there (decision 0104; Q150).
     if loading.is_some() {

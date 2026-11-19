@@ -1780,8 +1780,8 @@ fn every_switch_lowering_reads_is_classified() {
 
 /// Q22, a guard: a run after a rule's edit parses no file the last run read. The edit makes a new lane (the programs'
 /// texts) and plan, and the tapes are found by the root's last runs (`root_sources`), read before the first wave
-/// (decision 0104). It regressed unseen: the tapes were looked up by lane, which every edit changes. A guest's tape is
-/// not stored (Q30, `a_run_stores_no_source_of_its_guests`): its parse is cheaper than storing and reading it.
+/// (decision 0104). It regressed unseen: the tapes were looked up by lane, which every edit changes. A tape value's
+/// tape is found the same way (decision 0431 R6, `a_run_stores_its_tape_values_by_their_text`).
 #[test]
 fn an_edit_parses_no_file_the_last_run_read() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("file-tapes");
@@ -1898,7 +1898,6 @@ fn equal_texts_are_parsed_once_a_run() {
 /// Decision 0431 R6: a text the last run parsed is not parsed again when its file is edited elsewhere. The file is
 /// evaluated again; its annotation's tape is the last run's, found by the text's key.
 #[test]
-#[ignore = "0431 step 4: tape values kept"]
 fn an_edit_elsewhere_parses_no_text_the_last_run_parsed() {
     let (dir, run) = tape_value_runs("tv-edit", &[("a.py", "x: \"List[int]\" = []\n")]);
     assert_eq!(run("").guest_parses, 1);
@@ -1910,7 +1909,6 @@ fn an_edit_elsewhere_parses_no_text_the_last_run_parsed() {
 
 /// Decision 0431 R6: a new file holding a text a run parsed before parses nothing: one text is one tape, wherever.
 #[test]
-#[ignore = "0431 step 4: tape values kept"]
 fn a_new_file_with_a_text_parsed_before_parses_nothing() {
     let (dir, run) = tape_value_runs("tv-new-file", &[("a.py", "x: \"List[int]\" = []\n")]);
     assert_eq!(run("").guest_parses, 1);
@@ -1922,7 +1920,6 @@ fn a_new_file_with_a_text_parsed_before_parses_nothing() {
 /// Decision 0431 R6: an edited rule (a new program, every file evaluated again) parses no text the last run parsed,
 /// as an edit parses no file (`an_edit_parses_no_file_the_last_run_read`).
 #[test]
-#[ignore = "0431 step 4: tape values kept"]
 fn an_edited_rule_parses_no_text_the_last_run_parsed() {
     let (dir, run) = tape_value_runs("tv-rule-edit", &[("a.py", "x: \"List[int]\" = []\n"), ("b.py", "y: \"Optional[Foo]\" = None\n")]);
     assert_eq!(run("").guest_parses, 2);

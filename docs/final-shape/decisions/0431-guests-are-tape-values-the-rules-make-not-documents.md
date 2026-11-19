@@ -125,7 +125,10 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
 3. Programs as the file's (3a done: HTML declares its embeds, an embedder builds a program per place). The rest
    waits on the numbering above, decided after step 4: made by the host's parse at load, `with_matchers` once a chunk,
    guest documents go (R1, R5, R8).
-4. (Done before 3's rest.) `@parse` as a functor in the fixpoint; `parsed` and `sub_tape` of strings derived by the
+4. (Before 3's rest.) 4a, done: a tape value is found by its text's sha and grammar among the tapes the root's last
+   runs named, read before the first wave (the run's grammar's with the files', the others' by the tags the program's
+   requests name, every tag where one is not a constant), else parsed and queued for the store with its text, which
+   the manifest names (R6; Q30's "a guest's tape is not stored" is superseded). Then `@parse` as a functor in the fixpoint; `parsed` and `sub_tape` of strings derived by the
    program; tape values stored and loaded before the waves (R4, R6, R7, R5's annotations). The embed slice and its
    rounds stay for the grammar's programs until step 3.
 5. PostHog cold on CPU and Metal against 1ca497070's 32.1 s and 34.4 s of guests, findings unchanged (29,747,
