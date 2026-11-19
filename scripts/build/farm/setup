@@ -4,7 +4,8 @@
 # ~/.cargo/config.toml ("One configuration"), and a farm configuration to fill in at
 # ~/.config/rerail-farm/farm.json (kept if there is one). Hosts need nothing installed (the scripts
 # they run are sent with each command): only ssh without a password, and the toolchain of
-# rust-toolchain.toml, which this checks.
+# rust-toolchain.toml, which this checks (on a Linux host with aarch64-apple-darwin's std too: it
+# compiles this Mac's crates, README "Mac compiles on a Linux host").
 # Usage: setup [--force] [path-to-patched-sccache]
 #   --force installs this checkout's farm over a newer installed version (a downgrade).
 set -eu
@@ -36,7 +37,7 @@ if [ $# -gt 0 ]; then install -m 0755 "$1" "$share/bin/sccache.tmp" && mv "$shar
 toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$here/../../../rust-toolchain.toml")
 python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import farm; [print(h["name"]) for h in farm.hosts() if h.get("enabled", True)]' "$here" |
 while read -r host; do
-  if ssh -o BatchMode=yes -o ConnectTimeout=3 "$host" "~/.cargo/bin/rustup toolchain list | grep -q '^$toolchain' || ~/.cargo/bin/rustup toolchain install $toolchain --profile minimal" </dev/null; then
+  if ssh -o BatchMode=yes -o ConnectTimeout=3 "$host" "{ ~/.cargo/bin/rustup toolchain list | grep -q '^$toolchain' || ~/.cargo/bin/rustup toolchain install $toolchain --profile minimal; } && { [ \$(uname) != Linux ] || ~/.cargo/bin/rustup target add --toolchain $toolchain aarch64-apple-darwin >/dev/null 2>&1; }" </dev/null; then
     echo "$host: ready"
   else
     echo "$host: unreachable or without rustup, skipped"

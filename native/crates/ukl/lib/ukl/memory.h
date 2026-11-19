@@ -1,4 +1,4 @@
-// ukl/memory.h: a block's bytes read and written in place at any byte address (decisions 0400 §5, 0353, 0310).
+// ukl/memory.h: a block's bytes read and written in place at any byte address (decisions 0440 §5, 0353, 0310).
 //
 // A tape, a relation's block or an index is a byte buffer whose values lie at any byte offset: the generated reads
 // (CLIF's, 0310) read them here, where they lie, and nothing is copied out first. The buffer's base is 8-byte

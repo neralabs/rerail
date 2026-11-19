@@ -1,6 +1,6 @@
-//! CLIF as UKL (decisions 0310, 0400 §3.3): the reads written once in CLIF, for every GPU's kernels. UKL is C with
+//! CLIF as UKL (decisions 0310, 0440 §3.3): the reads written once in CLIF, for every GPU's kernels. UKL is C with
 //! macros for what differs between GPU languages; the backend's shim turns it into MSL for Metal or CUDA C++ for NVRTC,
-//! and the library (`<ukl/...>`, decision 0400 §5) gives the loads, stores and atomics, written once over each
+//! and the library (`<ukl/...>`, decision 0440 §5) gives the loads, stores and atomics, written once over each
 //! backend's intrinsics.
 //!
 //! A read's function takes the tape (`UKL_GLOBAL const uint8_t* t`, where the view's offsets count from: the
@@ -28,8 +28,9 @@
 //! A GPU computes in 32 bits; a 64-bit add or shift is several instructions. Every offset a read computes from the
 //! tape or the view is below 4 GiB on the device (a document's parts are offsets from its first byte, u32 in its
 //! view), so a 64-bit value whose every use reads only its low 32 bits (`low_words`: an address, a modular step to
-//! another such value) is computed as a `uint32_t`, with the same low bits, and a 64-bit load of it reads 32 bits. A
-//! relation's offsets are a block's, not bounded so: its reads keep 64 bits.
+//! another such value) is computed as a `uint32_t`, with the same low bits, and a 64-bit load of it reads 32 bits.
+//! The other families' offsets (a relation's, a view's entry, the lines') are a block's, not bounded so: their reads
+//! keep 64 bits.
 
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use crate::reads::Family;
@@ -63,7 +64,9 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
     for (id, f, n) in funcs {
         // Each read in its own family (a view read's source holds the lines' reads it calls too).
         let family = crate::reads::READS.get(*id as usize).map_or(family, |read| read.family);
-        let hot = crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot);
+        // Cold (a call) where 0310's policy marks the read so, and a read's 16z body called apart (decision 0353 step
+        // 4b, past `Z_APART`): inlined, each view's kernel carried the decoder once for every tape read in it.
+        let hot = *id < crate::reads::Z_APART && crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot);
         let signature = signature(f, &format!("{prefix}{n}"), family, hot)?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();
@@ -82,7 +85,7 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
 fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::Value> {
     let dfg = &f.dfg;
     let mut low: std::collections::HashSet<ir::Value> = std::collections::HashSet::new();
-    if family == Family::Relation {
+    if family != Family::Tape {
         return low;
     }
     for b in f.layout.blocks() {
@@ -205,11 +208,10 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     for (v, t) in &declared {
         writeln!(out, " {t} v{v}=0;").unwrap();
     }
-    // The family's pointers are offsets from `t` (and `v`): a relation's descriptor is its offset from `t`. The
+    // The family's pointers are offsets from `t` (and `v`): a relation's or a view's descriptor is its offset from `t`. The
     // read's own parameters are its arguments.
     for (k, &p) in dfg.block_params(entry).iter().enumerate() {
         if family != Family::Tape && k == 0 {
-            // The descriptor: its offset from `t`.
             writeln!(out, " {}=a0;", name(p)).unwrap();
         } else if k < family.pointers() {
             writeln!(out, " {}=0;", name(p)).unwrap();

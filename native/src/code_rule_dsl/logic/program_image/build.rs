@@ -118,6 +118,13 @@ impl Builder<'static> {
     }
 }
 
+/// A new base (`Builder::base`): a lowerer's header before it states anything.
+impl Default for Builder<'static> {
+    fn default() -> Self {
+        Builder::base()
+    }
+}
+
 impl<'p> Builder<'p> {
     /// An edit of `parent`.
     pub fn on(parent: &'p Arc<Version>) -> Builder<'p> {
@@ -465,6 +472,13 @@ impl<'p> Builder<'p> {
             None => self.parent.map(|p| p.input_names()).unwrap_or_default(),
         }
     }
+    /// Whether `rel` is an input this edit states, or its parent's: `input_names` with nothing copied.
+    pub fn has_input(&self, rel: &str) -> bool {
+        match &self.parts.inputs {
+            Some((ids, _)) => self.enc.find(rel).is_some_and(|a| ids.contains(&a)),
+            None => self.parent.is_some_and(|p| p.inputs().any(|a| p.text(a) == rel)),
+        }
+    }
     /// The outputs this edit states, or its parent's.
     pub fn output_names(&self) -> Vec<String> {
         match &self.parts.outputs {
@@ -583,37 +597,6 @@ impl<'p> Builder<'p> {
         };
         cells.extend(rows.iter().map(|row| row.iter().map(|v| self.cell(v)).collect::<Vec<Cell>>()));
         self.set_fact_cells(rel, cells);
-    }
-    /// States the fields of `header` besides its rules (`Version::header`'s, edited by a pass that reads and writes
-    /// only those): its declarations, facts, inputs, outputs and the rest of its `.about` rows, each where it differs
-    /// from `was`, the header the pass was given. Its rules are the builder's own.
-    pub fn set_header(&mut self, was: &Program, header: &Program) {
-        for (n, c) in &header.decls {
-            if was.decls.get(n) != Some(c) {
-                self.declare_names(n, c.as_slice());
-            }
-        }
-        for n in was.decls.keys().filter(|n| !header.decls.contains_key(*n)) {
-            self.undeclare(n);
-        }
-        for (r, rows) in &header.facts {
-            if was.facts.get(r) != Some(rows) {
-                self.set_facts(r, rows);
-            }
-        }
-        for r in was.facts.keys().filter(|r| !header.facts.contains_key(*r)) {
-            self.drop_facts(r);
-        }
-        if was.inputs != header.inputs {
-            self.set_inputs(&header.inputs);
-        }
-        if was.outputs != header.outputs {
-            self.set_outputs(&header.outputs);
-        }
-        let (a, b) = (super::about_of(was), super::about_of(header));
-        if a != b {
-            self.set_about(&b);
-        }
     }
     /// States the program's other fields (`about_of`), all of them.
     pub fn set_about(&mut self, about: &Facts) {

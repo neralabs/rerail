@@ -10,9 +10,9 @@ rayon = "=1.12.0"
 sha2 = "0.10"
 libc = "0.2.189"
 
-# The device layer: Metal on macOS, CUDA on Linux (decision 0400).
+# The device layer: Metal on macOS, CUDA on Linux (decision 0440).
 rerail-gpu = { path = "../gpu" }
-# The kernels preprocessed at run time for the CUDA device's architecture (decision 0400 §4).
+# The kernels preprocessed at run time for the CUDA device's architecture (decision 0440 §4).
 rerail-ukl = { path = "../native/crates/ukl" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -21,7 +21,7 @@ objc = "0.2.7"
 block = "0.1.6"
 
 [build-dependencies]
-# UKL's shims applied by the in-process preprocessor (decision 0400 §4).
+# UKL's shims applied by the in-process preprocessor (decision 0440 §4).
 rerail-ukl = { path = "../native/crates/ukl" }
 
 [lints.rust]

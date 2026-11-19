@@ -4,7 +4,7 @@
 
     UKL's shim for CUDA: a UKL kernel as CUDA C++ for NVRTC.
 
-    Adapted in Rerail (decision 0400 step 2) from upstream's draft, following the Metal shim beside it:
+    Adapted in Rerail (decision 0440 step 2) from upstream's draft, following the Metal shim beside it:
     - no host code: the C++ registration (`registerCudaKernel`) is gone; the Rust host finds a kernel by its
       unmangled name (`extern "C"`) and binds its arguments in its rows' order;
     - no system headers (NVRTC has none): the fixed-width types and `INFINITY` are defined here;

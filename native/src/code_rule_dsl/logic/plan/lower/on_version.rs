@@ -14,6 +14,13 @@ use super::super::{Error, Result};
 use rustc_hash::FxHashMap as HashMap;
 use std::sync::Arc;
 
+/// `v` lowered for `dialect` and read as the run reads it (`Lowered::of_placed`), with no preparation pass between:
+/// what a test or a tool that runs a program as written lowers. `intern` gives the name atoms of strings.
+pub fn lowered(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> Result<super::Lowered> {
+    let (v, domains, ops) = lower_version(v, dialect, intern)?;
+    Ok(super::Lowered::of_placed(super::super::body::Placed::whole(v), domains, ops, dialect))
+}
+
 /// `v` lowered for `dialect`, with the domains of its relations' columns (found before its strings became atoms, as
 /// `lower_tree` finds them) and the name atoms of `+`, `-` and `*`; `intern` gives the name atoms of strings.
 pub fn lower_version(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> Result<(Arc<Version>, Domains, [i64; 3])> {

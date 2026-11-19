@@ -1,4 +1,4 @@
-//! Kernels compiled at run time from UKL source (decision 0400 §4, §5): the text preprocessed in-process for the
+//! Kernels compiled at run time from UKL source (decision 0440 §4, §5): the text preprocessed in-process for the
 //! process's device (`rerail_ukl`, with the UKL library on its include path), compiled by the device's compiler (the
 //! Metal front end, NVRTC for the device's architecture), once a process per program; and a launch whose arguments
 //! are bound by their names in the kernel's rows.

@@ -1,4 +1,4 @@
-// ukl/scan.h: the device-wide exclusive scan of 32-bit values (decision 0400 §5), as two kernels the host plan
+// ukl/scan.h: the device-wide exclusive scan of 32-bit values (decision 0440 §5), as two kernels the host plan
 // launches (`rerail_gpu::library::scan_exclusive_u32`).
 //
 // Written for the weakest progress guarantee (Metal guarantees none between threadgroups): no threadgroup waits for

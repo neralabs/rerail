@@ -1,6 +1,15 @@
-//! `file_local::requests_file_local` on the version (decision 0281's path, step 7b; work queue Q149): each request of
-//! decision 0174 (`rr_<a>_req(n)`) that the split finds cross-file narrowed to literals over the asked node's own
-//! document, one for one with the tree's `Narrower`. See there for what a narrowed request keeps and why.
+//! Each request of decision 0174 (`rr_<a>_req(n)`) that the split finds cross-file narrowed to literals over the
+//! asked node's own document (decision 0281's path, step 7b; work queue Q149). A node's attribute is its own
+//! document's, so a request over that document alone is answered in its chunk, while the batch holding its text is
+//! there, and kept per file; asked in the cross-file part, it found no batch (O-cross-file-answers; the hub's
+//! work-queue question 2, option a).
+//!
+//! A request keeps the positive atoms of base and file-local relations joined to `n` through their location columns
+//! (and `d = @doc(n)`-like equalities), and the comparisons over what those bind. When none of them places `n`, a
+//! cross-file atom that holds `n` is unfolded: each of its relation's rules, narrowed the same way to the column `n`
+//! is in, is a request rule of its own (`passes(f) :- uses(_, f), …` with `uses(n, f) :- imp(n, q), def(f, q)` asks
+//! `def(f, _)`). Past `UNFOLD` levels, or where a rule gives `n` no variable, the request asks for every node
+//! (`node`). Dropping literals widens a request, which is sound.
 //!
 //! A narrowed body is made of pieces: literals of the request's own rule, and of the rules of each cross-file
 //! relation it unfolds, each of those renamed apart (`rq<k>_<x>`, its column's variable the reader's). A piece is
@@ -17,7 +26,7 @@ use std::sync::Arc;
 /// `requests_file_local` of the version, for the requests `requests` names (those the program declares).
 pub struct RequestsFileLocal {
     pub requests: Vec<&'static str>,
-    /// Each narrowed request and how (the tree's return value, for the profile's decisions).
+    /// Each narrowed request and how, for the profile's decisions.
     pub narrowed: Vec<(String, String)>,
 }
 

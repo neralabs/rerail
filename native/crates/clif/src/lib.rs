@@ -31,4 +31,5 @@ pub mod ukl;
 #[cfg(feature = "ir")]
 pub mod rust;
 pub mod view;
+#[cfg(feature = "ir")]
 pub mod view_reads;

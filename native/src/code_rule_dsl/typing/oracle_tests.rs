@@ -157,16 +157,19 @@ fn calls_name() -> String {
 }
 
 /// The combined `calls` program, as a run lowers it, holds no two relations that are one relation and no rule twice
-/// (`corpus::same_relations`): guest hiding's copies whose rules were another's, and its clones repeated, were 40% of
+/// (`combining::same_relations`): guest hiding's copies whose rules were another's, and its clones repeated, were 40% of
 /// O125's cross-file rules and a quarter of a one-file edit's CPU.
 #[test]
 fn the_combined_program_has_no_relation_twice_and_no_rule_twice() {
     let text = program("calls");
-    let mut prog = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()]).unwrap();
-    let same = crate::code_rule_dsl::logic::simplify::identical_classes(&prog);
-    assert!(same.is_empty(), "{} classes of relations that are one, e.g. {:?}", same.len(), same.iter().take(4).collect::<Vec<_>>());
-    let repeated = crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut prog);
-    assert_eq!(repeated, 0, "rules that repeat another");
+    use crate::code_rule_dsl::logic::plan::corpus::preparation::{DropRepeated, MergeIdentical};
+    let v = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()]).unwrap();
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", v);
+    let (mut merge, mut repeats) = (MergeIdentical::default(), DropRepeated::default());
+    p.program(&mut merge).program(&mut repeats);
+    p.current().unwrap();
+    assert_eq!(merge.merged, 0, "relations that are one");
+    assert_eq!(repeats.0, 0, "rules that repeat another");
 }
 
 fn program(name: &str) -> String {

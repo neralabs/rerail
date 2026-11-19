@@ -1,5 +1,5 @@
 //! The passes on the whole combined program, once its parts are linked (decision 0281's path, step 7a-1), on its
-//! version: `combine_read`'s tail. Each is the tree's pass of the same name, which a debug build runs beside it.
+//! version: the combine's tail (`corpus::tail_version`).
 
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW, Reads, edit_as_is};
 use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, TermRef, Version};

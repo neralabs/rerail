@@ -1,4 +1,4 @@
-// ukl/body/histogram_part.h: ukl/histogram.h's counting over one code type (decision 0400 §3.5: a type in C is a
+// ukl/body/histogram_part.h: ukl/histogram.h's counting over one code type (decision 0440 §3.5: a type in C is a
 // parameter of an included body). Included once per code type, with, defined first:
 // - `UKL_HIST_NAME(f)`: the instance's name of each function `f` (`f##_u16`, ...);
 // - `UKL_HIST_CODE`: the code type.

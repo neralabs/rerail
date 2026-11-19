@@ -77,9 +77,6 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
     if !crate::native_cpu_stream::calls_on_stack(native) {
         return Err("calls are not on the machine's stack (`calls_on_stack`)".into());
     }
-    if native.extras.len() > 1 {
-        return Err("more than one kind of extra".into());
-    }
     if native.block_programs.iter().filter_map(|b| b.records.as_ref()).any(|r| r.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2)) {
         return Err("a region tier 2 splits (decision 0323): not yet ahead of time".into());
     }
@@ -88,7 +85,7 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
     }
     let records = native.block_programs.first().and_then(|b| b.records.as_ref());
     let starts = native.structural.iter().any(|b| matches!(b.operation, Op::Token { .. }));
-    let in_code = records.map_or(0, |r| r.marks.len());
+    let in_code = records.map_or(0, |r| r.mark_bits());
     let lazy: Vec<(u8, u16)> = native.block_programs.first().and_then(|b| b.records.as_ref().map(|r| (b, r))).map_or(Vec::new(), |(b, r)| {
         let bw = crate::native_cpu_bytes::Bytewise::of(b);
         crate::native_cpu_block::lazy_marks(r, &|o| bw.can(o))
@@ -1621,17 +1618,19 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         Op::SettleBefore { mask } => format!("s.settle_before({});\n{}", mask_output(n, mask)?, jump(0)?),
         Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
             let k = u32::from(order);
-            let here = if (k as usize) < x.in_code {
+            // A token mark past the code's (decision 0407): live at every token, its tokens
+            // tested here; at the stream's end, held where the end has it.
+            let here = if (k as usize) < x.in_code || pattern.is_some() {
                 // In the record, folded into `live` at the token (the end's marks too).
+                // A lazy gap mark with a pattern (`before`, decision 0416): its gap, then its token.
+                let lazy = x.lazy.iter().any(|&(m, _)| u32::from(m) == k);
                 match pattern {
-                    Some(i) => format!("(s.at_end || s.pattern_{i}())"),
-                    None if x.lazy.iter().any(|&(m, _)| u32::from(m) == k) => format!("(s.at_end || s.lazy_{k}())"),
+                    Some(i) if lazy => format!("(if s.at_end {{ {end} }} else {{ s.lazy_{k}() && s.pattern_{i}() }})"),
+                    Some(i) => format!("(if s.at_end {{ {end} }} else {{ s.pattern_{i}() }})"),
+                    None if lazy => format!("(s.at_end || s.lazy_{k}())"),
                     None => "true".into(),
                 }
             } else {
-                if pattern.is_some() {
-                    return Err("a token mark not in the records".into());
-                }
                 let o = mask_output(n, mask)?;
                 let w = mark_word.map_or(String::new(), |s| format!("s.word() == {} && ", u32::from(s) + 1));
                 format!("(if s.at_end {{ {end} }} else {{ {w}s.bit({o}, s.start) }})")

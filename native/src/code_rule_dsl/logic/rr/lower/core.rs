@@ -141,9 +141,10 @@ impl Lowerer {
     /// The relation of a rewritten relation's rows, `rr_core_<rel>`, made on its first use.
     fn helper(&mut self, rel: &str) -> String {
         let name = format!("rr_core_{rel}");
-        if !self.prog.decls.contains_key(name.as_str()) {
+        if !self.prog.declares(&name) {
             let (params, body) = definition(rel);
-            self.prog.decls.insert(name.clone().into(), DECLS[rel].iter().map(|(c, t)| (c.into(), t.into())).collect());
+            let cols: Vec<(&str, &str)> = DECLS[rel].iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+            self.prog.declare(&name, &cols);
             self.write(Rule { head: Atom { rel: name.clone().into(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body: body.into() });
         }
         name

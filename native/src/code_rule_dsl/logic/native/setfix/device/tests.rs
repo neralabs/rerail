@@ -213,8 +213,10 @@
                     let r = report.as_ref().expect("a device report");
                     assert!(r.refused.is_none(), "{r:?}");
                     assert!(r.rounds > 3, "the recursion takes rounds: {r:?}");
-                    // A set head's rows written in place with their rounds (decision 0325 step 4); a lattice's read.
-                    assert_eq!(r.placed > 0, lattice.is_none(), "{r:?}");
+                    // A set head's rows written in place with their rounds (decision 0325 step 4); a lattice's folded
+                    // in place in its one relation (decision 0384 step 5, R3). Every row placed: none read back (R4).
+                    assert!(r.placed > 0, "{r:?}");
+                    assert_eq!(r.placed, r.distinct, "no head row read back: {r:?}");
                 }
                 super::super::close(&db, "dev_lev").unwrap();
                 let held = super::super::held(&db, "h0").expect("the relation held");
@@ -228,6 +230,83 @@
             assert!(got[0].iter().any(|r| r.2 > 3), "rows of later rounds");
             assert_eq!(got[0], got[1], "the device's rows and levels are the CPU's ({lattice:?})");
         }
+    }
+
+    /// Decision 0384 step 5 (R5): the device folds a `min` lattice's rounds into its one relation through its key map
+    /// in its block; the relation takes the rows as they lie and the map as its own, and a CPU fold goes on in that
+    /// map (the device's slots are the host's: one hash, one layout). Its rows and each key's changes are those of a
+    /// fold made on the CPU alone.
+    #[test]
+    fn a_cpu_fold_goes_on_in_the_devices_key_map() {
+        use crate::code_rule_dsl::facts::rows::{BlockVec, Part};
+        use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+        use super::super::keys::{KeyMap, SLOT};
+        if !mj::available() {
+            return;
+        }
+        let lattice = super::super::TestLattice::min;
+        // Round r: keys 0..400 + 300r (new keys each round), each value lower for some keys each round; a key's rows
+        // more than once in a round (the fold groups them).
+        let round = |r: i64| -> Vec<i64> {
+            (0..400 + 300 * r).flat_map(|key| [[key, 1000 - r * (key % 3)], [key, 1001]]).flatten().collect()
+        };
+        let mut cpu = lattice();
+        for r in 0..4 {
+            cpu.fold(&round(r));
+        }
+        let mut rel = lattice();
+        let (code, top, after) = rel.device_lattice();
+        let lat = mj::LatCode { code, top, after };
+        let part = Part::for_writes_with_room(2, 1, 64 << 20).unwrap();
+        let mut map: Option<KeyMap> = None;
+        let mut had = 0usize;
+        for r in 0..3 {
+            let rows = round(r);
+            let n = rows.len() / 2;
+            assert!(part.reserve((had + n) as u64));
+            let need = (2 * (had + n)).next_power_of_two().max(16);
+            let old = match map.take() {
+                Some(m) if m.places() >= need => {
+                    map = Some(m);
+                    None
+                }
+                old => {
+                    // SAFETY: the fold's first pass writes every slot before any read.
+                    map = Some(KeyMap::of(unsafe { BlockVec::unwritten_in(Some(&part.home()), need * SLOT) }, had));
+                    Some(old)
+                }
+            };
+            let m = map.as_ref().unwrap();
+            let first = match &old {
+                None => mj::MapFirst::Ready,
+                Some(None) => mj::MapFirst::Clear,
+                Some(Some(o)) => mj::MapFirst::Grow(super::map_at(o)),
+            };
+            assert!(r == 0 || matches!(first, mj::MapFirst::Grow(_)), "the map grows on the device");
+            let r_rel = mj::DevRel::in_block(&part.in_block(had as u32), 2).unwrap();
+            let u = mj::Table::of_rows(2, &rows).unwrap();
+            let changed = mj::Table::new(2, n).unwrap();
+            let counters = mj::Words::zeroed(2).unwrap();
+            let mut batch = super::direct_batch(None).unwrap();
+            batch.lattice_fold(&u, n, &r_rel, had, 1, lat, super::map_at(m), first, &counters, &changed, None, None).unwrap();
+            batch.finish().unwrap();
+            drop(old);
+            let added = counters.get(1) as usize;
+            // SAFETY: the batch finished; `lat_merge` wrote every new key's row.
+            unsafe { part.written_more(added as u32) };
+            had += added;
+            map.as_mut().unwrap().held(had);
+        }
+        assert_eq!(had, 400 + 300 * 2, "a row a key");
+        let map = map.unwrap();
+        assert!(map.facts().is_some_and(|f| std::sync::Arc::ptr_eq(f, part.home().facts())), "the map in its relation's block");
+        assert!(rel.take_folded(part, map));
+        assert_eq!(rel.len(), had, "the rows taken as they lie");
+        // The CPU's fold goes on in the device's map: held keys found, new keys put, the map grown.
+        rel.fold(&round(3));
+        let (got, want) = (rel.live(), cpu.live());
+        assert_eq!(got.len(), 400 + 300 * 3);
+        assert_eq!(got, want, "the device's fold, then the CPU's, is the CPU's alone");
     }
 
     /// Text tests on the device: each test's verdicts per distinct symbol made by its automaton, the same rows as
@@ -962,7 +1041,7 @@
                 if d.in_place.is_none() {
                     let out = mj::DevRel::empty(cols.len(), n).unwrap();
                     let mut batch = mj::Batch::new().expect("the device");
-                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
+                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, &cols, &out).unwrap();
                     batch.finish().unwrap();
                     for (j, &c) in cols.iter().enumerate() {
                         let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
@@ -1037,7 +1116,8 @@
                 }
             }
         }
-        // The kind-set axes and containment, read whole: the batch's solve, its pairs made ids on the device.
+        // The kind-set axes and containment, read whole: the batch's solve, a relation of ids written once where it is
+        // computed (decision 0353 step 5), which the device reads where it lies; no view of the chunk makes it.
         use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Mode, Within};
         use crate::code_rule_dsl::facts::nearest::Binding;
         use crate::code_rule_dsl::facts::vtab::Source as _;
@@ -1057,21 +1137,21 @@
         for (name, src) in &axes {
             let n = src.len();
             assert!(n > 0, "{name}: rows");
-            let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
-            assert_eq!(d.rows, n, "{name}");
-            for cols in [vec![0, 1], vec![1]] {
-                let out = mj::DevRel::empty(cols.len(), n).unwrap();
-                let mut batch = mj::Batch::new().expect("the device");
-                batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
-                batch.finish().unwrap();
-                for (j, &c) in cols.iter().enumerate() {
-                    let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
-                    assert_eq!(out.column(j), &host[..], "{name}: column {c}");
-                }
+            assert!(src.device_view().is_none(), "{name}: no view of the chunk makes it");
+            let held = src.in_block().unwrap_or_else(|| panic!("{name}: a relation in its block"));
+            assert_eq!(held.rows as usize, n, "{name}");
+            let dev = mj::DevRel::in_block(&held, 2).unwrap();
+            assert_eq!(dev.rows, n, "{name}: bound where it lies");
+            // Each row's ids are its nodes': `n` a member's descendant (an ancestor `a` of it), as the tree says.
+            for r in (0..n).step_by(11) {
+                let (inner, outer) = (src.value(r, 0), src.value(r, 1));
+                let (Some((d0, l0)), Some((d1, l1))) = (batch.node(inner), batch.node(outer)) else { panic!("{name}: row {r}'s ids are nodes") };
+                assert_eq!(d0, d1, "{name}: row {r} within one document");
+                assert_ne!(l0, l1, "{name}: row {r} strictly below");
             }
         }
-        // On the device's binding the solve itself is made on the device in the chunk: the host's rows, in its order,
-        // and its runs per looked-up node.
+        // On the device's binding the solve itself is made on the device: the host's rows, in its order, and its runs
+        // per looked-up node.
         for axis in [Axis::Nearest, Axis::Inside] {
             let host = Within::axis(Arc::clone(&batch), axis, &kinds, Binding::Cpu);
             let dev = Within::axis(Arc::clone(&batch), axis, &kinds, Binding::Metal);
@@ -1085,26 +1165,20 @@
                 let id = node.value(r, 1);
                 assert_eq!(dev.lookup(0, &[id]), host.lookup(0, &[id]), "the rows of {id}");
             }
-            let d = dev.device_view().expect("made on the device");
-            let out = mj::DevRel::empty(2, n).unwrap();
-            let mut batch = mj::Batch::new().expect("the device");
-            batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &[0, 1], &out).unwrap();
-            batch.finish().unwrap();
-            assert_eq!(out.column(1), &(0..n).map(|r| host.value(r, 1)).collect::<Vec<_>>()[..]);
+            assert_eq!(dev.in_block().expect("its relation").rows as usize, n);
         }
-        // Containment over every kind, in one submission (space sized before the count) and past a bound of no rows
-        // (written again once the total is read): the same pairs, as many as the host's containment.
+        // Containment over every kind: a relation of exactly the total's rows, as many as the host's containment, and
+        // the same rows on a second solve.
         let chunk = batch.chunk();
-        let read = |c: &crate::code_rule_dsl::facts::nearest::InChunk| -> Vec<u64> {
-            // SAFETY: the solve completed; `len` pairs at `pairs`.
-            unsafe { std::slice::from_raw_parts(chunk.block.ptr::<u64>(c.pairs), c.len) }.to_vec()
-        };
-        let once = mj::axis_in_chunk_bounded(chunk, None, true, 8).unwrap();
-        let again = mj::axis_in_chunk_bounded(chunk, None, true, 0).unwrap();
-        assert!(once.len > 0);
-        assert_eq!(once.len, Within::new(Arc::clone(&batch), Mode::Tree).len());
+        let read = |c: &crate::code_rule_dsl::facts::nearest::InChunk| -> Vec<(i64, i64)> { (0..c.rows.len()).map(|r| (c.rows.get(r, 0), c.rows.get(r, 1))).collect() };
+        let once = mj::axis_in_chunk(chunk, None, true).unwrap();
+        let again = mj::axis_in_chunk(chunk, None, true).unwrap();
+        assert!(once.rows.len() > 0);
+        assert_eq!(once.rows.len() as usize, Within::new(Arc::clone(&batch), Mode::Tree).len());
+        // Room for its rows, rounded up to whole chunks: not a bound sized before the count.
+        assert!(once.rows.rel().rows.reserved() < once.rows.len().next_multiple_of(64) + 64, "room for its rows, not more");
         assert_eq!(read(&again), read(&once));
-        // `has` is made per looked-up node, not by the batch's solve: uploaded as before.
-        assert!(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu).device_view().is_none());
+        // `has` is made per looked-up node, not by the batch's solve: no relation of it, uploaded as before.
+        assert!(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu).in_block().is_none());
         let _ = std::fs::remove_file(&store_path);
     }

@@ -286,6 +286,9 @@ pub(crate) struct NamedC {
 /// The file includes nest to at most (clang's bound).
 pub const MAX_INCLUDE_DEPTH: usize = 200;
 
+/// The device's rungs of `Bounds` (`Bounds::rung`), the last `Bounds::of`.
+pub const RUNGS: usize = 5;
+
 /// The stores' bounds.
 #[derive(Clone, Debug)]
 pub struct Bounds {
@@ -296,6 +299,12 @@ pub struct Bounds {
     pub macros: usize,
     pub output: usize,
     pub steps: u64,
+    /// The rooms of the calls' lists (`params`, `marks`, `kept`, `argv`, `pres`, `uses`), and of
+    /// the lists a TU rarely fills (`exps`, `wanted`, `asked`, and the bytes of the last two):
+    /// rooms only, which the interpreter's bounds (`arena`, `output`, `scratch`) are at `of`.
+    pub calls: usize,
+    pub lists: usize,
+    pub list_bytes: usize,
 }
 
 impl Bounds {
@@ -306,7 +315,30 @@ impl Bounds {
         let bytes: usize = files.iter().map(|f| f.bytes.len()).sum();
         let hashes = files.iter().flat_map(|f| f.toks.iter()).filter(|t| t.kind == HASH && t.flags & BOL != 0).count();
         // An `#embed` makes two tokens a byte.
-        Bounds { arena: 64 * toks + 2 * bytes + 4096, scratch: 64 * bytes + 4096, depth: 256, macros: hashes + 64, output: 64 * toks + 2 * bytes + 4096, steps: 4096 * (toks as u64 + 64) + 64 * bytes as u64 }
+        let (arena, output, scratch) = (64 * toks + 2 * bytes + 4096, 64 * toks + 2 * bytes + 4096, 64 * bytes + 4096);
+        Bounds { arena, scratch, depth: 256, macros: hashes + 64, output, steps: 4096 * (toks as u64 + 64) + 64 * bytes as u64, calls: arena, lists: output, list_bytes: scratch }
+    }
+
+    /// The device's rungs (decision 0348, stage L1), smallest first: rooms from a TU's use, for a
+    /// batch of TUs on Metal, where every room is pages taken. A run refused past a room's bound
+    /// (`is_room`) below the last rung is run again at the next. The last is `of`, so a TU's
+    /// answer, and its refusal at a real bound, are the CPU's. Each rung's tokens a token of the
+    /// TU, and its depths; an embedded file (data, no tokens) still makes two tokens a byte.
+    pub fn rung(files: &[File], r: usize) -> Bounds {
+        const RUNG: [(usize, usize); RUNGS - 1] = [(2, 32), (4, 64), (8, 64), (16, 128)];
+        let of = Bounds::of(files);
+        let Some(&(per, depth)) = RUNG.get(r) else { return of };
+        let toks: usize = files.iter().map(|f| f.toks.len()).sum();
+        let bytes: usize = files.iter().map(|f| f.bytes.len()).sum();
+        let data: usize = files.iter().filter(|f| f.toks.is_empty()).map(|f| f.bytes.len()).sum();
+        let tokens = per * toks + 2 * data + 256;
+        Bounds { arena: tokens, scratch: per * bytes + 256, depth, macros: of.macros, output: tokens, steps: of.steps, calls: tokens / 8 + 256, lists: tokens / 16 + 64, list_bytes: per * 256 }
+    }
+
+    /// Whether a refusal is a room's: past a store's bound, which a larger rung may hold. The
+    /// steps' bound is the work's, the same on every rung.
+    pub fn is_room(why: &str) -> bool {
+        why.starts_with("past the ") && why.ends_with(" bound") && why != "past the steps' bound"
     }
 }
 
@@ -1093,25 +1125,84 @@ pub(crate) const LEVEL: (usize, usize, usize) = (std::mem::size_of::<(u16, u32)>
 /// # Safety
 /// `code` reads and writes only within the `Ctx` it is given: each buffer below its room.
 pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, bounds: &Bounds, code: unsafe extern "C" fn(*mut Ctx) -> u64, reasons: &[&'static str]) -> Result<Expanded, Refused> {
-    let mut m = Machine::new(program, files, env, bounds)?;
-    let named: Vec<Vec<NamedC>> = files.iter().map(|f| f.named.iter().map(|n| NamedC { name: n.name.as_ptr(), len: n.name.len() as u64, to: n.to, angle: n.angle, next: n.next, embed: n.embed, pragma: n.pragma }).collect()).collect();
+    let mut p = prepare(program, files, env, bounds, &mut |b: Buf| b.ptr as u64)?;
+    // SAFETY: the caller's.
+    let r = unsafe { code(&mut p.c) };
+    // SAFETY: the code wrote each buffer below its room, which its vector has reserved.
+    unsafe { complete(p, r, reasons) }
+}
+
+/// A buffer the compiled words reach, as `prepare` hands it to a placement: its start, its
+/// bytes written so far, its bytes reserved (its room), and whether the words write it.
+#[derive(Clone, Copy, Debug)]
+pub struct Buf {
+    pub ptr: *mut u8,
+    pub len: usize,
+    pub room: usize,
+    pub write: bool,
+}
+
+/// A TU's machine laid out for compiled words: the machine, the context the code reads (each
+/// buffer's address where the placement put it), and what the context points at.
+pub struct Prepared<'a> {
+    m: Box<Machine<'a>>,
+    pub(crate) c: Ctx,
+    _keep: (Vec<Vec<NamedC>>, Vec<FileC>, Vec<FeatureC>, Vec<u32>),
+}
+
+impl Prepared<'_> {
+    /// The context's bytes, to copy where the code runs.
+    pub fn ctx_bytes(&self) -> &[u8] {
+        // SAFETY: `Ctx` is plain old data (`repr(C)`), read as bytes.
+        unsafe { std::slice::from_raw_parts((&raw const self.c).cast::<u8>(), std::mem::size_of::<Ctx>()) }
+    }
+
+    /// The context back from where the code ran (its counts and scalars).
+    ///
+    /// # Safety
+    /// `bytes` must be this context as the code left it.
+    pub unsafe fn ctx_from(&mut self, bytes: &[u8]) {
+        assert_eq!(bytes.len(), std::mem::size_of::<Ctx>());
+        // SAFETY: the caller's; `Ctx` is plain old data.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), (&raw mut self.c).cast::<u8>(), bytes.len()) };
+    }
+}
+
+/// A TU's machine laid out for compiled words: each buffer the code reaches handed to `place`,
+/// which gives the address the code finds it at (on the CPU its own; on a device, a copy's).
+pub fn prepare<'a>(program: &'a Words, files: &'a [File<'a>], env: &'a Env<'a>, bounds: &'a Bounds, place: &mut dyn FnMut(Buf) -> u64) -> Result<Prepared<'a>, Refused> {
+    let mut m = Box::new(Machine::new(program, files, env, bounds)?);
+    // A read-only slice, and a vector the words write (its room reserved, its written part).
+    fn ro<T>(place: &mut dyn FnMut(Buf) -> u64, v: &[T]) -> u64 {
+        let n = std::mem::size_of_val(v);
+        place(Buf { ptr: v.as_ptr().cast_mut().cast(), len: n, room: n, write: false })
+    }
+    fn rw<T>(place: &mut dyn FnMut(Buf) -> u64, v: &mut Vec<T>, room: u64, extra: usize) -> u64 {
+        let size = std::mem::size_of::<T>();
+        place(Buf { ptr: v.as_mut_ptr().cast(), len: v.len() * size, room: (room as usize * size + extra).max(v.len() * size), write: true })
+    }
+    fn one<T>(place: &mut dyn FnMut(Buf) -> u64, x: &mut T) -> u64 {
+        let n = std::mem::size_of::<T>();
+        place(Buf { ptr: (x as *mut T).cast(), len: n, room: n, write: true })
+    }
+    let named: Vec<Vec<NamedC>> = files.iter().map(|f| f.named.iter().map(|n| NamedC { name: ro(place, &n.name) as *const u8, len: n.name.len() as u64, to: n.to, angle: n.angle, next: n.next, embed: n.embed, pragma: n.pragma }).collect()).collect();
     let filesc: Vec<FileC> = files
         .iter()
         .zip(&named)
         .map(|(f, n)| FileC {
-            toks: f.toks.as_ptr(),
+            toks: ro(place, f.toks) as *const Tok,
             ntoks: f.toks.len() as u64,
-            bytes: f.bytes.as_ptr(),
+            bytes: ro(place, f.bytes) as *const u8,
             nbytes: f.bytes.len() as u64,
-            chains: f.chains.as_ptr().cast(),
+            chains: ro(place, f.chains) as *const u8,
             nchains: f.chains.len() as u64,
-            includes: f.includes.as_ptr().cast(),
+            includes: ro(place, f.includes) as *const u8,
             nincludes: f.includes.len() as u64,
-            named: n.as_ptr(),
+            named: ro(place, n) as *const NamedC,
             nnamed: n.len() as u64,
-            lines: f.lines.as_ptr(),
+            lines: ro(place, f.lines) as *const u32,
             nlines: f.lines.len() as u64,
-            path: f.path.as_ptr(),
+            path: ro(place, f.path) as *const u8,
             npath: f.path.len() as u64,
         })
         .collect();
@@ -1129,85 +1220,94 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
     let features: Vec<FeatureC> = env
         .features
         .iter()
-        .map(|f| FeatureC { b: BUILTINS.iter().position(|b| b.0.as_bytes() == f.0).map_or(NONE, |i| i as u32), name: f.1.as_ptr(), len: f.1.len() as u64, value: f.2 })
+        .map(|f| FeatureC { b: BUILTINS.iter().position(|b| b.0.as_bytes() == f.0).map_or(NONE, |i| i as u32), name: ro(place, &f.1) as *const u8, len: f.1.len() as u64, value: f.2 })
         .collect();
-    let mut c = Ctx {
-        files: filesc.as_ptr(),
+    // Each vector's room reserved first, then placed.
+    let rooms = [
+        room(&mut m.sources, bounds.depth), room(&mut m.arena, bounds.arena), room(&mut m.out, bounds.output), room_bytes(&mut m.scratch, bounds.scratch),
+        room(&mut m.conds, bounds.depth * 16), room(&mut m.defs, bounds.macros * 4), room(&mut m.params, bounds.calls), room(&mut m.marks, bounds.calls),
+        room(&mut m.kept, bounds.calls), room(&mut m.frames, bounds.depth), room(&mut m.argv, bounds.calls), room(&mut m.pres, bounds.calls),
+        room(&mut m.uses, bounds.calls), room(&mut m.levels, bounds.depth), room(&mut m.exps, bounds.lists), room(&mut m.wanted, bounds.lists),
+        room_bytes(&mut m.wanted_bytes, bounds.list_bytes), room(&mut m.ex.vals, bounds.depth * 4), room(&mut m.ex.ops, bounds.depth * 4), room(&mut m.ex.mins, bounds.depth * 4),
+        room(&mut m.ex.live, bounds.depth * 4), room(&mut m.asked, bounds.lists), room_bytes(&mut m.asked_bytes, bounds.list_bytes), room(&mut m.pushed, bounds.macros * 4),
+    ];
+    let c = Ctx {
+        files: ro(place, &filesc) as *const FileC,
         nfiles: filesc.len() as u64,
         like: Tok::default(),
         em: EmC { has_digits: u64::from(m.digits.is_some()), digits: u64::from(m.digits.unwrap_or(0)), ..EmC::default() },
-        room_sources: room(&mut m.sources, bounds.depth),
-        sources: m.sources.as_mut_ptr(),
+        room_sources: rooms[0],
+        sources: rw(place, &mut m.sources, rooms[0], 0) as *mut Src,
         nsources: m.sources.len() as u64,
-        room_arena: room(&mut m.arena, bounds.arena),
-        arena: m.arena.as_mut_ptr(),
+        room_arena: rooms[1],
+        arena: rw(place, &mut m.arena, rooms[1], 0) as *mut Tok,
         narena: m.arena.len() as u64,
-        room_out: room(&mut m.out, bounds.output),
-        out: m.out.as_mut_ptr(),
+        room_out: rooms[2],
+        out: rw(place, &mut m.out, rooms[2], 0) as *mut Tok,
         nout: m.out.len() as u64,
-        room_scratch: room_bytes(&mut m.scratch, bounds.scratch),
-        scratch: m.scratch.as_mut_ptr(),
+        room_scratch: rooms[3],
+        scratch: rw(place, &mut m.scratch, rooms[3], 8) as *mut u8,
         nscratch: m.scratch.len() as u64,
-        room_conds: room(&mut m.conds, bounds.depth * 16),
-        conds: m.conds.as_mut_ptr().cast(),
+        room_conds: rooms[4],
+        conds: rw(place, &mut m.conds, rooms[4], 0) as *mut u8,
         nconds: m.conds.len() as u64,
-        room_defs: room(&mut m.defs, bounds.macros * 4),
-        defs: m.defs.as_mut_ptr(),
+        room_defs: rooms[5],
+        defs: rw(place, &mut m.defs, rooms[5], 0) as *mut Def,
         ndefs: m.defs.len() as u64,
-        room_params: room(&mut m.params, bounds.arena),
-        params: m.params.as_mut_ptr(),
+        room_params: rooms[6],
+        params: rw(place, &mut m.params, rooms[6], 0) as *mut Tok,
         nparams: m.params.len() as u64,
-        room_marks: room(&mut m.marks, bounds.arena),
-        marks: m.marks.as_mut_ptr(),
+        room_marks: rooms[7],
+        marks: rw(place, &mut m.marks, rooms[7], 0) as *mut u32,
         nmarks: m.marks.len() as u64,
-        def_state: &mut m.def,
-        room_kept: room(&mut m.kept, bounds.arena),
-        kept: m.kept.as_mut_ptr(),
+        def_state: one(place, &mut m.def) as *mut DefState,
+        room_kept: rooms[8],
+        kept: rw(place, &mut m.kept, rooms[8], 0) as *mut Tok,
         nkept: m.kept.len() as u64,
-        room_frames: room(&mut m.frames, bounds.depth),
-        frames: m.frames.as_mut_ptr(),
+        room_frames: rooms[9],
+        frames: rw(place, &mut m.frames, rooms[9], 0) as *mut Frame,
         nframes: m.frames.len() as u64,
-        room_argv: room(&mut m.argv, bounds.arena),
-        argv: m.argv.as_mut_ptr().cast(),
+        room_argv: rooms[10],
+        argv: rw(place, &mut m.argv, rooms[10], 0) as *mut u8,
         nargv: m.argv.len() as u64,
-        room_pres: room(&mut m.pres, bounds.arena),
-        pres: m.pres.as_mut_ptr().cast(),
+        room_pres: rooms[11],
+        pres: rw(place, &mut m.pres, rooms[11], 0) as *mut u8,
         npres: m.pres.len() as u64,
-        room_uses: room(&mut m.uses, bounds.arena),
-        uses: m.uses.as_mut_ptr().cast(),
+        room_uses: rooms[12],
+        uses: rw(place, &mut m.uses, rooms[12], 0) as *mut u8,
         nuses: m.uses.len() as u64,
-        room_levels: room(&mut m.levels, bounds.depth),
-        levels: m.levels.as_mut_ptr().cast(),
+        room_levels: rooms[13],
+        levels: rw(place, &mut m.levels, rooms[13], 0) as *mut u8,
         nlevels: m.levels.len() as u64,
         table_mask: m.table.len() as u64 - 1,
-        table: m.table.as_mut_ptr(),
+        table: { let n = m.table.len() as u64; rw(place, &mut m.table, n, 0) as *mut Slot },
         d: u64::from(m.d),
-        room_exps: room(&mut m.exps, bounds.output),
-        exps: m.exps.as_mut_ptr().cast(),
+        room_exps: rooms[14],
+        exps: rw(place, &mut m.exps, rooms[14], 0) as *mut u8,
         nexps: m.exps.len() as u64,
-        sub: &mut m.sub,
-        inc: &mut m.inc,
-        once: m.once.as_mut_ptr().cast(),
-        room_wanted: room(&mut m.wanted, bounds.output),
-        wanted: m.wanted.as_mut_ptr(),
+        sub: one(place, &mut m.sub) as *mut Sub,
+        inc: one(place, &mut m.inc) as *mut Inc,
+        once: { let n = m.once.len() as u64; rw(place, &mut m.once, n, 0) as *mut u8 },
+        room_wanted: rooms[15],
+        wanted: rw(place, &mut m.wanted, rooms[15], 0) as *mut Want,
         nwanted: m.wanted.len() as u64,
-        room_wanted_bytes: room_bytes(&mut m.wanted_bytes, bounds.scratch),
-        wanted_bytes: m.wanted_bytes.as_mut_ptr(),
+        room_wanted_bytes: rooms[16],
+        wanted_bytes: rw(place, &mut m.wanted_bytes, rooms[16], 8) as *mut u8,
         nwanted_bytes: m.wanted_bytes.len() as u64,
-        room_vals: room(&mut m.ex.vals, bounds.depth * 4),
-        vals: m.ex.vals.as_mut_ptr(),
+        room_vals: rooms[17],
+        vals: rw(place, &mut m.ex.vals, rooms[17], 0) as *mut crate::pp_expr::Value,
         nvals: m.ex.vals.len() as u64,
-        room_ops: room(&mut m.ex.ops, bounds.depth * 4),
-        ops: m.ex.ops.as_mut_ptr(),
+        room_ops: rooms[18],
+        ops: rw(place, &mut m.ex.ops, rooms[18], 0) as *mut u8,
         nops: m.ex.ops.len() as u64,
-        room_mins: room(&mut m.ex.mins, bounds.depth * 4),
-        mins: m.ex.mins.as_mut_ptr(),
+        room_mins: rooms[19],
+        mins: rw(place, &mut m.ex.mins, rooms[19], 0) as *mut u8,
         nmins: m.ex.mins.len() as u64,
-        room_live: room(&mut m.ex.live, bounds.depth * 4),
-        live: m.ex.live.as_mut_ptr().cast(),
+        room_live: rooms[20],
+        live: rw(place, &mut m.ex.live, rooms[20], 0) as *mut u8,
         nlive: m.ex.live.len() as u64,
-        ex: &mut m.ex,
-        returns: returns.as_mut_ptr(),
+        ex: one(place, &mut m.ex) as *mut Ex,
+        returns: { let n = returns.len() as u64; rw(place, &mut returns, n, 0) as *mut u32 },
         nreturns: 0,
         room_returns: bounds.depth as u64,
         collecting: u64::from(m.collecting),
@@ -1215,33 +1315,42 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         t: m.t,
         line_last: m.line_last,
         pragma_toks: [Tok::default(); 3],
-        bi: &mut m.bi,
+        bi: one(place, &mut m.bi) as *mut Bi,
         counter: u64::from(m.counter),
         marker: m.marker,
         has_marker: u8::from(m.has_marker),
-        room_asked: room(&mut m.asked, bounds.output),
-        asked: m.asked.as_mut_ptr(),
+        room_asked: rooms[21],
+        asked: rw(place, &mut m.asked, rooms[21], 0) as *mut Asked,
         nasked: m.asked.len() as u64,
-        room_asked_bytes: room_bytes(&mut m.asked_bytes, bounds.scratch),
-        asked_bytes: m.asked_bytes.as_mut_ptr(),
+        room_asked_bytes: rooms[22],
+        asked_bytes: rw(place, &mut m.asked_bytes, rooms[22], 8) as *mut u8,
         nasked_bytes: m.asked_bytes.len() as u64,
-        date: env.date.as_ptr(),
+        date: ro(place, env.date) as *const u8,
         ndate: env.date.len() as u64,
-        time: env.time.as_ptr(),
+        time: ro(place, env.time) as *const u8,
         ntime: env.time.len() as u64,
-        timestamp: env.timestamp.as_ptr(),
+        timestamp: ro(place, env.timestamp) as *const u8,
         ntimestamp: env.timestamp.len() as u64,
-        features: features.as_ptr(),
+        features: ro(place, &features) as *const FeatureC,
         nfeatures: features.len() as u64,
-        room_pushed: room(&mut m.pushed, bounds.macros * 4),
-        pushed: m.pushed.as_mut_ptr().cast(),
+        room_pushed: rooms[23],
+        pushed: rw(place, &mut m.pushed, rooms[23], 0) as *mut u8,
         npushed: m.pushed.len() as u64,
         from_file: u8::from(m.from_file),
         in_if: u8::from(m.in_if),
     };
-    // SAFETY: the caller's.
-    let r = unsafe { code(&mut c) };
-    // SAFETY: the code wrote each buffer below its room, which its vector has reserved.
+    // The machine's box moves in, its heap place kept: the pointers into it stay good.
+    Ok(Prepared { m, c, _keep: (named, filesc, features, returns) })
+}
+
+/// A TU's run finished: the counts the code left in the context given back to the machine's
+/// vectors (each buffer placed back where it was), then its result, `r` the code's.
+///
+/// # Safety
+/// The code must have written each buffer below its room, and its context be `p.c`.
+pub unsafe fn complete(p: Prepared<'_>, r: u64, reasons: &[&'static str]) -> Result<Expanded, Refused> {
+    let Prepared { mut m, c, _keep } = p;
+    // SAFETY: the caller's: each count is within its vector's reserved room.
     unsafe {
         m.sources.set_len(c.nsources as usize);
         m.arena.set_len(c.narena as usize);

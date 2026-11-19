@@ -1,5 +1,5 @@
 //! The OpenCL runtime of the grid kernels, beside compute_kernel_metal.rs, compute_kernel_cuda.rs and
-//! compute_kernel_cpu.rs and with their interface (Rerail, decision 0400 §3.5): for the GPUs that have OpenCL and no
+//! compute_kernel_cpu.rs and with their interface (Rerail, decision 0440 §3.5): for the GPUs that have OpenCL and no
 //! other way in, integrated ones above all. A library compiled at run time from UKL source (OpenCL C 1.2, which the
 //! library is written in) by the device's driver, its kernels with their arguments, queues of launches, copies and
 //! fills, their events, and buffers.

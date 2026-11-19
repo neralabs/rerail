@@ -1,5 +1,5 @@
 //! The CPU runtime of the grid kernels, beside compute_kernel_metal.rs and compute_kernel_cuda.rs and with their
-//! interface (Rerail, decision 0400 §3.5): a library compiled at run time from UKL source by the host's C++
+//! interface (Rerail, decision 0440 §3.5): a library compiled at run time from UKL source by the host's C++
 //! compiler and loaded, its functions with their arguments, a queue of launches, copies and fills run in order on a
 //! thread of its root's, its events, and buffers. For debugging kernels, not for speed: a kernel runs where a
 //! debugger and sanitizers reach it, the same every time, and a barrier no thread can pass is an error that says who

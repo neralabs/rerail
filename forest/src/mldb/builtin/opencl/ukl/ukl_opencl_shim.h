@@ -4,10 +4,10 @@
 
     UKL's shim for OpenCL: a UKL kernel as OpenCL C 1.2, compiled from source by the device's driver.
 
-    Written in Rerail (decision 0400 §3.5), after the CUDA shim beside it and upstream's OpenCL prelude
+    Written in Rerail (decision 0440 §3.5), after the CUDA shim beside it and upstream's OpenCL prelude
     (`opencl-random-forests`):
     - C, not C++: OpenCL C 1.2 has no templates, references or overloading but clang's `overloadable` (every OpenCL
-      compiler we target is clang-based). The library is written in the subset both accept (0400 §3.5);
+      compiler we target is clang-based). The library is written in the subset both accept (0440 §3.5);
     - no host code: the Rust host finds a kernel by name and binds its arguments in its rows' order;
     - a kernel's threadgroup memory: an `RWLOCAL` row is a `__local` argument the host sizes
       (`clSetKernelArg(k, i, bytes, NULL)`); a `SHARED` row is declared in the kernel (OpenCL C 1.2 declares

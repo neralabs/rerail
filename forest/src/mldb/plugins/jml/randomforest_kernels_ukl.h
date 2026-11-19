@@ -3,12 +3,12 @@
     Copyright (c) 2018 mldb.ai inc.  All rights reserved.
     This file is part of MLDB. Copyright 2016 mldb.ai inc. All rights reserved.
 
-    The random forest's kernels, written once in UKL for every backend (Rerail, decision 0400 step 2): each
+    The random forest's kernels, written once in UKL for every backend (Rerail, decision 0440 step 2): each
     kernel's parameters are rows of access, type, name and bounds, and its body calls the shared implementation
     in randomforest_kernels_common.h. The Metal shim makes the kernels the Metal host binds by name (each
     parameter's name, as the hand-written Metal wrappers this file replaces named them); the CUDA shim makes them for NVRTC.
 
-    Rows beyond MLDB's (decision 0400 §3.1):
+    Rows beyond MLDB's (decision 0440 §3.1):
     - ARGS: a structure of arguments the host fills field by field, constant (Metal: `constant const T &`; CUDA:
       by value); its fields are reflected for CUDA's host by UKL_REFLECT_STRUCT after its definition;
     - CONSTBUFFER: a buffer in Metal's constant address space (CUDA: `const T * __restrict__`);

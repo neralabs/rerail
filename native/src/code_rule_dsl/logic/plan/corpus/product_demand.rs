@@ -5,7 +5,7 @@
 //! the reader's callers first. Reject a product with a reader that cannot supply a connected demand.
 
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Rule, Term, Value, components_of};
-use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit, Slot, TermRef, Tree, Version};
+use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit, Slot, TermRef, Version};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -82,18 +82,32 @@ impl ProgramPass for BoundProducts {
         if matches!(self, Self::Whole) && !may_have_products(version) {
             return Ok(());
         }
+        use crate::code_rule_dsl::logic::program_image::fields::FieldsMut as _;
         let lists = crate::code_rule_dsl::logic::front::Lists::default();
-        let header = version.header(&lists)?;
-        let mut tree = Tree::new(version, &lists);
-        let mut program = header.clone();
-        program.rules = version.rules().map(|rule| tree.rule(rule)).collect();
+        let mut program = version.program(&lists)?;
         let original = program.rules.clone();
+        let (decls, qualifiers, facts) = (program.decls.clone(), program.qualifiers.clone(), program.facts.clone());
         let rewritten = rewrite(&mut program, true)?;
         if rewritten.products.is_empty() {
             return Ok(());
         }
         let builder = w.on()?;
-        builder.set_header(&header, &program);
+        // The fields the rewrite changed, through the fields API (decision 0276 §3): the demand relations'
+        // declarations and qualifiers, and the facts it adds.
+        for (rel, cols) in &program.decls {
+            if decls.get(rel) != Some(cols) {
+                let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+                builder.declare(rel.as_str(), &pairs);
+            }
+        }
+        if program.qualifiers != qualifiers {
+            builder.set_field(crate::code_rule_dsl::logic::program_facts::Field::Qualifiers(&program.qualifiers));
+        }
+        for (rel, rows) in &program.facts {
+            if facts.get(rel) != Some(rows) {
+                builder.set_facts(rel, rows);
+            }
+        }
         for (index, rule) in version.rules().enumerate() {
             if original[index] != program.rules[index] {
                 builder.remove(rule.id());

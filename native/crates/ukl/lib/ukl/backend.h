@@ -1,4 +1,4 @@
-// ukl/backend.h: the intrinsics the UKL library is written over, one section per backend (decision 0400 §5).
+// ukl/backend.h: the intrinsics the UKL library is written over, one section per backend (decision 0440 §5).
 //
 // Everything else in the library is written once, against these. A backend is added here and nowhere else: its
 // qualifiers, its bit counts, its SIMD-group shuffles and ballot, its barriers and its atomics. Where a backend has a
@@ -14,7 +14,7 @@
 #include <ukl>
 
 // The SIMD group's state, for a backend that keeps it in memory (OpenCL without subgroups: a threadgroup's scratch,
-// which its shim defines, decision 0400 §3.5): every function that reaches a SIMD-group operation takes
+// which its shim defines, decision 0440 §3.5): every function that reaches a SIMD-group operation takes
 // `__UKL_PARAMS` after its parameters, and passes `__UKL_ARGS` after its arguments. Empty where the hardware holds the
 // group (Metal, CUDA, the CPU).
 #ifndef __UKL_PARAMS
@@ -285,7 +285,7 @@ UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { re
 UKL_INLINE uint32_t ukl_sg_ballot(bool b __UKL_PARAMS) { return b ? 1u : 0u; }
 UKL_INLINE void ukl_sg_barrier() { mem_fence(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
 #else
-#  error "ukl/backend.h: OpenCL's native subgroups (cl_khr_subgroup_shuffle, _ballot) are not written yet (decision 0400 §3.5)"
+#  error "ukl/backend.h: OpenCL's native subgroups (cl_khr_subgroup_shuffle, _ballot) are not written yet (decision 0440 §3.5)"
 #endif
 
 // Relaxed atomics on a device word (OpenCL 1.2's are relaxed), and a fence. OpenCL 1.2 has no coherent memory but

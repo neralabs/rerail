@@ -1,5 +1,5 @@
 //! The CUDA runtime of the grid kernels, beside compute_kernel_metal.rs and with its interface (Rerail, decision
-//! 0400 steps 3 and 4): a library compiled at run time from UKL source by NVRTC, its functions with their arguments,
+//! 0440 steps 3 and 4): a library compiled at run time from UKL source by NVRTC, its functions with their arguments,
 //! a queue of launches, copies and fills on a stream, its events, and buffers.
 //!
 //! Copyright (c) 2026 Jeremy Barnes. This file is part of MLDB's forest as carried in Rerail. Apache-2.0 (see the
@@ -9,8 +9,8 @@
 //!   device (`CudaDevice::system_default` is `None`), as on a Mac without Metal.
 //! - **Buffers are pinned, mapped host memory** (`cuMemHostAlloc`): the host reads and writes them in place
 //!   (`contents`), as Metal's shared storage, and kernels read them where they are. On a unified device (GB10) that
-//!   is as fast as device memory (0400 §2: 0.97x); on a discrete card it reads over the bus, which is correct and
-//!   slow: placing blocks in device memory there is the block directory's work (0400 §7.2, step 10).
+//!   is as fast as device memory (0440 §2: 0.97x); on a discrete card it reads over the bus, which is correct and
+//!   slow: placing blocks in device memory there is the block directory's work (0440 §7.2, step 10).
 //! - **Arguments without reflection.** UKL's CUDA shim emits beside each kernel the text of its rows
 //!   (`Name__ukl_params`) and each row's type's size, alignment and kind (`Name__ukl_rows`), and for each `args`
 //!   structure its fields' names and a kernel that measures its layout (`Type__ukl_layout`). They give the same
@@ -265,7 +265,7 @@ unsafe impl Sync for Allocation {}
 impl Drop for Allocation {
     /// Back to its size class's free list, not to the driver: `cuMemFreeHost` waits for the whole device, and a
     /// stream held on a host-signalled event (an armed prediction) would then wait for the very host thread that is
-    /// freeing. The pool keeps a process's peak of each class (0400 E1: the pool's slabs are `cuMemHostAlloc`'s).
+    /// freeing. The pool keeps a process's peak of each class (0440 E1: the pool's slabs are `cuMemHostAlloc`'s).
     fn drop(&mut self) {
         POOL.lock().unwrap().entry(self.class).or_default().push(Block { host: self.host, dev: self.dev });
     }

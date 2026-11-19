@@ -21,7 +21,8 @@ sys.path.insert(0, here)
 import farm  # noqa: E402  (after HOME: its state goes under the test's home)
 import mirror  # noqa: E402
 
-ROOT = os.path.join(os.environ["HOME"], "Library/Caches/rerail-farm/root.noindex")
+os.environ.pop("XDG_CACHE_HOME", None)
+ROOT = os.path.join(os.environ["HOME"], "Library/Caches" if sys.platform == "darwin" else ".cache", "rerail-farm/root.noindex")
 checkout = os.path.join(work, "checkout")
 
 

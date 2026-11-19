@@ -1,10 +1,10 @@
-//! The GPU device layer (decision 0400): one interface over the backends, Metal on macOS and CUDA on Linux, an OpenCL
+//! The GPU device layer (decision 0440): one interface over the backends, Metal on macOS and CUDA on Linux, an OpenCL
 //! GPU when `RERAIL_GPU=opencl`, or the CPU when `RERAIL_GPU=cpu` (`device`),
 //! MLDB's compute-kernel runtime (the argument types, the grid launcher that binds a kernel's parameters by name, and
 //! each backend's runtime, at their upstream paths under `mldb/`), the process's shared device, kernels compiled
 //! from UKL source at run time with the UKL library on their include path (`kernels`), and the library's device-wide
 //! calls (`library`). The library's tests (`library_tests`) run each primitive on the device against its reference.
-//! The forest's trainer runs on it; the engine's GPU lane moves onto it (0400 step 3).
+//! The forest's trainer runs on it; the engine's GPU lane moves onto it (0440 step 3).
 
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 

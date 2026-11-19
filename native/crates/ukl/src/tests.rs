@@ -75,7 +75,7 @@ fn every_library_header_stands_alone_on_every_backend() {
     }
 }
 
-/// The OpenCL gate (decision 0400 §3.5): each library header, preprocessed for OpenCL, is OpenCL C 1.2 that clang's
+/// The OpenCL gate (decision 0440 §3.5): each library header, preprocessed for OpenCL, is OpenCL C 1.2 that clang's
 /// front end accepts: with the SIMD group emulated (width 32), and at width 1.
 #[test]
 fn every_library_header_is_opencl_c_1_2() {
@@ -149,7 +149,7 @@ fn an_in_memory_kernel_gets_its_backends_shim() {
     assert!(metal.contains("threadgroup_barrier(mem_flags::mem_threadgroup)"), "{metal}");
 }
 
-/// A hand-written MSL kernel that takes the generated reads (decision 0400 §3.3): the Metal front end's own headers
+/// A hand-written MSL kernel that takes the generated reads (decision 0440 §3.3): the Metal front end's own headers
 /// left to it, the reads' hooks as the kernel defines them, and the tape's two sets of reads refused together.
 #[test]
 fn a_metal_kernel_takes_the_generated_reads() {

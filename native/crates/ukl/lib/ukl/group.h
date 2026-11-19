@@ -1,4 +1,4 @@
-// ukl/group.h: threadgroup operations, over the SIMD-group ones (decision 0400 §5).
+// ukl/group.h: threadgroup operations, over the SIMD-group ones (decision 0440 §5).
 //
 // For a 1-D threadgroup whose size is a multiple of `UKL_SIMD_WIDTH`, at most `UKL_TG_MAX` threads. Every thread of
 // the group calls them (they hold barriers). `scratch` is threadgroup memory of `UKL_TG_SCRATCH` words (a kernel's

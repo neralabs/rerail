@@ -646,10 +646,16 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, check_masks: Vec::new(), prefix: Vec::new() });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, check_masks: Vec::new(), prefix: Vec::new(), gap: None });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
+            } else if first == "recgap" {
+                let r = program
+                    .records
+                    .as_mut()
+                    .ok_or(format!("block {at} recgap before its records"))?;
+                r.gap = Some(line.number("")?);
             } else if first == "recends" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recends before its records"))?;
                 let hex = line.word()?;
@@ -741,18 +747,20 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "reccheck" {
                 let r = program.records.as_mut().ok_or(format!("block {at} reccheck before its records"))?;
                 let rule: u8 = line.number("")?;
-                let count = match line.word()?.as_str() {
-                    "count" => true,
-                    "run" => false,
-                    w => return Err(format!("block {at} reccheck: `count` or `run`, not {w}")),
+                let (count, all) = match line.word()?.as_str() {
+                    "count" => (true, false),
+                    "run" => (false, false),
+                    "all" => (false, true),
+                    w => return Err(format!("block {at} reccheck: `count`, `run` or `all`, not {w}")),
                 };
                 let (o, least): (u16, u32) = (line.number("")?, line.number("")?);
                 let then = match line.word() {
                     Ok(w) if w == "at" => crate::records::CheckThen::At(line.number("")?),
                     Ok(w) if w == "after" => crate::records::CheckThen::After(line.number("")?),
+                    Ok(w) if w == "cut" => crate::records::CheckThen::Cut,
                     _ => crate::records::CheckThen::Escape,
                 };
-                r.checks.push(crate::records::TokenCheck { rule, count, o, least, then });
+                r.checks.push(crate::records::TokenCheck { rule, count, o, least, then, all });
             } else if first == "recchecked" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recchecked before its records"))?;
                 r.check_masks.push(line.number("")?);

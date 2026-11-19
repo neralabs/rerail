@@ -98,9 +98,9 @@
             .decl total(n:number)\ntotal(n) :- n=count : {r(_,_)}.\n.output total\n";
         let run = || {
             let store = ContentStore::open(&path).unwrap();
-            let p = rr::parse(text).unwrap();
+            let p = rr::parse_version(text).unwrap();
             let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-            let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
+            let lowered = lower::lowered(p, python, &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
             let db = rusqlite::Connection::open(&path).unwrap();
             native::register(&db).unwrap();
             native::register_symbols(&db).unwrap();

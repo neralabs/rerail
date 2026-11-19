@@ -4,7 +4,7 @@
 //! its `must, may` relations and heads, its kind sets, lattices, helpers, what its relations read, its column types
 //! as written) are `.about` relations of their own, `module_*`.
 use super::lower::{Module, ModuleParts, ViolationParts};
-use crate::code_rule_dsl::logic::front::{Lists, List, Value};
+use crate::code_rule_dsl::logic::front::{List, Value};
 use crate::code_rule_dsl::logic::program_facts::Facts;
 use crate::code_rule_dsl::logic::program_image::{Builder, Cell, Version};
 use std::collections::BTreeMap;
@@ -12,15 +12,16 @@ use std::collections::BTreeMap;
 /// The image of module `m`.
 pub fn encode(m: &Module) -> Result<Vec<u8>, String> {
     let p = m.parts();
-    let mut b = Builder::of_program(&p.prog)?;
-    // A module written as a version (decision 0377) holds its rules there, in their order: its `must, may` rules'
-    // places and its helpers' counts are by that order.
-    if let Some(v) = &p.version {
-        for r in v.rules() {
-            b.copy(v, r);
-        }
+    let v = m.version();
+    // Its program as its version holds it (decision 0377), its rules in their order: its `must, may` rules' places
+    // and its helpers' counts are by that order.
+    let mut b = Builder::base();
+    for r in v.rules() {
+        b.copy(v, r);
     }
-    let mut about = crate::code_rule_dsl::logic::program_image::about_of(&p.prog);
+    let program = |r: &str| !r.starts_with("module_");
+    b.copy_fields(v, &program);
+    let mut about = v.about_kept(&program);
     let s = |t: &str| Value::Str(t.into());
     let n = |k: usize| Value::Int(k as i64);
     let mut put = |rel: &str, row: Vec<Value>| about.entry(rel.to_owned()).or_default().push(List::from(row));
@@ -75,8 +76,7 @@ pub fn encode(m: &Module) -> Result<Vec<u8>, String> {
 /// The module image `bytes` holds.
 pub fn decode(bytes: &[u8]) -> Result<Module, String> {
     let v = Version::open(bytes)?;
-    // Its rules stay in the image, read as the module's version; its program is the header.
-    let prog = v.header(&Lists::default())?;
+    // Its program, rules and header, stays in the image, read as the module's version.
     let mut rows: BTreeMap<String, Vec<Vec<Cell>>> = BTreeMap::new();
     for f in v.about_facts() {
         let name = v.text(f.name());
@@ -93,7 +93,7 @@ pub fn decode(bytes: &[u8]) -> Result<Module, String> {
         Cell::Str(_) | Cell::Branded(_) => Err("a module image's row: a name where a number is".to_owned()),
     };
     let of = |rel: &str| rows.get(rel).map(Vec::as_slice).unwrap_or(&[]);
-    let mut p = ModuleParts { prog, version: Some(std::sync::Arc::clone(&v)), ..ModuleParts::default() };
+    let mut p = ModuleParts::default();
     let mut violations: BTreeMap<i64, ViolationParts> = BTreeMap::new();
     for r in of("module_violation") {
         let tag = int(&r[9])?;
@@ -138,5 +138,5 @@ pub fn decode(bytes: &[u8]) -> Result<Module, String> {
     p.docof = of("module_docof").first().map(|r| int(&r[0]).map(|d| d != 0)).transpose()?;
     p.printed = of("module_printed").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
     p.places = of("module_place").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
-    Module::of_parts(p).map_err(|e| e.to_string())
+    Module::of_parts(p, std::sync::Arc::clone(&v)).map_err(|e| e.to_string())
 }

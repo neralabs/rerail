@@ -1,6 +1,6 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), being built: steps 1, 2, 3 and 7 built (2026-11-18). The user: "a directive which allows us to add enough data to the
+Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18). The user: "a directive which allows us to add enough data to the
 relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
 something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
@@ -94,6 +94,18 @@ Recursion keeps a fact only when it is declared, or proved by the base case and 
 
    An explicit override is allowed for rare cases: `.layout r by reach`, `by walk(child)`, `by running(i in p)`.
    Like 0137's directives, a profiled run says when the override is no longer needed.
+
+5. **A column's values, and statistics only where no fact answers** (decided 2026-11-18, after step 4's first
+   measurement found no relation answered whole). Two parts:
+   - A `values(c, …)` fact states how many distinct values column `c` holds: `documents` or `kinds` (the run's
+     exact counts of them), `within document` (numbered in each document: about a document's rows), `many` (about
+     one a row, without a key's guarantee), `~N` (at most about N) or `rows / N` (one every N rows). `core.rr`
+     declares them for its base relations' other columns (`node`'s `d`, `kind`, `start`, `end`; `kind`'s `k`;
+     `field`'s `f`; `text`'s and `name`'s `s`; `docof`'s `d`; `line`'s `l`; `visit_index`'s `i`), so each base
+     relation is answered whole. A bound (`documents`, `kinds`, `~N`) carries to a rule's head column that copies
+     it; a share of the rows does not.
+   - Every other relation's statistics are made for the columns no fact answers alone; an answered column's
+     statistic is the facts' estimate, not counted.
 
 ## Build steps
 
@@ -269,3 +281,134 @@ was 48 (41 local).
 - `plan::tests::explain_lists_each_relations_layout`: the lines in a planner run's decisions.
 
 With them, 268 tests of the planner, the image, the profile and `rr` pass (M1 Max).
+
+## Step 4: estimates from the facts (2026-11-18), the planner's side
+
+`plan::shapes::Shapes` holds each relation's facts (step 3's `Layouts`) by name, with its declared width, in the
+planner's statistics (`Stats::shapes`), shared by a component's model as the kind sets are. A column's distinct values
+come from the facts where one answers it:
+
+| Fact | The column's distinct values, of `rows` rows |
+|---|---|
+| `key(c)` | `rows` |
+| `size(<= m per c)` | `rows / m` |
+| `fanout(c -> …, one / few / ~N)` | `rows / 1`, `rows / 3`, `rows / N` (`many`: no estimate) |
+| `order(c dense in g)`, `g` a fan-out's source | at most its probe's class bound: 1, or `FEW` (16) |
+
+`few` is priced at 3 rows a probe (`FEW_ROWS`): the class bounds it at 16, and the batch estimate it replaces priced a
+parent column at a third of its rows, so `child`'s `p` plans as before.
+
+Where they are used:
+- **A batch's base relations** (T's SQL waves, `Inputs::batch`): each column from its facts, else by its name as
+  before (`d`, `kind`, `f`, `depth`, `s`: the columns no fact answers).
+- **An unmeasured column** (`Model::ndv_or_default`): the facts' estimate before the prior (a relation of the
+  component being solved: 200 values, else 1).
+- **A relation the facts answer whole** (every column): its lazy statistics are not requested (`Model::deferred` is
+  false) and not made (`Model::resolve` writes the facts' estimates). `RERAIL_PLAN_CACHE_COUNTS` counts them
+  ("answered by layouts").
+
+`RERAIL_LAYOUT_ESTIMATES=off` plans from statistics alone, as before (a measurement aid).
+
+**Measured** (corpus0, 300 files x B-now's 317 rules, cold, a profiling build on the M3 under load 25-70; off, on,
+off, on, each with its own store, costs and images):
+
+| | off | on | off | on |
+|---|---|---|---|---|
+| findings | 463 `d067ec2ebf6f` | 463 `d067ec2ebf6f` | 463 `d067ec2ebf6f` | 463 `d067ec2ebf6f` |
+| instructions | 925 G | 930 G | 955 G | 946 G |
+| statistics: batches, relations | 258, 357 | 257, 353 | 324, 432 | 315, 425 |
+| answered by layouts | 0 | 0 | 0 | 0 |
+| orders searched | 13,850 | 13,734 | 14,585 | 14,143 |
+
+The findings are the same. The work is within the runs' spread, which is wider than any change, so this measures
+nothing of the estimates' effect on plans.
+
+**What it does not yet do.** No relation was answered whole, so no statistics were saved. The facts answer few
+columns:
+- A derived relation takes `local` mostly (step 3: 18 of a Python program's 273 are keyed).
+- Of `core.rr`'s base relations, only `child` is answered whole. `node`'s `d`, `kind`, `start` and `end`, `field`'s
+  `f`, `kind`'s `k` and `text`'s `s` have no fact that gives their distinct values.
+
+In the same run's profile (85.9 s of own CPU), statistics are about 3%: `statistics` (inside `make_plan`) 1.28 s,
+`statistics: relations` 0.71 s, live statistics 0.26 s, the base rows measured 0.24 s, exact pair statistics
+0.15 s. Planning (search, kept plans) is about 1%. Removing the statistics needs facts that answer those columns, or
+statistics made only for the columns no fact answers; either changes what step 4 decided ("no statistics requested
+for a relation with a shape"), so it is the user's call.
+
+**Tests.** `plan::tests::a_layout_prices_the_columns_its_facts_answer` covers `child`'s three columns, a relation
+with a column no fact answers, and inferred facts pricing a derived relation. 429 tests of the planner, the image,
+`rr`, the corpus, sessions, retain and maintain mode pass (M3).
+
+## Step 4, the rest: a column's values, and statistics only where no fact answers (2026-11-18)
+
+Item 5 above, built:
+- **The fact.** `values(c, documents | kinds | within document | many | ~N | rows / N)` (`front::ast::Values`), read
+  and printed as the others are. `core.rr` declares it for every base relation's column no key, fan-out or order
+  answers, so each base relation is answered whole. A bound (`documents`, `kinds`, `~N`) is carried to a rule's
+  head column that copies it (`layouts.rs`); a share of the rows is not.
+- **Priced by the run's exact counts.** `Stats::counts` gives the documents (`stat_docrange`) and the grammar's kinds
+  (`stat_kind`); unknown, a fact of them answers nothing. A batch's `d` and `kind` were priced at 300 and 200 at
+  most; they are now the counts.
+- **Statistics only where no fact answers.** A chunk's base relations (the main run's and the guests') are measured
+  by `corpus::sampled_statistics_unanswered`: the columns no fact answers are sampled and counted as before, an
+  answered one takes its facts' estimate (`Shapes::statistic`: even postings, a document's share within documents),
+  and a relation answered whole reads no rows. The planner's own (lazy, unmeasured) relations already took the facts
+  (the planner's side, above).
+- **Shapes made once a version.** `Shapes` is an analysis of the version (`manager::analysis`), shared by every plan
+  of it. Built per `make_plan`, the planner's side had raised that span's own CPU from 1.5% to 2.3% of a cold run:
+  about 72,000 plans of one program each built it.
+
+**What it saves, measured before building it** (corpus0 x B-now, cold, profiling build, M3 under load 50-120): the
+base relations' sampled measurement ("measure …" and "guest statistics") was 0.37 s of 101 s of own CPU (0.4%).
+The statistics' larger share (2.3%) is `make_plan`'s own work per plan, not a count. So this step's value is the
+shape (no relation's statistics counted where its facts give them, as decided) more than the time. The same four
+cold runs with the values facts in (off, on, off, on) gave the same 463 findings (`d067ec2ebf6f`).
+
+**Tests** (under Relax, the engine's live loop): `a_values_fact_prices_a_column_by_the_runs_counts` (each class,
+unknown counts, the carry, the line read back), `a_base_relations_answered_columns_are_not_counted` (an answered
+column estimated, the others counted as `sampled_statistics` counts them), `a_layout_prices_the_columns_its_facts_answer`
+(now also: the shapes are made once a version), and the layout analysis' five.
+
+
+## Step 5: plans made with the program, kept in its image (2026-11-18)
+
+**What is planned.** A rule is planned from the facts when every literal is an atom (positive or negated) or a
+comparison, and every relation it reads has, from its facts alone, a size and the distinct values of each column the
+rule reads. Its forms are the rule itself and, for a recursive rule, its delta at each atom of its own component.
+Aggregates, `nearest`, AST matches and relations with no such facts stay the exceptions, planned at run time as
+before.
+
+**How.** `plan::prepared::Prepared` is an analysis of the program's version (`manager::analysis`): made once a
+version, with the version, and stored with its image's analyses (`rows`, read back by a later process, decision 0333
+§4). It plans each such form with the planner's own search, over a model of the facts alone at a nominal scale (one
+node in `NOMINAL_NODES`, 300 documents, 200 kinds): a relation's size from `size(per n)` (a node column), `per
+document`, `per kind`, `small`, a key on a node column or a fan-out from one; its columns from `Shapes::ndv`; the
+base relations' indexes as the run's (`vtab_indexes`); 0137's `.shape` directives as the run's. Nothing is measured
+and no store is read. A plan is kept by its line (the rule's text and delta, decision 0258's `line_key`), so every
+version that holds the rule finds it, with its work and rows per node.
+
+**At run time.** A search (`plan_inner_in`) and a live plan (`plan_rule_live_in`) of a line the version's prepared
+plans hold take the kept order, its work and rows scaled to the run's nodes, and search nothing, price nothing and
+keep nothing. `RERAIL_PREPARED_PLANS=off` plans as before; `RERAIL_PLAN_CACHE_COUNTS` counts the lines taken
+("prepared"). Step 6's checks are what replan a line whose facts the rows break.
+
+**Stored across processes** (Q228). An analysis with rows is read back with a version reopened from a stored pipeline
+run, but a stored run keeps its steps' inputs' analyses alone, and the versions a run plans are made after it
+(preparation's output is folded, then split into the parts). So the prepared plans are kept where the kept plans are
+(decision 0116 step 2): in their entry under the prepared program, by the planned version's identity
+(`manager::identity`: its digest, size and rules' hashes in order). A run reads them with the kept plans; a version's
+first plan holds those of its identity (`Store::hold`, counted as loaded) and makes only those of a version no
+earlier run planned, which are written with the kept plans when the run ends.
+
+**Tests** (Relax, live, here):
+- `a_rule_over_shaped_relations_is_planned_with_the_program`: a rule over `child`- and `kind`-shaped relations is
+  prepared, its order covering its literals; one reading a relation with no size is not; a declared recursive
+  relation's rule is prepared with its delta; made once a version.
+- `a_run_takes_a_prepared_plan_without_searching`: a run's plan of a prepared line is the kept order (one no search
+  chooses, set for the test), its work scaled to the run's nodes; another line is searched.
+- `prepared_plans_are_stored_with_the_image_and_read_back`: the rows read back the same.
+- `a_policy_run_takes_its_prepared_plans_and_finds_the_same`: end to end, `run_policies` over three files with a rule
+  over `kind` and `child`: its findings exact, and lines taken from the prepared plans.
+- `a_later_run_reads_the_prepared_plans_an_earlier_one_made`: a run keeps the plans it made by the version's
+  identity; a later run of the same program, built again, reads them through the store's rows (loaded 1, computed 0).
+

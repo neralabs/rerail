@@ -3,7 +3,7 @@
     This file is part of MLDB.
 
     UKL's shim for the CPU: a UKL kernel as C++ for the host's compiler, run a threadgroup at a time with each of
-    its threads a stackful coroutine (Rerail, decision 0400 §3.5; upstream's CPU shim is block/ukl/ukl_cpu_shim.h,
+    its threads a stackful coroutine (Rerail, decision 0440 §3.5; upstream's CPU shim is block/ukl/ukl_cpu_shim.h,
     stackless coroutines over MLDB's C++ runtime, with every function holding a barrier marked SYNC_*).
 
     - **Every thread of a threadgroup is a coroutine with its own stack** (the host's, one a thread, with a guard
@@ -16,7 +16,7 @@
     - **A thread that has returned no longer counts** at a barrier or in its SIMD group, as on a GPU (`if (i >= n)
       return;` before a barrier works).
     - **OpenCL's rule, checked** (`UKL_CPU_OPENCL_RULE`, `RERAIL_CPU_OPENCL_RULE=1`): a SIMD-group operation waits
-      for every live thread of the threadgroup, as OpenCL's emulated SIMD groups do (decision 0400 §3.5). A kernel
+      for every live thread of the threadgroup, as OpenCL's emulated SIMD groups do (decision 0440 §3.5). A kernel
       whose SIMD groups diverge at an operation fails here, naming its waits, where it would hang on such a device.
       `RERAIL_CPU_SIMD_WIDTH` runs SIMD groups of another width (a power of two up to 32).
     - **A barrier no thread can pass is an error here**: a SIMD group's lanes split between a SIMD-group operation

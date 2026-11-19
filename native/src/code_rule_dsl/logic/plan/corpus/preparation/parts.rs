@@ -145,6 +145,7 @@ fn common_of(v: &Version) -> [u8; 32] {
         v.text_globs(),
         v.asked(),
         v.shapes(),
+        v.layouts(),
     );
     sha2::Sha256::digest(format!("{shared:?}\0{more:?}").as_bytes()).into()
 }
@@ -218,7 +219,7 @@ impl ProgramFields for Selected<'_> {
         if self.has(rel) { self.v.fact_rows(rel) } else { Vec::new() }
     }
     fn about(&self, _relations: &[&str]) -> Facts {
-        Facts::new()
+        self.v.about(&[])
     }
     fn settings(&self) -> Vec<(String, String)> {
         Vec::new()
@@ -691,7 +692,7 @@ impl Rewrite for Renaming<'_> {
 /// What part `after`'s passes changed of its header `before`, applied to the link's fields `all` with its relations
 /// renamed by `rename`: entries added or changed are set; entries of relations the part owns that its passes removed
 /// go. A field no part changed is not read of `all`.
-fn merge_header(all: &mut Builder<'_>, before: &dyn ProgramFields, after: &dyn ProgramFields, owned: &dyn Fn(&str) -> bool, rename: &dyn Fn(&str) -> String) {
+fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn ProgramFields, owned: &dyn Fn(&str) -> bool, rename: &dyn Fn(&str) -> String) {
     use crate::code_rule_dsl::logic::program_facts::Field;
     for rel in after.declared_names() {
         let cols = after.columns_of(&rel);
@@ -822,8 +823,8 @@ fn merge_header(all: &mut Builder<'_>, before: &dyn ProgramFields, after: &dyn P
     }
     list!(demand_dropped, DemandDropped);
     list!(shapes, Shapes);
-    // Its relations' layouts the part's passes added (decision 0361), as renamed.
-    let (b4, now) = (before.layouts(), after.layouts());
+    // Each part starts with the whole program's layouts. Link only the facts its passes added.
+    let (b4, now) = (before.v.layouts(), after.layouts());
     let mut layouts = all.layouts();
     let mut grew = false;
     for (rel, facts) in &now {
@@ -1024,7 +1025,8 @@ fn interface(v: &Version, head: &Own, part: &Part, p: &Prepared) -> [u8; 32] {
     let (head, after) = (Shown(&Selected { v, own: head }), Shown(&*p.version));
     let derived: BTreeSet<&str> = p.version.rules().map(|r| p.version.rel_name(r.head().rel())).collect();
     let found = facts_of(p, &[0; 32]);
-    sha2::Sha256::digest(format!("{head:?}\0{:?}\0{:?}\0{after:?}\0{derived:?}\0{found:?}", part.made, part.read).as_bytes()).into()
+    let layouts = p.version.layouts();
+    sha2::Sha256::digest(format!("{head:?}\0{:?}\0{:?}\0{after:?}\0{layouts:?}\0{derived:?}\0{found:?}", part.made, part.read).as_bytes()).into()
 }
 
 /// The slots a kept link's facts hold, in the parts' order.
@@ -1712,7 +1714,8 @@ fn interface_after(whole: &Version, head: &Own, part: &Part, v: &Version) -> [u8
     use sha2::Digest as _;
     let (head, after) = (Shown(&Selected { v: whole, own: head }), Shown(v));
     let derived: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
-    sha2::Sha256::digest(format!("{head:?}\0{:?}\0{:?}\0{after:?}\0{derived:?}", part.made, part.read).as_bytes()).into()
+    let layouts = v.layouts();
+    sha2::Sha256::digest(format!("{head:?}\0{:?}\0{:?}\0{after:?}\0{layouts:?}\0{derived:?}", part.made, part.read).as_bytes()).into()
 }
 
 /// The last link after lowering with the `changed` parts' rules in their places; `None` when its image is missing or

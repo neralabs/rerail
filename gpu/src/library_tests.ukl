@@ -1,4 +1,4 @@
-// The UKL library's test kernels (decision 0400 §5): each wraps library calls, one result a slot, so that
+// The UKL library's test kernels (decision 0440 §5): each wraps library calls, one result a slot, so that
 // `library_tests.rs` compares each primitive with its Rust reference, on random inputs and edge sizes, on the device.
 
 #include <ukl/memory.h>

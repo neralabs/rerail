@@ -1,4 +1,4 @@
-//! The UKL library's tests, on the process's device (decision 0400 §5, step 5's gate): each primitive equals its Rust
+//! The UKL library's tests, on the process's device (decision 0440 §5, step 5's gate): each primitive equals its Rust
 //! reference on random inputs and on edge sizes; each backend form equals the library's reference form. They run on
 //! Metal (macOS) and CUDA (Linux) alike; without a device they pass, saying so.
 

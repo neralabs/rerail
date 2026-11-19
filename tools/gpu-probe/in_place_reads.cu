@@ -1,4 +1,4 @@
-// In-place reads on a unified-memory CUDA GPU (decision 0400, §2 and E1): what memory a kernel reads where it
+// In-place reads on a unified-memory CUDA GPU (decision 0440, §2 and E1): what memory a kernel reads where it
 // lives (cudaMalloc, malloc, a file mmap, an anonymous mmap, registered or not, huge pages), and how fast.
 // Build and run on a CUDA host: nvcc -O2 -arch=sm_121 -w -o in_place_reads in_place_reads.cu && ./in_place_reads
 #include <cstdio>

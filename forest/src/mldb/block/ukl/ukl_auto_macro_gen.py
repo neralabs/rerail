@@ -152,7 +152,7 @@ for n in range(4,max_num_args,4):
     calls = ", ".join([f"Fn({an(i)},{an(i+1)},{an(i+2)},{an(i+3)})" for i in range(0,n,4)])
     print(f"#define __UKL_FOREACH_QUAD_{n}(Fn, {argnames}) __UKL_INSERT_COMMAS_{int(n/4)}({calls})")
 
-# Generate UKL_FOREACH_QUAD_NOSEP (Rerail, decision 0400): the same, with nothing between the calls; for a list of
+# Generate UKL_FOREACH_QUAD_NOSEP (Rerail, decision 0440): the same, with nothing between the calls; for a list of
 # statements or declarations each call ends itself (a kernel's threadgroup storage, `SHARED` rows).
 print()
 print("// Internal switch to forward to __UKL_FOREACH_QUAD_NOSEP_(numargs) to implement __UKL_FOREACH_QUAD_NOSEP")
@@ -167,7 +167,7 @@ for n in range(4,max_num_args,4):
     calls = " ".join([f"Fn({an(i)},{an(i+1)},{an(i+2)},{an(i+3)})" for i in range(0,n,4)])
     print(f"#define __UKL_FOREACH_QUAD_NOSEP_{n}(Fn, {argnames}) {calls}")
 
-# Generate UKL_FOREACH_CTX (Rerail, decision 0400): Fn(Ctx, a) for each argument a, separated by commas; a
+# Generate UKL_FOREACH_CTX (Rerail, decision 0440): Fn(Ctx, a) for each argument a, separated by commas; a
 # structure's fields reflected for the CUDA host (UKL_REFLECT_STRUCT).
 max_ctx_args = 64
 print()

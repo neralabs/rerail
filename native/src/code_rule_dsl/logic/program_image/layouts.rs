@@ -8,6 +8,8 @@
 //!   at most the body atom's, and a forest's edges kept are a forest);
 //! - **an order** holds the same way, dense only where the rule is the relation itself, renamed (a filter leaves
 //!   gaps);
+//! - **a bound on a column's values** (`values(c, documents | kinds | ~N)`) holds of a head column that copies it;
+//!   a share of the rows (`many`, `rows / N`, `within document`) is not carried, as a rule keeps any part of them;
 //! - **local** holds where every atom is local, every node the head holds is an atom's, and the atoms that hold
 //!   nodes are joined by them (or by `nearest`, which stays in its node's document). A relation of one node column
 //!   at most is local by its shape.
@@ -23,7 +25,7 @@ use super::analyses::Strata;
 use super::handles::{CmpOp, Lit, RuleRef, TermRef};
 use super::manager::{Analysis, Cx, Reads};
 use super::version::Version;
-use crate::code_rule_dsl::logic::front::LayoutFact;
+use crate::code_rule_dsl::logic::front::{LayoutFact, LayoutValues};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Where a relation's fact came from.
@@ -273,6 +275,15 @@ fn infer_rule(v: &Version, r: RuleRef<'_>, known: &BTreeMap<RelId, Vec<(LayoutFa
                         && let (Some(&col), Some(within)) = (place.get(&cv), places(&wv))
                     {
                         add(LayoutFact::Order { col, within, dense: *dense && renamed });
+                    }
+                }
+                // A bound on a column's values holds of any column that copies it: the documents, the kinds, at most
+                // about N. A share of the rows (`many`, `rows / N`, `within document`) does not: a rule keeps any part.
+                LayoutFact::Values { col, values: values @ (LayoutValues::Documents | LayoutValues::Kinds | LayoutValues::About(_)) } => {
+                    if let Some(cv) = one(args, *col)
+                        && let Some(&col) = place.get(&cv)
+                    {
+                        add(LayoutFact::Values { col, values: *values });
                     }
                 }
                 _ => {}

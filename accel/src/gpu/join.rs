@@ -95,6 +95,43 @@ pub fn gpu_seconds(command: &CommandBufferRef) -> f64 {
     (end - start).max(0.0)
 }
 
+/// Why a failed command buffer failed: its error's description and code, once per process for each description
+/// (a wave's strata are refused to the CPU with no more than `BackendFailure` otherwise).
+#[allow(unexpected_cfgs)]
+pub fn say_failure(command: &CommandBufferRef) {
+    use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
+    static SAID: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    // SAFETY: `error` is an NSError or nil; its description an NSString, read as UTF-8 while the error lives.
+    let why = unsafe {
+        let error: *mut Object = msg_send![command, error];
+        if error.is_null() {
+            "no error given".to_owned()
+        } else {
+            let code: isize = msg_send![error, code];
+            let text: *mut Object = msg_send![error, localizedDescription];
+            let utf8: *const std::ffi::c_char = msg_send![text, UTF8String];
+            let text = if utf8.is_null() { String::new() } else { std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned() };
+            format!("{text} (code {code})")
+        }
+    };
+    let mut said = SAID.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !said.contains(&why) {
+        eprintln!("rerail: a command buffer the GPU failed: {why}");
+        said.push(why);
+    }
+}
+
+/// A Metal library, function or pipeline that does not compile is fatal (decision 0382): the run stops, naming the
+/// kernel and the compiler's message, and no caller runs another path (the CPU's) on it.
+#[track_caller]
+pub fn compile_failed(name: &str, what: &str, error: impl std::fmt::Display) -> ! {
+    panic!("Metal: the {what} of `{name}` does not compile (decision 0382: fatal): {error}")
+}
+
+/// The threads of a join kernel's group: every dispatch's (`Pass::dispatch*`).
+pub const GROUP: u64 = 256;
+
 /// `name` of `source` on the shared device: through the store of compiled kernels (decision 0395).
 pub fn compile(source: &str, name: &str) -> Result<ComputePipelineState, String> {
     device()?;
@@ -120,7 +157,15 @@ pub fn scratch_set(set: usize) -> usize {
 pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, String> {
     shared::pipeline(&format!("join {variant} {name}"), || {
         device()?;
-        Ok(super::kernels::pipeline_fixed(&source(), name, None))
+        let pipe = super::kernels::pipeline_fixed(&source(), name, None);
+        // Every dispatch of a join kernel is of groups of 256 threads: a kernel whose registers allow fewer cannot run
+        // them (a dispatch past its most is undefined). Such a pipeline does not compile, and the run stops (decision
+        // 0382): no caller runs another path on it.
+        let most = pipe.max_total_threads_per_threadgroup();
+        if most < GROUP {
+            compile_failed(name, "pipeline", format!("at most {most} threads a group, its dispatches' {GROUP}"));
+        }
+        Ok(pipe)
     })
 }
 
@@ -248,7 +293,11 @@ impl Submitted {
     pub fn wait_ok(self) -> (f64, bool) {
         let command = self.command.clone();
         let seconds = self.wait();
-        (seconds, command.status() != metal::MTLCommandBufferStatus::Error)
+        let ok = command.status() != metal::MTLCommandBufferStatus::Error;
+        if !ok {
+            say_failure(&command);
+        }
+        (seconds, ok)
     }
 }
 
@@ -369,7 +418,7 @@ impl<'a> Pass<'a> {
             self.encoder.set_buffer(i as u64, Some(b), 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
-        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
@@ -380,7 +429,7 @@ impl<'a> Pass<'a> {
             self.encoder.set_buffer(i as u64, Some(b), 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
-        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
@@ -391,7 +440,7 @@ impl<'a> Pass<'a> {
             self.encoder.set_buffer(i as u64, Some(b), 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, std::mem::size_of_val(params).max(4) as u64, if params.is_empty() { [0u32].as_ptr().cast() } else { params.as_ptr().cast() });
-        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
@@ -407,7 +456,7 @@ impl<'a> Pass<'a> {
         if !longs.is_empty() {
             self.encoder.set_bytes(at + 1, std::mem::size_of_val(longs) as u64, longs.as_ptr().cast());
         }
-        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
@@ -2139,7 +2188,7 @@ mod host_costs {
     }
 }
 
-/// Decision 0400 step 5's speed gate: the UKL library's scan and radix sort (`rerail_gpu::library`), on Metal, against
+/// Decision 0440 step 5's speed gate: the UKL library's scan and radix sort (`rerail_gpu::library`), on Metal, against
 /// this lane's own kernels on the same input: GPU time of the command buffer, warmed, the median of nine runs taken in
 /// turn. A measurement: `--ignored`.
 #[cfg(test)]

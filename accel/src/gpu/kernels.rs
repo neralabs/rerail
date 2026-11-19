@@ -223,6 +223,14 @@ static COUNTS: Mutex<Counts> = Mutex::new(Counts { from_memory: 0, from_archive:
 thread_local! {
     /// Pipelines this thread made (compiled, or from an archive), not found in the process's memory.
     static MADE_HERE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Of them, those made from an archive and those compiled (`here`).
+    static HERE: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// The pipelines this thread made from an archive, and compiled: a test's own counts, which the process's
+/// (`counts`) are not while other tests make pipelines beside it.
+pub fn here() -> (u64, u64) {
+    HERE.get()
 }
 
 /// The pipelines this thread made, not found in the process's memory (a test's own, whatever other tests make).
@@ -379,6 +387,7 @@ fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, com
         match loaded {
             Some(p) => {
                 count(|c| c.from_archive += 1);
+                HERE.set((HERE.get().0 + 1, HERE.get().1));
                 // Its use, for the store's pruning (the oldest unused first).
                 let _ = std::fs::File::options().append(true).open(&path).and_then(|f| f.set_modified(std::time::SystemTime::now()));
                 return Some(p);
@@ -396,6 +405,7 @@ fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, com
         c.compiled += 1;
         c.back_end_s += seconds;
     });
+    HERE.set((HERE.get().0, HERE.get().1 + 1));
     Some(p)
 }
 
@@ -468,7 +478,7 @@ fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescript
 }
 
 /// `source` as the Metal front end takes it: a source that takes UKL's library (`#include <ukl/...>`: the reads
-/// written once in CLIF, decision 0400 §3.3) preprocessed with it in place, any other as it is.
+/// written once in CLIF, decision 0440 §3.3) preprocessed with it in place, any other as it is.
 pub fn msl<'a>(source: &'a str, name: &str) -> Result<std::borrow::Cow<'a, str>, String> {
     if !rerail_ukl::takes_library(source) {
         return Ok(std::borrow::Cow::Borrowed(source));
@@ -501,6 +511,18 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Library {
                 }
                 Err(_) => source,
             };
+            // A measurement's sources (`RERAIL_METAL_DUMP=<dir>`): each library's source by its digest, and the kernels
+            // made of it, to compile apart and cold (`scripts/dev/metal/compile-time.swift`).
+            if let Some(dir) = std::env::var_os("RERAIL_METAL_DUMP") {
+                let stem = Path::new(&dir).join(hex(&library[..6]));
+                if !stem.with_extension("metal").exists() {
+                    let _ = std::fs::write(stem.with_extension("metal"), text);
+                }
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(stem.with_extension("pipelines")) {
+                    use std::io::Write as _;
+                    let _ = writeln!(f, "{name}");
+                }
+            }
             let l = crate::score::phase("msl front end", || objc::rc::autoreleasepool(|| device.new_library_with_source(text, &metal::CompileOptions::new())))
                 .unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}) does not compile: {e}", hex(&library[..8])));
             let seconds = started.elapsed().as_secs_f64();
@@ -882,10 +904,11 @@ mod tests {
         let _ = pipeline(source, name, None);
         assert!(archive_path(&Key::of(source, name, None)).is_some(), "its archive is in the store");
         release();
-        let before = counts();
+        // This thread's counts: other tests make pipelines beside this one, and `release` drops theirs too.
+        let before = here();
         let _ = pipeline(source, name, None);
-        assert_eq!(counts().from_archive, before.from_archive + 1, "made again from its archive");
-        assert_eq!(counts().compiled, before.compiled, "not compiled again");
+        assert_eq!(here().0, before.0 + 1, "made again from its archive");
+        assert_eq!(here().1, before.1, "not compiled again");
 
         let other = source.replace("i * 3u", "i * 5u");
         let key = Key::of(&other, name, None);

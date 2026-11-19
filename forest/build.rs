@@ -1,6 +1,6 @@
 //! The forest's build step: MLDB's random forest kernels (`src/mldb/`, one C source for every target, through
 //! UKL's shims) preprocessed into Metal source, as MLDB's `compileFromSourceFile` did with the C preprocessor.
-//! `rerail-ukl` does it in-process (decision 0400 §4), with the same predefines and search order, so the build
+//! `rerail-ukl` does it in-process (decision 0440 §4), with the same predefines and search order, so the build
 //! needs no C compiler and no Metal toolchain (the gpu lane compiles the source on the device at run time).
 
 use rerail_ukl::{Backend, Preprocess};

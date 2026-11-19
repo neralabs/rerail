@@ -379,7 +379,7 @@ const ANNOTATED: &[(&str, &str)] = &[
 ];
 
 /// `names` reads the annotations' identifiers through `parsed` and `idents` (so the run makes guests, and hiding
-/// copies `idents` for them, folded back into it: `fold_own`); `flagged` and `ids` are the rules an edit changes.
+/// copies `idents` for them, folded back into it: `FoldOwn`); `flagged` and `ids` are the rules an edit changes.
 fn annotated(names_edit: &str, flagged_edit: &str, ids_edit: &str) -> String {
     format!(
         r#"
@@ -432,7 +432,7 @@ fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
     assert!(rows[0].iter().any(|r| r[0] == "Foo"), "the annotations' names: {:?}", rows[0]);
     assert_eq!(rows, fresh("names", &program), "the rows of a full run");
     // `ids`' edit: it names no guest, but reads `idents`, which hiding widened to the annotations it copied it for
-    // (`fold_own`): it sees them, as a full run's does.
+    // (`FoldOwn`): it sees them, as a full run's does.
     let program = annotated("n1", "while_statement", "i1");
     let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
     assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");

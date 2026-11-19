@@ -1,4 +1,4 @@
-// ukl/body/lz4_decode.h: the LZ4 decoder of ukl/lz4.h over one output (decision 0400 §3.5: a type in C is a
+// ukl/body/lz4_decode.h: the LZ4 decoder of ukl/lz4.h over one output (decision 0440 §3.5: a type in C is a
 // parameter of an included body, not a template). Included once per output, with, defined first:
 // - `UKL_LZ4_NAME(f)`: the instance's name of each function `f` (`f` itself for the contiguous output);
 // - `UKL_LZ4_OUT`: the output's type;

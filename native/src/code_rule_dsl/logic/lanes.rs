@@ -251,10 +251,11 @@ pub mod wave {
         deferred_since(mark) || FLUSHES.get() > mark.2 || JOINED.get() > mark.3
     }
 
-    /// A mark at `queued` launches and no deferred submission (for tests).
+    /// A mark at `queued` launches, no deferred submission, and this thread's flushes and joins as they are now (for
+    /// tests).
     #[cfg(test)]
     pub fn mark_at(queued: usize) -> Mark {
-        Mark(queued, 0, 0, 0)
+        Mark(queued, 0, FLUSHES.get(), JOINED.get())
     }
 
     /// The launches queued on this thread since `mark`, taken off it.
@@ -469,6 +470,39 @@ mod wave_tests {
         .join()
         .unwrap();
         assert_eq!(wave::flushed().0 - before.0, 1, "another thread's wave is not the run's");
+    }
+
+    /// Q90: a thread waiting on a job runs another meanwhile, with a submission of its own deferred to its wave. The
+    /// job's scope (decision 0386) holds the thread's apart: the job's `flush` runs only its own, and the thread's
+    /// runs once the job has ended. Before, the job joined the thread's open submission, and its members went back
+    /// parked on a wave of the thread's, to be resumed on another, which refused them to the CPU.
+    #[test]
+    fn a_job_flushes_its_own_submissions_and_not_its_threads() {
+        std::thread::spawn(|| {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static RAN: AtomicU32 = AtomicU32::new(0);
+            wave::defer(Box::new(|| {
+                RAN.fetch_or(1, Ordering::Relaxed);
+                Ok(())
+            }));
+            {
+                let job = wave::enter();
+                let mark = wave::mark();
+                assert!(!wave::deferred_since(wave::mark_at(0)), "the thread's deferred submission is not the job's");
+                wave::defer(Box::new(|| {
+                    RAN.fetch_or(2, Ordering::Relaxed);
+                    Ok(())
+                }));
+                assert!(wave::deferred_since(mark));
+                wave::flush(1).unwrap();
+                assert_eq!(RAN.load(Ordering::Relaxed), 2, "the job's flush runs its own submission alone");
+                job.exit();
+            }
+            wave::flush(1).unwrap();
+            assert_eq!(RAN.load(Ordering::Relaxed), 3, "the thread's submission ran when its thread flushed");
+        })
+        .join()
+        .unwrap();
     }
 
     /// Q170: a job's strata that wait on their wave finish on its thread when anything they wait on is the thread's: a

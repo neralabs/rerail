@@ -1,4 +1,4 @@
-//! A kernel's arguments from its rows, for the backends without reflection (CUDA, the CPU; decision 0400 §6): UKL's
+//! A kernel's arguments from its rows, for the backends without reflection (CUDA, the CPU; decision 0440 §6): UKL's
 //! shims emit beside each kernel the text of its `DEFINE_KERNEL2` rows (`Name__ukl_params`) and each row's type's
 //! size, alignment and kind (`Name__ukl_rows`), and beside each `ARGS` structure its fields' names
 //! (`Type__ukl_fields`) and their layout (`Type__ukl_layout`). Read here, they give the same

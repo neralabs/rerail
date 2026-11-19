@@ -3235,6 +3235,7 @@ dependencies = [
  "rerail-clif",
  "rerail-compiler",
  "rerail-tape-format",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -3577,6 +3578,17 @@ dependencies = [
  "libc",
  "rerail-simdjson",
  "rerail-simdjson-native",
+]
+
+[[package]]
+name = "rerail-kotlin-aot"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rerail-compiler",
+ "rerail-kotlin-aot",
+ "rerail-kotlin-lean",
+ "rerail-kotlin-parser",
 ]
 
 [[package]]

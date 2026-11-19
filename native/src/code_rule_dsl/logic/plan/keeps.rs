@@ -735,7 +735,7 @@ fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: &BTr
 /// The relations that cross the chunk boundary (the local part's outputs: its exports and findings) stored as the
 /// flat join of parts that meet only at a variable they project away: `fl853_p4_outer(f, x) :- rr_inside_ks5(f, p),
 /// bound_in(p, x)` holds 777 k rows, its two parts about 100 k. Such an export is handed on as its parts before the
-/// first chunk (`file_local::factorize_exports`, decision 0099); this names each relation still stored flat that would
+/// first chunk (`file_local::FactorizeExports`, decision 0099); this names each relation still stored flat that would
 /// shrink so (one the program's test refused: a finding, a part of one row a key, a reader binding none of it), with
 /// its flat rows (observed where an earlier chunk measured them) and its parts' estimated rows, where the flat rows
 /// are over twice the parts'.
@@ -945,6 +945,9 @@ pub(in crate::code_rule_dsl) struct ObservedShared {
     published: arc_swap::ArcSwapOption<Observed>,
     pending: parking_lot::Mutex<Vec<Observed>>,
     folding: parking_lot::Mutex<()>,
+    /// A chunk's (Q88, `chunk_observed`): what its jobs handed in over the run's as filed, apart, for the run's in the
+    /// chunks' order (`file_observed`).
+    made: Option<parking_lot::Mutex<Observed>>,
 }
 
 /// The jobs' sums handed in before one of them folds them in: the lag of an estimate read in a job.
@@ -986,6 +989,9 @@ impl ObservedShared {
         let Some(now) = self.published.load_full() else { return };
         let mut next = Observed::clone(&now);
         for p in pending {
+            if let Some(made) = &self.made {
+                made.lock().add(p.clone());
+            }
             next.add(p);
         }
         self.published.store(Some(Arc::new(next)));
@@ -1091,6 +1097,30 @@ impl ObservedKey {
     }
 }
 static OBSERVED: ObservedKey = ObservedKey;
+
+/// A chunk's observations (Q88): the run's as filed when it began (`published`), what it observes over them, and that
+/// apart (`observed_made`).
+pub(in crate::code_rule_dsl) fn chunk_observed(published: Option<Arc<Observed>>) -> SharedObserved {
+    let s = ObservedShared { made: Some(Default::default()), ..Default::default() };
+    s.published.store(published);
+    Arc::new(s)
+}
+
+/// What a chunk observed (`chunk_observed`), every job's handed in.
+pub(in crate::code_rule_dsl) fn observed_made(chunk: &SharedObserved) -> Observed {
+    chunk.fold(true);
+    chunk.made.as_ref().map(|m| std::mem::take(&mut *m.lock())).unwrap_or_default()
+}
+
+/// The observations as last published: `None` while not observing.
+pub(in crate::code_rule_dsl) fn observed_now(s: &SharedObserved) -> Option<Arc<Observed>> {
+    s.published.load_full()
+}
+
+/// Adds a chunk's observations to the run's, as the main thread files it (Q88: in the chunks' order).
+pub(in crate::code_rule_dsl) fn file_observed(run: &SharedObserved, made: Observed) {
+    run.change(|o| o.add(made));
+}
 
 /// This thread's observations, for a job on another thread to enter.
 pub(in crate::code_rule_dsl) fn share_observed() -> SharedObserved {

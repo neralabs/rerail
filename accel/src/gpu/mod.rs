@@ -792,7 +792,7 @@ impl Planner {
 #[cfg(test)]
 mod tests;
 
-/// Decision 0400 step 5's speed gate for the histogram: the UKL library's (`rerail_gpu::library::histogram`) against
+/// Decision 0440 step 5's speed gate for the histogram: the UKL library's (`rerail_gpu::library::histogram`) against
 /// this lane's `hist`, on the same buffers: GPU time of the command buffer, warmed, the median of nine runs taken in
 /// turn. A measurement: `--ignored`.
 #[cfg(test)]

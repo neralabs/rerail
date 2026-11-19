@@ -224,7 +224,7 @@ fn record_finish(file: &std::path::Path, name: &str) {
 
 /// A maintenance job. `due` is called at every poll and must be cheap; `step` does a bounded part of the work.
 pub trait Job: Send {
-    /// Its name, unique among the jobs registered (an instance's, e.g. `sqlite content-v5.sqlite`). The kind is
+    /// Its name, unique among the jobs registered (an instance's, e.g. `sqlite content-v6.sqlite`). The kind is
     /// the part before the first space: what `RERAIL_UPKEEP_JOBS` names.
     fn name(&self) -> String;
     fn due(&mut self) -> Due;
@@ -958,8 +958,8 @@ mod tests {
     #[test]
     fn settings_parse_and_name_kinds() {
         let s = Settings { only: Some(vec!["sqlite".into()]), without: vec!["collect".into()], ..Default::default() };
-        assert!(s.runs("sqlite content-v5.sqlite"));
-        assert!(!s.runs("collect content-v5.sqlite"));
+        assert!(s.runs("sqlite content-v6.sqlite"));
+        assert!(!s.runs("collect content-v6.sqlite"));
         assert!(!s.runs("cost-model"));
         let all = Settings::default();
         assert!(all.runs("cost-model") && all.cpu > 0.0 && all.memory > 0);

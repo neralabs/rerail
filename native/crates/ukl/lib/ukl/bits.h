@@ -1,4 +1,4 @@
-// ukl/bits.h: bits within a word, and bitsets over a buffer's words (decision 0400 §5). Thread level.
+// ukl/bits.h: bits within a word, and bitsets over a buffer's words (decision 0440 §5). Thread level.
 
 #pragma once
 #include <ukl/backend.h>

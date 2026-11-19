@@ -616,6 +616,8 @@ fn a_header_edit_asks_again_only_for_the_units_that_read_it() {
     // (after the first observer, which turns it off once a process).
     super::observe(|_| ());
     crate::content_store::observe::set_journal(true);
+    // Its answer whatever it costs: slower than the `stat`s, a fresh header's would ask again for its unit (Q221).
+    crate::content_store::observe::set_journal_wait_least(std::time::Duration::from_secs(2));
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("c-units-kept");
     let _ = std::fs::remove_dir_all(&dir);
     let ws = dir.join("ws");
@@ -1005,18 +1007,18 @@ fn libraries_are_held_once_and_equal_requests_share_one_cone() {
     let quiet = "#include \"python/compare.rr\"\n.decl quiet(a: node)\nquiet(a) :- cmp_same(a, _).\n.output quiet\n".to_owned();
     let texts = [ask("call", "one"), ask("call", "two"), ask("name", "three"), quiet];
     let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
-    let prog = super::combine_texts(&texts).unwrap();
-    let heads = |rel: &str| prog.rules.iter().filter(|r| r.head.rel == rel).count();
+    let rules = super::combine_texts(&texts).unwrap().heads_and_reads();
+    let heads = |rel: &str| rules.iter().filter(|(h, _)| h == rel).count();
     // The library's rule once, unprefixed, whatever the programs read.
     assert_eq!(heads("cmp_same"), 1);
     // Programs 0 and 1 ask the same: one copy of the cone; program 2 its own.
-    let copies: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).filter(|r| r.starts_with('q') && r.ends_with("_cmp_same")).collect();
+    let copies: std::collections::BTreeSet<&str> = rules.iter().map(|(h, _)| h.as_str()).filter(|r| r.starts_with('q') && r.ends_with("_cmp_same")).collect();
     assert_eq!(copies.len(), 2, "{copies:?}");
     assert!(copies.iter().all(|r| heads(r) == 1));
-    assert!(!prog.rules.iter().any(|r| r.head.rel.starts_with('p') && r.head.rel.ends_with("_cmp_same")));
+    assert!(!rules.iter().any(|(h, _)| h.starts_with('p') && h.ends_with("_cmp_same")));
     // Each asker reads its request's copy; the quiet one reads the library's.
     let reads = |head: &str| -> Vec<String> {
-        prog.rules.iter().filter(|r| r.head.rel == head).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect()
+        rules.iter().filter(|(h, _)| h == head).flat_map(|(_, reads)| reads.iter().map(|(_, r)| r.clone())).collect()
     };
     let (one, two, three) = (reads("p0_one"), reads("p1_two"), reads("p2_three"));
     assert_eq!(one, two);
@@ -1095,6 +1097,8 @@ fn benchmark_test_store_copy() {
 
 /// `benchmark_test_store_copy`'s steps apart: the clone, the identity's write (as `copy` makes it, and without a
 /// journal or a sync), a first open as a store, and the removal.
+/// APFS's `clonefile`: macOS only (elsewhere a test's store is a copy, `test_store::clone_file`).
+#[cfg(target_vendor = "apple")]
 #[test]
 #[ignore = "a benchmark: the steps of a test's store"]
 fn benchmark_test_store_copy_steps() {
@@ -1422,12 +1426,13 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
 #[test]
 fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
     let src = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
-    let read = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
+    let read = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
     let (made, hidden, kept) = super::combine_handed(&read).unwrap();
-    assert_eq!(format!("{made:?}"), format!("{hidden:?}"), "a miss hides the program handed");
-    assert_eq!(kept.map(|k| format!("{k:?}")), Some(format!("{hidden:?}")), "kept under the texts' digest, read back as hidden");
+    let id = |v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| (v.size(), v.digest());
+    assert_eq!(id(&made), id(&hidden), "a miss hides the program handed");
+    assert_eq!(kept.as_ref().map(id), Some(id(&hidden)), "kept under the texts' digest, read back as hidden");
     let (again, _, _) = super::combine_handed(&read).unwrap();
-    assert_eq!(format!("{again:?}"), format!("{hidden:?}"), "the store's, the second time");
+    assert_eq!(id(&again), id(&hidden), "the store's, the second time");
 }
 
 /// Two programs combined with the library they share stratify (decision 0174, E32): PYI062's `literal_down` negates
@@ -1679,23 +1684,24 @@ fn every_switch_lowering_reads_is_classified() {
         }
         all
     };
-    // `corpus.rs` itself: its preparation (`run_observed` up to the prepared program) and `combine_read`.
+    // `corpus.rs` itself: its preparation (`run_observed` up to the prepared program) and `combine_tail`.
     let corpus = std::fs::read_to_string(root.join("logic/plan/corpus.rs")).unwrap();
     let region = |from: &str, to: &str| -> String {
         let a = corpus.find(from).unwrap_or_else(|| panic!("corpus.rs has no {from:?}"));
         let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
         corpus[a..b].to_owned()
     };
-    // Combining: `combine_read` (its link, `combine_linked`, and its tail on the tree and on the version), what it
-    // calls that reads a switch (`scoping::guard`, the tail's passes), and the `.rr` lowering its `rr::parse` runs
+    // Combining: `combine_tail` (its link, `combine_linked_as`, and its tail, `tail_version`), what it calls that
+    // reads a switch (`scoping`, the tail's passes), and the `.rr` lowering its `rr::parse` runs
     // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
     let mut combining = sources(&[
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
         "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
     ]);
-    combining.push(("corpus.rs, combine_read and its tail".to_owned(), region("\nfn combine_read(", "\n/// `combine_read` up to the programs linked")));
-    combining.push(("corpus.rs, combine_linked".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies }))")));
-    // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`hiding::fold_own`,
+    combining.push(("corpus.rs, combine_tail".to_owned(), region("\nfn combine_tail(", "\n}\n")));
+    combining.push(("corpus.rs, the combine's tail".to_owned(), region("\nenum Tail {", "\n/// The programs `programs` linked into one")));
+    combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies }))")));
+    // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`combining::FoldOwn`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
     // `choices::key`, which holds the switches those read (`RERAIL_INLINE`, `RERAIL_INLINE_ONLY`,
@@ -1703,7 +1709,7 @@ fn every_switch_lowering_reads_is_classified() {
     let mut preparing = sources(&[
         "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
         "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
-        // Its passes, on the version (`preparation`): the front's, the lowering's, `fold_own`'s and the merges, and
+        // Its passes, on the version (`preparation`): the front's, the lowering's, `FoldOwn`'s and the merges, and
         // the combine's fact spaces.
         "logic/plan/corpus/preparation.rs", "logic/plan/corpus/preparation",
         "logic/plan/corpus/session.rs", "logic/profile.rs", "logic/costs.rs", "typing/file_local.rs", "typing/file_local",

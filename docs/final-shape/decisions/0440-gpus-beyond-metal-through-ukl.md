@@ -1,4 +1,6 @@
-# 0400. GPUs beyond Metal: kernels written once in UKL, a device layer under the lanes, memory by class
+# 0440. GPUs beyond Metal: kernels written once in UKL, a device layer under the lanes, memory by class
+
+Numbered 0400 where it was written (renumbered at the merge of Native-and-GPU-strata, whose 0400 is the small root's).
 
 Status: draft (2026-11-18); the four questions of §9 answered by the user the same day (recorded there, and folded
 into §3.3, §5, §7 and §8). The user asked for Rerail to
@@ -426,7 +428,7 @@ subgroup problem above:
   (gpu, the reads' gate, the forest, rerail-device-metal's 56), CUDA (V100: gpu, ukl, the reads' gate, the
   forest) and the CPU.
 - **Open:** native subgroups where a device has them (Intel's, Mesa's); a 64-lane mask type (AMD); SVM for discrete
-  devices; the engine's own kernels (the GPU lane, 0400 step 3) on OpenCL; a device other than Apple's.
+  devices; the engine's own kernels (the GPU lane, 0440 step 3) on OpenCL; a device other than Apple's.
 
 ## 4. The C preprocessor
 

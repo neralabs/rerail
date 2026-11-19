@@ -1,4 +1,4 @@
-// ukl/compact.h: stream compaction (decision 0400 §5): the values whose flag is set, in order, packed from 0. The
+// ukl/compact.h: stream compaction (decision 0440 §5): the values whose flag is set, in order, packed from 0. The
 // host plan (`rerail_gpu::library::compact_u32`) scans the flags (0 or 1) into `offsets` with ukl/scan.h, then
 // scatters with this kernel; `offsets[n]` is how many were kept.
 

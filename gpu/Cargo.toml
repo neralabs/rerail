@@ -3,11 +3,11 @@ name = "rerail-gpu"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The GPU device layer (decision 0400): one interface over Metal (macOS) and CUDA (Linux), kernels written once in UKL and launched through MLDB's grid runtime, and the UKL libraries' tests on each device."
+description = "The GPU device layer (decision 0440): one interface over Metal (macOS) and CUDA (Linux), kernels written once in UKL and launched through MLDB's grid runtime, and the UKL libraries' tests on each device."
 
 [dependencies]
 libc = "0.2.189"
-# Kernels preprocessed in-process from UKL, with the UKL libraries carried in the binary (decision 0400 §4, §5).
+# Kernels preprocessed in-process from UKL, with the UKL libraries carried in the binary (decision 0440 §4, §5).
 rerail-ukl = { path = "../native/crates/ukl" }
 
 [dev-dependencies]

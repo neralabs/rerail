@@ -154,7 +154,141 @@ values being words: simdjson's `prev1` is a vector `ext` with the block before's
 mechanism, the totals made one flag at the first, its edge part making them exactly, is kept
 as a patch outside the tree. It fires on no grammar here.
 
-**Item 3** (token ends without a second extract) is not done.
+**Item 3: token ends from the gaps (0411).** A token ends at the next start, less the
+whitespace between them, as this page put it; Bitlex proves it for every row of `14-json`. The
+CPU's tier 1 makes no lasts, and its record pass makes each from the next start and the skip's
+mask: one word and a count of leading zeros.
+
+| | Hot loop | Stack accesses | Tier 1's operations |
+|---|---:|---:|---:|
+| Token ends from the gaps (0411) | **616** | **5** | 123 |
+
+JSONC kept its extract at first: the proof did not reach its comments (0411). With the claim
+as its own induction hypothesis, and lemmas that two regions are never open at one byte in a
+file not refused, it does (0412):
+
+| `15-jsonc` | Hot loop | Stack accesses |
+|---|---:|---:|
+| After 0411 | 988 | 33 |
+| Token ends from the gaps (0412) | **814** | **27** |
+
+## Item 2 again: the UTF-8 rules' form (0402)
+
+The premise above, that the lane plan makes the UTF-8 check's previous-byte values as words,
+came from the program as Bitlex writes it, where `~prefix` cuts every class that holds a byte
+of the byte order mark. The CPU compiles the program the host strips (0389), and there the
+check is on the vectors, its `prev`s as `ext`s. The gap was the rules' form: four two-byte
+rules, each a compare, an `ext`, a test and an `and` a chunk. They are now one `pair` lookup,
+as simdjson's `check_special_cases`.
+
+| | Hot loop | Stack accesses | UTF-8 stretch |
+|---|---:|---:|---:|
+| `14-json` after 0411 | 616 | 5 | 195 |
+| `14-json`, rules as one pair (0402) | **574** | **1** | **153** |
+| `15-jsonc` after 0412 | 814 | 27 | |
+| `15-jsonc`, 0402 | **784** | **11** | |
+
+simdjson's UTF-8 check is 72. What is left of it:
+
+- **The block's first chunk** (about 25 instructions). Its previous bytes are loaded again at
+  −1, −2 and −3 and looked up again; simdjson carries the previous block's input vector.
+  Carrying it here would make a vector a carry between blocks, which the lane plan avoids so
+  that a gated region can skip a `prev`.
+- **The error's reduction** (12). Page 39's item 2 as written, errors as flags, needs totals no
+  one reads by their rows (0347), and `14-json`'s tier 1 runs no CPU token loop, so its totals
+  have rows.
+- **The other rules' form.** The three-byte "a continuation is needed" test, and the bytes that
+  never start a sequence, are tests of the class bits apart, where simdjson's lookup folds
+  them into one table.
+
+### Spike: simdjson's carried previous block (2026-11-18)
+
+The user: "spike on it; in general, anything that SIMDJSON does we need to be able to do when
+it's profitable". The spike ran in two steps:
+
+1. **The bytes before the block as a chunk of their own.** Chunk 1 made each `prev(a, k)` again
+   from its own load at −k, with its own lookups. Made over the 16 bytes before the block
+   instead, `a` is made once, and every `prev` of chunk 1 is an `ext`, as in chunks 2 to 4. No
+   carry, so the gated regions are untouched.
+
+   | | `14-json` | `15-jsonc` |
+   |---|---:|---:|
+   | Chunk 1 by lags (as is) | 574 / 1 | 784 / 11 |
+   | Chunk 0, every `prev` | 568 / 1 | 792 / 13 |
+   | Chunk 0, a `prev` of a lookup only | 568 / 1 | 790 / 12 |
+
+   (Hot loop instructions / stack accesses.) It is a gain only where the `prev`s share a
+   table's lookup. For a `prev` of one byte's compare, a load and a compare at −k cost what an
+   `ext` does, and hold no register.
+2. **simdjson's carry.** Chunk 4's vectors handed to the next block would leave out what step 1
+   makes over the bytes before the block: one load and one lookup (6 instructions), and its
+   three tests (3). That is 9 instructions a block at most, about 1.5%. The price is a vector
+   carried between blocks, kept right on the ASCII path, the edge part, the general body and
+   the regions, and 1 to 3 registers held across the loop.
+
+Neither is profitable here on its own count. The user rejected that criterion: a step that
+puts simdjson's structure in place is kept even at a flat count. Step 1 is now 0403, and the
+carry is the step it prepares.
+
+**Where the profit is.** A steady chunk of the check is 29 instructions against simdjson's
+17, about 48 a block:
+
+- simdjson's one lookup holds all of its two-byte rules. Ours, since 0402, holds the four
+  overlong and surrogate rules, while "a continuation is needed, by lag 1" and "never a lead
+  byte" are separate class tests, each with its `ext`.
+- The current byte is looked up in two tables, since its classes need more than 8 bits.
+- The lags 2 and 3 are tests of class bits, where simdjson's are two saturating subtracts of the
+  raw bytes.
+
+Folding the lag-1 rules into the pair's table is the next simdjson step that pays.
+
+### simdjson's lookup form (0404)
+
+All three are done: the grammars state the check as simdjson's `lookup4` rules, every rule of
+two bytes is a bit of one pair of tables, this byte's table is one `tbl` of high nibbles, and
+lags 2 and 3 are `prev2 ≥ 0xe0 | prev3 ≥ 0xf0` against `TWO_CONTS`.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch | Steady chunk |
+|---|---:|---:|---:|---:|
+| After 0402 | 574 | 1 | 153 | 29 |
+| Chunk 0 (0403) and the lookup form (0404) | **549** | **1** | **128** | **25** |
+
+JSONC: 784 / 11 → 735 / 8. simdjson's stretch is 72 and its chunk about 17. Left:
+
+- the bytes that never start a sequence, two products no pair bit holds, on a lookup of their
+  own;
+- each rule tested to a 0 or 1 lane, where simdjson keeps the ANDed bytes;
+- the carried previous block.
+
+### simdjson's structure (0405)
+
+All three are done: the bytes that never start a sequence are pair rules, merged into
+simdjson's bits; the rules are made as bytes and tested once a chunk; and the hot loop carries
+its last chunk to the next block.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch | Steady chunk |
+|---|---:|---:|---:|---:|
+| After 0404 | 549 | 1 | 128 | 25 |
+| 0405 | **507** | **1** | **85** | **17** |
+| simdjson | | | 72 | 17 |
+
+JSONC: 735 / 8 → 693 / 9. The steady chunk is simdjson's. What is left of the stretch is the
+error's mask, about 9 instructions a block, where simdjson ORs error bytes into one vector for
+the file: that is item 2's flag (0402).
+
+### The error vector (0406)
+
+Item 2's flag now fires. A total no mask, mark or token-loop read names has no row without a
+token loop too, and the UTF-8 error's bytes are ORed into one vector carried round the hot
+loop, reduced where the loop leaves, as simdjson's `error`.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch |
+|---|---:|---:|---:|
+| After 0405 | 507 | 1 | 85 |
+| 0406 | **485** | **1** | **76** |
+| simdjson | | | 72 |
+
+JSONC: 693 / 9 → 667 / 11.
 
 ## Reproducing
 

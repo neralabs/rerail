@@ -1,4 +1,4 @@
-// ukl/simd.h: SIMD-group operations (decision 0400 §3.1, §5).
+// ukl/simd.h: SIMD-group operations (decision 0440 §3.1, §5).
 //
 // Convergent: every lane of the SIMD group calls each one, passing its own lane (`LANE` row, or `lid %
 // UKL_SIMD_WIDTH` in a 1-D threadgroup). Each operation with a backend form (`UKL_NATIVE_*`, ukl/backend.h) has its
@@ -10,7 +10,7 @@
 // The width is the backend's (`UKL_SIMD_WIDTH`: 32 on Metal, CUDA and the CPU; an OpenCL device's own, or 32
 // emulated). A ballot or match is a 32-bit mask, so a wider group (AMD's 64) needs a wider mask type first.
 #if UKL_SIMD_WIDTH < 1 || UKL_SIMD_WIDTH > 32 || (UKL_SIMD_WIDTH & (UKL_SIMD_WIDTH - 1)) != 0
-#  error "ukl/simd.h: UKL_SIMD_WIDTH is a power of two from 1 to 32 (decision 0400 §3.5)"
+#  error "ukl/simd.h: UKL_SIMD_WIDTH is a power of two from 1 to 32 (decision 0440 §3.5)"
 #endif
 
 // Reductions: every lane gets the group's sum, minimum or maximum (sums wrap at 2^32).

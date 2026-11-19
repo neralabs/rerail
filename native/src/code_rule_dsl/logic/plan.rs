@@ -91,6 +91,8 @@ pub mod text_demand;
 pub mod joins;
 pub mod table;
 pub mod output;
+pub mod shapes;
+pub mod prepared;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
 #[derive(Clone, Debug)]
@@ -506,6 +508,12 @@ pub struct Stats {
     /// The tree's fielded edges by kind (`Own::fields`, `stat_edge`'s field): Q44's correlation of a node's kind with
     /// the fields it has or is.
     pub fields: std::sync::Arc<Fielded>,
+    /// The program's relations' layouts (decision 0361 step 4), by name, shared by a component's model: estimates
+    /// where they answer a column, and no statistics for a relation they answer whole.
+    pub shapes: std::sync::Arc<shapes::Shapes>,
+    /// The version's plans made from its layouts (decision 0361 step 5), by line, shared by a component's model: a
+    /// line they hold is taken as kept, not searched or priced.
+    pub prepared: std::sync::Arc<prepared::Prepared>,
     /// Relations whose statistics are made when first planned with (`lazy`, `Model::resolve`).
     lazy: LazyMap,
     /// Quiet strata's relations, whose columns take their `__old`'s statistics when first planned with
@@ -619,6 +627,8 @@ impl Stats {
             kindsets: Arc::new(kindsets),
             lookup: Default::default(),
             fields: Default::default(),
+            shapes: Default::default(),
+            prepared: Default::default(),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         }
@@ -647,6 +657,12 @@ impl Stats {
     }
 
     /// Whether any column of `rel` has statistics (read or measured).
+    /// The documents and kinds the statistics hold, which a layout's `values` facts are priced by (decision 0361
+    /// item 5).
+    pub fn counts(&self) -> shapes::Counts {
+        shapes::Counts { docs: self.docs.filter(|&d| d > 0).map(|d| d as f64), kinds: (!self.kfreq.is_empty()).then(|| self.kfreq.len() as f64) }
+    }
+
     /// Whether `rel`'s columns are measured now, not lazily.
     fn knows_now(&self, rel: &str) -> bool {
         self.col.has(rel)
@@ -829,6 +845,8 @@ impl Stats {
             kindsets: Arc::new(pf.kindsets().iter().map(|(k, ks)| (pf.text(*k).to_owned(), ks.iter().map(|&a| pf.text(a).to_owned()).collect())).collect()),
             lookup: Default::default(),
             fields: Arc::new(Fielded::of(of("edge").filter(|r| !matches!(r[3], SqlValue::Null)).map(|r| (text(&r[0]), text(&r[1]), text(&r[3]), int(&r[2]) as f64)))),
+            shapes: Default::default(),
+            prepared: Default::default(),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         })
@@ -922,6 +940,13 @@ thread_local! {
 /// Reads of an input delta (`r__plus`, `r__minus`) priced with no size: each is priced at the default's 1,000 rows. A
 /// delta is bound with the run and measured, so none should be (the guard in `a_session_maintains_a_recursive_cross_file_stratum`).
 static UNSIZED_DELTAS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Relations whose statistics their layouts answered (`Model::resolve`, decision 0361 step 4): none was made.
+static SHAPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn shaped_statistics() -> u64 {
+    SHAPED.load(std::sync::atomic::Ordering::Relaxed)
+}
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub fn unsized_deltas() -> u64 {
     UNSIZED_DELTAS.load(std::sync::atomic::Ordering::Relaxed)
@@ -943,6 +968,20 @@ impl Model {
                 prior_now(self, f, rel, true);
             }
             let Some(deferred) = self.stats.lazy.0.remove(rel) else { continue };
+            // Its layout answers it whole: priced from the facts, nothing counted (decision 0361 step 4).
+            if let Some(width) = f.arity(rel)
+                && self.stats.shapes.answers(rel, self.stats.counts())
+            {
+                let rows = self.stats.card.get(rel).copied().unwrap_or(1.0).max(1.0);
+                for c in 0..width {
+                    let n = self.stats.shapes.ndv(rel, c, rows, self.stats.counts()).expect("answered");
+                    self.ndv.insert((rel.to_owned(), c), n);
+                    self.stats.fan.insert((rel.to_owned(), c), (rows / n).max(1.0));
+                }
+                SHAPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                super::profile::decision("statistics answered by a layout (decision 0361)", || rel.to_owned());
+                continue;
+            }
             let _span = super::profile::span(|| format!("statistics of {rel}, made when first planned with"));
             let (cols, vals) = deferred.statistics();
             self.stats.measured(rel, cols, vals);
@@ -992,6 +1031,8 @@ impl Model {
             kindsets: st.kindsets.clone(),
             lookup: st.lookup.clone(),
             fields: st.fields.clone(),
+            shapes: st.shapes.clone(),
+            prepared: st.prepared.clone(),
             lazy: LazyMap(rels.iter().filter_map(|r| Some((r.clone(), st.lazy.0.get(r)?.clone()))).collect()),
             prior_later: rels.iter().filter(|r| st.prior_later.contains(*r)).cloned().collect(),
         };
@@ -1320,8 +1361,8 @@ fn plans_find(key: &PlanKey, len: usize, nodes: f64) -> Option<Option<Kept>> {
         if let Some(k) = OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())) {
             return Some(Some(k));
         }
-        // The run's plans as last published (decision 0301): read with no lock.
-        if let Some(e) = shared.kept.load().get(key) {
+        // The run's plans as last published (decision 0301), or as a chunk's view holds them (Q88): read with no lock.
+        if let Some(e) = shared.now().get(key) {
             return Some(Some(e.kept()));
         }
         let found = shared.stored_near(key, len, nodes);
@@ -1338,7 +1379,7 @@ fn plans_get(key: &PlanKey) -> Option<Kept> {
     PLANS.with(|p| {
         let p = p.borrow();
         let shared = p.as_ref()?;
-        OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())).or_else(|| shared.kept.load().get(key).map(|e| e.kept()))
+        OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())).or_else(|| shared.now().get(key).map(|e| e.kept()))
     })
 }
 
@@ -1354,7 +1395,8 @@ fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
         _ => Some(kept),
     });
     let Some(kept) = kept else { return };
-    if shared.kept.load().get(&key).is_some_and(|e| e.set(&kept)) {
+    // A chunk's view (Q88) changes no entry it shares with the run's plans: its own go in as new entries.
+    if shared.view.is_none() && shared.kept.load().get(&key).is_some_and(|e| e.set(&kept)) {
         return;
     }
     let kept = OWN_PLANS.with(|o| match o.borrow_mut().as_mut() {
@@ -1365,7 +1407,10 @@ fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
         None => Some(kept),
     });
     if let Some(kept) = kept {
-        shared.publish(vec![(key, kept)]);
+        match &shared.view {
+            Some(v) => v.put(vec![(key, kept)]),
+            None => shared.publish(vec![(key, kept)]),
+        }
     }
 }
 
@@ -1386,6 +1431,29 @@ fn plans_learnt(key: &PlanKey, learnt: Learnt) {
             }
             None
         });
+        // In a chunk's view (Q88), a copy of the entry learns it, as the chunk's own: the view's entries are the
+        // run's as filed, shared with the other chunks.
+        let learnt = match (&shared.view, learnt) {
+            (Some(v), Some(learnt)) => {
+                let Some(mut k) = shared.now().get(key).map(|e| e.kept()) else { return };
+                match learnt {
+                    Learnt::Priced(priced) => k.4 = Some(priced),
+                    Learnt::Ran(work) => k.5 = Some(work),
+                }
+                let k = OWN_PLANS.with(|o| match o.borrow_mut().as_mut() {
+                    Some(m) => {
+                        m.insert(*key, k);
+                        None
+                    }
+                    None => Some(k),
+                });
+                if let Some(k) = k {
+                    v.put(vec![(*key, k)]);
+                }
+                return;
+            }
+            (_, learnt) => learnt,
+        };
         if let Some(learnt) = learnt
             && let Some(e) = shared.kept.load().get(key)
         {
@@ -1441,7 +1509,137 @@ fn growth(then: &[f64], now: &[f64]) -> f64 {
 
 /// A run's kept plans, shared by the threads its strata run on (decision 0113): a stratum's job enters them
 /// (`enter_plans`). Each stratum plans its own rules, so no two jobs write one key.
-type SharedPlans = Arc<RunPlans>;
+/// Within a chunk (Q88), with its view of them: what it plans and learns goes into the view, and is the run's only
+/// as the main thread files the chunk (`OrderedPlans`).
+#[derive(Clone)]
+struct SharedPlans {
+    run: Arc<RunPlans>,
+    view: Option<Arc<ChunkView>>,
+}
+
+impl std::ops::Deref for SharedPlans {
+    type Target = RunPlans;
+    fn deref(&self) -> &RunPlans {
+        &self.run
+    }
+}
+
+impl SharedPlans {
+    /// The plans a planner reads: its chunk's view, else the run's as last published.
+    fn now(&self) -> arc_swap::Guard<Arc<Plans>> {
+        match &self.view {
+            Some(v) => v.kept.load(),
+            None => self.run.kept.load(),
+        }
+    }
+}
+
+/// Q88: a chunk plans from the run's plans as filed up to this many chunks before it, never from what a chunk running
+/// beside it published: up to `PLAN_WINDOW` evaluate at once (decision 0254: at most 8), so those are filed when it
+/// begins, whatever the threads' timing, and its plans are a function of the run's inputs.
+pub const PLAN_WINDOW: usize = 8;
+
+/// A chunk's view of the run's plans (Q88): the run's as filed when it began (`OrderedPlans::next`), with what it
+/// planned and learnt over them, its own entries (`own`), handed back with it (`in_view`).
+pub struct ChunkView {
+    kept: arc_swap::ArcSwap<Plans>,
+    own: parking_lot::Mutex<rustc_hash::FxHashSet<PlanKey>>,
+    observed: Option<keeps::SharedObserved>,
+}
+
+impl ChunkView {
+    /// Takes `plans` as the chunk's own, new entries over the view's.
+    fn put(&self, plans: Vec<(PlanKey, Kept)>) {
+        if plans.is_empty() {
+            return;
+        }
+        let entries: Vec<(PlanKey, Arc<Entry>)> = plans.into_iter().map(|(k, v)| (k, Entry::of(v))).collect();
+        self.own.lock().extend(entries.iter().map(|(k, _)| *k));
+        self.kept.rcu(|m| {
+            let mut m = Plans::clone(m);
+            m.extend(entries.iter().map(|(k, e)| (*k, Arc::clone(e))));
+            m
+        });
+    }
+}
+
+/// What a chunk planned, learnt and observed (`in_view`), for the run's in the chunks' order (`OrderedPlans::file`).
+#[derive(Default)]
+pub struct ChunkPlans(Vec<(PlanKey, Kept)>, Option<keeps::Observed>);
+
+/// Q88: the run's plans and observations as its chunks are filed, in their order. Chunk `n` (from 0) sees them as they
+/// were once chunks `0..=n - window` were filed; what it made is the run's when it is filed.
+pub struct OrderedPlans {
+    run: SharedPlans,
+    observed: Option<keeps::SharedObserved>,
+    window: usize,
+    /// The run's plans and observations once `first + i` chunks were filed, for those a chunk to begin may see.
+    snapshots: std::collections::VecDeque<(Arc<Plans>, Option<Arc<keeps::Observed>>)>,
+    first: usize,
+    begun: usize,
+    filed: usize,
+}
+
+impl OrderedPlans {
+    /// Over this thread's run's plans: `None` outside a corpus run.
+    pub fn begin(window: usize) -> Option<Self> {
+        let run = share_plans()?;
+        let observed = keeps::share_observed();
+        let at = (run.kept.load_full(), keeps::observed_now(&observed));
+        let observed = at.1.is_some().then_some(observed);
+        Some(OrderedPlans { run, observed, window: window.max(1), snapshots: [at].into(), first: 0, begun: 0, filed: 0 })
+    }
+
+    /// The next chunk's view.
+    pub fn next(&mut self) -> Arc<ChunkView> {
+        let n = self.begun;
+        self.begun += 1;
+        let at = (n + 1).saturating_sub(self.window);
+        assert!(at <= self.filed, "Q88: chunk {n} begins with {} filed, under {at}", self.filed);
+        while self.first < at {
+            self.snapshots.pop_front();
+            self.first += 1;
+        }
+        let (plans, observed) = self.snapshots[at - self.first].clone();
+        Arc::new(ChunkView {
+            kept: arc_swap::ArcSwap::new(plans),
+            own: Default::default(),
+            observed: self.observed.as_ref().map(|_| keeps::chunk_observed(observed)),
+        })
+    }
+
+    /// Files the next chunk's plans and observations into the run's, in the chunks' order.
+    pub fn file(&mut self, made: ChunkPlans) {
+        let ChunkPlans(plans, observed) = made;
+        self.run.publish(plans);
+        if let (Some(run), Some(o)) = (&self.observed, observed) {
+            keeps::file_observed(run, o);
+        }
+        self.filed += 1;
+        let at = (self.run.kept.load_full(), self.observed.as_ref().and_then(keeps::observed_now));
+        self.snapshots.push_back(at);
+    }
+}
+
+/// `f` planning within a chunk's view (Q88): what it plans, learns and observes stays in the view (and the jobs it
+/// starts, which enter it), and is handed back with its result for the run's (`OrderedPlans::file`).
+pub fn in_view<R>(view: &Arc<ChunkView>, f: impl FnOnce() -> R) -> (R, ChunkPlans) {
+    let Some(run) = share_plans() else { return (f(), ChunkPlans::default()) };
+    let shared = SharedPlans { run: Arc::clone(&run.run), view: Some(Arc::clone(view)) };
+    let r = {
+        let _plans = enter_plans(Some(shared));
+        let _observed = view.observed.clone().map(keeps::enter_observed);
+        f()
+    };
+    let keys: Vec<PlanKey> = {
+        let mut keys: Vec<PlanKey> = view.own.lock().drain().collect();
+        keys.sort_unstable();
+        keys
+    };
+    let kept = view.kept.load();
+    let plans = keys.into_iter().filter_map(|k| kept.get(&k).map(|e| (k, e.kept()))).collect();
+    (r, ChunkPlans(plans, view.observed.as_ref().map(keeps::observed_made)))
+}
 
 /// A kept plan as the run shares it (decision 0301): its order and what its search found of it (work per node,
 /// EXPLAIN, gap), fixed until a put replaces them, and what its runs taught (its last price, the work its line did),
@@ -1556,6 +1754,10 @@ pub struct RunPlans {
     /// seen first under another key, or a maintenance rule of a rule planned before, starts from it (decision 0258).
     /// A session's, carried between its runs with its plans.
     orders: arc_swap::ArcSwap<rustc_hash::FxHashMap<u128, Arc<[Step]>>>,
+    /// The prepared plans of the versions planned (decision 0361 step 5, Q228): the store's, read with the kept
+    /// plans, and those this run made, by the version's identity; and whether it made any.
+    prepared: arc_swap::ArcSwap<prepared::ByVersion>,
+    prepared_new: std::sync::atomic::AtomicBool,
 }
 
 impl Default for RunPlans {
@@ -1565,7 +1767,8 @@ impl Default for RunPlans {
 }
 
 /// Decision 0258: a line's key apart from what solves it: its body and its delta.
-fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
+#[doc(hidden)]
+pub fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
     super::derived::digest(|d| {
         d.str("line");
         d.u64(b.key() as u64);
@@ -1636,6 +1839,8 @@ impl RunPlans {
             },
             planned_now: Default::default(),
             orders: arc_swap::ArcSwap::from_pointee(orders),
+            prepared: Default::default(),
+            prepared_new: Default::default(),
         }
     }
 
@@ -1822,6 +2027,52 @@ pub fn take_stored_plans(stored: Arc<StoredPlans>) {
     });
 }
 
+/// Whether this thread runs with kept plans (`PLANS`): only then are prepared plans read from or kept for the store.
+#[doc(hidden)]
+pub fn run_holds_plans() -> bool {
+    PLANS.with(|p| p.borrow().is_some())
+}
+
+/// The prepared plans the store kept of the version whose identity is `id` (Q228).
+#[doc(hidden)]
+pub fn prepared_stored(id: &[u8; 32]) -> Option<Arc<prepared::Prepared>> {
+    PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.prepared.load().get(id).cloned()))
+}
+
+/// Keeps `made`, the prepared plans this run made of the version whose identity is `id`, for the store.
+#[doc(hidden)]
+pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
+    PLANS.with(|p| {
+        if let Some(p) = p.borrow().as_ref() {
+            p.prepared.rcu(|m| {
+                let mut m = prepared::ByVersion::clone(m);
+                m.insert(id, Arc::clone(&made));
+                m
+            });
+            p.prepared_new.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+}
+
+/// Gives this thread's run the prepared plans the store kept (with `take_stored_plans`).
+pub fn take_stored_prepared(stored: prepared::ByVersion) {
+    PLANS.with(|p| {
+        if let Some(p) = p.borrow().as_ref() {
+            p.prepared.store(Arc::new(stored));
+        }
+    });
+}
+
+/// This thread's run's prepared plans for the store, the stored with the made: `None` where it made none.
+pub fn prepared_to_store() -> Option<Arc<prepared::ByVersion>> {
+    PLANS.with(|p| p.borrow().as_ref().filter(|p| p.prepared_new.load(std::sync::atomic::Ordering::Relaxed)).map(|p| p.prepared.load_full()))
+}
+
+/// The prepared plans held for this thread's run, as read and made.
+pub fn prepared_held() -> Arc<prepared::ByVersion> {
+    PLANS.with(|p| p.borrow().as_ref().map(|p| p.prepared.load_full()).unwrap_or_default())
+}
+
 /// This thread's run's plans for the store: the stored ones with the run's over them, or `None` where the run
 /// changed none.
 pub fn plans_to_store() -> Option<StoredPlans> {
@@ -1892,6 +2143,16 @@ fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
             let planned = OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.1.take()));
             let entered = PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), self.0.take()));
             let Some(shared) = entered else { return };
+            // In a chunk's view (Q88), the job's plans are the chunk's own, its entries.
+            if let Some(v) = &shared.view {
+                let mut own: Vec<(PlanKey, Kept)> = own.into_iter().flatten().collect();
+                own.sort_unstable_by_key(|(k, _)| *k);
+                v.put(own);
+                if let Some(planned) = planned.filter(|p| !p.is_empty()) {
+                    shared.planned_now.lock().extend(planned);
+                }
+                return;
+            }
             // Decision 0301: the job's plans whose order the run holds go to their entries' cells; the others, new
             // keys or new orders, are published together.
             let new: Vec<(PlanKey, Kept)> = {
@@ -1967,7 +2228,7 @@ impl KeepPlans {
     pub fn start(across: Option<u64>) -> Self {
         compose::clear();
         let (kept, orders) = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _, _)| *k == g).map(|(_, p, o)| (p, o)))).unwrap_or_default();
-        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(RunPlans::new(kept, orders, Default::default()))));
+        PLANS.with(|p| *p.borrow_mut() = Some(SharedPlans { run: Arc::new(RunPlans::new(kept, orders, Default::default())), view: None }));
         keeps::observing(true);
         KeepPlans(across)
     }
@@ -1981,7 +2242,7 @@ impl Drop for KeepPlans {
             let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let lazy = lazy_probes_counted();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], searches[0], searches[1], lazy.0, lazy.1);
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared ({} versions' plans read, {} made); orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -1994,7 +2255,7 @@ impl Drop for KeepPlans {
         super::profile::decision("kept plans shared by RCU (decision 0301)", || format!("{} publications of {} new plans or orders; observed sums folded {folds} times", published[0], published[1]));
         if let (Some(g), Some(plans)) = (self.0, plans) {
             // Every job that entered them has ended: the run's thread holds the last handle, or a copy is taken.
-            let (kept, orders) = match Arc::try_unwrap(plans) {
+            let (kept, orders) = match Arc::try_unwrap(plans.run) {
                 Ok(p) => p.into_kept(),
                 Err(p) => (p.kept.load().iter().map(|(k, e)| (*k, e.kept())).collect(), rustc_hash::FxHashMap::clone(&p.orders.load())),
             };
@@ -2141,7 +2402,10 @@ impl Model {
     /// inlined kept `pre_` relations (`rr_ctx282` read one at 0.8 M units, and inlined did 39 M).
     fn ndv_or_default(&self, rel: &str, c: usize) -> f64 {
         const DEFAULT_NUM_DISTINCT: f64 = 200.0;
-        let unseen = || if self.stats.solving.contains(rel) { DEFAULT_NUM_DISTINCT.min(self.card(rel)) } else { 1.0 };
+        // Unmeasured: its layout's estimate (decision 0361 step 4), else the prior.
+        let unseen = || {
+            self.stats.shapes.ndv(rel, c, self.card(rel), self.stats.counts()).unwrap_or_else(|| if self.stats.solving.contains(rel) { DEFAULT_NUM_DISTINCT.min(self.card(rel)) } else { 1.0 })
+        };
         let ndv = self.ndv.at(&rel, c).copied().unwrap_or_else(unseen);
         (ndv * skew(rel, c, 0)).max(1.0)
     }
@@ -2355,8 +2619,14 @@ impl Model {
 
     /// A relation whose statistics are still to be made: bound lazily (`Stats::lazily`), or quiet and taking its
     /// kept rows' (`prior_stats`).
+    /// A relation its layout answers whole (`shapes::Shapes::answers`) is never one: its statistics are not made.
     fn deferred(&self, rel: &str) -> bool {
-        self.stats.lazy.0.contains_key(rel) || self.stats.prior_later.contains(rel)
+        self.stats.lazy.0.contains_key(rel) && !self.shaped(rel) || self.stats.prior_later.contains(rel)
+    }
+
+    /// Whether `rel`'s layout answers every column's distinct values (decision 0361 step 4).
+    fn shaped(&self, rel: &str) -> bool {
+        self.stats.shapes.answers(rel, self.stats.counts())
     }
 
     /// Decision 0123, step 1: the statistics a planning round requests. Of the lines it will plan (a rule and its
@@ -2899,6 +3169,11 @@ impl Model {
         if PLANS.with(|p| p.borrow().is_none()) {
             return self.plan_inner(pf, b, first, None, true);
         }
+        // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
+        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes) {
+            super::profile::decision("prepared plans (decision 0361 step 5)", || "a live plan taken as prepared: not searched or priced".to_owned());
+            return Ok((plan, None));
+        }
         let misses = self.delta_misses(b, first);
         let key = self.plan_key_at("live ", b, first, &misses);
         // The state kept before the last (O-live-replan item 4): sizes that alternate between waves (a distinct
@@ -3244,6 +3519,14 @@ impl Model {
         explain: bool,
         cx: &mut joins::SearchCx,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
+        // A line planned with the program from its layouts (decision 0361 step 5): taken as kept, not searched.
+        if fixed.is_none()
+            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes)
+        {
+            super::profile::decision("prepared plans (decision 0361 step 5)", || "a line's plan taken as prepared: not searched".to_owned());
+            let explained = if explain { self.explain_order(pf, b, first, &plan.0) } else { None };
+            return Ok((plan, explained));
+        }
         if self.shapes_for(b.rel(b.head())).is_empty() || NO_SHAPES.with(std::cell::Cell::get) {
             return self.plan_unshaped(pf, b, first, fixed, explain, cx);
         }
@@ -4867,6 +5150,8 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
         .chain(f.fact_rels().into_iter().map(|r| f.text(r.name())).filter(|rel| !f.is_input(rel)).map(str::to_owned))
         .collect();
     let mut stats = Stats::new(db, p, &mut inputs)?;
+    stats.shapes = shapes::Shapes::of_version(&p.v);
+    stats.prepared = prepared::Prepared::of_version(&p.v);
     let mut ndv = ColMap::default();
     for (rel, (_, rows)) in &inputs.batch {
         let rows = rows.max(1.0);
@@ -4876,9 +5161,11 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
         Arc::make_mut(&mut stats.indexes).insert(rel.clone(), vtab_indexes(rel));
         let names = super::sql::select::input_columns(rel);
         for col in 0..f.arity(rel).unwrap_or(0) {
-            // A base relation's distinct values by column: a chunk's documents, kinds, child indexes, fields
-            // and parents are far fewer than its rows. Other columns are taken as keys.
-            let distinct = match names.and_then(|names| names.get(col)).copied() {
+            // A base relation's distinct values by column: from its layout where a fact answers the column
+            // (decision 0361 step 4: `child`'s `c` a key, its `p` a few fan-out, its `i` dense within `p`).
+            // Otherwise, by the column's name (the columns no fact answers: a chunk's documents, kinds, fields
+            // and depths are far fewer than its rows); other columns are taken as keys.
+            let distinct = stats.shapes.ndv(rel, col, rows, stats.counts()).unwrap_or_else(|| match names.and_then(|names| names.get(col)).copied() {
                 Some("d") => rows.min(300.0),
                 Some("kind") => rows.min(200.0),
                 Some("idx") => rows.min(20.0),
@@ -4887,7 +5174,7 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
                 Some("p" | "par") => (rows / 3.0).max(1.0),
                 Some("s") => (rows / 5.0).max(1.0),
                 _ => rows,
-            };
+            });
             ndv.insert((rel.clone(), col), distinct);
             stats.fan.insert((rel.clone(), col), (rows / distinct).max(1.0));
         }
@@ -8123,15 +8410,23 @@ impl<'a> Run<'a, '_> {
             live_stats(&mut self.model, r, live);
         }
         // Each line's work, under its kept plan's key, for the next run's planning budget (decision 0122): a removal
-        // and its add, planned alike, under one key, their work summed (Q208).
+        // and its add, planned alike, under one key, their work summed (Q208). A recursive component's driver (its
+        // probe's order less the delta atom, finding the rows that read a row gone) adds its work to its probe's.
         {
             let probes = super::native::component::step_counts(self.db, &name)?;
             let [removes, adds, rechecks] = super::native::component::maint_step_counts(self.db, &name)?;
+            let drivers = super::native::component::driver_step_counts(self.db, &name)?;
+            let work_of = |line: &[(i64, i64)]| super::profile::plan_work(&line.iter().map(|&(a, b)| (a as u64, b as u64)).collect::<Vec<_>>()) as f64;
             let mut lists: [std::vec::IntoIter<Vec<(i64, i64)>>; 4] = [probes.into_iter(), removes.into_iter(), adds.into_iter(), rechecks.into_iter()];
             let mut work: Vec<(PlanKey, f64)> = Vec::new();
+            let mut probe = 0;
             for (kind, key) in &mode_keys {
                 let Some(line) = lists[*kind as usize].next() else { continue };
-                let w = super::profile::plan_work(&line.iter().map(|&(a, b)| (a as u64, b as u64)).collect::<Vec<_>>()) as f64;
+                let mut w = work_of(&line);
+                if *kind == ModeLine::Probe {
+                    w += drivers.iter().filter(|(p, _)| *p == probe).map(|(_, d)| work_of(d)).sum::<f64>();
+                    probe += 1;
+                }
                 match work.iter_mut().find(|(k, _)| k == key) {
                     Some((_, at)) => *at += w,
                     None => work.push((*key, w)),
@@ -14202,5 +14497,43 @@ impl Walker<'_, '_> {
         x ^= x << 13; x ^= x >> 7; x ^= x << 17;
         self.seed.set(x);
         x
+    }
+}
+
+#[cfg(test)]
+mod ordered_tests {
+    use super::*;
+
+    /// Q88: a chunk plans from the run's plans as filed once the chunks `window` before it were, never from a chunk
+    /// beside it: what each sees is fixed by the chunks' order, whatever finishes or is filed first. What it plans and
+    /// learns is its own until it is filed.
+    #[test]
+    fn a_chunk_sees_the_plans_filed_before_its_window_never_a_neighbours() {
+        let _plans = KeepPlans::start(None);
+        let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
+        let put = |key: PlanKey, w: f64| PLANS.with(|p| plans_put(p.borrow().as_ref().unwrap(), key, (Arc::from(Vec::<Step>::new()), w, None, 1.0, None, None)));
+        let get = |key: PlanKey| plans_get(&key).map(|k| k.1);
+        let (v0, v1) = (ordered.next(), ordered.next());
+        let ((), m0) = in_view(&v0, || put(1, 10.0));
+        // Chunk 1 began beside chunk 0: chunk 0's plan is not in its view, though chunk 0 has finished.
+        let (seen, m1) = in_view(&v1, || {
+            let seen = get(1);
+            put(2, 20.0);
+            seen
+        });
+        assert_eq!(seen, None, "a neighbour's plan, finished first");
+        assert_eq!(get(1), None, "the run's plans hold no chunk's until it is filed");
+        ordered.file(m0);
+        assert_eq!(get(1), Some(10.0), "chunk 0 filed");
+        assert_eq!(in_view(&v1, || get(1)).0, None, "a view stays as its chunk began");
+        ordered.file(m1);
+        // Chunk 2 sees chunk 0's (`window` back), and not chunk 1's though it was filed before chunk 2 began.
+        let v2 = ordered.next();
+        assert_eq!(in_view(&v2, || (get(1), get(2))).0, (Some(10.0), None));
+        // What it learns of a plan it read is its own copy's: the run's entry is unchanged until it is filed.
+        let ((), m2) = in_view(&v2, || plans_learnt(&1, Learnt::Ran(5.0)));
+        assert_eq!(plans_get(&1).and_then(|k| k.5), None, "unfiled");
+        ordered.file(m2);
+        assert_eq!(plans_get(&1).and_then(|k| k.5), Some(5.0), "filed");
     }
 }

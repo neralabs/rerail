@@ -1,7 +1,7 @@
 //! compute_kernel.h's types of kernel arguments (and compute_kernel_grid.h's argument dispositions), in Rust: what
 //! a backend's compute function says of each of its arguments, and what the grid runtime binds a kernel's parameters
 //! by. Metal fills them from its reflection (compute_kernel_metal.rs); CUDA from the descriptors UKL's CUDA shim
-//! emits beside each kernel (compute_kernel_cuda.rs, Rerail decision 0400).
+//! emits beside each kernel (compute_kernel_cuda.rs, Rerail decision 0440).
 //!
 //! Jeremy Barnes, 21 July 2021. Copyright (c) 2021 Jeremy Barnes. This file is part of MLDB. Copyright 2016 mldb.ai
 //! inc. Apache-2.0 (see the LICENSE at `forest/src/mldb/`).

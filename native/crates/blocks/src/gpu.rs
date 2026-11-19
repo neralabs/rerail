@@ -273,7 +273,10 @@ kernel void reads_probe(device const uchar* b [[buffer(0)]], constant ulong& rel
     o[3] = clif_rel_group(b, rel, 0u, mix(SEED, long(o[1])));
 }
 "#;
-        let lib = device.new_library_with_source(&(source() + KERNEL), &CompileOptions::new()).expect("the kernels compile");
+        // The source includes the relation's reads (`<ukl/reads/relation.h>`): preprocessed for Metal first, as the
+        // engine does (`Gpu::on`'s caller).
+        let msl = rerail_ukl::metal_source("reads_probe.metal", &(source() + KERNEL)).unwrap_or_else(|e| panic!("{e}"));
+        let lib = device.new_library_with_source(&msl, &CompileOptions::new()).expect("the kernels compile");
         let pipe = device.new_compute_pipeline_state_with_function(&lib.get_function("reads_probe", None).unwrap()).unwrap();
         let queue = device.new_command_queue();
         for (block, rel) in [(&base_block, base), (&top_block, top)] {

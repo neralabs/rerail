@@ -729,6 +729,29 @@ pub struct BlockRun {
     pub codes: Vec<u32>,
 }
 
+impl BlockRun {
+    /// The run less the outputs in `made` (`BlockNative::records_made`), each emptied: the CPU's
+    /// record pass makes their positions (a token's last by its gap, decision 0411), and its
+    /// tier 1 no mask for them. Tier 1's runs are compared on the rest.
+    pub fn without(&self, made: &[usize]) -> BlockRun {
+        BlockRun {
+            outputs: self
+                .outputs
+                .iter()
+                .enumerate()
+                .map(|(k, w)| {
+                    if made.contains(&k) {
+                        Vec::new()
+                    } else {
+                        w.clone()
+                    }
+                })
+                .collect(),
+            ..self.clone()
+        }
+    }
+}
+
 impl BlockProgram {
     /// The verifier's rules for a block program: at least one operation and one output, every
     /// operand an earlier value, and outputs that name values.
@@ -781,6 +804,8 @@ impl BlockProgram {
         let records = self.records.as_ref().is_none_or(|r| {
             usize::from(r.starts) < self.extracts.len()
                 && usize::from(r.lasts) < self.extracts.len()
+                // The gaps' ends (decision 0411): the skip's output, and no end rules.
+                && r.gap.is_none_or(|g| usize::from(g) < self.outputs.len() && r.rules.is_empty() && r.skip.is_none())
                 && r.starts != r.lasts
                 && r.kinds.len() == 256
                 && !self.totals.is_empty()
@@ -904,6 +929,10 @@ impl BlockProgram {
             out.extend_from_slice(b"records");
             out.extend_from_slice(&r.starts.to_le_bytes());
             out.extend_from_slice(&r.lasts.to_le_bytes());
+            if let Some(g) = r.gap {
+                out.extend_from_slice(b"gap");
+                out.extend_from_slice(&g.to_le_bytes());
+            }
             out.extend_from_slice(&r.kinds);
             out.extend_from_slice(&(r.words.len() as u32).to_le_bytes());
             for w in &r.words {
@@ -1004,6 +1033,16 @@ impl BlockProgram {
                     any |= untaken && !r.untaken.is_empty() || read || checked;
                     positions[usize::from(r.starts)] = s;
                     positions[usize::from(r.lasts)] = l;
+                } else if let Some((r, gap)) =
+                    self.records.as_ref().and_then(|r| r.gap.map(|g| (r, g)))
+                {
+                    // The lasts by the gaps (decision 0411): each the byte before the next
+                    // start, less the skip's bytes there, as the CPU's record pass makes them.
+                    positions[usize::from(r.lasts)] = crate::records::gap_lasts(
+                        &outputs[usize::from(gap)],
+                        &positions[usize::from(r.starts)],
+                        bytes.len(),
+                    );
                 } else if let Some(r) = self.records.as_ref().filter(|r| !r.rules.is_empty()) {
                     // The lasts by the end rules: each token's from its first byte.
                     match crate::records::lasts(r, bytes, &positions[usize::from(r.starts)], &outputs) {
@@ -1787,6 +1826,11 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         for &(o, w) in &r.marks {
             let _ = writeln!(out, "  block {at} recmark {o} {w}");
         }
+        // `block N recgap O` the skip's output, where the tokens' last bytes are the gaps'
+        // (decision 0411).
+        if let Some(g) = r.gap {
+            let _ = writeln!(out, "  block {at} recgap {g}");
+        }
         // `block N recends …` each byte's end rule, then `block N recrule run|pair|last O` each
         // rule (decision 0177).
         if !r.rules.is_empty() {
@@ -1858,15 +1902,17 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         for (k, w) in &r.unless {
             let _ = writeln!(out, "  block {at} recunless {k} {w}");
         }
-        // `block N reccheck R count|run O N [at K|after K]`: a token test of rule `R`'s tokens,
-        // refusing the file, or a bit of mark `K` (`CheckThen`).
+        // `block N reccheck R count|run|all O N [at K|after K|cut]`: a token test of rule `R`'s
+        // tokens, refusing the file, a bit of mark `K`, or the token's cut (`CheckThen`).
         for c in &r.checks {
             let then = match c.then {
                 crate::records::CheckThen::Escape => String::new(),
                 crate::records::CheckThen::At(k) => format!(" at {k}"),
                 crate::records::CheckThen::After(k) => format!(" after {k}"),
+                crate::records::CheckThen::Cut => " cut".to_string(),
             };
-            let _ = writeln!(out, "  block {at} reccheck {} {} {} {}{then}", c.rule, if c.count { "count" } else { "run" }, c.o, c.least);
+            let test = if c.count { "count" } else if c.all { "all" } else { "run" };
+            let _ = writeln!(out, "  block {at} reccheck {} {test} {} {}{then}", c.rule, c.o, c.least);
         }
         // `block N recchecked M`: a mask tier 2's local checks alone read.
         for m in &r.check_masks {

@@ -1,4 +1,4 @@
-// ukl/radix.h: a stable LSD radix sort of keys with a value each (decision 0400 §5; the gpu lane's sort,
+// ukl/radix.h: a stable LSD radix sort of keys with a value each (decision 0440 §5; the gpu lane's sort,
 // accel/src/gpu/join.rs, decision 0095 §4).
 //
 // A pass sorts by one 8-bit digit; the host (`rerail_gpu::library::radix_sort_pairs`) runs one pass per digit of the

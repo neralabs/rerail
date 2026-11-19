@@ -1,6 +1,6 @@
 //! rerail's forest: MLDB's random forest trainer (`mldb/`, copied from mldbai/mldb@e3caed6f, branch
 //! opencl-random-forests), training and predicting on the device, and the cost model built on it (`cost_model`).
-//! The device is Metal on macOS and CUDA on Linux (`device`, decision 0400); elsewhere the crate is empty.
+//! The device is Metal on macOS and CUDA on Linux (`device`, decision 0440); elsewhere the crate is empty.
 //!
 //! The kernels are one C source (`mldb/plugins/jml/randomforest_kernels_common.h`) written against UKL's shims; the
 //! build step preprocesses `randomforest_kernels_ukl.h` with the Metal shim into Metal source; on CUDA it is
@@ -42,7 +42,7 @@ pub mod randomforest_types;
 pub mod randomforest_kernels;
 #[path = "mldb/plugins/jml/randomforest_recursive.rs"]
 pub mod randomforest_recursive;
-// The device layer: `rerail-gpu` (decision 0400), under the names the forest's code uses.
+// The device layer: `rerail-gpu` (decision 0440), under the names the forest's code uses.
 pub use rerail_gpu::{compute_kernel, compute_kernel_grid, device};
 #[cfg(target_os = "linux")]
 pub use rerail_gpu::compute_kernel_cuda;

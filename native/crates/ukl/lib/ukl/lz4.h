@@ -1,4 +1,4 @@
-// ukl/lz4.h: an LZ4 block decoded by one SIMD group (decisions 0400 §5, 0336 §8, 0156 §2.1).
+// ukl/lz4.h: an LZ4 block decoded by one SIMD group (decisions 0440 §5, 0336 §8, 0156 §2.1).
 //
 // The block's matches stay inside it (no dictionary), as a 16z piece's do. Every lane reads the same token; the lanes
 // copy a literal run, or a match, `UKL_SIMD_WIDTH` bytes at a time, and a match closer than that in rounds of its

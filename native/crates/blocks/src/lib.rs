@@ -20,6 +20,7 @@
 //! reached by reference into its block.
 
 pub mod alloc;
+pub mod atoms;
 pub mod block;
 pub mod chunk;
 pub mod col;
@@ -32,9 +33,10 @@ pub mod free;
 #[rustfmt::skip]
 pub mod generated_reads;
 /// The same reads in UKL, for every kernel that reads a relation in its block (decision 0325): the library's header,
-/// which a kernel source including it is preprocessed with (`rerail_ukl::metal_source`; decision 0400 §3.3).
+/// which a kernel source including it is preprocessed with (`rerail_ukl::metal_source`; decision 0440 §3.3).
 pub const RELATION_READS: &str = "#include <ukl/reads/relation.h>\n";
 pub mod journal;
+pub mod kept;
 pub mod mem;
 pub mod packed;
 pub mod ranged;

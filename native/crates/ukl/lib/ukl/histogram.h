@@ -1,4 +1,4 @@
-// ukl/histogram.h: counting codes in threadgroup memory (decision 0400 §5; the gpu lane's `hist` and count table,
+// ukl/histogram.h: counting codes in threadgroup memory (decision 0440 §5; the gpu lane's `hist` and count table,
 // accel/src/gpu/table.metal).
 //
 // A table of counters in threadgroup memory covers a window of codes; a range of codes is counted one window at a

@@ -1,4 +1,4 @@
-// ukl/body/radix_tile.h: ukl/radix.h's passes over one key type (decision 0400 §3.5: a type in C is a parameter of
+// ukl/body/radix_tile.h: ukl/radix.h's passes over one key type (decision 0440 §3.5: a type in C is a parameter of
 // an included body). Included once per key type, with, defined first:
 // - `UKL_RADIX_NAME(f)`: the instance's name of each function `f` (`f##_u32`, ...);
 // - `UKL_RADIX_KEY`: the key type.

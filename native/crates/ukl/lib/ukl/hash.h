@@ -1,4 +1,4 @@
-// ukl/hash.h: a hash table of 32-bit keys built and probed on the device (decision 0400 §5).
+// ukl/hash.h: a hash table of 32-bit keys built and probed on the device (decision 0440 §5).
 //
 // Open addressing with linear probing, a power-of-two capacity. A slot's key is `UKL_HASH_EMPTY` until a thread
 // claims it by compare-and-swap; a key is never moved or removed, so a probe that meets an empty slot knows the key is

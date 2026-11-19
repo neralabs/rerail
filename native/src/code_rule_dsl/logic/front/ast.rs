@@ -425,6 +425,24 @@ pub enum Size {
     Small,
 }
 
+/// How many distinct values a column holds (`values(c, …)`, decision 0361 item 5), where no key, size or fan-out
+/// says: the planner's estimate of the column, so its statistics need not be counted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Values {
+    /// The documents: one value a document (`node`'s `d`).
+    Documents,
+    /// The grammar's kinds (`node`'s `kind`).
+    Kinds,
+    /// Numbered within each document (a document's line or visit index): about a document's rows.
+    WithinDocument,
+    /// About one a row, without a key's guarantee (a node's start offset).
+    Many,
+    /// At most about N (a grammar's fields).
+    About(u32),
+    /// About one every N rows (interned source text).
+    OneIn(u32),
+}
+
 /// The native operator that makes a relation, where its rules' form does not show it (`.layout r by …`, decision
 /// 0361 item 4): an override a profiled run reports once the facts find it alone.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -451,6 +469,8 @@ pub enum LayoutFact {
     Order { col: usize, within: Vec<usize>, dense: bool },
     /// `from -> to` is a forest: each `to` has at most one `from`, and no cycle.
     Tree { from: usize, to: usize },
+    /// Column `col` holds `values` distinct values.
+    Values { col: usize, values: Values },
     By(Algo),
 }
 
@@ -556,6 +576,22 @@ pub fn layout_facts(text: &str, col: &dyn Fn(&str) -> Result<usize, String>) -> 
                 let arrow = a.iter().position(|w| w == "->").ok_or("`tree(parent -> child)`")?;
                 LayoutFact::Tree { from: one(&a[..arrow])?, to: one(&a[arrow + 1..])? }
             }
+            "values" => {
+                let a = args(&mut at, "values")?;
+                let comma = a.iter().position(|w| w == ",").ok_or("`values(column, class)`")?;
+                let class: Vec<&str> = a[comma + 1..].iter().map(String::as_str).collect();
+                let values = match class.as_slice() {
+                    ["documents"] => Values::Documents,
+                    ["kinds"] => Values::Kinds,
+                    ["within", "document"] => Values::WithinDocument,
+                    ["many"] => Values::Many,
+                    [n] if n.starts_with('~') => Values::About(number(&n[1..])?),
+                    ["rows", "/", n] | ["rows/", n] => Values::OneIn(number(n)?),
+                    [r] if r.starts_with("rows/") => Values::OneIn(number(&r[5..])?),
+                    _ => return Err(format!("`values`: a class is documents, kinds, within document, many, ~N or rows / N, not `{}`", class.join(" "))),
+                };
+                LayoutFact::Values { col: one(&a[..comma])?, values }
+            }
             "by" => {
                 let algo = words.get(at).cloned().ok_or("`by` names an algorithm: reach, walk(r) or running(c in g)")?;
                 at += 1;
@@ -573,7 +609,7 @@ pub fn layout_facts(text: &str, col: &dyn Fn(&str) -> Result<usize, String>) -> 
                     other => return Err(format!("`by {other}`: an algorithm is reach, walk(r) or running(c in g)")),
                 })
             }
-            other => return Err(format!("`{other}`: a layout fact is key, fanout, size, local, order, tree or by")),
+            other => return Err(format!("`{other}`: a layout fact is key, fanout, size, local, order, tree, values or by")),
         };
         facts.push(fact);
     }
@@ -606,6 +642,18 @@ impl LayoutFact {
             LayoutFact::Local => "local".to_owned(),
             LayoutFact::Order { col, within, dense } => format!("order({}{} in {})", name(*col), if *dense { " dense" } else { "" }, list(within)),
             LayoutFact::Tree { from, to } => format!("tree({} -> {})", name(*from), name(*to)),
+            LayoutFact::Values { col, values } => format!(
+                "values({}, {})",
+                name(*col),
+                match values {
+                    Values::Documents => "documents".to_owned(),
+                    Values::Kinds => "kinds".to_owned(),
+                    Values::WithinDocument => "within document".to_owned(),
+                    Values::Many => "many".to_owned(),
+                    Values::About(n) => format!("~{n}"),
+                    Values::OneIn(n) => format!("rows / {n}"),
+                }
+            ),
             LayoutFact::By(Algo::Reach) => "by reach".to_owned(),
             LayoutFact::By(Algo::Walk(r)) => format!("by walk({r})"),
             LayoutFact::By(Algo::Running { col, within }) => format!("by running({} in {})", name(*col), list(within)),
@@ -723,7 +771,7 @@ impl Program {
         self.rules.push(rule);
     }
     /// Renames readers in the request record, as a pass that merges or folds relations renames their reads
-    /// (`simplify::merge_identical`, hiding's `fold_own`): a request of a merged reader serves the relation it was
+    /// (`simplify::merge_identical`, hiding's `FoldOwn`): a request of a merged reader serves the relation it was
     /// merged into.
     pub fn rename_readers(&mut self, rename: impl Fn(&str) -> Option<String>) {
         for readers in self.asked_by.values_mut().flatten() {

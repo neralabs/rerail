@@ -74,7 +74,7 @@ pub struct ViewRow {
     pub rows: [u32; VIEWS.len()],
     pub view: crate::view::TapeView,
 }
-const _: () = assert!(std::mem::size_of::<ViewRow>() == 8 + 8 + 8 + 36 + 116);
+const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 36 + std::mem::size_of::<crate::view::TapeView>()).next_multiple_of(8));
 
 /// A batch's documents as its views' reads find them: the batch's block's GPU address (the entries' base), its
 /// documents' rows (their GPU address), how many.
@@ -150,9 +150,11 @@ pub fn ukl() -> String {
         ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
     ];
-    let mut s = String::from(
-        "#include <ukl/backend.h>\ntypedef struct ViewRow {\n    uint64_t entry;\n    UKL_GLOBAL const uint8_t* tape;\n    UKL_GLOBAL const uint8_t* lines;\n    uint32_t rows[9];\n    uint32_t view[29];\n} ViewRow;\n\
-         typedef struct ViewDir {\n    UKL_GLOBAL const uint8_t* chunk;\n    uint32_t ndocs;\n    uint32_t pad;\n    UKL_GLOBAL const ViewRow* rows;\n} ViewDir;\n",
+    let mut s = format!(
+        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    UKL_GLOBAL const uint8_t* tape;\n    UKL_GLOBAL const uint8_t* lines;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
+         typedef struct ViewDir {{\n    UKL_GLOBAL const uint8_t* chunk;\n    uint32_t ndocs;\n    uint32_t pad;\n    UKL_GLOBAL const ViewRow* rows;\n}} ViewDir;\n",
+        VIEWS.len(),
+        std::mem::size_of::<crate::view::TapeView>() / 4,
     );
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
     s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
@@ -540,4 +542,92 @@ pub fn loc_col(b: &mut B<'_, '_>) -> Value {
 #[cfg(feature = "ir")]
 pub fn loc_docof(b: &mut B<'_, '_>) -> Value {
     b.loc(Place::Docof)
+}
+
+/// No row: a parent probe's end (`view_child_first`, `view_child_next`, `view_number`).
+pub const NO_ROW: u32 = u32::MAX;
+
+impl B<'_, '_> {
+    /// The `child` row of the first numbered node from tape node `c` on, `c` and each sibling after it within
+    /// `end` (`tape_next_in`), or `NO_ROW`: numbered node `l`'s row is `l - 1`. The loop ends: each sibling is past
+    /// the last, and `tape_next_in` gives none at `end` (decision 0427's reads stay within the tape).
+    fn numbered_from(&mut self, c: Value, end: Value) -> Value {
+        let (head, test, step, found, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(done, I32);
+        self.f.ins().jump(head, &[c.into()]);
+        self.f.switch_to_block(head);
+        let c = self.f.block_params(head)[0];
+        let none = self.f.ins().icmp_imm(IntCC::Equal, c, i64::from(NO_ROW));
+        let no = self.c32(i64::from(NO_ROW));
+        self.f.ins().brif(none, done, &[no.into()], test, &[]);
+        self.f.switch_to_block(test);
+        let numbering = self.follow(self.tape, at::NUMBERING);
+        let node = self.c32(0);
+        let is = self.call_at("num_is", numbering, &[node, c]);
+        let numbered = self.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+        self.f.ins().brif(numbered, found, &[], step, &[]);
+        self.f.switch_to_block(found);
+        let numbering = self.follow(self.tape, at::NUMBERING);
+        let node = self.c32(0);
+        let l = self.call_at("num_rank", numbering, &[node, c]);
+        let row = self.f.ins().iadd_imm(l, -1);
+        self.f.ins().jump(done, &[row.into()]);
+        self.f.switch_to_block(step);
+        let next = self.call_tape("tape_next_in", &[c, end]);
+        self.f.ins().jump(head, &[next.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
+    }
+}
+
+/// `view_child_first(l)`: the `child` row of numbered node `l`'s first child (its first numbered tape child), or
+/// `NO_ROW` (decision 0353 step 4c: a probe of `child` by its parent, off the tape, with no index of the view).
+/// For a node other than the root: a numbered node's parent is its tape parent where that is numbered, so its
+/// children are its numbered tape children. The root's are also the nodes under unnumbered ones (a narrowed
+/// projection): a probe of the root scans its document's rows instead.
+pub fn child_first(b: &mut B<'_, '_>) -> Value {
+    let l = b.arg(0);
+    let x = b.tape_node(l);
+    let end = b.call_tape("tape_end_of", &[x]);
+    let c = b.call_tape("tape_first_child", &[x]);
+    b.numbered_from(c, end)
+}
+
+/// `view_child_next(i)`: the `child` row of the next child of the parent of `child` row `i` (numbered node `i +
+/// 1`'s next numbered tape sibling), or `NO_ROW`. For a child of a parent other than the root (`view_child_first`).
+pub fn child_next(b: &mut B<'_, '_>) -> Value {
+    let i = b.arg(0);
+    let l = b.f.ins().iadd_imm(i, 1);
+    let x = b.tape_node(l);
+    let p = b.call_tape("tape_parent", &[x]);
+    let root = b.f.ins().icmp_imm(IntCC::Equal, p, i64::from(NO_ROW));
+    b.either(I32, root, |b| b.c32(i64::from(NO_ROW)), |b| {
+        let end = b.call_tape("tape_end_of", &[p]);
+        let c = b.call_tape("tape_next_in", &[x, end]);
+        b.numbered_from(c, end)
+    })
+}
+
+/// `view_number(low)`: the numbered node whose id's low 32 bits are `low` (its document's: the key is the caller's
+/// to match), or `NO_ROW`: `low` itself where ids are local ids, else the numbering's inverse (`num_number_of`,
+/// a node's, not a token's).
+pub fn number(b: &mut B<'_, '_>) -> Value {
+    let low = b.arg(0);
+    let preorder = b.word_at(I32, b.tape, at::PREORDER);
+    let local = b.f.ins().icmp_imm(IntCC::NotEqual, preorder, 0);
+    let n = b.word_at(I32, b.tape, at::NODES);
+    let l = b.either(I32, local, |_| low, |b| {
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let found = b.call_at("num_number_of", numbering, &[low]);
+        // A node's: item 0 in the high word.
+        let item = b.f.ins().ushr_imm(found, 32);
+        let node = b.f.ins().icmp_imm(IntCC::Equal, item, 0);
+        let number = b.f.ins().ireduce(I32, found);
+        let no = b.c32(i64::from(NO_ROW));
+        b.f.ins().select(node, number, no)
+    });
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, l, n);
+    let no = b.c32(i64::from(NO_ROW));
+    b.f.ins().select(inside, l, no)
 }

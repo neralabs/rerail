@@ -1,4 +1,4 @@
-//! The UKL library's device-wide operations, as calls a host plan makes (decision 0400 §5): the kernels are the
+//! The UKL library's device-wide operations, as calls a host plan makes (decision 0440 §5): the kernels are the
 //! library's (`ukl/scan.h`, `ukl/compact.h`, `ukl/histogram.h`, `ukl/radix.h`, `ukl/hash.h`), compiled once a process; the plan
 //! of launches is here. Each call
 //! enqueues its work on the caller's queue and returns; the caller flushes and awaits.

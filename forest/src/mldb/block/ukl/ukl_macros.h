@@ -174,7 +174,7 @@
 #define FOREACH_QUAD(Fn, ...) \
     FOREACH_QUAD_N(Fn, COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)
 
-// A kernel's threadgroup storage (Rerail, decision 0400): a `SHARED, Type, Name, Count` row declares
+// A kernel's threadgroup storage (Rerail, decision 0440): a `SHARED, Type, Name, Count` row declares
 // `Type Name[Count]` in threadgroup memory in the kernel's own scope (Metal allows it nowhere else), and the body
 // gets a pointer to it. A shim defines GEN_SHARED_DECL_SHARED; every other kind of row declares nothing.
 #define GEN_SHARED_DECL_ROBUFFER(Type, Name, Bounds)

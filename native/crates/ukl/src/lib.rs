@@ -1,5 +1,5 @@
 //! UKL ("the Ugly Kernel Language", from MLDB): kernels written once, in C with macros, for every GPU backend
-//! (decision 0400 §3, §4).
+//! (decision 0440 §3, §4).
 //!
 //! A UKL kernel is C (a C++20 subset) whose GPU-specific parts are macros: address spaces (`ROBUFFER(T)`),
 //! kernel signatures (`DEFINE_KERNEL2`'s rows of access, type, name and bounds), barriers, atomics and SIMD-group
@@ -18,7 +18,7 @@
 //! backend's own shim (`<ukl_metal_shim.h>`, ...) and the common UKL headers (`<ukl>`, `<ukl_shim.h>`). UKL's
 //! `ukl_shim.h` picks the backend from the predefines (`__METAL_VERSION__`, `__CUDA_ARCH__`; none for the CPU).
 //!
-//! **The library** (decision 0400 §5): Rerail's UKL headers, in `lib/ukl/`, carried here too and found as
+//! **The library** (decision 0440 §5): Rerail's UKL headers, in `lib/ukl/`, carried here too and found as
 //! `<ukl/NAME.h>` by every kernel, hand-written or generated. `ukl/backend.h` holds the intrinsics, one section per
 //! backend; every other header is written once over them (`LIBRARY` lists them, lowest first). A kernel takes what
 //! it uses by `#include`: the library is linked by inclusion, and the backend's compiler (the Metal front end,
@@ -52,7 +52,7 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/memory.h", include_str!("../lib/ukl/memory.h")),
     ("ukl/simd.h", include_str!("../lib/ukl/simd.h")),
     ("ukl/group.h", include_str!("../lib/ukl/group.h")),
-    // A body over a type (decision 0400 §3.5): its header includes it once per type, with its parameters defined.
+    // A body over a type (decision 0440 §3.5): its header includes it once per type, with its parameters defined.
     ("ukl/body/lz4_decode.h", include_str!("../lib/ukl/body/lz4_decode.h")),
     ("ukl/body/histogram_part.h", include_str!("../lib/ukl/body/histogram_part.h")),
     ("ukl/body/radix_tile.h", include_str!("../lib/ukl/body/radix_tile.h")),
@@ -98,7 +98,7 @@ pub fn takes_library(text: &str) -> bool {
 
 /// A Metal source that takes the library (`takes_library`), preprocessed for the Metal front end: the library's
 /// headers in place, the source's own text and macros as written. A hand-written MSL kernel includes the generated
-/// reads so (decision 0400 §3.3) until it is UKL itself.
+/// reads so (decision 0440 §3.3) until it is UKL itself.
 pub fn metal_source(name: &str, text: &str) -> Result<String, Error> {
     let path = format!("/<kernels>/{name}");
     Preprocess::new(Backend::Metal { version: 310 }).file(&path, text).run(&path)

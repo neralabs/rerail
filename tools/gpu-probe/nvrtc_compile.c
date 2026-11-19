@@ -1,5 +1,5 @@
 // nvrtc_compile ARCH FILE: FILE (CUDA C++, already preprocessed) compiled by NVRTC for sm_ARCH, as the engine's
-// CUDA backend will compile a UKL kernel (decision 0400 §6); prints the log, the entry points and the cubin's size.
+// CUDA backend will compile a UKL kernel (decision 0440 §6); prints the log, the entry points and the cubin's size.
 // Build: cc -O2 -o nvrtc_compile nvrtc_compile.c -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -lnvrtc -lcuda
 #include <stdio.h>
 #include <stdlib.h>

@@ -824,7 +824,7 @@ fn transduce_nearest(prog: &mut Program, domains: &mut Domains) -> Vec<(String, 
 }
 
 mod on_version;
-pub use on_version::lower_version;
+pub use on_version::{lower_version, lowered};
 
 #[cfg(test)]
 pub mod tests;
