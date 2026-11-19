@@ -2712,7 +2712,15 @@ submitted" now hold device memory at once.
   its tables' room whole before it encodes and waits, helping the pool, for leases other threads hold; it goes to
   the CPU past the budget, when threads that go on hold less than it lacks (no deadlock), or past
   `placement::worth_waiting` (at most 0.5 s). (3) cb55e0b5a: a chunk is sized by the host memory it added, the
-  device's slabs and buffers (Metal's own budget, 0126) left out.
+  device's slabs and buffers (Metal's own budget, 0126) left out. (4) cea2183a4: admission's reservations shut the
+  matcher's waves out of `make_room`; a one-tape wave now waits for what others hold (`wait_for_release`) and runs
+  again, instead of panicking.
+- **Measured** (2026-11-18, the full shape cold on Metal at 512 MB, the M3 at load 103-132): t57 runs to the end,
+  findings identical by value to t41's CPU run; 8 chunks (t41 7, t54 10-19); 10-14 budget refusals (t54 68-111).
+  755.8 G instructions against t54's 596.9 G (load 86-91) and t41's 548.6 G: not yet explained.
+- **Open**: (a) the instructions, measured as one profiled t54/t57 pair on a quieter host before anything else;
+  (b) the refusals left are leases past a stratum's reservation (an estimate under its rows, or an unestimated
+  stage), which `lease_within` refuses without waiting.
 - **Record**: —
 
 ### Q189. (bend's Q117, benchmarks-on-integration's Q54, then Q179 there) The journal's answer across processes is not a guarantee FSEvents makes
