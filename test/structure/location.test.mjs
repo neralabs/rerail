@@ -260,6 +260,33 @@ describe("#4 engine source roots", () => {
   });
 });
 
+describe("pack test data and kept records", () => {
+  it("lets #1 and #2 through pack test data and the workbench's translated pack, never a stray copy", () => {
+    const repo = memoryRepo({
+      "packs/data-layer/upstream/lint/publish/authored/packs/data-layer/pack.json": "{}",
+      "packs/data-layer/upstream/lint/publish/authored/packs/data-layer/rules/a.json": rule("a"),
+      "docs/rule-syntax/packs/python-main/source/pack.json": "{}",
+      "docs/rule-syntax/packs/python-main/source/rules/b.json": rule("b"),
+      "docs/rule-syntax/packs/python/pack.json": "{}",
+      "docs/rule-syntax/packs/python/c.json": rule("c"),
+    });
+    expect(paths(packJsonLocation(repo))).toEqual(["docs/rule-syntax/packs/python/pack.json"]);
+    expect(paths(ruleDocLocation(repo))).toEqual(["docs/rule-syntax/packs/python/c.json"]);
+  });
+
+  it("treats a file in a tests/ directory under native/ as test-only, and the workbench's .rerail as the engine may include it", () => {
+    const result = engineRoots(
+      memoryRepo({
+        "native/Cargo.toml": "",
+        "native/src/findings/tests/reference.rs": 'const A: &str = include_str!("../../../../packs/python/rules/a.json");\n',
+        "native/src/logic/core.rs": 'const CORE: &str = include_str!("../../../docs/rule-syntax/lib/core.rerail");\n',
+        "native/src/logic/other.rs": 'const OTHER: &str = include_str!("../../../docs/notes/other.rerail");\n',
+      }),
+    );
+    expect(paths(result)).toEqual(["native/src/logic/other.rs"]);
+  });
+});
+
 describe("#5 test roots", () => {
   it("allows test/, integration/, e2e/ and data roots; flags tests elsewhere", () => {
     const result = testRoots(

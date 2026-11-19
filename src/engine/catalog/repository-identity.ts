@@ -17,7 +17,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { checkoutRealpath, physicalPath } from "./checkout-control.js";
 import { openNoFollowSync } from "../no-follow.js";
-import { GitUnavailableError, gitText, runGit } from "../git.js";
+import { GitUnavailableError, gitText, runGit, runGitAsync } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
 /** Where a checkout keeps its clone id, and which checkout it is. */
@@ -37,6 +37,9 @@ function nonGitLocation(requested: string): RepositoryIdentityLocation {
 /** The file in Git's common metadata directory that holds a clone's id, shared by every linked worktree. */
 export const GIT_IDENTITY_FILE = "rerail-repository-id";
 
+/** What {@link gitLocation} reads: Git's top level, common directory and Git directory, as absolute paths. */
+const LOCATE_ARGS = ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"];
+
 /**
  * Where `workspace`'s clone id lives: {@link GIT_IDENTITY_FILE} in Git's common metadata directory, shared by every
  * linked worktree, or `.rerail/repository-id` outside Git (or when Git is not installed).
@@ -48,6 +51,23 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
 }
 
 /**
+ * {@link repositoryIdentityLocation} without blocking: its one Git process runs off the thread, so a daemon goes on
+ * answering hooks meanwhile. Once `signal` is aborted, that Git ends (or never starts) and the folder reads as outside
+ * Git.
+ */
+export async function repositoryIdentityLocationAsync(workspace: string, signal?: AbortSignal): Promise<RepositoryIdentityLocation> {
+  const requested = resolve(workspace);
+  const result = outsideGit(requested) ? undefined : await runGitAsync(requested, LOCATE_ARGS, { signal }).catch(noGitInstalled);
+  return result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
+}
+
+/** Undefined when Git is not installed; any other failure is thrown again. */
+function noGitInstalled(error: unknown): undefined {
+  if (error instanceof GitUnavailableError) return undefined;
+  throw error;
+}
+
+/**
  * Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed, or when Git
  * would find no repository there ({@link outsideGit}), so a folder outside Git, asked about on every hook event of a
  * session working in it, starts no Git process.
@@ -55,10 +75,9 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
 function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
   if (outsideGit(requested)) return undefined;
   try {
-    return runGit(requested, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"]);
+    return runGit(requested, LOCATE_ARGS);
   } catch (error) {
-    if (error instanceof GitUnavailableError) return undefined;
-    throw error;
+    return noGitInstalled(error);
   }
 }
 

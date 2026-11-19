@@ -8,6 +8,18 @@ use ast_grep_core::{Doc, Node};
 use napi::Result;
 use serde_json::Value;
 
+/// ESLint's `eslint-disable` comments: the rule names a comment must name (or name none).
+pub struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "eslint";
+    const DETAIL: &'static str = "eslint: eslint-disable comments are ESLint's";
+    type Spec = Vec<String>;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Vec<String>> {
+        spec(value, at)
+    }
+}
+
 /// `eslint.rules`: the rule names an `eslint-disable` comment must name (or name none) to
 /// suppress the violation.
 pub(super) fn spec(eslint: &Value, at: &str) -> Result<Vec<String>> {
@@ -38,7 +50,7 @@ struct Block {
 /// A file's ESLint directives that disable or enable rules, as ESLint 10.11.0's
 /// `getDisableDirectives` and `applyDisableDirectives` read them.
 #[derive(Debug, Default)]
-pub(crate) struct EslintDirectives {
+pub struct EslintDirectives {
     /// Block directives, in source order.
     blocks: Vec<Block>,
     /// Line directives: the line each applies to, and the rule ids it names.

@@ -1,0 +1,5 @@
+{
+  "title": "Starting processes without a shell",
+  "rule": "bandit-b606-start-process-with-no-shell",
+  "note": "B606 lists the os functions that replace or spawn a process (exec*, spawn*, startfile): each call is a finding to review. subprocess is a different check."
+}

@@ -31,7 +31,7 @@ flowchart TD
     Tok[access-token / daemon.json]
     Ver[versions/, packs/]
   end
-  Cache[(~/.cache/rerail<br/>content-v1.sqlite)]
+  Cache[(~/.cache/rerail<br/>content-v5.sqlite)]
   Ledger[(repo/.rerail/sessions)]
   D[Daemon :4737<br/>HTTP API · MCP · dashboard]
   E[Native engine<br/>parsers · rules · model]
@@ -61,7 +61,7 @@ What Rerail holds that is worth attacking, and where it lives.
 | --- | --- | --- |
 | Session history: prompts, replies, tool inputs, **raw tool outputs** | `rerail.sqlite` (`RerailRuntime.persistEvent`) | Whatever the agent saw, secrets included, unredacted. |
 | Pre-edit source text and session ledgers | `<repo>/.rerail/sessions/<sha256(session)>/events.jsonl` | Source and prompt text in the working tree; `rewind` restores from it. |
-| Source copies, syntax trees, check results | `~/.cache/rerail/content-v1.sqlite` (Windows: `%USERPROFILE%\AppData\Local\rerail\content-v1.sqlite`) | A second copy of every file the engine read. |
+| Source copies, syntax trees, check results | `~/.cache/rerail/content-v5.sqlite` (Windows: `%USERPROFILE%\AppData\Local\rerail\content-v5.sqlite`) | A second copy of every file the engine read. |
 | Rule catalog: rules, packs, settings, start state | `rerail.sqlite` | Decides what reaches every future session, and whether Rerail is armed. |
 | Daemon access capability | `~/.rerail/access-token`, `daemon.json` (0600) | Full `person` API: all repositories, unredacted transcripts, every write. |
 | Executable code Rerail launches | `~/.rerail/versions/<v>/`, `current`, `bin/rerail`, `update-state.json`, `RERAIL_ENGINE_PATH` | Runs on every hook, daemon start and CLI call. |
@@ -721,8 +721,8 @@ On Unix, Rerail creates its files private and tightens existing ones. On Windows
 
 - The content store's folder is created 0700 and its database 0600; SQLite gives `-wal` and `-shm` the same mode.
 - On open, Rerail tightens the home and these files if other users could read them and the person owns them:
-  `rerail.sqlite*`, `harness.sqlite*`, `daemon.json*`, `access-token*`, `daemon.log*`, `*.pre-update`. It never
-  follows a symlink to do so.
+  `rerail.sqlite*`, `harness.sqlite*`, `daemon.json*`, `access-token*`, `daemon.log*`, `claude-status-lines/`, `*.pre-update`. It
+  never follows a symlink to do so.
 - The rule-pack staging folder is created 0700.
 
 **Mitigated on every system** (`src/daemon/daemon.ts:loadDaemonTls`): a daemon TLS key other accounts can read, by its
@@ -772,6 +772,11 @@ should not widen it.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, through a shell: `shell: true`, or Git Bash's `bash -c` on Windows when Rerail finds one
   (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
+- Claude Code's status command on macOS and Linux has its shell read `claude-status.sh` from the installed package and
+  print `<Rerail home>/claude-status-lines/<session id>`, which the daemon writes (0600, in a 0700 folder). The session id comes
+  from Claude Code's JSON on stdin; the script takes only `[A-Za-z0-9_-]`, so an id cannot name a file outside the
+  folder. The lines hold terminal escapes (colour, OSC 8 links); the daemon strips control characters from every
+  label and address it puts in them (`src/presentation/claude-status-files.ts`).
 - `hooks/cursor.json` uses the relative path `./dist/hosts/cursor/cursor-hook.js`. [INFERENCE: exposed only if Cursor
   runs plugin hooks with the project as working directory. `rerail setup` writes absolute paths.]
 

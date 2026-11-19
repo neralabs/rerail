@@ -1,0 +1,16 @@
+{
+  "format": "rerail.profile-selection/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "serverplan_dispatch_architecture"
+  ],
+  "files": [
+    {
+      "path": "impl/common/l2070_server_plan/base_server_plan.py",
+      "sha256": "f49015339b02b0cdebcd8f9477140a8d4e0d82d62af26ceb38b226028e8f6444"
+    }
+  ],
+  "expectations": {
+    "serverplan_dispatch_architecture": []
+  }
+}

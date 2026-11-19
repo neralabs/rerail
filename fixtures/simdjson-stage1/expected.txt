@@ -1,0 +1,5 @@
+fixtures/simdjson-stage1/edges.json 36226 3340 6c2d13119e27027d
+fixtures/simdjson-stage1/react-divergences.json 2310 105 178184c0de2ca0fc
+packs/python/rules/ruff-pie810-multiple-starts-ends-with.json 18469 1362 5d832b2378c79b5c
+packs/data-layer/candidates/rules/data-layer-plan-scope-ownership.json 152875 8749 237049d320b83056
+fixtures/php/literal/phpdoc.expected.json 3825785 1105499 e6a2c6de9936f227

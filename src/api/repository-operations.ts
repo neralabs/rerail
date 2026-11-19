@@ -27,7 +27,7 @@ import {
   type RuleSuppressions,
 } from "../engine/catalog/repository-model.js";
 import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
-import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
+import { repositoryIdentityLocationAsync } from "../engine/catalog/repository-identity.js";
 import {
   checkoutStatus,
   linkAlias,
@@ -454,15 +454,24 @@ function attachmentsOf(db: RerailDatabase, repositoryKey: string): z.infer<typeo
     .orderBy(ruleAttachments.folder, ruleAttachments.sourceKind, ruleAttachments.sourceId).all();
 }
 
-/** A checkout of the repository that is on disk to scan: the target's, else the main checkout, else the most recently seen. */
-export function checkoutOnDisk(target: Target): string {
+/**
+ * A checkout of the repository that is on disk to scan: the target's, else the main checkout, else the most recently
+ * seen. Git tells the main checkout from linked worktrees off the thread, so the daemon answers hooks meanwhile.
+ */
+export async function checkoutOnDisk(target: Target): Promise<string> {
   if (target.checkout !== undefined && existsSync(target.checkout.checkoutPath)) return target.checkout.checkoutPath;
   const present = target.repository.checkouts.filter(checkout => existsSync(checkout.checkoutPath));
-  const main = present.find(checkout => repositoryIdentityLocation(checkout.checkoutPath).main);
+  const main = await mainCheckout(present);
   const recent = [...present].sort((left, right) => right.lastSeenAt - left.lastSeenAt)[0];
   const chosen = main ?? recent;
   if (chosen === undefined) throw new ApiError(409, "no-checkout-on-disk", `no checkout of ${target.repository.repositoryKey} is on this machine's disk`);
   return chosen.checkoutPath;
+}
+
+/** The first of `present` that Git reads as a main checkout, not a linked worktree, asking about one at a time. */
+async function mainCheckout<C extends { readonly checkoutPath: string }>(present: readonly C[]): Promise<C | undefined> {
+  for (const checkout of present) if ((await repositoryIdentityLocationAsync(checkout.checkoutPath)).main) return checkout;
+  return undefined;
 }
 
 /** Library and engine errors as API errors. */
@@ -712,9 +721,9 @@ export const repositoryOperations: readonly Operation[] = [
     summary: "Recommend installed rule packs for a repository by matching a checkout's files and dependency manifests against each pack, each with the folder to add it in (the whole repository for repository packs). Local; changes nothing. A checkout is rescanned at most once a minute.",
     query: z.object({ ...targetShape }).strict(),
     output: rulePackRecommendationsSchema,
-    handler: (stores, input, caller) => {
+    handler: async (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, false);
-      const checkoutPath = checkoutOnDisk(target);
+      const checkoutPath = await checkoutOnDisk(target);
       return {
         repositoryKey: target.repository.repositoryKey,
         checkoutPath,

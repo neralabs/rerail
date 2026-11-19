@@ -1,0 +1,190 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt023-pytest-incorrect-mark-parentheses-style",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write pytest markers that take no arguments without empty parentheses, so every marker decorator follows one consistent style.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "mark-with-empty-parentheses",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "mark-ns": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "pytest.mark"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "mark-ns"
+                  }
+                }
+              ]
+            },
+            "mark-ref": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "mark-ns"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "pytest.mark"
+                    ],
+                    "prefix": true
+                  },
+                  "not": {
+                    "any": [
+                      {
+                        "resolves": {
+                          "import": [
+                            "pytest.mark"
+                          ]
+                        }
+                      },
+                      {
+                        "resolves": {
+                          "binding": {
+                            "form": "import",
+                            "site": {
+                              "matches": "deeper-import-site"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "mark-ref"
+                  }
+                }
+              ]
+            },
+            "empty-mark-call": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "mark-ref"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "kind": "argument_list",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "comment"
+                                },
+                                {
+                                  "kind": "line_continuation"
+                                },
+                                {
+                                  "regex": "^[()]$"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "empty-mark-call"
+                  }
+                }
+              ]
+            },
+            "deeper-import-site": {
+              "any": [
+                {
+                  "kind": "aliased_import",
+                  "not": {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "import_from_statement"
+                    }
+                  },
+                  "has": {
+                    "field": "name",
+                    "regex": "^(?:[^.]*\\.){3}"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "import_from_statement",
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^(?:[^.]*\\.){2}"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "empty-mark-call"
+            },
+            "regex": "^(?P<span>(?:\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:[ \\t]*#[^\\n]*)?$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.span",
+        "code": "PT023",
+        "message": "Remove the empty `()` after this `pytest.mark` decorator; a marker without arguments is written bare. Keep any comments that sat inside the parentheses.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT023"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
