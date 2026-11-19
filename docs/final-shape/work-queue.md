@@ -2880,8 +2880,14 @@ submitted" now hold device memory at once.
     17. So every unprofiled count from ab59 on carries lines that grow with what the main thread runs: the
     per-chunk slopes and the load correlation drawn from them (above) are not established. Clean, 8 at once:
     ~3 G a chunk (12.9 G for 4), within one chunking's 4% spread (~25 G); one at a time ~10 G a chunk, and
-    ~38 G under 8 at once at 13 chunks. The profiled pairs (ab74, ab75) print no lines. Next: the slope again
-    with `sections`, three runs each of 13 and 17 chunks 8 at once, before any more is drawn from it.
+    ~38 G under 8 at once at 13 chunks. The profiled pairs (ab74, ab75) print no lines.
+  - (ab79: `sections`, 8 at once, alternated, loads 6-15) 52,000 nodes forced: 626.8 G / 13, 629.0 / 13,
+    641.7 / 11 (mean 632.5); 28,600: 649.2 / 17, 623.6 / 17, 646.4 / 17 (mean 639.7). +7 G for 4-6 more chunks,
+    under each size's own spread (15 and 26 G): a chunk's cost is under ~2 G and not resolved. The ~7 G a chunk
+    this item set out to remove was the timeline's lines (unprofiled) and the profile's own spans (profiled).
+    Item 3 stands as measured: no per-chunk cost to remove past (i); (ii)'s two commits (the normalized
+    program, the symbols' arena outside their lock) are kept as shape, not as savings. Open: the warm-up run
+    (default sizing, 13 chunks) is 579.2 G, under every forced run after it (624-649 G).
   - (accounting, before 7562bf8a94) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
