@@ -19,12 +19,13 @@ is reverted.
   `endProcessTree(child, { platform, killTree })`, `exitWhenParentGone({ platform })`, `DaemonMachine` in
   `src/runtime/daemon-control.ts`, `RerailDaemonOptions.enginePlatform`. `openNoFollow` takes the no-follow flag, and
   its test passes `0` to run the Windows path against a real symlink on Linux.
-- **On Windows itself.** `unit-windows` builds the native engine on Windows when its cache misses, and then runs the
-  engine's `#[cfg(windows)]` Rust tests too. `package.yml`, which `release.yml` and the environment matrix call, builds
-  the engine for Windows x64 and arm64 and refuses one that imports the Visual C++ runtime
-  (`scripts/check/check-windows-runtime.mjs`); `release.yml` then installs the package on a Windows x64 runner with
-  `scripts/host/windows-install-smoke.ps1`. The [environment matrix](environment-matrix.md) installs it on Windows 11
-  VMs. None of these but `unit-windows` runs on a pull request.
+- **On Windows itself.** `build-windows` builds the native engine on Windows once per run and hands it to the
+  `unit-windows` shards, and `rust-windows` runs the engine's `#[cfg(windows)]` Rust tests whenever the change selects
+  the engine's tests. `package.yml`, which `release.yml` and the environment matrix call, builds the engine for Windows
+  x64 and arm64 and refuses one that imports the Visual C++ runtime (`scripts/check/check-windows-runtime.mjs`);
+  `release.yml` then installs the package on a Windows x64 runner with `scripts/host/windows-install-smoke.ps1`. The
+  [environment matrix](environment-matrix.md) installs it on Windows 11 VMs. None of these but the three CI jobs runs
+  on a pull request.
 
 <details>
 <summary>Windows-safe paths</summary>
@@ -104,8 +105,9 @@ by a library Rerail does not control for example, then shares the hidden console
   `rerail daemon start` a hook's autostart runs (`autostartDaemon`) starts in the Rerail home too, and hands it the
   session's folder as `--workspace-root`. This holds on every platform.
 - The Rust test `starts_the_daemon_with_a_hidden_console_not_without_one` checks the flags on every OS, and the Windows
-  build checks them against `windows-sys` when it compiles. PR CI compiles that `cfg(windows)` code in `unit-windows`
-  whenever the engine's inputs change, and runs `reports_a_detached_childs_exit_code_from_the_handle_it_kept` there.
+  build checks them against `windows-sys` when it compiles. PR CI compiles that `cfg(windows)` code in `rust-windows`
+  whenever the change selects the engine's tests, and runs `reports_a_detached_childs_exit_code_from_the_handle_it_kept`
+  there.
 - On Windows `test/runtime/daemon-control.test.ts` starts a probe (`test/support/platform/console-probe.ts`) through
   `launchDetached`, as the daemon is started. The probe opens `CONOUT$` to say whether it has a console, and starts
   two Git processes: one without `windowsHide`, as a library could, and one with it, as the helper does. The test
@@ -207,7 +209,7 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   then runs must pass the checks every `PATH` entry gets (`trustedFolder`): outside every `node_modules`, and outside
   the repository Rerail runs in by its path and by its real path, which a junction into the repository would reach.
 - `findGit` tries the candidates one at a time and stops at the first Git that runs, so the `PATH` entries after it
-  are never resolved; the status line, a process of its own every few seconds, pays for the entries up to its Git
+  are never resolved; the status line, a process of its own at every refresh, pays for the entries up to its Git
   only. On Windows a candidate spelled twice in different case is probed once.
 - A Git laid out otherwise, such as a scoop shim, runs as found. When a batch reader (`readGitBlobs`, `readGitBlobIds`,
   `gitCrlfPaths`) times out, it ends the shim and the Git it started (`endProcessTree`), and answers 500 ms later
@@ -573,7 +575,15 @@ capability, refused every start as "alive but not answering", and `rerail daemon
 
 ## The Claude Code status line
 
-On Windows Rerail's status line runs the person's previous status line through Git Bash, as Claude Code ran it, and
+On Windows every refresh of Rerail's status line starts Node (`sh -c '…' <node> <claude-status.js>`, through Git Bash),
+which asks the daemon for the session's line. On macOS and Linux a session with no status line of the person's own
+prints the line the daemon keeps in a file, with shell built-ins and no Node (`src/hosts/claude/claude-status.sh`);
+Windows does not use that yet, since the script has not been run under Git Bash, where `.` takes a Windows path and
+the home is not always `$HOME`, and the daemon keeps no such files there (`src/cli/daemon-entry.ts`). Registration sets
+no refresh interval on any platform, so Claude Code runs the status line on its own events only
+([how Claude Code draws it](in-session-surfaces.md#how-claude-code-draws-it)).
+
+Rerail's status line runs the person's previous status line through Git Bash, as Claude Code ran it, and
 ends its whole process tree when it overruns its 2 s budget.
 
 Node's `shell: true` is cmd.exe on Windows, which reads `~`, single quotes and `$(...)` as plain text, so a bash
