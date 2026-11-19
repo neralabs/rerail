@@ -171,9 +171,12 @@ fn selected_documents_keep_each_git_placement_of_a_shared_tape() {
     fs::copy(f.repo.join("a.py"), f.repo.join("sub/b.py")).unwrap();
     fs::write(f.repo.join("sub/ignored.py"), "ignored = True\n").unwrap();
     fs::write(f.repo.join(".rerailignore"), "sub/ignored.py\n").unwrap();
-    f.git(&["add", "--", "sub/b.py", "sub/ignored.py", ".rerailignore"]);
-    f.git(&["commit", "-qm", "two selected paths share one blob"]);
+    // Both files originally had the same size. An index stat match can hide the replacement on Windows.
     let blob = f.git(&["rev-parse", "HEAD:a.py"]);
+    f.git(&["update-index", "--cacheinfo", "100644", &blob, "sub/b.py"]);
+    f.git(&["add", "--", "sub/ignored.py", ".rerailignore"]);
+    f.git(&["commit", "-qm", "two selected paths share one blob"]);
+    assert_eq!(f.git(&["rev-parse", "HEAD:sub/b.py"]), blob);
     let tree = f.git(&["rev-parse", "HEAD^{tree}"]);
     fs::write(f.repo.join("a.py"), "edited = 'working tree'\n").unwrap();
     let example = include_str!("../../docs/rule-syntax/git.md").split("```rr\n")
