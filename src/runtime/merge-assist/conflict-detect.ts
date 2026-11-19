@@ -78,6 +78,12 @@ export interface DetectContext {
    * (`readsStoppedBy`), and the pass stores nothing and answers null.
    */
   readonly reads?: GitReads;
+  /**
+   * Whether the conflict events of storing `after` over `before` are heard, asked in the store's own transaction: when
+   * they are not, the pass stores nothing and answers null, so the next pass finds those conflicts again and its events
+   * are heard then. Heard when absent.
+   */
+  readonly heard?: (before: readonly StoredConflict[], after: readonly StoredConflict[]) => boolean;
 }
 
 /** This checkout's side: where its work starts, its head and branch, the person, and its changed hunks per file. */
@@ -529,7 +535,8 @@ export interface DetectedConflicts {
 
 /**
  * Find the checkout's conflicts and store them with the dismissed ones. A detection that finishes after Merge Assist
- * was turned off, or once the owner of its `reads` stops, stores nothing and answers null.
+ * was turned off, or once the owner of its `reads` stops, or whose events would not be `heard`, stores nothing and
+ * answers null.
  */
 export async function detectConflicts(context: DetectContext): Promise<DetectedConflicts | null> {
   const detected = await readsStoppedBy(context.reads, () => detectPass(context));
@@ -568,6 +575,7 @@ async function detectPass(context: DetectContext): Promise<DetectedConflicts | n
     const before = readConflicts(tx, root);
     const unexamined = before.filter(entry => entry.conflict.status === "open" && !examined.has(entry.conflict.id));
     const after = [...mergeDetected(before, detected), ...unexamined];
+    if (context.heard?.(before, after) === false) return null;
     writeConflicts(tx, root, after, now);
     return {
       before, after, peers: { branches: refs.branches.length, pullRequests: refs.pulls.length }, problems,

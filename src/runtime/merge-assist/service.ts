@@ -106,9 +106,11 @@ export interface MergeAssistRuntime extends MergeAssistService {
    * Stop: no conflict event is handed to the hook any more, and a handler that answers later records nothing. Every
    * hook command still running gets SIGTERM on its process group, then SIGKILL after a short grace. Waits at most
    * `waitMs` in all for the handlers, scans and detection passes running now: a pass that ends meanwhile stores what it
-   * found. A pass still running after that ends at its next Git read and stores nothing, and the stop resolves once the
-   * Git it ended has exited, so none runs on in the checkout. It does not wait for a pass's other work, such as a file
-   * read on a drive that stopped answering: that pass ends by itself later, and stores nothing and starts no Git.
+   * found when that tells the hook nothing new; one that finds a conflict new or gone stores nothing, and the next pass
+   * finds it again and the hook hears it then. A pass still running after that ends at its next Git read and stores
+   * nothing, and the stop resolves once the Git it ended has exited, so none runs on in the checkout. It does not wait for
+   * a pass's other work, such as a file read on a drive that stopped answering: that pass ends by itself later, and
+   * stores nothing and starts no Git.
    */
   stop(waitMs?: number): Promise<void>;
 }
@@ -306,6 +308,16 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   /**
+   * Whether the conflict hook hears the events of a pass that stores `after` over `before`: always, unless Merge Assist
+   * is stopping (`#fire` hands it nothing then) and the store would make an event. A pass stores only what is
+   * heard (`detectConflicts` asks this in its store's transaction), so a conflict found new or gone while stopping is
+   * found again by the next pass, in this process or the next, and the hook hears it then.
+   */
+  #heard(before: readonly StoredConflict[], after: readonly StoredConflict[]): boolean {
+    return !this.#stopped || conflictEvents(before, after).length === 0;
+  }
+
+  /**
    * `gh`'s readiness for the repository: the one read in the last five minutes by any process (the last minute, for
    * one `gh` could not tell, `unavailable`), else read now. None is kept once Merge Assist is off.
    */
@@ -423,9 +435,11 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   async #detect(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null, scan = false): Promise<void> {
     const { pulls, problems, login = null } = await this.#openPulls(checkout, scan);
     // The stop's wait ended while `gh` answered: the database may be closed. Within the wait, the pass runs and stores
-    // what it finds, as a pass that had begun when the stop came does.
+    // what it finds, as a pass that had begun when the stop came does, as long as the hook hears it (`#heard`).
     if (this.#reads.stopped) return;
-    const detected = await detectConflicts({ database: this.#db, checkout, pulls, login, now: this.#now, reads: this.#reads });
+    const detected = await detectConflicts({
+      database: this.#db, checkout, pulls, login, now: this.#now, reads: this.#reads, heard: (before, after) => this.#heard(before, after),
+    });
     if (detected === null) return;
     if (scan) {
       const last: LastScan = { at: isoSeconds(this.#now()), peers: detected.peers, problems: [...problems, ...detected.problems] };

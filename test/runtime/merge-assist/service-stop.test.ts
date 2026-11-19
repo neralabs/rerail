@@ -1,6 +1,7 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { type MergeAssistStatus, openRerailDatabase } from "../../../src/engine/index.js";
 import { createMergeAssistService, type GithubClient, type MergeAssistRuntime, type PullRequestSummary } from "../../../src/runtime/index.js";
@@ -28,17 +29,49 @@ const PEERS = 12;
  * as the checkout's own commit does, with other text: each conflicts with the checkout's work. Answers their tips.
  */
 function addPeers(ws: Workspace): string[] {
+  return Array.from({ length: PEERS }, (_, index) => commitPeer(ws, index, `Orders, take ${index}`));
+}
+
+/**
+ * Commits `origin/peer-<index>` anew off `main` with `subject`, its change to `src/api/orders.ts` as {@link addPeers}
+ * makes it: the same conflict, with another tip. Answers the tip.
+ */
+function commitPeer(ws: Workspace, index: number, subject: string): string {
   const now = Math.floor(Date.now() / 1000);
   const data = (text: string): string => `data ${Buffer.byteLength(text)}\n${text}\n`;
-  const commits = Array.from({ length: PEERS }, (_, index) => [
+  const commit = [
     `commit refs/remotes/origin/peer-${index}`,
     `committer Jo Barnes <jo@example.com> ${now} +0000`,
-    `${data(`Orders, take ${index}`)}from refs/heads/main^0`,
+    `${data(subject)}from refs/heads/main^0`,
     "M 100644 inline src/api/orders.ts",
     data(`export const orders = () => client.get("/v${index + 2}/orders");\n`),
-  ].join("\n"));
-  execFileSync("git", ["fast-import", "--quiet"], { cwd: ws.repo, input: commits.join("\n"), env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" } });
-  return Array.from({ length: PEERS }, (_, index) => git(ws.repo, "rev-parse", `refs/remotes/origin/peer-${index}`));
+  ].join("\n");
+  execFileSync("git", ["fast-import", "--quiet", "--force"], { cwd: ws.repo, input: commit, env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" } });
+  return git(ws.repo, "rev-parse", `refs/remotes/origin/peer-${index}`);
+}
+
+/**
+ * Every peer's conflict stored by a scan, then `origin/peer-0` committed anew: a later pass finds the same conflicts,
+ * which tell the hook nothing new, and stores peer-0's new tip. Answers that tip.
+ */
+async function knownConflictsMoved(ws: Workspace): Promise<string> {
+  addPeers(ws);
+  const first = ws.service();
+  await first.setEnabled(ws.repo, true);
+  expect((await first.scan(ws.repo)).conflicts).toHaveLength(PEERS);
+  return commitPeer(ws, 0, "Orders, take 0, again");
+}
+
+/** The tip of `origin/peer-0` the stored conflict with it names. */
+const peerTip = (conflicts: MergeAssistStatus["conflicts"]): string | undefined =>
+  conflicts.find(conflict => conflict.theirs.ref === "origin/peer-0")?.theirs.sha;
+
+/** Sets a hook command on the repository that logs each event it hears; answers the events logged so far. */
+async function loggedHook(ws: Workspace): Promise<() => string[]> {
+  const log = join(ws.folder, "hook.log");
+  const script = "require(\"node:fs\").appendFileSync(process.argv[1], process.env.RERAIL_CONFLICT_EVENT + \"\\n\")";
+  await ws.service().updateSettings(ws.repo, { hook: { command: [process.execPath, "-e", script, log], timeoutSeconds: 10 } });
+  return () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(line => line !== "") : []);
 }
 
 /** An open pull request from `peer-<index>`, its head at `sha`. */
@@ -217,44 +250,77 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     expect(await stored(ws)).toEqual({ lastScan: found.lastScan, scanning: false, conflicts: found.conflicts });
   });
 
-  it("lets a scan that ends within the stop's wait store what it found, as a scan that ends before the stop does", async () => {
+  it("lets a scan that ends within the stop's wait store what it found when that tells the hook nothing new, as a scan that ends before the stop does", async () => {
     const ws = await workspace();
-    addPeers(ws);
+    const tip = await knownConflictsMoved(ws);
     const service = ws.service();
-    await service.setEnabled(ws.repo, true);
 
     const { runningAtStop } = await stopDuring(service, () => service.openSession(ws.repo, "claude-code", "session-1"), { at: "--name-only", waitMs: UNREACHED_MS, held: false });
 
     expect(runningAtStop).toEqual([]);
     const scan = await stored(ws);
-    expect({ peers: scan.lastScan?.peers, scanning: scan.scanning, conflicts: scan.conflicts.length })
-      .toEqual({ peers: { branches: PEERS, pullRequests: 0 }, scanning: false, conflicts: PEERS });
+    expect({ peers: scan.lastScan?.peers, scanning: scan.scanning, conflicts: scan.conflicts.length, tip: peerTip(scan.conflicts) })
+      .toEqual({ peers: { branches: PEERS, pullRequests: 0 }, scanning: false, conflicts: PEERS, tip });
   });
 
-  it("lets the detection after an edit that ends within the stop's wait store what it found", async () => {
+  it("lets the detection after an edit that ends within the stop's wait store what it found when that tells the hook nothing new", async () => {
     const ws = await workspace();
-    addPeers(ws);
+    const tip = await knownConflictsMoved(ws);
     const service = ws.service();
-    await service.setEnabled(ws.repo, true);
 
     const { runningAtStop } = await stopDuring(service, () => service.detectAfterEdit(ws.repo, "session-1", "claude-code"), { at: "--name-only", waitMs: UNREACHED_MS, held: false });
 
     expect(runningAtStop).toEqual([]);
-    expect((await stored(ws)).conflicts).toHaveLength(PEERS);
+    const { conflicts } = await stored(ws);
+    expect({ conflicts: conflicts.length, tip: peerTip(conflicts) }).toEqual({ conflicts: PEERS, tip });
   });
 
   it("lets a session's scan whose checkout Git was still locating when the stop came store what it found within the stop's wait", async () => {
     const ws = await workspace();
-    addPeers(ws);
+    const tip = await knownConflictsMoved(ws);
     const service = ws.service();
-    await service.setEnabled(ws.repo, true);
 
     const { runningAtStop } = await stopDuring(service, () => service.openSession(ws.repo, "claude-code", "session-1"), { at: "--show-toplevel", waitMs: UNREACHED_MS, held: false });
 
     expect(runningAtStop).toEqual([]);
     const scan = await stored(ws);
-    expect({ peers: scan.lastScan?.peers, scanning: scan.scanning, conflicts: scan.conflicts.length })
-      .toEqual({ peers: { branches: PEERS, pullRequests: 0 }, scanning: false, conflicts: PEERS });
+    expect({ peers: scan.lastScan?.peers, scanning: scan.scanning, conflicts: scan.conflicts.length, tip: peerTip(scan.conflicts) })
+      .toEqual({ peers: { branches: PEERS, pullRequests: 0 }, scanning: false, conflicts: PEERS, tip });
+  });
+
+  it.each([
+    ["whose `gh` listing answers within the stop's wait", "gh"],
+    ["already comparing the checkout's work with other branches when the stop came", "--name-only"],
+  ])("stores nothing a scan %s finds new, which the stopped hook would not hear: a service opened after finds each of those conflicts, and its hook hears it", async (_, at) => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    const pullRequests = addPeers(ws).map(pullOf);
+    await ws.service().setEnabled(ws.repo, true);
+    const heard = await loggedHook(ws);
+    const github = new HeldGithub({ pullRequests });
+    if (at !== "gh") github.release();
+    const service = ws.service({ github });
+
+    const { runningAtStop, startedAfter } = await stopDuring(service, () => service.openSession(ws.repo, "claude-code", "session-1"), {
+      ...(at === "gh" ? {} : { at }),
+      trigger: stop => {
+        if (at !== "gh") return;
+        // `gh` answers once the stop has begun, and the stop's wait lasts until the scan ends.
+        github.onHeld = () => {
+          stop();
+          queueMicrotask(() => github.release());
+        };
+      },
+      waitMs: UNREACHED_MS,
+      held: false,
+    });
+
+    expect(startedAfter).toEqual([]);
+    expect(runningAtStop).toEqual([]);
+    expect(await stored(ws)).toEqual({ lastScan: null, scanning: false, conflicts: [] });
+    const next = ws.service({ github: new FakeGithub({ pullRequests }) });
+    expect((await next.scan(ws.repo)).conflicts).toHaveLength(PEERS);
+    await next.settled();
+    expect(heard()).toEqual(Array.from({ length: PEERS }, () => "detected"));
   });
 
   it("returns once the Git it ended has exited while a scan waits for a file call that never answers, and the scan then writes nothing to the closed database and starts no Git", async () => {
