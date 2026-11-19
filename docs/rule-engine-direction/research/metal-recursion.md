@@ -2,7 +2,7 @@
 
 > **Superseded (2026-10-25).** This report predates `metal-enqueue.md` and the no-fallback rule (spec §8). Statements below that route anything to a CPU/JIT rerun are replaced: monotone recursion runs on Metal as GPU-scheduled waves, constructs that cannot be stratified are rejected by the verifier, and hard device limits yield `Unknown(resource)`, which is counted and gated.
 
-Sources and raw output are in `../experiments/metal-recursion/` (`gen.py`, `kernels.metal`, `bench.swift`, `run1.txt`, `run2.txt`, `runc.txt`).
+Sources and raw output are in `../experiments/metal-recursion/` (removed; at 7efcac9c67) (`gen.py`, `kernels.metal`, `bench.swift`, `run1.txt`, `run2.txt`, `runc.txt`).
 
 ## Conclusion
 

@@ -774,7 +774,7 @@ jobs:
       # P's producer-shape and SQL-budget gates measure P's SQL anchor engine, which this engine places test-only
       # (docs/final-shape/open-items.md O20; P's tests that need P's addon, O84). On this addon they find no anchor
       # batches or producer plans, and the 100-submission budget "remains an expected acceptance failure"
-      # (docs/sql-performance-recovery-workplan.md). As vitest.config.ts does for P's relational suites, they run only
+      # (docs/sql-performance-recovery-workplan.md, removed; at 7efcac9c67). As vitest.config.ts does for P's relational suites, they run only
       # with RERAIL_RELATIONAL_TESTS=1 (set it in this job's env) until O20 picks one anchor engine. By hand,
       # `npm run test:producer-shape` and `npm run test:sql-execution-budget -- <directory>` run as they are.
       # The shape gate requires profiling spans and must never silently skip on a production addon.
@@ -954,10 +954,14 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Both shards read every pack's test data (packs.test.ts, complexity-rules.test.ts and the native tests share them),
-  # restored from what the test-data job saved.
+  # Every shard reads every pack's test data (packs.test.ts, complexity-rules.test.ts and the native tests share them),
+  # restored from what the test-data job saved. The shards split the files by how long each takes in CI, not by their
+  # count (test/support/shards/time-balanced-sequencer.ts, from the times in unit-test-times.generated.ts beside it,
+  # which `node scripts/generate/tests/unit-test-times.mjs` rewrites from CI's logs: scripts/generate/README.md). With
+  # vitest's split by a hash of each path, one of two shards held 57% of the test time; three even ones end with the
+  # Windows shards. The count is the matrix's alone: the name and `--shard` read it as `strategy.job-total`.
   unit:
-    name: Unit tests (${{ matrix.shard }}/2)
+    name: Unit tests (${{ matrix.shard }}/${{ strategy.job-total }})
     needs: [build, test-data]
     if: >-
       ${{
@@ -971,7 +975,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -995,10 +999,11 @@ jobs:
       - name: Unit tests
         env:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
-        run: npm test -- --shard=${{ matrix.shard }}/2
+        run: npm test -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
 
       # Every statement, branch and function of reading a repository's own lint config is run by its tests, file by
-      # file (package.json `test:coverage:lint-config`). Once, on the first shard.
+      # file (package.json `test:coverage:lint-config`). Once, on the first shard, which the split gives that much less
+      # of the suite (`firstShardExtraMs` in the times).
       - name: Lint config coverage gate
         if: matrix.shard == 1
         run: npm run test:coverage:lint-config
@@ -1152,13 +1157,12 @@ jobs:
           dir: ${{ steps.compile-cache.outputs.dir }}
 
   # The unit suite on Windows, the one job that runs it there: paths, shells, process starts and file locks behave
-  # differently on Windows, and every other test job runs on Linux or macOS. Five shards where Linux has two: the suite
-  # runs more than twice as slowly here, and vitest splits the files by a hash of their path, not by how long they
-  # take, so with two shards one held nearly two thirds of the test time and CI result waited about 10 minutes for it.
-  # With five, the slowest shard's tests take about 4 minutes, so Windows ends with the Linux unit job. The count is
-  # the matrix's alone: the name and `--shard` read it as `strategy.job-total`. Gated as the unit job is, and reads the
-  # same test data: the test-data job's artifact, downloaded and verified against the locks as on Linux. The engine is
-  # build-windows' artifact; the package is built here, which takes seconds.
+  # differently on Windows, and every other test job runs on Linux or macOS. Five shards where Linux has three: the
+  # suite runs more than twice as slowly here. The shards split the files by how long each takes on Windows in CI, as
+  # the unit job's do; with vitest's split by a hash of each path the slowest of the five held nearly twice the
+  # fastest's test time. The count is the matrix's alone: the name and `--shard` read it as `strategy.job-total`. Gated
+  # as the unit job is, and reads the same test data: the test-data job's artifact, downloaded and verified against the
+  # locks as on Linux. The engine is build-windows' artifact; the package is built here, which takes seconds.
   unit-windows:
     name: Unit tests (Windows, ${{ matrix.shard }}/${{ strategy.job-total }})
     needs: [test-data, build-windows]
@@ -1229,7 +1233,8 @@ jobs:
       # The integration job runs on Linux only. This file replays a Claude Code session through the built hook as
       # Claude Code runs it on Windows (dist/harness/hook-launcher.js), against a daemon of this build, including a
       # session VS Code opens with a lower-case `c:`; it needs the engine and dist/ the steps above made, and takes
-      # about a minute, so one shard runs it.
+      # about a minute, so one shard runs it, which the split gives that much less of the suite (`firstShardExtraMs`
+      # in the times).
       - name: Claude Code hook integration test
         if: matrix.shard == 1
         env:
