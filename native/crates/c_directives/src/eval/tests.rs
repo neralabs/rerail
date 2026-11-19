@@ -823,3 +823,36 @@ fn line_and_file_are_the_serial_passes() {
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }
+
+/// A measurement, not a check: each stage's GPU time for a small and a large unit, at 1 and 32
+/// groups, and each phase's of `pp_setup` (an empty dispatch's: `what_a_barrier_costs`).
+#[test]
+#[ignore = "a measurement"]
+fn where_an_evaluations_gpu_time_goes() {
+    use rerail_c_pp::files::Search;
+    use rerail_metal::pp_eval::{TO_ALL, TO_DEFS, TO_FRONT, TO_VIS};
+    use rerail_metal::pp_expand::stage_seconds;
+    let mut big = String::new();
+    for k in 0..400usize {
+        big += &format!("#define M{k}(a, b) (a + b * {k}) M{}\n", k.saturating_sub(1));
+        big += &format!("int v{k} = M{k}(x{k}, y) + M{}(1, 2);\n", (k * 7) % 400);
+    }
+    let best = |f: &dyn Fn() -> f64| (0..5).map(|_| f()).fold(f64::MAX, f64::min) * 1e6;
+    for (what, src) in [("small", "#define A 1\nint x = A;\n".to_string()), ("large", big)] {
+        let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), src.into_bytes())].into_iter().collect();
+        let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+        let p1 = rerail_c_pp::stream::parallel::p1_of(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c").unwrap();
+        let (unit, lay, _) = unit_of(&p1, false);
+        for g in [1u64, 32] {
+            let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
+                .iter()
+                .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(&unit, &lay, last, 0, g).unwrap().unwrap_or(f64::NAN))))
+                .collect();
+            eprintln!("{what}, {g} groups (us, cumulative): {}", t.join(", "));
+            // Each phase's cost: the run stopped before phase k+1 less the run stopped before k.
+            let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(&unit, &lay, TO_ALL + 1, k, g).unwrap().unwrap_or(f64::NAN))).collect();
+            let steps: Vec<String> = at.windows(2).enumerate().map(|(k, w)| format!("{}:{:.0}", k + 1, w[1] - w[0])).collect();
+            eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
+        }
+    }
+}

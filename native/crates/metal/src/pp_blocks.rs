@@ -263,7 +263,7 @@ pub const GROUPS: u64 = 32;
 /// The arena's stores the persistent kernels read, by slot: `pp_grid.metal`'s `S_*`, made from
 /// this list (`source`), and a run's offsets (`Lay`). A word slot holds a value, not an offset.
 pub const SLOTS: &[&str] = &[
-    "GRID", "SUMS", "LAST", "N_FILES", "NODES_FLAG", "FILES", "COUNTS", "BASES", "TOTAL", "DIR_COUNTS", "DIR_BASES", "DIR_TOTAL",
+    "GRID", "SUMS", "LAST", "STOP", "N_FILES", "NODES_FLAG", "FILES", "COUNTS", "BASES", "TOTAL", "DIR_COUNTS", "DIR_BASES", "DIR_TOTAL",
     "DIR_GROUPS", "GUARDED", "GUARDS", "BAD", "KEYS", "NODES_OUT", "ROWS", "DIR_KEYS",
     "DEFS", "PCOUNT", "BCOUNT", "PFIRST", "IFIRST", "PTOTAL", "ITOTAL", "PKEYS", "ITEMS", "ROOM", "CAP", "VA_LO", "VA_HI",
     "INSTS", "N_INSTS", "DSLOT", "DACTIVE", "N_DIRS", "GSLOT", "GACTIVE", "N_GAPS", "N_BUILTIN", "ND", "NG", "OWNER_IN", "VHEADS",

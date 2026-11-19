@@ -675,3 +675,22 @@ pub fn relex(texts: &[Vec<u8>], options: u32) -> Result<Vec<u32>, Error> {
     // SAFETY: the device finished writing `out`.
     Ok(unsafe { std::slice::from_raw_parts(out.host().cast::<u32>(), texts.len()).to_vec() })
 }
+
+/// For measurements: the GPU time of a run over `unit` at `groups` groups that ends after stage
+/// `last` (`TO_FRONT`, `TO_DEFS`, `TO_VIS`; `TO_ALL` with the expansion; `TO_ALL + 1` the whole
+/// setup without it), in seconds; `None` where a barrier failed.
+pub fn stage_seconds(unit: &Unit, lay: &Layout, last: u32, stop: u32, groups: u64) -> Result<Option<f64>, Error> {
+    let arena = Arena::new();
+    let front = Front::new(&arena, unit, false, groups)?;
+    let defs = Defs::new(&arena, unit, 0)?;
+    let vis = Vis::new(&arena, unit, lay)?;
+    let exp = Exp::new(&arena, unit, lay, 0)?;
+    arena.lease()?;
+    let mut l = Lay::new();
+    front.lay(&mut l, last);
+    defs.lay(&mut l);
+    vis.lay(&mut l);
+    exp.lay(&mut l);
+    l.word("STOP", stop);
+    Ok(on_grid(&arena, unit, &front, &l, groups)?.map(|(_, s)| s))
+}

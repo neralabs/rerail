@@ -108,3 +108,49 @@ fn an_evaluation_is_one_command_buffer() {
     });
     assert!(two.is_err(), "a second command buffer in one evaluation");
 }
+
+/// A measurement, not a check: the grid's sort alone, a few keys, one group.
+#[test]
+#[ignore = "a measurement"]
+fn the_grid_sort_alone_is_fast() {
+    let dev = crate::device().unwrap();
+    for (n, bits) in [(3usize, 32u32), (31, 64), (31, 32), (3, 64), (1000, 32)] {
+        let keys: Vec<u64> = (0..n as u64).map(|k| k.wrapping_mul(0x9e37_79b9) & 0xffff_ffff).collect();
+        let z32 = |k: usize| MappedBuffer::zeroed::<u32>(&dev, k).unwrap();
+        let (ctl, kb, va, k2, v2, hist, sums) = (z32(8), buf(&keys), z32(n), MappedBuffer::zeroed::<u64>(&dev, n).unwrap(), z32(n), z32(256 * n.div_ceil(1024) + 1), z32(4));
+        let t = (0..5)
+            .map(|_| {
+                crate::pp_eval::run_timed(|e| e.run("pb_sort_alone", None, &[&ctl.buffer, &kb.buffer, &va.buffer, &k2.buffer, &v2.buffer, &hist.buffer, &sums.buffer], &[n as u32, bits], Grid::Groups(1)))
+                    .unwrap()
+                    .1
+            })
+            .fold(f64::MAX, f64::min);
+        eprintln!("sort alone: {n} keys, {bits} bits: {:.1} us", t * 1e6);
+    }
+}
+
+/// A measurement, not a check: what a grid barrier, a device fence, a threadgroup barrier and a
+/// dependent coherent load each cost.
+#[test]
+#[ignore = "a measurement"]
+fn what_a_barrier_costs() {
+    let dev = crate::device().unwrap();
+    let names = ["grid barrier", "device fence", "tg barrier (device)", "coherent load chain", "plain load chain"];
+    for what in 0..5u32 {
+        for groups in [1u64, 32] {
+            let time = |n: u32| {
+                (0..5)
+                    .map(|_| {
+                        let (ctl, data) = (MappedBuffer::zeroed::<u32>(&dev, 8).unwrap(), MappedBuffer::zeroed::<u32>(&dev, 512).unwrap());
+                        crate::pp_eval::run_timed(|e| e.run("pb_barriers_alone", None, &[&ctl.buffer, &data.buffer], &[n, what], Grid::Groups(groups))).unwrap().1
+                    })
+                    .fold(f64::MAX, f64::min)
+            };
+            let (t0, t1) = (time(0), time(1000));
+            if what == 0 {
+                eprintln!("empty run, {groups} groups: {:.1} us", t0 * 1e6);
+            }
+            eprintln!("{}, {groups} groups: {:.3} us each", names[what as usize], (t1 - t0) * 1e6 / 1000.0);
+        }
+    }
+}

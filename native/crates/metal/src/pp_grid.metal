@@ -23,10 +23,12 @@
 #define EACH(t, n) for (uint t = g.group * g.lsz + g.lid, t##_n = (n); t < t##_n; t += g.groups * g.lsz)
 // One thread of the grid.
 #define ONE(t) for (uint t = 0u; g.group == 0u && g.lid == 0u && t < 1u; t++)
-#define BARRIER() if (!ukl_grid_barrier(g, &tg.flag)) return
-#define SCAN(n, in, out, total) if (!ukl_grid_scan_n(g, (n), C32(in), C32(out), C32(total), C32(SUMS), tg.scratch, &tg.flag)) return
-#define SEG(op, n, in, heads, out) if (!ukl_grid_seg_scan_n(g, (op), (n), C32(in), C32(heads), C32(out), C32(SUMS), tg.big, tg.big + 256u, &tg.flag)) return
-#define SORT(n, bits, keys, va, kb, vb, hist) if (!ukl_grid_sort_u64(g, (n), (bits), true, C64(keys), C32(va), C64(kb), C32(vb), C32(hist), C32(SUMS), sl, tg.scratch, &tg.flag)) return
+// A measurement's stop (`STOP`): the kernel ends before its phase `stop` (0: never).
+#define TICK() if (++phase == stop) return
+#define BARRIER() TICK(); if (!ukl_grid_barrier(g, &tg.flag)) return
+#define SCAN(n, in, out, total) TICK(); if (!ukl_grid_scan_n(g, (n), C32(in), C32(out), C32(total), C32(SUMS), tg.scratch, &tg.flag)) return
+#define SEG(op, n, in, heads, out) TICK(); if (!ukl_grid_seg_scan_n(g, (op), (n), C32(in), C32(heads), C32(out), C32(SUMS), tg.big, tg.big + 256u, &tg.flag)) return
+#define SORT(n, bits, keys, va, kb, vb, hist) TICK(); if (!ukl_grid_sort_u64(g, (n), (bits), true, C64(keys), C32(va), C64(kb), C32(vb), C32(hist), C32(SUMS), sl, tg.scratch, &tg.flag)) return
 // A count the passes before wrote.
 #define N(s) AT(const uint, s)[0]
 
@@ -57,10 +59,12 @@ constant uint PG_STAGE = 3u;
     sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS;                       \
     device const PpFile* files = AT(const PpFile, FILES);                                              \
     uint nf = W(N_FILES);                                                                              \
-    (void)lane; (void)data; (void)files; (void)nf; (void)sl;
+    uint stop = 0u, phase = 0u;                                                                        \
+    (void)lane; (void)data; (void)files; (void)nf; (void)sl; (void)stop; (void)phase;
 
 kernel void pp_setup(PP_GRID_PARAMS) {
     PP_GRID_BEGIN
+    stop = W(STOP);
     if (ukl_grid_failed(g)) return;
     uint last = W(LAST);
     // --- The front: the nodes, the names, the directives, the guards -------------------------
@@ -107,7 +111,9 @@ kernel void pp_setup(PP_GRID_PARAMS) {
     BARRIER();
     SORT(N(N_ROWS), 64u, SORT_KEYS, SORT_VA, SORT_KB, SORT_VB, SORT_HIST);
     SORT(N(N_GAPS), 32u, GKEYS, GSORT_VA, GSORT_KB, GSORT_VB, GSORT_HIST);
+    TICK();
     EACH(p, W(NG)) pe_gap_counts(AT(const PpInst, INSTS), AT(const uint, N_INSTS), AT(const uint, GACTIVE), AT(const uint, N_GAPS), AT(const uint, DIR_BASES), AT(const uint, DIR_TOTAL), AT(const PpDir, ROWS), AT(const uint, BASES), AT(const uint, TOTAL), AT(const uint, TRANK), AT(const uint, TTOTAL), AT(uint, GCOUNTS), AT(uint, GFIRSTS), AT(const uint, GSORT_VA), AT(const ulong, GKEYS), AT(uint, SSLOT), nf, p);
+    TICK();
     BARRIER();
     SCAN(N(N_GAPS), GCOUNTS, GAT, GTOTAL);
     EACH(s, N(GTOTAL)) pe_lookups(files, data, AT(const uint, BASES), AT(const ulong, KEYS), AT(const uint, TEXT_NODES), AT(const uint, GAT), AT(const uint, N_GAPS), AT(const uint, GFIRSTS), AT(const uint, SSLOT), AT(const uint, GTOTAL), AT(const ulong, SORT_KEYS), AT(const uint, SORT_VA), AT(const uint, N_ROWS), AT(const ulong, NAME_KEYS), AT(const uint, VALUES), AT(uint, LOOKUPS), AT(atomic_uint, VBAD), nf, s);
@@ -123,6 +129,7 @@ kernel void pp_setup(PP_GRID_PARAMS) {
     BARRIER();
     SORT(N(CLOSE_TOTAL), W(CLOSE_BITS), CLOSE_KEYS, CSORT_VA, CSORT_KB, CSORT_VB, CSORT_HIST);
     device const ulong* closes = ukl_grid_sort_in_input(W(CLOSE_BITS)) ? AT(const ulong, CLOSE_KEYS) : AT(const ulong, CSORT_KB);
+    TICK();
     EACH(s, nt) px_top_calls(files, data, AT(const uint, BASES), AT(const PpDef, DEFS), AT(const uint, LOOKUPS), AT(const uint, TEXT_NODES), AT(const uint, GAT), AT(const uint, N_GAPS), AT(const uint, GFIRSTS), AT(const uint, GTOTAL), AT(const uint, DEPTH), closes, AT(const uint, CLOSE_TOTAL), AT(uint, CEND), AT(atomic_uint, CTL), nf, s);
     BARRIER();
     SEG(UKL_SEG_MAX, nt, CEND, EHEADS, REACH);

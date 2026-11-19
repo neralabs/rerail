@@ -43,3 +43,46 @@ kernel void pb_expand(device const uint* offsets [[buffer(0)]], device const uin
     item[j] = k;
     rank[j] = j - offsets[k];
 }
+
+// For measurements: the grid's sort alone (`ukl_grid_sort_u64`), `n` keys by their low `bits`.
+kernel void pb_sort_alone(device uint* ctl [[buffer(0)]], device ulong* keys [[buffer(1)]], device uint* values [[buffer(2)]],
+                          device ulong* keys2 [[buffer(3)]], device uint* values2 [[buffer(4)]], device uint* hist [[buffer(5)]],
+                          device uint* sums [[buffer(6)]], constant uint& n [[buffer(7)]], constant uint& bits [[buffer(8)]],
+                          uint lid [[thread_position_in_threadgroup]], uint group [[threadgroup_position_in_grid]],
+                          uint groups [[threadgroups_per_grid]], uint lsz [[threads_per_threadgroup]]) {
+    threadgroup uint flag;
+    threadgroup uint scratch[UKL_TG_SCRATCH];
+    threadgroup uint big[UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS];
+    UklGrid g;
+    g.ctl = ctl; g.groups = groups; g.group = group; g.lid = lid; g.lsz = lsz;
+    UklGridSortLocal sl;
+    sl.counts = big; sl.h = big + UKL_RADIX_GROUPS * UKL_RADIX_DIGITS;
+    sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS;
+    ukl_grid_sort_u64(g, n, bits, true, (UKL_COHERENT uint64_t*)keys, (UKL_COHERENT uint32_t*)values, (UKL_COHERENT uint64_t*)keys2,
+                      (UKL_COHERENT uint32_t*)values2, (UKL_COHERENT uint32_t*)hist, (UKL_COHERENT uint32_t*)sums, sl, scratch, &flag);
+}
+
+// For measurements: `n` grid barriers, then (`what` 1) `n` device fences, (2) `n` threadgroup
+// barriers with device scope, (3) `n` dependent coherent loads by thread 0.
+kernel void pb_barriers_alone(device uint* ctl [[buffer(0)]], device uint* data [[buffer(1)]], constant uint& n [[buffer(2)]],
+                              constant uint& what [[buffer(3)]], uint lid [[thread_position_in_threadgroup]],
+                              uint group [[threadgroup_position_in_grid]], uint groups [[threadgroups_per_grid]],
+                              uint lsz [[threads_per_threadgroup]]) {
+    threadgroup uint flag;
+    UklGrid g;
+    g.ctl = ctl; g.groups = groups; g.group = group; g.lid = lid; g.lsz = lsz;
+    if (what == 0u) { for (uint k = 0u; k < n; k++) if (!ukl_grid_barrier(g, &flag)) return; }
+    if (what == 1u) { for (uint k = 0u; k < n; k++) { ukl_fence_device(); data[lid] += k; } }
+    if (what == 2u) { for (uint k = 0u; k < n; k++) { ukl_tg_barrier_device(); data[lid] += k; } }
+    if (what == 3u && lid == 0u) {
+        UKL_COHERENT uint* c = (UKL_COHERENT uint*)data;
+        uint at = 0u;
+        for (uint k = 0u; k < n; k++) at = c[at & 255u] + k;
+        data[256] = at;
+    }
+    if (what == 4u && lid == 0u) {
+        uint at = 0u;
+        for (uint k = 0u; k < n; k++) at = data[at & 255u] + k;
+        data[256] = at;
+    }
+}

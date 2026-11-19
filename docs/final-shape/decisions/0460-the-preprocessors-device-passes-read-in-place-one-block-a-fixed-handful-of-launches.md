@@ -278,3 +278,35 @@ with the unit, because each primitive's number of levels was chosen by its capac
       a median of 1.67 ms a unit, and 16.8 ms for the slowest. A small unit's time is mostly
       its barriers: about 100 a run, at 32 groups. Step 4's code was not timed, so there is
       no comparison against it; that would take a second build of step 4.
+- **Step 5a's GPU time, taken apart** (2026-11-19, M5, the machine at load average 32 to 72 but
+  its GPU idle). The first slice's 2.24 s is about 2,000 times what 2.34 M tokens should cost.
+  The measurements are ignored tests: `where_an_evaluations_gpu_time_goes`,
+  `the_grid_sort_alone_is_fast` and `what_a_barrier_costs`. A stop word (`STOP`) ends
+  `pp_setup` before phase k, so the difference between two stops is that phase's cost.
+  - **What a step of the grid costs:**
+
+    | Step | Cost |
+    |---|---|
+    | Empty command buffer | 11 µs |
+    | `ukl_grid_barrier` | 2.8 µs at 1 group, 3.8 µs at 32 |
+    | Device fence | 0.8 µs |
+    | Threadgroup barrier with device scope | 0.4 µs |
+    | Dependent load | 0.2 µs, coherent or not |
+
+  - **`ukl_grid_sort_u64` costs about 35 µs a digit whatever its count:** 154 µs for 3 keys or
+    1,000 at 32 bits, and 275 µs for 3 keys at 64 bits. Each digit runs a whole tile's rounds
+    and about 8 grid barriers. The setup sorts 17 digits, about 600 µs of the fixed cost.
+  - **A two-line unit costs 1.3 ms, the same at 1 group as at 32.** It is a fixed latency: about
+    130 grid barriers, the sorts' digits, and chains of dependent loads. None of it is work.
+  - **A unit of 15 K nodes in one file costs 4.3 ms at 32 groups.** About 0.6 ms of that is
+    `pp_counts`/`pp_dir_counts` and another 0.6 ms is `pp_dirs`: each is one thread a file,
+    walking the whole tape serially (40 ns a node). The queue's two phases take 2.5 ms.
+  - **The corpus runs one evaluation a unit:** 999 command buffers one after another, each
+    paying the fixed latency. 0448 §2's "one arena a batch of units" is not built: `expand`
+    takes one unit.
+  - So the causes, largest first:
+    1. no batching: the fixed latency is paid 999 times, not once;
+    2. a per-evaluation latency of about 1.2 ms, from barrier count and per-digit sort cost
+       rather than from work;
+    3. serial per-file walks, which scale with a file's nodes on one thread;
+    4. the queue's phases on large units.
