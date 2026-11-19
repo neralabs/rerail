@@ -521,6 +521,39 @@ describe("the read before Git places a folder ends in the folder where Git's sea
     expectGitsRegistries(inner);
     expect(gitsRegistry(inner)).toEqual(gitsRegistry(above));
   });
+
+  it("reads past a folder between whose HEAD is a link Git does not take, and lists none once the repository above is gone", async context => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    git(middle, "init", "--quiet");
+    // A HEAD link whose text names no path under refs/ and whose target is not there: Git refuses it.
+    await rm(join(middle, ".git", "HEAD"));
+    symlinkOrSkip(context, "nowhere", join(middle, ".git", "HEAD"), "file");
+    expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
+    expect(registryPlacements(inner)).toBe(1);
+
+    await rename(join(outer, ".git"), join(root, "outer.git"));
+    expect(gitsAnswer(inner).git).toBe(false);
+    expect(worktreeRegistry(inner)).toBeUndefined();
+  });
+
+  it("reads no folder above a checkout whose .git is a link to a .git file, six folders or more below the root", async context => {
+    const root = await deepRoot();
+    const store = join(root, "store.git");
+    await rename(join(repository(join(root, "store")), ".git"), store);
+    const linked = join(root, "linked");
+    const folder = join(linked, "d0");
+    mkdirSync(folder, { recursive: true });
+    await writeFile(join(root, "linked.gitfile"), `gitdir: ${store}\n`);
+    symlinkOrSkip(context, join(root, "linked.gitfile"), join(linked, ".git"), "file");
+    const before = vi.mocked(lstatSync).mock.calls.length;
+    expect(worktreeRegistry(folder)?.worktrees).toEqual(listedByGit(folder));
+    expect(listedByGit(folder)).toBeDefined();
+    expect(gitEntriesReadIn(before)).toEqual(foldersUpTo(folder, linked));
+  });
 });
 
 /** Points the link at `path`, a symbolic link or on Windows a junction, at `target` instead. */
@@ -1481,6 +1514,27 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     expect(gitsRegistry(inner)).toHaveLength(1);
   });
 
+  it("lists as Git does once the .git file a .git link of the folder Git places such a checkout in names is rewritten in place to name another repository", async context => {
+    const root = await temporaryRoot();
+    const x = repository(join(root, "x"));
+    git(x, "worktree", "add", "--quiet", "-b", "xw", join(root, "xw"));
+    const y = repository(join(root, "y"));
+    const middle = join(root, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    // Git reads the .git file through the link and places the checkout in the folder holding the link.
+    const file = join(root, "middle.gitfile");
+    await writeFile(file, `gitdir: ${join(x, ".git")}\n`);
+    symlinkOrSkip(context, file, join(middle, ".git"), "file");
+    expect(registryPlacements(inner)).toBe(1);
+    expect(gitsRegistry(inner)).toHaveLength(2);
+
+    // The link and the file's identity stay as they were; only the file's text names another Git folder.
+    await rewriteInPlace(file, `gitdir: ${join(y, ".git")}\n`);
+    expectGitsRegistries(inner);
+    expect(gitsRegistry(inner)).toHaveLength(1);
+  });
+
   it("lists as Git does once the .git link of a checkout whose real path cannot be read names another repository's Git folder", async () => {
     const root = await temporaryRoot();
     const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
@@ -1546,6 +1600,32 @@ describe.skipIf(process.platform !== "win32")("a .git symbolic link on Windows, 
     git(middle, "commit", "--quiet", "--allow-empty", "-m", "seed");
     expectGitsRegistries(inner);
     expect(gitsRegistry(inner)).toEqual(gitsRegistry(middle));
+  });
+});
+
+// Root reads every file, so only a user other than root can make an entry it cannot read.
+describe.skipIf(process.platform === "win32" || process.geteuid?.() === 0)("an entry behind a .git link that the user cannot read", () => {
+  it("gives no list once the folder a .git link in a folder between names, which the user cannot read, is replaced by a file the user cannot read", async () => {
+    const root = await temporaryRoot();
+    const outer = repository(join(root, "outer"));
+    const middle = join(outer, "middle");
+    const inner = join(middle, "inner");
+    mkdirSync(inner, { recursive: true });
+    const target = join(root, "middle.git");
+    mkdirSync(join(target, "objects"), { recursive: true });
+    linkFolder(target, join(middle, ".git"));
+    // A folder the user cannot read: Git cannot read a HEAD there and passes over it.
+    await chmod(target, 0o000);
+    cleanups.push(() => chmod(target, 0o700).catch(() => undefined));
+    expect(gitsAnswer(inner).workspaceRoot).toBe(outer);
+    expect(registryPlacements(inner)).toBe(1);
+
+    // A file the user cannot read where that folder was: Git stops there with an error.
+    await chmod(target, 0o700);
+    await removeFolder(target);
+    await writeFile(target, "gitdir: elsewhere\n", { mode: 0o000 });
+    expect(gitsAnswer(inner).git).toBe(false);
+    expect(worktreeRegistry(inner)).toBeUndefined();
   });
 });
 
