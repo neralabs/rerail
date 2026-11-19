@@ -78,10 +78,67 @@ impl<'a> Gen<'a> {
     fn new(inputs: &'a Inputs<'a>) -> Result<Self, String> {
         let p = inputs.program;
         let r = p.records.as_ref().ok_or("a block program without records")?;
-        if r.skip.is_none() {
+        // Every field of the records, named: a new one fails to build here until this emitter
+        // writes it or refuses it. The emitter writes the interpreter's meaning (`records::walk`,
+        // `pass`, `gap_marks`); the fields it does not read are the CPU JIT's lowering hints,
+        // whose meaning the masks and retags already carry.
+        let crate::records::Records {
+            starts: _,
+            lasts: _,
+            kinds: _,
+            words: _,
+            marks: _,
+            ends: _,
+            rules: _,
+            skip,
+            gaps: _,
+            extra: _,
+            untaken: _,
+            unless: _,
+            unplaced: _,
+            checks,
+            readers,
+            retags: _,
+            nexts: _,
+            tested_only: _,
+            // Which code bits hold no mark (0407) and which `without` reads (0430): `lazy` and
+            // the marks' masks give the code's bits.
+            alone: _,
+            read: _,
+            // The CPU loop's reading of a gap mark from the blanks (0430): the mark's mask has
+            // the same bits between tokens.
+            blanks: _,
+            // Tier 2 reads these from the bytes on the CPU (`native_cpu_bytes`).
+            check_masks: _,
+            prefix,
+            gap,
+        } = r;
+        if skip.is_none() {
             return Err("records without a skip (`walk`): not written yet".into());
         }
-        if !r.prefix.is_empty() || r.gap.is_some() || p.rows.is_some() {
+        for c in checks {
+            let crate::records::TokenCheck { rule: _, count: _, o: _, least: _, then } = c;
+            // Each way a test ends, named: a new one (0413's `Cut`) fails to build here.
+            match then {
+                CheckThen::Escape | CheckThen::At(_) | CheckThen::After(_) => {}
+            }
+        }
+        for rd in readers {
+            // `retag` and the arms' are the CPU's form of the retags (`Records::retags`), which
+            // the token's record reads; `quiet` is a proved hint; a split by tier 2 is refused.
+            let crate::records::Reader { arms, other: _, retag: _, parts, split, quiet: _ } = rd;
+            if !parts.is_empty() && *split != crate::records::Split::Tier1 {
+                return Err("a region tier 2 splits (0323): not written yet".into());
+            }
+            for a in arms {
+                let crate::records::ReadArm { opener: _, closer: _, off: _, last: _, none: _, retag: _ } = a;
+            }
+            for pt in parts {
+                let crate::records::ReadPart { start: _, bytes: _, last: _, kind: _ } = pt;
+            }
+        }
+        let (prefix, gap) = (prefix, gap);
+        if !prefix.is_empty() || gap.is_some() || p.rows.is_some() {
             return Err("a prefix, a gap rule or rows: not written yet".into());
         }
         if p.rounds.len() != p.walks.len() {

@@ -85,3 +85,32 @@ generated source, a named `let` each.
   refuses, the records are compared only up to the count.
 - `structure` and `tier1_alone` pass.
 - The compiler tests (128) and the Kotlin tests (51) pass.
+
+## Kinds that share a first byte: the row's kind, not a code bit (2026-11-19)
+
+Go-C-and-C++'s 0445 (point 3) and this branch's 0431 F step 2 solve one problem: a token mark,
+or tier 2, telling apart two kinds that start with the same byte (the preprocessor's `#` and
+`##`, Kotlin's string parts). 0445 adds a bit to the record's code per such kind, the OR of its
+rows' start masks (`Records::kind_rows`): a mask made in stage 1 at every byte, and a code bit
+from the 16 the marks share. F step 2 gives the record its row's kind, as the lean lexer's
+`Tok::kind` does: the token loop knows the row from the path it took (a pair table's second
+byte, a reader's arm, a string's part) or from the token's word (keyword rows), so the kind is
+one table lookup and no mask.
+
+**Decided: the row's kind.** It leaves stage 1 the lexer's masks (the direction of this
+decision's gap B), spends kind values, which are plentiful, not code bits, which are not, and
+is one mechanism: it already removed every `ROW` test from tier 2. At the merge with 0445:
+- a keyword row gets a record kind of its own from its word, in the token loop, extending
+  `ReadPart::kind` past the string parts;
+- `TokenElem` tests that kind; `Records::kind_rows`, its code bit and its masks go, and so does
+  `BlockNative::read_at_tokens`'s use for it;
+- 0445's test `a_token_mark_tells_a_kind_by_its_rows_where_a_first_byte_is_shared` and the
+  preprocessor's cases stay, ported to the kinds (Q282).
+
+## `rust_block` names every field it reads
+
+`Gen::new` takes the records apart field by field (`Records`, `Reader`, `ReadArm`, `ReadPart`,
+`TokenCheck`, and each `CheckThen`), with the reason it ignores each lowering hint. A field or
+a test's ending added on another branch (0413's `run … once` and `CheckThen::Cut`, 0445's
+`kind_rows`) fails the build there until the emitter writes it or refuses it, never a wrong
+tier 1 that only `aot_tapes_are_the_jits` would catch.

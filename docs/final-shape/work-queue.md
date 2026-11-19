@@ -1686,6 +1686,16 @@ code. 0366's change is tier 1's alone and leaves both sides' trees as they were.
          as a token mark's test already was. The production parser (clusters by rules) was not
          affected.
 
+### Q282. At the merge with Go-C-and-C++: 0445's kind bit onto the row kinds, 0413 in `rust_block`
+
+- **What**: 0451 decided a kind that shares a first byte is the record's own kind (F step 2),
+  not 0445's code bit (`Records::kind_rows`). 0413 adds `run R once D` and `CheckThen::Cut`,
+  which `rust_block` does not write; its field-by-field match fails the build until it does.
+  Numbered past Go-C-and-C++'s Q281. Their Q278 is this branch's Q229 (the reference's `, ends`).
+- **Done when**: after the merge, a keyword row's kind is its own in the token loop; token marks
+  test it; `kind_rows` and its masks are gone; 0445's test and the preprocessor's cases pass on
+  every executor; `rust_block` writes `once` and `Cut`; `aot_tapes_are_the_jits` passes.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
