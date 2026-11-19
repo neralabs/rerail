@@ -533,8 +533,9 @@ pub mod tests {
         let c = super::compiled().expect("compiles");
         let lazy = lazy_bits(&c.native);
         let body = "r(x) :- a(x), \"s\". // c\n".repeat(400);
-        // Refused by a mask total (no token coded), and by a token the record pass refuses.
-        for head in ["\u{1}", "````a````.", "x = 1.2.3."] {
+        // Refused by a mask total (no token coded), and by a token the record pass refuses: an
+        // integer of 19 digits, the engine's (decision 0413; a float chain is read now).
+        for head in ["\u{1}", "````a````.", "x = 1234567890123456789."] {
             let (bad, good) = (format!("a(x).\n{head}\n{body}"), format!("a(x).\n{body}"));
             let refs = [bad.as_bytes(), good.as_bytes()];
             let files: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();

@@ -5345,6 +5345,12 @@ Open:
     are 0411 (the CPU's record pass makes the outputs in `records_made`, and tier 1's runs are compared `without`
     them) and Q200 (a refused file's records stop at the refusal). Check which by one run of the test, then compare
     as `compile_tests` does.
+- **Written** (2026-11-19, not yet run on a Mac: the M3's disk full, 214 MB free, the other Macs off):
+  - `a_refused_files_…`: its token refusal is a 19-digit integer (0413: a float chain is read now).
+  - `every_step_on_metal_…`: where the interpreter makes a token's records itself (the loop's starts and lasts,
+    0177 stage 2a; the lasts by the gaps, 0411), a refused file's starts and lasts extracts are excused, as those
+    decisions prove them only where the file is taken. Every other output and extract is compared, a difference
+    named by its index with the file's refusal; the excused differences are counted and printed.
 
 ### Q253. The journal's wait bound (Q221) is gone, and the FSEvents tests disturb each other
 
@@ -5358,6 +5364,13 @@ Open:
   (at `-j 4` one to three of its own fail, a different set each run, also at 5fbc02057).
 - **Done when**: Q221's bound reads `wait` again with the observer tests passing, and the FSEvents tests pass
   together (a test group of their own, or streams that do not share `fseventsd`'s latency).
+- **Written** (2026-11-19, not yet run on a Mac, as Q252):
+  - `fsevents::since_within` waits the caller's bound again, else `WAIT` (or a journal test's settle):
+    `wait.unwrap_or(WAIT.max(settle))`.
+  - `journal_observer` asks for the journal's answer within the same 5 s it lets the replay settle (it asked 2 s,
+    under a busy host's cookie): the four observer tests.
+  - `.config/nextest.toml`: the store's journal and observer tests and the engine's `tree_watch` tests are a test
+    group, one at a time, on macOS (`show-config test-groups` reads it; Linux matches none).
 
 ### Q254. Eight token and anchor tests fail at the hub's tip on Linux
 
