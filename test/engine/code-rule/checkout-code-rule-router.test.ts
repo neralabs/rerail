@@ -675,7 +675,9 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await auditor.openWorkspace("steering-wait");
     const edits = [join(session, "api", "x.py"), join(worktree, "api", "y.py")].map(path => ({ path, language: "python" as const, generatedText: "NEEDLE\n" }));
     await auditor.auditGeneratedEdits("steering-wait", { revision: 1, checkpoints: ["edit"], edits });
-    const settle = vi.spyOn(NativeCodeRuleEnforcer.prototype, "settleGeneratedEdits");
+    // What each lane's evaluator is asked is the subject, not how long its checks take: on a loaded Windows machine the
+    // two lanes' checks outlasted the case's 30 s limit. The router's clean-up ends them after the case.
+    const settle = vi.spyOn(NativeCodeRuleEnforcer.prototype, "settleGeneratedEdits").mockResolvedValue(undefined);
     try {
       await auditor.settleGeneratedEdits("steering");
       // A walk's log edits in a lane steer no one: a lane told to wait for every edit would hold the result for them.
