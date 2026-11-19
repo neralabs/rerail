@@ -5176,9 +5176,9 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   (eslint-yoda's `yoda_in_order`).
 - **Keep**: Tim's 3fe6f8227, without the 0201 ports he reverted (adfb49fac; see Q247).
 - **Done when**: `rr::tests::a_negated_cross_product_is_bound_by_the_rules_context` passes, unignored.
-- **Also seen** (2026-11-18): `typing::oracle_tests::calls_into_the_standard_library_reach_its_stubs` fails at the hub
-  tip 65e368a0b with "unbounded node Cartesian product in `base`". Check whether 3fe6f8227 fixes it; if not, it is its
-  own item.
+- **Done** (2026-11-18, branch `pr508-fixes-as-tests`): `cross_product` ported into the walk's
+  `negated_conjunction`; the test passes on the M3, unignored, with every negation test of rerail-engine. It does not
+  fix the typing oracles' products (Q249).
 
 ### Q245. (PR #508, t47) `using` as a name reads without a syntax error
 
@@ -5210,3 +5210,11 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - Windows, Linux and x86-64 (12 commits, t47's portability class) come last, with the Windows work.
 - Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f: `rules test` on a `.rr` file; ed1872a09: `--delete-data`)
   are ported into `test/cli/` with their fixes.
+
+### Q249. The typing oracles' node products are unbounded at the hub tip
+
+- **Seen** (2026-11-18, the hub at 65e368a0b on the M3): 19 of the 30 `typing::oracle_tests` fail before running:
+  "bound node products by their readers: unbounded node Cartesian product in `base`" (18) and "in `res`: the read in
+  `res` has no connected demand" (1). Not PR #508's: the same with Q241's and Q244's ports and without them.
+- **Done when**: the 30 pass, the product bound at its producer (no relation computed in full to be filtered).
+
