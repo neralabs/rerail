@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitIgnoreMatchers } from "../../../src/engine/native/git-ignore-matchers.js";
-import { loadNativeBinding } from "../../../src/engine/native/native.js";
+import { nativeGitAccess } from "../../../src/engine/native/git-access.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const folders: string[] = [];
@@ -62,7 +62,7 @@ function user(name: string): object {
 describe("GitIgnoreMatchers", () => {
   it("shares one matcher for a checkout while nothing it read changed, a configuration change that leaves its rules alone included", async () => {
     const { main } = await checkout();
-    const opened = vi.spyOn(loadNativeBinding(), "openGitIgnoreMatcher");
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
     const matchers = new GitIgnoreMatchers();
     const first = matchers.matcher(main, user("first"));
     expect(first?.ignored("gen/a.py", false)).toBe(true);
@@ -80,10 +80,10 @@ describe("GitIgnoreMatchers", () => {
 
   it("hands the shared matcher to a router that did not hold it with the index read again, and not to one that asks again", async () => {
     const { main } = await checkout();
-    const binding = loadNativeBinding();
+    const access = nativeGitAccess();
     const readAgain: (boolean | undefined)[] = [];
     const matchers = new GitIgnoreMatchers(root => {
-      const matcher = binding.openGitIgnoreMatcher(root);
+      const matcher = access.openGitIgnoreMatcher(root);
       return matcher === null ? null : {
         ignored: (path, directory) => matcher.ignored(path, directory),
         ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
@@ -108,11 +108,11 @@ describe("GitIgnoreMatchers", () => {
 
   it("opens a fresh matcher for a router when the shared one cannot say whether what it read changed", async () => {
     const { main } = await checkout();
-    const binding = loadNativeBinding();
+    const access = nativeGitAccess();
     let opens = 0;
     const matchers = new GitIgnoreMatchers(root => {
       opens += 1;
-      const matcher = binding.openGitIgnoreMatcher(root);
+      const matcher = access.openGitIgnoreMatcher(root);
       return matcher === null ? null : {
         ignored: (path, directory) => matcher.ignored(path, directory),
         ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
@@ -127,9 +127,9 @@ describe("GitIgnoreMatchers", () => {
   it("says once per checkout that a shared matcher cannot tell whether what it read changed, with the error", async () => {
     const { main, linked } = await checkout();
     const errors = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const binding = loadNativeBinding();
+    const access = nativeGitAccess();
     const matchers = new GitIgnoreMatchers(root => {
-      const matcher = binding.openGitIgnoreMatcher(root);
+      const matcher = access.openGitIgnoreMatcher(root);
       return matcher === null ? null : {
         ignored: (path, directory) => matcher.ignored(path, directory),
         ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),

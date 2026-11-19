@@ -8,7 +8,16 @@
 //! a `.gitignore` is read when the walk first enters its folder. A matcher says whether one opened
 //! now would read the rules it read (`sources_unchanged`), so hosts can share one per checkout;
 //! one handed on as a matcher opened now reads the index from disk at its next question.
+//!
+//! The repository opens through the engine's one opener (`git_access::opener`), so a repository
+//! Git refuses has no matcher. Opening runs on a thread of its own under the Git read time limit; questions
+//! are answered on the caller's thread, since a walk asks one or two per file. A question's own
+//! disk reads are a stat of the index and the `.gitignore` of a folder the walk has just listed,
+//! so a disk that stops answering holds the walk before it holds the matcher. The check of a
+//! matcher's sources finds the repository again through the same opener.
 
+use crate::git_access::opener::{self, OpenError};
+use crate::git_access::pool::{self, GIT_READ_TIME_LIMIT};
 use gix::bstr::{BStr, ByteSlice};
 use gix::index::entry::Mode;
 use napi::{Error, Result, Status};
@@ -137,7 +146,7 @@ impl GitIgnore {
                     .source
                     .map(|source| source.to_string_lossy().into_owned()),
                 line: u32::try_from(matched.sequence_number).unwrap_or(u32::MAX),
-                pattern: matched.pattern.to_string(),
+                pattern: git_pattern_text(matched.pattern),
             }))
     }
 
@@ -157,14 +166,15 @@ impl GitIgnore {
     }
 }
 
-/// The repository around `root` and its worktree, resolved; `None` outside a Git worktree.
+/// The repository around `root`, opened through the engine's opener, and its worktree, resolved;
+/// `None` outside a Git worktree.
 fn discover_worktree(
     root: &Path,
 ) -> std::result::Result<Option<(gix::Repository, PathBuf)>, String> {
-    let repository = match gix::discover(root) {
+    let repository = match opener::discover(root) {
         Ok(repository) => repository,
-        Err(error) if crate::git_workspace::is_no_repository(&error) => return Ok(None),
-        Err(error) => return Err(format!("cannot discover Git repository: {error}")),
+        Err(OpenError::NoRepository(_)) => return Ok(None),
+        Err(OpenError::Failed(message)) => return Err(message),
     };
     let Some(worktree) = repository.workdir() else {
         return Ok(None);
@@ -284,6 +294,16 @@ fn digest(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
+/// `pattern` as `git check-ignore -v` prints it: as written, but for gix dropping the `\` of a
+/// leading `\#` or `\!`, which Git keeps.
+fn git_pattern_text(pattern: &gix::glob::Pattern) -> String {
+    let text = pattern.to_string();
+    let escaped = !pattern.is_negative()
+        && !pattern.mode.contains(gix::glob::pattern::Mode::ABSOLUTE)
+        && matches!(pattern.text.first(), Some(b'#' | b'!'));
+    if escaped { format!("\\{text}") } else { text }
+}
+
 /// Git applies ignore rules to untracked paths only: a tracked file, a submodule, and a folder
 /// holding either stay visible whatever the patterns say.
 fn tracked(index: &gix::index::State, path: &BStr, is_directory: bool) -> bool {
@@ -310,10 +330,43 @@ pub struct GitIgnoreMatch {
     pub pattern: String,
 }
 
-/// A Git exclude stack for a host's walk below one root; see the module documentation.
+/// A Git exclude stack for a host's walk below one root; see the module documentation. The
+/// process's `GitAccess` opens it.
 #[napi]
 pub struct GitIgnoreMatcher {
     inner: Mutex<GitIgnore>,
+}
+
+impl GitIgnoreMatcher {
+    /// The matcher for paths below `root`, opened on a thread of its own under the Git read time
+    /// limit; `None` when `root` is in no Git worktree.
+    pub(crate) fn open(root: String) -> std::result::Result<Option<Self>, pool::GitReadError> {
+        let key = std::path::PathBuf::from(&root);
+        let opened = pool::run(
+            "opening Git's ignore rules",
+            &key,
+            GIT_READ_TIME_LIMIT,
+            move || GitIgnore::open(Path::new(&root)),
+        )?
+        .map_err(|message| pool::GitReadError {
+            timed_out: false,
+            message,
+        })?;
+        Ok(opened.map(|inner| Self {
+            inner: Mutex::new(inner),
+        }))
+    }
+
+    fn read<T>(
+        &self,
+        read: impl FnOnce(&mut GitIgnore) -> std::result::Result<T, String>,
+    ) -> Result<T> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| Error::new(Status::GenericFailure, "Git ignore matcher is poisoned"))?;
+        read(&mut inner).map_err(|message| Error::new(Status::GenericFailure, message))
+    }
 }
 
 #[napi]
@@ -322,13 +375,7 @@ impl GitIgnoreMatcher {
     /// `is_directory` lets directory-only patterns (`build/`) match.
     #[napi(catch_unwind)]
     pub fn ignored(&self, relative_path: String, is_directory: bool) -> Result<bool> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| Error::new(Status::GenericFailure, "Git ignore matcher is poisoned"))?;
-        inner
-            .ignored(&relative_path, is_directory)
-            .map_err(|message| Error::new(Status::GenericFailure, message))
+        self.read(|inner| inner.ignored(&relative_path, is_directory))
     }
 
     /// The pattern that makes Git ignore `relative_path` (as for `ignored`), with its file and
@@ -339,13 +386,7 @@ impl GitIgnoreMatcher {
         relative_path: String,
         is_directory: bool,
     ) -> Result<Option<GitIgnoreMatch>> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| Error::new(Status::GenericFailure, "Git ignore matcher is poisoned"))?;
-        inner
-            .ignored_by(&relative_path, is_directory)
-            .map_err(|message| Error::new(Status::GenericFailure, message))
+        self.read(|inner| inner.ignored_by(&relative_path, is_directory))
     }
 
     /// Whether a matcher opened now would follow the rules this one follows (the configuration
@@ -354,24 +395,8 @@ impl GitIgnoreMatcher {
     /// `read_index_again` is false (for a holder that asks again), the index at the next question.
     #[napi(catch_unwind)]
     pub fn sources_unchanged(&self, read_index_again: Option<bool>) -> Result<bool> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| Error::new(Status::GenericFailure, "Git ignore matcher is poisoned"))?;
-        Ok(inner.sources_unchanged(read_index_again.unwrap_or(true)))
+        self.read(|inner| Ok(inner.sources_unchanged(read_index_again.unwrap_or(true))))
     }
-}
-
-/// The Git exclude stack for paths below `root`; null when `root` is in no Git worktree.
-#[napi(catch_unwind)]
-pub fn open_git_ignore_matcher(root: String) -> Result<Option<GitIgnoreMatcher>> {
-    GitIgnore::open(Path::new(&root))
-        .map(|opened| {
-            opened.map(|inner| GitIgnoreMatcher {
-                inner: Mutex::new(inner),
-            })
-        })
-        .map_err(|message| Error::new(Status::GenericFailure, message))
 }
 
 #[cfg(test)]

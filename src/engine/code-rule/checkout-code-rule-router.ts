@@ -14,7 +14,8 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { worktreeRegistry } from "../catalog/repository-identity.js";
-import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../native/native.js";
+import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
+import type { NativeGitAccess, NativeGitIgnoreMatcher } from "../native/native.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import { GitIgnoreMatchers } from "../native/git-ignore-matchers.js";
 import type {
@@ -84,7 +85,14 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #gitIgnoreMatchers: GitIgnoreMatchers;
   /** Git's exclude stack of each checkout a path was asked of, and of each lane's checkout; null outside Git. */
   readonly #gitIgnore = new Map<string, NativeGitIgnoreMatcher | null>();
-  /** The checkouts with no lane whose Git ignore rules failed a read, reported once each. */
+  /** The owner the matchers in `#gitIgnore` were opened with: a new one (Git answered at last) opens them again. */
+  #gitIgnoreAccess: NativeGitAccess | undefined;
+  /** When each checkout may open its rules again after an open that outran its time limit (`GIT_OPEN_AGAIN_MS`). */
+  readonly #gitIgnoreOpenAgainAt = new Map<string, number>();
+  /**
+   * The checkouts with no lane whose Git ignore rules failed, reported once per checkout and kind (an open that timed
+   * out, an open refused, a question that failed) under one owner.
+   */
   readonly #gitIgnoreReported = new Set<string>();
   /** The checkouts another lane answered for: their catalogs are read again when the lanes' are (`refreshCodeRules`). */
   readonly #answeredByOthers = new Set<string>();
@@ -274,25 +282,40 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     try {
       return this.#gitIgnoreMatcher(owner)?.ignored(owner.path, directory) ?? false;
     } catch (error) {
-      this.#reportGitIgnoreError(owner, error);
+      this.#reportGitIgnoreError(owner, error, "question");
       return false;
     }
   }
 
   /**
-   * The exclude stack of `owner`'s checkout, opened on first use; null where it is outside Git or cannot be opened now.
-   * A failed open is not kept: the next question opens it again, as a lane's own open did, so a configuration caught
-   * half-written does not leave the checkout without its ignore rules for the session.
+   * The exclude stack of `owner`'s checkout, taken on first use (`#openGitIgnore`); null where it is outside Git or
+   * cannot be opened. An open that outran its time limit is not kept: the checkout opens again once GIT_OPEN_AGAIN_MS
+   * has passed, and sees no matcher until then.
    */
   #gitIgnoreMatcher(owner: CheckoutOwner): NativeGitIgnoreMatcher | null {
-    const matcher = this.#gitIgnore.get(owner.checkoutRoot);
-    if (matcher !== undefined) return matcher;
+    let matcher: NativeGitIgnoreMatcher | null | undefined;
     try {
-      return this.#takeGitIgnore(owner.checkoutRoot);
+      const access = nativeGitAccess();
+      if (access !== this.#gitIgnoreAccess) {
+        this.#gitIgnore.clear();
+        this.#gitIgnoreReported.clear();
+        this.#gitIgnoreAccess = access;
+      }
+      matcher = this.#gitIgnore.get(owner.checkoutRoot);
+      if (matcher !== undefined) return matcher;
+      if (Date.now() < (this.#gitIgnoreOpenAgainAt.get(owner.checkoutRoot) ?? 0)) return null;
+      matcher = this.#openGitIgnore(owner.checkoutRoot);
     } catch (error) {
-      this.#reportGitIgnoreError(owner, error);
-      return null;
+      const timedOut = gitReadTimedOut(error);
+      this.#reportGitIgnoreError(owner, error, timedOut ? "timed out" : "refused");
+      if (timedOut) {
+        this.#gitIgnoreOpenAgainAt.set(owner.checkoutRoot, Date.now() + GIT_OPEN_AGAIN_MS);
+        return null;
+      }
+      matcher = null;
     }
+    this.#gitIgnore.set(owner.checkoutRoot, matcher);
+    return matcher;
   }
 
   /**
@@ -310,12 +333,13 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * own. A router that closed takes its own, so a late question does not hold the shared one past its close.
    */
   #openGitIgnore(root: string): NativeGitIgnoreMatcher | null {
-    return this.#closing ? loadNativeBinding().openGitIgnoreMatcher(root) : this.#gitIgnoreMatchers.matcher(root, this);
+    return this.#closing ? nativeGitAccess().openGitIgnoreMatcher(root) : this.#gitIgnoreMatchers.matcher(root, this);
   }
 
-  #reportGitIgnoreError(owner: CheckoutOwner, error: unknown): void {
-    if (this.#gitIgnoreReported.has(owner.checkoutRoot)) return;
-    this.#gitIgnoreReported.add(owner.checkoutRoot);
+  #reportGitIgnoreError(owner: CheckoutOwner, error: unknown, kind: "timed out" | "refused" | "question"): void {
+    const key = `${owner.checkoutRoot}\0${kind}`;
+    if (this.#gitIgnoreReported.has(key)) return;
+    this.#gitIgnoreReported.add(key);
     process.stderr.write(`rerail: cannot read Git ignore rules for ${owner.path || "."}: ${error instanceof Error ? error.message : String(error)}\n`);
   }
 

@@ -24,7 +24,7 @@ import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
-import { loadNativeBinding } from "../../../src/engine/native/native.js";
+import { GIT_OPEN_AGAIN_MS, nativeGitAccess } from "../../../src/engine/native/git-access.js";
 import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { GitIgnoreMatchers } from "../../../src/engine/native/git-ignore-matchers.js";
 
@@ -211,9 +211,9 @@ describe("CheckoutCodeRuleRouter", () => {
     await writeFile(join(session, ".gitignore"), "scratch/\n*.log\n");
     startTestRepository(session, databasePath);
     // A nested `.gitignore` the matcher cannot read (or the index caught mid-rewrite) fails that one path's question.
-    const binding = loadNativeBinding();
-    const open = binding.openGitIgnoreMatcher.bind(binding);
-    const opens = vi.spyOn(binding, "openGitIgnoreMatcher").mockImplementation(checkoutRoot => {
+    const access = nativeGitAccess();
+    const open = access.openGitIgnoreMatcher.bind(access);
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementation(checkoutRoot => {
       const matcher = open(checkoutRoot);
       return matcher === null ? null : {
         ignored: (path, directory) => {
@@ -256,6 +256,37 @@ describe("CheckoutCodeRuleRouter", () => {
       expect(answers).toEqual([true, false, false, true]);
     }
     expect(takes).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a checkout's Git ignore rules again once GIT_OPEN_AGAIN_MS has passed after a timeout, and reports the refusal that follows too", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await writeFile(join(session, ".gitignore"), "*.log\n");
+    // Started but not set up: no lane runs, so the router opens the checkout's rules itself.
+    startTestRepository(session, databasePath);
+    const access = nativeGitAccess();
+    const timedOut = Object.assign(new Error("opening Git's ignore rules gave no answer within 10 s"), { code: "GitReadTimedOut" });
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher")
+      .mockImplementationOnce(() => { throw timedOut; })
+      .mockImplementation(() => { throw new Error("detected dubious ownership"); });
+    cleanups.push(async () => { opens.mockRestore(); });
+    const errors = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    cleanups.push(async () => { errors.mockRestore(); });
+    const { recorder } = recordingAudits();
+    const following = router(session, databasePath, recorder, undefined, true);
+    await following.openWorkspace("timed-out-then-refused");
+
+    let clock = Date.now();
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    cleanups.push(async () => { now.mockRestore(); });
+    expect(["a.log", "b.log"].map(path => following.ignoresPath(path, false))).toEqual([false, false]);
+    expect(opens).toHaveBeenCalledTimes(1);
+    clock += GIT_OPEN_AGAIN_MS;
+    expect(["c.log", "d.log"].map(path => following.ignoresPath(path, false))).toEqual([false, false]);
+    expect(opens).toHaveBeenCalledTimes(2);
+    const logged = errors.mock.calls.map(([text]) => String(text)).filter(text => text.includes("cannot read Git ignore rules"));
+    expect(logged).toEqual([expect.stringContaining("gave no answer within 10 s"), expect.stringContaining("detected dubious ownership")]);
   });
 
   it("looks up the checkout of a walk's files once per folder, not once per file", async () => {
@@ -639,7 +670,7 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await mkdir(join(worktree, "api"), { recursive: true });
     const { recorder, audits } = recordingAudits();
     const auditor = router(session, databasePath, recorder, undefined, true);
-    const opened = vi.spyOn(loadNativeBinding(), "openGitIgnoreMatcher");
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
     cleanups.push(async () => { opened.mockRestore(); });
 
     await auditor.openWorkspace("one-matcher");
@@ -704,7 +735,7 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
     await mkdir(join(worktree, "api"), { recursive: true });
     const matchers = new GitIgnoreMatchers();
-    const opened = vi.spyOn(loadNativeBinding(), "openGitIgnoreMatcher");
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
     cleanups.push(async () => { opened.mockRestore(); });
     const opensIn = () => opened.mock.calls.filter(([root]) => root === worktree).length;
     const { recorder } = recordingAudits();
@@ -767,12 +798,12 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect([view().ignoresPath(gen, true), view().acceptsPath(`${gen}/x.py`)]).toEqual([false, true]);
   });
 
-  it("opens a worktree's Git ignore rules again after an open that failed, and says the failure once", async () => {
+  it("keeps a worktree's refused Git ignore rules as none for the walk's questions and says it once, while its lane opens them as it opens", async () => {
     const { worktree, audits, auditor, gen } = await worktreeIgnoringGen("open-again");
-    const binding = loadNativeBinding();
-    const open = binding.openGitIgnoreMatcher.bind(binding);
+    const access = nativeGitAccess();
+    const open = access.openGitIgnoreMatcher.bind(access);
     let failures = 1;
-    const opens = vi.spyOn(binding, "openGitIgnoreMatcher").mockImplementation(root => {
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementation(root => {
       if (root !== worktree || failures === 0) return open(root);
       failures -= 1;
       throw new Error("cannot read Git excludes: the configuration was being written");
@@ -781,8 +812,9 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     const errors = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     cleanups.push(async () => { errors.mockRestore(); });
 
-    // The first question finds no rules and leaves the folder in, as rules that cannot be read do; the next reads them.
-    expect([auditor.walkView().ignoresPath(gen, true), auditor.walkView().ignoresPath(gen, true)]).toEqual([false, true]);
+    // The walk's questions find no rules and leave the folder in, as rules Git refuses do, under the owner that tried.
+    expect([auditor.walkView().ignoresPath(gen, true), auditor.walkView().ignoresPath(gen, true)]).toEqual([false, false]);
+    // The edit opens the worktree's lane, which opens the rules as it opens and leaves the ignored file unchecked.
     await edit(auditor, "open-again", 1, join(worktree, "gen", "x.py"));
     expect(violations(audits)).toEqual([]);
     expect(errors.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
@@ -915,7 +947,7 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     git(session, "worktree", "add", "--quiet", "-b", "second", join(root, "elsewhere", "second"));
     const second = await realpath(join(root, "elsewhere", "second"));
     const matchers = new GitIgnoreMatchers();
-    const opened = vi.spyOn(loadNativeBinding(), "openGitIgnoreMatcher");
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
     cleanups.push(async () => { opened.mockRestore(); });
     const { recorder, audits } = recordingAudits();
     const sessions = [

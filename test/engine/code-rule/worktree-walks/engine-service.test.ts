@@ -9,7 +9,7 @@ import { removeFolder } from "../../../support/platform/remove-folder.js";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type * as WalkReads from "../../../../src/engine/code-rule/walk-read-buffers.js";
 import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
-import { loadNativeBinding } from "../../../../src/engine/native/native.js";
+import { nativeGitAccess } from "../../../../src/engine/native/git-access.js";
 import { startEngineService } from "../../../../src/runtime/index.js";
 import { testEmbedder } from "../../../support/hook-events.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
@@ -118,7 +118,7 @@ describe("the engine service and the other worktrees of a repository", () => {
     const { worktrees } = repository(root, databasePath, ["w1", "w2", "w3", "w4"]);
     const opens = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace");
     const audits = vi.spyOn(CheckoutCodeRuleRouter.prototype, "auditGeneratedEdits");
-    const matchers = vi.spyOn(loadNativeBinding(), "openGitIgnoreMatcher");
+    const matchers = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
     const service = await startEngineService({ socketPath: socketPathIn(root, "shared-ignore"), storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder });
     const sessions = worktrees.slice(0, 3).map((cwd, index) => ({ host: "claude-code" as const, sessionId: `session-${index + 1}`, cwd }));
     const turns = async () => {

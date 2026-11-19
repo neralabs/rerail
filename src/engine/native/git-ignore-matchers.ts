@@ -8,7 +8,8 @@
  * at its next question, as a matcher it opened would read it. A router keeps the matcher it was given until it asks
  * again, as a lane of its opens where a lane of its own opened its own matcher.
  */
-import { loadNativeBinding, type NativeGitIgnoreMatcher } from "./native.js";
+import { nativeGitAccess } from "./git-access.js";
+import type { NativeGitIgnoreMatcher } from "./native.js";
 
 interface Shared {
   readonly root: string;
@@ -25,7 +26,7 @@ export class GitIgnoreMatchers {
   /** The checkouts whose matcher could not say whether what it read changed, said once each. */
   readonly #checkFailed = new Set<string>();
 
-  constructor(open: (root: string) => NativeGitIgnoreMatcher | null = root => loadNativeBinding().openGitIgnoreMatcher(root)) {
+  constructor(open: (root: string) => NativeGitIgnoreMatcher | null = root => nativeGitAccess().openGitIgnoreMatcher(root)) {
     this.#open = open;
   }
 
