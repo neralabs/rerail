@@ -1507,6 +1507,34 @@ describe("CodeRuleBridge", () => {
     expect(audited(auditGeneratedEdits).at(-1)).toEqual({ mode: undefined, edits: [{ path: "src/a.py", generatedText: "x = 1\n", readError: undefined }] });
   });
 
+  // Another program rewrites a file the session edited, and holds it as the next walk opens it. The evaluator keeps
+  // the session's text through the read error, so the walk that reads the file records that program's write in Log,
+  // as it does when nothing held the file.
+  it("records another program's write to a file the session edited in Log, though a walk could not read it first", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 1\n");
+    await bridge.finish("write-1");
+    await bridge.checkpoint("turn");
+    const now = await mkdtemp(join(tmpdir(), "rerail-policy-now-"));
+    directories.push(now);
+    await awaitClockAfter(now);
+
+    await writeFile(path, "x = 2\n");
+    heldFromReads(path);
+    await bridge.checkpoint("turn");
+    await bridge.checkpoint("turn");
+    expect(audited(auditGeneratedEdits)).toEqual([
+      { mode: undefined, edits: [{ path: "src/a.py", generatedText: "x = 1\n", readError: undefined }] },
+      { mode: "log", edits: [{ path: "src/a.py", generatedText: undefined, readError: expect.stringContaining("EBUSY") }] },
+      { mode: "log", edits: [{ path: "src/a.py", generatedText: "x = 2\n", readError: undefined }] },
+    ]);
+  });
+
   // A walk looked at a file one command had written, and read it only after a second command, begun meanwhile, emptied
   // it: its text was the emptied file, while the stamp it looked at said the change came before the second command. So
   // too when the command then removed the file before the walk could stamp it again.
