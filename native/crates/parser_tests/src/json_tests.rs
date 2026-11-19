@@ -44,6 +44,8 @@ fn simdjson_forms_starts_are_simdjsons_indexes() {
     // pass, and writes the starts alone, as simdjson's `bit_indexer::write`.
     assert!(r.fetched_in_tier2(), "tier 2 makes the records");
     assert!(c.parser.tier1.records.is_none(), "the CPU's tier 1 has no record pass");
+    // Tier 2's tape is sized from the input once, as simdjson's: no room check a token.
+    assert!(!c.parser.tier2.room_checked(), "no room check a token");
     // Nor a row of what tier 2 reads from the bytes (the run's mask, the string's quote), or
     // not at all: the string's escape part, as tier 2 reads a string as simdjson's
     // `parse_string` does (first quote or backslash), with no escape carry.

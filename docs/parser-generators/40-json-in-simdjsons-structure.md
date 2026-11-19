@@ -306,6 +306,19 @@ Counts, as information (load about 15): the 17 files' whole parse 44.5M (step 3:
 `[1,1,…]` 190.7M (206.8M), short strings 51.1M (70.5M). Against simdjson's whole parse: 4.5×,
 3.5×, 5.6×.
 
+## Step 5, done: no room check a token; the start read as `*(next_structural++)`
+
+| simdjson | Before | Now |
+|---|---|---|
+| The tape's capacity from the input, once (`allocate`); no check a token | three room checks a token (nodes, supertypes, returns): three loads from `ctx`, three compares, three branches | none: where the bound holds for every run (no returns chain) and a token's path writes at most 4 nodes (`Bounds::unchecked`), the run's tape is the bound's from the start. The capacity is reserved, not written |
+| `buf + *(next_structural++)`: a 4-byte index array | the record's stride loaded from `ctx`, a multiply, a load | `ldr w, [starts, next, lsl #2]`: tier 1 writes the starts alone, a column (`call` asserts the stride) |
+
+JSON's bound is 2 nodes, 1 supertype and 1 return a token. A `TOKEN` at a value is now 13
+instructions before its switch, from 24. Of those, two checks remain that simdjson does not make
+a token: the stream's end (`AtEnd`, and the count's compare). simdjson has a sentinel in place of
+both: the index after the last points at the padding, which no switch accepts. The starts test
+asserts there is no room check.
+
 ## Order
 
 1. Done: step 1, above.

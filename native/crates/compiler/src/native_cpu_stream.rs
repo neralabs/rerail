@@ -239,6 +239,25 @@ pub struct Bounds {
     pub pop_supers: u64,
 }
 
+/// The most nodes a token's path may write for a run's tape to be the bound's from the start
+/// (`unchecked`): the lean tape holds 1.5 a token, and the bound's capacity is reserved, not
+/// written, so pages a run does not reach are never touched.
+const UNCHECKED_NODES: u64 = 4;
+
+impl Bounds {
+    /// No room check a token: the run's tape is the bound's (`full_tape`) from the start, as
+    /// simdjson sizes its tape from the input once. Only where the bound holds for every run (no
+    /// returns chain) and is small (`UNCHECKED_NODES`), with `marks` the program's marks.
+    pub fn unchecked(&self, marks: u64) -> bool {
+        !self.chains && self.pop_nodes == 0 && self.pop_supers == 0 && self.nodes * (1 + marks) <= UNCHECKED_NODES
+    }
+}
+
+/// The marks `MARK` tests (`CompiledStream::marks`).
+fn marks_of(words: &[crate::native_ir::StructuralBlock]) -> u64 {
+    words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0)
+}
+
 /// A compiled tier-2 program.
 pub struct CompiledStream {
     _module: JITModule,
@@ -2957,6 +2976,8 @@ fn merge_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: 
 #[derive(Clone, Copy)]
 struct TokenShape {
     bound: Bounds,
+    /// No room check (`Bounds::unchecked`).
+    unchecked: bool,
     in_code: usize,
     rest_bits: i64,
     end_bits: i64,
@@ -3275,10 +3296,20 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
     f.switch_to_block(top);
     heads.push((top, Step::Token));
     let over = f.create_block();
-    let mut counts = vec![field_get(f, ctx, Mem::Nodes), field_get(f, ctx, Mem::Supers)];
-    let mut rooms = vec![load(f, ROOM_NODES), load(f, ROOM_SUPERS)];
-    let mut most = vec![(t.bound.nodes, t.bound.pop_nodes), (t.bound.supers, t.bound.pop_supers)];
-    if !t.on_stack {
+    // None where the tape is the bound's from the start (`Bounds::unchecked`).
+    let (mut counts, mut rooms, mut most) = (vec![], vec![], vec![]);
+    if !t.unchecked {
+        counts = vec![field_get(f, ctx, Mem::Nodes), field_get(f, ctx, Mem::Supers)];
+        rooms = vec![load(f, ROOM_NODES), load(f, ROOM_SUPERS)];
+        most = vec![(t.bound.nodes, t.bound.pop_nodes), (t.bound.supers, t.bound.pop_supers)];
+    }
+    if t.unchecked {
+        // The block before is filled before the cold one is entered.
+        let fits = f.create_block();
+        f.ins().jump(fits, &[]);
+        f.switch_to_block(fits);
+    }
+    if !t.on_stack && !t.unchecked {
         counts.push(open_calls);
         rooms.push(load(f, ROOM_PUSHES));
         most.push((t.bound.pushes, 0));
@@ -4292,6 +4323,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         // Where returns chain, each `RETURN` is a loop's head: a turn pops a call.
         let bound = bounds(native);
         let chains = bound.chains;
+        let unchecked = bound.unchecked(marks_of(words));
         // Programs without `WRAP` or a `relabel` pay nothing for them: no frames, no chains, no
         // reorder (which runs only once a wrap was made).
         let wrapping = framed(words);
@@ -4580,7 +4612,11 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
             let (rows_v, snode_c, skind_c, open_c, ret_c, counts_c) = (rows_v, snode_c, skind_c, open_c, ret_c, counts_c);
             let wcols_here: Vec<Value>;
             let (bytes, len, starts_p, nstarts, lasts_p, codes_p, lasts_stride, totals_p, output_stride, totals_stride, totals_mask, rooms, outputs_p, rows_here, snode_c, skind_c, open_c, ret_c, counts_c, wc) = {
-                let reads = ctx_reads(&w.operation, wrapping);
+                let mut reads = ctx_reads(&w.operation, wrapping);
+                // No room read where none is checked (`Bounds::unchecked`).
+                if unchecked {
+                    reads.retain(|&at| ![ROOM_NODES, ROOM_SUPERS, ROOM_PUSHES].contains(&at));
+                }
                 let all = reads.is_empty() && cut.reload && cold_op(&w.operation);
                 let get = |f: &mut FunctionBuilder<'_>, at: i32, old: Value| -> Value {
                     if cut.reload && (all || reads.contains(&at)) {
@@ -4686,7 +4722,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             f.ins().jump(fall, &[]);
                             continue;
                         }
-                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
+                        let shape = TokenShape { bound, unchecked, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
                         let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, &native.token_marks, pinned_ctx)?;
                         let c = pinned(&mut f);
                         let open_calls: Vec<Value> = if on_stack { vec![] } else { vec![mget(&mut f, Mem::Ret)] };
@@ -4705,10 +4741,17 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     // The path from here to the next token word writes at most `bound`'s nodes,
                     // supertypes and returns: past the tape's room, the run stops for a bigger
                     // tape. Three compares a token, not one a write.
-                    let open_calls = mget(&mut f, Mem::Ret);
+                    // None where the tape is the bound's from the start (`Bounds::unchecked`).
+                    let open_calls = if unchecked { zero } else { mget(&mut f, Mem::Ret) };
                     // Out of room: one cold block, which sets the run's end.
                     let over = f.create_block();
-                    let counts = [mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Supers), mget(&mut f, Mem::Ret)];
+                    let counts = if unchecked { vec![] } else { vec![mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Supers), mget(&mut f, Mem::Ret)] };
+                    if unchecked {
+                        // The block before is filled before the cold one is entered.
+                        let fits = f.create_block();
+                        f.ins().jump(fits, &[]);
+                        f.switch_to_block(fits);
+                    }
                     for (at, (room, (most, per_call))) in counts.into_iter().zip(rooms.into_iter().zip([(bound.nodes, bound.pop_nodes), (bound.supers, bound.pop_supers), (bound.pushes, 0)])) {
                         let at = if per_call > 0 {
                             let popped = f.ins().imul_imm(open_calls, per_call as i64);
@@ -4780,9 +4823,15 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     // the columns (the totals' flag).
                     f.switch_to_block(token);
                     // The records' stride (`records::RecordLayout`): columns or rows, tier 1's.
-                    let rb = if clustered { pinned(&mut f) } else { ctx };
-                    let stride = f.ins().load(types::I64, MemFlags::trusted().with_readonly().with_can_move(), rb, RECORD_STRIDE);
-                    let roff = f.ins().imul(next, stride);
+                    // Where tier 2 makes the records (page 40), the starts alone: a column, as
+                    // simdjson's `structural_indexes` (`call` checks the stride).
+                    let roff = if table.fetch.is_some() {
+                        f.ins().ishl_imm(next, 2)
+                    } else {
+                        let rb = if clustered { pinned(&mut f) } else { ctx };
+                        let stride = f.ins().load(types::I64, MemFlags::trusted().with_readonly().with_can_move(), rb, RECORD_STRIDE);
+                        f.ins().imul(next, stride)
+                    };
                     let load_at = |f: &mut FunctionBuilder<'_>, c: Value| {
                         let at = f.ins().iadd(c, roff);
                         f.ins().uload32(flags, at, 0)
@@ -5835,7 +5884,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             Some(k) => Some(native.block_programs.first().and_then(|b| b.masks.get(usize::from(k)).copied()).ok_or(Error::UnsupportedBackend)?),
                             None => None,
                         };
-                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
+                        let shape = TokenShape { bound, unchecked, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
                         let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, &native.token_marks, pinned_ctx)?;
                         let c = pinned(&mut f);
                         let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
@@ -6295,7 +6344,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     let own_calls = calls;
     let tables = defined.iter().map(|c| c.func.layout.blocks().filter(|&b| c.func.layout.last_inst(b).is_some_and(|i| matches!(c.func.dfg.insts[i], cranelift_codegen::ir::InstructionData::BranchTable { .. }))).count()).sum();
-    let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
+    let marks = marks_of(words);
     let wraps = framed(words);
     let two_slots = has_context(words);
     Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, tables, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
@@ -6770,9 +6819,18 @@ impl CompiledStream {
     /// token's path past it. A run that could pass it stops at a token word (`OVERFLOW`) and
     /// `call` runs it again on `full_tape`.
     pub fn tape(&self, n: usize) -> Tape {
+        if self.bounds.unchecked(self.marks) {
+            return self.full_tape(n);
+        }
         let b = &self.bounds;
         let tokens = n as u64 + 2;
         self.sized((tokens + tokens / 2 + b.nodes + 1) as usize, (tokens / 2 + b.supers + 1) as usize, (tokens / 4 + b.pushes + 64) as usize)
+    }
+
+    /// `TOKEN` checks the tape's room (`Bounds::unchecked`: not where the run's tape is the
+    /// bound's from the start).
+    pub fn room_checked(&self) -> bool {
+        !self.bounds.unchecked(self.marks)
     }
 
     /// The most tokens a file of `len` bytes with `records` records gives: its records, or where
@@ -6851,6 +6909,17 @@ impl CompiledStream {
     /// # Safety
     /// The pointers must be as stated, and `tape` from `self.tape(self.tokens(tier1.nstarts, len))`.
     pub unsafe fn call(&self, bytes: *const u8, len: usize, tier1: Tier1View, tape: &mut Tape) -> u64 {
+        // Where tier 2 makes the records, `TOKEN` reads the starts as a column.
+        assert!(self._fetch.is_none() || tier1.record_stride == crate::records::RecordLayout::Columns.stride() as usize, "the starts as a column where tier 2 makes the records");
+        // With no room check (`Bounds::unchecked`), a tape short of the bound's is replaced first.
+        if self.bounds.unchecked(self.marks) {
+            let n = self.tokens(tier1.nstarts, len);
+            let paths = n as u64 + 2;
+            let fits = (tape.code_first.capacity() as u64) > self.bounds.nodes * paths && tape.super_node.capacity() as u64 > self.bounds.supers * paths && (tape.returns.capacity() / if self.context { 2 } else { 1 }) as u64 > self.bounds.pushes * paths;
+            if !fits {
+                *tape = self.full_tape(n);
+            }
+        }
         // SAFETY: the caller's contract.
         let r = unsafe { self.call_once(bytes, len, tier1, tape) };
         if r != OVERFLOW {
