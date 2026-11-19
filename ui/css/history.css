@@ -45,7 +45,7 @@ body[data-panel="open"] .hist > aside{display:none}
 .hsearch input{flex:1;min-width:0;border:0;background:transparent;font:inherit;font-size:13px;color:var(--foreground);outline:none}
 .hsearch input::placeholder{color:var(--muted-foreground)}
 .hsearch:focus-within{outline:2px solid var(--ring);outline-offset:1px}
-/* All · Steered · Logged: which violations the list counts. */
+/* All · Log only · Steered · Declined: which violations the list counts. */
 .hchips{margin:0 0 10px}
 .hlhead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
 .hrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(36px,max-content);column-gap:14px;align-items:center;padding:10px 12px;border-top:1px solid var(--border);text-align:left;width:100%}
@@ -55,6 +55,10 @@ body[data-panel="open"] .hist > aside{display:none}
 .hrow .l{display:flex;flex-direction:column;gap:2px;min-width:0}
 .hrow .t{font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hrow .m{font-size:12px;color:var(--muted-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The rule's declined violations after where it comes from, in red, whatever the chip; nothing when none. */
+.hrow .m .dc:empty{display:none}
+.hrow .m .dc::before{content:"·";margin:0 6px;color:var(--muted-foreground);opacity:.6}
+.hrow .m .dc{color:var(--danger-foreground)}
 .hrow .c{display:flex;justify-content:flex-end;line-height:1.15;white-space:nowrap}
 .hrow .c b{font-size:16px;color:var(--foreground);font-weight:600}
 .hnomatch{padding:20px}
@@ -87,19 +91,35 @@ body[data-panel="open"] .hist > aside{display:none}
 .hkv .said2{display:block;flex:1;min-width:0;padding:4px 10px;box-sizing:border-box;border-left:2px solid var(--brand);background:var(--brand-subtle);border-radius:0 var(--radius-md) var(--radius-md) 0;font-size:13px;line-height:1.45}
 .hkv .said2 > span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .hsum{display:flex;align-items:center;padding:4px 18px 8px}
-.hsum .tsum{font-size:13px;color:var(--muted-foreground);white-space:nowrap}
+/* "12 violations · 3 log only · 7 steered · 2 declined · 4 sessions": a narrow column wraps between parts, never inside one. */
+.hsum .tsum{display:flex;flex-wrap:wrap;font-size:13px;color:var(--muted-foreground)}
+.hsum .tsum > span{white-space:nowrap}
+.hsum .tsum > span + span::before{content:"·";margin:0 6px;opacity:.6}
 .hsum .tsum b{color:var(--foreground);font-weight:600}
+.hsum .tsum .dc{color:var(--danger-foreground)}
 
 /* One violation: when, where (and its message only when it differs from the header's), its session. */
 .hrows{padding:0 18px 6px}
 .hist .ev{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:2px 16px;padding:9px 0;font-size:13px;align-items:baseline}
 .hist .ev + .ev{border-top:1px solid var(--border)}
 .hist .ev .when{color:var(--muted-foreground);font-size:12px;white-space:nowrap}
-.hist .ev .what{min-width:0}
-.hist .ev .loc{font-family:var(--font-mono);font-size:12.5px;color:var(--foreground);word-break:break-all}
+.hist .ev .what{min-width:0;display:flex;flex-direction:column;align-items:flex-start}
+.hist .ev .loc{max-width:100%;font-family:var(--font-mono);font-size:12.5px;color:var(--foreground);word-break:break-all}
 .hist .ev .loc.muted{font-family:inherit;font-style:italic;color:var(--muted-foreground)}
 .hist .ev .diff{display:block;margin-top:2px;font-size:12px;color:var(--muted-foreground);overflow-wrap:anywhere}
 .hist .ev .diff[hidden]{display:none}
+/* Its outcome under where it is: Log only, Steered, or Declined in red with the coding agent's reasons, one per line. */
+.hist .ev .hoc{margin-top:4px;width:fit-content}
+.hist .ev .hoc[data-outcome="logged"]{background:var(--log-bg);color:var(--log-fg)}
+.hist .ev .hoc[data-outcome="steered"]{background:var(--steer-bg);color:var(--steer-fg)}
+.hist .ev .hoc[data-outcome="declined"]{background:var(--danger-subtle);color:var(--danger-foreground)}
+.hsaid{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;align-self:stretch;margin:6px 0 0;font-size:13px}
+.hsaid[hidden]{display:none}
+/* Narrow (a phone, or the rule's sheet open beside it): "Agent said" over the reasons, which keep the row's width. */
+body[data-panel="open"] .hsaid{grid-template-columns:minmax(0,1fr)}
+@media (max-width:900px){.hsaid{grid-template-columns:minmax(0,1fr)}}
+.hsaid dt{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--danger-foreground);padding-top:2px}
+.hsaid dd{margin:0;min-width:0;overflow-wrap:anywhere;white-space:pre-line}
 .hist .ev .open{font-size:12px;color:var(--brand-foreground);white-space:nowrap}
 .hist .day{padding:10px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-foreground);display:flex;align-items:center;gap:8px}
 .hist .day::after{content:"";flex:1;height:1px;background:var(--border)}

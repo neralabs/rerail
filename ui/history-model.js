@@ -1,23 +1,33 @@
 /**
- * History by rule: which rules it lists (under its All · Steered · Logged chips), which one it shows, and what it says
+ * History by rule: which rules it lists (under its All · Log only · Steered · Declined chips), which one it shows, and what it says
  * when there is nothing to list. `poll.js` reads `historyRuleId` to fetch that rule's violations in range.
  */
 import { data, ui, sinceFor, titleOf, attachedPackOf, packOfRule } from "./state.js";
 import { isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN } from "./derive.js";
 
-/** History by rule's chips: the `ui.histOutcome` value and its label. */
-export const OUTCOME_CHIPS = [["all", "All"], ["steered", "Steered"], ["logged", "Logged"]];
+/**
+ * History by rule's chips: the `ui.histOutcome` value and its label. Every violation is logged; "logged" keeps its
+ * word in the hash (`?outcome=logged`) and reads Log only, since a steered or declined violation was logged too.
+ */
+export const OUTCOME_CHIPS = [["all", "All"], ["logged", "Log only"], ["steered", "Steered"], ["declined", "Declined"]];
 
 /**
- * Distinct violations of rule `id` in the range that `outcome` counts: every one ("all"), those recorded on Steer or
- * Block ("steered", as the Violations steered tile counts them), or those recorded on Log ("logged"). 0 for a rule the
- * range has no activity for, or one not measured.
+ * Rule `id`'s distinct violations in the range, each in exactly one outcome: Log only ("logged": recorded on Log, so
+ * the coding agent was not told), Declined (a steer the agent declined with `rerail feedback`), or Steered (sent to
+ * the agent, and not declined). Zeros for a rule the range has no activity for, or one not measured.
+ * @returns {{ all: number, logged: number, steered: number, declined: number }}
  */
-export function inRange(id, outcome = "all") {
+export function outcomesOf(id) {
   const a = data.activity[id];
-  if (a === undefined || a.measured === false) return 0;
+  if (a === undefined || a.measured === false) return { all: 0, logged: 0, steered: 0, declined: 0 };
   const logged = a.loggedViolations ?? 0;
-  return outcome === "steered" ? a.distinctViolations - logged : outcome === "logged" ? logged : a.distinctViolations;
+  const declined = Math.min(a.declinedViolations ?? 0, a.distinctViolations - logged);
+  return { all: a.distinctViolations, logged, steered: a.distinctViolations - logged - declined, declined };
+}
+
+/** Rule `id`'s distinct violations in the range that `outcome` counts (`outcomesOf`); every one for "all". */
+export function inRange(id, outcome = "all") {
+  return outcomesOf(id)[outcome];
 }
 
 /** A row's title: the stored rule's, else (a rule no longer here) its id. */
@@ -44,12 +54,13 @@ export function filterRanked(ranked, query) {
 
 /**
  * The rules History lists: every rule with a violation in the range that `outcome` counts, most first, ties by title.
+ * Each row also carries how many of its violations the coding agent declined (`declined`), shown whatever the chip.
  * Rules no longer here still list (their violations stay in history) under their id.
  */
 export function rankedRules(outcome = ui.histOutcome) {
   return Object.keys(data.activity)
     .filter(id => inRange(id, outcome) > 0)
-    .map(id => ({ id, title: historyTitle(id), origin: historyOrigin(id), count: inRange(id, outcome) }))
+    .map(id => ({ id, title: historyTitle(id), origin: historyOrigin(id), count: inRange(id, outcome), declined: inRange(id, "declined") }))
     .sort((a, b) => b.count - a.count || a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
 }
 

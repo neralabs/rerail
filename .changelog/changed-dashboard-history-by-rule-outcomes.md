@@ -1,0 +1,1 @@
+History by rule counts each violation once, as Log only, Steered or Declined, with chips for each; Logged is now Log only, since every violation is logged. Each rule shows its declined count in red, and a declined violation shows the reason the coding agent recorded. Overview's Violations steered leaves out declined steers, matching the Steered chip.
