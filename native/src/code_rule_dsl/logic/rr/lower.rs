@@ -2112,10 +2112,10 @@ impl Lowerer {
 
     /// Opens a rule of the walk: head `rel(args)`, its body's `unset(x)` binding `unset` empty (`unset_vars`); its
     /// literals are `emit`'s, then `end_rule`.
-    fn begin_rule(&mut self, rel: &str, mut args: Vec<Term>, unset: BTreeSet<String>) {
-        args.iter_mut().for_each(|t| unset_term(t, &unset));
+    fn begin_rule(&mut self, rel: &str, mut args: Vec<Tm>, unset: BTreeSet<String>) {
+        args.iter_mut().for_each(|t| tm_unset(&self.prog, t, &unset));
         let mut o = self.prog.open_rule();
-        self.prog.put_head(&mut o, rel, &ts(&args));
+        self.prog.put_head(&mut o, rel, &args);
         self.open.0 = Some(Sink::Rule(o, Some(unset), None));
     }
 
@@ -2198,9 +2198,9 @@ impl Lowerer {
 
     /// Opens a helper's rule, head `rel(args)`: its `unset(x)` literals are written as they are (only a rule's own
     /// body binds the empty value).
-    fn begin_helper_rule(&mut self, rel: &str, args: &[Term]) {
+    fn begin_helper_rule(&mut self, rel: &str, args: &[Tm]) {
         let mut o = self.prog.open_rule();
-        self.prog.put_head(&mut o, rel, &ts(args));
+        self.prog.put_head(&mut o, rel, args);
         self.open.0 = Some(Sink::Rule(o, None, None));
     }
 
@@ -2371,7 +2371,7 @@ impl Lowerer {
     /// position `start` to `end` (`decide_conjunction`): each replays the conjunction into the open rule. Nothing in
     /// a replay, whose deciding walk wrote them. What their literals say of their variables (`Scan`).
     #[allow(clippy::too_many_arguments)]
-    fn write_combinations(&mut self, decided: (usize, usize, usize), rel: &str, args: &[Term], prefix: &[Literal], lits: &[LitAt], context: &BTreeSet<String>) -> Result<Scan, Error> {
+    fn write_combinations(&mut self, decided: (usize, usize, usize), rel: &str, args: &[Tm], prefix: &[Literal], lits: &[LitAt], context: &BTreeSet<String>) -> Result<Scan, Error> {
         self.write_alternatives(decided, rel, args, prefix, false, |me, k| me.conjunction_put(lits, context, k))
     }
 
@@ -2379,7 +2379,7 @@ impl Lowerer {
     /// told to (`f`), decided from log position `start` to `end` (`decide`): each replays it into the open rule.
     /// With `unset`, each rule's `unset(x)` bind the empty value, as in a rule's own body (an aggregate's helper).
     /// Nothing in a replay, whose deciding walk wrote them. What their literals say of their variables (`Scan`).
-    fn write_alternatives(&mut self, (start, n, end): (usize, usize, usize), rel: &str, args: &[Term], prefix: &[Literal], unset: bool, mut f: impl FnMut(&mut Self, usize) -> Result<usize, Error>) -> Result<Scan, Error> {
+    fn write_alternatives(&mut self, (start, n, end): (usize, usize, usize), rel: &str, args: &[Tm], prefix: &[Literal], unset: bool, mut f: impl FnMut(&mut Self, usize) -> Result<usize, Error>) -> Result<Scan, Error> {
         if self.replay.is_some() {
             return Ok(Scan::default());
         }
@@ -2755,7 +2755,8 @@ impl Lowerer {
     /// equal one made before (`merge_helpers`). Its head's arguments.
     fn helper_of(&mut self, name: &str, stem: &str, vars: &[String], decided: (usize, usize, usize), lits: &[LitAt], context: &BTreeSet<String>) -> Result<Vec<Term>, Error> {
         let args: Vec<Term> = vars.iter().map(|c| Term::Var(c.clone().into())).collect();
-        let scan = self.write_combinations(decided, name, &args, &[], lits, context)?;
+        let head: Vec<Tm> = vars.iter().map(|c| self.var_tm(c)).collect();
+        let scan = self.write_combinations(decided, name, &head, &[], lits, context)?;
         if self.replay.is_none() {
             self.prog.declare_cols(name, vars.iter().map(|c| (c.clone(), scan.type_of(c))));
             self.once.push((name.to_owned(), stem.to_owned(), decided.1));
@@ -2972,7 +2973,7 @@ impl Lowerer {
                 rel = place_relation(&head.rel);
                 written = [path.clone(), line.clone()].into_iter().chain(head.args.iter().skip(1).cloned()).collect();
             }
-            let args = written.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
+            let args = written.iter().map(|a| self.term_tm(a)).collect::<Result<Vec<_>, _>>()?;
             for k in 0..combinations {
                 // The empty value's variables, of the combination's literals (a scan of them), then its rule.
                 self.subs.truncate(1);
@@ -3093,8 +3094,8 @@ impl Lowerer {
                         && self.node_set(stop).is_none()
                     {
                         let r = self.within_stop_relation(stop)?;
-                        let atom = Literal::Atom(Atom { rel: r.into(), args: [self.term(n)?, self.term(a)?].into(), neg: false, gated: false });
-                        self.alt(0, picks[i], |me| me.emit(atom))?;
+                        let args = vec![self.term_tm(n)?, self.term_tm(a)?];
+                        self.alt(0, picks[i], |me| me.emit_atom(&r, args, false, false))?;
                         Ok(1)
                     } else {
                         let mut used: Vec<String> = context.iter().cloned().collect();
@@ -3243,8 +3244,8 @@ impl Lowerer {
                 let (Some(re), [_, s]) = (args.first().and_then(|a| str_of(self, a)), args.as_slice()) else {
                     return Err(Error::Syntax("match_all takes a regex and a text".to_owned()));
                 };
-                let l = Literal::Cmp { l: Term::Call("rx".into(), [self.term(s)?, Term::Str(re.into())].into()), op: "=", r: Term::Int(0) };
-                one(self, &mut |me| me.emit(l.clone()))
+                let test = Tm::CallAtom(self.prog.atom("rx"), vec![self.term_tm(s)?, self.str_tm(&re)]);
+                one(self, &mut |me| me.emit_cmp(test.clone(), "=", Tm::Int(0)))
             }
             L::Atom { rel, args, neg } => one(self, &mut |me| me.atom_literal(&rel, &args, neg)),
             L::Cmp { l, op, r } => one(self, &mut |me| me.comparison(&l, op, &r, outer)),
@@ -3527,7 +3528,7 @@ impl Lowerer {
             None
         } else {
             let name = self.fresh("or");
-            let args: Vec<Term> = shared.iter().map(|c| Term::Var(c.as_str().into())).collect();
+            let args: Vec<Tm> = shared.iter().map(|c| self.var_tm(c)).collect();
             if self.replay.is_none() {
                 let at = self.log.len();
                 let sink = self.open.0.take();
@@ -3555,7 +3556,7 @@ impl Lowerer {
                 debug_assert_eq!(at, self.log.len(), "a helper's rules replay their names");
                 self.prog.declare_cols(&name, shared.iter().map(|c| (c.clone(), made.type_of(c))));
             }
-            Some(Literal::Atom(Atom { rel: name.into(), args: args.into(), neg: false, gated: false }))
+            Some((name, args))
         };
         // The kept alternatives, each replayed from where the literal began, then the helper's atom.
         let after = self.replay;
@@ -3570,8 +3571,8 @@ impl Lowerer {
                 r.map(|_| ())
             })?;
         }
-        if let Some(atom) = helper {
-            self.alt(keep.len(), pick, |me| me.emit(atom))?;
+        if let Some((name, args)) = helper {
+            self.alt(keep.len(), pick, |me| me.emit_atom(&name, args, false, false))?;
             return Ok(keep.len() + 1);
         }
         Ok(keep.len())
@@ -3593,7 +3594,8 @@ impl Lowerer {
         // `rr_not<k>(shared)` of the bodies, negated; `rr_not<k>(0)` when nothing is shared.
         let name = self.fresh("not");
         let args: Vec<Term> = if shared.is_empty() { vec![Term::Int(0)] } else { shared.iter().map(|c| Term::Var(c.clone().into())).collect() };
-        let scan = self.write_combinations(decided, &name, &args, &prefix, lits, &context);
+        let head: Vec<Tm> = args.iter().map(|t| self.tm(t)).collect();
+        let scan = self.write_combinations(decided, &name, &head, &prefix, lits, &context);
         self.siblings = siblings;
         let scan = scan?;
         if self.replay.is_none() {
@@ -3727,14 +3729,13 @@ impl Lowerer {
         let shared: Vec<String> = args[..2].iter().filter_map(|t| if let T::Var(v) = self.tv(t) { Some(v) } else { None }).filter(|x| outer.contains(x)).collect();
         let decided = self.decide(|me, p| me.node_axis_put(rel, args, p))?;
         let name = self.fresh("not");
-        let head: Vec<Term> = if shared.is_empty() { vec![Term::Int(0)] } else { shared.iter().map(|c| Term::Var(c.clone().into())).collect() };
+        let head: Vec<Tm> = if shared.is_empty() { vec![Tm::Int(0)] } else { shared.iter().map(|c| self.var_tm(c)).collect() };
         let scan = self.write_alternatives(decided, &name, &head, &[], false, |me, p| me.node_axis_put(rel, args, p))?;
         if self.replay.is_none() {
             let cols: Vec<(String, String)> = if shared.is_empty() { vec![("unit".to_owned(), "int".to_owned())] } else { shared.iter().map(|c| (c.clone(), scan.type_of(c))).collect() };
             self.prog.declare_cols(&name, cols);
         }
-        let not = Literal::Atom(Atom { rel: name.into(), args: head.into(), neg: true, gated: false });
-        self.alt(0, pick, |me| me.emit(not))?;
+        self.alt(0, pick, |me| me.emit_atom(&name, head, true, false))?;
         Ok(1)
     }
 
@@ -3824,47 +3825,45 @@ impl Lowerer {
         if neg && stop.is_some() && matches!(self.tv(a), T::Wild) {
             return not_yet(format!("`!{rel}` with its ancestor unnamed"));
         }
-        let (n, a) = (self.term(n)?, self.term(a)?);
+        let (n, a) = (self.term_tm(n)?, self.term_tm(a)?);
         let within = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
         self.prog.declare_cols(&within, [("n", "node"), ("a", "node")]);
         if !self.prog.has_input(within) {
             self.prog.add_input(within);
         }
-        let below = |neg: bool| Literal::Atom(Atom { rel: within.to_owned().into(), args: [n.clone(), a.clone()].into(), neg, gated: false });
+        let below = |me: &mut Self, neg: bool| me.emit_atom(within, vec![n.clone(), a.clone()], neg, false);
         let Some(stop) = stop else {
-            self.emit(below(neg))?;
+            below(self, neg)?;
             return Ok(1);
         };
         let set = self.set_name("within_stop", stop)?;
-        let Term::Var(nv) = &n else { return Err(Error::Syntax("within_stop: the node is a variable".to_owned())) };
+        let Some(nv) = tm_var(&self.prog, &n).map(str::to_owned) else { return Err(Error::Syntax("within_stop: the node is a variable".to_owned())) };
         let s = self.fresh("stop");
-        let nearest = Literal::Nearest { n: nv.to_string(), a: s.clone(), kindset: set.clone() };
+        let sv = self.var_tm(&s);
+        let nearest = |me: &mut Self| me.emit_nearest(&nv, &s, &set);
         // The nearest stop against a is by the tree, not by comparing ids (ids need not follow preorder, decision
         // 0083 §3).
         if neg {
             // n is not below a, or its nearest stop is strictly below a.
-            let between = Literal::Atom(Atom { rel: within.to_owned().into(), args: [Term::Var(s.clone().into()), a.clone()].into(), neg: false, gated: false });
-            self.alt(0, pick, |me| me.emit(below(true)))?;
+            self.alt(0, pick, |me| below(me, true))?;
             self.alt(1, pick, |me| {
-                me.emit(below(false))?;
-                me.emit(nearest)?;
-                me.emit(between)
+                below(me, false)?;
+                nearest(me)?;
+                me.emit_atom(within, vec![sv.clone(), a.clone()], false, false)
             })?;
             return Ok(2);
         }
-        let none = Literal::Atom(Atom { rel: format!("{AXIS}{set}").into(), args: [n.clone(), Term::Wild].into(), neg: true, gated: false });
         // The nearest stop is a, or a is below it: it is not strictly below a (both are above n, so one of the three
         // holds). One alternative, not two: a rule's alternatives multiply, and a policy of several `within_stop`s
         // was exponential in them.
-        let not_below = Literal::Atom(Atom { rel: within.to_owned().into(), args: [Term::Var(s.clone().into()), a.clone()].into(), neg: true, gated: false });
         self.alt(0, pick, |me| {
-            me.emit(below(false))?;
-            me.emit(none)
+            below(me, false)?;
+            me.emit_atom(&format!("{AXIS}{set}"), vec![n.clone(), Tm::Wild], true, false)
         })?;
         self.alt(1, pick, |me| {
-            me.emit(below(false))?;
-            me.emit(nearest)?;
-            me.emit(not_below)
+            below(me, false)?;
+            nearest(me)?;
+            me.emit_atom(within, vec![sv.clone(), a.clone()], true, false)
         })?;
         Ok(2)
     }
@@ -3889,7 +3888,7 @@ impl Lowerer {
             let args = [At::Var("n".to_owned()), At::Var("a".to_owned()), stop.clone()];
             let decided = self.decide(|me, p| me.within_put("within_stop", &args, false, p))?;
             self.prog.declare_cols(&name, [("n", "node"), ("a", "node")]);
-            let head = [Term::Var("n".into()), Term::Var("a".into())];
+            let head = [self.var_tm("n"), self.var_tm("a")];
             self.write_alternatives(decided, &name, &head, &[], false, |me, p| me.within_put("within_stop", &args, false, p))?;
         }
         self.log[slot] = Logged::Skip(self.log.len() - slot - 1);
@@ -4010,14 +4009,16 @@ impl Lowerer {
             }
             let pattern = if all { re.clone() } else { format!("^(?:{re})$") };
             self.rx_span_input();
-            let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".into(), args: args.into(), neg: false, gated: false });
-            let (p, c) = (Term::Str(pattern.into()), Term::Var(v.clone().into()));
+            let (p, c) = (self.str_tm(&pattern), self.var_tm(&v));
             if gs.is_empty() {
-                return self.emit(atom(vec![p, c, Term::Wild, Term::Str(String::new().into()), Term::Wild]));
+                let args = vec![p, c, Tm::Wild, self.str_tm(""), Tm::Wild];
+                return self.emit_atom("rx_span", args, false, false);
             }
-            let j = Term::Var(self.fresh("j").into());
+            let j = self.fresh("j");
+            let j = self.var_tm(&j);
             for g in &gs {
-                self.emit(atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone().into()), Term::Var(g.clone().into())]))?;
+                let args = vec![p.clone(), c.clone(), j.clone(), self.str_tm(g), self.var_tm(g)];
+                self.emit_atom("rx_span", args, false, false)?;
             }
             return Ok(());
         }
@@ -4025,8 +4026,8 @@ impl Lowerer {
             return self.captures(args);
         }
         if gs.is_empty() && positions.is_empty() {
-            let l = Literal::Cmp { l: Term::Call("rx".into(), [self.term(s)?, Term::Str(re.clone().into())].into()), op: "=", r: Term::Int(1) };
-            return self.emit(l);
+            let test = Tm::CallAtom(self.prog.atom("rx"), vec![self.term_tm(s)?, self.str_tm(re)]);
+            return self.emit_cmp(test, "=", Tm::Int(1));
         }
         let T::Var(v) = self.tv(s) else { return not_yet(format!("match_all over a computed text, {:?} (bind it to a variable first)", self.tv(s))) };
         let v = &v;
@@ -4049,9 +4050,11 @@ impl Lowerer {
         let ctx = ctx?;
         let name = self.fresh("mall");
         self.match_all_native(&name, &ctx.rel, re, &gs, !positions.is_empty());
-        let args = std::iter::once(Term::Var(v.clone().into())).chain(gs.iter().map(|g| Term::Var(g.clone().into())))
-            .map(Ok).chain(positions.iter().map(|p| self.term(p))).collect::<Result<Vec<_>, Error>>()?;
-        self.emit(Literal::Atom(Atom { rel: name.into(), args: args.into(), neg: false, gated: false }))
+        let mut args: Vec<Tm> = std::iter::once(v).chain(&gs).map(|g| self.var_tm(g)).collect();
+        for p in positions {
+            args.push(self.term_tm(p)?);
+        }
+        self.emit_atom(&name, args, false, false)
     }
 
     /// `match_all("re", n, m)` over node n: each match j of re in n's source is `rx_span(re, n, j, "", m)`, and each
@@ -4061,12 +4064,14 @@ impl Lowerer {
         let (T::Str(re), T::Var(n)) = (self.tv(re), self.tv(n)) else { unreachable!("a node match_all") };
         let (re, n) = (&re, &n);
         self.rx_span_input();
-        let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".into(), args: args.into(), neg: false, gated: false });
-        let (p, c, j) = (Term::Str(re.clone().into()), Term::Var(n.clone().into()), Term::Var(self.fresh("j").into()));
-        let m = self.term(m)?;
-        self.emit(atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(String::new().into()), m]))?;
+        let j = self.fresh("j");
+        let (p, c, j) = (self.str_tm(re), self.var_tm(n), self.var_tm(&j));
+        let m = self.term_tm(m)?;
+        let args = vec![p.clone(), c.clone(), j.clone(), self.str_tm(""), m];
+        self.emit_atom("rx_span", args, false, false)?;
         for g in groups(re) {
-            self.emit(atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone().into()), Term::Var(g.into())]))?;
+            let args = vec![p.clone(), c.clone(), j.clone(), self.str_tm(&g), self.var_tm(&g)];
+            self.emit_atom("rx_span", args, false, false)?;
         }
         Ok(())
     }
@@ -4108,15 +4113,17 @@ impl Lowerer {
             let cols = [("p", "sym"), ("n", "node"), ("g", "sym"), ("c", "node")];
             self.prog.declare_cols("ast_match", cols.iter().copied());
         }
-        let atom = |g: &str, c: Term, neg: bool| {
-            Literal::Atom(Atom { rel: "ast_match".into(), args: [Term::Str(key.clone().into()), Term::Var(n.clone().into()), Term::Str(g.to_owned().into()), c].into(), neg, gated: false })
+        let atom = |me: &mut Self, g: &str, c: Tm, neg: bool| {
+            let args = vec![me.str_tm(&key), me.var_tm(&n), me.str_tm(g), c];
+            me.emit_atom("ast_match", args, neg, false)
         };
         if neg {
-            return self.emit(atom("", Term::Wild, true));
+            return atom(self, "", Tm::Wild, true);
         }
-        self.emit(atom("", Term::Wild, false))?;
+        atom(self, "", Tm::Wild, false)?;
         for x in super::single_metavars(pattern) {
-            self.emit(atom(&x, Term::Var(x.clone().into()), false))?;
+            let c = self.var_tm(&x);
+            atom(self, &x, c, false)?;
         }
         Ok(())
     }
@@ -4194,13 +4201,16 @@ impl Lowerer {
         let [re, s] = args else { unreachable!("match with a pattern") };
         let T::Str(re) = self.tv(re) else { unreachable!("match with a pattern") };
         let re = &re;
-        let whole = Term::Str(format!("^(?:{re})$").into());
-        let s = self.term(s)?;
+        let whole = self.str_tm(&format!("^(?:{re})$"));
+        let s = self.term_tm(s)?;
         // The test as well as the groups: a group the head alone reads is a column, which SQL does not filter on, so
         // a text that does not match would make a row with no value (`pct_rest`'s `%%` step).
-        self.emit(Literal::Cmp { l: Term::Call("rx".into(), [s.clone(), whole.clone()].into()), op: "=", r: Term::Int(1) })?;
+        let (rx, rx_group) = (self.prog.atom("rx"), self.prog.atom("rx_group"));
+        self.emit_cmp(Tm::CallAtom(rx, vec![s.clone(), whole.clone()]), "=", Tm::Int(1))?;
         for g in groups(re) {
-            self.emit(Literal::Cmp { l: Term::Var(g.clone().into()), op: "=", r: Term::Call("rx_group".into(), [s.clone(), whole.clone(), Term::Str(g.into())].into()) })?;
+            let group = Tm::CallAtom(rx_group, vec![s.clone(), whole.clone(), self.str_tm(&g)]);
+            let v = self.var_tm(&g);
+            self.emit_cmp(v, "=", group)?;
         }
         Ok(())
     }
@@ -4559,10 +4569,10 @@ impl Lowerer {
     }
 
     /// Term `a` lowered; a whole number as a float where `float` (`comparison`: compared with a float).
-    fn term_as(&mut self, a: &At, float: bool) -> Result<Term, Error> {
+    fn term_as(&mut self, a: &At, float: bool) -> Result<Tm, Error> {
         match self.tv(a) {
-            T::Num(n) if float => Ok(Term::Int(float_key(format!("{n}.0").parse::<f64>().map_err(|_| Error::Syntax(format!("bad decimal number {n}.0")))?))),
-            _ => self.term(a),
+            T::Num(n) if float => Ok(Tm::Int(float_key(format!("{n}.0").parse::<f64>().map_err(|_| Error::Syntax(format!("bad decimal number {n}.0")))?))),
+            _ => self.term_tm(a),
         }
     }
 
@@ -4580,7 +4590,6 @@ impl Lowerer {
                 let v = self.fresh("agg");
                 self.aggregate(&v, &agg, over.as_ref(), &by, &sep, &body, outer)?;
                 let other = self.term_as(other, float)?;
-                let other = self.tm(&other);
                 // `$v = 0` with `$v` unbound would assign it (`front::cmp_binds`), and the planner may place it
                 // before the aggregate: an equality is written `0 = $v`, a test that waits for the aggregate.
                 let v = self.var_tm(&v);
@@ -4588,8 +4597,8 @@ impl Lowerer {
                 self.emit_cmp(l, op, r)
             }
             _ => {
-                let c = Literal::Cmp { l: self.term_as(l, l_float)?, op, r: self.term_as(r, r_float)? };
-                self.emit(c)
+                let (l, r) = (self.term_as(l, l_float)?, self.term_as(r, r_float)?);
+                self.emit_cmp(l, op, r)
             }
         }
     }
@@ -5223,7 +5232,7 @@ impl Lowerer {
             self.span_context = false;
             prefix.push(Literal::Atom(ctx?));
         }
-        let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone().into())).collect();
+        let args: Vec<Tm> = cols.iter().map(|c| self.var_tm(c)).collect();
         // The empty value inside the body is the constant, as in a rule's own body.
         let scan = self.write_alternatives(decided, &name, &args, &prefix, true, |me, k| me.conjunction_put(body, outer, k))?;
         // Shared only by the clauses of the same heads: aggregate demand narrows a helper by its readers' contexts
@@ -5336,31 +5345,41 @@ impl Lowerer {
         if neg && args.iter().any(|a| matches!(self.tv(a), T::Wild)) {
             return not_yet("`!split_dot` with a column unnamed");
         }
-        let (mut out, mut terms) = (Vec::new(), Vec::new());
+        let (mut bound, mut terms) = (Vec::new(), Vec::new());
         // The constants' parts, bound in the (one) positive alternative.
         for a in args {
-            let t = self.term(a)?;
+            let t = self.term_tm(a)?;
             terms.push(match t {
-                Term::Var(_) => t,
+                Tm::VarAtom(_) => t,
                 _ if neg => t,
-                Term::Wild => Term::Var(self.fresh("part").into()),
+                Tm::Wild => {
+                    let v = self.fresh("part");
+                    self.var_tm(&v)
+                }
                 constant => {
-                    let v = Term::Var(self.fresh("part").into());
-                    out.push(Literal::Cmp { l: v.clone(), op: "=", r: constant });
+                    let v = self.fresh("part");
+                    let v = self.var_tm(&v);
+                    bound.push((v.clone(), constant));
                     v
                 }
             });
         }
-        let [q, m, x] = <[Term; 3]>::try_from(terms).expect("three columns");
-        let dotted = |b: i64| Literal::Cmp { l: Term::Call("contains".into(), [x.clone(), Term::Str(".".into())].into()), op: "=", r: Term::Int(b) };
-        let cat = Term::Call("cat".into(), [m, x.clone()].into());
+        let [q, m, x] = <[Tm; 3]>::try_from(terms).expect("three columns");
+        let (contains, dot) = (self.prog.atom("contains"), self.str_tm("."));
+        let dotted = Tm::CallAtom(contains, vec![x.clone(), dot]);
+        let cat = Tm::CallAtom(self.prog.atom("cat"), vec![m, x]);
         if neg {
-            self.alt(0, pick, |me| me.emit(Literal::Cmp { l: q, op: "!=", r: cat }))?;
-            self.alt(1, pick, |me| me.emit(dotted(1)))?;
+            self.alt(0, pick, |me| me.emit_cmp(q, "!=", cat))?;
+            self.alt(1, pick, |me| me.emit_cmp(dotted, "=", Tm::Int(1)))?;
             return Ok(2);
         }
-        out.extend([Literal::Cmp { l: q, op: "=", r: cat }, dotted(0)]);
-        self.alt(0, pick, |me| out.into_iter().try_for_each(|l| me.emit(l)))?;
+        self.alt(0, pick, |me| {
+            for (v, constant) in bound {
+                me.emit_cmp(v, "=", constant)?;
+            }
+            me.emit_cmp(q, "=", cat)?;
+            me.emit_cmp(dotted, "=", Tm::Int(0))
+        })?;
         Ok(1)
     }
 
