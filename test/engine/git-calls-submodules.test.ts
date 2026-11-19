@@ -1,6 +1,6 @@
 import * as childProcess from "node:child_process";
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -192,6 +192,19 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const audit = await afterSubmoduleListing(root, work, `mv '${kept}' '${placed}'`, `mv '${placed}' '${kept}'`);
 
     expect(existsSync(placed)).toBe(true);
+    expect(runs(marker)).toBe(0);
+    expect([audit.status, listed(audit.stdout)]).toEqual([0, ["sub"]]);
+  }, 60_000);
+
+  it.skipIf(process.platform === "win32")("in a Git folder taken away while Rerail listed its config, and list that submodule as changed", async () => {
+    const root = await folder();
+    const marker = join(root, "filter-ran");
+    const { work, placed } = await submoduleWithPlacedCopy(root, marker);
+    unlinkSync(join(work, "sub", ".git"));
+    await writeFile(join(work, "sub", ".git"), "gitdir: ../placed\n");
+
+    const audit = await afterSubmoduleListing(root, work, ":", `mv '${placed}' '${join(root, "kept")}'`);
+
     expect(runs(marker)).toBe(0);
     expect([audit.status, listed(audit.stdout)]).toEqual([0, ["sub"]]);
   }, 60_000);
@@ -444,14 +457,14 @@ function rerail(cwd: string, args: readonly string[]): [boolean, string] {
 
 /** The submodule `sub` of a `changedSubmodule` checkout with its Git folder made otherwise; the checkout to diff in. */
 const GIT_FOLDERS: ReadonlyArray<readonly [string, (work: string, root: string) => Promise<string>]> = [
-  ["whose config file is empty", async work => {
-    writeFileSync(join(work, ".git", "modules", "sub", "config"), "");
+  ["whose HEAD Git does not take", async work => {
+    writeFileSync(join(work, ".git", "modules", "sub", "HEAD"), "not a head\n");
     return work;
   }],
-  ["with no config file", async work => {
-    unlinkSync(join(work, ".git", "modules", "sub", "config"));
+  ...["objects", "refs"].map(name => [`with no ${name} folder`, async (work: string) => {
+    await removeFolder(join(work, ".git", "modules", "sub", name));
     return work;
-  }],
+  }] as const),
   ["that holds no repository: an empty `.git` folder in a submodule not checked out", async work => {
     git(work, "submodule", "deinit", "--quiet", "--force", "sub");
     mkdirSync(join(work, "sub", ".git"));
@@ -485,6 +498,13 @@ const GIT_FOLDERS: ReadonlyArray<readonly [string, (work: string, root: string) 
   }],
 ];
 
+/** Each config file of a submodule's Git folder that holds no entry, and how to make it so. */
+const NO_ENTRY: ReadonlyArray<readonly [string, (gitFolder: string) => void]> = [
+  ["is empty", gitFolder => writeFileSync(join(gitFolder, "config"), "")],
+  ["is gone", gitFolder => unlinkSync(join(gitFolder, "config"))],
+  ["holds only a comment and a section header", gitFolder => writeFileSync(join(gitFolder, "config"), "# no entry\n[core]\n")],
+];
+
 describe("Rerail's diffs answer as Git's own for each Git folder a submodule's `.git` names", () => {
   it.each(GIT_FOLDERS)("one %s", async (_name, made) => {
     const root = await folder();
@@ -493,13 +513,30 @@ describe("Rerail's diffs answer as Git's own for each Git folder a submodule's `
     expect([rerail(work, AUDIT_DIFF), rerail(work, SCAN_DIFF)]).toEqual([own(work, AUDIT_DIFF), own(work, SCAN_DIFF)]);
   }, 60_000);
 
-  it.each(GIT_FOLDERS.slice(0, 2))("and list the submodule and the checkout's files for one %s, which defines no driver", async (_name, made) => {
+  it.each(NO_ENTRY)("one whose config file %s, which defines no driver, and list it when it changed, as Git does", async (_name, made) => {
     const root = await folder();
-    const work = await made(await changedSubmodule(root), root);
+    const work = await changedSubmodule(root);
+    made(join(work, ".git", "modules", "sub"));
+    const changed = [rerail(work, AUDIT_DIFF), rerail(work, SCAN_DIFF)];
+    await writeFile(join(work, "sub", "inner.txt"), "one\n");
+    const clean = [rerail(work, AUDIT_DIFF), rerail(work, SCAN_DIFF)];
 
-    const answers = [runGit(work, AUDIT_DIFF), runGit(work, SCAN_DIFF)];
+    expect(changed).toEqual([[true, "sub\0top.txt\0"], [true, "sub\0top.txt\0"]]);
+    expect(clean).toEqual([own(work, AUDIT_DIFF), own(work, SCAN_DIFF)]);
+    expect(clean).toEqual([[true, "top.txt\0"], [true, "top.txt\0"]]);
+  }, 60_000);
 
-    expect(answers.map(answer => [answer.status, listed(answer.stdout)])).toEqual([[0, ["sub", "top.txt"]], [0, ["sub", "top.txt"]]]);
+  it.skipIf(process.platform === "win32")("one whose HEAD is a symbolic link into refs/, as Git once wrote it, to a branch not made yet", async () => {
+    const root = await folder();
+    const work = await changedSubmodule(root);
+    const head = join(work, ".git", "modules", "sub", "HEAD");
+    unlinkSync(head);
+    symlinkSync("refs/heads/unborn", head);
+
+    const answers = [rerail(work, AUDIT_DIFF), rerail(work, SCAN_DIFF)];
+
+    expect(answers).toEqual([own(work, AUDIT_DIFF), own(work, SCAN_DIFF)]);
+    expect(answers.map(([answered]) => answered)).toEqual([true, true]);
   }, 60_000);
 
   it("one of a submodule inside a submodule, whose config file is empty", async () => {
@@ -522,6 +559,45 @@ describe("Rerail's diffs answer as Git's own for each Git folder a submodule's `
   }, 60_000);
 });
 
+/** What a call made in a Rerail loaded afresh started: each Git's file and time limit, and the call's result. */
+interface Started {
+  readonly gits: ReadonlyArray<{ readonly file: string; readonly limit: number | undefined }>;
+  readonly answer: GitResult;
+}
+
+/**
+ * `call` in a Rerail loaded afresh, which asks Git's version at its first call that reads worktree files. Each Git it
+ * starts answers as itself, or `git version` as `version` when given, and as if it had taken 2.5 s.
+ */
+async function startedBy(call: (fresh: typeof import("../../src/engine/git.js")) => GitResult, version?: string): Promise<Started> {
+  vi.resetModules();
+  const fresh = await import("../../src/engine/git.js");
+  const started = await import("node:child_process");
+  const now = performance.now.bind(performance);
+  let used = 0;
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + used);
+  const gits: Array<{ file: string; limit: number | undefined }> = [];
+  vi.mocked(started.spawnSync).mockImplementation(((file: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+    const result = version !== undefined && args.at(-1) === "version"
+      ? { pid: 0, output: [], stdout: version, stderr: "", status: 0, signal: null }
+      : actualChildProcess.spawnSync(file, args, options);
+    if (!args.includes("-C")) return result;
+    gits.push({ file, limit: options.timeout });
+    used += 2_500;
+    return result;
+  }) as unknown as typeof childProcess.spawnSync);
+  try {
+    return { answer: call(fresh), gits };
+  } finally {
+    vi.mocked(started.spawnSync).mockImplementation(actualChildProcess.spawnSync);
+    clock.mockRestore();
+  }
+}
+
+/** Whether the `at`th Git of a call with a 20 s limit, each before it taking 2.5 s, started with what was left. */
+const leftAt = ({ limit }: { readonly limit: number | undefined }, at: number): boolean =>
+  limit !== undefined && limit > 18_000 - 2_500 * at && limit <= 20_000 - 2_500 * at;
+
 describe("Rerail's diff of a checkout with submodules keeps the call's one time limit", () => {
   it("as each Git it starts gets what is left of it, and none starts once it is spent", async () => {
     const root = await folder();
@@ -530,31 +606,39 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
     for (const name of ["one", "two", "three"]) git(work, "submodule", "add", "--quiet", source, name);
     git(work, "commit", "--quiet", "-m", "submodules");
     for (const name of ["one", "two", "three"]) await writeFile(join(work, name, "inner.txt"), "two\n");
-    // Asked once first: each process asks Git's version once, at its first call that reads worktree files.
-    runGit(work, AUDIT_DIFF);
-    const now = performance.now.bind(performance);
-    let used = 0;
-    const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + used);
-    const limits: Array<number | undefined> = [];
-    // Each Git answers as itself, and as if it had taken 4 s of the call's 10 s.
-    vi.mocked(childProcess.spawnSync).mockImplementation(((file: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
-      limits.push(options.timeout);
-      const result = actualChildProcess.spawnSync(file, args, options);
-      used += 4_000;
-      return result;
-    }) as unknown as typeof childProcess.spawnSync);
-    const answer = ((): GitResult => {
-      try {
-        return runGit(work, AUDIT_DIFF, { timeout: 10_000 });
-      } finally {
-        vi.mocked(childProcess.spawnSync).mockImplementation(actualChildProcess.spawnSync);
-        clock.mockRestore();
-      }
-    })();
 
-    // The config listing, the diff and the index's submodules ran; the question after them was not started.
-    expect(limits.map((limit, at) => limit !== undefined && limit > 0 && limit <= 10_000 - 4_000 * at)).toEqual([true, true, true]);
-    expect([answer.status, answer.stdout, answer.error?.message]).toEqual([null, "", expect.stringMatching(/^spawnSync .+ ETIMEDOUT$/u)]);
-    expect(answer.error).toMatchObject({ code: "ETIMEDOUT", syscall: expect.stringMatching(/^spawnSync /u) });
+    const { gits, answer } = await startedBy(fresh => fresh.runGit(work, AUDIT_DIFF, { timeout: 20_000 }));
+    // A start that runs past its own time limit, for the error Node gives it on this system.
+    const ranOut = actualChildProcess.spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], { timeout: 50 }).error as NodeJS.ErrnoException | undefined;
+
+    // Git's version, the config listing, the diff, the index's submodules, the top folder and `.gitmodules`, then the
+    // first submodule's config listing and status, each with what was left; the next submodule's listing never started.
+    expect(gits.map(leftAt)).toEqual(Array(8).fill(true));
+    expect([answer.status, answer.stdout, answer.stderr, answer.error?.message]).toEqual([null, "", "", `spawnSync ${gits[0]?.file} ETIMEDOUT`]);
+    expect(answer.error).toMatchObject({ code: "ETIMEDOUT", errno: ranOut?.errno, syscall: `spawnSync ${gits[0]?.file}`, path: gits[0]?.file });
+    const spawnargs = (answer.error as unknown as { spawnargs: string[] }).spawnargs;
+    expect([spawnargs.slice(0, 2), spawnargs.at(-6), spawnargs.slice(-4)]).toEqual([["-c", "core.fsmonitor=false"], "-C", ["config", "-z", "--show-scope", "--list"]]);
+  }, 60_000);
+
+  it.each([["status", "--porcelain=2", "-z"], ["ls-files", "-z", "--modified"]])("and so does a guarded `git %s`", async (...args: string[]) => {
+    const root = await folder();
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+
+    const { gits, answer } = await startedBy(fresh => fresh.runGit(work, args, { timeout: 20_000 }));
+
+    // Git's version, the config listing, and the call.
+    expect([gits.map(leftAt), answer.status]).toEqual([[true, true, true], 0]);
+  }, 60_000);
+
+  it("and so does a call with a Git too old for the guard", async () => {
+    const root = await folder();
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    const quiet = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const { gits, answer } = await startedBy(fresh => fresh.runGit(work, AUDIT_DIFF, { timeout: 20_000 }), "git version 2.30.2\n");
+    quiet.mockRestore();
+
+    // Git's version, then the diff as it ran before the guard.
+    expect([gits.map(leftAt), answer.status]).toEqual([[true, true], 0]);
   }, 60_000);
 });
