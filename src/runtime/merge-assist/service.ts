@@ -650,7 +650,15 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
    */
   #endPasses(): Promise<void> {
     const ended = this.#reads.stop();
-    for (const [path, { mark }] of this.#scans) this.#releaseMark(path, mark);
+    for (const [path, { mark }] of this.#scans) {
+      try {
+        this.#releaseMark(path, mark);
+      } catch (error) {
+        // Another connection held the database past its busy wait: the mark goes stale once this process ends, as a
+        // mark left by a process that ended without its stop does.
+        process.stderr.write(`rerail: Merge Assist could not give up its scan of ${path}: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    }
     return ended;
   }
 }

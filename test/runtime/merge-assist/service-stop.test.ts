@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { type MergeAssistStatus, openRerailDatabase } from "../../../src/engine/index.js";
+import { type MergeAssistStatus, openRerailDatabase, type RerailDatabase } from "../../../src/engine/index.js";
 import { createMergeAssistService, type GithubClient, type MergeAssistRuntime, type PullRequestSummary } from "../../../src/runtime/index.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 import { git } from "../../support/merge-assist/git.js";
@@ -187,7 +187,7 @@ async function stopDuring(service: MergeAssistRuntime, work: () => Promise<unkno
  * A Merge Assist over a connection of its own to the workspace's database, and the closing of that connection, as a
  * runtime closes its database once its Merge Assist has stopped. Closed after the test at the latest.
  */
-function ownConnection(ws: Workspace, github: GithubClient): { service: MergeAssistRuntime; close: () => void } {
+function ownConnection(ws: Workspace, github: GithubClient): { service: MergeAssistRuntime; close: () => void; database: RerailDatabase } {
   const database = openRerailDatabase(ws.databasePath);
   let open = true;
   const close = (): void => {
@@ -195,7 +195,7 @@ function ownConnection(ws: Workspace, github: GithubClient): { service: MergeAss
     open = false;
   };
   onTestFinished(close);
-  return { service: createMergeAssistService({ database, github }), close };
+  return { service: createMergeAssistService({ database, github }), close, database };
 }
 
 const { access: actualAccess } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
@@ -497,6 +497,38 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     const events = byConflict(heard());
     expect(events.size).toBe(PEERS);
     for (const sequence of events.values()) expect(sequence).toEqual(["closed", "detected"]);
+  });
+
+  it("resolves a stop with no wait whose release of a scan's mark meets a database another connection holds, and leaves the mark to go stale, as when its process ends", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    addPeers(ws);
+    await ws.service().setEnabled(ws.repo, true);
+    const github = new HeldGithub();
+    const { service, close, database } = ownConnection(ws, github);
+    // The release waits this long for the lock, not the five seconds a daemon's connection waits.
+    database.$client.pragma("busy_timeout = 50");
+    const asked = Promise.withResolvers<void>();
+    github.onHeld = () => asked.resolve();
+    const scan = service.openSession(ws.repo, "claude-code", "session-1");
+    await asked.promise;
+    const holder = openRerailDatabase(ws.databasePath);
+    onTestFinished(() => {
+      holder.$client.close();
+    });
+    holder.$client.exec("BEGIN IMMEDIATE");
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    // As `DatabaseApiStores.close()` does: the stop, then the database closed in the same call.
+    const stopped = service.stop(0);
+    close();
+    const written = stderr.mock.calls.map(([text]) => String(text));
+    stderr.mockRestore();
+    holder.$client.exec("ROLLBACK");
+    github.release();
+    await scan;
+
+    await expect(stopped).resolves.toBeUndefined();
+    expect(written).toEqual([expect.stringContaining(`rerail: Merge Assist could not give up its scan of ${ws.repo}: `)]);
+    expect(await stored(ws)).toEqual({ lastScan: null, scanning: true, conflicts: [] });
   });
 
   it("returns once the Git it ended has exited while a scan waits for a file call that never answers, and the scan then writes nothing to the closed database and starts no Git", async () => {
