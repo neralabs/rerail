@@ -219,6 +219,20 @@ pub struct GapTest {
     /// regex), so the walk passes them. `None`: a plain neighbour, where an extra
     /// beside the node is the neighbour.
     pub(in crate::code_rule_dsl) past: Option<Box<AstMatcher>>,
+    /// What the target says of the token beside its text, each a relation from the token found to a bare token regex
+    /// (`follows: {regex: "^,$", not: {follows: {stopBy: end, regex: "^,$"}}}`: the comma right before the node is its
+    /// parent's first). Asked of the parent's tokens, its gaps' and its stored children's (by their text): a `Before`
+    /// or `After` test's alone.
+    pub(in crate::code_rule_dsl) token: Vec<TokenCondition>,
+}
+
+/// One condition on the token a gap test found (`GapTest::token`): whether a token `regex` matches is at `place` from
+/// it (`Before`, `After`, `Earlier` or `Later` along the parent's tokens), or with `negated` is not.
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct TokenCondition {
+    pub(in crate::code_rule_dsl) negated: bool,
+    pub(in crate::code_rule_dsl) place: Place,
+    pub(in crate::code_rule_dsl) regex: Regex,
 }
 
 impl std::fmt::Debug for GapTest {
@@ -278,8 +292,8 @@ impl GapTest {
                     Place::Before => {
                         let mut k = at;
                         loop {
-                            if let Some(token) = gaps.before[k].iter().rev().find(|token| !skipped(token.0)) {
-                                return matches(token);
+                            if let Some(i) = gaps.before[k].iter().rposition(|token| !skipped(token.0)) {
+                                return matches(&gaps.before[k][i]) && self.token_holds(gaps, &parent, k, i);
                             }
                             if k == 0 || !passed(k - 1) {
                                 return false;
@@ -298,9 +312,9 @@ impl GapTest {
                     _ => {
                         let mut k = at + 1;
                         loop {
-                            let word = if k < children.len() { &gaps.before[k] } else { &gaps.end };
-                            if let Some(token) = word.iter().find(|token| !skipped(token.0)) {
-                                return matches(token);
+                            let word = if k < parent_gaps.ids.len() { &gaps.before[k] } else { &gaps.end };
+                            if let Some(i) = word.iter().position(|token| !skipped(token.0)) {
+                                return matches(&word[i]) && self.token_holds(gaps, &parent, k.min(parent_gaps.ids.len()), i);
                             }
                             if k >= children.len() || !passed(k) {
                                 return false;
@@ -315,6 +329,57 @@ impl GapTest {
 }
 
 impl GapTest {
+    /// Whether the token at `i` of gap `k` (the end where `k` is the stored children's count) of `parent` meets every
+    /// condition of `token`: its parent's tokens in order are each gap's, then the stored child after it.
+    fn token_holds<D: Doc>(&self, gaps: &Gaps<'static>, parent: &Node<'_, D>, k: usize, i: usize) -> bool {
+        if self.token.is_empty() {
+            return true;
+        }
+        let children: Vec<Node<'_, D>> = parent.children().collect();
+        let n = children.len();
+        let word = |k: usize| if k < n { gaps.before[k].as_slice() } else { gaps.end.as_slice() };
+        let child = |k: usize, regex: &Regex| regex.is_match(&children[k].text());
+        self.token.iter().all(|condition| {
+            let regex = &condition.regex;
+            let found = match condition.place {
+                // The token right before: earlier in its gap, else the stored child before the gap.
+                Place::Before => if i > 0 { regex.is_match(word(k)[i - 1].0) } else { k > 0 && child(k - 1, regex) },
+                // Right after: later in its gap, else the stored child after it.
+                Place::After => match word(k).get(i + 1) {
+                    Some(token) => regex.is_match(token.0),
+                    None => k < n && child(k, regex),
+                },
+                Place::Earlier => {
+                    word(k)[..i].iter().any(|token| regex.is_match(token.0))
+                        || (0..k).any(|j| child(j, regex) || gaps.before[j].iter().any(|token| regex.is_match(token.0)))
+                }
+                Place::Later => {
+                    word(k)[i + 1..].iter().any(|token| regex.is_match(token.0))
+                        || (k..n).any(|j| child(j, regex) || word(j + 1).iter().any(|token| regex.is_match(token.0)))
+                }
+                Place::Own | Place::Field(_) => return false,
+            };
+            found != condition.negated
+        })
+    }
+
+    /// The implied tokens `regex` matches at an `Earlier` or `Later` test's place from `node`, which `count` adds to the
+    /// stored nodes it counts (`count.rs`): the tape leaves them out, and no gap holds a stored token. `None` where the
+    /// parent's gaps cannot be read (its tokens are then stored, and walked).
+    pub(in crate::code_rule_dsl) fn implied_count<D: Doc>(&self, node: &Node<'_, D>) -> Option<usize> {
+        let grammar = self.grammar()?;
+        let parent = node.parent()?;
+        let parent_gaps = gaps_of(self.dialect, grammar, &parent)?;
+        let at = parent_gaps.ids.binary_search(&node.node_id()).ok()?;
+        let gaps = &parent_gaps.gaps;
+        let count = |word: &[(&str, &str)]| word.iter().filter(|token| self.regex.is_match(token.0)).count();
+        match self.place {
+            Place::Earlier => Some(gaps.before[..=at].iter().map(|word| count(word)).sum()),
+            Place::Later => Some(gaps.before[at + 1..].iter().map(|word| count(word)).sum::<usize>() + count(&gaps.end)),
+            _ => None,
+        }
+    }
+
     /// The token regexes `rule` passes, where it is made of kinds (which no implied token has)
     /// and tokens (by a bare regex); `None` where it says more.
     fn passes(&self, rule: &AstMatcher, depth: usize) -> Option<Vec<Regex>> {

@@ -2689,6 +2689,39 @@ fn a_quadratic_compare_over_the_siblings_runs_out_of_its_allowance_making_the_ga
     workspace.close();
 }
 
+/// Tests of a token the tape leaves out (RER-131) that say more than its text: the comma right before a node that is its
+/// parent's first (the React packs' state setter, `[value, setValue]`), and a count of the commas before a node
+/// (`eslint-no-setter-return`'s descriptor, the third argument). Asked of the parent's gaps, they find what a full
+/// tree's tokens did; before, the first found nothing and the second counted no implied comma.
+#[test]
+fn a_token_test_on_an_implied_comma_reads_the_parents_tokens() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("implied-comma");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let clause = |id: &str, rule: Value| json!({
+        "id": id, "violation": { "anchor": "witness.span", "code": id.to_uppercase(), "message": id },
+        "forbid": { "ast": { "language": "javascript", "rule": rule } }
+    });
+    let code_rule = compile("implied-comma", json!([
+        clause("second", json!({ "kind": "identifier", "inside": { "kind": "array_pattern", "stopBy": "neighbor" },
+            "follows": { "stopBy": "neighbor", "regex": "^,$", "not": { "follows": { "stopBy": "end", "regex": "^,$" } } } })),
+        clause("third", json!({ "kind": "identifier", "inside": { "kind": "arguments", "stopBy": "neighbor" },
+            "count": { "follows": { "regex": "^,$", "stopBy": "end" }, "min": 2, "max": 2 } })),
+    ]));
+    let source = "const [a, b, c] = x;\nf(p, q, r, s);\n";
+    let file = json!([{ "path": "a.js", "language": "javascript", "source": source }]);
+    let workspace = stored_workspace(&store, "/implied-comma", &code_rule);
+    let evaluated = apply_json(&workspace, 1, file);
+    let mut found: Vec<(String, String)> = evaluated["evaluation"]["violations"].as_array().unwrap().iter().map(|v| {
+        let (start, end) = (v["span"]["startByte"].as_u64().unwrap() as usize, v["span"]["endByte"].as_u64().unwrap() as usize);
+        let text = source[start..end].to_owned();
+        (v["clauseId"].as_str().unwrap().to_owned(), text)
+    }).collect();
+    found.sort();
+    assert_eq!(found, [("second".to_owned(), "b".to_owned()), ("third".to_owned(), "r".to_owned())], "{evaluated}");
+    workspace.close();
+}
+
 /// A utility verdict a clause computed while its allowance ran out is not remembered for the
 /// clauses after it: the second clause reads the same utility at the same node and either finds
 /// its violation or fails, never reports nothing. Both share a `define`'s utility, so a verdict
