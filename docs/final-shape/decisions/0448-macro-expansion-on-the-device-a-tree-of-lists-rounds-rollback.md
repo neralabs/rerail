@@ -171,4 +171,13 @@ outermost call becomes the queue's first items.
 
 ## Built
 
-(Written as each step is built.)
+- **R1, the building blocks** (`rerail_metal::pp_blocks`, `pp_blocks.metal`): a three-level
+  scan (up to 2^30 elements), a segmented inclusive scan (add, max) by a shuffle ladder carrying
+  head flags across SIMD groups, groups and blocks, a stable LSD radix sort of u64 keys (8-bit
+  digits; a SIMD group's peers by 8 ballots, the earlier SIMD groups' counts in 8 KB of
+  threadgroup memory), a search, and an expand. Each count is a device word, and each plan
+  kernel writes the next dispatches' indirect arguments. Each equals the host from 0 to 1.1 M
+  elements (`pp_blocks::tests`).
+  - **Its launches:** a scan is 6, and a sort pass is 8, so a 64-bit sort is 66. The setup's
+    sorts are kept narrow for that reason (a name is a dense id, not its 64-bit hash, where a
+    sort orders by it).

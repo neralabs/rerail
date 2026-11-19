@@ -15,6 +15,8 @@ pub mod buffer_observation;
 pub mod launch;
 pub mod launch_budget;
 /// The preprocessor's evaluator over tapes (decision 0436): plain MSL passes.
+/// The building blocks of the preprocessor's grid passes (decision 0448).
+pub mod pp_blocks;
 pub mod pp_eval;
 /// The preprocessing words on the device (decision 0348, stage 5).
 pub mod pp_on;
