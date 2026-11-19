@@ -91,6 +91,11 @@ export class GitIgnoreMatchers {
     this.#letGo(user, () => true);
   }
 
+  /** Ends `user`'s use of `root`'s matchers, as a router that drops its own does; one no user holds is dropped. */
+  releaseRoot(user: object, root: string): void {
+    this.#letGo(user, shared => shared.root === root);
+  }
+
   /** Ends `user`'s use of each matcher `which` names; one no user holds is dropped. */
   #letGo(user: object, which: (shared: Shared) => boolean): void {
     for (const shared of [...this.#held].filter(which)) {

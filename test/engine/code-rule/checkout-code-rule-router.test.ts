@@ -798,6 +798,34 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect([view().ignoresPath(gen, true), view().acceptsPath(`${gen}/x.py`)]).toEqual([false, true]);
   });
 
+  it("lets go of the daemon's matcher of a worktree it drops once that worktree stops, which another router holding it keeps", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    const matchers = new GitIgnoreMatchers();
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
+    cleanups.push(async () => { opened.mockRestore(); });
+    const { recorder } = recordingAudits();
+    const first = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    const second = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await first.openWorkspace("let-go-first");
+    await second.openWorkspace("let-go-second");
+    const api = walked(session, worktree, "api");
+    expect([first.walkView().ignoresPath(api, true), second.walkView().ignoresPath(api, true)]).toEqual([false, false]);
+    expect(opened.mock.calls.filter(([root]) => root === worktree)).toHaveLength(1);
+    const held = matchers.size;
+
+    setStarted(databasePath, worktree, false);
+    first.refreshCodeRules();
+    expect(matchers.size).toBe(held);
+    // The last router that held the worktree's matcher drops it: the daemon holds it, and its index, no longer.
+    second.refreshCodeRules();
+    expect(matchers.size).toBe(held - 1);
+    setStarted(databasePath, worktree, true);
+    second.refreshCodeRules();
+    expect(second.walkView().ignoresPath(api, true)).toBe(false);
+    expect(opened.mock.calls.filter(([root]) => root === worktree)).toHaveLength(2);
+  });
+
   it("keeps a worktree's refused Git ignore rules as none for the walk's questions and says it once, while its lane opens them as it opens", async () => {
     const { worktree, audits, auditor, gen } = await worktreeIgnoringGen("open-again");
     const access = nativeGitAccess();

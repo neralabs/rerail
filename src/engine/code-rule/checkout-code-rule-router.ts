@@ -139,7 +139,16 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * so a checkout stopped and started again does not keep the rules it had before.
    */
   #forgetGitIgnoreOfChanged(ran: ReadonlyMap<string, boolean>): void {
-    for (const [root, mayRun] of ran) if (this.#mayRun(root) !== mayRun) this.#gitIgnore.delete(root);
+    for (const [root, mayRun] of ran) if (this.#mayRun(root) !== mayRun) this.#forgetGitIgnore(root);
+  }
+
+  /**
+   * Drops `root`'s Git ignore matcher and lets go of the daemon's (`GitIgnoreMatchers`), which is dropped too, and its
+   * index with it, once no router holds it: a checkout this router no longer asks about keeps no index for it.
+   */
+  #forgetGitIgnore(root: string): void {
+    this.#gitIgnore.delete(root);
+    this.#gitIgnoreMatchers.releaseRoot(this, root);
   }
 
   /** Each lane reads its rules again; one whose checkout may no longer run rules closes. */
@@ -310,7 +319,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   #keptGitIgnore(root: string): NativeGitIgnoreMatcher | null | undefined {
     const access = nativeGitAccess();
     if (access !== this.#gitIgnoreAccess) {
-      this.#gitIgnore.clear();
+      for (const kept of [...this.#gitIgnore.keys()]) this.#forgetGitIgnore(kept);
       this.#gitIgnoreReported.clear();
       this.#gitIgnoreAccess = access;
     }
