@@ -2,7 +2,16 @@
 
 The original [twenty cases and their regression tests](audit-c1b588f91.md) cover specific inputs. This audit checks additional inputs, public entry points, and the collector's choice of owners.
 
-Twelve of the 28 follow-up findings have verified repairs. Sixteen remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+Thirteen of the 28 follow-up findings have verified repairs. Fifteen remain open. The separate Windows checks for cases 21 and 22 passed at `65e24db1d`.
+
+## Skipped revision paths
+
+For case 47, one CLI invocation selected a tracked symlink, a gitlink, an absent path, and a readable file.
+Before the repair, the report gave only the names it skipped. It now gives each reason and the mode of the entry that prevented selection.
+The same report covered lookups below a symlink, gitlink, and regular file. These used the ancestor's mode.
+Only the absent path had no mode. The readable file still produced its finding.
+A separate fixture with a missing tree object produced a scan failure for the affected path.
+[Headless CLI regressions](../../../../test/cli/headless-scan.test.ts)
 
 ## Working-tree path spelling
 

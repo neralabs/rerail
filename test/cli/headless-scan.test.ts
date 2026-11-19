@@ -783,6 +783,32 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
     }
   }, 30_000);
 
+  it("reports why each explicit Git path was skipped with the blocking entry mode", () => {
+    const root = checkout(), home = root + "-home";
+    const linkTarget = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: "a.py", encoding: "utf8" }).trim();
+    git(root, "update-index", "--add", "--cacheinfo", `120000,${linkTarget},alias.py`);
+    git(root, "update-index", "--add", "--cacheinfo", `160000,${git(root, "rev-parse", "HEAD")},vendor`);
+    const revision = git(root, "write-tree");
+    const expected = [
+      { path: "./alias.py", reason: "symlink", mode: 0o120000 },
+      { path: "vendor", reason: "gitlink", mode: 0o160000 },
+      { path: "absent.py", reason: "absent" },
+      { path: "vendor/src.py", reason: "gitlink", mode: 0o160000 },
+      { path: "alias.py/child", reason: "symlink", mode: 0o120000 },
+      { path: "a.py/", reason: "not-directory", mode: 0o100644 },
+      { path: "a.py/child", reason: "not-directory", mode: 0o100644 },
+    ];
+    const skippedPaths = expected.map(row => row.path);
+    const paths = [...skippedPaths, "a.py"];
+    const text = execFileSync(process.execPath, ["--import", "tsx", "src/cli/cli.ts", "--rerail-managed-child", "scan",
+      "--repo", root, "--revision", revision, "--analysis-scope", "skips", "--json", "--no-send", ...paths.flatMap(path => ["--path", path])], {
+      encoding: "utf8", env: { ...process.env, RERAIL_HOME: home, RERAIL_CONTENT_STORE_PATH: join(home, "store.sqlite") },
+    });
+    const report = JSON.parse(text);
+    expect(report).toMatchObject({ status: "completed", failures: [], requestedPaths: paths, paths: ["a.py"], skippedPaths, violations: [{ path: "a.py" }] });
+    expect(report.skippedPathDetails).toEqual(expected);
+  }, 30_000);
+
   it("uses the filesystem spelling for a worktree selection and exact names for a Git tree", () => {
     const root = checkout(), home = root + "-home";
     mkdirSync(join(root, "src"));
@@ -849,6 +875,7 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
     });
     expect(report.status).toBe("failed");
     expect(report.skippedPaths).toEqual(["absent.py"]);
+    expect(report.skippedPathDetails).toEqual([{ path: "absent.py", reason: "absent" }]);
     expect(report.violations.map(finding => finding.path)).toEqual(["a.py"]);
     expect(report.failures).toEqual([expect.objectContaining({ code: "adapter-error", path: "gaps/a.py" })]);
   });

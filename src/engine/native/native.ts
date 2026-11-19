@@ -191,13 +191,16 @@ export interface NativeCodeRuleDslWorkspace {
   close(): void;
 }
 
-/** The bounds of one repository index; every chunk call carries the same. */
+export type GitPathSkipReason = "absent" | "symlink" | "gitlink" | "not-directory" | "unsupported-mode";
+
+/** One pinned Git tree, with its optional commit and source selection. */
 export interface NativeGitRevisionSource {
   restrictPaths(paths: string[]): void;
   setSourceLanguages(json: string): void;
   readonly tree: string;
   readonly commit: string | null;
   containsPath(path: string): boolean;
+  pathStatus(path: string): { status: "selected" | GitPathSkipReason; mode?: number };
   invalidPaths(): string[];
   sourceFailures(): { path: string; message: string }[];
   /** Legacy nullable shorthand for a read with a 32,000,000-byte limit. */

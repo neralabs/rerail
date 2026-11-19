@@ -102,6 +102,13 @@ pub struct GitSourceRead {
 }
 
 #[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct GitPathStatus {
+    pub status: String,
+    pub mode: Option<u32>,
+}
+
+#[cfg(not(feature = "headless"))]
 fn file_byte_limit(limit: f64) -> Result<u64> {
     if !(0.0..=f64::from(u32::MAX)).contains(&limit) || limit.fract() != 0.0 {
         return Err(invalid("file byte limit must be an integer between 0 and 4294967295"));
@@ -153,6 +160,12 @@ impl GitRevisionSource {
     #[napi]
     pub fn contains_path(&self, path: String) -> Result<bool> {
         self.snapshot.contains_path(Path::new(&path)).map_err(|err| invalid(err.to_string()))
+    }
+
+    #[napi]
+    pub fn path_status(&self, path: String) -> Result<GitPathStatus> {
+        let (status, mode) = self.snapshot.path_status(Path::new(&path)).map_err(|err| invalid(err.to_string()))?;
+        Ok(GitPathStatus { status: status.to_owned(), mode: mode.map(u32::from) })
     }
 
     #[napi]

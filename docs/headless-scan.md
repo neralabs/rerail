@@ -49,7 +49,10 @@ rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--revis
 <summary>Option details</summary>
 
 - With `--path` or `--paths-from`, paths are relative to the repository. The scan skips absent paths.
-  The JSON report records the supplied names in `requestedPaths` and the absent names in `skippedPaths`.
+  The JSON report records the supplied names in `requestedPaths` and skipped names in `skippedPaths`.
+  For an explicit revision selection, `skippedPathDetails` gives the original `path`, the `reason`, and the numeric Git `mode` when an entry exists.
+  The reasons are `absent`, `symlink`, `gitlink`, `not-directory`, and `unsupported-mode`.
+  If an ancestor prevents the lookup, its entry supplies the reason and mode. An unreadable tree produces a scan failure.
   Both providers resolve `.` and `..` components before selecting files. An absolute path or a path outside the repository is an error.
   The `paths` field gives the normalized selections. For example, `src/../src/a.py` selects `src/a.py`.
   A working-tree selection uses the spelling stored on the filesystem. On a case-insensitive volume, `SRC/A.PY` can select `src/a.py`.

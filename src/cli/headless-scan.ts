@@ -29,7 +29,7 @@ import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { isWorktreePack, MAX_RULE_DOCUMENT_BYTES, rrPayloadHash, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
-import { loadNativeBinding, type NativeAnalysisScopeRun, type NativeGitRevisionSource, type NativeLoadedRrPolicies } from "../engine/native/native.js";
+import { loadNativeBinding, type GitPathSkipReason, type NativeAnalysisScopeRun, type NativeGitRevisionSource, type NativeLoadedRrPolicies } from "../engine/native/native.js";
 import { acquireDirectoryAnalysisRegistration, acquireNamedAnalysisRun, analysisScopeHome, finishNamedAnalysisRegistration, scanContentStore } from "../engine/native/analysis-scope.js";
 import { assertContentStoreOwner } from "../engine/native/main-instance.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
@@ -104,6 +104,7 @@ export interface ScanReport {
   paths: string[] | null;
   requestedPaths?: string[];
   skippedPaths?: string[];
+  skippedPathDetails?: { path: string; reason: GitPathSkipReason; mode?: number }[];
   rulesSource: { kind: "home" } | { kind: "worktree" } | RefRuleSource | { kind: "rr" };
   status: "completed" | "failed";
   rules: ScanRule[];
@@ -462,10 +463,11 @@ function worktreeSelection(root: string, path: string, directory: boolean): stri
 }
 
 /** What the scan covers: the paths asked for, what differs from the base or HEAD, or null for the whole repository. */
-function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): Pick<ScanReport, "base" | "paths" | "requestedPaths" | "skippedPaths"> & { failures?: ScanFailure[] } {
+function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): Pick<ScanReport, "base" | "paths" | "requestedPaths" | "skippedPaths" | "skippedPathDetails"> & { failures?: ScanFailure[] } {
   if (options.paths !== undefined) {
     const failures: ScanFailure[] = [];
     const skippedPaths: string[] = [];
+    const skippedPathDetails: NonNullable<ScanReport["skippedPathDetails"]> = [];
     const selected = new Set<string>();
     for (const requested of new Set(options.paths)) {
       if (requested.length === 0) continue;
@@ -481,11 +483,18 @@ function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGi
       const directory = spelling.endsWith("/") || spelling.endsWith("/.") || spelling.endsWith("/..");
       const lookup = directory ? path + "/" : path;
       try {
-        const name = source === undefined
-          ? worktreeSelection(root, path, directory)
-          : (source.containsPath(lookup) ? path : undefined);
-        if (name !== undefined) selected.add(name);
-        else skippedPaths.push(requested);
+        if (source === undefined) {
+          const name = worktreeSelection(root, path, directory);
+          if (name === undefined) skippedPaths.push(requested);
+          else selected.add(name);
+        } else {
+          const { status, mode } = source.pathStatus(lookup);
+          if (status === "selected") selected.add(path);
+          else {
+            skippedPaths.push(requested);
+            skippedPathDetails.push({ path: requested, reason: status, ...(mode === undefined ? {} : { mode }) });
+          }
+        }
       } catch (error) {
         failures.push({
           code: "adapter-error", path: requested, ruleId: null,
@@ -494,7 +503,7 @@ function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGi
       }
     }
     const paths = selected.has(".") ? null : [...selected].sort((left, right) => left.localeCompare(right));
-    return { base: null, paths, requestedPaths: [...options.paths], skippedPaths, failures };
+    return { base: null, paths, requestedPaths: [...options.paths], skippedPaths, ...(source && { skippedPathDetails }), failures };
   }
   if (options.scope !== "git-diff") return { base: null, paths: null };
   if (options.base === undefined) {

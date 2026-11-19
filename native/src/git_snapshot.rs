@@ -252,6 +252,19 @@ enum Entry {
     Dir(gix::ObjectId),
 }
 
+/// The last tree entry matched by a path. A non-directory ancestor can prevent an exact match.
+struct TreePathMatch {
+    entry: RawTreeEntry,
+    exact: bool,
+}
+
+enum SourcePath {
+    Selected(Entry),
+    Absent,
+    Excluded(u16),
+    FileAsDirectory(u16),
+}
+
 /// One evaluation shares the validated pack layout across its workers. An independent API read
 /// validates the layout on entry. The evaluation checks its original layout before returning.
 pub struct StorageBatch {
@@ -335,6 +348,10 @@ impl View {
 
     /// Return absence only after reading a tree and checking its entries.
     fn lookup_tree_entry(&self, repo: &gix::Repository, storage: Option<&storage::Storage>, path: &Path) -> io::Result<Option<RawTreeEntry>> {
+        Ok(self.match_tree_path(repo, storage, path)?.filter(|m| m.exact).map(|m| m.entry))
+    }
+
+    fn match_tree_path(&self, repo: &gix::Repository, storage: Option<&storage::Storage>, path: &Path) -> io::Result<Option<TreePathMatch>> {
         let mut id = self.tree;
         let mut components = path.components().peekable();
         while let Some(component) = components.next() {
@@ -342,11 +359,9 @@ impl View {
             let name = component.as_os_str().as_encoded_bytes();
             let Ok(index) = tree.binary_search_by(|entry| entry.name.as_slice().cmp(name)) else { return Ok(None) };
             let entry = &tree[index];
-            if components.peek().is_none() {
-                return Ok(Some(entry.clone()));
-            }
-            if !entry.is_tree() {
-                return Ok(None);
+            let exact = components.peek().is_none();
+            if exact || !entry.is_tree() {
+                return Ok(Some(TreePathMatch { entry: entry.clone(), exact }));
             }
             id = entry.target;
         }
@@ -441,21 +456,31 @@ impl View {
     }
 
     fn relative_entry(&self, under: &Path, directory_only: bool) -> io::Result<Entry> {
+        match self.select_path(under, directory_only)? {
+            SourcePath::Selected(entry) => Ok(entry),
+            SourcePath::FileAsDirectory(_) => Err(io::Error::from(io::ErrorKind::NotADirectory)),
+            SourcePath::Absent | SourcePath::Excluded(_) => Err(missing()),
+        }
+    }
+
+    fn select_path(&self, under: &Path, directory_only: bool) -> io::Result<SourcePath> {
         let full = self.prefix.join(under);
         if full.as_os_str().is_empty() {
-            return Ok(Entry::Dir(self.tree));
+            return Ok(SourcePath::Selected(Entry::Dir(self.tree)));
         }
         self.with_repo(|repo, storage, _| {
-            let entry = self.lookup_tree_entry(repo, storage, &full)?.ok_or_else(missing)?;
-            if entry.is_tree() {
-                Ok(Entry::Dir(entry.target))
-            } else if entry.is_blob() && directory_only {
-                Err(io::Error::from(io::ErrorKind::NotADirectory))
+            let Some(TreePathMatch { entry, exact }) = self.match_tree_path(repo, storage, &full)? else { return Ok(SourcePath::Absent) };
+            Ok(if !exact {
+                SourcePath::Excluded(entry.mode)
+            } else if entry.is_tree() {
+                SourcePath::Selected(Entry::Dir(entry.target))
+            } else if directory_only && entry.is_blob() {
+                SourcePath::FileAsDirectory(entry.mode)
             } else if entry.is_blob() {
-                Ok(Entry::File(entry.target))
+                SourcePath::Selected(Entry::File(entry.target))
             } else {
-                Err(missing())
-            } // Never follow symlinks or enter submodules.
+                SourcePath::Excluded(entry.mode)
+            })
         })?
     }
 }
@@ -623,6 +648,24 @@ impl Snapshot {
             Err(err) if matches!(err.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => Ok(false),
             Err(err) => Err(err),
         }
+    }
+
+    /// An excluded path names the mode of the entry that stopped the lookup. A missing tree object is an error.
+    pub fn path_status(&self, path: &Path) -> io::Result<(&'static str, Option<u16>)> {
+        let matched = self.view.select_path(&relative_path(path)?, requires_directory(path))?;
+        Ok(match matched {
+            SourcePath::Selected(_) => ("selected", None),
+            SourcePath::Absent => ("absent", None),
+            SourcePath::FileAsDirectory(mode) | SourcePath::Excluded(mode) => {
+                let reason = match mode & 0o170000 {
+                    0o100000 => "not-directory",
+                    0o120000 => "symlink",
+                    0o160000 => "gitlink",
+                    _ => "unsupported-mode",
+                };
+                (reason, Some(mode))
+            }
+        })
     }
 
     /// List raw entry modes without opening any of their objects.
