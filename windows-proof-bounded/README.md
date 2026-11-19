@@ -1,19 +1,19 @@
 # A busy Windows daemon is kept; a stop ends only its daemon
 
-For [pull request #677](https://github.com/neralabs/rerail/pull/677), head d5c88bebe. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #677](https://github.com/neralabs/rerail/pull/677), head 63ada20d8. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
-**Does a stop now end only processes a fact shows are this home's daemon, lookups and starts no worse than `main`, hooks per Decision 6?**
+**Does a stop now end only processes a fact shows are this home's daemon, with lookups, starts and hooks' events at `main`'s result or better?**
 
 1. A busy Windows daemon reads `alive but not answering` on every lookup.
 2. A stop ends nothing when no fact shows the process is the daemon.
 
-**We recommend:** rule on #663 whether 2 s is the right wait, then review the squashed diff.
+**We recommend:** rule on #663 how long a busy daemon is waited for, which Decision 6 asks of hooks too, then review the squashed diff.
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 2,520 lines in 22 files: 745 ship, 1,775 are tests and text | Fast. One question on #663, then the stop's rule. | #663's answer. CI's result shows on this pull request's checks. | 4 |
+| 2,749 lines in 25 files: 830 ship, 1,919 are tests and text | Fast. One question on #663, then the stop's rule. | #663's answer. CI's result shows on this pull request's checks. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -28,7 +28,7 @@ The busy daemon: reported in #663 on 13 November 2026, from Windows 11. The stop
 
 | Change | Where main states the intent | The cause, and what was measured |
 |---|---|---|
-| A busy daemon's record | `docs/windows.md` at `main`: "An engine that does not answer the proof in time is taken for a busy daemon: its state file is kept and the lookup reports it unresponsive." | Node listens on a pipe with four free instances, and a stuck engine frees none. The fifth connect waits up to 30 s for one. `src/runtime/engine-proof.ts` arms the limit with `outgoing.setTimeout`, which starts once the socket has connected. The connect fails, the proof reads that as `refused`, and `lookupDaemon` deletes the record. Windows 11 at `main` e8a6b0b5a: the fifth `rerail status` took 30,254 ms. |
+| A busy daemon's record | `docs/windows.md` at `main`: "An engine that does not answer the proof in time is taken for a busy daemon: its state file is kept and the lookup reports it unresponsive." | Node listens on a pipe with four free instances, and a stuck engine frees none. The fifth connect waits up to 30 s for one. `src/runtime/daemon/engine-proof.ts` arms the limit with `outgoing.setTimeout`, which starts once the socket has connected. The connect fails, the proof reads that as `refused`, and `lookupDaemon` deletes the record. Windows 11 at `main` 7efcac9c6, with the 0.2.0 engine: the fifth `rerail status` took 30,256 to 30,777 ms. |
 | What a stop ends | `docs/reference.md` at `main`: "`rerail daemon start` reuses a running daemon and says where; stale state from a crash or reboot is cleared." | `stopFoundDaemon` sent SIGTERM, then SIGKILL after 10 s, to the pid `daemon.json` records whenever a lookup kept the record, and a lookup kept it whenever the pid was alive and did not answer. A daemon killed without its cleanup leaves the record, and the system can give its pid to another program. |
 
 </details>
@@ -36,13 +36,13 @@ The busy daemon: reported in #663 on 13 November 2026, from Windows 11. The stop
 ## 3. Where to look
 
 1. **Read first**, 20 min: `daemon-control.ts`: `recordedProcess`, `lockVerdict`, `startVerdict`, `holderWroteRecord`, `signalCheck`, `stopFoundDaemon`. Can a stop signal a pid no fact shows is the daemon, or forget a busy one?
-2. 15 min: `engine-proof.ts`, `home-daemon-lock.ts`, `process-liveness.ts`, `setup-cli.ts`, `cli.ts` and `index.ts`.
+2. 15 min: `engine-proof.ts`, `session-presentation.ts`, `hook-host.ts`, `home-daemon-lock.ts`, `process-liveness.ts`, `setup-cli.ts`, `cli.ts` and `index.ts`.
 
 **Then skim**, 10 min: Tests at the lookup and stop seam on the Linux and Windows rules, a CLI case, and two release notes.
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Kept, own stop, medium risk: rules scan: nothing new holds with a limit. CI at this head does not hold yet for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Kept, own stop, medium risk: the first five checks hold. CI at this head does not hold yet for every change.">
 
 Half mark: a probe, not a test, measured the real-daemon rows.
 
@@ -50,14 +50,13 @@ Half mark: a probe, not a test, measured the real-daemon rows.
 
 | Change | Check | Its limit, or why it does not hold yet |
 |---|---|---|
-| Kept, own stop | rules scan: nothing new | The automated reviewer's rules scan at f184d3e53 on Linux x64: no new finding with the published Rerail (0 Steer, 0 Log, 0 complexity) or with Rerail built from `main`. No verdict: the published 0.1.1 cannot parse `test/cli/support-bundle.test.ts`, at the merge base too. |
 | Kept, own stop | CI at this head | CI's result shows on this pull request's checks. |
 
 </details>
 
 ## 5. The changes
 
-**Busy daemon kept, own stop only**, medium risk: A killed daemon's record naming a live program: `main`'s stop ended it in 236 ms on Linux x64; here, nothing.
+**Busy daemon kept, own stop only**, medium risk: A killed daemon's record naming a live program: `main`'s stop ends it on Linux x64; here, nothing.
 
 <details><summary><b>6. The decisions</b></summary>
 
@@ -89,9 +88,9 @@ Half mark: a probe, not a test, measured the real-daemon rows.
 
 <details><summary><b>7. How it fits</b></summary>
 
-It stands on `main` alone and holds `main` at cf5ab9083. Merging waits on #663. #672, #678, #656 and eight later changes edited its files; all are merged and in that `main`.
+It stands on `main` alone and holds `main` at 7efcac9c6, with the 0.2.0 engine. Merging waits on #663. #672, #678, #656 and nine later changes edited its files; all are merged and in that `main`.
 
-**Trial merges and shared files.** Merged: #672 as a08de26a9, #678 as dffb47a91, #656 as 285e5d837, each held by e8a6b0b5a (`git merge-base --is-ancestor`). `git merge-tree --write-tree` with the newer `main` at 21841d21f: clean. #672 shared `daemon-control.ts`, `cli.ts`, the CLI's integration test and two docs pages; #678 `daemon-control.ts`, its test file and `docs/windows.md`; #656 `docs/windows.md`. Any order works.
+**Trial merges and shared files.** Merged: #672 as a08de26a9, #678 as dffb47a91, #656 as 285e5d837, each held by e8a6b0b5a (`git merge-base --is-ancestor`). `main` at 7efcac9c6, the 0.2.0 engine (#508), merged in at 6552849b1 with no conflict. #672 shared `daemon-control.ts`, `cli.ts`, the CLI's integration test and two docs pages; #678 `daemon-control.ts`, its test file and `docs/windows.md`; #656 `docs/windows.md`. Any order works.
 
 </details>
 
@@ -109,14 +108,14 @@ It stands on `main` alone and holds `main` at cf5ab9083. Merging waits on #663. 
 - **A holder record naming the pid `daemon.json` names** beside a lock another daemon holds without recording itself reads as ours, as at `main`. A start after `daemon.json`'s record would overrule it, at one more PowerShell process per Windows stop of a busy daemon.
 - **A healthy 0.1.4 daemon on Windows** is not seen, as at `main`: its engine predates the proof.
 - **No `daemon.json` and a holder record naming an ended pid:** the stop says not running while the home's stalled daemon holds the lock, as at `main`.
-- **Seventy-eight commits, one diff.** Nine merge `main`, four replace the proof's first design and three settle the engine start's wait. Pushed commits are not rewritten.
+- **Eighty-five commits, one diff.** Eleven merge `main`, four replace the proof's first design and three settle the engine start's wait. Pushed commits are not rewritten.
 
 **Limits that stay**
 
 - The engine start can wait 30 s for a free instance and then 2 s for the answer, past the 15 s `rerail daemon start` gives the daemon, as at `main`.
 - `ingestEngineEvent` arms its timeout on a pipe connect, so an event can meet Node's 30 s wait for a free instance.
-- An event a hook sends on Windows while every instance of the engine pipe stays taken for more than about 12 s is lost; `main`'s hook waits up to 30 s and delivers it (Decision 6, which waits on #663).
-- A hook beside a daemon that never frees an instance gives up at about 12 s each time and keeps `daemon.json`; at `main` the first waits 60 s and deletes it, then each answers in about 0.15 s (Decision 6).
+- Beside a daemon hung for good with every instance of its pipe taken, each hook waits about 32 s and keeps `daemon.json`; at `main` the first waits 60 s and deletes it. `rerail daemon stop` ends that daemon.
+- A busy spell that begins while the pipe has free instances: the hook connects at once and waits 12 s in all, as at `main`; a 15 s spell loses its event at both.
 
 </details>
 
@@ -124,7 +123,7 @@ It stands on `main` alone and holds `main` at cf5ab9083. Merging waits on #663. 
 
 Ask 1 rules on answer 1.
 
-1. **On [#663](https://github.com/neralabs/rerail/issues/663#issuecomment-6869803910): is the proof's limit, `main`'s default, the wait you want before a busy daemon reads as not answering?** We recommend yes: a longer one holds every command.
+1. **On [#663](https://github.com/neralabs/rerail/issues/663#issuecomment-6869803910): which wait do you want before a busy daemon reads as not answering, for commands and hooks?** We recommend 2 s for commands, `main`'s wait for hooks.
 
 Answer 2 asks no ruling. It says how to check the process.
 
@@ -134,12 +133,12 @@ The description on GitHub is the record: "How you tested it" holds the runs and 
 
 | Where | What ran | Result |
 |---|---|---|
+| Windows 11 x64 | At e2900262d, `main` and d5c88bebe, 3 rounds each: the daemon's loop held 40 s, its instances free at first, under 20 prompt hooks with `RERAIL_ENGINE_SOCKET` set; every instance taken: busy 5, 15 and 40 s, hung for good | Delivered: `main` 48 of 60, d5c88bebe none, here 48; here every spell gives `main`'s count and keeps `daemon.json`. Hung for good, each hook here waits about 32 s (d5c88bebe 12 s; `main` 60 s once, record deleted). |
 | Windows 11 and Linux x64 | At 1d5068c54: a busy Rerail 0.1.4 daemon stopped 20 times through the CLI, each start read logged; and with its reads refused from the third on | 20 of 20 ended on both, with one read deciding the SIGTERM. Refused from the third read: 9014dce8e said stopped with the daemon running (3 of 3, both systems); here Windows 11 ends it and Linux x64 keeps the record and says so (3 of 3). |
 | Windows 11 x64 | At eec4cce67, Node 24.21.0: the changed modules' test files and every test file that imports one (30 unit, 7 integration) | 821 passed, 60 skipped, 6 failed, none in this change's behaviour: five OMP cases need a real OMP executable, and the engine proof's cost case measured 162 ms of work where 120 is allowed beside five other runs. `claude-hook-rules.test.ts` passed its 4 cases. |
 | Linux x64 | At eec4cce67: the 30 unit files, then CI's integration job | Unit: 829 passed, 23 skipped, 0 failed. Integration with the OMP host installed: 22 files, 91 passed, 4 skipped, 0 failed. |
 | Windows 11 and Linux x64 | Each fix line taken out alone, with the cases that cover it selected: 24 lines, then 7, then 12 at 1d5068c54 | Each fails 1 to 5 of its cases, on Windows 11 and on Linux x64; the PowerShell command's case runs on Windows only. |
 | Windows 11 and Linux x64 | The new and changed cases, 20 rounds each, at eec4cce67 and at 1d5068c54 | 0 of 20 runs failed on either system at both heads (12 cases each at 1d5068c54); with the holder record's time read as the present, 20 of 20 failed. |
-| Windows 11 x64 | At f184d3e53, the hook case beside 5 to 15 other runs, 80 rounds, and with the second start read given the busy wait's 10 s | 0 of 80 runs failed; with that change 80 of 80 failed at the check that both reads together get no more than the hook's wait. With the 4 s wait it had failed once in 42 runs on a loaded machine. |
 | Windows 11 and Linux x64 | A real daemon through the built CLI, 27 states, at `main` e8a6b0b5a and here; a probe test added | Of 27 states none gives less than `main`; a 28th, a stand-in refusing every start read as where policy blocks `powershell.exe`, does: a busy 0.1.4 daemon's stops end nothing. Busy daemons, 0.1.4's too, are kept and ended by their stop, also under Constrained Language Mode; a killed daemon's record naming a live program ends nothing. |
 | Linux x64 | The automated reviewer's rules scan over the diff against `main`, at e4adffc0f | No new finding with either Rerail: 0 Steer, 0 Log, 0 complexity, and 0 differences with Rerail built from `main`. No verdict, since the published 0.1.1 cannot parse `test/cli/support-bundle.test.ts`, at the merge base too. Every function added or edited is at complexity 6 or under. |
 
