@@ -219,12 +219,10 @@ native/src/code_rule_dsl/logic/plan/corpus/session.rs::GENERATION	review
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::CHANGED	review	
 native/src/code_rule_dsl/logic/plan/corpus/switches.rs::STATE	run	the RERAIL_* switches' gate: a setting is the run's, read as it starts
 native/src/code_rule_dsl/logic/plan/coverage.rs::CENSUS	review	
-native/src/code_rule_dsl/logic/plan/joins.rs::COUNTS	review	
 native/src/code_rule_dsl/logic/plan/joins.rs::DRAIN	review	
 native/src/code_rule_dsl/logic/plan/joins.rs::EXACT	review	
 native/src/code_rule_dsl/logic/plan/joins.rs::JOB	shared	shared by design: a learned model, its queue or its job
 native/src/code_rule_dsl/logic/plan/joins.rs::MEMO	shared	shared by design: a learned model, its queue or its job
-native/src/code_rule_dsl/logic/plan/joins.rs::MISSES	review	
 native/src/code_rule_dsl/logic/plan/joins.rs::N	review	
 native/src/code_rule_dsl/logic/plan/joins.rs::NOTED	review	
 native/src/code_rule_dsl/logic/plan/joins.rs::PRICER	shared	shared by design: a learned model, its queue or its job

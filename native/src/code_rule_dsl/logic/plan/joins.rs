@@ -103,7 +103,7 @@ pub(super) fn take_trial(key: PlanKey) -> bool {
 
 /// A trial measured `ratio` (work over price) for `order` of line `key`: kept as a run's is (`critical`).
 pub(super) fn put_tried(key: PlanKey, rule: u64, order: &[Step], ratio: f64) {
-    COUNTS[TRIALS].fetch_add(1, Relaxed);
+    run_counts().counts[TRIALS].fetch_add(1, Relaxed);
     let mut m = MEMO.write();
     let n = noted_mut(&mut m, key, rule);
     merge_tried(n, steps(order), ratio.clamp(1e-6, 1e9), TRIAL_WEIGHT);
@@ -133,7 +133,7 @@ pub(super) fn put_trial(key: PlanKey, rule: u64, order: &[Step], work: f64, est:
     if ratio <= 1.0 {
         return;
     }
-    COUNTS[TRIALS].fetch_add(1, Relaxed);
+    run_counts().counts[TRIALS].fetch_add(1, Relaxed);
     let mut m = MEMO.write();
     let n = noted_mut(&mut m, key, rule);
     let order = steps(order);
@@ -282,9 +282,6 @@ static MEMO: std::sync::LazyLock<RwLock<Memo>> = std::sync::LazyLock::new(Defaul
 /// Whether any line is noted, or any rule has exact statistics: the planner's fast paths read these alone.
 static NOTED: AtomicBool = AtomicBool::new(false);
 static EXACT: AtomicBool = AtomicBool::new(false);
-/// Counts for the profile and tests: flags, exact statistics measured, choices corrected, explored, proposals,
-/// handoffs and handbacks (decision 0206), orders trialled (0206 §2).
-pub(super) static COUNTS: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
 pub(super) const FLAGS: usize = 0;
 pub(super) const MEASURED: usize = 1;
 pub(super) const CORRECTED: usize = 2;
@@ -449,7 +446,7 @@ pub(super) fn limit_again(rate: f64, base: f64, left: f64, work: f64) -> f64 {
 
 /// A handoff made, or ended with the old order going on (`back`).
 pub(super) fn count_handoff(back: bool) {
-    COUNTS[if back { HANDBACKS } else { HANDOFFS }].fetch_add(1, Relaxed);
+    run_counts().counts[if back { HANDBACKS } else { HANDOFFS }].fetch_add(1, Relaxed);
 }
 
 /// A line ran slow: `ran` rows of work where its order `order` was priced at `est`. Its next replan skips the
@@ -483,11 +480,9 @@ impl Miss {
     }
 }
 
-/// Lines found mispredicted step by step in this process: blown up, over-estimated (`RERAIL_PLAN_CACHE_COUNTS`).
-pub static MISSES: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
 
 pub(super) fn count_miss(m: &Miss) {
-    MISSES[usize::from(matches!(m, Miss::Over { .. }))].fetch_add(1, Relaxed);
+    run_counts().misses[usize::from(matches!(m, Miss::Over { .. }))].fetch_add(1, Relaxed);
 }
 
 /// Bindings a step is entered with before its estimate is judged too high: under them its count is noise.
@@ -535,7 +530,7 @@ pub fn step_miss(est: &[f64], ran: &[(u64, u64)], search_work: f64) -> Option<Mi
 }
 
 pub(super) fn flag_slow(key: PlanKey, rule: u64, order: &[Step], est: f64, ran: f64) {
-    COUNTS[FLAGS].fetch_add(1, Relaxed);
+    run_counts().counts[FLAGS].fetch_add(1, Relaxed);
     let mut m = MEMO.write();
     let order = steps(order);
     m.flagged.insert(key, order.clone());
@@ -576,7 +571,7 @@ pub(super) fn put_exact(key: PlanKey, rule: u64, stats: Vec<(Sig, [i64; 2])>) {
     if stats.is_empty() {
         return;
     }
-    COUNTS[MEASURED].fetch_add(stats.len() as u64, Relaxed);
+    run_counts().counts[MEASURED].fetch_add(stats.len() as u64, Relaxed);
     let mut m = MEMO.write();
     let n = noted_mut(&mut m, key, rule);
     for (sig, c) in stats {
@@ -597,7 +592,7 @@ pub(super) fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>, wal
     orders.sort_by(|a, b| a.1.total_cmp(&b.1));
     orders.dedup_by(|a, b| a.0 == b.0);
     orders.truncate(PROPOSALS);
-    COUNTS[PROPOSED].fetch_add(orders.len() as u64, Relaxed);
+    run_counts().counts[PROPOSED].fetch_add(orders.len() as u64, Relaxed);
     log(|| format!("proposals for line {:x}: {} orders, {} {:?}{}", key as u64, orders.len(), if walked.is_some() { "walked" } else { "prices" }, orders.iter().map(|o| format!("{} {:.0}", o.0.iter().map(|s| s.0.to_string()).collect::<Vec<_>>().join("."), o.1)).collect::<Vec<_>>(), walked.map_or(String::new(), |w| format!("; the order it ran walked {w:.0}"))));
     let mut m = MEMO.write();
     let Some(n) = m.notes.get_mut(&key) else { return };
@@ -741,7 +736,7 @@ pub fn choose(round: &mut [Choice]) {
         if best != 0 {
             c.chosen = best;
             c.why = if note.is_some() { "corrected by what its orders measured" } else { "the batch prediction's least" };
-            COUNTS[CORRECTED].fetch_add(1, Relaxed);
+            run_counts().counts[CORRECTED].fetch_add(1, Relaxed);
         }
         // Decision 0354: where the learned model chose, a share of its choices take another candidate within the
         // margin, so that the steps it learns from are not only the orders it picks.
@@ -751,7 +746,7 @@ pub fn choose(round: &mut [Choice]) {
             if !near.is_empty() && costs[best] <= explore_rows() && rng.unit() < explore_rate() {
                 c.chosen = near[rng.below(near.len())];
                 c.why = "explored: a candidate within the margin of the model's least";
-                COUNTS[EXPLORED].fetch_add(1, Relaxed);
+                run_counts().counts[EXPLORED].fetch_add(1, Relaxed);
             }
             continue;
         }
@@ -767,7 +762,7 @@ pub fn choose(round: &mut [Choice]) {
         if rng.unit() < explore_rate() {
             c.chosen = untried[rng.below(untried.len())];
             c.why = "explored: an order not tried, within the margin";
-            COUNTS[EXPLORED].fetch_add(1, Relaxed);
+            run_counts().counts[EXPLORED].fetch_add(1, Relaxed);
         }
     }
 }
@@ -1280,4 +1275,20 @@ pub fn walk_width() -> usize {
 /// Decision 0233: the rows of each part a line's first-phase walk samples (`RERAIL_WALK_ROWS`, 128).
 pub fn walk_rows() -> usize {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_WALK_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(128))
+}
+
+/// The run's counts of this module's work (decision 0442: a run's own, `run::local`).
+#[derive(Default)]
+pub struct JoinCounts {
+    /// Counts for the profile and tests: flags, exact statistics measured, choices corrected, explored, proposals,
+    /// handoffs and handbacks (decision 0206), orders trialled (0206 §2).
+    pub counts: [AtomicU64; 8],
+    /// Lines found mispredicted step by step in this process: blown up, over-estimated (`RERAIL_PLAN_CACHE_COUNTS`).
+    pub misses: [AtomicU64; 2],
+}
+
+/// The run's `JoinCounts`.
+#[inline]
+pub fn run_counts() -> std::sync::Arc<JoinCounts> {
+    crate::code_rule_dsl::logic::run::local::<JoinCounts>()
 }
