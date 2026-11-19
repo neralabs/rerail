@@ -2181,16 +2181,14 @@ impl Lowerer {
             Some(L::Atom { rel, neg: false, .. }) => Some(rel),
             _ => None,
         };
-        // The deciding walk, then a writing walk that replays it (decision 0276 A3.3): the same bodies.
+        // The deciding walk (decision 0276 A3.3): each literal's count of alternatives. Each combination is written by
+        // a walk that replays it and takes one alternative of each literal.
         self.log.clear();
         self.replay = None;
-        let (heads, bodies) = self.clause_bodies(c, heads, body.clone())?;
-        self.subs.truncate(1);
-        self.replay = Some(0);
-        let again = self.clause_bodies(c, self.heads_at(c), body);
-        self.replay = None;
-        let (_, again) = again?;
-        debug_assert!(again == bodies, "a replayed clause lowers as its deciding walk did");
+        let (heads, alts) = self.clause_alts(heads, body.clone())?;
+        let counts: Vec<usize> = alts.iter().map(Vec::len).collect();
+        drop(alts);
+        let combinations: usize = counts.iter().product();
         for head in &heads {
             if let Some(m) = &head.modal
                 && !self.three.contains(&head.rel)
@@ -2215,8 +2213,21 @@ impl Lowerer {
                 written = [path.clone(), line.clone()].into_iter().chain(head.args.iter().skip(1).cloned()).collect();
             }
             let args = written.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
-            for body in &bodies {
-                let (args, body) = unset(args.clone(), body.clone())?;
+            for k in 0..combinations {
+                // Combination k's pick of each literal: the first literal's the most significant.
+                let mut picks = vec![0; counts.len()];
+                let mut rest = k;
+                for (p, n) in picks.iter_mut().zip(&counts).rev() {
+                    *p = rest % n;
+                    rest /= n;
+                }
+                self.subs.truncate(1);
+                self.replay = Some(0);
+                let replayed = self.clause_alts(self.heads_at(c), body.clone());
+                self.replay = None;
+                let (_, alts) = replayed?;
+                let chosen: Vec<Literal> = alts.into_iter().zip(&picks).flat_map(|(mut a, &p)| a.swap_remove(p)).collect();
+                let (args, body) = unset(args.clone(), merge_negated_tests(chosen))?;
                 if let Some(m) = &head.modal {
                     self.modal.insert(self.written(), m.clone());
                 }
@@ -2226,10 +2237,10 @@ impl Lowerer {
         Ok(())
     }
 
-    /// Clause `c`'s heads, each argument read under the substitution its hoisting made, and its bodies: the
-    /// aggregates in the heads' arguments hoisted into the body (`cc(f, 1 + count : { … })` is a variable the body
-    /// binds), and the conjunction's alternatives.
-    fn clause_bodies(&mut self, _c: u32, heads: Vec<HeadAt>, mut body: Vec<LitAt>) -> Result<(Vec<HeadAt>, Vec<Vec<Literal>>), Error> {
+    /// A clause's heads, each argument read under the substitution its hoisting made, and each body literal's
+    /// alternatives: the aggregates in the heads' arguments hoisted into the body (`cc(f, 1 + count : { … })` is a
+    /// variable the body binds).
+    fn clause_alts(&mut self, heads: Vec<HeadAt>, mut body: Vec<LitAt>) -> Result<(Vec<HeadAt>, Vec<Vec<Vec<Literal>>>), Error> {
         let mut sub = None;
         for a in heads.iter().flat_map(|h| h.args.iter()) {
             self.hoist(a, 0, &mut sub, &mut body, true);
@@ -2238,13 +2249,23 @@ impl Lowerer {
         let heads: Vec<HeadAt> = heads.into_iter().map(|h| HeadAt { args: h.args.into_iter().map(|a| reads::with_sub_at(a, s)).collect(), ..h }).collect();
         let mut outer = Vec::new();
         heads.iter().flat_map(|h| &h.args).for_each(|a| self.term_vars(a, &mut outer));
-        let bodies = self.conjunction(&body, &outer.into_iter().collect())?;
-        Ok((heads, bodies))
+        let alts = self.conjunction_alts(&body, &outer.into_iter().collect())?;
+        Ok((heads, alts))
     }
 
     /// A conjunction's alternatives (one per choice in its disjunctions).
     /// `context`: the variables used outside the conjunction.
     fn conjunction(&mut self, lits: &[LitAt], context: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
+        let mut acc = vec![Vec::new()];
+        for alts in self.conjunction_alts(lits, context)? {
+            acc = acc.iter().flat_map(|a| alts.iter().map(move |b| a.iter().chain(b).cloned().collect::<Vec<_>>())).collect();
+        }
+        Ok(acc.into_iter().map(merge_negated_tests).collect())
+    }
+
+    /// Each literal's alternatives in a conjunction, in order, a literal of many outlined past OUTLINE_PAST
+    /// (`conjunction` makes their combinations; a clause writes one combination a rule, decision 0276 A3.3).
+    fn conjunction_alts(&mut self, lits: &[LitAt], context: &BTreeSet<String>) -> Result<Vec<Vec<Vec<Literal>>>, Error> {
         // An aggregate inside a term (`n = count : { … } + 1`) is a variable bound beside it.
         let mut hoisted = Vec::new();
         for lit in lits {
@@ -2263,7 +2284,8 @@ impl Lowerer {
             hoisted.push(sub.map_or_else(|| lit.clone(), |s| reads::with_sub(lit, s)));
         }
         let lits = hoisted.as_slice();
-        let mut acc = vec![Vec::new()];
+        let mut combinations = 1;
+        let mut out = Vec::with_capacity(lits.len());
         for (k, lit) in lits.iter().enumerate() {
             // The variables used outside this literal, which an aggregate inside it is correlated on.
             let mut outer: Vec<String> = context.iter().cloned().collect();
@@ -2278,7 +2300,7 @@ impl Lowerer {
             // set is one atom of `rr_wstop_<S>`, S's relation (`within_stop_relation`). A nest of them was otherwise
             // exponential: a Rust policy of 200 lines lowered to 101,423 rules. Below it, they stay in the rule, whose
             // own literals narrow each.
-            if acc.len() * alts.len() > OUTLINE_PAST && alts.len() > 1 {
+            if combinations * alts.len() > OUTLINE_PAST && alts.len() > 1 {
                 if let L::Atom { rel, args, neg: false } = self.lit(lit)
                     && rel == "within_stop"
                     && let [n, a, stop] = args.as_slice()
@@ -2293,9 +2315,10 @@ impl Lowerer {
                     alts = self.outline(alts, &used);
                 }
             }
-            acc = acc.iter().flat_map(|a| alts.iter().map(move |b| a.iter().chain(b).cloned().collect::<Vec<_>>())).collect();
+            combinations *= alts.len();
+            out.push(alts);
         }
-        Ok(acc.into_iter().map(merge_negated_tests).collect())
+        Ok(out)
     }
 
     /// Each aggregate inside term `a` (and `a` itself when `whole`) as a fresh variable, bound by `v = aggregate` in

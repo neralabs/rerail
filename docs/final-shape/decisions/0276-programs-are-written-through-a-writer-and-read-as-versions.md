@@ -484,6 +484,11 @@ Progress (2026-11-18):
       checked to lower to the same bodies: it does over the library and every pack (the print-back tests,
       `library_modules_link`, `dropping_unreached` over the other packs). The second walk doubles the lowering until
       each literal writes its picked alternative (stage 2): the eight tests took 203 s, against 115 s before.
+    - *Done (A3.3 stage 2, the pick).* The deciding walk keeps only each literal's count of alternatives
+      (`conjunction_alts`); the clause writes combination k by a replay that takes pick k of each literal (the first
+      literal's the most significant, the order the products had), then `merge_negated_tests` and `unset` over that
+      one body. No list of bodies is made. The eight tests: 131 s. Left: each literal's lowering still returns its
+      alternatives as trees, which the replay picks from; next, the literal writes only the picked alternative.
   - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
     (`Tree::rule`) goes.
   - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,
