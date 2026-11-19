@@ -411,3 +411,13 @@ Each process reported `a.py`. The fixture used two named scopes and a separate e
 | Original store after deletion and collection of its last scope | 3 | 0 | 1 |
 
 The last run compiled all three programs again. The tape counter also includes policy and library reads.
+
+## Recovery contract for a stopped directory
+
+Case 23 tracks implementation of this contract. Restoring the control database can currently lose a stop that still requires delivery.
+
+The store registry keeps the committed release ID, directory, acquisition cutoff and registered store identities until delivery completes.
+A rolled-back stop leaves no release to deliver. An acknowledged stop must survive restoration of an older control database.
+After a restart, the worker rebuilds missing delivery work from the registry. A repeated delivery uses the original release ID and cutoff.
+A store that received the release before the worker stopped can acknowledge it again. A run acquired after the cutoff keeps its ownership.
+A database that takes another store's pathname cannot acknowledge a release addressed to the original store.
