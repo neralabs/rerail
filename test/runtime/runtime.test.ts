@@ -646,8 +646,12 @@ describe("Rerail tool results waiting for their edit's check", () => {
   });
 
   it("reads another agent's result as no Claude Code result: a late Codex edit stays unchecked", async () => {
-    const { runtime, check, lateEdit } = await hookSession("codex");
+    const { runtime, check, lateEdit, turnEnd } = await hookSession("codex");
     try {
+      // The baseline walk has run before the write. One still running could read the write and take it as the
+      // session's own once the call opens its turn window: on a coarse filesystem clock, Windows' among them, the write
+      // and the window's start can share a stamp. It would then check the write itself, and the result carry its steer.
+      await turnEnd("baseline");
       const output = (path: string) => ({ type: "update", filePath: path, content: BAD, structuredPatch: [], originalFile: "export const a = 1;\n" });
       const { answering } = await lateEdit("t1", "a.ts", BAD, output);
       check.resolve();
