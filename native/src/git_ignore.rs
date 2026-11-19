@@ -9,8 +9,7 @@
 //! blob it names now; a `.gitignore` is read when the walk first enters its folder. A matcher says
 //! whether one opened now would read the rules it read (`sources_unchanged`), so hosts can share
 //! one per checkout: every holder reads the index again once its file changes. A matcher holds no
-//! file open: on Linux the index's stamp carries its file handle, which tells the file read from a
-//! later index given its inode number.
+//! file open.
 //!
 //! The repository opens through the engine's one opener (`git_access::opener`), so a repository
 //! Git refuses has no matcher. Opening runs on a thread of its own under the Git read time limit; questions
@@ -388,26 +387,24 @@ impl IndexFile {
     }
 }
 
-/// What tells one index file from another and from itself rewritten: the file's identity, which
-/// every write of Git's changes, and its modification time and size, which a write in place
-/// changes. Git writes the index to a new file and renames it over the old one, and a file system
-/// such as ext4 gives a freed inode number to the next new file at once: two writes within one
-/// step of its clock can land the second on the number of the file read, at its size and time.
-/// So on Linux the identity takes in the file's handle (`name_to_handle_at`), which holds the
-/// inode's generation on ext4, xfs, btrfs and tmpfs: a later file on the same number has another.
-/// No file is held open for it. Where the file system gives no handle (overlayfs), a stamp taken
-/// while its clock still reads the file's time is not kept ([`FileStamp::tells`]). On macOS the
-/// inode number tells them: APFS numbers each new file from its volume's next identifier, and
+/// What tells one index file from another and from itself rewritten: the file's identity (device
+/// and inode on Unix; volume serial and file index on Windows), which every write of Git's
+/// changes, and its modification time and size, which a write in place changes. All three come
+/// from the one query a stat makes, so a question costs what it cost before. Git writes the index
+/// to a new file and renames it over the old one, and ext4 gives a freed inode number to the next
+/// new file at once: two writes within one step of the file system's clock can land the second on
+/// the number of the file read, at its size and time. That needs the read taken within the step,
+/// so on Linux such a stamp is not kept ([`FileStamp::tells`]) and nothing is held open. On macOS
+/// the inode number tells them: APFS numbers each new file from its volume's next identifier, and
 /// HFS+ gives a number again only once its 32-bit count has wrapped. On Windows the file index
-/// tells them: NTFS gives every new file a file index of its own. The change time is
-/// left out: only a write in place that keeps the size and sets the time back would need it, and
-/// Git never writes the index in place.
+/// tells them: NTFS gives every new file a file index of its own. The change time is left out:
+/// only a write in place that keeps the size and sets the time back would need it, and Git never
+/// writes the index in place.
 #[derive(Debug, PartialEq, Eq)]
 struct FileStamp {
     identity: (u64, u64),
     modified: FileTime,
     len: u64,
-    handle: Handle,
 }
 
 /// A file's modification time as its stat gives it.
@@ -416,64 +413,6 @@ type FileTime = Option<std::time::SystemTime>;
 /// A file's modification time as its stat gives it: the `FILETIME` count of 100 ns.
 #[cfg(windows)]
 type FileTime = u64;
-
-/// On Linux, the file's handle; `None` where the file system or the process gives none.
-#[cfg(target_os = "linux")]
-type Handle = Option<FileHandle>;
-/// Elsewhere the stat's identity alone.
-#[cfg(not(target_os = "linux"))]
-type Handle = ();
-
-/// A file handle as `name_to_handle_at` fills it (`struct file_handle`): its length, its type and
-/// room for the longest handle (`MAX_HANDLE_SZ`, 128 bytes). Bytes past its length stay zero, so
-/// two handles are equal when their files are.
-#[cfg(target_os = "linux")]
-#[repr(C)]
-#[derive(Debug, PartialEq, Eq)]
-struct FileHandle {
-    len: libc::c_uint,
-    kind: libc::c_int,
-    bytes: [u8; 128],
-}
-
-#[cfg(all(target_os = "linux", test))]
-thread_local! {
-    /// Set by a case for its own thread: no handle, as on a file system that gives none.
-    static NO_HANDLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// `path`'s handle; `None` where the file system has none to give (overlayfs: `EOPNOTSUPP`), the
-/// process may not ask (`EPERM` or `ENOSYS` under a container's filter) or the file is gone.
-#[cfg(target_os = "linux")]
-fn file_handle(path: &Path) -> Handle {
-    use std::os::unix::ffi::OsStrExt;
-    #[cfg(test)]
-    if NO_HANDLE.get() {
-        return None;
-    }
-    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
-    let mut handle = FileHandle {
-        len: 128,
-        kind: 0,
-        bytes: [0; 128],
-    };
-    let mut mount = 0;
-    // SAFETY: a path ended by NUL, and a handle laid out as `struct file_handle` whose length
-    // says how much room follows it.
-    let named = unsafe {
-        libc::name_to_handle_at(
-            libc::AT_FDCWD,
-            path.as_ptr(),
-            (&raw mut handle).cast(),
-            &raw mut mount,
-            0,
-        )
-    };
-    (named == 0).then_some(handle)
-}
-
-#[cfg(all(unix, not(target_os = "linux")))]
-fn file_handle(_: &Path) -> Handle {}
 
 /// The clock Linux gives file times from (`CLOCK_REALTIME_COARSE`): a write after a reading of it
 /// gets a time no earlier than that reading, whether the file system takes this clock or a finer
@@ -507,8 +446,7 @@ fn past_step(modified: std::time::SystemTime, now: std::time::SystemTime) -> boo
 }
 
 impl FileStamp {
-    /// `path`'s stamp; `None` when it is absent or cannot be read. A stat, and on Linux a second
-    /// lookup of the path for its handle.
+    /// `path`'s stamp; `None` when it is absent or cannot be read.
     #[cfg(unix)]
     fn of(path: &Path) -> Option<Self> {
         use std::os::unix::fs::MetadataExt;
@@ -517,19 +455,16 @@ impl FileStamp {
             identity: (metadata.dev(), metadata.ino()),
             modified: metadata.modified().ok(),
             len: metadata.len(),
-            handle: file_handle(path),
         })
     }
 
-    /// Whether this stamp tells its file from every later one: always with a handle; with none,
-    /// once the file clock has left the step that gave the file's time, since a later write can
-    /// get that time only within it.
+    /// Whether this stamp tells its file from every later one Git writes: once the file clock has
+    /// left the step that gave the file's time, since a later write can get that time only within
+    /// it. A stamp taken within the step is not kept, so the next question reads the index again;
+    /// that read, taken later, is kept.
     #[cfg(target_os = "linux")]
     fn tells(&self) -> bool {
-        self.handle.is_some()
-            || self
-                .modified
-                .is_some_and(|modified| past_step(modified, file_clock()))
+        self.modified.is_some_and(|modified| past_step(modified, file_clock()))
     }
 
     /// Whether this stamp tells its file from every later one: the identity alone does here.
@@ -571,7 +506,6 @@ impl FileStamp {
                 info.ftLastWriteTime.dwLowDateTime,
             ),
             len: join(info.nFileSizeHigh, info.nFileSizeLow),
-            handle: (),
         })
     }
 }
@@ -1324,10 +1258,12 @@ mod tests {
 
     /// ext4 gives a freed inode number to the next new file at once. After a matcher reads the
     /// index, Git writes it twice within one tick of the file system's clock: the first write frees
-    /// the number of the file read, and the second, at its size and time, can land on it. Its file
-    /// handle tells it from the file read, so the matcher reads it. Other threads take and free
-    /// inode numbers too, so the writes are made again until the second lands on the number read;
-    /// a file system that gives no number again (tmpfs) cannot make the state, and says so.
+    /// the number of the file read, and the second, at its size and time, can land on it. Both
+    /// writes fall within the clock step of the file read only if the read did too, so the index's
+    /// time is put ahead of the file clock first: the matcher keeps no stamp of a read taken then,
+    /// and reads the second write. Other threads take and free inode numbers too, so the writes are
+    /// made again until the second lands on the number read; a file system that gives no number
+    /// again (tmpfs) cannot make the state, and says so.
     #[cfg(target_os = "linux")]
     #[test]
     fn reads_the_index_again_when_git_writes_it_twice_onto_the_inode_number_of_the_file_read() {
@@ -1339,6 +1275,8 @@ mod tests {
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["add", ".gitignore", "z/m.py"]);
         let index = root.join(".git/index");
+        let ahead = file_clock() + Duration::from_millis(3_600_500);
+        set_modified(&index, ahead);
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
         let made = (0..10).any(|_| {
             assert!(ignore.ignored("gen/t.py", false).unwrap(), "read out of the index");
@@ -1356,6 +1294,7 @@ mod tests {
             );
             git(&root, &["update-index", "--add", "z/m.py"]);
             git(&root, &["rm", "--cached", "-q", "gen/t.py"]);
+            set_modified(&index, ahead);
             now.ino() == read.ino()
         });
         if !made {
@@ -1388,15 +1327,13 @@ mod tests {
         assert_eq!(open_under(&root), none, "once the checkout is removed");
     }
 
-    /// Where the file system gives no handle, a stamp taken while the file clock still reads the
-    /// index's time cannot tell a later write within that step from the file read: it is not kept,
-    /// so the next question reads the index again. A stamp taken once the clock has left that time
-    /// is kept, and a question costs a stat.
+    /// A stamp taken while the file clock still reads the index's time cannot tell a later write
+    /// within that step from the file read: it is not kept, so the next question reads the index
+    /// again. A stamp taken once the clock has left that time is kept, and a question costs a stat.
     #[cfg(target_os = "linux")]
     #[test]
-    fn keeps_a_stamp_with_no_handle_once_the_file_clock_has_left_its_time() {
-        NO_HANDLE.set(true);
-        let root = fixture("no-handle", &[(".gitignore", "e.py\n"), ("e.py", "")]);
+    fn keeps_a_stamp_once_the_file_clock_has_left_its_time() {
+        let root = fixture("clock-step", &[(".gitignore", "e.py\n"), ("e.py", "")]);
         git(&root, &["init", "--initial-branch=main"]);
         git(&root, &["add", ".gitignore"]);
         let index = root.join(".git/index");
@@ -1424,34 +1361,6 @@ mod tests {
         assert!(
             ignore.ignored("e.py", false).is_err(),
             "a time the clock still reads: read again, and said to be unreadable"
-        );
-        NO_HANDLE.set(false);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    /// With a handle the stamp is kept whatever the file clock reads: the handle tells a later file,
-    /// so a question costs a stat and the handle, never a read.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn keeps_a_stamp_with_a_handle_whatever_the_file_clock_reads() {
-        let root = fixture("handle", &[(".gitignore", "e.py\n"), ("e.py", "")]);
-        git(&root, &["init", "--initial-branch=main"]);
-        git(&root, &["add", ".gitignore"]);
-        let index = root.join(".git/index");
-        if file_handle(&index).is_none() {
-            eprintln!("this file system gives no handle");
-            return std::fs::remove_dir_all(root).unwrap();
-        }
-        let zeros = vec![0; std::fs::read(&index).unwrap().len()];
-        let ahead = file_clock() + Duration::from_millis(3_600_500);
-        set_modified(&index, ahead);
-        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
-        assert!(ignore.ignored("e.py", false).unwrap());
-        std::fs::write(&index, &zeros).unwrap();
-        set_modified(&index, ahead);
-        assert!(
-            ignore.ignored("e.py", false).unwrap(),
-            "the index read before answers"
         );
         std::fs::remove_dir_all(root).unwrap();
     }
