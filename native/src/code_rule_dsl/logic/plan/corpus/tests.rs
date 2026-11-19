@@ -1,6 +1,40 @@
 //! The corpus runner's tests. The engine compiles them (its facade of `logic::plan::corpus`): they parse files, and
 //! the languages are registered by the crates above `rerail-logic` as the engine loads.
 
+#[cfg(feature = "tape-cache")]
+#[test]
+fn edits_keep_other_documents_facts_when_the_input_omits_its_owner() {
+    use crate::code_rule_dsl::logic::plan::output;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("sources");
+    let out = temp.path().join("out");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("keep.py"), "keep = 1\n").unwrap();
+    std::fs::write(root.join("base.py"), "base = 1\n").unwrap();
+    let rr = r#".decl doc(d: number, path: symbol, module: symbol)
+.input doc
+.decl request(k: number)
+request(1) :- doc(_, "keep.py", _).
+request(2) :- doc(_, "remove.py", _).
+.output request
+"#;
+    let run = || {
+        super::run(rr, &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let mut rows = output::shown(&out, "request").unwrap();
+        rows.sort();
+        rows
+    };
+    let previous = super::TEST_TAPE_CACHE.with(|p| p.replace(Some(temp.path().join("kept.sqlite"))));
+    assert_eq!(run(), [["1"]]);
+    std::fs::write(root.join("remove.py"), "remove = 2\n").unwrap();
+    assert_eq!(run(), [["1"], ["2"]]);
+    std::fs::remove_file(root.join("remove.py")).unwrap();
+    assert_eq!(run(), [["1"]]);
+    super::TEST_TAPE_CACHE.with(|p| p.replace(previous));
+}
+
 /// Phase 0 alone over `RERAIL_P0_ROOT`: the corpus's files (from Git in a Git work tree, else the walk) and
 /// every Python document's digest, with the observer's counts and the CPU. Run it twice for the warm figure; the
 /// observer's store is `<RERAIL_TAPE_CACHE>.files`.

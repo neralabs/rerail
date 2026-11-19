@@ -7521,15 +7521,28 @@ fn run_observed(
                 let evaluated: BTreeSet<i64> = owners.into_iter().collect();
                 // `RERAIL_STATS_KEEP_TRACE`: what the patches read, by input.
                 let mut read_trace: Option<Vec<(usize, usize, usize, String)>> = std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some().then(Vec::new);
+                let no_evaluated = BTreeSet::new();
                 for (rel, g, base, names, old, new) in staged {
                     let k = &kept[rel];
                     let width = fields.width(rel);
+                    // An omitted base column reads as zero. If it names the owner, every document
+                    // appears to be document zero. Replacing that owner's rows on an edit would
+                    // retract other files' facts too. Rebind the memo entries before adopting any patch.
+                    let evaluated_here = if width != 0 && base.is_some_and(|held| !held.contains(&names[g])) {
+                        if !new.is_empty() || old.iter().any(|rows| !rows.is_empty()) {
+                            return Err(format!("{rel}: the projected input omits its owner column {}", names[g]));
+                        }
+                        // No changed entry contributes a row. An owner of another relation cannot identify one here.
+                        &no_evaluated
+                    } else {
+                        &evaluated
+                    };
                     let holders = base.is_none().then(|| keeper.as_ref().and_then(|k| k.holders(rel)).unwrap_or(&no_holders));
                     // `RERAIL_KEPT_INPUTS_TRACE`: each input's old and new rows of the changed files, and its patch.
                     let trace_rows = std::env::var_os("RERAIL_KEPT_INPUTS_TRACE").is_some().then(|| (old.clone(), new.clone()));
                     let atoms = store.atoms_handle();
                     let cells = retain::cells_of(&atoms, prog, &maintained.0.domains, rel, width);
-                    let mut patch = patch_owners(rel, k, g, holders, &evaluated, &old, new, &cells)?;
+                    let mut patch = patch_owners(rel, k, g, holders, evaluated_here, &old, new, &cells)?;
                     if let Some(t) = read_trace.as_mut() {
                         t.push((patch.read.1, patch.read.0, patch.read.2, rel.clone()));
                     }
