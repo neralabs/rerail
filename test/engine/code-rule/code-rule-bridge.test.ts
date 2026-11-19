@@ -1323,6 +1323,123 @@ describe("CodeRuleBridge", () => {
     ]);
   });
 
+  /**
+   * A session's first start opens its evaluator, for seconds on a large repository, without holding its agent up: a call
+   * answered meanwhile is never begun (`unwatchedCall`), so its edit is left to the evaluator's first walk. The first
+   * walk is held at its read of the file, so the next edit of the file begins before the walk has taken it.
+   */
+  async function editedWhileOpening(root: string, edit: (bridge: CodeRuleBridge, path: string) => Promise<void>) {
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const opening = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      openWorkspace: async () => {
+        entered.resolve();
+        await opening.promise;
+      },
+    });
+    const open = bridge.openWorkspace("session-1");
+    passes.push(open);
+    await entered.promise;
+    await edit(bridge, path);
+    const reading = holdDiscovery("reads", path);
+    opening.resolve();
+    await open;
+    await reading.entered;
+    const edits = () => auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)
+      .map(({ generatedText, previousText, previousReadError }) => ({ generatedText, previousText, previousReadError }));
+    return { bridge, path, reading, edits };
+  }
+
+  // The next edit's capture took the file holding the first edit as its earlier state: the walk then found no change,
+  // the next edit reported only its own lines, and a rule the first edit's lines broke gave no steer and no record.
+  it.each([
+    ["Write", { file_path: "src/a.py", content: "x = NEEDLE\n" }],
+    ["edit", { path: "src/a.py" }],
+  ] as const)("checks once, over its whole file, an edit a %s call answered while the evaluator opened made, at the next edit of the file before the first walk took it", async (tool, input) => {
+    const root = await workspace();
+    const test = await editedWhileOpening(root, async (bridge, path) => {
+      await bridge.unwatchedCall("first", tool, { ...input, ...("file_path" in input ? { file_path: path } : {}) });
+      await writeFile(path, "x = NEEDLE\n");
+      await bridge.unwatchedResult("first");
+    });
+    await test.bridge.begin("second", "write", { path: "src/a.py" });
+    await writeFile(test.path, "x = NEEDLE\ny = 2\n");
+    await test.bridge.finish("second");
+    test.reading.release();
+    await test.bridge.checkpoint("turn");
+    // From here on the file is observed as the session's: the next edit is measured from it.
+    await test.bridge.begin("third", "write", { path: "src/a.py" });
+    await writeFile(test.path, "x = NEEDLE\ny = 3\n");
+    await test.bridge.finish("third");
+    await test.bridge.checkpoint("turn");
+    expect(test.edits()).toEqual([
+      { generatedText: "x = NEEDLE\ny = 2\n", previousText: undefined, previousReadError: "Source changed during initial discovery without a captured preimage" },
+      { generatedText: "x = NEEDLE\ny = 3\n", previousText: "x = NEEDLE\ny = 2\n", previousReadError: undefined },
+    ]);
+  });
+
+  // A call answered while the evaluator opened may still run (a subagent's result comes late): once the next edit has
+  // checked the file, the session has observed it, and the edit after is measured from what that edit left.
+  it("measures an edit from what the last checked edit left, though the call answered while the evaluator opened still runs", async () => {
+    const root = await workspace();
+    const test = await editedWhileOpening(root, async (bridge, path) => {
+      await bridge.unwatchedCall("first", "Write", { file_path: path, content: "x = NEEDLE\n" });
+      await writeFile(path, "x = NEEDLE\n");
+    });
+    await test.bridge.begin("second", "write", { path: "src/a.py" });
+    await writeFile(test.path, "x = NEEDLE\ny = 2\n");
+    await test.bridge.finish("second");
+    await test.bridge.begin("third", "write", { path: "src/a.py" });
+    await writeFile(test.path, "x = NEEDLE\ny = 3\n");
+    await test.bridge.finish("third");
+    await test.bridge.finish("first");
+    test.reading.release();
+    await test.bridge.checkpoint("turn");
+    expect(test.edits()).toEqual([
+      { generatedText: "x = NEEDLE\ny = 2\n", previousText: undefined, previousReadError: "Source changed during initial discovery without a captured preimage" },
+      { generatedText: "x = NEEDLE\ny = 3\n", previousText: "x = NEEDLE\ny = 2\n", previousReadError: undefined },
+    ]);
+  });
+
+  it("answers a call while the evaluator opens though the session's folder is gone", async () => {
+    const root = await workspace();
+    const bridge = createBridge(join(root, "gone"), auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+    await expect(bridge.unwatchedCall("first", "Write", { file_path: "a.py", content: "x = 1\n" })).resolves.toBeUndefined();
+  });
+
+  // A file a call answered while the evaluator opened did not name, or that changed after that call ended, is not the
+  // call's edit: the next edit of it is measured from what it holds, as before.
+  it.each([
+    ["another writer changed while the call ran", "src/b.py", false],
+    ["changed after the call ended", "src/a.py", true],
+  ] as const)("measures the next edit of a file %s from what it holds", async (_kind, named, after) => {
+    const root = await workspace();
+    const test = await editedWhileOpening(root, async (bridge, path) => {
+      await bridge.unwatchedCall("first", "edit", { path: named });
+      if (!after) await writeFile(path, "x = OTHER\n");
+      await bridge.unwatchedResult("first");
+      if (after) {
+        // Past the call's end on the filesystem's clock, which stamped a file written after it.
+        const clock = await mkdtemp(join(tmpdir(), "rerail-policy-clock-"));
+        directories.push(clock);
+        await writeFile(join(clock, "ended"), "");
+        await awaitClockAfter(join(clock, "ended"));
+        await writeFile(path, "x = OTHER\n");
+      }
+    });
+    await test.bridge.begin("second", "write", { path: "src/a.py" });
+    await writeFile(test.path, "x = OTHER\ny = 2\n");
+    await test.bridge.finish("second");
+    test.reading.release();
+    await test.bridge.checkpoint("turn");
+    expect(test.edits()).toEqual([{ generatedText: "x = OTHER\ny = 2\n", previousText: "x = OTHER\n", previousReadError: undefined }]);
+  });
+
   // The walk at one command's result read the file the other was writing, and that command ended before the walk was
   // audited: the walk began while it ran, so the file is still left to the walk after.
   it("leaves a file to the walk after a command ends, though the command ends after a walk read the file and before the walk is audited", async () => {
@@ -3926,6 +4043,19 @@ describe("ToolCallWindows", () => {
     expect(windows.ranDuring(0, 0)).toBe(false);
     expect(windows.ranDuring(10, 10)).toBe(true);
     expect(windows.ranDuring(MAX_FINISHED_CALLS * 10, MAX_FINISHED_CALLS * 10)).toBe(true);
+  });
+
+  it("says a call named a file and ran when it was written, from its start to its end, and only for the files it named", () => {
+    const windows = new ToolCallWindows();
+    windows.begin("write", 10, false, ["src/a.py"]);
+    windows.begin("command", 10, true);
+    expect(windows.namedAt("src/a.py", 9)).toBe(false);
+    expect(windows.namedAt("src/a.py", 10)).toBe(true);
+    expect(windows.namedAt("src/b.py", 12)).toBe(false);
+    windows.finish("write", 20);
+    expect(windows.namedAt("src/a.py", 20)).toBe(true);
+    expect(windows.namedAt("src/a.py", 21)).toBe(false);
+    expect(windows.namedAt("src/a.py", 9)).toBe(false);
   });
 });
 
