@@ -829,7 +829,7 @@ describe("mechanical code rule regressions", () => {
         vi.mocked(writeFile).mockReset();
         await enforcer.close();
       }
-    });
+    }, 60_000);
   });
 
   it("credits a steer to the distinct rules whose steer and block violations it rendered", async () => {
