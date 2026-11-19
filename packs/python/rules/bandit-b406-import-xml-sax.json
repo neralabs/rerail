@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b406-import-xml-sax",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Avoid parsing XML with xml.sax (importing only its saxutils helpers is fine); it is open to XML attacks, so use defusedxml.",
   "scope": {
@@ -19,19 +19,53 @@
           "rule": {
             "any": [
               {
-                "pattern": "import xml.sax"
+                "kind": "import_statement",
+                "has": {
+                  "any": [
+                    {
+                      "kind": "dotted_name"
+                    },
+                    {
+                      "kind": "aliased_import"
+                    }
+                  ],
+                  "regex": "^xml\\s*\\.\\s*sax"
+                }
               },
               {
-                "pattern": "import xml.sax as $ALIAS"
+                "kind": "import_from_statement",
+                "has": {
+                  "field": "module_name",
+                  "regex": "^[.\\s]*xml\\s*\\.\\s*sax"
+                }
               },
               {
-                "pattern": "from xml.sax import $$$NAMES"
-              },
-              {
-                "pattern": "from xml import sax"
-              },
-              {
-                "pattern": "from xml import sax as $ALIAS"
+                "kind": "import_from_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^[.\\s]*xml$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "dotted_name"
+                        },
+                        {
+                          "kind": "aliased_import"
+                        }
+                      ],
+                      "regex": "^sax",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^import$"
+                      }
+                    }
+                  }
+                ]
               }
             ],
             "not": {
@@ -40,16 +74,52 @@
                   "pattern": "from xml.sax.saxutils import $$$NAMES"
                 },
                 {
-                  "pattern": "from xml.sax import saxutils"
-                },
-                {
-                  "pattern": "from xml.sax import saxutils as $ALIAS"
-                },
-                {
-                  "pattern": "from xml.sax import (saxutils)"
-                },
-                {
-                  "pattern": "from xml.sax import (saxutils as $ALIAS)"
+                  "kind": "import_from_statement",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "module_name",
+                        "regex": "^xml\\s*\\.\\s*sax$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "dotted_name"
+                          },
+                          {
+                            "kind": "aliased_import"
+                          }
+                        ],
+                        "follows": {
+                          "stopBy": "end",
+                          "regex": "^import$"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "dotted_name"
+                            },
+                            {
+                              "kind": "aliased_import"
+                            }
+                          ],
+                          "follows": {
+                            "stopBy": "end",
+                            "regex": "^import$"
+                          },
+                          "not": {
+                            "regex": "^saxutils(?:\\s|$)"
+                          }
+                        }
+                      }
+                    }
+                  ]
                 }
               ]
             }

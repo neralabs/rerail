@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b201-flask-debug-true",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Don't run a Flask app with debug enabled; the interactive debugger lets anyone who can reach it execute arbitrary code.",
   "scope": {
@@ -56,6 +56,182 @@
           "utils": {
             "flask-instance": {
               "pattern": "$CTOR($$$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B201",
+        "anchor": "witness.span",
+        "message": "Remove debug=True from this run call; the debugger lets anyone who reaches it run arbitrary code.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B201"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "b201-any-app",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$APP.run($$$ARGS)",
+            "has": {
+              "field": "arguments",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "keyword_argument",
+                "all": [
+                  {
+                    "has": {
+                      "field": "name",
+                      "regex": "^debug$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "value",
+                      "matches": "true-literal"
+                    }
+                  }
+                ]
+              }
+            },
+            "matches": "after-flask-import",
+            "not": {
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "has": {
+                      "field": "object",
+                      "resolves": {
+                        "binding": {
+                          "value": {
+                            "matches": "flask-instance"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "keyword_argument",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "name",
+                            "regex": "^debug$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "value",
+                            "value": {
+                              "eq": true
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "utils": {
+            "flask-import": {
+              "any": [
+                {
+                  "kind": "import_statement"
+                },
+                {
+                  "kind": "import_from_statement"
+                }
+              ],
+              "has": {
+                "stopBy": "end",
+                "kind": "dotted_name",
+                "regex": "flask"
+              }
+            },
+            "after-flask-import": {
+              "inside": {
+                "stopBy": "end",
+                "follows": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "flask-import"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "flask-import"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "true-literal": {
+              "any": [
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "string",
+                  "value": {
+                    "eq": "True"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_start",
+                      "regex": "(?i)^[rubft]*[ft]"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "value": {
+                    "eq": "True"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "string_start",
+                      "regex": "(?i)^[rubft]*[ft]"
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "true-literal"
+                  }
+                }
+              ]
+            },
+            "flask-instance": {
+              "kind": "call",
+              "has": {
+                "field": "function",
+                "resolves": {
+                  "import": [
+                    "flask.Flask"
+                  ]
+                }
+              }
             }
           }
         }

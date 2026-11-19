@@ -409,7 +409,7 @@ the same capability across restarts.
 recorded daemon with `recordedDaemonAlive`. A pid owned by another OS user (`EPERM`) cannot be this user's daemon: the
 state is stale and no capability is sent. On Windows the state's engine pipe must also exist, since a live daemon always
 holds it, and the engine on that pipe must answer a random challenge with an HMAC keyed by the capability
-(`engineCapabilityProof` in `src/runtime/engine-proof.ts`), which never shows it the capability. That holds for a pid
+(`engineCapabilityProof` in `src/runtime/daemon/engine-proof.ts`), which never shows it the capability. That holds for a pid
 this user may signal as for one it may not (this user's elevated daemon), so on Windows a reused pid of the person's
 own, with the pipe name and the port held by another user, gets nothing: the state is dropped unprobed. An engine that
 says nothing within the wait is taken for a busy daemon: its state is kept, and it is sent no capability, the shutdown
@@ -731,7 +731,13 @@ should not widen it.
 - Git calls inherit `GIT_*`, and an absolute `PATH` entry outside the repository decides which `git` runs. "The
   repository" is only the nearest one above the process's working folder, so entries in an outer checkout around a
   nested worktree or submodule are not skipped, nor is any repository's when the process started outside it. The
-  daemon finds Git once, from the folder and `PATH` it started with, and keeps it.
+  daemon finds Git once, from the folder and `PATH` it started with, and keeps it. The daemon alone looks again, from the
+  same folder, `PATH` and repository and by the same checks, only when a start of the Git it kept finds no program
+  there. That call waits for the look only within its time limit and until it is stopped: then it fails as its start
+  did, and the look goes on for the calls after it. A hook or a command never looks again: such a start fails that
+  call, and the next process looks for Git afresh at its first call. The daemon alone also asks whether the home share
+  `HOMEDRIVE` and `HOMEPATH` name is a folder, to put that home's `bin` on `PATH` as Git for Windows' launcher does; a
+  hook's or a command's Git gets both homes' `bin`, the share's first.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
   Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
   System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
@@ -838,7 +844,7 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - **Engine socket** lives in `tmpdir()/rerail-<uid>/`, checked before `listen` to be the person's own, 0700 and not a
   symlink (`src/runtime/engine-service.ts`). On Windows it is a named pipe, which any local user could create first
   under its predictable name. The daemon asks the holder to answer a random challenge with an HMAC keyed by the access
-  capability (`src/runtime/engine-proof.ts`), so the holder never sees the capability; one that cannot answer is not
+  capability (`src/runtime/daemon/engine-proof.ts`), so the holder never sees the capability; one that cannot answer is not
   this home's engine, and the engine listens on that name with a random suffix. On Linux another user can create that
   folder first; the daemon then
   listens in a `run` folder beside its database under the 0700 Rerail home (`chooseEngineSocketPath`) and records the
