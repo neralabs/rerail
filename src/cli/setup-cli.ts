@@ -929,17 +929,20 @@ export interface SetupIo extends RepositorySetupIo {
 
 /**
  * The terminal lane needs a TTY on both stdin and stdout, and no `--relay`: set-up never waits on input that a coding
- * agent, or a pipe, will not type. `/rerail-start` and every answer printed for a coding agent pass `--relay`.
+ * agent, or a pipe, will not type. `/rerail-start` and every answer printed for a coding agent pass `--relay`. A command
+ * that never `asks` (`rerail stop`, `--json`) gets the terminal lane without a reader, so what is typed ahead stays for
+ * the shell.
  */
-export function setupIo(args: readonly string[] = []): SetupIo {
+export function setupIo(args: readonly string[] = [], asks: boolean = !args.includes(JSON_FLAG)): SetupIo {
   const say = (text: string): void => {
     process.stdout.write(`${text}\n`);
   };
   if (args.includes(SETUP_FLAGS.relay) || !process.stdin.isTTY || !process.stdout.isTTY) {
     return { lane: "agent", relayed: args.includes(SETUP_FLAGS.relay), say, close: () => {} };
   }
-  // One reader for the run: lines for the folder and pack prompts, keys for each question's menu. Each question drops
-  // what was typed before it was on screen.
+  if (!asks) return { lane: "terminal", say, close: () => {} };
+  // One reader for the run, from its start: lines for the folder and pack prompts, keys for each question's menu. What
+  // is typed while no question is on screen is dropped.
   const input = new TerminalInput(process.stdin, text => process.stdout.write(text), undefined, () => process.stdout.columns);
   return {
     lane: "terminal",

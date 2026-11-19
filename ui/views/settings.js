@@ -78,7 +78,7 @@ function repoRow(repo) {
 
 function repos() {
   return h("section", null,
-    h("div.ghead", null, h("h2", null, "Repos"), h("p", null, "Rerail is installed once on this computer. Each repo has its own rules; switch a repo off to pause Rerail there. Its rules and history are kept.")),
+    h("div.ghead", null, h("h2", null, "Repos"), h("p", null, "Rerail is installed once on this computer. Each repo has its own rules; switch a repo off to stop Rerail in all its checkouts and worktrees. Its rules and history are kept.")),
     h("div.list", null, data.repositories.length ? data.repositories.map(repoRow) : h("div.empty", null, h("p", null, "Rerail has not seen a repo yet."))));
 }
 

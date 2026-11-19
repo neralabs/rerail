@@ -34,6 +34,7 @@ import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engin
 import * as native from "../../../src/engine/native/native.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { GIT_OPEN_AGAIN_MS, nativeGitAccess } from "../../../src/engine/native/git-access.js";
 
 
 vi.mock("node:fs/promises", { spy: true });
@@ -1012,38 +1013,64 @@ describe("mechanical code rule regressions", () => {
   it("never evaluates a spooled edit a newer edit of its file superseded while the pump was running", async () => {
     const { recorder, audits } = recordingAudits();
     const { enforcer } = await fixture({ scope: "ai-output", audits: recorder });
-    const spoolReads: string[] = [];
-    // The queue reads the superseded edit back from its spool: held until the pump has read it too (it took it out of
-    // the queue to evaluate it) or gone idle without it.
+    // Spool reads are told apart by the file their edit changes. The pump stops at its read of api/ahead.py, queued
+    // before api/late.py, until the newer edit of api/late.py has looked for the older one in the queue (the queue's
+    // read of the older edit back from the spool, or the newer edit's batch ending), so the pump cannot have taken the
+    // older edit first. The queue's read then waits until the pump has read the older edit too (it is evaluating it)
+    // or has gone idle without it. Each wait ends on an event the other side reaches, never on a state that may last.
+    const looked = Promise.withResolvers<void>();
+    const pumpReadOlder = Promise.withResolvers<void>();
+    let pumpStopped = true;
+    let older: string | undefined;
+    const lookedForOlder = () => {
+      pumpStopped = false;
+      looked.resolve();
+    };
+    const hold = async (spool: string, path: string): Promise<void> => {
+      if (path === "api/ahead.py") await looked.promise;
+      if (path !== "api/late.py") return;
+      if (spool === older) pumpReadOlder.resolve();
+      else if (pumpStopped) {
+        older = spool;
+        lookedForOlder();
+        await Promise.race([pumpReadOlder.promise, enforcer.settleGeneratedEdits()]);
+      }
+    };
     const reads = vi.spyOn(fsPromises, "readFile").mockImplementation(async (...args: Parameters<typeof fsPromises.readFile>) => {
       const path = String(args[0]);
-      if (path.includes("rerail-policy-")) {
-        spoolReads.push(path);
-        while (spoolReads.length === 1 && enforcer.snapshotStatus().pending) await new Promise(resolve => queueHostTurn(resolve));
-      }
       const handle = await fsPromises.open(path, "r");
+      let text: Awaited<ReturnType<typeof handle.readFile>>;
       try {
-        return await handle.readFile(args[1] as Parameters<typeof handle.readFile>[0]);
+        text = await handle.readFile(args[1] as Parameters<typeof handle.readFile>[0]);
       } finally {
         await handle.close();
       }
+      if (path.includes("rerail-policy-")) await hold(path, z.object({ path: z.string() }).parse(JSON.parse(String(text))).path);
+      return text;
     });
     try {
       await enforcer.openWorkspace("superseded-spool");
-      // Eight megabytes held in memory, so the next edit of api/late.py goes to the spool.
+      // Eight megabytes evaluated and kept in memory, so each later edit of over 388 KB goes to the spool.
       const held = Array.from({ length: 8 }, (_, index) => ({ path: `api/held-${index}.py`, language: "python" as const, generatedText: "x".repeat(1_000_000) }));
+      await enforcer.auditGeneratedEdits("superseded-spool", { revision: 1, checkpoints: ["edit"], edits: held });
+      await settled(enforcer);
       const first = `NEEDLE\n${"x".repeat(400_000)}\n`;
       await enforcer.auditGeneratedEdits("superseded-spool", {
-        revision: 1, checkpoints: ["edit"], edits: [...held, { path: "api/late.py", language: "python", generatedText: first }],
+        revision: 2, checkpoints: ["edit"], edits: [
+          { path: "api/ahead.py", language: "python", generatedText: "x".repeat(400_000) },
+          { path: "api/late.py", language: "python", generatedText: first },
+        ],
       });
       await enforcer.auditGeneratedEdits("superseded-spool", {
-        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/late.py", language: "python", previousText: first, generatedText: `${first}NEEDLE\n` }],
-      });
+        revision: 3, checkpoints: ["edit"], edits: [{ path: "api/late.py", language: "python", previousText: first, generatedText: `${first}NEEDLE\n` }],
+      }).finally(lookedForOlder);
       await settled(enforcer);
       const late = [...audits.values()].filter(audit => audit.paths.includes("api/late.py"));
-      // The first edit's audit stays superseded; the second reports both edits' lines, since the first was never reported.
-      expect(late.map(audit => [audit.revision, audit.result?.status, audit.result?.violations?.length])).toEqual([[1, "superseded", 0], [2, "completed", 2]]);
+      // The older edit's audit stays superseded; the newer reports both edits' lines, since the older was never reported.
+      expect(late.map(audit => [audit.revision, audit.result?.status, audit.result?.violations?.length])).toEqual([[2, "superseded", 0], [3, "completed", 2]]);
     } finally {
+      lookedForOlder();
+      pumpReadOlder.resolve();
       reads.mockRestore();
       await enforcer.close();
     }
@@ -1290,6 +1317,87 @@ describe("mechanical code rule regressions", () => {
     expect(await repositoryAuditPaths(join(checkout, "tmp/ws"), true)).toEqual(["api/a.py"]);
     expect(await repositoryAuditPaths(join(checkout, "out/ws"), true)).toEqual([]);
   }, 60_000);
+
+  it("tries a refused Git ignore matcher once and logs it once, however many paths ask", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-refused-ignore-"));
+    roots.push(root);
+    const access = nativeGitAccess();
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementation(() => {
+      throw new Error("detected dubious ownership");
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog([needleCodeRule(1)]), {
+      workspaceRoot: root,
+      steerDelivery: { requestSteer: async () => undefined },
+      followGitignore: true,
+    });
+    try {
+      expect(["a.py", "b.log", "build"].map(path => enforcer.ignoresPath(path, path === "build"))).toEqual([false, false, false]);
+      expect(opens).toHaveBeenCalledTimes(1);
+      expect(stderr.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
+    } finally {
+      opens.mockRestore();
+      stderr.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("opens the Git ignore matcher again once GIT_OPEN_AGAIN_MS has passed after an open that timed out, not at every path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-timed-out-ignore-"));
+    roots.push(root);
+    const access = nativeGitAccess();
+    const timedOut = Object.assign(new Error("opening Git's ignore rules gave no answer within 10 s"), { code: "GitReadTimedOut" });
+    const ignoresLogs = { ignored: (path: string) => path.endsWith(".log"), ignoredBy: () => null };
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementationOnce(() => { throw timedOut; }).mockImplementation(() => ignoresLogs);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let clock = 1_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog([needleCodeRule(1)]), {
+      workspaceRoot: root,
+      steerDelivery: { requestSteer: async () => undefined },
+      followGitignore: true,
+    });
+    try {
+      expect(["a.log", "b.log", "c.log"].map(path => enforcer.ignoresPath(path, false))).toEqual([false, false, false]);
+      expect(opens).toHaveBeenCalledTimes(1);
+      clock += GIT_OPEN_AGAIN_MS;
+      expect(["d.log", "e.py"].map(path => enforcer.ignoresPath(path, false))).toEqual([true, false]);
+      expect(opens).toHaveBeenCalledTimes(2);
+      expect(stderr.mock.calls.filter(([text]) => String(text).includes("gave no answer within"))).toHaveLength(1);
+    } finally {
+      now.mockRestore();
+      opens.mockRestore();
+      stderr.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("logs each distinct failure of a Git ignore question once", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-failing-ignore-"));
+    roots.push(root);
+    const access = nativeGitAccess();
+    const failing = {
+      ignored: (path: string) => { throw new Error(path.startsWith("locked/") ? "cannot read Git excludes for locked: Permission denied" : "cannot read Git index"); },
+      ignoredBy: () => null,
+    };
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementation(() => failing);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog([needleCodeRule(1)]), {
+      workspaceRoot: root,
+      steerDelivery: { requestSteer: async () => undefined },
+      followGitignore: true,
+    });
+    try {
+      for (const path of ["locked/a.py", "locked/b.py", "c.py", "d.py"]) expect(enforcer.ignoresPath(path, false)).toBe(false);
+      const logged = stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("cannot read Git ignore rules"));
+      expect(logged).toEqual([expect.stringContaining("Permission denied"), expect.stringContaining("cannot read Git index")]);
+      expect(opens).toHaveBeenCalledTimes(1);
+    } finally {
+      opens.mockRestore();
+      stderr.mockRestore();
+      await enforcer.close();
+    }
+  });
 
   it("audits a workspace root reached through a symlink as its target, with or without Git", async () => {
     const plain = await mkdtemp(join(tmpdir(), "rerail-scan-plain-"));

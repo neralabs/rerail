@@ -16,8 +16,9 @@ import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
-import { engineCapabilityProof, type EngineProofAnswer } from "./engine-proof.js";
-import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
+import { BUSY_DAEMON_WAIT_MS, PROBE_TIMEOUT_MS, START_TIMEOUT_MS } from "./daemon/daemon-waits.js";
+import { engineCapabilityProof, type EngineProofAnswer } from "./daemon/engine-proof.js";
+import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./daemon/engine-pipe.js";
 import { processState, type ProcessSignal } from "../engine/process-liveness.js";
 import {
   DAEMON_ACCESS_TOKEN_FILE,
@@ -69,6 +70,11 @@ export interface DaemonState {
    * the key, and this names it and the command that fixes it. Absent for every other daemon.
    */
   remoteRefused?: string;
+  /**
+   * True where the daemon's `GET /api/presentation` takes `spelling`, the folder as a Windows host spelt it. Absent in
+   * a state file an older daemon wrote: that one refuses a query value it does not know, so it is not sent one.
+   */
+  readsSpelling?: boolean;
 }
 
 /** Header a Rerail process, and the dashboard page, send the daemon's {@link DaemonState.accessToken} in. */
@@ -285,7 +291,6 @@ export const START_LOCK_DIR = "start.lock";
 /** In the Rerail home: the claim of the one autostart launch in progress, holding its launcher's pid (`claimAutostart`). */
 export const AUTOSTART_CLAIM_FILE = "autostart.claim";
 
-const START_TIMEOUT_MS = 15_000;
 /**
  * The longest a launcher keeps its autostart claim (`keepAutostartClaim`): its whole life, each of its start's waits of
  * {@link START_TIMEOUT_MS} in turn: for the start lock, for a daemon that holds the home to record itself
@@ -305,7 +310,6 @@ const AUTOSTART_CLAIM_RENEW_MS = 1_000;
 const STOP_TIMEOUT_MS = 10_000;
 const KILL_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
-const PROBE_TIMEOUT_MS = 2_000;
 const MAX_MACOS_UNIX_SOCKET_PATH_BYTES = 103;
 
 export interface RunningDaemon {
@@ -998,11 +1002,6 @@ export async function runningDaemonEngineEndpoint(deadline?: number, machine: Da
   return { status: "running", endpoint };
 }
 
-/** How long, in all, a hook's second health probe waits for a busy daemon to answer as itself. */
-const BUSY_DAEMON_WAIT_MS = 10_000;
-/** How long, in all, a hook waits for a busy daemon from the event's arrival: the first probe and the busy wait after it. */
-export const HOOK_DAEMON_WAIT_MS = PROBE_TIMEOUT_MS + BUSY_DAEMON_WAIT_MS;
-
 /**
  * The daemon lookup a hook acts on. A daemon whose pid is alive but which missed the first probe's 2 s, as one does
  * while its one event loop runs an audit or a long garbage collection, is probed once more, with up to
@@ -1197,24 +1196,42 @@ function createClaim(path: string): boolean {
   return true;
 }
 
+/** The claim at `path` as one look finds it: when it was made or last renewed, and what it names; undefined once it is gone. */
+function readClaim(path: string): { made: number; named: string } | undefined {
+  try {
+    return { made: statSync(path).mtimeMs, named: readFileSync(path, "utf8").trim() };
+  } catch (error) {
+    // A start ended it between this process's create and its look.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/**
+ * The claim at `path` read again once the process it named, `named`, was found gone: the claim as handed over since
+ * (`handOverClaim`), or undefined when it still names that process or is gone.
+ */
+function claimHandedOver(path: string, named: string): { made: number; named: string } | undefined {
+  const again = readClaim(path);
+  return again?.named === named ? undefined : again;
+}
+
 /**
  * Whether the claim at `path` still holds: it was made or renewed under `AUTOSTART_CLAIM_LEASE_MS` from now, either way,
  * so a claim made before the clock moved back expires too, and the process it names runs (`kill`'s signal 0). A claim
- * with no pid in it yet is being written by the process that created it, and holds.
+ * with no pid in it yet is being written by the process that created it, and holds. The autostart that made a claim
+ * hands it to its launcher (`handOverClaim`) and then exits, so a claim that names a process found gone is read again:
+ * it lapses only while it still names that process, and one handed over meanwhile holds while its launcher runs.
  */
 function claimHolds(path: string, kill: ProcessSignal): boolean {
-  let made: number;
-  let text: string;
-  try {
-    made = statSync(path).mtimeMs;
-    text = readFileSync(path, "utf8").trim();
-  } catch (error) {
-    // A start ended it between this process's create and its look.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
+  let claim = readClaim(path);
+  while (claim !== undefined && Math.abs(Date.now() - claim.made) < AUTOSTART_CLAIM_LEASE_MS) {
+    if (claim.named === "") return true;
+    if (!/^[1-9]\d*$/u.test(claim.named)) return false;
+    if (processAlive(Number(claim.named), kill)) return true;
+    claim = claimHandedOver(path, claim.named);
   }
-  if (Math.abs(Date.now() - made) >= AUTOSTART_CLAIM_LEASE_MS) return false;
-  return text === "" || (/^[1-9]\d*$/u.test(text) && processAlive(Number(text), kill));
+  return false;
 }
 
 /**
@@ -1330,12 +1347,19 @@ export function stillRunningMessage(pid: number, platform: NodeJS.Platform = pro
   return `Rerail daemon pid ${pid} is still running ${KILL_TIMEOUT_MS / 1_000}s after SIGKILL; check it with ${check}, then run rerail daemon stop again.`;
 }
 
-/** Sends `signal` to the daemon, saying who to ask when this user may not signal it (`EPERM`). */
+/**
+ * Sends `signal` to the daemon, saying who to ask when this user may not signal it (`EPERM`). A daemon that has ended
+ * (`ESRCH`) is what the stop wants: its own shutdown can finish between the stop's last look and the signal, as when it
+ * waits out a session's requests for about as long as the stop waits for it, and the stop then goes on as for a
+ * daemon gone by itself.
+ */
 function signalDaemon(pid: number, signal: string, machine: DaemonMachine): void {
   try {
     machine.kill(pid, signal);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return;
+    if (code !== "EPERM") throw error;
     throw new Error(`Rerail daemon pid ${pid} runs as another user or elevated, and this user may not stop it; stop it from there.`, { cause: error });
   }
 }

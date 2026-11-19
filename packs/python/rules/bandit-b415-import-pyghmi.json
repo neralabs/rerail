@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b415-import-pyghmi",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Avoid importing pyghmi; IPMI is an insecure protocol, so prefer an encrypted management protocol.",
   "scope": {
@@ -19,13 +19,53 @@
           "rule": {
             "any": [
               {
-                "pattern": "import pyghmi"
+                "kind": "import_statement",
+                "has": {
+                  "any": [
+                    {
+                      "kind": "dotted_name"
+                    },
+                    {
+                      "kind": "aliased_import"
+                    }
+                  ],
+                  "regex": "^pyghmi"
+                }
               },
               {
-                "pattern": "import pyghmi as $ALIAS"
+                "kind": "import_from_statement",
+                "has": {
+                  "field": "module_name",
+                  "regex": "^[.\\s]*pyghmi"
+                }
               },
               {
-                "pattern": "from pyghmi import $$$NAMES"
+                "kind": "import_from_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^[.\\s]+$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "dotted_name"
+                        },
+                        {
+                          "kind": "aliased_import"
+                        }
+                      ],
+                      "regex": "^pyghmi",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^import$"
+                      }
+                    }
+                  }
+                ]
               }
             ]
           }

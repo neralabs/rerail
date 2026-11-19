@@ -196,7 +196,7 @@ stays with nothing installing, delete that folder and run again.
 ### `Couldn’t download Rerail’s rule packs`
 
 ```text
-Couldn’t download Rerail’s rule packs, so set-up can’t tell which fit app.
+Couldn’t download Rerail’s rule packs, so set-up can’t suggest rule packs for app.
   could not reach the npm registry (https://registry.npmjs.org, ECONNREFUSED): check your network, proxy, or registry in ~/.npmrc
 Try downloading them again?
 ```
@@ -217,7 +217,7 @@ each with its reason. A pack made for a newer Rerail says so, and that `rerail u
 ### A rule pack I expected is not offered
 
 ```text
-Node.js and React would fit, but have no rules yet, so set-up does not offer them.
+Node.js and React would be suggested, but have no rules yet, so set-up does not offer them.
 ```
 
 These packs are published but have no rules yet, so they would check nothing. Nothing to do: a later version brings

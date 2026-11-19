@@ -100,6 +100,23 @@ jobs:
       - name: Build TypeScript
         run: npm run build:ts
 
+      # napi's cross toolchain (`--use-napi-cross`) links the Linux engine against its glibc 2.17 sysroot, but its GCC
+      # 4.8.5 cannot compile the engine's C and C++ dependencies: it rejects flags cc-rs passes it
+      # (`-fdiagnostics-color=always`). napi up to 3.10.9 left them to the runner's compiler, as cc-rs reads napi's
+      # TARGET_CC only for a target that is not the runner's own; from 3.10.12 napi also sets CC_<target>, CXX_<target>,
+      # AR_<target> and RANLIB_<target> to the toolchain's, unless they are set. They are set here, to the runner's tools
+      # by absolute path (napi puts the toolchain's bin first on PATH).
+      - name: Compile the Linux engine's C with the runner's compilers
+        if: matrix.napi_cross
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          for tool in CC:cc CXX:c++ AR:ar RANLIB:ranlib; do
+            path="$(command -v "${tool#*:}")"
+            echo "${tool%%:*}_${TARGET//-/_}=$path" >> "$GITHUB_ENV"
+          done
+
       - name: Build native engine
         run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} ${{ matrix.napi_cross && '--use-napi-cross --strip' || '' }} --manifest-path native/Cargo.toml --output-dir native
 

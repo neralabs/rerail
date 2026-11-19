@@ -25,6 +25,7 @@ import {
   type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
+import { claudeCodeReportedPreimage } from "../engine/code-rule/tool-result/reported-preimage.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
@@ -664,6 +665,12 @@ interface RuntimeSessionState {
    */
   waitsForRules: boolean;
   ownerClaim: PolicyOwnerClaim | undefined;
+  /**
+   * Set while this runtime's claim on the session, written again when a write put the session's row back, has not
+   * landed (`#claimAgain`): the session's next event writes it. Kept here, so an event of a session whose claim is in
+   * place reads nothing to find out.
+   */
+  claimOwed?: true;
   /** The database's `data_version` this session's settings and audit queue were last read at; undefined to read on the next tick. */
   controlsVersion: number | undefined;
   auditRequestWork: Promise<void> | undefined;
@@ -1147,7 +1154,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     try {
       catalogs = new CheckoutCatalogs(databasePath);
       startWatch = options.startGate === true ? new RepositoryStartWatch(databasePath, workspaceRoot) : undefined;
-      sessionStore = new SqliteSessionStore(databasePath);
+      sessionStore = new SqliteSessionStore(databasePath, { onRowPutBack: sessionId => this.#claimAgain(sessionId) });
       audits = new SqliteAuditStore(databasePath);
       controls = new SqliteAuditControlStore(databasePath);
       this.#catalogs = catalogs;
@@ -1254,6 +1261,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const { active, descriptor } = this.#resolveEventSession(event);
     if (active === undefined) await this.#router(descriptor.host).start(descriptor);
     const state = this.#session(event.sessionId);
+    this.#writeOwedClaim(state);
     this.#scheduleAuditRequests(state.descriptor.sessionId);
     state.ruleSync?.refresh();
     // A code-rule boundary reached while the session's evaluator is still opening (indexing) goes on without code rules.
@@ -1333,7 +1341,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       try {
         // From the finish on, which may check the edit before it returns, to the end of the wait.
         await this.#waitingForEditChecks(state, false, async () => {
-          await this.#finishCall(state, bridge, call!.id, event.failed === true);
+          await this.#finishCall(state, bridge, event);
           await this.#append(state, { type: "policy-result", toolCallId: call!.id });
           await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
         });
@@ -1413,7 +1421,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     event: Extract<AdapterEvent, { kind: "call" }>,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
     if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
-    await state.codeRuleBridge?.unwatchedCall(event.toolCallId);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.toolName);
     return undefined;
   }
 
@@ -1449,12 +1457,18 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Finishes a tool call on the open evaluator; one answered while it opened ends its window (`unwatchedResult`), and is
-   * checked once it is open when the ledger held it open (`#checkWhenOpen`).
+   * Finishes a tool call on the open evaluator, with what the tool's result says the file it wrote held: only Claude
+   * Code's Write and Edit results say it, so no other agent's result is read as theirs. One answered while the evaluator
+   * opened ends its window (`unwatchedResult`), and is checked once it is open when the ledger held it open
+   * (`#checkWhenOpen`).
    */
-  async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, toolCallId: string, failed: boolean): Promise<void> {
-    if (bridge !== undefined) await bridge.finish(toolCallId, failed, { rewindable: true });
-    else await this.#finishUnwatched(state, toolCallId, failed);
+  async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, result: Extract<AdapterEvent, { kind: "result" }>): Promise<void> {
+    if (bridge === undefined) {
+      await this.#finishUnwatched(state, result.toolCallId, result.failed === true);
+      return;
+    }
+    const reported = state.descriptor.host === "claude-code" ? claudeCodeReportedPreimage(result.output) : undefined;
+    await bridge.finish(result.toolCallId, result.failed === true, { rewindable: true, reported });
   }
 
   async #finishUnwatched(state: RuntimeSessionState, toolCallId: string, failed: boolean): Promise<void> {
@@ -2102,9 +2116,45 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const kept = this.#suspendedSessions?.get(sessionId)?.ownerClaim;
     const claim = kept !== undefined && this.#controls.holdsOwner(sessionId, kept)
       ? kept
-      : this.#controls.registerOwner(sessionId, this.#deliverBackground === undefined ? "next-event" : "background", this.#ownerLockId);
+      : this.#controls.registerOwner(sessionId, this.#ownerDelivery(), this.#ownerLockId);
     this.#suspendedSessions?.take(sessionId);
     return claim;
+  }
+
+  /** How this runtime delivers the steers of the sessions it claims: in the background when it can, else at the next event. */
+  #ownerDelivery(): "background" | "next-event" {
+    return this.#deliverBackground === undefined ? "next-event" : "background";
+  }
+
+  /**
+   * Writes this runtime's claim on a session it holds again once a write found the session's row gone and put it back
+   * (`SqliteSessionStore`'s `onRowPutBack`): another program that removes a running session's rows removes its claim
+   * with them, and a scan asked for in the session needs a live owner. A daemon started again would claim the session
+   * as it opened it; this one keeps the claim it made then. A claim that fails to land is owed (`claimOwed`), and the
+   * session's next event writes it (`#writeOwedClaim`): once the row is back, no write puts it back again.
+   */
+  #claimAgain(sessionId: string): void {
+    const state = this.#sessions.get(sessionId);
+    if (state === undefined || state.closed || state.ownerClaim === undefined) return;
+    try {
+      this.#controls.claimAgain(sessionId, this.#ownerDelivery(), state.ownerClaim);
+      delete state.claimOwed;
+    } catch (error) {
+      // The write that put the row back saved its event first: the claim's failure is said here, as the control scan's
+      // are, and never reaches that write's caller, which would report a failed write for an event Rerail holds.
+      state.claimOwed = true;
+      process.stderr.write(`rerail: could not write the claim on session ${sessionId} again: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
+
+  /**
+   * Writes the claim a failed `#claimAgain` left owed, at the session's next event and before that event is recorded:
+   * a claim write that failed while an event put the row back is tried again at the following event, not at once
+   * after its failure, which can have waited out the database's busy timeout already. A session whose claim is in
+   * place reads and writes nothing here.
+   */
+  #writeOwedClaim(state: RuntimeSessionState): void {
+    if (state.claimOwed === true) this.#claimAgain(state.descriptor.sessionId);
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
@@ -2583,7 +2633,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #scheduleAuditRequests(sessionId: string, version?: number): void {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
-    const settings = this.#controls.hasUserSettings(sessionId) ? this.#controls.getSettings(sessionId).settings : this.#auditSettings;
+    // Read by the folder as the session spelt it and the repository it was recorded in, the facts its row holds, never
+    // through the row: another program can remove a running session's row (a database put back from a copy), and
+    // neither the control timer nor the session's events need it. The session's next recorded event puts the row back,
+    // and this runtime's claim on the session with it (`#claimAgain`).
+    const settings = this.#controls.getWorkspaceSettings(state.descriptor.cwd, this.#repositoryKey(state.checkout)) ?? this.#auditSettings;
     state.steerStrategy = effectiveSteerStrategy(settings);
     state.codeRuleBridge?.updateSettings(settings);
     if (state.auditRequestWork !== undefined) return;

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "react-jsx-no-target-blank",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Add a noreferrer rel to links that open external or dynamic URLs with target _blank; otherwise the new page can reach back through window.opener.",
   "scope": {
@@ -244,54 +244,120 @@
               "kind": "template_string",
               "regex": "\\A`(?:(?:[^$`]|\\$[^{`])*? )?(?i:noreferrer)(?: |`|\\$\\{)"
             },
+            "named-test": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "undefined"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "named-test"
+                  }
+                }
+              ]
+            },
             "same-test": {
-              "all": [
+              "any": [
                 {
-                  "has": {
-                    "matches": "last-rel",
-                    "has": {
-                      "kind": "jsx_expression",
+                  "all": [
+                    {
                       "has": {
-                        "kind": "ternary_expression",
-                        "all": [
-                          {
-                            "has": {
-                              "field": "condition",
-                              "kind": "identifier",
-                              "pattern": "$RT"
-                            }
+                        "matches": "last-rel",
+                        "has": {
+                          "kind": "jsx_expression",
+                          "has": {
+                            "kind": "ternary_expression",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "condition",
+                                  "kind": "identifier",
+                                  "pattern": "$RT"
+                                }
+                              }
+                            ]
                           }
-                        ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "matches": "last-target",
+                        "has": {
+                          "kind": "jsx_expression",
+                          "has": {
+                            "kind": "ternary_expression",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "condition",
+                                  "kind": "identifier",
+                                  "pattern": "$TT"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "RT",
+                        "op": "eq",
+                        "right": "TT"
                       }
                     }
-                  }
+                  ]
                 },
                 {
-                  "has": {
-                    "matches": "last-target",
-                    "has": {
-                      "kind": "jsx_expression",
+                  "all": [
+                    {
                       "has": {
-                        "kind": "ternary_expression",
-                        "all": [
-                          {
-                            "has": {
-                              "field": "condition",
-                              "kind": "identifier",
-                              "pattern": "$TT"
-                            }
+                        "matches": "last-rel",
+                        "has": {
+                          "kind": "jsx_expression",
+                          "has": {
+                            "kind": "ternary_expression",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "condition",
+                                  "not": {
+                                    "matches": "named-test"
+                                  }
+                                }
+                              }
+                            ]
                           }
-                        ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "matches": "last-target",
+                        "has": {
+                          "kind": "jsx_expression",
+                          "has": {
+                            "kind": "ternary_expression",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "condition",
+                                  "not": {
+                                    "matches": "named-test"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
                       }
                     }
-                  }
-                },
-                {
-                  "compare": {
-                    "left": "RT",
-                    "op": "eq",
-                    "right": "TT"
-                  }
+                  ]
                 }
               ]
             },
@@ -360,136 +426,268 @@
                   ]
                 },
                 {
-                  "all": [
+                  "any": [
                     {
-                      "has": {
-                        "matches": "last-rel",
-                        "has": {
-                          "kind": "jsx_expression",
+                      "all": [
+                        {
                           "has": {
-                            "kind": "ternary_expression",
-                            "all": [
-                              {
-                                "has": {
-                                  "field": "condition",
-                                  "kind": "identifier",
-                                  "pattern": "$RC"
-                                }
-                              },
-                              {
-                                "has": {
-                                  "field": "consequence",
-                                  "matches": "ok-literal"
-                                }
+                            "matches": "last-rel",
+                            "has": {
+                              "kind": "jsx_expression",
+                              "has": {
+                                "kind": "ternary_expression",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "condition",
+                                      "kind": "identifier",
+                                      "pattern": "$RC"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "consequence",
+                                      "matches": "ok-literal"
+                                    }
+                                  }
+                                ]
                               }
-                            ]
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "last-target",
+                            "has": {
+                              "kind": "jsx_expression",
+                              "has": {
+                                "kind": "ternary_expression",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "condition",
+                                      "kind": "identifier",
+                                      "pattern": "$TC"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "consequence",
+                                      "matches": "exact-blank"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "compare": {
+                            "left": "RC",
+                            "op": "eq",
+                            "right": "TC"
                           }
                         }
-                      }
+                      ]
                     },
                     {
-                      "has": {
-                        "matches": "last-target",
-                        "has": {
-                          "kind": "jsx_expression",
+                      "all": [
+                        {
                           "has": {
-                            "kind": "ternary_expression",
-                            "all": [
-                              {
-                                "has": {
-                                  "field": "condition",
-                                  "kind": "identifier",
-                                  "pattern": "$TC"
-                                }
-                              },
-                              {
-                                "has": {
-                                  "field": "consequence",
-                                  "matches": "exact-blank"
-                                }
+                            "matches": "last-rel",
+                            "has": {
+                              "kind": "jsx_expression",
+                              "has": {
+                                "kind": "ternary_expression",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "condition",
+                                      "not": {
+                                        "matches": "named-test"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "consequence",
+                                      "matches": "ok-literal"
+                                    }
+                                  }
+                                ]
                               }
-                            ]
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "last-target",
+                            "has": {
+                              "kind": "jsx_expression",
+                              "has": {
+                                "kind": "ternary_expression",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "condition",
+                                      "not": {
+                                        "matches": "named-test"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "consequence",
+                                      "matches": "exact-blank"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
                           }
                         }
-                      }
-                    },
-                    {
-                      "compare": {
-                        "left": "RC",
-                        "op": "eq",
-                        "right": "TC"
-                      }
+                      ]
                     }
                   ]
                 },
                 {
-                  "all": [
+                  "any": [
                     {
-                      "has": {
-                        "matches": "last-rel",
-                        "has": {
-                          "kind": "jsx_expression",
+                      "all": [
+                        {
                           "has": {
-                            "kind": "ternary_expression",
-                            "all": [
-                              {
-                                "has": {
-                                  "field": "condition",
-                                  "kind": "identifier",
-                                  "pattern": "$RA"
-                                }
-                              },
-                              {
-                                "has": {
-                                  "field": "alternative",
-                                  "matches": "ok-literal"
-                                }
-                              }
-                            ]
-                          }
-                        }
-                      }
-                    },
-                    {
-                      "has": {
-                        "matches": "last-target",
-                        "has": {
-                          "kind": "jsx_expression",
-                          "has": {
-                            "kind": "ternary_expression",
-                            "all": [
-                              {
-                                "has": {
-                                  "field": "condition",
-                                  "kind": "identifier",
-                                  "pattern": "$TA"
-                                }
-                              },
-                              {
-                                "not": {
-                                  "has": {
-                                    "field": "consequence",
-                                    "matches": "exact-blank"
+                            "matches": "last-rel",
+                            "has": {
+                              "kind": "jsx_expression",
+                              "has": {
+                                "kind": "ternary_expression",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "condition",
+                                      "kind": "identifier",
+                                      "pattern": "$RA"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "alternative",
+                                      "matches": "ok-literal"
+                                    }
                                   }
-                                }
-                              },
-                              {
-                                "has": {
-                                  "field": "alternative",
-                                  "matches": "exact-blank"
-                                }
+                                ]
                               }
-                            ]
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "last-target",
+                            "has": {
+                              "kind": "jsx_expression",
+                              "has": {
+                                "kind": "ternary_expression",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "condition",
+                                      "kind": "identifier",
+                                      "pattern": "$TA"
+                                    }
+                                  },
+                                  {
+                                    "not": {
+                                      "has": {
+                                        "field": "consequence",
+                                        "matches": "exact-blank"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "alternative",
+                                      "matches": "exact-blank"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "compare": {
+                            "left": "RA",
+                            "op": "eq",
+                            "right": "TA"
                           }
                         }
-                      }
+                      ]
                     },
                     {
-                      "compare": {
-                        "left": "RA",
-                        "op": "eq",
-                        "right": "TA"
-                      }
+                      "all": [
+                        {
+                          "has": {
+                            "matches": "last-rel",
+                            "has": {
+                              "kind": "jsx_expression",
+                              "has": {
+                                "kind": "ternary_expression",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "condition",
+                                      "not": {
+                                        "matches": "named-test"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "alternative",
+                                      "matches": "ok-literal"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "last-target",
+                            "has": {
+                              "kind": "jsx_expression",
+                              "has": {
+                                "kind": "ternary_expression",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "condition",
+                                      "not": {
+                                        "matches": "named-test"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "not": {
+                                      "has": {
+                                        "field": "consequence",
+                                        "matches": "exact-blank"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "alternative",
+                                      "matches": "exact-blank"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ]
                     }
                   ]
                 }

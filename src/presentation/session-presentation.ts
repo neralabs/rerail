@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { ADAPTER_CAPABILITIES, type AdapterDelivery, type AdapterSession, type RerailHost } from "../engine/adapter-contract.js";
 import {
@@ -451,11 +451,23 @@ async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<Sum
   try {
     const daemon = await verifyDaemon(cwd);
     if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return null;
-    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema);
+    const response = await get(daemon, `/api/presentation?${presentationQuery(cwd, daemon, { host })}`, presentationReadSchema);
     return response.repositoryState;
   } catch (error) {
     return error instanceof NotAnswering ? "not-answering" : null;
   }
+}
+
+/**
+ * What a hook and the status line ask `/api/presentation` about `cwd`: `repository`, the folder as its real path gives
+ * it, and on Windows `spelling`, the folder as spelt, where the two differ and the daemon reads it
+ * ({@link DaemonState.readsSpelling}). Rerail 0.1.4 saved a stop for a folder outside Git under the folder as spelt, a
+ * mapped drive letter included, and the daemon's start check reads that key only when it gets the spelling.
+ */
+function presentationQuery(cwd: string, daemon: VerifiedDaemon, query: Record<string, string>): URLSearchParams {
+  const spelling = resolve(cwd);
+  const spelt = process.platform === "win32" && spelling !== daemon.workspace && daemon.state.readsSpelling === true;
+  return new URLSearchParams({ repository: daemon.workspace, ...query, ...(spelt ? { spelling } : {}) });
 }
 
 /** Why no daemon answered in a started checkout: none is running, or the live one gave no answer in time. */
@@ -532,9 +544,7 @@ async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: Pres
   // The `/api/presentation` response proves liveness; it must not pay for a second probe.
   const daemon = await verifyDaemon(cwd);
   if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return undefined;
-  const response = await get(daemon, `/api/presentation?${new URLSearchParams({
-    repository: daemon.workspace, host, sessionId, onDemand: String(onDemand),
-  })}`, presentationReadSchema);
+  const response = await get(daemon, `/api/presentation?${presentationQuery(cwd, daemon, { host, sessionId, onDemand: String(onDemand) })}`, presentationReadSchema);
   const context = response.context;
   return context === undefined || context.daemon.pid !== daemon.state.pid ? undefined : { daemon, response };
 }

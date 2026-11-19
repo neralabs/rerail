@@ -47,8 +47,8 @@ import {
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
 import { LOCKS_DIR } from "../../src/engine/index.js";
-import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
-import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/daemon/engine-pipe.js";
+import { engineCapabilityProof } from "../../src/runtime/daemon/engine-proof.js";
 import { DEAD_PID, olderDaemon, until } from "../support/processes/daemon-home.js";
 import { type ProbeLaunch, type StartedProbe, runConsoleProbe } from "../support/platform/console-probe.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
@@ -616,6 +616,35 @@ describe("stopping the daemon", () => {
     expect(stillRunningMessage(123, "win32")).not.toContain("ps -p");
     expect(stillRunningMessage(123, "linux")).toContain("ps -p 123");
   });
+
+  it("counts a daemon that ends just as its signal is sent as stopped, at the SIGTERM or at the SIGKILL", async () => {
+    // A daemon's own shutdown waits out its sessions' requests, about as long as a stop waits before its SIGKILL; it can
+    // end between the stop's last look and the signal, which kill then answers with ESRCH. The stop failed with it.
+    const home = await mkdtemp(join(tmpdir(), "rerail-stop-race-"));
+    try {
+      for (const endsAt of ["SIGTERM", "SIGKILL"]) {
+        const stateFile = join(home, DAEMON_STATE_FILE);
+        const state = stateFor({});
+        await writeFile(stateFile, JSON.stringify(state));
+        const signals: Array<string | number | undefined> = [];
+        let running = true;
+        const machine = fakeMachine("linux", {
+          // The daemon ends as `endsAt` is sent, before kill reaches it; until then it outlives each signal.
+          kill: (_pid, signal) => {
+            signals.push(signal);
+            if (signal === endsAt) running = false;
+            if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+            return true;
+          },
+        });
+        await stopFoundDaemon(home, { status: "unresponsive", state }, machine);
+        expect(signals.filter(signal => signal !== 0)).toEqual(endsAt === "SIGTERM" ? ["SIGTERM"] : ["SIGTERM", "SIGKILL"]);
+        expect(existsSync(stateFile)).toBe(false);
+      }
+    } finally {
+      await removeFolder(home);
+    }
+  }, 20_000);
 });
 
 describe("RERAIL_AUTOSTART", () => {
@@ -1177,9 +1206,10 @@ describe("autostartDaemon", () => {
    * A process of its own, as every hook is, that finds no daemon in `home`: it prints `ready`, and on each line on stdin
    * calls autostartDaemon and prints how many processes it has launched, exiting after `calls` lines. Its machine counts
    * launches and starts nothing; the launcher it reports is `launcher`, by default the test's own process, which runs for
-   * the whole test as a real launcher runs for its start, and null reports none. Its pid checks are real.
+   * the whole test as a real launcher runs for its start, and null reports none. Its pid checks are real, but for
+   * `handOverFrom`: the autostart that, as this hook looks at it, hands its claim to `launcher` and exits.
    */
-  function hookProcess(home: string, { calls = 1, launcher = process.pid }: { calls?: number; launcher?: number | null } = {}): {
+  function hookProcess(home: string, { calls = 1, launcher = process.pid, handOverFrom }: { calls?: number; launcher?: number | null; handOverFrom?: number } = {}): {
     child: ChildProcess;
     ready: Promise<void>;
     go: () => void;
@@ -1190,18 +1220,25 @@ describe("autostartDaemon", () => {
     const child = spawn(process.execPath, [
       "--import", "tsx", "--input-type=module", "-e",
       `import { EventEmitter } from "node:events";
+       import { writeFileSync } from "node:fs";
+       import { join } from "node:path";
        import { createInterface } from "node:readline";
-       const { autostartDaemon } = await import(${JSON.stringify(daemonControlModule)});
+       const { AUTOSTART_CLAIM_FILE, autostartDaemon } = await import(${JSON.stringify(daemonControlModule)});
        let launches = 0;
        const launcher = ${launcher ?? "undefined"};
        const started = () => {
          launches += 1;
          return Object.assign(new EventEmitter(), { pid: launcher, unref() {} });
        };
+       const handOverFrom = ${handOverFrom ?? "undefined"};
        const machine = {
          platform: process.platform,
          env: process.env,
-         kill: (pid, signal) => process.kill(pid, signal),
+         kill: (pid, signal) => {
+           if (pid !== handOverFrom) return process.kill(pid, signal);
+           writeFileSync(join(process.env.RERAIL_HOME, AUTOSTART_CLAIM_FILE), String(launcher));
+           throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+         },
          pipes: () => [],
          holdsCapability: async () => false,
          forgetMainInstanceHolder: () => undefined,
@@ -1299,6 +1336,25 @@ describe("autostartDaemon", () => {
     } finally {
       for (const { child } of hooks) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       await Promise.all(homes.map(async home => await removeFolder(home)));
+    }
+  }, 60_000);
+
+  it("leaves the start to the launcher a claim is handed to while a hook finds the autostart that made it gone", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));
+    const claim = join(home, AUTOSTART_CLAIM_FILE);
+    // The autostart that made the claim hands it to its launcher, this test's process, then exits: a hook that read the
+    // claim before the hand-over finds the autostart gone after it, and the claim names a launcher that runs.
+    const autostart = DEAD_PID - 1;
+    const hook = hookProcess(home, { handOverFrom: autostart });
+    try {
+      await hook.ready;
+      await writeFile(claim, String(autostart));
+      hook.go();
+      expect(await hook.launches).toBe(0);
+      expect(await readFile(claim, "utf8")).toBe(String(process.pid));
+    } finally {
+      if (hook.child.exitCode === null && hook.child.signalCode === null) hook.child.kill("SIGKILL");
+      await removeFolder(home);
     }
   }, 60_000);
 
