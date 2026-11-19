@@ -210,6 +210,8 @@ rerail feedback list [--rule <rule-id>]  # print the notes, oldest first, to att
 
 Rerail sends notes nowhere. To share them with Nera, attach `rerail feedback list --rule <rule-id>` output to a [Rule misfire](https://github.com/neralabs/rerail/issues/new?template=2-rule-misfire.yml) issue. Read the reasons first: each is the agent's own sentence about its work.
 
+The dashboard's History by session shows each note on the steer it answers: the card reads Declined beside Steered, with the agent's reason, and the session's row and header count declined steers. A note keeps no audit, so the steer is the latest audit in the note's session that steered the rule and started before the note. A steer with no note is not shown as followed: an agent can decline without recording why.
+
 <details>
 <summary>What is recorded and printed</summary>
 
@@ -466,8 +468,8 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `library_rules_get` | `GET /api/library-rules/{id}` | One rule created by you. |
 | `library_rules_upsert` | `PUT /api/library-rules/{id}` | Create or replace your rule (`attach: true` adds it to the target); a By Rerail id stores an edited copy. |
 | `library_rules_remove` | `DELETE /api/library-rules/{id}` | Delete your rule, its attachments and settings. |
-| `sessions_list` | `GET /api/sessions?since=&limit=&cursor=` | Sessions newest first with counts, `steeredViolations`, `lastEventAt`; `total`, `nextCursor`. |
-| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, boundaries answered before checks ran, tool edits left unchecked because Git ignores the file (`ignoredEdits`), changes seen that make Git's ignore rules ignore more (`ignoreRuleChanges`). |
+| `sessions_list` | `GET /api/sessions?since=&limit=&cursor=` | Sessions newest first with counts, `steeredViolations`, `declinedViolations`, `lastEventAt`; `total`, `nextCursor`. |
+| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, boundaries answered before checks ran, tool edits left unchecked because Git ignores the file (`ignoredEdits`), changes seen that make Git's ignore rules ignore more (`ignoreRuleChanges`); and `declined`, the steers the coding agent declined with `rerail feedback`: each note's reason and the audit it answers, and how many steered violations that covers. |
 | `session_events` | `GET /api/sessions/{sessionId}/events?after=&before=&limit=` | Ordered events, at most 500 per page, forward from `after` or the page before `before`; `nextAfter` continues. Agents get some payloads withheld ([details](#what-a-coding-agent-may-read)). |
 | `work_links_list` | `GET /api/sessions/{sessionId}/work-links` | A session's external references. |
 | `work_links_add` | `PUT /api/sessions/{sessionId}/work-links` | `{ kind, reference, url? }`; re-linking updates the url. |
