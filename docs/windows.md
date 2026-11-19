@@ -551,7 +551,9 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   that started no later than the `startedAt` that `daemon.json` records is the daemon that wrote it, and gets the
   capability. A hook's start and set-up replace it whatever package it ran from, since it predates the fields hooks
   send; a hook that may not replace it (`RERAIL_AUTOSTART=0`, or a daemon that answered only after the start looked)
-  sends it nothing and says it is not the active package's daemon. Any other pid behind such an engine (one that
+  sends it nothing and logs each event it lost, which `rerail status` reports with the stop to run before the start.
+  Under `RERAIL_AUTOSTART=0` a session's start also tells the person that nothing is recorded until a daemon from the
+  active package runs, and to run `rerail daemon stop`, then `rerail daemon start`. Any other pid behind such an engine (one that
   started later, one whose start is not read, one this user may not signal) is not shown to be that daemon, and the
   record is removed, as for an engine that does not prove itself. Every other reader
   (each hook's check whether Rerail runs in its repository, the status line, the MCP bridge) sends such an engine
