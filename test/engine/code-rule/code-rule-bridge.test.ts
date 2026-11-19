@@ -1742,9 +1742,10 @@ describe("CodeRuleBridge", () => {
     ]);
   });
 
-  // A walk that could not list a folder tried no read of a file the session had seen there. The walk after it lists the
-  // folder but cannot read the file, which a command wrote meanwhile: that is the file's first miss, so it keeps the
-  // command's call, and the walk that reads the file takes the write as the session's, by its stamp, and checks it.
+  // A walk that could not list a folder tried no read of a file the session had seen there, and audits the folder's error
+  // for it. The walk after it lists the folder but cannot read the file, which a command wrote meanwhile: that is the
+  // file's first miss, so it keeps the command's call, and the walk that reads the file takes the write as the session's,
+  // by its stamp, and checks it.
   it("checks the write of a command that ended after a walk could not list the file's folder, though the next walk could not read the file", async () => {
     const root = await workspace();
     const deep = join(root, "deep");
@@ -1771,6 +1772,7 @@ describe("CodeRuleBridge", () => {
     await bridge.begin("shell-3", "Bash", { command: "ls" });
     await bridge.finish("shell-3");
     expect(audited(auditGeneratedEdits)).toEqual([
+      { mode: undefined, edits: [{ path: "deep/a.py", generatedText: undefined, readError: expect.stringContaining("EMFILE") }] },
       { mode: undefined, edits: [{ path: "deep/a.py", generatedText: undefined, readError: expect.stringContaining("EBUSY") }] },
       { mode: undefined, edits: [{ path: "deep/a.py", generatedText: "x = 1\n", readError: undefined }] },
     ]);
