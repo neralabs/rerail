@@ -13,15 +13,16 @@ export const OUTCOME_CHIPS = [["all", "All"], ["logged", "Log only"], ["steered"
 
 /**
  * Rule `id`'s distinct violations in the range, each in exactly one outcome: Log only ("logged": recorded on Log, so
- * the coding agent was not told), Declined (a steer the agent declined with `rerail feedback`), or Steered (sent to
- * the agent, and not declined). Zeros for a rule the range has no activity for, or one not measured.
+ * the coding agent was not told), Declined (a steer the agent declined with `rerail feedback`, even when another audit
+ * recorded it on Log), or Steered (sent to the agent, and not declined). Zeros for a rule the range has no activity for, or one not measured.
  * @returns {{ all: number, logged: number, steered: number, declined: number }}
  */
 export function outcomesOf(id) {
   const a = data.activity[id];
   if (a === undefined || a.measured === false) return { all: 0, logged: 0, steered: 0, declined: 0 };
-  const logged = a.loggedViolations ?? 0;
-  const declined = Math.min(a.declinedViolations ?? 0, a.distinctViolations - logged);
+  const declined = Math.min(a.declinedViolations ?? 0, a.distinctViolations);
+  // A declined violation that another audit recorded on Log counts as declined, never also as Log only.
+  const logged = Math.min((a.loggedViolations ?? 0) - (a.declinedLoggedViolations ?? 0), a.distinctViolations - declined);
   return { all: a.distinctViolations, logged, steered: a.distinctViolations - logged - declined, declined };
 }
 

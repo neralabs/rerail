@@ -212,7 +212,7 @@ Rerail sends notes nowhere. To share them with Nera, attach `rerail feedback lis
 
 The dashboard's History by session shows each note on the steer it answers: the card reads Declined beside Steered, with the agent's reason, and the session's row and header count declined steers. A note keeps no audit, so the steer is the latest audit in the note's session that steered the rule and started before the note. A steer with no note is not shown as followed: an agent can decline without recording why.
 
-History by rule counts each of a rule's violations once, in one of three outcomes: Log only (recorded on Log, so the agent was not told), Steered (sent to the agent), or Declined (a steer a note answered). Every violation is logged; a declined one is not also counted as steered. Its All · Log only · Steered · Declined chips rank the rules by one outcome, each rule's row says in red how many it had declined, and each violation shows its outcome, a declined one with the agent's reasons.
+History by rule counts each of a rule's violations once, in one of three outcomes: Log only (recorded on Log, so the agent was not told), Steered (sent to the agent), or Declined (a steer a note answered). Every violation is logged; a declined one counts as declined only, even when another audit recorded it on Log. Its All · Log only · Steered · Declined chips rank the rules by one outcome, each rule's row says in red how many it had declined, and each violation shows its outcome, a declined one with the agent's reasons.
 
 <details>
 <summary>What is recorded and printed</summary>

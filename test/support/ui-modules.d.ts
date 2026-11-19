@@ -334,7 +334,7 @@ declare module "*/ui/first-open.js" {
   export function firstOpenState(facts: RepositoryFacts): FirstOpenState;
   export function bannerFor(state: FirstOpenState, welcomeDismissed: boolean): "stopped" | "welcome" | null;
   export function overviewBody(facts: { ruleCount: number; sessionsEver: number; topCount: number }): "no-rules" | "no-sessions" | "no-violations" | "lists";
-  export function steeredTally(activity: Record<string, { measured?: boolean; distinctViolations: number; loggedViolations?: number; declinedViolations?: number; rerails?: number }>): { steered: number; total: number };
+  export function steeredTally(activity: Record<string, { measured?: boolean; distinctViolations: number; loggedViolations?: number; declinedViolations?: number; declinedLoggedViolations?: number; rerails?: number }>): { steered: number; total: number };
   export const TOP_RULES: number;
   export function topRules<R extends { id: string; title: string; fires: number }>(rules: readonly R[], limit?: number): R[];
   export function rulesOnSource(packCount: number, mineCount: number): string;

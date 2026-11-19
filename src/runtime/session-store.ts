@@ -88,6 +88,14 @@ export interface DeclineNote {
   auditId: string | null;
 }
 
+/** A rule's declined violations in a range (`SqliteSessionReader.declinedByRule`). */
+export interface DeclinedViolations {
+  /** Distinct violations of a steer the coding agent declined. */
+  declined: number;
+  /** Of those, the ones an audit in range also recorded in Log mode. */
+  alsoLogged: number;
+}
+
 /** The steers a session's coding agent declined (`SqliteSessionReader.declines`). */
 export interface SessionDeclines {
   /** Steered violations of a declined steer: its audit's violations of the rule, each counted once however many notes name it. */
@@ -687,21 +695,21 @@ export class SqliteSessionReader {
   }
 
   /**
-   * Per rule, its violations in range whose steer the coding agent declined, counted as `rules_activity` counts the
-   * rule's violations: each distinct violation key once, whichever sessions reported it. A violation that an audit in
-   * range recorded in Log mode is counted Log only there (`loggedViolations`), so it is left out here: Log only,
-   * steered and declined never overlap. A declined steer is in range when its audit started in it.
+   * Per rule, its violations in range whose steer the coding agent declined (`declined`), counted as `rules_activity`
+   * counts the rule's violations: each distinct violation key once, whichever sessions reported it. A declined steer
+   * is in range when its audit started in it. `alsoLogged` is how many of them an audit in range also recorded in Log
+   * mode, so are in `loggedViolations` too: a declined violation counts as declined, never also as Log only.
    *
    * Notes are few, so they drive the read: each note's steer (`DECLINED_AUDIT`), then that audit's violations of the
    * rule, an `audit_violations_audit_key` probe. `CROSS JOIN` keeps that order, and the `+` keeps SQLite off
    * `audit_violations_rule_started`, which would read every violation of the rule in range.
    */
-  declinedByRule(since: number, repositoryIds: readonly string[] | undefined = undefined): Map<string, number> {
+  declinedByRule(since: number, repositoryIds: readonly string[] | undefined = undefined): Map<string, DeclinedViolations> {
     const database = this.#database.open();
     if (database === undefined) return new Map();
     const scope = repositoryIds ?? this.#repositoryIds;
     const scoped = (column: SQL) => (scope === undefined ? sql`1 = 1` : sql`${column} IN (${sessionsOfRepository(scope)})`);
-    const rows = database.all<{ ruleId: string; violations: number }>(sql`
+    const rows = database.all<DeclinedViolations & { ruleId: string }>(sql`
       WITH declined_steers AS (
         SELECT DISTINCT ${DECLINED_AUDIT} AS auditId, note.rule_id AS ruleId
         FROM ${steerFeedback} note WHERE ${scoped(sql`note.session_id`)}
@@ -711,17 +719,19 @@ export class SqliteSessionReader {
         FROM declined_steers steer
         CROSS JOIN ${auditViolations} sighting ON sighting.audit_id = steer.auditId AND sighting.rule_id = steer.ruleId
         WHERE sighting.logged = 0 AND +sighting.started_at >= ${since}
-      )
-      SELECT ruleId, count(*) AS violations FROM (
-        SELECT ruleId, violationKey FROM declined_keys
-        EXCEPT
-        SELECT ${ruleViolationRollup.ruleId}, ${ruleViolationRollup.violationKey} FROM ${ruleViolationRollup}
+      ),
+      logged_keys AS (
+        SELECT DISTINCT ${ruleViolationRollup.ruleId} AS ruleId, ${ruleViolationRollup.violationKey} AS violationKey
+        FROM ${ruleViolationRollup}
         WHERE ${ruleViolationRollup.lastSeenAt} >= ${since} AND ${ruleViolationRollup.lastLoggedAt} >= ${since}
           AND ${ruleViolationRollup.ruleId} IN (SELECT ruleId FROM declined_keys) AND ${scoped(sql`${ruleViolationRollup.sessionId}`)}
       )
-      GROUP BY ruleId
+      SELECT declined.ruleId AS ruleId, count(*) AS declined, count(logged.ruleId) AS alsoLogged
+      FROM declined_keys declined
+      LEFT JOIN logged_keys logged ON logged.ruleId = declined.ruleId AND logged.violationKey = declined.violationKey
+      GROUP BY declined.ruleId
     `);
-    return new Map(rows.map(row => [row.ruleId, row.violations]));
+    return new Map(rows.map(({ ruleId, declined, alsoLogged }) => [ruleId, { declined, alsoLogged }]));
   }
 
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {

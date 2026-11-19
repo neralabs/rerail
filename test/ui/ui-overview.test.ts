@@ -25,10 +25,10 @@ describe("Violations steered tile", () => {
   });
 
   it("leaves out a violation whose steer the coding agent declined, as History by rule's Steered chip does", () => {
-    const tally = steeredTally({ a: { ...activity(5, 2), declinedViolations: 1 }, b: { ...activity(2, 1), declinedViolations: 4 } });
+    // a: 2 logged, 1 declined, 2 steered; b: 1 logged that was also declined, so 1 declined and 1 steered.
+    const tally = steeredTally({ a: { ...activity(5, 2), declinedViolations: 1 }, b: { ...activity(2, 1), declinedViolations: 1, declinedLoggedViolations: 1 } });
 
-    // a: 3 sent, 1 declined; b: 1 sent, at most that one declined.
-    expect(tally).toEqual({ steered: 2, total: 7 });
+    expect(tally).toEqual({ steered: 3, total: 7 });
   });
 
   it("leaves unmeasured rules out and reads zero for an empty range", () => {

@@ -63,7 +63,7 @@ export function overviewBody({ ruleCount, sessionsEver, topCount }) {
  * rule's), less those whose steer the coding agent declined: the tile opens History by rule's Steered chip, which
  * counts a declined violation under Declined only. `rerails` counts steer deliveries, which can
  * exceed Y, so it is not used. Unmeasured rules (conversation rules, inactive code rules) record none.
- * @param {Record<string, { measured?: boolean, distinctViolations: number, loggedViolations?: number, declinedViolations?: number }>} activity
+ * @param {Record<string, { measured?: boolean, distinctViolations: number, loggedViolations?: number, declinedViolations?: number, declinedLoggedViolations?: number }>} activity
  * @returns {{ steered: number, total: number }}
  */
 export function steeredTally(activity) {
@@ -71,8 +71,9 @@ export function steeredTally(activity) {
   for (const a of Object.values(activity)) {
     if (a.measured === false) continue;
     total += a.distinctViolations;
-    const sent = a.distinctViolations - (a.loggedViolations ?? 0);
-    steered += sent - Math.min(a.declinedViolations ?? 0, sent);
+    // As History by rule counts them: a declined violation is declined, even when another audit recorded it on Log.
+    const logOnly = (a.loggedViolations ?? 0) - (a.declinedLoggedViolations ?? 0);
+    steered += Math.max(0, a.distinctViolations - logOnly - (a.declinedViolations ?? 0));
   }
   return { steered, total };
 }

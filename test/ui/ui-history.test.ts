@@ -3,7 +3,7 @@ import { data, ui } from "../../ui/state.js";
 import { filterRanked, historyEmpty, historyRuleId, outcomesOf, rankedRules } from "../../ui/history-model.js";
 import { parseRoute } from "../../ui/routes.js";
 
-const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, declinedViolations: 0, rerails: 0 };
+const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, declinedViolations: 0, declinedLoggedViolations: 0, rerails: 0 };
 const fired = (distinctViolations: number, extra: object = {}) => ({ ...NONE, distinctViolations, audits: 1, ...extra });
 
 const storedRule = (id: string, title: string, enabled = true) => ({
@@ -72,10 +72,10 @@ describe("History's rule list", () => {
     expect(rankedRules("all").map(r => [r.id, r.declined])).toEqual([["a", 2], ["b", 3], ["c", 0]]);
   });
 
-  it("never counts more declined than the violations sent to the agent, nor reads an answer without the count as any", () => {
-    data.activity = { a: fired(4, { loggedViolations: 3, declinedViolations: 2 }), old: { ...fired(2), declinedViolations: undefined } };
+  it("counts a declined violation another audit recorded on Log as declined, never also as Log only", () => {
+    data.activity = { a: fired(4, { loggedViolations: 3, declinedViolations: 2, declinedLoggedViolations: 1 }), old: { ...fired(2), declinedViolations: undefined } };
 
-    expect(outcomesOf("a")).toEqual({ all: 4, logged: 3, steered: 0, declined: 1 });
+    expect(outcomesOf("a")).toEqual({ all: 4, logged: 2, steered: 0, declined: 2 });
     expect(outcomesOf("old")).toEqual({ all: 2, logged: 0, steered: 2, declined: 0 });
     expect(outcomesOf("missing")).toEqual({ all: 0, logged: 0, steered: 0, declined: 0 });
   });

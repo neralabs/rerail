@@ -175,7 +175,7 @@ export function sinceFor(range = ui.range) {
 const RANGE_LABEL = { 0: "today", 7: "in the last 7 days", 30: "in the last 30 days" };
 export const rangeLabel = () => RANGE_LABEL[ui.range] ?? "since install";
 
-const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, declinedViolations: 0, rerails: 0 };
+const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, declinedViolations: 0, declinedLoggedViolations: 0, rerails: 0 };
 export const activityOf = id => data.activity[id] ?? NONE;
 export const activityAllOf = id => data.activityAll[id] ?? NONE;
 export const isMeasured = id => activityOf(id).measured !== false;

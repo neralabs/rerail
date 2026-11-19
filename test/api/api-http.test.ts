@@ -149,11 +149,11 @@ describe("Rerail API over HTTP", () => {
 
     expect(body.since).toBe(1000);
     // Evaluated by the two runs in range; the run at 500 is before the range and counts for nothing.
-    expect(body.rules[codeRule.id]).toEqual({ measured: true, distinctViolations: 1, sessions: 1, lastSeenAt: 3_000, audits: 2, loggedViolations: 0, declinedViolations: 0, rerails: 0 });
+    expect(body.rules[codeRule.id]).toEqual({ measured: true, distinctViolations: 1, sessions: 1, lastSeenAt: 3_000, audits: 2, loggedViolations: 0, declinedViolations: 0, declinedLoggedViolations: 0, rerails: 0 });
     // Compiled into a run but never flagged: a zero backed by evidence rather than by silence.
     expect(body.rules[otherCodeRule.id]).toMatchObject({ measured: true, distinctViolations: 0, audits: 1, lastSeenAt: null });
     // Conversation rules never write an audit, so there is nothing to report either way.
-    expect(body.rules[conversationRule.id]).toEqual({ measured: false, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, declinedViolations: 0, rerails: 0 });
+    expect(body.rules[conversationRule.id]).toEqual({ measured: false, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, declinedViolations: 0, declinedLoggedViolations: 0, rerails: 0 });
   });
 
   it("counts logged-only violations by the mode recorded with each, not the rule's mode now", async () => {
@@ -338,7 +338,7 @@ describe("Rerail API over HTTP", () => {
     const [a, b, c, d, e, f] = [at("a", "web/src/a.ts"), at("b", "web/src/b.ts"), at("c", "web/src/c.ts", "log"), at("d", "web/src/d.ts"), at("e", "web/src/e.ts"), at("f", "web/src/f.ts")];
     const early = seedAudit({ at: 500, violations: [f] });
     const declinedAudit = seedAudit({ at: 2_100, violations: [a, b, c, d] });
-    // Recorded in Log mode later in range: Log only, though its steer was declined.
+    // Recorded in Log mode later in range: still declined, and counted among the logged too.
     const loggedAudit = seedAudit({ at: 2_300, mode: "log", violations: [d] });
     const steeredAudit = seedAudit({ at: 2_400, violations: [e] });
     const note = (id: string, recordedAt: number) => ({
@@ -348,11 +348,13 @@ describe("Rerail API over HTTP", () => {
 
     const activity = async (since: number) =>
       (await getJson<{ rules: Record<string, Record<string, unknown>> }>(`/api/rules/activity?since=${since}`)).rules[flagged.ruleId];
-    // Log only c and d, declined a and b, steered e: each violation once.
-    expect(await activity(1_000)).toMatchObject({ distinctViolations: 5, loggedViolations: 2, declinedViolations: 2 });
-    expect(await activity(0)).toMatchObject({ distinctViolations: 6, loggedViolations: 2, declinedViolations: 3 });
+    // Declined a, b and d (d also logged), Log only c, steered e: each violation in one outcome.
+    expect(await activity(1_000)).toMatchObject({ distinctViolations: 5, loggedViolations: 2, declinedViolations: 3, declinedLoggedViolations: 1 });
+    expect(await activity(0)).toMatchObject({ distinctViolations: 6, loggedViolations: 2, declinedViolations: 4, declinedLoggedViolations: 1 });
+    // Before the declined audit's range: the decline of d no longer counts, and d is Log only again.
+    expect(await activity(2_200)).toMatchObject({ distinctViolations: 2, loggedViolations: 1, declinedViolations: 0, declinedLoggedViolations: 0 });
     expect((await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000")).rules[MOCK_CODE_RULES[1]!.id])
-      .toMatchObject({ declinedViolations: 0 });
+      .toMatchObject({ declinedViolations: 0, declinedLoggedViolations: 0 });
 
     const { violations } = await getJson<{ violations: Array<{ id: string; auditId: string; declinedReasons: string[] }> }>(
       `/api/violations?since=0&ruleId=${encodeURIComponent(flagged.ruleId)}`);

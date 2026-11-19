@@ -20,7 +20,7 @@ import {
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { approvalKey, packSubject, readApprovals } from "../engine/catalog/rule-approval.js";
 import { rulePackListSchema } from "./rule-pack-contracts.js";
-import { SESSION_EVENT_PAGE_LIMIT, type DeclineNote, type StoredSessionSummary } from "../runtime/session-store.js";
+import { SESSION_EVENT_PAGE_LIMIT, type DeclinedViolations, type DeclineNote, type StoredSessionSummary } from "../runtime/session-store.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
 import { ApiError, defineOperation, experimentalSummary, type Operation, type RerailApiStores } from "./operation.js";
 import { mergeAssistOperations } from "./merge-assist-operations.js";
@@ -78,6 +78,12 @@ function agentViolation(caller: ApiCaller, violation: CodeRuleViolation): CodeRu
   if (caller.kind === "person" || violation.path === undefined || !sensitiveByName(violation.path)) return violation;
   const { fix: _fix, ...rest } = violation;
   return { ...rest, message: SECRET_FILE_FINDING_MESSAGE, variables: {} };
+}
+
+/** Rule `id`'s declined violations as `rules_activity` reports them; zeros for a rule with none. */
+function declinedOf(declined: ReadonlyMap<string, DeclinedViolations>, id: string) {
+  const counts = declined.get(id);
+  return { declinedViolations: counts?.declined ?? 0, declinedLoggedViolations: counts?.alsoLogged ?? 0 };
 }
 
 /** A steer as `violations_list` names it: the audit that steered and the rule it steered on. */
@@ -281,7 +287,8 @@ const ruleActivitySchema = z.object({
   lastSeenAt: z.number().int().nullable(),
   audits: z.number().int().nonnegative().describe("Distinct audits in range that compiled this rule, so a zero violation count over a positive number of audits is evidence rather than silence."),
   loggedViolations: z.number().int().nonnegative().describe("Of distinctViolations, those recorded in Log mode at the time, whatever the rule's mode is now."),
-  declinedViolations: z.number().int().nonnegative().describe("Of distinctViolations not in loggedViolations, those of a steer the coding agent declined with `rerail feedback`. The rest of those are steered and not declined, so log only, steered and declined never overlap. A steer with no note is not known to be followed: an agent can decline without recording why."),
+  declinedViolations: z.number().int().nonnegative().describe("Of distinctViolations, those of a steer the coding agent declined with `rerail feedback`. A steer with no note is not known to be followed: an agent can decline without recording why."),
+  declinedLoggedViolations: z.number().int().nonnegative().describe("Of declinedViolations, those also in loggedViolations (recorded in Log mode by another audit in range). Counting each violation once, as Log only, steered or declined, a declined one is declined: Log only is loggedViolations less these, steered the rest."),
   rerails: z.number().int().nonnegative(),
   ...inactiveField,
   removed: z.literal(true).optional().describe("Set on a rule no longer among the rules reported (taken out of the repository, or no longer installed or in the library) that has violations in range: listed for its history, with nothing to turn off."),
@@ -432,7 +439,7 @@ export const operations: readonly Operation[] = [
           audits: totals?.audits ?? 0,
           loggedViolations: totals?.loggedViolations ?? 0,
           // A conversation rule writes no audit, so no steer of it is ever declined.
-          declinedViolations: declined.get(id) ?? 0,
+          ...declinedOf(declined, id),
           rerails: kind === "conversation" ? 0 : rerails.get(id) ?? 0,
           ...(inactive === undefined ? {} : { inactive }),
         };
@@ -440,7 +447,7 @@ export const operations: readonly Operation[] = [
       // A rule taken out since keeps its violations: History still lists it, marked removed.
       for (const [id, totals] of activity) {
         if (rules[id] !== undefined || totals.distinctViolations === 0) continue;
-        rules[id] = { measured: true, ...totals, declinedViolations: declined.get(id) ?? 0, rerails: rerails.get(id) ?? 0, removed: true };
+        rules[id] = { measured: true, ...totals, ...declinedOf(declined, id), rerails: rerails.get(id) ?? 0, removed: true };
       }
       return {
         since: input.since,
