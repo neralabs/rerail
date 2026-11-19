@@ -167,6 +167,13 @@ describe("an owner-only ACL on Windows", () => {
     expect(acl.restricted).toEqual([[sessions, true], [sessions, true]]);
   });
 
+  it("reads no ACL of a records folder outside any .rerail folder, which the person named and may keep their own files in", async () => {
+    const root = join(await temporaryRoot(), "records");
+    const acl = recordingAcl();
+    await makeLedgerFolder(join(root, "a".repeat(64)), { acl, platform: "win32", profile: ELSEWHERE, repair: true });
+    expect(acl.read).toEqual([]);
+  });
+
   it("reads no ACL of a session records folder under the profile folder, whose own ACL is the person's alone", async () => {
     const checkout = await temporaryRoot();
     const sessions = join(checkout, ".rerail", "sessions");
