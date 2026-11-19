@@ -544,6 +544,52 @@ impl Writer {
         self.n(texts.len());
         texts.for_each(|text| self.text(text));
     }
+    /// `entries` entries of the list `words` lays out (`Reader::words`).
+    fn list(&mut self, entries: usize, words: impl Iterator<Item = u32>) {
+        self.n(entries);
+        words.for_each(|word| self.u(word));
+    }
+    /// A kind's automaton (`Reader::automaton`): its states' moves, its implied words, its kept tokens and fields.
+    fn automaton(&mut self, automaton: &Automaton) {
+        self.moves(automaton);
+        self.implied(&automaton.implied);
+        let kept: BTreeSet<&Label> = automaton.kept.iter().collect();
+        self.n(kept.len());
+        kept.into_iter().for_each(|label| self.label(label));
+        self.list(automaton.fields.len(), automaton.fields.iter().copied());
+    }
+    /// Each state's acceptance and its moves, in their labels' order.
+    fn moves(&mut self, automaton: &Automaton) {
+        self.n(automaton.moves.len());
+        for (moves, accepting) in automaton.moves.iter().zip(&automaton.accepting) {
+            self.u(u32::from(*accepting));
+            let moves: BTreeMap<&Label, &u32> = moves.iter().collect();
+            self.n(moves.len());
+            moves.into_iter().for_each(|(label, to)| {
+                self.label(label);
+                self.u(*to);
+            });
+        }
+    }
+    /// The implied words: to each named child, in their keys' order, then each state's to the end.
+    fn implied(&mut self, implied: &Implied) {
+        let to: BTreeMap<&(u32, Label), &Box<[Label]>> = implied.to.iter().collect();
+        self.n(to.len());
+        to.into_iter().for_each(|((from, label), word)| {
+            self.u(*from);
+            self.label(label);
+            self.word(word);
+        });
+        for end in &implied.end {
+            match end {
+                Some(word) => {
+                    self.u(1);
+                    self.word(word);
+                }
+                None => self.u(0),
+            }
+        }
+    }
 }
 
 /// The automata as bytes: the grammar's texts, then per kind its symbol and its automaton, which its length
@@ -558,37 +604,7 @@ pub(crate) fn encode(built: &Built) -> Vec<u8> {
     for (sym, automaton) in &built.kinds {
         w.u(*sym);
         let mut a = Writer(Vec::new());
-        a.n(automaton.moves.len());
-        for (moves, accepting) in automaton.moves.iter().zip(&automaton.accepting) {
-            a.u(u32::from(*accepting));
-            let moves: BTreeMap<&Label, &u32> = moves.iter().collect();
-            a.n(moves.len());
-            for (label, to) in moves {
-                a.label(label);
-                a.u(*to);
-            }
-        }
-        let to: BTreeMap<&(u32, Label), &Box<[Label]>> = automaton.implied.to.iter().collect();
-        a.n(to.len());
-        for ((from, label), word) in to {
-            a.u(*from);
-            a.label(label);
-            a.word(word);
-        }
-        for end in &automaton.implied.end {
-            match end {
-                Some(word) => {
-                    a.u(1);
-                    a.word(word);
-                }
-                None => a.u(0),
-            }
-        }
-        let kept: BTreeSet<&Label> = automaton.kept.iter().collect();
-        a.n(kept.len());
-        kept.into_iter().for_each(|label| a.label(label));
-        a.n(automaton.fields.len());
-        automaton.fields.iter().for_each(|field| a.u(*field));
+        a.automaton(automaton);
         w.n(a.0.len());
         w.0.extend(a.0);
     }
@@ -636,10 +652,20 @@ impl<'b> Reader<'b> {
         self.0 = &self.0[bytes.len()..];
         Some(Words { bytes, width })
     }
-    /// Past `n` bytes, unread.
-    fn skip(&mut self, n: usize) -> Option<()> {
-        self.0 = self.0.get(n..)?;
-        Some(())
+    /// Past `format`, which the bytes must begin with.
+    fn format(&mut self, format: u32) -> Option<()> {
+        (self.u()? == format).then_some(())
+    }
+    /// Bytes, left where they lie, after their count.
+    fn sized(&mut self) -> Option<&'b [u8]> {
+        let n = self.n()?;
+        let bytes = self.0.get(..n)?;
+        self.0 = &self.0[n..];
+        Some(bytes)
+    }
+    /// Each kind's symbol and the bytes its automaton lies in (`encode`).
+    fn kinds(&mut self) -> Option<Vec<(Sym, &'b [u8])>> {
+        (0..self.n()?).map(|_| Some((self.u()?, self.sized()?))).collect()
     }
     /// A kind's automaton, as `encode` wrote it after its length.
     fn automaton(&mut self) -> Option<Automaton> {
@@ -683,21 +709,9 @@ pub(crate) struct Index<'b> {
 /// The automata `encode` wrote, indexed (`Index`); `None` for bytes it did not write.
 pub(crate) fn index(bytes: &[u8]) -> Option<Index<'_>> {
     let mut r = Reader(bytes);
-    if r.u()? != FORMAT {
-        return None;
-    }
-    let texts: Vec<&str> = r.strs()?;
-    let unsupported = r.texts()?;
-    let extras = r.texts()?;
-    let count = r.n()?;
-    let mut kinds = Vec::with_capacity(count.min(1 << 16));
-    for _ in 0..count {
-        let sym = r.u()?;
-        let n = r.n()?;
-        kinds.push((sym, r.0.get(..n)?));
-        r.skip(n)?;
-    }
-    r.0.is_empty().then_some(Index { texts, kinds, unsupported, extras })
+    r.format(FORMAT)?;
+    let index = Index { texts: r.strs()?, unsupported: r.texts()?, extras: r.texts()?, kinds: r.kinds()? };
+    r.0.is_empty().then_some(index)
 }
 
 /// A kind's automaton from the bytes `index` found it in.
@@ -749,58 +763,45 @@ const CENSUS_FORMAT: u32 = 0x7461_0002;
 /// kind's are found by a binary search and nothing is decoded until it is asked; and the (token, field) pairs some
 /// kind implies, once (`token_census::Lang::distinct`).
 pub(crate) fn encode_census(census: &Census) -> Vec<u8> {
-    let mut names: BTreeSet<&str> = BTreeSet::new();
-    for (kind, pairs) in &census.implied {
-        names.insert(kind);
-        for (token, field) in pairs {
-            names.extend([token.as_str(), field.as_str()]);
-        }
-    }
-    for (kind, parents) in &census.parents {
-        names.insert(kind);
-        names.extend(parents.iter().map(String::as_str));
-    }
-    names.extend(census.tokens.iter().chain(&census.extras).map(String::as_str));
-    let names: Vec<&str> = names.into_iter().collect();
+    let names = census_names(census);
     let at = |name: &str| u32::try_from(names.binary_search(&name).expect("every name is listed")).expect("a census's names fit a u32");
     let mut w = Writer(Vec::new());
     w.u(CENSUS_FORMAT);
     w.n(names.len());
     names.iter().for_each(|name| w.text(name));
     let distinct: BTreeSet<(u32, u32)> = census.implied.values().flatten().map(|(token, field)| (at(token), at(field))).collect();
-    w.n(distinct.len());
-    distinct.into_iter().for_each(|(token, field)| {
-        w.u(token);
-        w.u(field);
-    });
-    for set in [&census.tokens, &census.extras] {
-        w.n(set.len());
-        set.iter().for_each(|name| w.u(at(name)));
-    }
-    w.n(census.implied.len());
-    let mut start = 0;
-    for (kind, pairs) in &census.implied {
-        w.u(at(kind));
-        w.n(start);
-        w.n(pairs.len());
-        start += pairs.len();
-    }
-    w.n(start);
-    census.implied.values().flatten().for_each(|(token, field)| {
-        w.u(at(token));
-        w.u(at(field));
-    });
-    w.n(census.parents.len());
-    let mut start = 0;
-    for (kind, parents) in &census.parents {
-        w.u(at(kind));
-        w.n(start);
-        w.n(parents.len());
-        start += parents.len();
-    }
-    w.n(start);
-    census.parents.values().flatten().for_each(|parent| w.u(at(parent)));
+    w.list(distinct.len(), distinct.iter().flat_map(|&(token, field)| [token, field]));
+    w.list(census.tokens.len(), census.tokens.iter().map(|name| at(name)));
+    w.list(census.extras.len(), census.extras.iter().map(|name| at(name)));
+    w.ranges(census.implied.iter().map(|(kind, pairs)| (at(kind), pairs.len())));
+    let pairs = census.implied.values().flatten();
+    w.list(pairs.clone().count(), pairs.flat_map(|(token, field)| [at(token), at(field)]));
+    w.ranges(census.parents.iter().map(|(kind, parents)| (at(kind), parents.len())));
+    let parents = census.parents.values().flatten();
+    w.list(parents.clone().count(), parents.map(|parent| at(parent)));
     w.0
+}
+
+/// Every name a census holds, once, sorted.
+fn census_names(census: &Census) -> Vec<&str> {
+    let implied = census.implied.iter().flat_map(|(kind, pairs)| std::iter::once(kind).chain(pairs.iter().flat_map(|(token, field)| [token, field])));
+    let parents = census.parents.iter().flat_map(|(kind, parents)| std::iter::once(kind).chain(parents));
+    let names: BTreeSet<&str> = implied.chain(parents).chain(&census.tokens).chain(&census.extras).map(String::as_str).collect();
+    names.into_iter().collect()
+}
+
+impl Writer {
+    /// Per kind, its name's index and the range its list takes of one flat list (kind, start, length), in order.
+    fn ranges(&mut self, kinds: impl ExactSizeIterator<Item = (u32, usize)>) {
+        self.n(kinds.len());
+        let mut start = 0;
+        for (kind, len) in kinds {
+            self.u(kind);
+            self.n(start);
+            self.n(len);
+            start += len;
+        }
+    }
 }
 
 /// Little-endian `u32`s where they lie, `width` to an entry.
@@ -829,6 +830,26 @@ impl<'b> Words<'b> {
     /// Every entry's first word.
     pub(crate) fn firsts(self) -> impl Iterator<Item = u32> + 'b {
         (0..self.len()).map(move |at| self.get(at, 0))
+    }
+
+    /// Entry `at`'s words.
+    fn entry(self, at: usize) -> impl Iterator<Item = u32> + 'b {
+        (0..self.width).map(move |of| self.get(at, of))
+    }
+
+    /// Whether the entries ascend strictly, word by word (a set, sorted).
+    fn ascending(self) -> bool {
+        (1..self.len()).all(|at| self.entry(at - 1).lt(self.entry(at)))
+    }
+
+    /// Whether the entries' first words ascend strictly (the keys `find` searches).
+    fn keys_ascending(self) -> bool {
+        (1..self.len()).all(|at| self.get(at - 1, 0) < self.get(at, 0))
+    }
+
+    /// Whether every word is below `bound`.
+    fn below(self, bound: usize) -> bool {
+        (0..self.len()).all(|at| self.entry(at).all(|word| (word as usize) < bound))
     }
 
     /// The entry whose first word is `key`, where the entries are sorted by it.
@@ -860,32 +881,48 @@ pub(crate) struct CensusIn<'b> {
     pub(crate) parent_kinds: Words<'b>,
 }
 
+impl CensusIn<'_> {
+    /// Whether the census is as `encode_census` writes it: every index names a name, every range lies in its list,
+    /// and the names and every list a lookup searches ascend, so a binary search finds what the census holds.
+    fn is_whole(&self) -> bool {
+        let bound = self.names.len();
+        let named = [self.distinct, self.tokens, self.extras, self.implied_pairs, self.parent_kinds].into_iter().all(|words| words.below(bound))
+            && [self.implied, self.parents].into_iter().all(|ranges| ranges.firsts().all(|kind| (kind as usize) < bound));
+        let sorted = [self.distinct, self.tokens, self.extras].into_iter().all(Words::ascending)
+            && [self.implied, self.parents].into_iter().all(Words::keys_ascending);
+        let ranged = in_range(self.implied, self.implied_pairs) && in_range(self.parents, self.parent_kinds);
+        [named, sorted, ranged, self.names.is_sorted_by(|a, b| a < b)].into_iter().all(std::convert::identity)
+    }
+}
+
+/// Whether each of `ranges`' (kind, start, length) lies within `items`.
+fn in_range(ranges: Words<'_>, items: Words<'_>) -> bool {
+    (0..ranges.len()).all(|at| (ranges.get(at, 1) as usize).checked_add(ranges.get(at, 2) as usize).is_some_and(|end| end <= items.len()))
+}
+
+impl<'b> Reader<'b> {
+    /// A census's names and lists (`encode_census`), unchecked.
+    fn census(&mut self) -> Option<CensusIn<'b>> {
+        let names = self.strs()?;
+        let [Some(distinct), Some(tokens), Some(extras), Some(implied), Some(implied_pairs), Some(parents), Some(parent_kinds)] =
+            [2, 1, 1, 3, 2, 3, 1].map(|width| self.words(width))
+        else {
+            return None;
+        };
+        Some(CensusIn { names, distinct, tokens, extras, implied, implied_pairs, parents, parent_kinds })
+    }
+}
+
 /// The census `encode_census` wrote, read in place (it is read once a dialect, as a rule of it first compiles): its
-/// names checked once, its lists left in their bytes; `None` for bytes it did not write, or an index or range that
-/// lies outside what it names.
+/// names checked once, its lists left in their bytes; `None` for bytes it did not write: another format, trailing
+/// bytes, an index or range outside what it names, or names or a list out of order.
 pub(crate) fn decode_census(bytes: &[u8]) -> Option<CensusIn<'_>> {
     let mut r = Reader(bytes);
-    if r.u()? != CENSUS_FORMAT {
-        return None;
-    }
-    let names: Vec<&str> = r.strs()?;
-    let census = CensusIn {
-        distinct: r.words(2)?,
-        tokens: r.words(1)?,
-        extras: r.words(1)?,
-        implied: r.words(3)?,
-        implied_pairs: r.words(2)?,
-        parents: r.words(3)?,
-        parent_kinds: r.words(1)?,
-        names,
-    };
-    let named = |words: Words<'_>| (0..words.len()).all(|at| (0..words.width).all(|of| (words.get(at, of) as usize) < census.names.len()));
-    let ranged = |ranges: Words<'_>, items: Words<'_>| {
-        (0..ranges.len()).all(|at| (ranges.get(at, 0) as usize) < census.names.len() && (ranges.get(at, 1) as usize).checked_add(ranges.get(at, 2) as usize).is_some_and(|end| end <= items.len()))
-    };
-    let whole = r.0.is_empty()
-        && [census.distinct, census.tokens, census.extras, census.implied_pairs, census.parent_kinds].into_iter().all(named)
-        && ranged(census.implied, census.implied_pairs)
-        && ranged(census.parents, census.parent_kinds);
-    whole.then_some(census)
+    r.format(CENSUS_FORMAT)?;
+    let census = r.census()?;
+    (r.0.is_empty() && census.is_whole()).then_some(census)
 }
+
+#[cfg(test)]
+#[path = "token_automata_tests.rs"]
+mod tests;
