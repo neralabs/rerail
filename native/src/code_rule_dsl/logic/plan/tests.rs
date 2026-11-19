@@ -143,15 +143,15 @@ fn a_relation_past_the_width_cap_stops_the_run_or_is_cut() {
     };
     // Each run's limits are its own (no process setting): the test holds each run's scope, as a command does.
     let stopped = {
-        let _limits = width::scope(|| width::Settings { cap: 1_000, cut: false, ceiling: None });
+        let _run = super::super::run::scope(|| width::Settings { cap: 1_000, cut: false, ceiling: None });
         run()
     };
     let (cut, record) = {
-        let limits = width::scope(|| width::Settings { cap: 1_000, cut: true, ceiling: None });
+        let own = super::super::run::scope(|| width::Settings { cap: 1_000, cut: true, ceiling: None });
         let cut = run();
-        (cut, limits.finish().expect("the test's run is the outermost"))
+        (cut, own.finish().expect("the test's run is the outermost"))
     };
-    let report = record.incomplete();
+    let report = record.width.incomplete();
     let error = stopped.err().expect("a relation past the cap stops the run").to_string();
     assert!(error.contains("`pairs` reached 1000 rows") && error.contains("l(") && error.contains("r("), "the error names the relation and its rule: {error}");
     let out = cut.expect("cut, the run goes on");

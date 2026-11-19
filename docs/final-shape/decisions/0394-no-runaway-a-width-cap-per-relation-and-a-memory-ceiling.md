@@ -34,11 +34,9 @@ which rule was growing.
    too. Once it has stayed past the ceiling for 2 s after the run was told to stop (a SQL stratum's insert, the
    device, a cache), it dumps the run (as a deadline does) and exits with code 3. It reads no engine state.
 5. **All of it is the run's** (the user, 2026-11-19: "we want the engine to be re-entrant, multi-thread possible and
-   to not have global state"). The settings, the cut list, the widest relations and the memory watch are a
-   `width::Run`, made by the outermost run's scope (`width::scope`: a command, a corpus run or a program run,
-   whichever starts first on the thread) and carried to its jobs (`run_state`). A nested run joins it. The record
-   comes back with the result (`Outcome::limits`, `corpus::Report::limits`, `cli_in`'s message). Two runs on two
-   threads have their own; nothing is process state, and a test sets a run's limits by holding its scope.
+   to not have global state"). The settings, the cut list, the widest relations and the memory watch are the run's
+   `width::Width`, in its `run::Run` (decision 0441), and come back in its record. Two runs on two threads have their
+   own; nothing is process state, and a test sets a run's limits by holding its scope.
 
 `--memory-mb` (the budget chunks and residency plan by) is unchanged. The cap and the ceiling are limits, not
 plans.

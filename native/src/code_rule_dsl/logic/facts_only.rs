@@ -194,23 +194,14 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
     // The rule being compiled: the step that first bound each slot, for a refusal's message.
     ("code_rule_dsl/logic/native/setfix/device.rs", "BINDER"),
-    // Settings and measurement or debugging aids, read once or written as a run goes: a file appended to
-    // (`RERAIL_PREPARED_WHY`), the heap's span (`RERAIL_HEAP_AT`), the exports a debugging run counts by document
-    // (`RERAIL_KEPT_DOCS`), and the trees a thread decoded (a count, for the check that a run decodes none).
+    // Measurement aids, read once or written as a process goes: a file appended to (`RERAIL_PREPARED_WHY`), the
+    // heap's span (`RERAIL_HEAP_AT`).
     ("code_rule_dsl/logic/plan/prepared.rs", "LOG"),
     ("code_rule_dsl/logic/profile/memory.rs", "AT"),
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_DOCS"),
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "KEPT_ROWS"),
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "COUNTING"),
-    ("code_rule_dsl/logic/plan/corpus/keptstats.rs", "LISTED"),
-    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
-    // The rule being compiled for the device: its component's columns that hold arena texts (decision 0307).
-    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
     // What registers at load: the world's files with the answerers installed, and the record's kinds' applies.
     ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
     ("content_store/record.rs", "KINDS"),
-    // The stores forgotten, by path and file, so a frames job neither reads nor sweeps them again; a test's log.
-    ("content_store/upkeep.rs", "GONE"),
+    // A test's log.
     ("content_store/record.rs", "LOG"),
     // This thread's run's binding (CPU or Metal).
     ("code_rule_dsl/logic/plan/placement.rs", "DEVICE"),
@@ -399,8 +390,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
     ("code_rule_dsl/logic/plan.rs", "OWN_PLANNED"),
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
-    // The run under way on the thread: its limits and what it met of them (decision 0394), carried to its jobs.
-    ("code_rule_dsl/logic/native/width.rs", "RUN"),
+    // The run under way on the thread: its own state (decision 0441), carried to its jobs.
+    ("code_rule_dsl/logic/profile.rs", "RUN"),
     // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
     ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
     // Measurement aids under `RERAIL_PLAN_GREEDY_PROBE`: its switches, and the probe's counts and sums.

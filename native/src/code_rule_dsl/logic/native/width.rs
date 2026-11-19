@@ -1,7 +1,7 @@
 //! Decision 0394: the most rows a derived relation may hold, the most memory a run may take, and what a run does
-//! past them. Everything here is a run's own: its settings, the relations it cut, the widest relations it held, and its
-//! memory watch, in a `Run` that the run's scope (`scope`) holds and its jobs carry (`run_state`). Two runs in one
-//! process, on any threads, each have their own; nothing here is process state.
+//! past them. Everything here is a run's own (decision 0441): its settings, the relations it cut, the widest relations
+//! it held, and its memory watch, in the `Width` of its `run::Run`. Two runs in one process, on any threads, each have
+//! their own; nothing here is process state.
 //!
 //! A rule whose head really is huge (a product of two node ranges no join connects, 0393) fills memory until the
 //! machine gives out: Ruff's SLF001 as written passed 56 GB on 1,644 PostHog files. Replanning cannot help, since no
@@ -17,11 +17,12 @@
 //!
 //! The memory ceiling (`Settings::ceiling`: `RERAIL_MEMORY_MAX_MB`; default three quarters of the machine's memory;
 //! `off` for none) is watched by a thread of the run's own while the run lasts. Past it, the run is told to stop: its
-//! walks and its driver stop with an error (`OverMemory`) naming the widest relations it held (`Run::note_rows`).
+//! walks and its driver stop with an error (`OverMemory`) naming the widest relations it held (`Width::note_rows`).
 //! Resident memory is the process's, so a run beside another stops when the two together pass its ceiling.
 
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, OnceLock};
+
+use super::super::run;
 
 /// The default cap: 50 M rows, about 0.8 GB for a relation of two columns before its indexes.
 pub const DEFAULT_ROWS: usize = 50_000_000;
@@ -59,7 +60,7 @@ fn parse_cap(v: Option<&str>) -> usize {
     }
 }
 
-/// What derived a relation cut: a component's probe, until its driver names its rule (`Run::name_cuts`), or the rule.
+/// What derived a relation cut: a component's probe, until its driver names its rule (`Width::name_cuts`), or the rule.
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum By {
     Probe(String, usize),
@@ -67,7 +68,7 @@ enum By {
 }
 
 /// A run's limits and what it met of them.
-pub struct Run {
+pub struct Width {
     settings: Settings,
     /// The relations cut at the cap, in the order cut, each with what derived it.
     cuts: parking_lot::Mutex<Vec<(String, Vec<By>)>>,
@@ -75,13 +76,11 @@ pub struct Run {
     widest: parking_lot::Mutex<Vec<(String, usize)>>,
     /// Set by the memory watch: why the run must stop.
     stop: OnceLock<String>,
-    /// Set as the run ends: its watch ends too.
-    ended: AtomicBool,
 }
 
-impl Run {
-    fn new(settings: Settings) -> Run {
-        Run { settings, cuts: Default::default(), widest: Default::default(), stop: OnceLock::new(), ended: AtomicBool::new(false) }
+impl Width {
+    pub(in crate::code_rule_dsl) fn new(settings: Settings) -> Width {
+        Width { settings, cuts: Default::default(), widest: Default::default(), stop: OnceLock::new() }
     }
     pub fn cap(&self) -> usize {
         self.settings.cap
@@ -228,73 +227,21 @@ impl Record {
     }
 }
 
-thread_local! {
-    /// The run under way on this thread (`scope`), carried to its jobs (`run_state`): a run nested in it shares it.
-    static RUN: std::cell::RefCell<Option<Arc<Run>>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Carries the run's limits and record to a job on another thread (`run_state`).
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.cloned(&["RUN"], &RUN);
-}
-
-/// The run under way on this thread, if one holds a scope.
-pub fn current() -> Option<Arc<Run>> {
-    RUN.with(|r| r.borrow().clone())
-}
-
-/// A run's hold on its limits and record. The outermost scope on a thread makes them (and starts the memory watch); a
-/// nested one joins them. Dropped, the outermost ends them.
-pub struct Scope {
-    run: Arc<Run>,
-    outer: bool,
-}
-
-/// The scope of a run starting here: the run's own if one is under way on this thread, else a new run with
-/// `settings`.
-pub fn scope(settings: impl FnOnce() -> Settings) -> Scope {
-    if let Some(run) = current() {
-        return Scope { run, outer: false };
-    }
-    let run = Arc::new(Run::new(settings()));
-    if let Some(max) = run.settings.ceiling {
-        watch(Arc::downgrade(&run), max);
-    }
-    RUN.with(|r| *r.borrow_mut() = Some(Arc::clone(&run)));
-    Scope { run, outer: true }
-}
-
-impl Scope {
-    pub fn run(&self) -> &Arc<Run> {
-        &self.run
-    }
-    /// The run's record, from its outermost scope; `None` from a nested one (its record is the outer run's).
-    pub fn finish(self) -> Option<Record> {
-        self.outer.then(|| self.run.record())
-    }
-}
-
-impl Drop for Scope {
-    fn drop(&mut self) {
-        if self.outer {
-            self.run.ended.store(true, Relaxed);
-            RUN.with(|r| *r.borrow_mut() = None);
-        }
-    }
-}
-
-/// The run's memory watch: the resident memory every 50 ms; past `max`, the run is told to stop. It ends with the run.
-fn watch(run: std::sync::Weak<Run>, max: u64) {
+/// The run's memory watch, where its settings have a ceiling: the resident memory every 50 ms; past it, the run is told
+/// to stop. It ends with the run.
+pub(in crate::code_rule_dsl) fn watch(run: &Arc<run::Run>) {
+    let Some(max) = run.width.settings.ceiling else { return };
+    let run = Arc::downgrade(run);
     let _ = rerail_accel::exec::service("rerail-run-memory", None, move || {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(50));
             let Some(r) = run.upgrade() else { return };
-            if r.ended.load(Relaxed) || r.stop.get().is_some() {
+            if r.ended() || r.width.stop.get().is_some() {
                 return;
             }
             let Some(now) = crate::code_rule_dsl::logic::profile::watch::resident_bytes() else { return };
             if now > max {
-                let _ = r.stop.set(r.ceiling_message(max, now));
+                let _ = r.width.stop.set(r.width.ceiling_message(max, now));
                 return;
             }
         }
@@ -305,26 +252,26 @@ fn watch(run: std::sync::Weak<Run>, max: u64) {
 #[derive(Clone)]
 pub struct Limits {
     pub cap: usize,
-    run: Option<Arc<Run>>,
+    run: Option<Arc<run::Run>>,
 }
 
 impl Limits {
     /// The limits of the run under way here; with none, the default cap, stopping.
     pub fn here() -> Limits {
-        let run = current();
-        Limits { cap: run.as_ref().map_or(DEFAULT_ROWS, |r| r.cap()), run }
+        let run = run::current();
+        Limits { cap: run.as_ref().map_or(DEFAULT_ROWS, |r| r.width.cap()), run }
     }
-    pub fn run(&self) -> Option<&Arc<Run>> {
-        self.run.as_ref()
+    fn width(&self) -> Option<&Width> {
+        self.run.as_deref().map(|r| &r.width)
     }
     /// Whether the run cuts a relation at the cap (else it stops). A walk with no run stops: a cut needs a record.
     pub fn cutting(&self) -> bool {
-        self.run.as_ref().is_some_and(|r| r.cutting())
+        self.width().is_some_and(|w| w.cutting())
     }
     /// The error a walk stops with now: the run's memory stop, else the cap's for `table`, if `rows` reached it.
     #[inline]
     pub fn check(&self, table: &str, rows: usize) -> Option<rusqlite::Error> {
-        if let Some(e) = self.run.as_ref().and_then(|r| r.stop_error()) {
+        if let Some(e) = self.stop_error() {
             return Some(e);
         }
         (rows >= self.cap).then(|| too_wide(table, self.cap))
@@ -332,21 +279,21 @@ impl Limits {
     /// The run's memory stop, if it must stop.
     #[inline]
     pub fn stop_error(&self) -> Option<rusqlite::Error> {
-        self.run.as_ref().and_then(|r| r.stop_error())
+        self.width().and_then(|w| w.stop_error())
     }
     pub fn note_cut(&self, table: &str, component: &str, probe: usize) {
-        if let Some(r) = &self.run {
-            r.note_cut(table, component, probe);
+        if let Some(w) = self.width() {
+            w.note_cut(table, component, probe);
         }
     }
     pub fn note_cut_by(&self, table: &str, rule: String) {
-        if let Some(r) = &self.run {
-            r.note_cut_by(table, rule);
+        if let Some(w) = self.width() {
+            w.note_cut_by(table, rule);
         }
     }
     pub fn note_rows(&self, table: &str, rows: usize) {
-        if let Some(r) = &self.run {
-            r.note_rows(table, rows);
+        if let Some(w) = self.width() {
+            w.note_rows(table, rows);
         }
     }
 }
@@ -426,10 +373,6 @@ pub fn with_rules(e: rusqlite::Error, rules: impl FnOnce(&str) -> Vec<String>) -
 mod tests {
     use super::*;
 
-    fn cutting(cap: usize) -> impl FnOnce() -> Settings {
-        move || Settings { cap, cut: true, ceiling: None }
-    }
-
     #[test]
     fn the_cap_reads_its_setting() {
         assert_eq!(parse_cap(None), DEFAULT_ROWS);
@@ -452,55 +395,19 @@ mod tests {
         assert_eq!(as_too_wide(&twice).unwrap().rules, ["r."], "a rule run by two lines is named once");
     }
 
-    /// Runs one after another and one inside another: each outermost run has a record of its own, and a nested run
-    /// shares the outer run's.
-    #[test]
-    fn each_run_has_its_own_record() {
-        let a = scope(cutting(10));
-        a.run().note_cut_by("x", "x(1).".into());
-        let nested = scope(|| unreachable!("a nested run takes the outer run's settings"));
-        assert_eq!(nested.run().cap(), 10);
-        nested.run().note_cut_by("y", "y(1).".into());
-        assert!(nested.finish().is_none(), "a nested run's record is the outer run's");
-        let record = a.finish().expect("the outermost run's record");
-        assert_eq!(record.cuts.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), ["x", "y"]);
-        assert!(record.incomplete().is_some_and(|m| m.contains("`x`") && m.contains("derived by x(1).")));
-        assert!(current().is_none(), "the run ended with its scope");
-        let b = scope(cutting(10));
-        assert!(b.finish().expect("a new run").cuts.is_empty(), "a later run starts with nothing cut");
-        assert!(!Limits::here().cutting(), "a walk with no run stops at the cap");
-    }
-
-    /// Runs on two threads at once keep apart.
-    #[test]
-    fn runs_on_two_threads_keep_apart() {
-        let (mine, theirs) = rerail_accel::exec::scoped(|s| {
-            let other = s.spawn(|| {
-                let run = scope(cutting(5));
-                run.run().note_cut_by("theirs", "t.".into());
-                run.finish().unwrap()
-            });
-            let run = scope(cutting(7));
-            run.run().note_cut_by("mine", "m.".into());
-            (run.finish().unwrap(), other.join().unwrap())
-        });
-        assert_eq!((mine.cap, mine.cuts.len(), mine.cuts[0].0.as_str()), (7, 1, "mine"));
-        assert_eq!((theirs.cap, theirs.cuts.len(), theirs.cuts[0].0.as_str()), (5, 1, "theirs"));
-    }
-
     /// The memory watch stops a run past its ceiling, naming the widest relations it held.
     #[test]
     fn the_memory_watch_stops_a_run_past_its_ceiling() {
         if crate::code_rule_dsl::logic::profile::watch::resident_bytes().is_none() {
             return;
         }
-        let run = scope(|| Settings { cap: DEFAULT_ROWS, cut: false, ceiling: Some(1) });
-        run.run().note_rows("big", 2 << 20);
+        let run = run::scope(|| Settings { cap: DEFAULT_ROWS, cut: false, ceiling: Some(1) });
+        run.run().width.note_rows("big", 2 << 20);
         let started = std::time::Instant::now();
-        while run.run().stopped().is_none() && started.elapsed() < std::time::Duration::from_secs(5) {
+        while run.run().width.stopped().is_none() && started.elapsed() < std::time::Duration::from_secs(5) {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        let why = run.run().stopped().expect("stopped within 5 s").to_owned();
+        let why = run.run().width.stopped().expect("stopped within 5 s").to_owned();
         assert!(why.contains("memory ceiling") && why.contains("`big`"), "{why}");
         assert!(Limits::here().check("t", 0).is_some(), "a walk stops once its run must");
     }

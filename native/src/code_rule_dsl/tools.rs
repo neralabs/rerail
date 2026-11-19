@@ -813,13 +813,12 @@ pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
 ///
-/// The command is one run for its limits (decision 0394): its settings are read as it starts, its runs share them and
-/// one record, and nothing of them outlives it. Beside the result: the message that it cut a relation, if it did.
+/// The command is one run (decisions 0394, 0441): its limits are read as it starts, its runs share them and one
+/// record, and nothing of them outlives it. Beside the result: the message that it cut a relation, if it did.
 pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> (Result<String, String>, Option<String>) {
-    use crate::code_rule_dsl::logic::native::width;
-    let limits = width::scope(width::Settings::from_env);
+    let own = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let out = command(args, kept);
-    let incomplete = limits.finish().and_then(|r| r.incomplete());
+    let incomplete = own.finish().and_then(|r| r.width.incomplete());
     (out, incomplete)
 }
 

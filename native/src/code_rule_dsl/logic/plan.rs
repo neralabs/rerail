@@ -5304,9 +5304,9 @@ pub struct Outcome {
     pub kept: BTreeSet<String>,
     /// The kept relations handed to the caller during the run (`run_atoms_native_handing`), no longer held.
     pub handed: BTreeSet<String>,
-    /// What the run met of its limits (decision 0394: relations cut at the width cap, the widest it held), where it
-    /// was the outermost run; a run nested in another leaves them to it.
-    pub limits: Option<super::native::width::Record>,
+    /// The run's own record (decision 0441: what it met of its limits, the trees it decoded), where it was the
+    /// outermost run; a run nested in another leaves it to that run.
+    pub run: Option<super::run::Record>,
     /// The relations recomputed in their readers (decision 0099): no table and no engine rows hold them.
     pub inlined: BTreeSet<String>,
     /// The maintained strata derived again by their input deltas' size (decision 0090 §4), chosen during the run.
@@ -9403,8 +9403,8 @@ impl<'a> Run<'a, '_> {
                 })?
             };
             // Decision 0394: a probe cut at the width cap, named by its rule in the order it ran.
-            if let Some(run) = super::native::width::current().filter(|r| r.any_cut()) {
-                run.name_cuts(&name, |line| {
+            if let Some(run) = super::run::current().filter(|r| r.width.any_cut()) {
+                run.width.name_cuts(&name, |line| {
                     let b = line_bodies.get(line)?;
                     let order = if line < nseeds { orders.get(line).map(|o| &o.1)? } else { probes.get(line - nseeds).map(|p| &p.2)? };
                     Some(format!("{} :- {}.", b.head_text(), b.shown(order).join(", ")))
@@ -11625,15 +11625,15 @@ pub fn stated_apart(prog: &mut Program) -> Vec<(String, String)> {
 /// Runs program `program`, its version (a whole image: decision 0173, t36 item 7 step 8), over `db`: `lowering` the
 /// lowering's domains where the program is lowered (decision 0009).
 pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Option<lower::Lowering<'_>>, hooks: Hooks<'_>) -> Result<Outcome> {
-    // The run's limits and record (decision 0394): the caller's run's if one is under way here, else this run's own,
-    // returned with its outcome.
-    let limits = super::native::width::scope(super::native::width::Settings::from_env);
+    // The run's own state (decision 0441): the caller's run's if one is under way here, else this run's own, returned
+    // with its outcome.
+    let own = super::run::scope(super::native::width::Settings::from_env);
     let mut outcome = run_within(program, db, inputs, lowering, hooks)?;
-    outcome.limits = limits.finish();
+    outcome.run = own.finish();
     Ok(outcome)
 }
 
-/// `run`, within the run's limits (`width::scope`).
+/// `run`, within the run's own state (`run::scope`).
 fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Option<lower::Lowering<'_>>, mut hooks: Hooks<'_>) -> Result<Outcome> {
     // A relation of rules and stated facts: its facts are a relation of facts alone, read by one rule, so the engine
     // holds them as it holds every relation, and no table is loaded with them in the run's waves (decision 0104).

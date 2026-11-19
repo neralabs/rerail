@@ -1414,6 +1414,23 @@ const INSIDE: u8 = 2;
 thread_local! {
     /// Public so that the run's context can carry it (`logic::run_state`, a crate above this one).
     pub static STAGE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    /// The run under way on this thread (decision 0441): its own state, `logic::run::Run`, made and carried by the
+    /// crate above (`logic::run`, `logic::run_state`), held here so that the crates below it (the program image) reach
+    /// it too.
+    pub static RUN: std::cell::RefCell<Option<std::sync::Arc<dyn RunOwn>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// What the crates below `logic` tell the run under way (`RUN`; decision 0441).
+pub trait RunOwn: Send + Sync {
+    /// A tree decoded from a program's version, at `at`.
+    fn decoded(&self, at: &'static std::panic::Location<'static>);
+    /// The run itself, for the crate that defines it.
+    fn any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync>;
+}
+
+/// The run under way on this thread (`RUN`), if any.
+pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
+    RUN.with(|r| r.borrow().clone())
 }
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
