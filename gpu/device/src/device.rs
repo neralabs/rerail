@@ -128,6 +128,11 @@ impl Device {
         }
     }
 
+    /// Whether its buffers have a kernels' address (`Buffer::device_address`): every backend's but OpenCL 1.2's.
+    pub fn has_addresses(&self) -> bool {
+        !matches!(self, Device::OpenCl(_))
+    }
+
     /// The most threads a threadgroup can have: 1,024 on Metal, CUDA and the CPU; an OpenCL device's own (256 on
     /// Apple's).
     pub fn max_threadgroup(&self) -> u32 {

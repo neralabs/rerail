@@ -96,11 +96,10 @@ pub struct Table {
 impl Slab {
     /// A slab of at least `bytes`, within the Metal budget.
     fn lease(id: u64, bytes: usize) -> Result<Slab, Error> {
-        // The device first: making it installs the one block policy (decision 0342), without which no block is a
-        // device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before anything else
-        // touched the device (the parser crate's tests) had every lease refused as over capacity.
-        crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-        let device = &rerail_device::shared::get().ok_or(Error::UnsupportedBackend)?.device;
+        // The device first, whatever its backend: making it installs the one block policy (decision 0342), without
+        // which no block is a device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before
+        // anything else touched the device (the parser crate's tests) had every lease refused as over capacity.
+        let device = crate::lane::device()?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
         let block = rerail_blocks::alloc::block(&need).map_err(|_| Error::BackendCapacity)?;
@@ -788,7 +787,7 @@ mod tests {
     /// that buffer, its rooms zeroed though it holds the last lease's bytes.
     #[test]
     fn an_evicted_slab_is_recycled_and_its_rooms_read_zero() {
-        if crate::METAL_DEVICE.is_none() {
+        if crate::lane::device().is_err() {
             return;
         }
         // The residency is the process's; other tests of this crate admit sources into it too.

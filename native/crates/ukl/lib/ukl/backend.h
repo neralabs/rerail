@@ -38,6 +38,9 @@
 #define UKL_COHERENT device coherent(device)
 #define UKL_LOCAL threadgroup
 #define UKL_PRIVATE thread
+// A table at file scope (`UKL_TABLE const uint32_t t[2]={1u,2u};`) and a pointer into one (`UKL_TABLE_SPACE const T*`).
+#define UKL_TABLE constant
+#define UKL_TABLE_SPACE constant
 
 UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return popcount(x); }
 UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return (uint32_t)popcount(x); }
@@ -108,6 +111,8 @@ UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { retur
 #define UKL_COHERENT volatile
 #define UKL_LOCAL
 #define UKL_PRIVATE
+#define UKL_TABLE __constant__
+#define UKL_TABLE_SPACE
 
 UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return __popc(x); }
 UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return __popcll(x); }
@@ -164,6 +169,8 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __reduce
 #define UKL_COHERENT volatile
 #define UKL_LOCAL
 #define UKL_PRIVATE
+#define UKL_TABLE static const
+#define UKL_TABLE_SPACE
 
 UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return (uint32_t)__builtin_popcount(x); }
 UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return (uint32_t)__builtin_popcountll(x); }
@@ -234,6 +241,8 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __at
 #define UKL_COHERENT volatile __global
 #define UKL_LOCAL __local
 #define UKL_PRIVATE
+#define UKL_TABLE __constant
+#define UKL_TABLE_SPACE __constant
 #define UKL_OVERLOAD __attribute__((overloadable))
 #define UKL_STATIC_ASSERT(c, m) _Static_assert(c, m)
 

@@ -894,16 +894,13 @@ static VIEW_PIECES: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(
         )
     })
 });
-/// The view as the pattern kernels read it: Metal's, until step D writes them in UKL (decision 0440).
-static TAPE_VIEWS: std::sync::LazyLock<[String; 2]> =
-    std::sync::LazyLock::new(|| VIEW_PIECES.clone().map(|pieces| format!("#include <metal_stdlib>\nusing namespace metal;\n{pieces}")));
-/// Whether a batch of tapes in `format` (0: mixed) reads 16z ([`TAPE_VIEWS`]).
+/// Whether a batch of tapes in `format` (0: mixed) reads 16z ([`VIEW_PIECES`]).
 fn reads_z(format: u32) -> bool {
     format != 15 && format != 16
 }
 /// The tape view for a batch of tapes in `format` (0: mixed).
 fn tape_view(format: u32) -> &'static str {
-    &TAPE_VIEWS[usize::from(reads_z(format))]
+    &VIEW_PIECES[usize::from(reads_z(format))]
 }
 /// The label kernels (UKL, decision 0440 step C) over the tape view, for a batch of either kind ([`tape_view`]).
 static SOURCES: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|| {
@@ -1058,8 +1055,7 @@ static PIPELINES: LazyLock<Mutex<HashMap<u32, Vec<LabelKernel>>>> = LazyLock::ne
 /// The clauses' pattern kernels, by source and tape format (until the residency's drop).
 static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<(String, u32), LabelKernel>>> = LazyLock::new(Default::default);
 
-/// A pattern kernel of a source over [`tape_view`] for a batch of tapes in `format` (0: mixed). Its source is
-/// Metal's until the generators write UKL (decision 0440 step D): on Metal the device layer takes it as written.
+/// A pattern kernel of a source over [`tape_view`] for a batch of tapes in `format` (0: mixed).
 fn pipeline_of(source: &str, name: &str, format: u32) -> Result<LabelKernel, Error> {
     lane::device()?;
     Ok(LabelKernel::of(&lane::kernel_fixed(source, name, Some(format))))
@@ -1155,7 +1151,7 @@ fn pattern_pipeline(patterns: &[&PackedPattern], first: usize, format: u32) -> R
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         source.hash(&mut hasher);
-        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{:016x}.metal", hasher.finish())), &source);
+        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{:016x}.uglykl", hasher.finish())), &source);
     }
     let mut cached = PATTERN_PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
     let key = (source, format);
@@ -1839,8 +1835,9 @@ fn tapes(
     let prefix_labels = rows.map_or(plan.labels, |(present, _)| present.len());
     // The labels, then the sweeps' round, failure and per group (by step) changes (`label_sweep`),
     // written in place with no host copy of the labels; then the scratch rows and tallies, each at
-    // 256 bytes (32 pairs), as a buffer offset is bound. (Grammar classes are the tapes' codes.)
-    let at = |pairs: usize| pairs.div_ceil(32) * 32;
+    // 4,096 bytes (512 pairs), as a buffer offset is bound: OpenCL binds a region at a multiple of
+    // its base alignment, 4,096 bytes (Metal's 256). (Grammar classes are the tapes' codes.)
+    let at = |pairs: usize| pairs.div_ceil(512) * 512;
     let scratch_pair = at(1 + (prefix_labels * words + 2 + 2 * plan.steps.len()).div_ceil(2));
     let counts_pair = at(scratch_pair + scratch_words.div_ceil(2));
     let prefix = at(counts_pair + count_words.max(1).div_ceil(2));
@@ -2766,7 +2763,7 @@ impl Runner<'_> {
                 group,
                 &[
                     (&docs, 0),
-                    (&labels, 8),
+                    (&labels, 0),
                     scratch,
                     (&flags, 0),
                     (&items, 0),
@@ -2788,7 +2785,7 @@ impl Runner<'_> {
         self.kernel(
             1,
             KERNELS[1],
-            &[(&labels, 8), scratch, (&flags, 0), (&settles, 0), counts],
+            &[(&labels, 0), scratch, (&flags, 0), (&settles, 0), counts],
             shape,
             target_count * self.words,
         );

@@ -417,6 +417,11 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
                     refused += 1;
                     eprintln!("  refused {policy}/{clause}: {error:?}");
                 }
+                (Ok(cpu), Ok(metal)) => {
+                    // Where they part: each side's count, and the first root that differs.
+                    let at = cpu.iter().zip(&metal).position(|(a, b)| a != b);
+                    differ.push(format!("{policy}/{clause}: cpu {} roots, metal {}, first differing at {at:?}: cpu {:?}, metal {:?}", cpu.len(), metal.len(), at.map(|i| &cpu[i]), at.map(|i| &metal[i])));
+                }
                 (cpu, metal) => differ.push(format!("{policy}/{clause}: cpu {:?}, metal {:?}", cpu.as_ref().err(), metal.as_ref().err())),
             }
         }

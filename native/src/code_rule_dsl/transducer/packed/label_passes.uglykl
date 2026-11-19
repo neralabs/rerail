@@ -64,7 +64,7 @@ DEFINE_KERNEL2(label_passes, label_sink,
 // Each of the level's targets takes its new bits: a complement's or a count's computed here (per
 // word), the others' from scratch. A change sets flags[1]; scratch is cleared.
 DEFINE_KERNEL2(label_passes, label_settle,
-               RWBUFFER, uint32_t, labels,  "[labels * shape.words]",
+               RWBUFFER, uint32_t, head,    "[2 + labels * shape.words]",
                RWBUFFER, uint32_t, scratch, "[rows * shape.words]",
                RWBUFFER, uint32_t, flags,   "[6]",
                ROBUFFER, Op,       ops,     "[shape.targetCount]",
@@ -72,13 +72,18 @@ DEFINE_KERNEL2(label_passes, label_settle,
                ARGS,     Shape,    shape,   ,
                GID0,     uint32_t, tid,     )
 {
-  if(ukl_atomic_load(&flags[2])!=0u)return;
+  // The labels after the prefix's head (bound whole: OpenCL binds a region at 4,096 bytes).
+  UKL_GLOBAL uint32_t* labels=head+2;
   // A round's last settle decides for the round before it, whose changes are all in: one that
   // changed nothing reached the fixpoint, so the rest of the group is skipped. Deciding a round
-  // late costs only a round that changes nothing.
+  // late costs only a round that changes nothing. The decision is the round's own value (`round + 1`):
+  // this settle's threads skip only for an earlier kernel's, not for their thread 0's, which can land
+  // before another group of this launch has started (on the CPU every time), leaving its scratch unzeroed.
+  uint32_t settled=ukl_atomic_load(&flags[2]),own=shape.round+1u;
+  if(settled!=0u&&!(shape.recursive!=0u&&shape.lastLevel!=0u&&settled==own))return;
   if(tid==0u&&shape.recursive!=0u&&shape.lastLevel!=0u&&shape.round>0u){
     uint32_t previous=4u+(shape.round-1u)%2u;
-    if(ukl_atomic_load(&flags[previous])==0u){ukl_atomic_store(&flags[2],1u);ukl_atomic_or((UKL_GLOBAL uint32_t*)&labels[-2],0x80000000u);}
+    if(ukl_atomic_load(&flags[previous])==0u){ukl_atomic_store(&flags[2],own);ukl_atomic_or(&head[0],0x80000000u);}
     ukl_atomic_store(&flags[previous],0u);
   }
   if(tid>=shape.targetCount*shape.words)return;
@@ -261,7 +266,7 @@ UKL_INLINE void micro_run(uint32_t FRAMES,UKL_GLOBAL const DocView* docs,UKL_GLO
       uint32_t i=round+lane;uint16_t owner=(uint16_t)(simd_root_lane(r,i __UKL_ARGS));
       uint32_t lo=ukl_sg_shuffle((uint32_t)(mask),owner __UKL_ARGS),hi=ukl_sg_shuffle((uint32_t)(mask>>32u),owner __UKL_ARGS),from=ukl_sg_shuffle(r.prefix,owner __UKL_ARGS);
       p=ukl_sg_shuffle(pass,owner __UKL_ARGS);f=ukl_sg_shuffle(file,owner __UKL_ARGS);uint32_t g=ukl_sg_shuffle(group,owner __UKL_ARGS);
-      round+=32u;
+      round+=UKL_SIMD_WIDTH;
       if(i>=r.total)continue;
       start=docs[f].node_base+g*ROOT_GROUP+mask_nth(lo,hi,i-from);depth0=0u;
     }else{
@@ -698,7 +703,7 @@ UKL_INLINE void label_group_run(uint32_t FRAMES,UKL_GLOBAL MicroFrame* stack,UKL
           uint32_t group=base+lane;
           uint64_t mask=group<groups?root_mask(chunk,own,items,pass.itemStart,file,group):0ul;
           SimdRoots r=simd_roots(mask,simdLane __UKL_ARGS);
-          for(uint32_t round=0u;round<r.total;round+=32u){
+          for(uint32_t round=0u;round<r.total;round+=UKL_SIMD_WIDTH){
             uint32_t i=round+simdLane;uint16_t owner=(uint16_t)(simd_root_lane(r,i __UKL_ARGS));
             uint32_t lo=ukl_sg_shuffle((uint32_t)(mask),owner __UKL_ARGS),hi=ukl_sg_shuffle((uint32_t)(mask>>32u),owner __UKL_ARGS),from=ukl_sg_shuffle(r.prefix,owner __UKL_ARGS),g=ukl_sg_shuffle(group,owner __UKL_ARGS);
             if(i>=r.total)continue;

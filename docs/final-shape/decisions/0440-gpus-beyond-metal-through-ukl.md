@@ -1099,6 +1099,32 @@ stands on:
 - The engine's Metal tests of the program backend, the semantic conformance, the label passes, the sweep, the
   resident interpreter, the slabs and the JIT pass on the M3 (181).
 
+**C: the pattern kernels, the slabs and their test on every backend (2026-11-19).**
+- **The pattern kernels are UKL** (`metal_label_patterns.rs`): the generator writes C, its functions taking a
+  pattern's bindings by pointer, its goal tables and text pool as `UKL_TABLE` arrays. It was step D's, and is moved
+  into C: every clause with a pattern or a fact runs it, so without it the label passes ran on the CPU for 23 of
+  the resident interpreter test's 122 clauses.
+- **`UKL_TABLE`, `UKL_TABLE_SPACE`** (UKL's `backend.h`): a table at file scope and a pointer into one: Metal's and
+  OpenCL's constant space, CUDA's `__constant__` (a pointer into it is generic), the CPU's `static const`.
+- **A slab is leased on the process's device** (`slabs::Slab::lease`), not Metal's: under `RERAIL_GPU=cpu` every
+  admission was refused as over capacity. The slabs' test of every format runs its kernel in UKL through the lane.
+- **A settle skips for an earlier kernel's decision, not its own launch's** (`label_settle`): a recursive group's
+  last settle has thread 0 decide that the round before reached the fixpoint, and every settle returned at once
+  when the flag was set. The flag landed while other threadgroups of the same launch had not started: never on
+  Metal's or OpenCL's GPU, every time on the CPU, which runs the groups in turn, so their scratch stayed unzeroed
+  and 10 of the 122 clauses lost roots there (a SIMD width of 1 changed nothing: not the lanes). The flag now holds
+  the deciding round plus one, and a settle of that round goes on.
+- **OpenCL 1.2's limits, kept in the kernels' interface:** a buffer region is bound only at a multiple of 4,096
+  bytes, so the prefix's parts are aligned to it and the labels are bound at 0, behind the two head words
+  (`label_settle`'s `head`, the pattern kernel's `head + 2`); `local` is a keyword there, so no parameter has
+  the name; and a buffer has no kernels' address (`Device::has_addresses`), so a 16z batch, whose cache each view
+  points at, is refused there, as the slabs' tests now check.
+- **A SIMD group's rounds step by `UKL_SIMD_WIDTH`**, not 32 (`micro_run`, `label_group_run`, the pattern kernel).
+- On Metal, the CPU and OpenCL, the 225 targeted tests pass except: the two reading pack data this checkout lacks
+  (`pyflakes/F601.py`); and, on the CPU and OpenCL, the block programs' test and the anchor scan's, both still
+  Metal (C's remaining files). On OpenCL two retained-grid tests take 115 and 151 s alone (Apple's OpenCL
+  compiler) and time out at 240 s in the full set.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
