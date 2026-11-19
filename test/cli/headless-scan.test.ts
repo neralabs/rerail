@@ -504,6 +504,8 @@ Call(n) :- kind(n, "call").
     expect(await evaluate()).toEqual(["plain.py"]);
     expect(source.sourceFailures()).toEqual([expect.objectContaining({ path: "src" })]);
     restoreTree();
+    expect(source.readDirectory("src")).toEqual([expect.objectContaining({ name: "nested.py" })]);
+    expect(source.sourceFailures()).toEqual([]);
     expect(await evaluate()).toEqual(["plain.py", "src/nested.py"]);
     expect(source.sourceFailures()).toEqual([]);
 
@@ -1109,6 +1111,67 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
         settleAnalysisScopeReleases(databasePath);
         expect(database.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get()).toBe(0);
       } finally { database.$client.close(); }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("applies a second language registry to a reused Git source", async () => {
+    const root = checkout(), home = root + "-home";
+    mkdirSync(home);
+    const engine = loadNativeBinding(), policy = join(home, "languages.rr");
+    writeFileSync(policy, '#include "source-language.rr"\n.policy "languages" revision 1\n.violation Language(at: span, l: symbol) "{l}"\nsource_language_request("a.py").\nLanguage(@place("a.py", 1), l) :- source_language("a.py", l).\n');
+    const open = () => new engine.GitRevisionSource(root, "HEAD", "languages");
+    let seq = 0;
+    const read = async (source: ReturnType<typeof open>, language: string) => {
+      source.setSourceLanguages(JSON.stringify({ names: {}, suffixes: { ".py": language } }));
+      const [result] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, join(home, "lang.sqlite"), join(home, String(++seq)), undefined, undefined, source));
+      return result.diagnostics.map((row: { message: string }) => row.message);
+    };
+    const view = open();
+    expect(await read(view, "python")).toEqual(["python"]);
+    expect(await read(view, "rust")).toEqual(["rust"]);
+    expect(await read(open(), "rust")).toEqual(["rust"]);
+  });
+
+  it("publishes each policy under the current owner when two runs share one source view", async () => {
+    const root = checkout(), home = root + "-home";
+    mkdirSync(home);
+    const engine = loadNativeBinding();
+    const source = new engine.GitRevisionSource(root, "HEAD", "reuse");
+    const store = join(home, "shared.sqlite");
+    const manifests = () => queryContentStore<{ scope: string; manifest_id: number }>(store,
+      "SELECT scope, manifest_id FROM analysis_scope_manifest ORDER BY manifest_id");
+    let prior: number[] = [];
+    for (const name of ["first", "second"]) {
+      const policy = join(home, name + ".rr");
+      writeFileSync(policy, `#include "git.rr"\n.policy "${name}" revision 1\n.violation Seen(at: span) "${name}"\nSeen(@place("git",1)) :- git_source_tree(_, _).\n`);
+      const run = new engine.AnalysisScopeRun(store, "reuse", false, name, 0);
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, join(home, name), run, undefined, source));
+      expect(report.diagnostics.map((row: { message: string }) => row.message)).toEqual([name]);
+      expect(run.finish(true)).toBeNull();
+      const rows = manifests();
+      expect(rows.map(row => row.scope)).toEqual(rows.map(() => "named:reuse"));
+      const ids = rows.map(row => row.manifest_id);
+      expect(ids).toEqual(expect.arrayContaining(prior));
+      expect(ids.length).toBeGreaterThan(prior.length);
+      prior = ids;
+    }
+  }, 30_000);
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("retries an unreadable store with real directory ownership", async () => {
+    const root = checkout(), home = root + "-home";
+    const databasePath = join(home, "rerail.sqlite"), store = join(home, "legacy.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+    try {
+      expect((await scan(root, { databasePath })).status).toBe("completed");
+      const script = `import { loadNativeBinding } from "./src/engine/native/native.ts";
+        try { console.log(loadNativeBinding().existingDirectoryAnalysisOwnership(...process.argv.slice(2))); }
+        catch { console.log("unavailable"); }`;
+      const read = () => execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", store, root, analysisScopeHome(databasePath)], { input: script, encoding: "utf8" }).trim();
+      expect(read()).toBe("true");
+      chmodSync(store, 0);
+      try { expect(read()).toBe("unavailable"); }
+      finally { chmodSync(store, 0o600); }
+      expect(read()).toBe("true");
     } finally { vi.unstubAllEnvs(); }
   });
 

@@ -366,8 +366,8 @@ fn source_checks(root: &Path, paths: &[String]) -> super::Result<SourceChecks> {
     Ok((checked, failures))
 }
 
-pub(super) fn check_source_digests(root: &Path, store: &Path, paths: &[String]) -> Result<std::collections::HashMap<String, crate::content_store::HashKey>, snapshot::InventoryError> {
-    let _store = super::ThreadStore::enter(store);
+pub(super) fn check_source_digests(root: &Path, store: &Path, paths: &[String], owner: Option<&crate::content_store::analysis_scope::AnalysisOwner>) -> Result<std::collections::HashMap<String, crate::content_store::HashKey>, snapshot::InventoryError> {
+    let _store = super::ThreadStore::select(store, owner.map(|o| (root.to_owned(), o.clone())));
     let (checked, _) = source_checks(root, paths).map_err(|err| match err {
         super::Error::Cache(error) => snapshot::InventoryError::Cache(error),
         other => snapshot::InventoryError::Source(other.to_string()),
@@ -477,13 +477,13 @@ pub(super) fn prime_root(root: &Path) -> super::Result<()> {
 
 /// Materialize the placements from the source phase. Rust only adapts the rows to
 /// the snapshot store's inventory format.
-pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> Result<crate::git_workspace::snapshot::Inventory, crate::git_workspace::snapshot::InventoryError> {
+pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>, owner: Option<&crate::content_store::analysis_scope::AnalysisOwner>) -> Result<crate::git_workspace::snapshot::Inventory, crate::git_workspace::snapshot::InventoryError> {
     use crate::content_store::{GitTree, GitTreeEntry};
     use crate::git_workspace::{BaseFile, snapshot::{self, InventoryError}};
     use crate::code_rule_dsl::logic::plan::output::{Outputs, Value as Cell};
     use std::collections::BTreeMap;
 
-    let _store = store.map(super::ThreadStore::enter);
+    let _store = store.map(|store| super::ThreadStore::select(store, owner.map(|o| (root.to_owned(), o.clone()))));
     prime_root(root).map_err(|error| match error {
         super::Error::Cache(error) => InventoryError::Cache(error),
         other => InventoryError::Source(other.to_string()),

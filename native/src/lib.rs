@@ -376,16 +376,9 @@ impl napi::Task for ScanRrPolicies {
 
     fn compute(&mut self) -> Result<String> {
         let path = Path::new(&self.store);
-        let ownership = if let Some(snapshot) = &self.snapshot {
-            if let Some(owner) = &self.owner {
-                snapshot.set_analysis_owner(owner.clone());
-            }
-            None
-        } else {
-            self.owner.clone().map(|owner| (self.root.clone().into(), owner))
-        };
+        let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
+        let ownership = self.owner.clone().map(|owner| (root.to_owned(), owner));
         code_rule_dsl::logic::plan::corpus::with_tape_cache_path(path, ownership, || {
-            let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
             let options = serde_json::json!({ "sourcePaths": self.source_paths, "scanSpans": true, "reuse": path != Path::new(":memory:") });
             let policies = self.policies.take().unwrap_or_else(|| self.paths.iter().map(|path|
                 LoadedRrPolicy::read(path, self.policy_snapshot.as_deref()).map_err(|error| error.to_string())

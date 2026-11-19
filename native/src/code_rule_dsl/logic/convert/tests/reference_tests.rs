@@ -302,8 +302,7 @@ fn reference_edge_matches_the_eager_graph_after_git_cache_reuse() {
     let graph_at = |id: &str| {
         let snapshot = Snapshot::scoped(&repo, "HEAD", "links").unwrap();
         let mut analysis = AnalysisRun::begin(ContentStore::open(&store).unwrap(), "named:links", id).unwrap();
-        snapshot.set_analysis_owner(analysis.owner.clone());
-        let graph = with_tape_cache_path(&store, None, || ours_at(snapshot.root(), &root.path().join(id), setting));
+        let graph = with_tape_cache_path(&store, Some((snapshot.root().to_owned(), analysis.owner.clone())), || ours_at(snapshot.root(), &root.path().join(id), setting));
         analysis.finish(true).unwrap();
         graph
     };

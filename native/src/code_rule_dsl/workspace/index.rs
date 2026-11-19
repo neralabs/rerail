@@ -638,10 +638,11 @@ impl WorkspaceIndexTask {
             .store
             .local_check_results_by_key(&keys, catalog)
             .map_err(|error| invalid(error.to_string()))?;
+        let owner = self.lock()?.pending_analysis.as_ref().map(|(owner, _)| owner.clone());
         let checked_sources = repository.snapshot.as_ref().and_then(|snapshot| {
             let paths = prepared.iter().filter(|(_, _, _, _, key)| result_manifest.contains_key(key))
                 .map(|(file, _, _, _, _)| file.repository_path.clone()).collect::<Vec<_>>();
-            snapshot.checked_sources(storage.store.database_path(), &paths).ok()
+            snapshot.checked_sources(storage.store.database_path(), &paths, owner.as_ref()).ok()
         });
         // Discovery found these files clean at scan start, but a file may change after it, and a
         // checkout conversion keeps a file clean in Git while its bytes differ from the blob's

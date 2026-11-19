@@ -1017,7 +1017,6 @@ impl Task for WorkspaceStorageTask {
             };
             let deferred = self.snapshot.is_some() || self.analysis_owner.is_some();
             let owner = if let Some(owner) = self.analysis_owner.take() {
-                if let Some(snapshot) = &self.snapshot { snapshot.set_analysis_owner(owner.clone()); }
                 Some(owner)
             } else if self.store_path == Path::new(":memory:") {
                 None
@@ -1026,25 +1025,16 @@ impl Task for WorkspaceStorageTask {
                     Ok(store) => store,
                     Err(error) => return Ok(cache_failed(error)),
                 };
-                if let Some(snapshot) = &self.snapshot {
-                    if let Err(error) = snapshot.begin_analysis(&store) {
-                        return Ok(cache_failed(error));
-                    }
+                let scope = crate::git_workspace::snapshot::analysis_scope(Path::new(&self.root))
+                    .unwrap_or_else(|| analysis_scope::directory_in(Path::new(&self.root), self.analysis_home.as_deref()));
+                match store.begin_analysis_scope_at(&scope, self.analysis_generation) {
+                    Ok(owner) => Some(owner),
+                    Err(error) => return Ok(cache_failed(error)),
                 }
-                Some(match crate::git_workspace::snapshot::analysis_owner(Path::new(&self.root)) {
-                    Some(owner) => owner,
-                    None => match store.begin_analysis_scope_at(
-                        &analysis_scope::directory_in(Path::new(&self.root), self.analysis_home.as_deref()),
-                        self.analysis_generation,
-                    ) {
-                        Ok(owner) => owner,
-                        Err(error) => return Ok(cache_failed(error)),
-                    },
-                })
             };
             let discovered = if let Some(snapshot) = &self.snapshot {
                 use crate::git_workspace::snapshot::InventoryError;
-                match snapshot.workspace(&self.store_path) {
+                match snapshot.workspace(&self.store_path, owner.as_ref()) {
                     Ok(discovered) => Ok(discovered),
                     Err(InventoryError::Source(error)) => Err(crate::git_workspace::DiscoveryError::Failed(error)),
                     Err(InventoryError::Cache(error)) => return Ok(cache_failed(error)),

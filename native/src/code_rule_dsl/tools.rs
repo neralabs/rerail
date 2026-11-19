@@ -312,7 +312,6 @@ impl RevisionRun {
             let scope = analysis_scope::named(scope).expect("validated when opening snapshot");
             match ContentStore::open(&path).and_then(|store| AnalysisRun::begin(store, &scope, &id)) {
                 Ok(run) => {
-                    invocation.snapshot.set_analysis_owner(run.owner.clone());
                     invocation.analysis = Some(run);
                 }
                 Err(error) => invocation.warning = Some(error.to_string()),
@@ -324,7 +323,12 @@ impl RevisionRun {
     fn evaluate<T>(&mut self, run: impl Fn(&Path) -> Result<T, ProgramRunError>) -> Result<T, String> {
         let root = self.snapshot.root();
         if self.warning.is_none() {
-            match run(root) {
+            let result = match self.analysis.as_ref() {
+                Some(analysis) => super::logic::plan::corpus::with_tape_cache_path(
+                    analysis.store_path(), Some((root.to_owned(), analysis.owner.clone())), || run(root)),
+                None => run(root),
+            };
+            match result {
                 Ok(report) => return Ok(report),
                 Err(ProgramRunError::Cache(error)) if self.analysis.is_some() => {
                     self.warning = Some(error.to_string());

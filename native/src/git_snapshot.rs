@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::HashKey;
+use crate::content_store::analysis_scope::AnalysisOwner;
 use gix::bstr::ByteSlice;
 
 #[path = "git_ignore_coverage.rs"]
@@ -30,12 +31,17 @@ struct View {
     commit: Option<gix::ObjectId>,
     cache_root: PathBuf,
     scope: Option<String>,
-    owner: OnceLock<crate::content_store::analysis_scope::AnalysisOwner>,
-    inventory: Mutex<Option<(u64, Arc<Inventory>)>>,
+    inventory: Mutex<InventoryState>,
     observed_trees: Mutex<std::collections::HashMap<gix::ObjectId, ObservedTree>>,
     source_errors: Mutex<std::collections::BTreeMap<String, String>>,
-    paths: Mutex<Option<Vec<PathBuf>>>,
-    host_languages: OnceLock<SourceLanguages>,
+}
+
+#[derive(Debug, Default)]
+struct InventoryState {
+    generation: u64,
+    saved: Option<(u64, Arc<Inventory>)>,
+    paths: Option<Vec<PathBuf>>,
+    host_languages: Option<SourceLanguages>,
 }
 
 #[derive(Debug)]
@@ -132,9 +138,9 @@ impl From<&str> for InventoryError {
     }
 }
 
-type InventoryReader = fn(&Path, Option<&Path>) -> Result<Inventory, InventoryError>;
+type InventoryReader = fn(&Path, Option<&Path>, Option<&AnalysisOwner>) -> Result<Inventory, InventoryError>;
 static READ_INVENTORY: OnceLock<InventoryReader> = OnceLock::new();
-type SourceChecker = fn(&Path, &Path, &[String]) -> Result<std::collections::HashMap<String, HashKey>, InventoryError>;
+type SourceChecker = fn(&Path, &Path, &[String], Option<&AnalysisOwner>) -> Result<std::collections::HashMap<String, HashKey>, InventoryError>;
 static CHECK_SOURCES: OnceLock<SourceChecker> = OnceLock::new();
 
 pub fn install_inventory_reader(reader: InventoryReader) {
@@ -273,10 +279,11 @@ impl View {
     }
 
     fn saved_inventory(&self) -> Option<(u64, Arc<Inventory>)> {
-        self.inventory.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.inventory.lock().unwrap_or_else(|e| e.into_inner()).saved.clone()
     }
 
-    fn inventory(&self, store: Option<&Path>) -> Result<Arc<Inventory>, InventoryError> {
+    fn inventory(&self, store: Option<&Path>, owner: Option<&AnalysisOwner>) -> Result<Arc<Inventory>, InventoryError> {
+        let generation = self.inventory.lock().unwrap_or_else(|e| e.into_inner()).generation;
         let (epoch, observed, saved) = self.with_repo(|_, storage, epoch| {
             let saved = self.saved_inventory().filter(|(saved_epoch, inventory)| {
                 *saved_epoch == epoch && inventory.tree_failures.is_empty() && storage.is_some_and(|storage| {
@@ -293,12 +300,16 @@ impl View {
             return Ok(value);
         }
         let read = READ_INVENTORY.get().ok_or("Git tree inventory reader is unavailable")?;
-        let value = Arc::new(read(&self.root, store)?);
+        let value = Arc::new(read(&self.root, store, owner)?);
         let state = self.current_repository().map_err(|error| error.to_string())?;
         if observed && state.epoch != epoch {
             return Err("Git object storage changed during inventory".into());
         }
-        *self.inventory.lock().unwrap_or_else(|e| e.into_inner()) = Some((epoch, Arc::clone(&value)));
+        let mut inventory = self.inventory.lock().unwrap_or_else(|e| e.into_inner());
+        if generation != inventory.generation {
+            return Err("Git source configuration changed during inventory".into());
+        }
+        inventory.saved = Some((epoch, Arc::clone(&value)));
         Ok(value)
     }
 
@@ -380,35 +391,34 @@ pub struct Snapshot {
 
 impl Snapshot {
     pub fn set_source_languages(&self, languages: SourceLanguages) {
-        let _ = self.view.host_languages.set(languages);
+        let mut state = self.view.inventory.lock().unwrap_or_else(|e| e.into_inner());
+        if state.host_languages.as_ref() != Some(&languages) {
+            state.host_languages = Some(languages);
+            state.generation += 1;
+            state.saved = None;
+        }
     }
 
     pub fn host_language(&self, path: &str) -> Option<Option<String>> {
-        self.view.host_languages.get()?;
-        Some(self.view.saved_inventory()?.1.languages.get(path).cloned())
+        let state = self.view.inventory.lock().unwrap_or_else(|e| e.into_inner());
+        state.host_languages.as_ref()?;
+        Some(state.saved.as_ref()?.1.languages.get(path).cloned())
     }
 
     pub fn uses_source_languages(&self, languages: &SourceLanguages) -> bool {
-        self.view.host_languages.get() == Some(languages)
+        self.view.inventory.lock().unwrap_or_else(|e| e.into_inner()).host_languages.as_ref() == Some(languages)
     }
 
     pub fn restrict_paths(&self, paths: Vec<String>) {
         let paths = paths.iter().map(|path| {
             Path::new(path).components().filter(|part| *part != Component::CurDir).collect()
         }).collect();
-        *self.view.paths.lock().unwrap_or_else(|err| err.into_inner()) = Some(paths);
-    }
-
-    pub fn begin_analysis(&self, store: &crate::content_store::ContentStore) -> crate::content_store::StoreResult<()> {
-        if let Some(scope) = &self.view.scope && self.view.owner.get().is_none() {
-            let owner = store.begin_analysis_scope(scope)?;
-            let _ = self.view.owner.set(owner);
+        let mut state = self.view.inventory.lock().unwrap_or_else(|e| e.into_inner());
+        if state.paths.as_ref() != Some(&paths) {
+            state.paths = Some(paths);
+            state.generation += 1;
+            state.saved = None;
         }
-        Ok(())
-    }
-
-    pub fn set_analysis_owner(&self, owner: crate::content_store::analysis_scope::AnalysisOwner) {
-        let _ = self.view.owner.set(owner);
     }
 
     pub fn root(&self) -> &Path {
@@ -428,29 +438,32 @@ impl Snapshot {
             path, message: "Git path has invalid UTF-8".to_owned(),
         });
         let tree_failures = self.view.saved_inventory().map_or_else(Vec::new, |(_, inventory)| {
-            inventory.tree_failures.iter().map(|failure| {
+            inventory.tree_failures.iter().filter_map(|failure| {
                 let path = Path::new(&failure.path).strip_prefix(&self.view.prefix)
                     .map_or_else(|_| failure.path.clone(), |path| path.to_string_lossy().into_owned());
-                SourceFailure { path, message: failure.message.clone() }
+                if matches!(self.directory_entries(&path), Ok(Some(_))) { return None; }
+                Some(SourceFailure { path, message: failure.message.clone() })
             }).collect()
         });
+        let paths = self.view.inventory.lock().unwrap_or_else(|e| e.into_inner()).paths.clone();
         let unreadable = self.view.source_errors.lock().unwrap_or_else(|e| e.into_inner());
-        invalid.chain(tree_failures).chain(unreadable.iter().map(|(path, message)| SourceFailure {
+        invalid.chain(tree_failures).chain(unreadable.iter().filter(|(path, _)| paths.as_ref().is_none_or(|selected|
+            selected.iter().any(|wanted| Path::new(path.as_str()).starts_with(wanted)))).map(|(path, message)| SourceFailure {
             path: path.clone(), message: message.clone(),
         })).collect()
     }
 
     /// Verify demanded source identities before a consumer restores saved results.
-    pub fn checked_sources(&self, store: &Path, paths: &[String]) -> Result<std::collections::HashMap<String, HashKey>, InventoryError> {
-        CHECK_SOURCES.get().ok_or("Git source checker is unavailable")?(self.root(), store, paths)
+    pub fn checked_sources(&self, store: &Path, paths: &[String], owner: Option<&AnalysisOwner>) -> Result<std::collections::HashMap<String, HashKey>, InventoryError> {
+        CHECK_SOURCES.get().ok_or("Git source checker is unavailable")?(self.root(), store, paths, owner)
     }
 
     pub fn commit(&self) -> Option<String> {
         self.view.commit.map(|id| id.to_string())
     }
 
-    pub fn workspace(self: &Arc<Self>, store: &Path) -> Result<super::GitWorkspace, InventoryError> {
-        let inventory = self.view.inventory(Some(store))?;
+    pub fn workspace(self: &Arc<Self>, store: &Path, owner: Option<&AnalysisOwner>) -> Result<super::GitWorkspace, InventoryError> {
+        let inventory = self.view.inventory(Some(store), owner)?;
         self.view.with_repo(|repo, _, _| {
             Ok(super::GitWorkspace {
                 snapshot: Some(Arc::clone(self)),
@@ -593,12 +606,9 @@ impl Snapshot {
             cache_root: git_dir.join("rerail-object-facts").join(&prefix),
             prefix,
             scope,
-            owner: OnceLock::new(),
             inventory: Mutex::default(),
             observed_trees: Mutex::default(),
             source_errors: Mutex::default(),
-            paths: Mutex::new(None),
-            host_languages: OnceLock::new(),
             repository: Mutex::new(RepositoryState { epoch: 0, repo: repo.into_sync(), storage }),
         });
         if !view.prefix.as_os_str().is_empty() {
@@ -658,14 +668,10 @@ pub fn analysis_scope(path: &Path) -> Option<String> {
     view(path)?.scope.clone()
 }
 
-pub fn analysis_owner(path: &Path) -> Option<crate::content_store::analysis_scope::AnalysisOwner> {
-    view(path)?.owner.get().cloned()
-}
-
 pub fn scan_files(root: &Path) -> Option<Result<Vec<(String, Option<String>)>, InventoryError>> {
     let v = view(root)?;
     let prefix = v.prefix.join(root.strip_prefix(&v.root).ok()?);
-    Some(v.inventory(None).map(|inventory|
+    Some(v.inventory(None, None).map(|inventory|
         inventory.files
             .iter()
             .filter_map(|file| {
@@ -777,13 +783,13 @@ pub fn inventory_filter(root: &Path) -> Result<InventoryFilter, String> {
     let coverage = ignore_coverage::IgnoreCoverage::new(
         rules.workspace.patterns.iter().flat_map(|list| &list.patterns).map(|entry| &entry.pattern),
     );
-    let paths = v.paths.lock().unwrap_or_else(|err| err.into_inner()).clone();
+    let paths = v.inventory.lock().unwrap_or_else(|err| err.into_inner()).paths.clone();
     Ok(InventoryFilter { rules, coverage, paths, prefix: v.prefix.clone() })
 }
 
 pub fn inventory_selection(root: &Path) -> Option<String> {
     let v = view(root)?;
-    let paths = v.paths.lock().unwrap_or_else(|err| err.into_inner());
+    let paths = v.inventory.lock().unwrap_or_else(|err| err.into_inner()).paths.clone();
     let ignores = match v.ignore_blob() {
         Ok(Some(id)) => v.with_repo(|repo, storage, _| {
             storage.and_then(|storage| storage.object(id)).filter(|_| repo.has_object(id))
@@ -796,11 +802,11 @@ pub fn inventory_selection(root: &Path) -> Option<String> {
         Ok(None) => String::new(),
         Err(_) => format!("unreadable:{}", v.tree),
     };
-    serde_json::to_string(&("ignore-v6", ignores, &v.prefix, &*paths)).ok()
+    serde_json::to_string(&("ignore-v6", ignores, &v.prefix, &paths)).ok()
 }
 
 pub fn source_languages(root: &Path) -> Option<SourceLanguages> {
-    view(root)?.host_languages.get().cloned()
+    view(root)?.inventory.lock().unwrap_or_else(|e| e.into_inner()).host_languages.clone()
 }
 
 /// An immutable regular file's object identity. Directories, symlinks and gitlinks give no blob.

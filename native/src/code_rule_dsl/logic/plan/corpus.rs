@@ -2049,7 +2049,7 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
 pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, set: Option<[u8; 32]>, relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let owner = crate::git_workspace::snapshot::analysis_owner(root).or_else(|| ThreadStore::owner(root));
+    let owner = ThreadStore::owner(root);
     let scope = owner.as_ref().map(|owner| owner.scope.clone())
         .or_else(|| crate::git_workspace::snapshot::analysis_scope(root))
         .or_else(|| (!phase0::active()).then(|| crate::content_store::analysis_scope::directory(root)));
@@ -2332,10 +2332,6 @@ struct StoreSelection {
 struct ThreadStore(Option<StoreSelection>);
 
 impl ThreadStore {
-    fn enter(path: &Path) -> Self {
-        Self::select(path, None)
-    }
-
     fn select(path: &Path, ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>) -> Self {
         let path = (path != Path::new(":memory:")).then(|| path.to_owned());
         Self(THREAD_STORE.with(|store| store.replace(Some(StoreSelection { path, ownership }))))
@@ -9564,7 +9560,7 @@ fn run_observed(
         }
         if let Err(error) = outcome {
             let warning = error.to_string();
-            let owner = crate::git_workspace::snapshot::analysis_owner(root).or_else(|| ThreadStore::owner(root));
+            let owner = ThreadStore::owner(root);
             if !owner.is_some_and(|owner| owner.warn(warning.clone())) {
                 return Err(Error::Plan(warning));
             }
