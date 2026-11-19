@@ -499,6 +499,37 @@ pub fn array_rows(out: &mut String, at: usize, p: &ArrayProgram) {
 /// What a run's `call`s ask of their functions: function `f` (`ArrayProgram::funs`) of one
 /// element's arguments and the call's `env` arrays, its results pushed to `out` (each `fields`
 /// values).
+/// One unit's elements of a call in a batch of units (`UnitCalls`): its index, its operands
+/// (a length-1 operand broadcast), its elements, its environment.
+pub struct UnitCall<'a> {
+    pub unit: usize,
+    pub args: Vec<&'a [i64]>,
+    pub w: usize,
+    pub env: Vec<&'a [i64]>,
+}
+
+/// The calls of a batch of units at once: each unit's elements' results (each element's rows),
+/// or its refusal. A host that answers every unit's elements together (one device batch for all
+/// of them) implements it; `Each` answers each unit by its own `Calls`.
+pub trait UnitCalls {
+    fn call_units(&mut self, f: u16, fun: &Fun, units: &[UnitCall<'_>]) -> Vec<Result<Vec<Vec<i64>>, &'static str>>;
+}
+
+/// Each unit's calls by its own host (`Calls::call_many`), unit by unit.
+pub struct Each<'a>(pub Vec<&'a mut dyn Calls>);
+
+impl UnitCalls for Each<'_> {
+    fn call_units(&mut self, f: u16, fun: &Fun, units: &[UnitCall<'_>]) -> Vec<Result<Vec<Vec<i64>>, &'static str>> {
+        units
+            .iter()
+            .map(|c| {
+                let mut out = Vec::with_capacity(c.w);
+                self.0[c.unit].call_many(f, fun, &c.args, c.w, &c.env, &mut out).map(|()| out)
+            })
+            .collect()
+    }
+}
+
 pub trait Calls {
     fn call(&mut self, f: u16, fun: &Fun, args: &[i64], env: &[&[i64]], out: &mut Vec<i64>) -> Result<(), &'static str>;
 

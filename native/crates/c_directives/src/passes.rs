@@ -23,7 +23,7 @@ use rerail_c_pp::Config;
 use rerail_c_pp::files::Files;
 use rerail_c_pp::stream::parallel::host::{Unit, code, ev, tok};
 use rerail_c_pp::stream::parallel::{Outcome, Stats};
-use rerail_compiler::array::{ArrayOp, ArrayProgram, Calls, Combine, Fun, MapOp, Place};
+use rerail_compiler::array::{ArrayOp, ArrayProgram, Calls, Combine, Fun, MapOp, Place, UnitCall, UnitCalls};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -1084,6 +1084,84 @@ struct Host<'u, 'a> {
     words: Option<&'u mut words::Words>,
 }
 
+/// A batch's hosts, answering every unit's elements of a call together: an arm's tests and an
+/// invocation's expansions on the words, every unit's readings a wave at a time in one batch
+/// (`words::tests_across`, `expands_across`); every other call by the unit's own host.
+struct Hosts<'h, 'u, 'a>(&'h mut [Host<'u, 'a>]);
+
+impl UnitCalls for Hosts<'_, '_, '_> {
+    fn call_units(&mut self, f: u16, fun: &Fun, units: &[UnitCall<'_>]) -> Vec<Result<Vec<Vec<i64>>, &'static str>> {
+        if !matches!(f, F_TEST | F_EXPAND) || !units.iter().all(|c| self.0[c.unit].words.is_some()) {
+            return units
+                .iter()
+                .map(|c| {
+                    let mut out = Vec::with_capacity(c.w);
+                    self.0[c.unit].call_many(f, fun, &c.args, c.w, &c.env, &mut out).map(|()| out)
+                })
+                .collect();
+        }
+        let a = |c: &UnitCall, k: usize, j: usize| if c.args[k].len() == 1 { c.args[k][0] } else { c.args[k][j] };
+        // The units called, in order (each once): their words, tables and positional tables.
+        let mut called = units.iter().map(|c| c.unit).peekable();
+        let mut picked: Vec<&mut Host> = Vec::with_capacity(units.len());
+        for (u, h) in self.0.iter_mut().enumerate() {
+            if called.peek() == Some(&u) {
+                called.next();
+                picked.push(h);
+            }
+        }
+        assert_eq!(picked.len(), units.len(), "a call's units in order, each once");
+        let mut shares: Vec<words::Share> = picked.iter_mut().zip(units).map(|(h, c)| words::Share { words: h.words.as_deref_mut().unwrap(), unit: &mut *h.unit, keys: c.env[0], vals: c.env[1] }).collect();
+        if f == F_TEST {
+            let arms: Vec<Vec<(i64, i64, i64)>> = units.iter().map(|c| (0..c.w).map(|j| (a(c, 0, j), a(c, 1, j), a(c, 2, j))).collect()).collect();
+            let refs: Vec<&[(i64, i64, i64)]> = arms.iter().map(Vec::as_slice).collect();
+            return words::tests_across(&mut shares, &refs)
+                .into_iter()
+                .map(|vs| {
+                    Ok(vs
+                        .into_iter()
+                        .map(|(v, r, l)| {
+                            let mut rows = vec![0, i64::from(v), r];
+                            for (s, d) in l {
+                                rows.extend([1, s, d]);
+                            }
+                            rows
+                        })
+                        .collect())
+                })
+                .collect();
+        }
+        let calls: Vec<Vec<[i64; 6]>> = units.iter().map(|c| (0..c.w).map(|j| std::array::from_fn(|k| a(c, k, j))).collect()).collect();
+        let refs: Vec<&[[i64; 6]]> = calls.iter().map(Vec::as_slice).collect();
+        let rs = words::expands_across(&mut shares, &refs);
+        drop(shares);
+        rs.into_iter()
+            .zip(picked)
+            .map(|(es, h)| {
+                Ok(es
+                    .into_iter()
+                    .map(|(r, t)| {
+                        let mut rows = Vec::with_capacity(2 * t.len() + 2);
+                        match r {
+                            Ok(counted) => {
+                                for x in t {
+                                    rows.extend([x, 0]);
+                                }
+                                rows.extend([counted, 1]);
+                            }
+                            Err(r) => {
+                                h.refused = h.refused.max(r);
+                                rows.extend([0, 1]);
+                            }
+                        }
+                        rows
+                    })
+                    .collect())
+            })
+            .collect()
+    }
+}
+
 impl Calls for Host<'_, '_> {
     fn call(&mut self, f: u16, _: &Fun, a: &[i64], env: &[&[i64]], out: &mut Vec<i64>) -> Result<(), &'static str> {
         let (keys, vals) = (env[0], env[1]);
@@ -1127,62 +1205,6 @@ impl Calls for Host<'_, '_> {
             _ => unreachable!("a function the programs declare"),
         }
         Ok(())
-    }
-
-    /// Tests and expansions on the words read together (`Words::test_many`, `expand_many`): a
-    /// wave of readings in one batch. Every other call one by one.
-    fn call_many(&mut self, f: u16, fun: &Fun, args: &[&[i64]], w: usize, env: &[&[i64]], out: &mut Vec<Vec<i64>>) -> Result<(), &'static str> {
-        let a = |k: usize, j: usize| if args[k].len() == 1 { args[k][0] } else { args[k][j] };
-        match (f, self.words.as_deref_mut()) {
-            (F_TEST, Some(words)) => {
-                let (keys, vals) = (env[0], env[1]);
-                let arms: Vec<(i64, i64, i64)> = (0..w).map(|j| (a(0, j), a(1, j), a(2, j))).collect();
-                let mut looked: Vec<Vec<(i64, i64)>> = vec![Vec::new(); w];
-                let vs = words.test_many(self.unit, &arms, keys, vals, &mut looked);
-                for ((v, r), l) in vs.into_iter().zip(looked) {
-                    let mut rows = vec![0, i64::from(v), r];
-                    for (s, d) in l {
-                        rows.extend([1, s, d]);
-                    }
-                    out.push(rows);
-                }
-                Ok(())
-            }
-            (F_EXPAND, Some(words)) => {
-                let (keys, vals) = (env[0], env[1]);
-                let calls: Vec<[i64; 6]> = (0..w).map(|j| std::array::from_fn(|k| a(k, j))).collect();
-                let mut toks: Vec<Vec<i64>> = vec![Vec::new(); w];
-                let rs = words.expand_many(self.unit, &calls, keys, vals, &mut toks);
-                for (r, t) in rs.into_iter().zip(toks) {
-                    let mut rows = Vec::with_capacity(2 * t.len() + 2);
-                    match r {
-                        Ok(counted) => {
-                            for h in t {
-                                rows.extend([h, 0]);
-                            }
-                            rows.extend([counted, 1]);
-                        }
-                        Err(r) => {
-                            self.refused = self.refused.max(r);
-                            rows.extend([0, 1]);
-                        }
-                    }
-                    out.push(rows);
-                }
-                Ok(())
-            }
-            _ => {
-                let mut one = Vec::with_capacity(args.len());
-                for j in 0..w {
-                    one.clear();
-                    one.extend((0..args.len()).map(|k| a(k, j)));
-                    let mut rows = Vec::new();
-                    self.call(f, fun, &one, env, &mut rows)?;
-                    out.push(rows);
-                }
-                Ok(())
-            }
-        }
     }
 }
 
@@ -1266,13 +1288,12 @@ impl Prog {
             Exec::Interpreter => inputs.iter().zip(hosts.iter_mut()).map(|(i, h)| self.p.values_at(i, &[], h).map(|v| self.p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect())).collect(),
             #[cfg(target_os = "macos")]
             Exec::Metal | Exec::MetalWords => {
-                let mut jobs: Vec<rerail_metal::array_program::Job> = inputs.iter().zip(hosts.iter_mut()).map(|(i, h)| rerail_metal::array_program::Job { inputs: i.clone(), params: Vec::new(), calls: h }).collect();
-                match rerail_metal::array_program::run_batch(&self.p, &mut jobs) {
+                let cols: Vec<rerail_metal::array_program::Columns> = inputs.iter().map(|i| rerail_metal::array_program::Columns { inputs: i.clone(), params: Vec::new() }).collect();
+                match rerail_metal::array_program::run_units(&self.p, &cols, &mut Hosts(hosts)) {
                     Ok((out, r)) => {
                         runner.device.add(&DeviceStats { runs: 1, gpu_seconds: r.gpu_seconds, dispatches: r.dispatches, syncs: r.syncs, calls: r.calls, syncs_by: r.syncs_by, peak_bytes: r.peak_bytes, by_kernel: r.by_kernel });
                         if std::env::var_os("RERAIL_PP_ORACLE").is_some() {
                             // Each unit's run against the interpreter's, output by output.
-                            drop(jobs);
                             for (u, (i, h)) in inputs.iter().zip(hosts.iter_mut()).enumerate() {
                                 let want = self.p.values_at(i, &[], h).map(|v| self.p.outputs.iter().map(|&o| v.arrays[usize::from(o)].clone()).collect::<Vec<_>>());
                                 match (&want, &out[u]) {

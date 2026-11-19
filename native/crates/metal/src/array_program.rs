@@ -31,7 +31,7 @@
 use crate::Error;
 use crate::pool::Block;
 use metal::{ComputePipelineState, MTLSize};
-use rerail_compiler::array::{ArrayOp, ArrayProgram, Calls, Combine, MAX_ROUNDS, MapOp};
+use rerail_compiler::array::{ArrayOp, ArrayProgram, Calls, Combine, Each, MAX_ROUNDS, MapOp, UnitCall, UnitCalls};
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
@@ -110,6 +110,12 @@ pub struct Job<'a> {
     pub inputs: Vec<&'a [i64]>,
     pub params: Vec<i64>,
     pub calls: &'a mut dyn Calls,
+}
+
+/// A unit's columns and parameters, its calls answered by the batch's `UnitCalls`.
+pub struct Columns<'a> {
+    pub inputs: Vec<&'a [i64]>,
+    pub params: Vec<i64>,
 }
 
 /// A unit's outputs, or its refusal: the operation and why.
@@ -449,25 +455,44 @@ pub fn run(p: &ArrayProgram, inputs: &[&[i64]], params: &[i64], calls: &mut dyn 
 /// `p` run on the device for each of `jobs` at once, in the same launches: each one's outcome,
 /// as `run` gives it alone.
 pub fn run_batch(p: &ArrayProgram, jobs: &mut [Job<'_>]) -> Result<(Vec<Outcome>, DeviceRun), Error> {
-    let shaped = |j: &Job| j.inputs.len() == usize::from(p.inputs) && j.params.len() == usize::from(p.params);
-    if jobs.is_empty() {
+    let (cols, mut calls) = split(jobs);
+    run_units(p, &cols, &mut calls)
+}
+
+/// A batch's columns, and its hosts as `Each`.
+fn split<'j>(jobs: &'j mut [Job<'_>]) -> (Vec<Columns<'j>>, Each<'j>) {
+    let mut cols = Vec::with_capacity(jobs.len());
+    let mut calls: Vec<&'j mut dyn Calls> = Vec::with_capacity(jobs.len());
+    for j in jobs.iter_mut() {
+        cols.push(Columns { inputs: j.inputs.clone(), params: j.params.clone() });
+        calls.push(&mut *j.calls);
+    }
+    (cols, Each(calls))
+}
+
+/// `run_batch` with every unit's calls answered by one host (`calls`), which may read all the
+/// units' elements of a call together.
+pub fn run_units(p: &ArrayProgram, units: &[Columns<'_>], calls: &mut dyn UnitCalls) -> Result<(Vec<Outcome>, DeviceRun), Error> {
+    let shaped = |j: &Columns| j.inputs.len() == usize::from(p.inputs) && j.params.len() == usize::from(p.params);
+    if units.is_empty() {
         return Ok((Vec::new(), DeviceRun::default()));
     }
-    if !jobs.iter().all(shaped) {
-        return Ok((jobs.iter().map(|j| if shaped(j) { Err((0, "a batch with a unit of another shape")) } else { Err((0, "the run's columns or parameters are not the program's")) }).collect(), DeviceRun::default()));
+    if !units.iter().all(shaped) {
+        return Ok((units.iter().map(|j| if shaped(j) { Err((0, "a batch with a unit of another shape")) } else { Err((0, "the run's columns or parameters are not the program's")) }).collect(), DeviceRun::default()));
     }
-    metal::objc::rc::autoreleasepool(|| run_in(p, jobs, None))
+    metal::objc::rc::autoreleasepool(|| run_in(p, units, calls, None))
 }
 
 /// Every value of a batch's run, each unit's (`None` where it was refused): a debugging aid,
 /// for the first operation whose value is not the interpreter's.
 pub fn values_batch(p: &ArrayProgram, jobs: &mut [Job<'_>]) -> Result<Vec<Vec<Option<Vec<i64>>>>, Error> {
     let mut all = Vec::new();
-    metal::objc::rc::autoreleasepool(|| run_in(p, jobs, Some(&mut all)))?;
+    let (cols, mut calls) = split(jobs);
+    metal::objc::rc::autoreleasepool(|| run_in(p, &cols, &mut calls, Some(&mut all)))?;
     Ok(all)
 }
 
-fn run_in(p: &ArrayProgram, jobs: &mut [Job<'_>], mut keep: Option<&mut Vec<Vec<Option<Vec<i64>>>>>) -> Result<(Vec<Outcome>, DeviceRun), Error> {
+fn run_in(p: &ArrayProgram, jobs: &[Columns<'_>], calls: &mut dyn UnitCalls, mut keep: Option<&mut Vec<Vec<Option<Vec<i64>>>>>) -> Result<(Vec<Outcome>, DeviceRun), Error> {
     let nb = jobs.len();
     let err = Rc::new(crate::pool::upload(&vec![u32::MAX; nb])?);
     let ones: Vec<i64> = (0..=nb as i64).collect();
@@ -496,9 +521,9 @@ fn run_in(p: &ArrayProgram, jobs: &mut [Job<'_>], mut keep: Option<&mut Vec<Vec<
     ends.sort_unstable_by_key(|e| e.0);
     let mut next_end = 0;
     for i in 0..n {
-        step(&mut g, p, i, &mut v, &mut parts, jobs, None)?;
+        step(&mut g, p, i, &mut v, &mut parts, jobs, calls, None)?;
         while next_end < ends.len() && ends[next_end].0 == i {
-            settle(&mut g, p, ends[next_end].1, &mut v, &mut parts, jobs)?;
+            settle(&mut g, p, ends[next_end].1, &mut v, &mut parts, jobs, calls)?;
             next_end += 1;
         }
         for k in 0..=i {
@@ -526,7 +551,7 @@ fn run_in(p: &ArrayProgram, jobs: &mut [Job<'_>], mut keep: Option<&mut Vec<Vec<
 
 /// A group's rounds, as the interpreter's `settle`: its span's dependents run again until each
 /// unit's carries are their nexts (a unit whose carries are already stays so).
-fn settle(g: &mut Gpu, p: &ArrayProgram, group: &[(u16, u16)], v: &mut [Option<Arr>], parts: &mut [Vec<Arr>], jobs: &mut [Job<'_>]) -> Result<(), Error> {
+fn settle(g: &mut Gpu, p: &ArrayProgram, group: &[(u16, u16)], v: &mut [Option<Arr>], parts: &mut [Vec<Arr>], jobs: &[Columns<'_>], calls: &mut dyn UnitCalls) -> Result<(), Error> {
     let lo = usize::from(group.iter().map(|q| q.0).min().unwrap());
     let hi = usize::from(group.iter().map(|q| q.1).max().unwrap());
     let mut moved = vec![false; hi + 1];
@@ -562,13 +587,13 @@ fn settle(g: &mut Gpu, p: &ArrayProgram, group: &[(u16, u16)], v: &mut [Option<A
         let nexts: Vec<(usize, Arr)> = group.iter().map(|&(c, x)| (usize::from(c), v[usize::from(x)].clone().unwrap())).collect();
         for i in (lo..=hi).filter(|&i| moved[i]) {
             let carried = nexts.iter().find(|q| q.0 == i).map(|q| q.1.clone());
-            step(g, p, i, v, parts, jobs, carried)?;
+            step(g, p, i, v, parts, jobs, calls, carried)?;
         }
     }
 }
 
 /// Operation `i` encoded for the batch (a carry's value `carried` after the first round).
-fn step(g: &mut Gpu, p: &ArrayProgram, i: usize, v: &mut [Option<Arr>], parts: &mut [Vec<Arr>], jobs: &mut [Job<'_>], carried: Option<Arr>) -> Result<(), Error> {
+fn step(g: &mut Gpu, p: &ArrayProgram, i: usize, v: &mut [Option<Arr>], parts: &mut [Vec<Arr>], jobs: &[Columns<'_>], calls: &mut dyn UnitCalls, carried: Option<Arr>) -> Result<(), Error> {
     let at = i as u32;
     let nb = g.nb;
     let a = |k: u16| -> Arr { v[usize::from(k)].clone().expect("an earlier value") };
@@ -748,7 +773,9 @@ fn step(g: &mut Gpu, p: &ArrayProgram, i: usize, v: &mut [Option<Arr>], parts: &
             let mut cols: Vec<Vec<i64>> = vec![Vec::new(); fields];
             let mut part_lens = vec![0usize; nb];
             let mut rows = Vec::new();
-            for (u, job) in jobs.iter_mut().enumerate() {
+            // Every live unit's elements, then one call for all: the host may read them together.
+            let mut asked: Vec<UnitCall> = Vec::new();
+            for u in 0..nb {
                 if g.dead[u].is_some() {
                     continue;
                 }
@@ -764,12 +791,16 @@ fn step(g: &mut Gpu, p: &ArrayProgram, i: usize, v: &mut [Option<Arr>], parts: &
                         continue;
                     }
                 };
+                asked.push(UnitCall { unit: u, args: xr, w, env: er });
+            }
+            let answers = if asked.is_empty() { Vec::new() } else { calls.call_units(*f, fun, &asked) };
+            debug_assert_eq!(answers.len(), asked.len());
+            for (c, answer) in asked.iter().zip(answers) {
+                let (u, w) = (c.unit, c.w);
                 rows.clear();
                 let mut mine = Vec::with_capacity(w);
-                // The unit's elements at once: its host may read them together.
-                let mut each: Vec<Vec<i64>> = Vec::with_capacity(w);
-                let mut refused = job.calls.call_many(*f, fun, &xr, w, &er, &mut each).err();
-                if refused.is_none() {
+                let mut refused = answer.as_ref().err().copied();
+                if let Ok(each) = answer {
                     for made in each {
                         if fields == 0 || made.len() % fields != 0 {
                             if fields == 0 && made.is_empty() {

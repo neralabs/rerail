@@ -211,35 +211,9 @@ impl Words {
         }
         self.stats.tests += 1;
         let item = Item { el: Owned::Test(kind, line.to_vec()), inst, pos, counter: 0 };
-        let r = self.read_many(unit, keys, vals, vec![item], std::slice::from_mut(looked)).pop().unwrap();
+        let (r, l) = read_across(&mut [Share { words: self, unit, keys, vals }], vec![vec![item]]).pop().unwrap().pop().unwrap();
+        looked.extend(l);
         test_value(unit, r)
-    }
-
-    /// Many arms' tests at once (`test`): each `(inst, dir, pos)`'s value and refusal code, its
-    /// looked pairs to its `looked`. Their readings run a wave at a time in one batch.
-    pub fn test_many(&mut self, unit: &mut Unit, arms: &[(i64, i64, i64)], keys: &[i64], vals: &[i64], looked: &mut [Vec<(i64, i64)>]) -> Vec<(bool, i64)> {
-        let t = std::time::Instant::now();
-        let mut out: Vec<Option<(bool, i64)>> = vec![None; arms.len()];
-        let mut items = Vec::new();
-        let mut at = Vec::new();
-        for (k, &(inst, dir, pos)) in arms.iter().enumerate() {
-            let (kind, line) = unit.directive(inst, dir);
-            if kind == Kind::Else {
-                out[k] = Some((true, 0));
-                continue;
-            }
-            self.stats.tests += 1;
-            items.push(Item { el: Owned::Test(kind, line.to_vec()), inst, pos, counter: 0 });
-            at.push(k);
-        }
-        let mut lk: Vec<Vec<(i64, i64)>> = at.iter().map(|_| Vec::new()).collect();
-        let rs = self.read_many(unit, keys, vals, items, &mut lk);
-        for ((k, r), l) in at.into_iter().zip(rs).zip(lk) {
-            out[k] = Some(test_value(unit, r));
-            looked[k].extend(l);
-        }
-        self.stats.call_us += t.elapsed().as_micros() as u64;
-        out.into_iter().map(Option::unwrap).collect()
     }
 
     /// The invocation of text tokens `first..=last` of instance `inst` (its stretch's last
@@ -258,9 +232,8 @@ impl Words {
         self.stats.expansions += 1;
         let (toks, after) = unit.text_toks(inst, first, last, stop);
         let (toks, after) = (toks.to_vec(), after.filter(|t| t.is(T::LParen)).copied());
-        let mut looked = [Vec::new()];
         let item = Item { el: Owned::Expand(toks, after), inst, pos, counter: counter as u32 };
-        let r = self.read_many(unit, keys, vals, vec![item], &mut looked).pop().unwrap();
+        let (r, _) = read_across(&mut [Share { words: self, unit, keys, vals }], vec![vec![item]]).pop().unwrap().pop().unwrap();
         self.expanded(unit, r, counter, out)
     }
 
@@ -274,93 +247,16 @@ impl Words {
         Ok(i64::from(r.counter) - counter)
     }
 
-    /// Many invocations at once (`expand`), each `(inst, first, last, stop, pos, counter)`:
-    /// each one's tokens' handles to its `out` and its count, made in their order.
-    pub fn expand_many(&mut self, unit: &mut Unit, calls: &[[i64; 6]], keys: &[i64], vals: &[i64], out: &mut [Vec<i64>]) -> Vec<Result<i64, i64>> {
-        let t = std::time::Instant::now();
-        let items: Vec<Item> = calls
-            .iter()
-            .map(|&[inst, first, last, stop, pos, counter]| {
-                self.stats.expansions += 1;
-                let (toks, after) = unit.text_toks(inst, first, last, stop);
-                let (toks, after) = (toks.to_vec(), after.filter(|t| t.is(T::LParen)).copied());
-                Item { el: Owned::Expand(toks, after), inst, pos, counter: counter as u32 }
-            })
-            .collect();
-        let mut looked: Vec<Vec<(i64, i64)>> = calls.iter().map(|_| Vec::new()).collect();
-        let rs = self.read_many(unit, keys, vals, items, &mut looked);
-        let r = rs.into_iter().zip(calls).zip(out.iter_mut()).map(|((r, c), o)| self.expanded(unit, r, c[5], o)).collect();
-        self.stats.call_us += t.elapsed().as_micros() as u64;
-        r
-    }
-
-    /// Elements read together: each one's file made, the wave of readings run in one batch
-    /// (`batch`, the device's lockstep batch, else one run each), and each element made again
-    /// while it asks for more. The asks are answered in the elements' order, as one by one.
-    fn read_many(&mut self, unit: &mut Unit, keys: &[i64], vals: &[i64], items: Vec<Item>, looked: &mut [Vec<(i64, i64)>]) -> Vec<Result<Reading, &'static str>> {
-        let mut ps: Vec<Pending> = items
-            .into_iter()
-            .map(|item| {
-                let (file, chain) = unit.instance(item.inst);
-                let chain = chain.to_vec();
-                debug_assert_eq!(chain.last(), Some(&file));
-                // The names of the element's own tokens start the closure.
-                let start: Vec<u32> = match &item.el {
-                    Owned::Test(_, line) => line.iter().filter(|t| t.kind == P::Ident).map(|t| t.sym).collect(),
-                    Owned::Expand(toks, _) => toks.iter().filter(|t| t.kind == P::Ident).map(|t| t.sym).collect(),
-                };
-                Pending { item, file, chain, start, given: HashMap::new(), defs: Vec::new(), extra: Vec::new(), named: Vec::new(), done: None }
-            })
-            .collect();
-        for reading in 0..READINGS {
-            let live: Vec<usize> = (0..ps.len()).filter(|&k| ps[k].done.is_none()).collect();
-            if live.is_empty() {
-                break;
-            }
-            let t0 = std::time::Instant::now();
-            let mut jds: Vec<(usize, JobData)> = Vec::with_capacity(live.len());
-            for &k in &live {
-                if reading > 0 {
-                    self.stats.again += 1;
-                }
-                match self.job(unit, keys, vals, &mut ps[k]) {
-                    Ok(jd) => jds.push((k, jd)),
-                    Err(why) => ps[k].done = Some(Err(why)),
-                }
-            }
-            // The wave's files, environments and bounds, then its runs.
-            let (program, run, batch) = (self.program, self.run, self.batch);
-            let features: Vec<(&[u8], &[u8], i64)> = self.features.iter().map(|(b, n, v)| (&b[..], &n[..], *v)).collect();
-            let files: Vec<Vec<File>> = jds.iter().map(|(k, jd)| files_of(jd, &ps[*k], unit, &self.lines)).collect();
-            let envs: Vec<Env> = jds.iter().map(|(_, jd)| Env { cpp: self.cpp, date: &self.date, time: &self.time, timestamp: &self.timestamp, features: &features, counter: jd.counter, asks: true }).collect();
-            let jobs: Vec<crate::expand::Job> = jds.iter().zip(&files).zip(&envs).map(|(((_, jd), f), e)| (program, &f[..], e, &jd.bounds)).collect();
-            let t1 = std::time::Instant::now();
-            let results: Vec<Result<Expanded, Refused>> = match batch {
-                Some(b) => {
-                    let (r, gpu, dispatches) = b(&jobs);
-                    self.stats.batches += 1;
-                    self.stats.dispatches += dispatches as u64;
-                    self.stats.gpu_us += (gpu * 1e6) as u64;
-                    r
-                }
-                None => jobs.iter().map(|&(w, f, e, b)| run(w, f, e, b)).collect(),
-            };
-            let t2 = std::time::Instant::now();
-            self.stats.make_us += (t1 - t0).as_micros() as u64;
-            self.stats.run_us += (t2 - t1).as_micros() as u64;
-            let spelled: Vec<Result<(Expanded, Vec<Vec<u8>>), &'static str>> = results.into_iter().zip(&files).map(|(r, f)| r.map(|e| { let sp = e.toks.iter().map(|t| e.text(f, t).to_vec()).collect(); (e, sp) }).map_err(|r| r.why)).collect();
-            drop(jobs);
-            drop(envs);
-            drop(files);
-            for ((k, jd), r) in jds.into_iter().zip(spelled) {
-                let p = &mut ps[k];
-                p.done = match r {
-                    Err(why) => Some(Err(why)),
-                    Ok((e, spell)) => self.after(unit, keys, vals, p, &jd, e, spell, &mut looked[k]),
-                };
-            }
-        }
-        ps.into_iter().map(|p| p.done.unwrap_or(Err("past an element's readings"))).collect()
+    /// An element to be read, its closure started from its own tokens' names.
+    fn pending(unit: &Unit, item: Item) -> Pending {
+        let (file, chain) = unit.instance(item.inst);
+        let chain = chain.to_vec();
+        debug_assert_eq!(chain.last(), Some(&file));
+        let start: Vec<u32> = match &item.el {
+            Owned::Test(_, line) => line.iter().filter(|t| t.kind == P::Ident).map(|t| t.sym).collect(),
+            Owned::Expand(toks, _) => toks.iter().filter(|t| t.kind == P::Ident).map(|t| t.sym).collect(),
+        };
+        Pending { item, file, chain, start, given: HashMap::new(), defs: Vec::new(), extra: Vec::new(), named: Vec::new(), done: None }
     }
 
     /// An element's next reading: its closure grown, its file's tokens, its files' numbering.
@@ -666,4 +562,184 @@ fn kind_of_const(w: &[u8]) -> u8 {
         b"\"x\"" => pp_words::LITERAL,
         _ => pp_words::IDENT,
     }
+}
+
+/// A unit's share of a read across units: its words, its tables, and its positional table.
+pub struct Share<'s, 'a> {
+    pub words: &'s mut Words,
+    pub unit: &'s mut Unit<'a>,
+    pub keys: &'s [i64],
+    pub vals: &'s [i64],
+}
+
+/// Arms' tests of many units at once, each unit's `(inst, dir, pos)`s (`Words::test`): each
+/// one's value, refusal code and looked pairs. Every unit's readings run a wave at a time in one
+/// batch (the first unit's `batch`, the device's lockstep batch).
+pub fn tests_across(us: &mut [Share<'_, '_>], arms: &[&[(i64, i64, i64)]]) -> Vec<Vec<(bool, i64, Vec<(i64, i64)>)>> {
+    let t = std::time::Instant::now();
+    let mut outs: Vec<Vec<Option<(bool, i64, Vec<(i64, i64)>)>>> = Vec::with_capacity(us.len());
+    let mut items: Vec<Vec<Item>> = Vec::with_capacity(us.len());
+    let mut ats: Vec<Vec<usize>> = Vec::with_capacity(us.len());
+    for (s, arms) in us.iter_mut().zip(arms) {
+        let mut out = vec![None; arms.len()];
+        let (mut its, mut at) = (Vec::new(), Vec::new());
+        for (k, &(inst, dir, pos)) in arms.iter().enumerate() {
+            let (kind, line) = s.unit.directive(inst, dir);
+            if kind == Kind::Else {
+                out[k] = Some((true, 0, Vec::new()));
+                continue;
+            }
+            s.words.stats.tests += 1;
+            its.push(Item { el: Owned::Test(kind, line.to_vec()), inst, pos, counter: 0 });
+            at.push(k);
+        }
+        outs.push(out);
+        items.push(its);
+        ats.push(at);
+    }
+    let rs = read_across(us, items);
+    for (((s, out), at), r) in us.iter_mut().zip(&mut outs).zip(ats).zip(rs) {
+        for (k, (r, l)) in at.into_iter().zip(r) {
+            let (v, code) = test_value(s.unit, r);
+            out[k] = Some((v, code, l));
+        }
+    }
+    if let Some(s) = us.first_mut() {
+        s.words.stats.call_us += t.elapsed().as_micros() as u64;
+    }
+    outs.into_iter().map(|o| o.into_iter().map(Option::unwrap).collect()).collect()
+}
+
+/// Invocations of many units at once, each unit's `(inst, first, last, stop, pos, counter)`s
+/// (`Words::expand`): each one's count, or its refusal code, and its tokens' handles, made in
+/// their order. The readings run as `tests_across`'s.
+pub fn expands_across(us: &mut [Share<'_, '_>], calls: &[&[[i64; 6]]]) -> Vec<Vec<(Result<i64, i64>, Vec<i64>)>> {
+    let t = std::time::Instant::now();
+    let items: Vec<Vec<Item>> = us
+        .iter_mut()
+        .zip(calls)
+        .map(|(s, calls)| {
+            calls
+                .iter()
+                .map(|&[inst, first, last, stop, pos, counter]| {
+                    s.words.stats.expansions += 1;
+                    let (toks, after) = s.unit.text_toks(inst, first, last, stop);
+                    let (toks, after) = (toks.to_vec(), after.filter(|t| t.is(T::LParen)).copied());
+                    Item { el: Owned::Expand(toks, after), inst, pos, counter: counter as u32 }
+                })
+                .collect()
+        })
+        .collect();
+    let rs = read_across(us, items);
+    let out = us
+        .iter_mut()
+        .zip(calls)
+        .zip(rs)
+        .map(|((s, calls), r)| {
+            r.into_iter()
+                .zip(calls.iter())
+                .map(|((r, _), c)| {
+                    let mut toks = Vec::new();
+                    let n = s.words.expanded(s.unit, r, c[5], &mut toks);
+                    (n, toks)
+                })
+                .collect()
+        })
+        .collect();
+    if let Some(s) = us.first_mut() {
+        s.words.stats.call_us += t.elapsed().as_micros() as u64;
+    }
+    out
+}
+
+/// Elements of many units read together: each one's file made, each wave of readings (every
+/// unit's) run in one batch (the first unit's `batch`, the device's lockstep batch, else one
+/// run each), and each element made again while it asks for more; each one's reading and its
+/// looked pairs. A unit's asks are answered in its elements' order, as one by one. A batch's
+/// counts and times go to the first unit's stats.
+fn read_across(us: &mut [Share<'_, '_>], items: Vec<Vec<Item>>) -> Vec<Vec<(Result<Reading, &'static str>, Vec<(i64, i64)>)>> {
+    let mut ps: Vec<Vec<Pending>> = us.iter().zip(items).map(|(s, its)| its.into_iter().map(|it| Words::pending(s.unit, it)).collect()).collect();
+    let mut looked: Vec<Vec<Vec<(i64, i64)>>> = ps.iter().map(|p| vec![Vec::new(); p.len()]).collect();
+    for reading in 0..READINGS {
+        let t0 = std::time::Instant::now();
+        // Each unit's wave: its elements still reading, each one's next job.
+        let mut jds: Vec<Vec<(usize, JobData)>> = Vec::with_capacity(us.len());
+        for (s, p) in us.iter_mut().zip(&mut ps) {
+            let mut mine = Vec::new();
+            for (k, q) in p.iter_mut().enumerate().filter(|q| q.1.done.is_none()) {
+                if reading > 0 {
+                    s.words.stats.again += 1;
+                }
+                match s.words.job(s.unit, s.keys, s.vals, q) {
+                    Ok(jd) => mine.push((k, jd)),
+                    Err(why) => q.done = Some(Err(why)),
+                }
+            }
+            jds.push(mine);
+        }
+        if jds.iter().all(Vec::is_empty) {
+            break;
+        }
+        // The wave's files, environments and bounds, every unit's, then its runs.
+        let view: &[Share] = us;
+        let features: Vec<Vec<(&[u8], &[u8], i64)>> = view.iter().map(|s| s.words.features.iter().map(|(b, n, v)| (&b[..], &n[..], *v)).collect()).collect();
+        let files: Vec<Vec<Vec<File>>> = view.iter().zip(&jds).zip(&ps).map(|((s, j), p)| j.iter().map(|(k, jd)| files_of(jd, &p[*k], s.unit, &s.words.lines)).collect()).collect();
+        let envs: Vec<Vec<Env>> = view
+            .iter()
+            .zip(&jds)
+            .zip(&features)
+            .map(|((s, j), f)| {
+                let w = &*s.words;
+                j.iter().map(|(_, jd)| Env { cpp: w.cpp, date: &w.date, time: &w.time, timestamp: &w.timestamp, features: f, counter: jd.counter, asks: true }).collect()
+            })
+            .collect();
+        let jobs: Vec<crate::expand::Job> = view
+            .iter()
+            .zip(&jds)
+            .zip(&files)
+            .zip(&envs)
+            .flat_map(|(((s, j), f), e)| j.iter().zip(f).zip(e).map(|(((_, jd), f), e)| (s.words.program, &f[..], e, &jd.bounds)))
+            .collect();
+        let (run, batch) = (view[0].words.run, view[0].words.batch);
+        let t1 = std::time::Instant::now();
+        let mut device = None;
+        let results: Vec<Result<Expanded, Refused>> = match batch {
+            Some(b) => {
+                let (r, gpu, dispatches) = b(&jobs);
+                device = Some((gpu, dispatches));
+                r
+            }
+            None => jobs.iter().map(|&(w, f, e, b)| run(w, f, e, b)).collect(),
+        };
+        let t2 = std::time::Instant::now();
+        let mut results = results.into_iter();
+        let spelled: Vec<Vec<Result<(Expanded, Vec<Vec<u8>>), &'static str>>> = files
+            .iter()
+            .map(|fs| fs.iter().map(|f| results.next().expect("a result a job").map(|e| { let sp = e.toks.iter().map(|t| e.text(f, t).to_vec()).collect(); (e, sp) }).map_err(|r| r.why)).collect())
+            .collect();
+        drop(jobs);
+        drop(envs);
+        drop(files);
+        drop(features);
+        {
+            let st = &mut us[0].words.stats;
+            st.make_us += (t1 - t0).as_micros() as u64;
+            st.run_us += (t2 - t1).as_micros() as u64;
+            if let Some((gpu, dispatches)) = device {
+                st.batches += 1;
+                st.dispatches += dispatches as u64;
+                st.gpu_us += (gpu * 1e6) as u64;
+            }
+        }
+        for (((s, p), j), (sp, lk)) in us.iter_mut().zip(&mut ps).zip(jds).zip(spelled.into_iter().zip(&mut looked)) {
+            for ((k, jd), r) in j.into_iter().zip(sp) {
+                let q = &mut p[k];
+                q.done = match r {
+                    Err(why) => Some(Err(why)),
+                    Ok((e, spell)) => s.words.after(s.unit, s.keys, s.vals, q, &jd, e, spell, &mut lk[k]),
+                };
+            }
+        }
+    }
+    ps.into_iter().zip(looked).map(|(p, l)| p.into_iter().zip(l).map(|(q, l)| (q.done.unwrap_or(Err("past an element's readings")), l)).collect()).collect()
 }
