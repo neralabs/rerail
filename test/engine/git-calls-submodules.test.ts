@@ -646,6 +646,24 @@ describe("Rerail's diffs answer as Git's own for each Git folder a submodule's `
     expect([answers.map(([answered]) => answered), inSub]).toEqual([[false, false], []]);
   }, 60_000);
 
+  it("one holding a submodule whose ignore rule Git refuses, which fails Git's own diff", async () => {
+    const root = await folder();
+    const leaf = await repository(root, "leaf", { "leaf.txt": "one\n" });
+    const middle = await repository(root, "middle", { "middle.txt": "one\n" });
+    git(middle, "submodule", "add", "--quiet", leaf, "leaf");
+    git(middle, "commit", "--quiet", "-m", "leaf");
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", middle, "sub");
+    git(work, "submodule", "update", "--quiet", "--init", "--recursive");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    git(join(work, "sub"), "config", "submodule.leaf.ignore", "sometimes");
+
+    const answers = [await rerail(work, AUDIT_DIFF), await rerail(work, SCAN_DIFF)];
+
+    expect(answers).toEqual([own(work, AUDIT_DIFF), own(work, SCAN_DIFF)]);
+    expect(answers.map(([answered]) => answered)).toEqual([false, false]);
+  }, 60_000);
+
   it("one of a submodule inside a submodule, whose config file is empty", async () => {
     const root = await folder();
     const leaf = await repository(root, "leaf", { "leaf.txt": "one\n" });
