@@ -1,16 +1,16 @@
 # Daemon: starting Git no longer stalls every hook on Linux
 
-For [pull request #756](https://github.com/neralabs/rerail/pull/756), head 6eb9fbf17. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #756](https://github.com/neralabs/rerail/pull/756), head f54b69860. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
 **Does any Git the daemon starts now answer, end or take a signal differently from one Node's `spawn` or `spawnSync` starts?**
 
-**We recommend:** approve it: every read answers as through Node in 9 repository states, every limit and kill ends Git as Node does; hooks beside 2,000 reads wait 150 to 230 ms, main's 0.4 to 6.5 s.
+**We recommend:** approve it: reads answer as through Node in 9 repository states, every limit and kill ends Git as Node does, and as sessions start a hook waits 188 to 192 ms, `main`'s 505 to 570.
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 2,259 lines in 11 files: 1,489 ship, 770 are tests and text | Fast. Fast lane: no high-risk path; the automated reviewer can approve. | Nothing. It stands alone on `main`; no pull request needs it. | 3 |
+| 2,265 lines in 12 files: 1,492 ship, 3 run in every test run, 770 are tests and text | Fast. Fast lane: no high-risk path; the automated reviewer can approve. | Nothing. It stands alone on `main`; no pull request needs it. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -31,7 +31,7 @@ Found on 14 November 2026 in CPU profiles of a daemon under a 10-minute load on 
 ## 3. Where to look
 
 1. **Read first**, 12 min: `run.rs`: `run`, `collect`, `end`, `read_ready` and `poll_until`. Does a blocking run end at its time and output limits exactly as `spawnSync` ends one?
-2. 30 min: `spawn.rs`, `git_start.rs`, `lib.rs`, `git-start.ts`, `git.ts`, `native.ts` and `daemon-entry.ts`: the start, the child readers get, the switch.
+2. 30 min: `spawn.rs`, `git_start.rs`, `lib.rs`, `git-start.ts`, `git.ts`, `native.ts`, `daemon-entry.ts` and `files.txt`: the start, the child readers get, the switch.
 
 **Then skim**, 6 min: `git-start.test.ts` compares each answer with Node's start, field by field, and reads facts, not times. The release note is one line.
 
@@ -45,13 +45,13 @@ Start with `run.rs`: the blocking run holds the daemon's thread, so its ends at 
 
 | Change | Check | It holds with this limit |
 |---|---|---|
-| Git start | CI at this head | CI's integration job and the change's 93 test files ran on Linux x64 at this head; GitHub's CI is the pull request's own run. |
+| Git start | CI at this head | At f54b69860 on Linux x64: CI's lint and type-check job, rustfmt, clippy and the engine's guard, `git_start` and path owner tests pass. CI's integration job and the 97 test files ran at 03ce43e59. GitHub's CI is the pull request's own run. |
 
 </details>
 
 ## 5. The changes
 
-**Git starts without copying the daemon**, medium risk: A Git read holds a 4.0 GB daemon 64.1 to 91.9 ms at `main` and 0.2 to 0.4 ms here.
+**Git starts without copying the daemon**, medium risk: Six sessions starting: a 2.0 GB daemon's hook waits 505 to 570 at `main`, 188 to 192 ms with it.
 
 <details><summary><b>6. The decisions</b></summary>
 
@@ -84,22 +84,23 @@ Before: Before 86208776f a blocking run through the engine sent SIGTERM at its l
 
 <details><summary><b>7. How it fits</b></summary>
 
-Nothing has to merge first: the head holds `main` with #621, whose asks of Rerail's Git now start through `git-start.ts` with the variables each sets. #813, #807 and the draft #508 each add lines where this does: one conflict a file, keep both. #816 and #812 gain none.
+Nothing has to merge first: f54b69860 holds `main` at 821eac82e, with #508's 0.2.0 engine, #807, #813 and #621; where both add lines, both are kept. Of open pull requests, #812 shares `native.ts` and #830 `lib.rs`: a trial merge adds no conflict with either, nor with `main` at 90075faa3.
 
-**Shared files and trial merges.** Trial merges with 6eb9fbf17 at the pull requests' heads of 19 November 2026. #813 (ours): 1 conflict in `native.ts`, both adding an optional engine function. #807: 1 in `daemon-entry.ts`'s imports, both changing one line. #508 (draft): 1 in `native.ts`. Keep both sides in each. #816 and #812 (ours) share `git.ts` or `native.ts` with no conflict this head adds.
+**Shared files and trial merges.** Trial merges (`git merge-tree`) with f54b69860 at the pull requests' heads of 19 November 2026. #812 (ours) shares `native.ts`: its four conflicts, none in `native.ts`, are with `main` alone. #830 shares `lib.rs`: no conflict. `main` at 90075faa3: no conflict, and none of its commits since 821eac82e edits a file of this change. In this head, #508 and #813 add entries beside this change's in `lib.rs`, `native.ts` and the rustfmt list, and #807's lines of `daemon-entry.ts` and this change's are kept whole.
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 3 not verified, 2 smaller gaps, 2 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 3 not verified, 3 smaller gaps, 2 limits that stay</summary>
 
 1. **macOS** never ran; the switch acts on Linux only and macOS keeps Node's start.
 2. **A daemon audit with a submodule past its limit** was not run through a daemon; the run's end was shown at `runGit` itself, with a Git alias that leaves a process holding the output.
-3. **A 10-minute load with many worktrees** was not run at this head.
+3. **A 10-minute load with many worktrees** was not run at f54b69860.
 
 **Smaller gaps**
 
 - **A start the engine refuses** goes through Node for that start only, with no line in `daemon.log`: shown with a refusing engine in a test.
 - **The time limit read before each look** has no case that fails when it is taken out: one socket always runs dry for a moment, and the run then ends at once either way.
+- **The blocking `runGit`'s default 10 s limit** has no case that fails when it is taken out, as at `main`; with the engine's `run_git`, no default would mean no limit.
 
 **Limits that stay**
 
