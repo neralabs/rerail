@@ -298,7 +298,7 @@ impl ContentStore {
         }))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
-    fn check_scope_store(&self, db: &rusqlite::Connection) -> StoreResult<()> {
+    pub(super) fn check_scope_store(&self, db: &rusqlite::Connection) -> StoreResult<()> {
         let actual: i64 = db.query_row_cached("SELECT id FROM store_identity WHERE singleton=1", [], |row| row.get(0))?;
         if actual != self.identity() {
             return Err(super::StoreError::Invalid(format!("analysis store identity changed at {}", self.database_path().display())));
@@ -458,7 +458,14 @@ impl ContentStore {
     pub fn open_for_collection(file: &Path, expected: &[i64]) -> StoreResult<Self> {
         let (db, identity) = existing_analysis_store(file, expected)?;
         let connection = super::connection::ThreadConnection::pinned(file.to_owned(), db, identity);
-        Ok(Self::with_connection(file.to_owned(), connection, super::atoms::Atoms::for_database(file, Some(identity)), None))
+        let store = Self::with_connection(file.to_owned(), connection, super::atoms::Atoms::for_database(file, Some(identity)), None);
+        #[cfg(not(target_family = "wasm"))]
+        let store = {
+            let mut store = store;
+            store.pin_collection_lock()?;
+            store
+        };
+        Ok(store)
     }
 
     pub fn delete_analysis_scope(&self, scope: &str) -> StoreResult<usize> {

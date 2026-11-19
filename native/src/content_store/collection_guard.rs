@@ -11,6 +11,7 @@ use std::fs::{File, OpenOptions};
 #[derive(Default)]
 pub(super) struct SharedLease {
     state: std::sync::Mutex<(Option<File>, usize)>,
+    original: Option<same_file::Handle>,
 }
 
 /// Closing the handle releases the lease, including when unwinding or exiting the process.
@@ -103,18 +104,37 @@ impl ContentStore {
     }
 
     #[cfg(not(target_family = "wasm"))]
+    pub(super) fn pin_collection_lock(&mut self) -> StoreResult<()> {
+        let file = self.collection_lock_file()?;
+        let original = same_file::Handle::from_file(file)?;
+        // A replacement between database verification and opening the lock cannot identify this store.
+        let db = rusqlite::Connection::open_with_flags(&self.database_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        self.check_scope_store(&db)?;
+        std::sync::Arc::get_mut(&mut self.lease).expect("a newly opened maintenance handle").original = Some(original);
+        // Check the same lock is still at the verified database's path.
+        self.collection_lock_file()?;
+        Ok(())
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     fn collection_lock_file(&self) -> StoreResult<File> {
         // Resolve aliases so separate handles and processes protect the same database.
         let mut path = std::fs::canonicalize(&self.database_path)?.into_os_string();
         path.push(".collection.lock");
         let mut options = OpenOptions::new();
-        options.read(true).write(true).create(true).truncate(false);
+        options.read(true).write(true).create(self.lease.original.is_none()).truncate(false);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        Ok(options.open(path)?)
+        let file = options.open(path)?;
+        if let Some(original) = &self.lease.original
+            && same_file::Handle::from_file(file.try_clone()?)? != *original
+        {
+            return Err(super::StoreError::Invalid(format!("analysis store collection lock changed at {}", self.database_path.display())));
+        }
+        Ok(file)
     }
 }
 

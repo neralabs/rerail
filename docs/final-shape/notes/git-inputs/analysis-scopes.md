@@ -187,6 +187,7 @@ The generation cutoff preserves a new watch that acquires the same path after th
 Directory registrations record the store's SQLite identity as well as its path.
 Maintenance also records the store identity. Collection checks the open database before it can change its schema or data.
 The collector uses that same connection for its work. A missing store remains eligible for the next maintenance pass.
+Maintenance also records which lock file belongs to the open store. If that file disappears or changes, collection defers until the original pair returns.
 After a scan or named release, a missing expected store produces a collection error.
 Registrations from older versions can contain only a path. The collector checks for an existing content-store schema at those paths.
 A numbered release opens an existing database and checks its identity on the connection that delivers the release.

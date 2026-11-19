@@ -4562,6 +4562,7 @@ dependencies = [
  "rerail-prof",
  "rerail-store",
  "rusqlite",
+ "same-file",
  "serde",
  "serde_json",
  "sha2 0.11.1",

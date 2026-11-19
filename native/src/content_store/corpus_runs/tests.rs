@@ -282,16 +282,30 @@ fn collection_keeps_the_database_it_verified_after_its_path_changes() {
     let mount = area.path().join("mounted");
     std::fs::create_dir(&mount).unwrap();
     let file = mount.join("store.sqlite");
-    let id = ContentStore::open(&file).unwrap().identity();
+    let reader = ContentStore::open(&file).unwrap();
+    let lease = reader.hold_collection().unwrap();
+    let id = reader.identity();
     let collector = ContentStore::open_for_collection(&file, &[id]).unwrap();
+    assert!(collector.try_collect().unwrap().is_none());
     std::fs::rename(&mount, area.path().join("original")).unwrap();
     std::fs::create_dir(&mount).unwrap();
     let other = rusqlite::Connection::open(&file).unwrap();
     other.execute("CREATE TABLE unrelated(value TEXT)", []).unwrap();
     let rows = collector.completed_analysis_runs().unwrap();
     assert!(rows.is_empty());
+    let sidecar = mount.join("store.sqlite.collection.lock");
+    assert!(collector.try_collect().is_err());
+    assert!(!sidecar.exists());
+    std::fs::write(&sidecar, []).unwrap();
+    assert!(matches!(collector.try_collect(), Err(crate::content_store::StoreError::Invalid(message)) if message.contains("collection lock changed")));
     assert!(ContentStore::open_for_collection(&file, &[]).is_err());
     assert_eq!(other.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    drop(other);
+    std::fs::rename(&mount, area.path().join("replacement")).unwrap();
+    std::fs::rename(area.path().join("original"), &mount).unwrap();
+    assert!(collector.try_collect().unwrap().is_none());
+    drop(lease);
+    assert!(collector.try_collect().unwrap().is_some());
 }
 
 #[test]
