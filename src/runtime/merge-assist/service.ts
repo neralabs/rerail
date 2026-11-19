@@ -31,7 +31,7 @@ import { createGithubClient, PULL_REQUEST_LIMIT, type GithubClient, type GithubR
 import { commandHandler, RunningCommands } from "./hook-command.js";
 import { currentNotice, forgetDelivered, markNotesDelivered, pendingNotes, type ConflictNoteOptions, type PendingNote } from "./notes.js";
 import { personName } from "./people.js";
-import { STATE_KEYS, deleteState, isoSeconds, readState, stateKeys, writeState, type StateQueries } from "./state.js";
+import { STATE_KEYS, deleteState, isoSeconds, readState, writeState, type StateQueries } from "./state.js";
 
 export const MERGE_ASSIST_ERROR_CODES = ["not-a-checkout", "not-found", "invalid-state", "disabled"] as const;
 export type MergeAssistErrorCode = (typeof MERGE_ASSIST_ERROR_CODES)[number];
@@ -168,13 +168,6 @@ const UNREAD_PULLS: Partial<Record<GithubReadiness["state"], string>> = {
 
 /** A checkout conflict events are fired in. */
 type FiredCheckout = Pick<CheckoutContext, "checkoutPath" | "repositoryKey">;
-
-/** A checkout's branch and base branch, as the conflict hook hears them. */
-type Branches = Pick<ConflictHandlerContext["checkout"], "branch" | "base">;
-
-/** The checkouts Rerail has recorded of the repository. */
-const checkoutPaths = (db: StateQueries, repositoryKey: string): string[] =>
-  db.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, repositoryKey)).all().map(({ path }) => path);
 
 /**
  * Runs `work` with the busy wait of `database`'s open connection off: a write fails at once (SQLITE_BUSY) while another
@@ -519,50 +512,36 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   /**
    * Clear what Merge Assist found in every checkout of the repository, dismissals included, which sessions were handed
    * those conflicts' notes (so one found again is told again), and its `gh` readiness; the person's settings stay.
-   * Returns each checkout's events to hand the hook, `closed` for each conflict that was open (`handedEvents`), with its
-   * `branches` read before the change. A checkout whose branches were not read (its conflicts were stored after that
-   * read) keeps its events for the next change there, as a change does while stopping.
+   * Returns each checkout's events to hand the hook: `closed` for each conflict that was open (`#handed`).
    */
-  #clearRepository(tx: StateQueries, repositoryKey: string, branches: ReadonlyMap<string, Branches>): Array<{ path: string; fires: ConflictFire[]; branches: Branches }> {
+  #clearRepository(tx: StateQueries, repositoryKey: string): Array<{ path: string; fires: ConflictFire[] }> {
     deleteState(tx, STATE_KEYS.github(repositoryKey));
-    const cleared = checkoutPaths(tx, repositoryKey).map(path => {
+    const cleared = tx.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, repositoryKey)).all().map(({ path }) => {
       const stored = readConflicts(tx, path);
       deleteState(tx, STATE_KEYS.scan(path));
       deleteState(tx, STATE_KEYS.conflicts(path));
       return { path, stored };
     });
     forgetDelivered(tx, new Set(cleared.flatMap(({ stored }) => stored.map(entry => entry.conflict.id))), this.#now());
-    return cleared.flatMap(({ path, stored }) => {
-      const read = branches.get(path);
-      const closed = stored.filter(entry => entry.conflict.status === "open").map(conflict => ({ event: "closed" as const, conflict }));
-      const fires = handedEvents(tx, { checkoutPath: path, before: stored, fires: closed, muted: this.#stopped || read === undefined, now: this.#now() });
-      return read === undefined ? [] : [{ path, fires, branches: read }];
-    });
-  }
-
-  /**
-   * The branches of each of the repository's checkouts that holds conflicts or kept events, read together before Merge
-   * Assist goes off there, so that nothing is awaited between taking a checkout's events and handing them.
-   */
-  async #branchesToClear(repositoryKey: string): Promise<Map<string, Branches>> {
-    const held = new Set([...stateKeys(this.#db, STATE_KEYS.conflicts("")), ...stateKeys(this.#db, STATE_KEYS.unheard(""))]);
-    const paths = checkoutPaths(this.#db, repositoryKey).filter(path => held.has(STATE_KEYS.conflicts(path)) || held.has(STATE_KEYS.unheard(path)));
-    return new Map(await Promise.all(paths.map(async path => [path, await this.#branches(path)] as const)));
+    return cleared.map(({ path, stored }) => ({
+      path, fires: this.#handed(tx, path, stored, stored.filter(entry => entry.conflict.status === "open").map(conflict => ({ event: "closed", conflict }))),
+    }));
   }
 
   async setEnabled(checkoutPath: string, enabled: boolean): Promise<MergeAssistStatus> {
     const checkout = await this.#checkout(checkoutPath, true);
     const { repositoryKey } = checkout;
-    // A stop lands before the change, which then keeps the events for the next change, or after they are handed.
-    const branches = enabled ? new Map<string, Branches>() : await this.#branchesToClear(repositoryKey);
     const cleared = this.#db.transaction(tx => {
       tx.update(repositories).set({ mergeAssist: enabled, updatedAt: this.#now() })
         .where(eq(repositories.repositoryKey, repositoryKey)).run();
-      return enabled ? [] : this.#clearRepository(tx, repositoryKey, branches);
+      return enabled ? [] : this.#clearRepository(tx, repositoryKey);
     }, { behavior: "immediate" });
     this.#pulls.delete(repositoryKey);
     // Every conflict open when Merge Assist went off is closed: the hook hears it once, as for one no longer found.
-    for (const { path, fires, branches: read } of cleared) this.#fire({ checkoutPath: path, repositoryKey }, fires, null, read);
+    for (const { path, fires } of cleared) {
+      if (fires.length === 0) continue;
+      this.#fire({ checkoutPath: path, repositoryKey }, fires, null, await this.#branches(path));
+    }
     return await this.status(checkout.checkoutPath);
   }
 

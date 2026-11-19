@@ -744,15 +744,15 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     expect({ closed: heard().filter(({ event }) => event === "closed").length, kept: kept() }).toEqual({ closed: 2 * PEERS, kept: [0, 0] });
   });
 
-  it("keeps for the next change there the `closed` of conflicts another pass stores in a checkout while turning Merge Assist off reads the branches of the others", async () => {
+  it("hands the `closed` of conflicts another pass stores in a checkout as Merge Assist is being turned off, as it hands those of the other checkouts", async () => {
     const ws = await workspace();
     const heard = await loggedHook(ws);
     await conflictsStored(ws);
     const other = addCheckout(ws, "other", "main");
     const service = ws.service();
-    // As another process's pass would, once the turn-off has chosen whose branches it reads.
+    // As another process's pass would, while the turn-off locates its checkout, before it changes the store.
     vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
-      if (commandLine(args).includes("symbolic-ref") && keptRows(ws, other) === 0 && readConflicts(ws.database, other).length === 0) {
+      if (commandLine(args).includes("--show-toplevel") && readConflicts(ws.database, ws.repo).length > 0 && readConflicts(ws.database, other).length === 0) {
         writeConflicts(ws.database, other, readConflicts(ws.database, ws.repo), Date.now());
       }
       return actualSpawn(...args);
@@ -765,13 +765,18 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     }
 
     expect({ closed: heard().filter(({ event }) => event === "closed").length, other: readConflicts(ws.database, other), kept: keptRows(ws, other) })
-      .toEqual({ closed: PEERS, other: [], kept: 1 });
+      .toEqual({ closed: 2 * PEERS, other: [], kept: 0 });
   });
 
-  it("reads the branches only of the checkouts it hands events in when Merge Assist is turned on or off", async () => {
+  it("reads the branches only of the checkouts it hands events in when Merge Assist is turned on or off, none of those passes scanned and found nothing in", async () => {
     const ws = await workspace();
+    await ws.service().setEnabled(ws.repo, true);
+    // Scanned before any peer is there: each pass finds nothing, and stores that it found nothing.
+    const idle = ["idle-1", "idle-2", "idle-3", "idle-4"].map(name => addCheckout(ws, name, "main"));
+    for (const checkout of idle) expect((await ws.service().scan(checkout)).conflicts).toEqual([]);
+    const found = ws.database.select().from(mergeAssistState).all().filter(({ key }) => idle.some(checkout => key === `conflicts:${checkout}`));
+    expect(found.map(({ valueJson }) => valueJson)).toEqual(times(idle.length, "[]"));
     await conflictsStored(ws);
-    const idle = addCheckout(ws, "idle", "main");
     const reads = { on: [] as string[], off: [] as string[] };
     let turn: "on" | "off" = "on";
     vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
@@ -779,15 +784,16 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
       return actualSpawn(...args);
     });
     try {
-      // Already on, asked from the checkout with nothing stored: no event to hand.
-      await ws.service().setEnabled(idle, true);
+      // Already on, asked from a checkout with nothing found: no event to hand.
+      await ws.service().setEnabled(idle[0] ?? "", true);
       turn = "off";
       await ws.service().setEnabled(ws.repo, false);
     } finally {
       vi.mocked(spawn).mockImplementation(actualSpawn);
     }
 
-    expect({ on: reads.on.filter(line => line.includes(ws.repo)), off: reads.off.filter(line => line.includes(idle)) }).toEqual({ on: [], off: [] });
+    const idleReads = reads.off.filter(line => idle.some(checkout => line.includes(checkout)));
+    expect({ on: reads.on.filter(line => line.includes(ws.repo)), off: idleReads }).toEqual({ on: [], off: [] });
   });
 
   it("resolves a stop with no wait whose release of a scan's mark meets another process's write lock without waiting for the lock, and leaves the mark to go stale, as when its process ends", async () => {
