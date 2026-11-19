@@ -5185,6 +5185,9 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Seen**: JavaScript's `const using = [1]; using.filter(x => x)` reads with errors at 24..25 and 31..31.
 - **Keep**: Tim's 7410a263b (#735's grammars, Patches 18 and 30), in the hub's vendored grammars (format 16).
 - **Done when**: `tape::tests::using_as_a_name_reads_without_an_error_on_the_products_path` passes, unignored.
+- **Waits on** (2026-11-18): main's #735 (39b59e9d7: the grammars' Patches 18 and 30, `language.rs`, the packs'
+  rules), which the hub has not merged. Tim's 7410a263b writes format 16's tables 2, 3 and 6 and the lean parser's
+  implied tokens again for those grammars, so it follows #735 into the hub with the main merge, not before.
 
 ### Q246. (PR #508, t47) The end of children meets implied tokens (RER-131)
 
@@ -5192,6 +5195,11 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Keep**: Tim's 65ff68df5 and the vendored ast-grep-core half (its test needs `tokenless_matched`, ported with
   it); the rer-131 worktree's work on tapes of named nodes.
 - **Done when**: `ast_pattern_end_of_children_meets_implied_tokens` passes, unignored, and the vendored test is in.
+- **Done** (2026-11-18, branch `pr508-fixes-as-tests`): 83b741861 (the end-of-children goal carries the implied
+  word; an ellipsis before it leaves the candidate's trailing tokens) and 65ff68df5 (`Doc::implied_after`,
+  `TapeDoc` from `stored_gaps`, `Slotted::children`), the tape's calls given the hub's parent (`at(index, up)`). The
+  test passes on the M3, unignored, with the packed matcher's tests; the vendored crate's `may_match_ellipsis*` do not
+  run in the workspace (ast-grep-core is no member).
 
 ### Q247. (PR #508, t47) RUF013 finds nothing on the hub
 
@@ -5210,6 +5218,8 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - Windows, Linux and x86-64 (12 commits, t47's portability class) come last, with the Windows work.
 - Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f: `rules test` on a `.rr` file; ed1872a09: `--delete-data`)
   are ported into `test/cli/` with their fixes.
+- `compile_matcher_tests::ast_pattern_captures_are_pinned` and `ast_pattern_verdicts_reuse_their_bindings` read
+  `pyflakes/F601.py`, an upstream fixture the farm's checkout lacks, like the slice test's.
 
 ### Q249. The typing oracles' node products are unbounded at the hub tip
 

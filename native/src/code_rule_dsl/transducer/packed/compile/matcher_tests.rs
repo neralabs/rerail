@@ -1770,7 +1770,6 @@ fn presence_bitmap_census() {
 /// refuses `f(a, b)`, whose gap after `a` is `,`.
 /// PR #508's 65ff68df5 (t47).
 #[test]
-#[ignore = "PR #508 65ff68df5 not ported (RER-131): Q246"]
 fn ast_pattern_end_of_children_meets_implied_tokens() {
     use ast_grep_core::matcher::MatcherExt as _;
     let source = Arc::new("switch (x) { case 1: f(); break; }\nf(a);\nf(a, b);\n".to_owned());

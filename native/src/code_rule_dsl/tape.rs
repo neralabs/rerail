@@ -2790,6 +2790,12 @@ impl TapeDoc {
         })
     }
 
+    /// Whether the tokens the tape leaves out right after `parent`'s child `child` (its index among
+    /// the children) begin with `word` (`Doc::implied_after`, RER-131).
+    pub fn transducer_implied_after(&self, parent: u32, child: usize, word: &[&str]) -> bool {
+        self.implied_after(&self.root_node().at(parent, UNKNOWN), child, word) == Some(true)
+    }
+
     pub fn transducer_descendants(&self, node: u32) -> Range<u32> {
         read!("size");
         read_at!("tape size", node);
@@ -3266,6 +3272,18 @@ impl Doc for TapeDoc {
     fn get_node_text<'a>(&'a self, node: &Self::Node<'a>) -> Cow<'a, str> {
         Cow::Borrowed(&self.source[node.range()])
     }
+    /// The implied word the tape leaves out in the gap after `parent`'s child `child`
+    /// (`tokens::stored_gaps`: the word before the next named child, or after the last), RER-131.
+    fn implied_after<'a>(&'a self, parent: &TapeNode<'a>, child: usize, word: &[&str]) -> Option<bool> {
+        let grammar = tokens::TokenGrammar::of_dialect(self.grammar.lang)?;
+        // `stored_gaps` reads an ast-grep node: the parent's, rebuilt over a root of this document.
+        let root = ast_grep_core::AstGrep::doc(self.clone());
+        let parent = root.adopt(root.root().get_inner_node().at(parent.index, parent.up));
+        let (children, gaps) = tokens::stored_gaps(&grammar, &parent)?;
+        let next = (child + 1..children.len()).find(|&at| children[at].is_named() && !children[at].is_extra());
+        let gap = next.map_or(&gaps.end, |at| &gaps.before[at]);
+        Some(gap.len() >= word.len() && gap.iter().zip(word).all(|((text, _), token)| text == token))
+    }
 }
 
 
@@ -3303,18 +3321,13 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
     let root = tree.tree.root_node();
     let image = TapeImage::encode_tree_image(root, &grammar, source, None, &|| false)?;
     let filter = grammar.kinds.grammar().and_then(|language| tokens::TokenGrammar::of(lang, language));
-    let ellipsis = |node: TsNode<'_>| {
-        node.utf8_text(source.as_bytes()).ok().and_then(|text| lang.extract_meta_var(text)).is_some_and(|var| {
-            matches!(var, ast_grep_core::meta_var::MetaVariable::Multiple | ast_grep_core::meta_var::MetaVariable::MultiCapture(_))
-        })
-    };
     // In the encoder's preorder: a record per stored node.
-    let mut ends = Vec::new();
+    let mut ends: Vec<Option<Vec<String>>> = Vec::new();
     let mut single = Vec::new();
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         let at = ends.len();
-        ends.push(false);
+        ends.push(None);
         let stored = filter.as_deref().and_then(|filter| filter.stored_children(node));
         // `is_single_node` (ast-grep's `pattern.rs`) over tree-sitter's node, whose first child
         // the tape holds (the walk descends to it).
@@ -3332,9 +3345,16 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
             Some(stored) => children.iter().zip(stored).filter_map(|(child, &kept)| kept.then_some(*child)).collect(),
         };
         if let Some(stored) = &stored {
+            // The implied tokens after the last stored child: the pattern ends its children with
+            // them, as one goal (`PatternNode::children_end`), which an ellipsis before it leaves.
             let last = stored.iter().rposition(|&kept| kept);
-            let implied_after = stored[last.map_or(0, |last| last + 1)..].iter().any(|&kept| !kept);
-            ends[at] = implied_after && last.is_none_or(|last| !ellipsis(children[last]));
+            let word: Vec<String> = children.iter().zip(stored).skip(last.map_or(0, |last| last + 1))
+                .filter(|(_, kept)| !**kept)
+                .filter_map(|(child, _)| child.utf8_text(source.as_bytes()).ok().map(str::to_owned))
+                .collect();
+            if !word.is_empty() {
+                ends[at] = Some(word);
+            }
         }
         stack.extend(kept.into_iter().rev());
     }
@@ -3350,9 +3370,9 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
 /// What a pattern's tree-sitter nodes say that its tape leaves out, per record
 /// (`ast_grep_core::matcher::PatternShape`, `native/vendor/ast-grep-core-0.51.0/PATCHES.md`).
 pub struct PatternShape {
-    /// Whether the node ended in implied tokens after its last child (unless that child is an
-    /// ellipsis, which takes every candidate anyway): its pattern ends its children there.
-    pub(crate) ends: Vec<bool>,
+    /// The implied tokens' texts, in order, where the node ended in implied tokens after its last
+    /// child: its pattern ends its children there.
+    pub(crate) ends: Vec<Option<Vec<String>>>,
     /// Whether tree-sitter's node is single (`is_single_node`): one child, or one and a MISSING
     /// or empty one. A tape's node can have one child where tree-sitter's had tokens too.
     pub(crate) single: Vec<bool>,
