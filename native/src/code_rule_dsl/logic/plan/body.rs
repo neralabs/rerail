@@ -584,8 +584,11 @@ pub struct Group {
     pub olds: Vec<String>,
 }
 
-/// A stratum derived again: its relations, those its maintained form makes, its rules over the
-/// current inputs and its deltas against its old rows, the input deltas it reads and its old rows.
+/// A maintained stratum's other form (decision 0090 §4), derived again: its relations (one fixpoint when derived
+/// again), every relation its maintained form makes for it (its relations, their pieces `__del`, `__ins`, … and
+/// deltas), its rules over the current inputs and its deltas against its old rows, the input deltas it reads and its
+/// old rows (the sizes that choose). Both forms make its relations and their deltas (`r__minus`, `r__plus`), which are
+/// all that other strata read of it, so each stratum chooses alone; the run chooses once its input deltas are known.
 #[derive(Clone, Debug)]
 pub struct AgainRef {
     pub scc: Vec<RelId>,

@@ -1,4 +1,5 @@
-//! A version read as today's tree (`front::ast::Program`), by its handles: every caller not yet moved to ids reads this.
+//! A version's rules read as the lowering's intermediate rules (`front::ast::Rule`), by their handles: what the lowering
+//! reads back of the helpers it wrote (`rr::lower`'s `helpers_of`), until it reads them as handles.
 //! Each atom is made a `Name` once; lists are interned from scratch stacks, so a read allocates no list of its own.
 use super::handles::{AggRef, Lit, RuleRef, TermRef, Terms};
 use super::{AtomId, Cell, Version};

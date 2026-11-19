@@ -75,10 +75,10 @@ pub enum Shape {
 pub struct Projection {
     pub shape: Shape,
     pub reads: Option<BTreeSet<String>>,
-    /// The regexes the program runs over `source` or `src_line` spans (`front::Program::rx_spans`): their matches'
+    /// The regexes the program runs over `source` or `src_line` spans (`Field::RxSpans`): their matches'
     /// groups are spans, rows of `rx_span`.
     pub rx_spans: Vec<(crate::code_rule_dsl::logic::front::ast::SpanIn, String)>,
-    /// The AST patterns the program matches (`front::Program::ast_patterns`): rows of `ast_match`.
+    /// The AST patterns the program matches (`Field::AstPatterns`): rows of `ast_match`.
     pub ast_patterns: Vec<String>,
     /// Source/line spans whose complete text a rule reads, traced through copied relation columns.
     /// None is the unprojected test/export interface; AST subtree text keeps its independent bound.

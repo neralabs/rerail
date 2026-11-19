@@ -389,25 +389,48 @@ impl Writer<'_> {
 /// where it is (`Version`'s readers in `program_image::fields`), with no program decoded.
 #[derive(Clone, Copy)]
 pub enum Field<'a> {
+    /// Logically nullary relations encoded with one physical unit column.
     Nullary(&'a BTreeSet<String>),
+    /// `.decl r(…) inline`, `no_inline`, `magic`, `no_magic` (Soufflé's qualifiers, decision 0099): the program's own
+    /// choice of what a relation keeps, by relation, overriding the planner's (`plan::keeps`).
     Qualifiers(&'a BTreeMap<String, BTreeSet<String>>),
+    /// The columns declared `tape` (decision 0103 §3), by relation: stored as `sym`, checked before lowering
+    /// (`rr::tape_type`) and printed back as `tape`.
     Tapes(&'a BTreeMap<String, BTreeSet<usize>>),
+    /// Join shape directives (`.shape`, O-join-shape-directives), each on the rules of its relation and every form
+    /// made from them.
     Shapes(&'a [Shape]),
     Lattice(&'a BTreeMap<String, LatticeDecl>),
     Kindsets(&'a BTreeMap<String, Vec<String>>),
+    /// `.demand` relations, or `*` for every derived one.
     Demand(&'a [String]),
+    /// Set by `magic`: demanded relations computed in full, and why.
     DemandDropped(&'a [(String, String)]),
+    /// Set by `magic`: the extras its magic rules kept.
     MagicExtras(Option<usize>),
     MagicReport(Option<&'a Report>),
+    /// Gated negations (`magic::gate_negations`), by their `done_` relation, in the order they were made.
     Gates(&'a [(String, Gate)]),
+    /// `.policy { … }`: lint-rule documents, each without its matchers, which are the rules' `ast` atoms (`yaml`).
     Policies(&'a [serde_json::Value]),
+    /// `.rr` setting directives (`.mode block`, `.scope include "…"`, …), by name, as written (`logic::rr`).
     Settings(&'a [(String, String)]),
+    /// Relations the evaluator makes from their inputs' rows rather than from rules (`dfs_first`), by name. Each
+    /// has one rule over its inputs, which orders it after them; its rows are the native operator's.
     Natives(&'a BTreeMap<String, Native>),
     DocScopes(Option<&'a [(Vec<String>, Vec<String>)]>),
+    /// `.scope text`'s globs: a document matching one that has no grammar of the run (`.md`, `.rst`) is read as text
+    /// only, its `doc`, `source` and `src_line` and no tree, when a scope selects it. Every program's, in a combined
+    /// one.
     TextGlobs(&'a [String]),
     AstPatterns(&'a BTreeSet<String>),
     Answers(&'a BTreeMap<String, Vec<String>>),
+    /// The rules lowering made to ask for a node's attribute (decision 0174's `rr_node_text_req` …), by request
+    /// relation: for each of its rules, in order, the relations whose readers it serves. `Prune` keeps a request
+    /// rule only while one of them is reached, as a reader's request is kept with the reader (`manager::AskedByRule`).
     Asked(&'a BTreeMap<String, Vec<BTreeSet<String>>>),
+    /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
+    /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
     RxSpans(&'a BTreeSet<(SpanIn, String)>),
 }
 

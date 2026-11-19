@@ -283,7 +283,7 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
             None if !report.is_empty() && !given => (Vec::new(), Vec::new()),
             None => return Vec::new(),
         };
-        // The corpus reads only these documents (`front::Program::doc_scopes`): their facts are the policy's, as the
+        // The corpus reads only these documents (`Field::DocScopes`): their facts are the policy's, as the
         // scripts' discovery has them; the drop below still holds for a combined run that reads more.
         if !within.is_empty() || !out.is_empty() {
             self.prog.set_field(crate::code_rule_dsl::logic::program_facts::Field::DocScopes(Some(&[(within.clone(), out.clone())])));

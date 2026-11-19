@@ -62,7 +62,7 @@ pub use self::core::is_core;
 use std::collections::{BTreeMap, BTreeSet};
 
 use rerail_rr_syntax::syntax::{Code, Fix, Head, Item, Lit, Statement, Suppress, Term as STerm, quote};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, LatticeDecl, List, Literal, Native, Program, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, LatticeDecl, List, Literal, Native, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
 use crate::code_rule_dsl::logic::program_facts::Field;
@@ -430,7 +430,7 @@ fn scope_list(settings: &[(String, String)], form: &[&str]) -> Vec<String> {
     found
 }
 
-/// `.scope text "**/*.md", …`: documents read as text only (`front::Program::text_globs`).
+/// `.scope text "**/*.md", …`: documents read as text only (`Field::TextGlobs`).
 pub fn scope_text_globs(settings: &[(String, String)]) -> Vec<String> {
     scope_list(settings, &["text"])
 }
@@ -1700,11 +1700,6 @@ pub fn projection_at(rel: &str, first_head: Option<&str>) -> usize {
     usize::from(rel == "docof" && first_head == Some("kind"))
 }
 
-/// The relations a program's rules read (an aggregate's among them), with the arity each is read with.
-pub fn reads(prog: &Program) -> BTreeSet<(String, usize)> {
-    prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| (a.rel.to_string(), a.args.len())).collect()
-}
-
 /// The three-valued relations: those declared so, and every relation a rule of which reads one (`rules`: each rule's
 /// head and the relations its body's atoms read), to a fixed point.
 pub fn three_closure(declared: &BTreeSet<String>, rules: &[(&str, Vec<&str>)]) -> BTreeSet<String> {
@@ -1772,7 +1767,7 @@ pub struct SpanRule<'a> {
     pub body: Vec<SpanAtom<'a>>,
 }
 
-/// A program as `span_patterns` reads it, from the tree (`of_tree`) or a version.
+/// A program as `span_patterns` reads it, from a version.
 pub struct SpanProgram<'a> {
     pub rules: Vec<SpanRule<'a>>,
     /// Each declared relation's name and arity.
@@ -1780,24 +1775,6 @@ pub struct SpanProgram<'a> {
     pub inputs: Vec<&'a str>,
     pub natives: BTreeSet<&'a str>,
     pub outputs: Vec<&'a str>,
-}
-
-impl<'a> SpanProgram<'a> {
-    pub fn of_tree(prog: &'a Program) -> Self {
-        let term = |t: &'a Term| match t {
-            Term::Var(x) => SpanTerm::Var(x.as_str()),
-            Term::Str(s) => SpanTerm::Str(s.as_str()),
-            _ => SpanTerm::Other,
-        };
-        let atom = |a: &'a Atom| SpanAtom { rel: a.rel.as_str(), args: a.args.iter().map(term).collect(), neg: a.neg };
-        SpanProgram {
-            rules: prog.rules.iter().map(|r| SpanRule { head: atom(&r.head), body: r.body.iter().filter_map(Literal::atom).map(atom).collect() }).collect(),
-            decls: prog.decls.iter().map(|(r, c)| (r.as_str(), c.len())).collect(),
-            inputs: prog.inputs.iter().map(String::as_str).collect(),
-            natives: prog.natives.keys().map(String::as_str).collect(),
-            outputs: prog.outputs.iter().map(String::as_str).collect(),
-        }
-    }
 }
 
 /// The column of a relation that names a grammar (`grammar_names`).
