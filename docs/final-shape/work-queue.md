@@ -5234,16 +5234,26 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 
 ### Q248. (PR #508, t47) Tests that wait on code or data
 
-- 7529228ce (`budget::matcher_calls`), 53361e039 (`clif_text::reachable_calls`) and 65ff68df5's vendored half need
-  functions the hub lacks: their tests go in with the ports.
-- `slice::tests::the_backends_find_the_same_keys_on_real_files` needs the Python pack's upstream fixtures, which are
-  not in Git; the farm's checkout has 1 file of the 4 it samples. Send them with the job (`--tree`) or restore them
-  (`pack-data` from 236fc98d2~1).
+Done (2026-11-19):
+- 7529228ce: ported (c6815a3af), its sibling-walk charge then made a parent's gaps once a walk outside a tape's
+  scope, n² on every path but label facts; the file's index keeps them (4c5e85057).
+- 53361e039: the hub fixed its four parser tests its own way; `reached_calls` reads a branch behind a source
+  location, with Tim's test (2c9ab87b9).
+- Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f, ed1872a09): ported with their fixes, `--delete-data` written for
+  the v6 store (5b19487fb).
+- Found on the way, fixed: the rule schema refused RER-131's `stored` note, skipping the JavaScript, Python and
+  TypeScript packs whole (f2cf3dc2a); five shipped rules' caught examples found nothing, gap tests not answering a
+  condition on an implied comma or a count of them (a3db5929d); vitest ran git with the person's config, so a
+  machine signing commits failed about 120 tests (4c5e85057). audit-cli's four failures are a debug addon's speed
+  (each scan's wait is 10 s): with an optimised addon all 13 pass.
+
+Open:
+- Pack test data. `slice::tests::the_backends_find_the_same_keys_on_real_files`,
+  `compile_matcher_tests::a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not`,
+  and 965 TypeScript tests (`packs.test.ts` checks 4 and 6 and its fixtures, `react-practice-rules`) read the packs'
+  upstream fixtures, which are not in Git and no checkout holds whole: `npm run fixtures:pull` (AWS CLI, signed in)
+  fetches them, then send them with the job (`--tree`).
 - Windows, Linux and x86-64 (12 commits, t47's portability class) come last, with the Windows work.
-- Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f: `rules test` on a `.rr` file; ed1872a09: `--delete-data`)
-  are ported into `test/cli/` with their fixes.
-- `compile_matcher_tests::ast_pattern_captures_are_pinned` and `ast_pattern_verdicts_reuse_their_bindings` read six
-  Ruff fixtures the farm's checkout lacks: restored from 236fc98d2~1 and sent with the job (`--tree`), both pass.
 
 ### Q249. The typing oracles' node products are unbounded at the hub tip
 
