@@ -961,10 +961,12 @@ impl LabelKernel {
 /// A walk's stack tiers are one kernel each (`label_micro`, `label_group`, `root_records`), their frames the dispatch's
 /// shape's (`Shape::frames`), not a template's: an Apple GPU's compiler compiled each tier's copy of the walk on its own,
 /// 8–10 s each for format 16 (work queue Q181).
-const KERNELS: [&str; 8] = ["label_sink", "label_settle", "label_round", "label_micro", "label_group", "root_records", "label_formula", "label_leaves"];
+const KERNELS: [&str; 9] = ["label_sink", "label_settle", "label_round", "label_micro", "label_group", "root_records", "label_formula", "label_leaves", "label_phase"];
 /// `label_formula` and `label_leaves` in `KERNELS` (decision 0365).
 const FORMULA_KERNEL: usize = 6;
 const LEAVES_KERNEL: usize = 7;
+/// `label_phase` (decision 0461): a level's formulas a thread a (word, formula), in phases.
+const PHASE_KERNEL: usize = 8;
 /// `RERAIL_GPU_ENCODER_TIMES=1` (a measurement switch): each compute encoder's own time on the GPU, from timestamps the
 /// GPU takes at its start and end inside its command buffer (stage-boundary counters), and the gaps between one
 /// encoder's end and the next one's start. `RERAIL_GPU_KERNEL_TIMES` times a command buffer a kernel, committed and
@@ -1120,6 +1122,137 @@ fn formula_width() -> u64 {
 
 /// `label_formula`'s threads a (file, formula).
 const FORMULA_WIDTH: u64 = 128;
+
+/// `RERAIL_FORMULA_PHASES=1` (decision 0461, a measure): the formulas `phase_program` takes run on `label_phase`.
+fn formula_phases() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_FORMULA_PHASES").is_ok_and(|v| v == "1"));
+    *ON
+}
+
+/// A formula compiled for `label_phase` (decision 0461): its instructions (`[code, dst, src, extra]`, the kernel's
+/// `PHASE_*`), its phases, the slot of its set, and its slots.
+#[derive(Debug, PartialEq)]
+struct PhaseProgram {
+    code: Vec<[u32; 4]>,
+    phases: u32,
+    result: u32,
+    slots: u32,
+}
+
+/// The kernel's instructions (`label_passes.uglykl`'s `PHASE_*`).
+const PHASE_END: u32 = 0;
+const PHASE_ROW: u32 = 1;
+const PHASE_AND: u32 = 2;
+const PHASE_OR: u32 = 3;
+const PHASE_ZERO: u32 = 4;
+const PHASE_UP: u32 = 5;
+const PHASE_DOWN: u32 = 6;
+
+/// `words` (a lowered formula, `label_formula`'s postfix) as `label_phase`'s program, where its steps are rows,
+/// AND, OR and the one-hop steps `CHILD`, `PARENT` and `CHILD_IN`; else `None`.
+///
+/// Every value has a slot. A one-hop step pushes from its inner set's members in each thread's own word into a fresh
+/// slot (cleared in phase 0), so its set is complete only in the next phase: a value is settled before a step reads
+/// it, which ends the phase where it was pushed in this one, and then takes `CHILD_IN`'s candidates (`cand`). A
+/// slot is used again only after the phase that freed it.
+fn phase_program(words: &[u32]) -> Option<PhaseProgram> {
+    use compile_sets::device_ops as op;
+    #[derive(Clone, Copy)]
+    struct Value {
+        slot: u32,
+        // Pushed in this phase (others' threads set its bits), and the candidates it is still to be cut to.
+        pushed: Option<u32>,
+        cand: Option<u32>,
+    }
+    struct Build {
+        code: Vec<[u32; 4]>,
+        zeros: Vec<u32>,
+        free: Vec<u32>,
+        pending: Vec<u32>,
+        slots: u32,
+        phase: u32,
+    }
+    impl Build {
+        fn take(&mut self) -> u32 {
+            self.free.pop().unwrap_or_else(|| self.fresh())
+        }
+        fn fresh(&mut self) -> u32 {
+            self.slots += 1;
+            self.slots - 1
+        }
+        fn end_phase(&mut self) {
+            self.code.push([PHASE_END, 0, 0, 0]);
+            self.phase += 1;
+            self.free.append(&mut self.pending);
+        }
+        /// `value` readable in this thread's word: its pushes done, cut to its candidates.
+        fn settle(&mut self, value: &mut Value) {
+            if value.pushed == Some(self.phase) {
+                self.end_phase();
+            }
+            value.pushed = None;
+            if let Some(cand) = value.cand.take() {
+                self.code.push([PHASE_AND, value.slot, cand, 0]);
+                self.pending.push(cand);
+            }
+        }
+    }
+    let mut b = Build { code: Vec::new(), zeros: Vec::new(), free: Vec::new(), pending: Vec::new(), slots: 0, phase: 0 };
+    let mut stack = Vec::<Value>::new();
+    for &word in words {
+        let (kind, arg) = (word & 255, word >> 8);
+        match kind {
+            op::ALL | op::CLASS | op::NONE | op::LEAF | op::TEXT => {
+                let slot = b.take();
+                b.code.push([PHASE_ROW, slot, word, 0]);
+                stack.push(Value { slot, pushed: None, cand: None });
+            }
+            op::AND | op::OR => {
+                let n = arg as usize;
+                if n == 0 || stack.len() < n {
+                    return None;
+                }
+                let mut operands = stack.split_off(stack.len() - n);
+                for value in &mut operands {
+                    b.settle(value);
+                }
+                let dst = operands[0].slot;
+                for other in &operands[1..] {
+                    b.code.push([if kind == op::AND { PHASE_AND } else { PHASE_OR }, dst, other.slot, 0]);
+                    b.pending.push(other.slot);
+                }
+                stack.push(Value { slot: dst, pushed: None, cand: None });
+            }
+            op::CHILD | op::PARENT | op::CHILD_IN => {
+                let mut inner = stack.pop()?;
+                let cand = if kind == op::CHILD_IN {
+                    let mut cand = stack.pop()?;
+                    b.settle(&mut cand);
+                    Some(cand.slot)
+                } else {
+                    None
+                };
+                b.settle(&mut inner);
+                // The phase 0 clears the fresh slots: a push comes after it.
+                if b.phase == 0 {
+                    b.end_phase();
+                }
+                let dst = b.fresh();
+                b.zeros.push(dst);
+                let step = if kind == op::PARENT { [PHASE_DOWN, dst, inner.slot, 0] } else { [PHASE_UP, dst, inner.slot, arg & 1] };
+                b.code.push(step);
+                b.pending.push(inner.slot);
+                stack.push(Value { slot: dst, pushed: Some(b.phase), cand });
+            }
+            _ => return None,
+        }
+    }
+    let [mut result] = stack[..] else { return None };
+    b.settle(&mut result);
+    let mut code = b.zeros.iter().map(|&slot| [PHASE_ZERO, slot, 0, 0]).collect::<Vec<_>>();
+    code.extend(b.code);
+    Some(PhaseProgram { code, phases: b.phase + 1, result: result.slot, slots: b.slots })
+}
 /// A file of at least this many words a thread of `FORMULA_WIDTH` gets a wide group (0459, `formula_classes`).
 const FORMULA_WIDE_WORDS_A_THREAD: usize = 4;
 
@@ -1503,6 +1636,8 @@ struct Runner<'a> {
     /// each level counted toward the segment as an upload, so two levels of formulas ended the command buffer
     /// (`SEGMENT_BYTES`; `the_wave_is_one_evaluation_on_metal`: 3 of them, 50 s against 0.9 s).
     formula_scratch: Option<MappedBuffer>,
+    /// `label_phase`'s slots (0461).
+    phase_scratch: Option<MappedBuffer>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
@@ -1887,6 +2022,7 @@ fn encode(
         run_leaves: Vec::new(),
         run_leaf_rows: None,
         formula_scratch: None,
+        phase_scratch: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
         group_stacks: [None, None, None, None, None],
         encoded: false,
@@ -2867,6 +3003,14 @@ impl Runner<'_> {
                 }
             }
         }
+        // The formulas that run as phases (0461, `RERAIL_FORMULA_PHASES=1`) first, the rest after them on `label_formula`.
+        let mut phased = unique.iter().map(|(words, ..)| if formula_phases() { phase_program(words) } else { None }).collect::<Vec<_>>();
+        let mut order = (0..unique.len()).collect::<Vec<_>>();
+        order.sort_by_key(|&index| phased[index].is_none());
+        let mut taken = unique.into_iter().map(Some).collect::<Vec<_>>();
+        let unique = order.iter().map(|&index| taken[index].take().expect("each formula once")).collect::<Vec<_>>();
+        let phased = order.iter().map(|&index| phased[index].take()).collect::<Vec<_>>();
+        let eligible = phased.iter().take_while(|program| program.is_some()).count();
         let mut headers = Vec::<u32>::new();
         let mut targets = Vec::<[u32; 3]>::new();
         let mut words = Vec::<u32>::new();
@@ -2920,7 +3064,10 @@ impl Runner<'_> {
         // encoder, concurrent: they read and write apart (a file's own scratch region; its rows' words by atomics).
         let narrow = formula_width().min(state.max_total_threads_per_threadgroup());
         let classes = formula_classes(self.files.iter().map(|file| file.transducer_len().div_ceil(32)), narrow, state.max_total_threads_per_threadgroup());
-        for first in (0..count).step_by(per) {
+        if eligible > 0 {
+            self.phase_dispatches(&phased[..eligible], region, &[&docs, &head, &headers, &words, rows], &leaves, &targets, &rules, texts)?;
+        }
+        for first in (eligible..count).step_by(per) {
             let formulas = per.min(count - first);
             let encoder = encoder_concurrent_of(&self.command, &mut self.encoder_times, KERNELS[FORMULA_KERNEL], classes.len() > 1);
             encoder.set_label(KERNELS[FORMULA_KERNEL]);
@@ -2967,6 +3114,63 @@ impl Runner<'_> {
             self.formula_stats.push(stats);
         }
         self.encoded = true;
+        Ok(())
+    }
+
+    /// `label_phase` (0461): `programs`' formulas (the first of the group's headers), a dispatch a phase, a thread a
+    /// (word of the region, formula). Their slots in a scratch of their own, as many formulas at once as it holds.
+    #[allow(clippy::too_many_arguments)]
+    fn phase_dispatches(&mut self, programs: &[Option<PhaseProgram>], region: usize, inputs: &[&Buffer; 5], leaves: &Buffer, targets: &Buffer, rules: &Buffer, texts: Option<&Buffer>) -> Result<(), Error> {
+        let slots = programs.iter().flatten().map(|program| program.slots).max().unwrap_or(1).max(1) as usize;
+        let at_once = (FORMULA_SCRATCH_BYTES / 4 / (slots * region)).clamp(1, programs.len());
+        if self.phase_scratch.as_ref().is_none_or(|scratch| (scratch.buffer.length() as usize) < 4 * slots * region * at_once) {
+            // Not an upload: one buffer for the run, at most `FORMULA_SCRATCH_BYTES`, as the formulas' is.
+            let grown = MappedBuffer::untouched::<u32>(self.device, slots * region * at_once)?;
+            if let Some(old) = self.phase_scratch.replace(grown) {
+                self.retained.push(old);
+            }
+        }
+        let scratch = self.phase_scratch.as_ref().expect("the phases' scratch").buffer.clone();
+        let LabelKernel { state, chunk, .. } = self.kernels[PHASE_KERNEL].clone();
+        crate::code_rule_dsl::prof::count("gpu.formula_phased", programs.len());
+        for first in (0..programs.len()).step_by(at_once) {
+            let own = &programs[first..(first + at_once).min(programs.len())];
+            // Each formula's header (its instructions' first word, their count, its result, its phases), then the
+            // instructions.
+            let mut program = vec![0_u32; 4 * own.len()];
+            for (index, compiled) in own.iter().flatten().enumerate() {
+                let at = program.len() as u32;
+                program.extend(compiled.code.iter().flatten());
+                program[4 * index..4 * index + 4].copy_from_slice(&[at, compiled.code.len() as u32, compiled.result, compiled.phases]);
+            }
+            let phases = own.iter().flatten().map(|program| program.phases).max().unwrap_or(1);
+            crate::code_rule_dsl::prof::count("gpu.formula_phases", phases as usize);
+            let program = self.upload(&program)?;
+            let encoder = encoder_of(&self.command, &mut self.encoder_times, KERNELS[PHASE_KERNEL]);
+            encoder.set_label(KERNELS[PHASE_KERNEL]);
+            encoder.set_compute_pipeline_state(&state);
+            for (index, buffer) in inputs.iter().enumerate() {
+                encoder.set_buffer(index as u64, Some(buffer), 0);
+            }
+            encoder.set_buffer(5, Some(&scratch), 0);
+            encoder.set_buffer(7, Some(leaves), 0);
+            encoder.set_buffer(8, Some(&program), 0);
+            encoder.set_buffer(9, Some(targets), 0);
+            encoder.set_buffer(10, Some(&self.tapes.supertypes.buffer), self.tapes.scratch_at);
+            encoder.set_buffer(11, Some(rules), 0);
+            encoder.set_buffer(12, Some(texts.unwrap_or(rules)), 0);
+            self.bind_slabs(encoder, chunk);
+            let width = 64.min(state.max_total_threads_per_threadgroup());
+            for round in 0..phases {
+                let shape = Shape { item_count: first as u32, target_count: own.len() as u32, round, recursive: region as u32, queue: (slots * region) as u32, ..self.shape() };
+                encoder.set_bytes(6, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
+                crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[PHASE_KERNEL]), 1);
+                encoder.checked_dispatch_threads(&self.command, MTLSize::new(region as u64, own.len() as u64, 1), MTLSize::new(width, 1, 1));
+                self.outcome.dispatches += 1;
+            }
+            encoder.end_encoding();
+            let _ = self.split(KERNELS[PHASE_KERNEL]);
+        }
         Ok(())
     }
 
@@ -3855,5 +4059,37 @@ mod formula_class_tests {
         let wide = (threshold as u32) << 1;
         assert_eq!(formula_classes([10, threshold].into_iter(), 128, 1024), vec![(wide | 1, 1024), (wide, 128)]);
         assert_eq!(formula_classes([10, threshold].into_iter(), 128, 128), vec![(0, 128)]);
+    }
+
+    /// 0461: a one-hop step pushes into a slot cleared before phase 0, so it starts in phase 1 and is read in the
+    /// next; `CHILD_IN` takes its candidates when read; a step the phases do not hold leaves the formula to
+    /// `label_formula`.
+    #[test]
+    fn a_formula_is_compiled_to_phases_of_word_and_push_steps() {
+        use super::{
+            phase_program, PhaseProgram, PHASE_AND, PHASE_DOWN, PHASE_END, PHASE_OR, PHASE_ROW, PHASE_UP, PHASE_ZERO,
+        };
+        use crate::code_rule_dsl::transducer::packed::compile_sets::device_ops as op;
+        let word = |kind: u32, arg: u32| arg << 8 | kind;
+        let (a, b) = (word(op::CLASS, 16384), word(op::CLASS, 16385));
+        // CHILD(a): the parents of a's named members.
+        assert_eq!(
+            phase_program(&[a, word(op::CHILD, 1)]),
+            Some(PhaseProgram {
+                // The last phase only reads the pushed set, in the epilogue.
+                code: vec![[PHASE_ZERO, 1, 0, 0], [PHASE_ROW, 0, a, 0], [PHASE_END, 0, 0, 0], [PHASE_UP, 1, 0, 1], [PHASE_END, 0, 0, 0]],
+                phases: 3,
+                result: 1,
+                slots: 2,
+            })
+        );
+        // OR(PARENT(a), b): the push is read in the phase after it.
+        let program = phase_program(&[a, word(op::PARENT, 0), b, word(op::OR, 2)]).expect("phases hold it");
+        assert_eq!(program.phases, 3);
+        assert_eq!(&program.code[3..], &[[PHASE_DOWN, 1, 0, 0], [PHASE_ROW, 2, b, 0], [PHASE_END, 0, 0, 0], [PHASE_OR, 1, 2, 0]]);
+        // CHILD_IN(b, a): a's parents, cut to b when read.
+        let program = phase_program(&[b, a, word(op::CHILD_IN, 0)]).expect("phases hold it");
+        assert_eq!(program.code.last(), Some(&[PHASE_AND, program.result, 0, 0]));
+        assert_eq!(phase_program(&[a, word(op::DESCENDANT, 0)]), None);
     }
 }

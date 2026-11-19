@@ -91,10 +91,11 @@ UKL_INLINE uint64_t root_row(UKL_GLOBAL const uint32_t* row,uint32_t b){
 // The roots of the rule at `at` among document `d`'s nodes 64*group + lo .. 64*group + hi (file `file` of the batch),
 // as bits of the group's 64. A rule over codes with an anchor (kind 2, decision 0365): its row (set by
 // `label_formula`) and the rule without it.
-UKL_INLINE uint64_t root_mask_in(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBAL const uint32_t* roots,uint32_t at,uint32_t file,uint32_t group,uint32_t lo,uint32_t hi){
+// The roots among the group's nodes whose bits `among` holds: a rule over codes reads only those nodes' codes.
+UKL_INLINE uint64_t root_mask_among(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBAL const uint32_t* roots,uint32_t at,uint32_t file,uint32_t group,uint64_t among){
  uint32_t from=group*ROOT_GROUP;if(from>=d.nodes)return 0ul;
- uint32_t count=ukl_min(ROOT_GROUP,d.nodes-from);hi=ukl_min(hi,count);if(lo>=hi)return 0ul;
- uint64_t keep=hi-lo==64u?~0ul:(((1ul<<(hi-lo))-1ul)<<lo);
+ uint32_t count=ukl_min(ROOT_GROUP,d.nodes-from);
+ uint64_t keep=among&(count==64u?~0ul:((1ul<<count)-1ul));if(keep==0ul)return 0ul;
  uint64_t mask=0ul,anchor=~0ul;
  if(roots[at]==2u){anchor=root_row(roots+at+2u,d.node_base+from)&keep;if(anchor==0ul)return 0ul;at+=roots[at+1u];}
  if(roots[at]!=0u){
@@ -103,10 +104,14 @@ UKL_INLINE uint64_t root_mask_in(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBA
   uint32_t files=roots[0];
   if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return 0ul;
   UKL_GLOBAL const uint32_t* rule=roots+at+1u+(files+31u)/32u;
-  for(uint32_t k=lo;k<hi;k++)if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;
+  for(uint64_t rest=keep&anchor;rest!=0ul;rest&=rest-1ul){uint32_t k=ukl_ctz64(rest);if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;}
  }
  mask&=anchor;
  return mask&keep;
+}
+UKL_INLINE uint64_t root_mask_in(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBAL const uint32_t* roots,uint32_t at,uint32_t file,uint32_t group,uint32_t lo,uint32_t hi){
+ hi=ukl_min(hi,ROOT_GROUP);if(lo>=hi)return 0ul;
+ return root_mask_among(s,d,roots,at,file,group,hi-lo==64u?~0ul:(((1ul<<(hi-lo))-1ul)<<lo));
 }
 // Whether document `d`'s node `node` (file `file` of the batch) is a root of the rule at `at`: one node of
 // `root_mask_in`'s test, an anchored rule's (kind 2, decision 0365) within its anchor's row.

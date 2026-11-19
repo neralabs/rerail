@@ -1274,8 +1274,9 @@ DEFINE_KERNEL2(label_passes, label_formula,
         if(bits==0u)continue;
         // Within its rule: the rule read at the word's own 32 nodes, and only where the formula holds at one. A rule
         // over codes reads each node's code, so reading it at every word (both halves of a 64-node group each time)
-        // was the floor of every formula's dispatch, whatever the formula (0447).
-        if(target.mode==2u){uint32_t lo=32u*(w%2u);bits&=(uint32_t)(root_mask_in(chunk,d,rules,target.rule,file,w/2u,lo,lo+32u)>>lo);if(bits==0u)continue;}
+        // was the floor of every formula's dispatch, whatever the formula (0447); it reads the codes of the word's
+        // set bits only (0461).
+        if(target.mode==2u){uint32_t lo=32u*(w%2u);bits&=(uint32_t)(root_mask_among(chunk,d,rules,target.rule,file,w/2u,(uint64_t)bits<<lo)>>lo);if(bits==0u)continue;}
         ukl_atomic_or(&row[at],bits<<sh);
         if(sh!=0u)ukl_atomic_or(&row[at+1u],bits>>(32u-sh));
       }else{
@@ -1292,4 +1293,127 @@ DEFINE_KERNEL2(label_passes, label_formula,
   #undef FORMULA_COUNT
   #undef SLOT
   #undef VALID
+}
+
+// A level's formulas as phases (decision 0461, a measure): a thread a (word of the batch's region, formula), no
+// group a file. A formula is compiled on the host (`phase_program`) into instructions over slots of the region's
+// words (`scratch`, `shape.queue` words a formula, `shape.recursive` a slot):
+//   PHASE_ROW dst word: a set, a label's row, a leaf's row, a text test's row (the formula's own word);
+//   PHASE_AND / PHASE_OR dst src: the word of `dst` with `src`'s;
+//   PHASE_ZERO dst: the word cleared, for a step that pushes into it in a later phase;
+//   PHASE_UP dst src named: the parents of `src`'s (named) members in this thread's word, set in `dst` (`CHILD`);
+//   PHASE_DOWN dst src: the children of `src`'s members in this thread's word, set in `dst` (`PARENT`);
+//   PHASE_END: the phase ends here; the next dispatch (`shape.round` + 1) goes on.
+// A one-hop step works from its members only (they are few), and sets bits in other threads' words, so its set is
+// read from the next phase on. Every other step reads and writes a thread's own word.
+#define PHASE_END 0u
+#define PHASE_ROW 1u
+#define PHASE_AND 2u
+#define PHASE_OR 3u
+#define PHASE_ZERO 4u
+#define PHASE_UP 5u
+#define PHASE_DOWN 6u
+
+// The bits of a set, label, leaf or text row at word `lw` of file `d` (`gw` in the region's numbering).
+UKL_INLINE uint32_t phase_row(UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const uint32_t* leaves,UKL_GLOBAL const uint32_t* texts,uint32_t recursive,uint32_t rowWords,DocView d,uint32_t gw,uint32_t lw,uint32_t word){
+  uint32_t op=word&255u,arg=word>>8u,nodes=d.nodes;
+  uint32_t valid=lw*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-lw*32u))-1u);
+  if(op==0u)return valid;
+  if(op==12u)return 0u;
+  if(op==13u)return leaves[arg*recursive+gw];
+  UKL_GLOBAL const uint32_t* row=op==4u?head+2u+(arg-16384u)*head[1]:texts+arg*rowWords;
+  uint32_t b=d.node_base+lw*32u,at=b/32u,sh=b%32u;
+  uint32_t bits=sh==0u?row[at]:(row[at]>>sh)|(row[at+1u]<<(32u-sh));
+  return bits&valid;
+}
+
+DEFINE_KERNEL2(label_passes, label_phase,
+               ROBUFFER, DocView,       docs,         "[shape.fileCount]",
+               ROBUFFER, uint32_t,      head,         "[2 + labels * words]",
+               ROBUFFER, Formula,       formulas,     "[formulas]",
+               ROBUFFER, uint32_t,      words,        "[words]",
+               RWBUFFER, uint32_t,      roots,        "[rules * words]",
+               RWBUFFER, uint32_t,      scratch,      "[formulas * shape.queue]",
+               ARGS,     Shape,         shape,        ,
+               ROBUFFER, uint32_t,      leaves,       "[leaves * shape.recursive]",
+               ROBUFFER, uint32_t,      program,      "[program]",
+               ROBUFFER, FormulaTarget, targets,      "[targets]",
+               RWBUFFER, uint32_t,      labelScratch, "[rows * words]",
+               ROBUFFER, uint32_t,      rules,        "[rules]",
+               ROBUFFER, uint32_t,      texts,        "[texts * words]",
+               ROBUFFER, uint8_t,       chunk,        "[block]",
+               GID0,     uint32_t,      gid,          ,
+               GID1,     uint32_t,      y,            )
+{
+  if(shape.fileCount==0u||y>=shape.targetCount)return;
+  uint32_t gw=gid;
+  // The file whose region holds word `gw`: the last whose region starts at or before it.
+  uint32_t file=0u,last=shape.fileCount;
+  while(last-file>1u){uint32_t middle=(file+last)/2u;if(FORMULA_REGION(docs[middle],middle)<=gw)file=middle;else last=middle;}
+  DocView d=docs[file];
+  uint32_t rs=FORMULA_REGION(d,file);
+  if(gw<rs)return;
+  uint32_t lw=gw-rs,nodes=d.nodes;
+  if(lw*32u>=nodes)return;
+  uint32_t valid=lw*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-lw*32u))-1u);
+  Formula formula=formulas[shape.itemCount+y];
+  bool wanted=false;
+  for(uint32_t i=0u;i<formula.targetCount&&!wanted;i++){
+    FormulaTarget target=targets[formula.targetStart+i];
+    if(target.mode==1u||target.rule==0xffffffffu){wanted=true;continue;}
+    uint32_t codes=rules[target.rule]==2u?target.rule+rules[target.rule+1u]:target.rule;
+    wanted=rules[codes]!=0u||((rules[codes+1u+file/32u]>>(file%32u))&1u)!=0u;
+  }
+  if(!wanted)return;
+  // The formula's program: its instructions' first word, their count, its result's slot, its phases.
+  uint32_t at=program[4u*y],count=program[4u*y+1u],result=program[4u*y+2u],phases=program[4u*y+3u];
+  if(shape.round>=phases)return;
+  UKL_GLOBAL uint32_t* base=scratch+y*shape.queue;
+  #define PHASE_SLOT(i) (base+(i)*shape.recursive)
+  uint32_t i=0u;
+  for(uint32_t phase=0u;phase<shape.round&&i<count;i++)if(program[at+4u*i]==PHASE_END)phase++;
+  for(;i<count;i++){
+    uint32_t code=program[at+4u*i],dst=program[at+4u*i+1u],src=program[at+4u*i+2u],extra=program[at+4u*i+3u];
+    if(code==PHASE_END)return;
+    if(code==PHASE_ROW){PHASE_SLOT(dst)[gw]=phase_row(head,leaves,texts,shape.recursive,shape.words,d,gw,lw,src);continue;}
+    if(code==PHASE_AND||code==PHASE_OR){uint32_t a=PHASE_SLOT(dst)[gw],b=PHASE_SLOT(src)[gw];PHASE_SLOT(dst)[gw]=code==PHASE_AND?a&b:a|b;continue;}
+    if(code==PHASE_ZERO){PHASE_SLOT(dst)[gw]=0u;continue;}
+    // A one-hop step, from this word's members: their parents or children set in their words.
+    bool named=(extra&1u)!=0u;
+    UKL_GLOBAL uint32_t* out=PHASE_SLOT(dst)+rs;
+    // The bits for one word of `dst` gather here and go out in one atomic when the next bit falls in another word:
+    // siblings share a parent, and a member's children run through a few words.
+    uint32_t held=0xffffffffu,bits=0u;
+    #define PHASE_SET(x) do{uint32_t x_=(x);if(x_/32u!=held){if(bits!=0u)ukl_atomic_or(&out[held],bits);held=x_/32u;bits=0u;}bits|=1u<<(x_%32u);}while(false)
+    for(uint32_t rest=PHASE_SLOT(src)[gw]&valid;rest!=0u;rest&=rest-1u){
+      uint32_t n=lw*32u+ukl_ctz32(rest);
+      if(code==PHASE_UP){
+        if(named&&(tape_flags(chunk,d,n)&1u)==0u)continue;
+        uint32_t p=tape_parent(chunk,d,n);
+        if(p!=TAPE_NONE)PHASE_SET(p);
+      }else{
+        uint32_t end=tape_end_of(chunk,d,n);
+        for(uint32_t c=tape_first_child(chunk,d,n);c!=TAPE_NONE;c=tape_next_in(chunk,d,c,end))PHASE_SET(c);
+      }
+    }
+    #undef PHASE_SET
+    if(bits!=0u)ukl_atomic_or(&out[held],bits);
+  }
+  // The formula's set into its targets' rows, as `label_formula`'s epilogue: a file's word spans two of a row's.
+  uint32_t anchor=PHASE_SLOT(result)[gw],sh=d.node_base%32u,row_at=(d.node_base+lw*32u)/32u;
+  #undef PHASE_SLOT
+  for(uint32_t t=0u;t<formula.targetCount;t++){
+    FormulaTarget target=targets[formula.targetStart+t];
+    UKL_GLOBAL uint32_t* row=(target.mode>=2u?labelScratch:roots)+target.row;
+    uint32_t bits=anchor;
+    if(target.mode!=1u){
+      if(bits==0u)continue;
+      if(target.mode==2u){uint32_t lo=32u*(lw%2u);bits&=(uint32_t)(root_mask_among(chunk,d,rules,target.rule,file,lw/2u,(uint64_t)bits<<lo)>>lo);if(bits==0u)continue;}
+      ukl_atomic_or(&row[row_at],bits<<sh);
+      if(sh!=0u)ukl_atomic_or(&row[row_at+1u],bits>>(32u-sh));
+    }else{
+      ukl_atomic_and(&row[row_at],~(valid<<sh)|(bits<<sh));
+      if(sh!=0u)ukl_atomic_and(&row[row_at+1u],~(valid>>(32u-sh))|(bits>>(32u-sh)));
+    }
+  }
 }

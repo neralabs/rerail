@@ -5594,3 +5594,16 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   Q189's listings (a small root checked by listing its directories, not by a stat a file).
 - **Done when**: the four pass, or an assertion is shown to state a behaviour the observer no longer has on
   purpose, and is changed with the reason.
+
+### Q283. A level's formulas as phases: the pushes' chains are the time (0461)
+
+- **Found** (2026-11-19, 0461): `label_phase` runs a level's word steps and one-hop pushes in one dispatch a phase
+  for the whole batch. Its word steps cost about 32 µs a dispatch, but its pushes are chains within a thread: up to 7
+  dependent hops for a format 16 parent, and one hop for each child. On s1000 it does not beat `label_formula`, so it
+  stays behind `RERAIL_FORMULA_PHASES=1`.
+- **Next**, in this order:
+  1. spread a phase's members over its SIMD group (`simd_roots`, as `label_micro`'s roots), then measure big1 and
+     s1000;
+  2. range steps (descendants, following, reaches: ops 8, 10, 11, 15, 16, 23–25) as scans between blocks, so a
+     level runs on one kernel;
+  3. then compare a level's phases with 0459's size classes, and remove the loser.
