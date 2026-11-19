@@ -13,11 +13,14 @@ body[data-page="history"] #content,body[data-page="history"] #content > .history
 .hh h2{font-size:20px;letter-spacing:-.01em;line-height:28px}
 .hh p{margin-top:2px}
 .hh .act{align-self:end}
-/* Beside the rule's sheet the list is already hidden and the rule is open, so Hide list and Open rule go. Beside it,
- * or on a narrow page, the range sits under the heading rather than squeezing the heading into a column. */
+/* Beside the rule's sheet the list is already hidden and the rule is open, so Hide list and Open rule go. The sheet
+ * sits beside the page from 1101 px (base.css overlays it below); up to 1180 px that leaves a narrow column, where the
+ * range sits under the heading rather than squeezing it, as on a narrow page. */
 body[data-panel="open"] .hltoggle,body[data-panel="open"] .hdetail .l1 .acts{display:none}
-body[data-panel="open"] .hh{grid-template-columns:minmax(0,1fr)}
-body[data-panel="open"] .hh .act{grid-column:1;grid-row:auto;justify-content:flex-start;margin-top:8px}
+@media (min-width:1101px) and (max-width:1180px){
+  body[data-panel="open"] .hh{grid-template-columns:minmax(0,1fr)}
+  body[data-panel="open"] .hh .act{grid-column:1;grid-row:auto;justify-content:flex-start;margin-top:8px}
+}
 @media (max-width:900px){
   .hh{grid-template-columns:minmax(0,1fr)}
   .hh .act{grid-column:1;grid-row:auto;justify-content:space-between;margin-top:8px}
@@ -100,13 +103,15 @@ body[data-panel="open"] .hist > aside{display:none}
 .hkv .oc-blocked{color:var(--danger-foreground)}
 .hkv .said2{display:block;flex:1;min-width:0;padding:4px 10px;box-sizing:border-box;border-left:2px solid var(--brand);background:var(--brand-subtle);border-radius:0 var(--radius-md) var(--radius-md) 0;font-size:13px;line-height:1.45}
 .hkv .said2 > span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
-/* A phone, or beside the rule's sheet: each label over its value, and a violation's session under it, so the
- * message and the agent's reasons get the column's full width. */
-body[data-panel="open"] .hkv{grid-template-columns:minmax(0,1fr);gap:2px 0}
-body[data-panel="open"] .hkv dt{min-height:0}
-body[data-panel="open"] .hkv dd + dt{margin-top:8px}
-body[data-panel="open"] .hist .ev{grid-template-columns:44px minmax(0,1fr)}
-body[data-panel="open"] .hist .ev .open{grid-column:2;justify-self:start}
+/* A phone, or the narrow column beside the rule's sheet (1101 to 1180 px): each label over its value, and a
+ * violation's session under it, so the message and the agent's reasons get the column's full width. */
+@media (min-width:1101px) and (max-width:1180px){
+  body[data-panel="open"] .hkv{grid-template-columns:minmax(0,1fr);gap:2px 0}
+  body[data-panel="open"] .hkv dt{min-height:0}
+  body[data-panel="open"] .hkv dd + dt{margin-top:8px}
+  body[data-panel="open"] .hist .ev{grid-template-columns:44px minmax(0,1fr)}
+  body[data-panel="open"] .hist .ev .open{grid-column:2;justify-self:start}
+}
 @media (max-width:640px){
   .hkv{grid-template-columns:minmax(0,1fr);gap:2px 0}
   .hkv dt{min-height:0}
