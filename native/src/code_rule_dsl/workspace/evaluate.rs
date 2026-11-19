@@ -1109,30 +1109,34 @@ fn evaluate_document(
     let plans = p_plans.iter().map(Arc::as_ref).collect::<Vec<_>>();
     #[cfg(feature = "code-rule-profile")]
     let index_timer = profile::PhaseTimer::start(profile::Phase::Index);
+    // A document where no clause runs (each ruled out by its presence or its text) builds no index: nothing selects.
+    let any_runs = runs.iter().any(|&runs| runs);
     #[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
-    let index = FileAnchorIndex::build(&root, &plans, max_nodes, matcher_budget_exhausted);
+    let index = any_runs.then(|| FileAnchorIndex::build(&root, &plans, max_nodes, matcher_budget_exhausted));
     // The corpus holds each file's primary document under its path; a document it does not
     // hold (an embedded program, whose digest differs) selects no roots and is walked whole.
     #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
-    let index = crate::code_rule_dsl::matcher::p_anchors::sql::FileAnchorIndex::build_at(
+    let index = any_runs.then(|| crate::code_rule_dsl::matcher::p_anchors::sql::FileAnchorIndex::build_at(
         &root,
         &plans,
         max_nodes,
         matcher_budget_exhausted,
         &file.input.path,
-    );
-    metrics.visited_nodes += index.visited_nodes();
+    ));
+    metrics.visited_nodes += index.as_ref().map_or(0, |index| index.visited_nodes());
     #[cfg(feature = "code-rule-profile")]
     drop(index_timer);
     #[cfg(feature = "code-rule-profile")]
-    profile::record_index(index.len(), index.estimated_bytes(), index.complete());
+    if let Some(index) = &index {
+        profile::record_index(index.len(), index.estimated_bytes(), index.complete());
+    }
     // A clause's anchor selection is its own work: it runs under the clause's allowance.
     #[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
     let select = |position: usize| -> Option<Arc<[u32]>> {
         if !runs[position] {
             return Some(Arc::from([]));
         }
-        select_roots(&index, &slots[position].1.anchors)
+        select_roots(index.as_ref().expect("a clause runs"), &slots[position].1.anchors)
     };
     #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
     let select = |position: usize| -> Option<Arc<[u32]>> {
@@ -1141,6 +1145,7 @@ fn evaluate_document(
         }
         #[cfg(feature = "code-rule-profile")]
         let _selection_timer = profile::PhaseTimer::start(profile::Phase::Selection);
+        let index = index.as_ref().expect("a clause runs");
         let roots = index.selected(&crate::code_rule_dsl::matcher::p_anchors::plan_for(slots[position].1));
         #[cfg(feature = "code-rule-profile")]
         profile::record_selection(
