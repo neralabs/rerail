@@ -1830,15 +1830,14 @@ pub mod tests {
         assert_eq!(merged.tags, run.tags);
     }
 
-    /// A tag counted at each comparison (`tag_span` reads tags only by comparing them).
+    /// A tag counted at each comparison (`tag_span` reads tags only by comparing them); only
+    /// `a_tag_span_costs_reads_logarithmic_in_its_length` makes them, so one counter serves.
     #[derive(Clone, Copy, Debug)]
     struct Read(u16);
-    thread_local! {
-        static READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
+    static READS: AtomicU64 = AtomicU64::new(0);
     impl PartialEq for Read {
         fn eq(&self, o: &Read) -> bool {
-            READS.with(|r| r.set(r.get() + 1));
+            READS.fetch_add(1, AtomicOrdering::Relaxed);
             self.0 == o.0
         }
     }
@@ -1850,7 +1849,7 @@ pub mod tests {
     }
     impl Ord for Read {
         fn cmp(&self, o: &Read) -> Ordering {
-            READS.with(|r| r.set(r.get() + 1));
+            READS.fetch_add(1, AtomicOrdering::Relaxed);
             self.0.cmp(&o.0)
         }
     }
@@ -1868,14 +1867,14 @@ pub mod tests {
         let span = 1usize << 20;
         let tags: Vec<Read> = std::iter::repeat_n(Read(1), 10).chain(std::iter::repeat_n(Read(5), span)).chain(std::iter::repeat_n(Read(9), 10)).collect();
         let rows = 1000;
-        READS.with(|r| r.set(0));
+        READS.store(0, AtomicOrdering::Relaxed);
         for i in 0..rows {
             let from = 10 + i * (span / rows);
             assert_eq!(tag_span(&tags, Read(5), from, false), (from, 10 + span));
         }
         assert_eq!(tag_span(&tags, Read(5), 0, true), (10, 10 + span));
         assert_eq!(tag_span(&tags, Read(9), 0, true), (10 + span, 20 + span));
-        let reads = READS.with(|r| r.get());
+        let reads = READS.load(AtomicOrdering::Relaxed);
         // About 4 log2(2^20) reads a search; the walk read about rows * span / 2.
         assert!(reads <= (rows as u64 + 2) * 100, "{reads} tag reads for {rows} searches of a span of {span}");
     }
