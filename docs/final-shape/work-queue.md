@@ -2858,6 +2858,16 @@ submitted" now hold device memory at once.
     again each chunk, 1,058 -> 2,142, and "the distributions moved" 393 -> 667. Small: planning is not where a
     chunk's 7 G goes. The growth 11 -> 17 by span is the joins' runs (`engine run (joins)` +1.63 s, `native`
     +0.43, morsels +0.31), then spec +0.26 and issued components +0.26. Next: the joins' fixed setup a run.
+  - (ii, the symbols' lock, 46fe04ad8) A component's open reads the arena without the lock (`Symbols`): wall time.
+  - (ii, the joins' setup a run) None worth making once. `engine run (joins)` is one `component::run` call (309,609
+    at 11 chunks, 421,196 at 17, ~8.5 a stratum); 1.78 s more for 111,587 more calls looked like 16 us of fixed
+    setup a call, but ab71's samples of `setfix::run` (70,114) are its work: the device's fixpoint and resume
+    (35,034), `run_seed` (13,868), `Rel::set_delta` (8,373: `Index::add_run_in`'s sort and merge of the new
+    rows), `run_join_in_each` (3,542), and the store's write lock (3,458, parked: wall). What a call repeats
+    whatever its rows (the component by name, `scalars::register` of its scalar steps, its SQL probes'
+    statements, `planning_counts`) is under 100 samples together. So a chunk's 7 G is rows, not setup: more
+    chunks derive more rows, or the same rows dearer. Next: which, by the joins' rows at 11 and 17 chunks
+    (`native.tsv`'s work, and the seeds' and indexes' rows per relation).
   - (accounting, before 7562bf8a94) Thread CPU counts the jobs rayon's own joins steal: the text tests' "0.366 -> 1.795 s CPU" is
     other chunks' work run inside `Searchers::evaluate`'s `par_iter` (its own samples are equal, 365 -> 7284
     of which 6800 stolen); span `own_s` under any `par_iter` is inflated the same way. `exec::helped` covers
