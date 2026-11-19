@@ -321,8 +321,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return merged(batch.revision, responses);
   }
 
-  async settleGeneratedEdits(): Promise<void> {
-    await this.#settleLanes(lane => lane.enforcer.settleGeneratedEdits());
+  async settleGeneratedEdits(only?: "steering"): Promise<void> {
+    await this.#settleLanes(lane => lane.enforcer.settleGeneratedEdits(only));
   }
 
   async settle(): Promise<void> {

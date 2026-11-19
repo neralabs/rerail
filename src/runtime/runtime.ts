@@ -1336,7 +1336,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         await this.#waitingForEditChecks(state, false, async () => {
           await this.#finishCall(state, bridge, event);
           await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
+          // The call's own edit may steer; a walk's `log` edits queued around it steer no one, so the result waits for none.
+          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS, "steering");
         });
       } finally {
         if (window !== undefined) {
@@ -1383,13 +1384,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * A boundary's wait for the session's edit checks, capped at `capMs`. Checks run in order, so while a backlog an
-   * earlier boundary stopped waiting for is still draining, a later edit's check is behind it too: the boundary answers
-   * at once rather than spend the cap again, and those steers wait for the yield digest.
+   * A boundary's wait for the session's edit checks, capped at `capMs`; with `steering`, for those that may steer only.
+   * Checks run in order, so while a backlog an earlier boundary stopped waiting for is still draining, a later edit's
+   * check is behind it too: the boundary answers at once rather than spend the cap again, and those steers wait for the
+   * yield digest.
    */
-  async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number): Promise<void> {
+  async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number, only?: "steering"): Promise<void> {
     if (bridge === undefined || state.overdueEditChecks !== undefined) return;
-    const settled = bridge.settleGeneratedEdits();
+    const settled = bridge.settleGeneratedEdits(only);
     if (await settledWithin(settled, capMs)) return;
     const overdue: Promise<void> = settled.catch(() => undefined).finally(() => {
       if (state.overdueEditChecks === overdue) state.overdueEditChecks = undefined;

@@ -64,10 +64,14 @@ export function loadCodeRuleCapabilities(path: string = resolve(bundledCodeRuleD
   return { path: resolve(path), json, digest: digest(json) };
 }
 
-type CompileOutcome = { readonly ok: true; readonly executable: NativeCompiledCodeRuleDsl } | { readonly ok: false; readonly reason: string };
+type CompileOutcome =
+  | { readonly ok: true; readonly executable: NativeCompiledCodeRuleDsl; readonly crossFile: boolean }
+  | { readonly ok: false; readonly reason: string };
 
 /** A compiled outcome as the cache keeps it: a failure whole, an executable only while a catalog still holds it. */
-type HeldOutcome = { readonly ok: true; readonly executable: WeakRef<NativeCompiledCodeRuleDsl> } | { readonly ok: false; readonly reason: string };
+type HeldOutcome =
+  | { readonly ok: true; readonly executable: WeakRef<NativeCompiledCodeRuleDsl>; readonly crossFile: boolean }
+  | { readonly ok: false; readonly reason: string };
 
 /**
  * Compiled executables shared by every checkout of the process: one per rule id, capabilities and `config` (a
@@ -94,7 +98,7 @@ export class CompiledRuleCache {
     const held = cached?.sourceDigest === sourceDigest ? liveOutcome(cached.outcome) : undefined;
     if (held !== undefined) return held;
     const outcome = compileOutcome(capabilities, policyId, sourceText);
-    this.#outcomes.set(key, { sourceDigest, outcome: outcome.ok ? { ok: true, executable: new WeakRef(outcome.executable) } : outcome });
+    this.#outcomes.set(key, { sourceDigest, outcome: outcome.ok ? { ...outcome, executable: new WeakRef(outcome.executable) } : outcome });
     return outcome;
   }
 }
@@ -103,7 +107,21 @@ export class CompiledRuleCache {
 function liveOutcome(held: HeldOutcome): CompileOutcome | undefined {
   if (!held.ok) return held;
   const executable = held.executable.deref();
-  return executable === undefined ? undefined : { ok: true, executable };
+  return executable === undefined ? undefined : { ...held, executable };
+}
+
+/** The terms of a rule whose finding in one file can depend on another file the workspace holds. */
+const CROSS_FILE_TERMS = new Set(["budget", "require_each", "calls", "importTarget"]);
+
+/**
+ * Whether a rule's finding in one file can depend on other files the workspace holds: a `budget` or `require_each`
+ * clause counts or pairs matches across files, a `calls` term follows calls into them, an `importTarget` term reads the
+ * file an import names. Where none does, the order files are checked in changes no finding.
+ */
+function readsOtherFiles(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(readsOtherFiles);
+  if (value === null || typeof value !== "object") return false;
+  return Object.entries(value).some(([key, item]) => CROSS_FILE_TERMS.has(key) || readsOtherFiles(item));
 }
 
 function compileOutcome(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string): CompileOutcome {
@@ -111,7 +129,7 @@ function compileOutcome(capabilities: CodeRuleCapabilities, policyId: string, so
     const executable = loadNativeBinding().CodeRuleDslRuntime.compile(sourceText, "json", capabilities.json);
     const canonical = JSON.parse(executable.canonicalJson()) as { id?: unknown };
     return canonical.id === policyId
-      ? { ok: true, executable }
+      ? { ok: true, executable, crossFile: readsOtherFiles(canonical) }
       : { ok: false, reason: `Compiled policy ID does not match rule document: ${policyId}` };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
@@ -125,6 +143,8 @@ export interface CompiledCodeRuleDslEntry {
   readonly executable: NativeCompiledCodeRuleDsl;
   /** Where the code rule runs in the checkout, at which mode, and where suppression comments are ignored; passed to the native workspace. */
   readonly placement: CodeRulePlacement;
+  /** Whether its finding in one file can depend on other files the workspace holds (`readsOtherFiles`). */
+  readonly crossFile: boolean;
 }
 
 /** Immutable provenance and executables used to construct one native evaluation workspace. */
@@ -291,7 +311,7 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
     if (!outcome.ok) return { quarantined: refusedRule(id, rule, outcome.reason) };
     const checkout = loaded.ruleSet!.checkout;
     return {
-      entry: { id, executable: outcome.executable, placement },
+      entry: { id, executable: outcome.executable, placement, crossFile: outcome.crossFile },
       provenance: {
         ruleId: id, revision: rule.revision, payloadHash: rule.payloadHash, source: { ...rule.source },
         repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath, placement: decisions,

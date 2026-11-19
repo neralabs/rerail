@@ -1837,11 +1837,12 @@ export class CodeRuleBridge {
     this.#assertDiscovery(discovery);
     return this.#revision === revision ? [] : [this.#lastResponse];
   }
-  async settleGeneratedEdits(): Promise<void> {
+  /** The auditor's `settleGeneratedEdits` once the bridge's queued work is done; with `steering`, the edits that may steer. */
+  async settleGeneratedEdits(only?: "steering"): Promise<void> {
     this.#requireSession();
     await this.#queue;
     if (this.#auditor.settleGeneratedEdits !== undefined) {
-      await this.#auditor.settleGeneratedEdits();
+      await this.#auditor.settleGeneratedEdits(only);
     } else {
       await this.#auditor.settle?.();
     }

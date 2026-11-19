@@ -217,9 +217,10 @@ type StoredEdit = {
   auditId: string | undefined;
 };
 /**
- * The edits an evaluator has yet to check, one per path, in the order they came. `next` gives first the oldest that may
- * steer the session (a mode other than `log`): a walk of the other worktrees queues what it found in `log` mode, which
- * steers no session (`CodeRuleBridge`), and behind a batch of those a tool call's own edit came to its result's wait late.
+ * The edits an evaluator has yet to check, one per path, in the order they came. `next` may give first the oldest that
+ * may steer the session (a mode other than `log`): a walk of the other worktrees queues what it found in `log` mode,
+ * which steers no session (`CodeRuleBridge`), and behind a batch of those a tool call's own edit came to its result's
+ * wait late.
  */
 class PendingEdits extends Map<string, StoredEdit> {
   /** The paths whose queued edit may steer, in the order they came. */
@@ -242,11 +243,31 @@ class PendingEdits extends Map<string, StoredEdit> {
     super.clear();
   }
 
-  /** The edit to check next: the oldest that may steer the session, else the oldest. */
-  next(): [string, StoredEdit] | undefined {
-    const steering = this.#steering.values().next().value;
+  /** The edit to check next: where `reorder`, the oldest that may steer the session; else, and failing one, the oldest. */
+  next(reorder: boolean): [string, StoredEdit] | undefined {
+    const steering = reorder ? this.#steering.values().next().value : undefined;
     if (steering !== undefined) return [steering, this.get(steering)!];
     return this.entries().next().value;
+  }
+
+  /** The edits queued ahead of `path`, oldest first. */
+  ahead(path: string): [string, StoredEdit][] {
+    const earlier: [string, StoredEdit][] = [];
+    for (const entry of this) {
+      if (entry[0] === path) break;
+      earlier.push(entry);
+    }
+    return earlier;
+  }
+
+  /** Whether an edit that may steer the session is queued. */
+  steers(): boolean {
+    return this.#steering.size > 0;
+  }
+
+  /** The revisions of the edits queued. */
+  revisions(): Set<number> {
+    return new Set([...this.values()].map(stored => stored.revision));
   }
 }
 type PreparedWorkspace = {
@@ -255,6 +276,8 @@ type PreparedWorkspace = {
   provenance: readonly AuditRuleProvenance[];
   /** The storage attach, settled before the workspace's first apply; true when a Git store attached (repository audits then index natively). */
   storage: Promise<boolean>;
+  /** Whether a rule's finding in one file can depend on another file (`CompiledCodeRuleDslEntry.crossFile`). */
+  crossFile: boolean;
 };
 type ByteRange = { start: number; end: number };
 /** The earlier source an ai-output edit's generated lines are measured from. */
@@ -687,6 +710,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #storing = new Set<Promise<StoredEdit>>();
   #pump: Promise<void> | undefined;
   #busy = false;
+  /** The edit being checked, while one is. */
+  #checking: StoredEdit | undefined;
+  /** Told as the pump ends a check, or ends: what a wait for the edits that may steer wakes on (`settleGeneratedEdits`). */
+  readonly #checkEnds = new Set<() => void>();
   #closing = false;
   #closed = false;
   readonly #scopeAudits = new Set<Promise<unknown>>();
@@ -694,6 +721,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /** Audits this evaluator started and has not finished: all it may end when the session-wide interrupt is not its to make. */
   readonly #runningAudits = new Set<string>();
   #reportableViolations: CodeRuleViolation[] = [];
+  /** The revision whose published findings `#reportableViolations` holds: an older revision published later leaves them. */
+  #reportableRevision = 0;
   #responseMode: AuditMode;
   #evaluation = emptyEvaluation();
 
@@ -809,14 +838,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       pending: this.#busy || this.#pending.size > 0 || this.#pump !== undefined || this.#scopeAudits.size > 0,
     };
   }
-  async settleGeneratedEdits(): Promise<void> {
-    while (
-      this.#busy ||
-      this.#pending.size > 0 ||
-      this.#pump !== undefined ||
-      this.#generatedEditAudits.size > 0
-    ) {
-      const work = [...(this.#pump === undefined ? [] : [this.#pump]), ...this.#generatedEditAudits];
+  /**
+   * Waits until every accepted generated edit is checked and its findings published. With `steering`, only the edits that
+   * may steer the session: a tool call's result waits for its own edit's check, not for a walk's `log` edits queued
+   * around it, which steer no session.
+   */
+  async settleGeneratedEdits(only?: "steering"): Promise<void> {
+    while (this.#editsOwed(only) || this.#generatedEditAudits.size > 0) {
+      const work = [...this.#pumpWork(only), ...this.#generatedEditAudits];
       if (work.length === 0) {
         await yieldToHost();
         continue;
@@ -824,6 +853,23 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       await Promise.allSettled(work);
     }
   }
+  /** Whether an edit `settleGeneratedEdits` waits for is queued or being checked: any, or with `steering` one that may steer. */
+  #editsOwed(only: "steering" | undefined): boolean {
+    if (only === undefined) return this.#busy || this.#pending.size > 0 || this.#pump !== undefined;
+    return this.#pending.steers() || (this.#checking !== undefined && this.#checking.mode !== "log");
+  }
+
+  /** What a wait for queued edits awaits of the pump: its end, or with `steering` the end of its next check. */
+  #pumpWork(only: "steering" | undefined): Promise<unknown>[] {
+    if (this.#pump === undefined) return [];
+    return [only === undefined ? this.#pump : new Promise<void>(resolve => this.#checkEnds.add(resolve))];
+  }
+
+  #endCheck(): void {
+    for (const resolve of this.#checkEnds) resolve();
+    this.#checkEnds.clear();
+  }
+
   async settle(): Promise<void> {
     while (this.snapshotStatus().pending) {
       const work = [...(this.#pump === undefined ? [] : [this.#pump]), ...this.#scopeAudits];
@@ -1125,7 +1171,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#workspaceRevisions.set(workspace, 0);
     this.#workspaceEvaluations.set(workspace, emptyEvaluation());
     this.#workspacePackages.set(workspace, new Map());
-    return { workspace, version: snapshot.version, provenance: snapshot.provenance, storage };
+    const crossFile = snapshot.codeRules.some(rule => rule.crossFile);
+    return { workspace, version: snapshot.version, provenance: snapshot.provenance, storage, crossFile };
   }
 
   #disposeWorkspace(workspace: NativeCodeRuleDslWorkspace): void {
@@ -1190,6 +1237,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       .finally(() => {
         this.#pump = undefined;
         if (!this.#closing && this.#pending.size > 0) this.#schedule();
+        this.#endCheck();
       });
   }
 
@@ -1197,20 +1245,39 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     await yieldToHost();
     while (!this.#closing) {
       while (this.#replacement !== undefined && !this.#closing) await this.#replaceWorkspace(this.#replacement);
-      const entry = this.#pending.next();
+      const entry = this.#take();
       if (entry === undefined) return;
-      const [path, stored] = entry;
-      this.#pending.delete(path);
-      this.#ensureStoredAudit(stored, path, this.#workspace?.provenance ?? []);
-      this.#busy = true;
-      try {
-        await this.#evaluatePendingEdit(path, stored);
-      } catch (error) {
-        await this.#recordPendingEvaluationError(path, stored, error);
-      } finally {
-        this.#busy = false;
-        this.#release(stored);
-      }
+      await this.#check(...entry);
+    }
+  }
+
+  /**
+   * The next queued edit, out of the queue with its audit begun. One that may steer goes before the `log` edits queued
+   * ahead of it, unless a rule of the lane reads other files, whose findings then depend on the order (`crossFile`); the
+   * audits of the edits it passes begin first, so the Log lists them in the order they came.
+   */
+  #take(): [string, StoredEdit] | undefined {
+    const entry = this.#pending.next(this.#workspace?.crossFile === false);
+    if (entry === undefined) return undefined;
+    const provenance = this.#workspace?.provenance ?? [];
+    for (const [path, stored] of this.#pending.ahead(entry[0])) this.#ensureStoredAudit(stored, path, provenance);
+    this.#pending.delete(entry[0]);
+    this.#ensureStoredAudit(entry[1], entry[0], provenance);
+    return entry;
+  }
+
+  async #check(path: string, stored: StoredEdit): Promise<void> {
+    this.#busy = true;
+    this.#checking = stored;
+    try {
+      await this.#evaluatePendingEdit(path, stored);
+    } catch (error) {
+      await this.#recordPendingEvaluationError(path, stored, error);
+    } finally {
+      this.#busy = false;
+      this.#checking = undefined;
+      this.#release(stored);
+      this.#endCheck();
     }
   }
 
@@ -1224,7 +1291,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (readFailure !== undefined) {
       this.#readFailures.set(path, readFailure);
       this.#finishAudit(stored.auditId, "failed", [], [readFailure]);
-      if (this.#pending.size === 0) await this.#publishReady();
+      await this.#publishReady();
       return;
     }
     if (prepared === undefined) throw new Error("Policy workspace could not be initialized");
@@ -1337,15 +1404,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /**
    * A steer queued for a source this evaluation reported again speaks for its older facts. The runtime drops each such
    * steer whole, so the other sources it spoke for are steered again with the findings they last reported. Then what is
-   * ready is published, once nothing is pending: with nothing reported again, that is decided without a wait, so an
-   * edit queued meanwhile cannot put the publishing off.
+   * ready is published (`#publishReady`): with nothing reported again, that is decided without a wait, so an edit queued
+   * meanwhile cannot put the publishing off.
    */
   async #steerAgainThenPublish(stored: StoredEdit, reported: ReadonlyMap<string, CodeRuleViolation[]>): Promise<void> {
     if (reported.size > 0 && this.#sessionId !== undefined) {
       const revised = [...reported.keys()].map(source => this.#presentPath(source));
       await this.#steerAgain(this.#steerDelivery.revised?.(this.#sessionId, stored.revision, revised) ?? []);
     }
-    if (this.#pending.size === 0) await this.#publishReady();
+    await this.#publishReady();
   }
 
   /**
@@ -1371,7 +1438,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   async #recordPendingEvaluationError(path: string, stored: StoredEdit, error: unknown): Promise<void> {
     if (this.#closing) return;
     const problem = failure("worker", "adapter-error", errorMessage(error), path, "evaluate");
-    if (this.#pending.size === 0) await this.#publishReady();
+    await this.#publishReady();
     this.#readFailures.set(path, problem);
     this.#finishAudit(stored.auditId, "failed", [], [problem]);
   }
@@ -2073,17 +2140,19 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#workspaceEvaluations.set(workspace, evaluation);
     return evaluation;
   }
+  /**
+   * Publishes each ready revision none of whose edits is still queued, in the order they became ready: a revision's
+   * findings go out whole and once, and a tool call's own edit goes out once checked, not once the `log` edits a walk
+   * queued around it are. What the session is answered (`#response`) stays the newest revision's.
+   */
   async #publishReady(): Promise<void> {
-    const ready = [...this.#readyViolations.entries()];
-    this.#readyViolations.clear();
-    for (const [revision, byPath] of ready) {
+    for (const [revision, byPath] of this.#takeReady()) {
       const current = [...byPath].filter(([path]) => this.#versions.get(path) === revision);
       if (current.length === 0) continue;
       const violations = current.flatMap(([, pathViolations]) => pathViolations);
       const mode = this.#readyModes.get(revision) ?? this.#mode;
       this.#readyModes.delete(revision);
-      this.#reportableViolations = violations;
-      this.#responseMode = mode;
+      this.#answerWith(revision, violations, mode);
       await this.#publish(
         revision,
         current.map(([path]) => path),
@@ -2093,6 +2162,22 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         true,
       );
     }
+  }
+
+  /** The ready revisions with no edit still queued, taken out of `#readyViolations`. */
+  #takeReady(): [number, Map<string, CodeRuleViolation[]>][] {
+    const queued = this.#pending.revisions();
+    const ready = [...this.#readyViolations].filter(([revision]) => !queued.has(revision));
+    for (const [revision] of ready) this.#readyViolations.delete(revision);
+    return ready;
+  }
+
+  /** What `#response` answers from now: a revision's published findings, unless a newer revision's went out first. */
+  #answerWith(revision: number, violations: CodeRuleViolation[], mode: AuditMode): void {
+    if (revision < this.#reportableRevision) return;
+    this.#reportableRevision = revision;
+    this.#reportableViolations = violations;
+    this.#responseMode = mode;
   }
 
   async #publish(
