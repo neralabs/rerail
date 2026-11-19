@@ -28,7 +28,10 @@ The scan published to a second store. These are the observed counts from the pol
 | Delete one of two scopes and collect, then delete the last scope and collect | The surviving scope reopened the graph with zero compilations. After the last deletion, the next scan compiled once. |
 
 The final check initially failed. Two manifests for the rule library had claimed the Git policy during compiler startup.
-The consuming scan now records ownership of the inspected policy. [Public catalog regression](../../../../test/cli/headless-scan.test.ts) · [Cache contract](analysis-scopes.md)
+The consuming scan now records ownership of the inspected policy.
+Five catalog and scope tests passed on macOS and on Windows 11 ARM64 with NTFS. The Windows guest used the addon built from `1993d043da` and two workers.
+The Windows fixture cleanup runs after workers close their database handles. The include assertions compare the canonical path to the selected file.
+Four tests of the compiled-program store passed on Linux. [Public catalog regression](../../../../test/cli/headless-scan.test.ts) · [Cache contract](analysis-scopes.md)
 
 ## Scope-keyed history
 

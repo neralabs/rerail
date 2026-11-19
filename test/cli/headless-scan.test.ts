@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, toNamespacedPath } from "node:path";
 import { deflateSync } from "node:zlib";
 import Database from "better-sqlite3";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, inject, it, vi } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { describeScan, runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
@@ -19,11 +19,14 @@ import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.
 import { queryContentStore } from "../support/query-content-store.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 
+const windowsStoreRoot = process.platform === "win32" ? inject("windowsStoreRoot") : undefined;
+const fixtureParent = windowsStoreRoot ?? tmpdir();
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) {
     loadNativeBinding().retireUpkeepUnder?.(root);
-    rmSync(root, { recursive: true, force: true });
+    // The Windows runner removes these fixtures after the workers close their SQLite handles.
+    if (windowsStoreRoot === undefined) rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -46,7 +49,7 @@ function writeRule(root: string, name: string, document: unknown): void {
 
 /** A committed checkout on `main` with one NEEDLE rule and `a.py`, which breaks it on line 2. */
 function checkout(): string {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-scan-")));
+  const root = realpathSync(mkdtempSync(join(fixtureParent, "rerail-headless-scan-")));
   roots.push(root, `${root}-home`);
   git(root, "init", "--quiet", "--initial-branch=main");
   writeRule(root, "needle.json", needle("needle", "NEEDLE"));
@@ -291,7 +294,7 @@ C(n) :- label("always"), kind(n, "call").
     writeFileSync(join(root, "new.py"), "x = NEEDLE\n");
     git(root, "add", "--", "a.py", "new.py", ".rerail/rules/needle.json");
     git(root, "commit", "--quiet", "-m", "today");
-    const home = mkdtempSync(join(tmpdir(), "rerail-history-home-"));
+    const home = mkdtempSync(join(fixtureParent, "rerail-history-home-"));
     roots.push(home);
     const databasePath = join(home, "rerail.sqlite");
 
@@ -327,7 +330,7 @@ C(n) :- label("always"), kind(n, "call").
 
   it("scans a bare repository with explicit policy from a ref", async () => {
     const root = checkout();
-    const home = mkdtempSync(join(tmpdir(), "rerail-bare-home-"));
+    const home = mkdtempSync(join(fixtureParent, "rerail-bare-home-"));
     roots.push(home);
     const bare = join(home, "repo.git");
     git(root, "clone", "--quiet", "--bare", ".", bare);
@@ -2862,7 +2865,7 @@ try {
     const word = (value: string) => `.decl ref_message(text: symbol)\nref_message("${value}").\n`;
     writeFileSync(policy, '#include "git.rr"\n#include "word.rr"\n.policy "words" revision 1\n.violation Seen(at: span, w: symbol) "{w}"\nSeen(@place("a.py", 1), w) :- git_source_commit(_, _), ref_message(w).\n');
     writeFileSync(include, word("one"));
-    const inspect = () => JSON.parse(catalog.load(policy)).programInputs.find((input: { path: string }) => input.path === include)?.sha256;
+    const inspect = () => JSON.parse(catalog.load(policy)).programInputs.find((input: { path: string }) => input.path === toNamespacedPath(realpathSync.native(include)))?.sha256;
     const run = async (pinned: boolean) => {
       const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, "", undefined, undefined, view, undefined, pinned ? catalog : undefined));
       return report.diagnostics.map((row: { message: string }) => row.message);
@@ -2906,7 +2909,9 @@ console.log(JSON.stringify(result));`;
       ["--import", "tsx", "--input-type=module", "-", root, home, policy, store, ...names],
       { input: script, encoding: "utf8" }));
     for (const [a, b] of [["one", "two"], ["two", "one"]] as const) {
-      const store = join(home, a + ".sqlite"), first = join(home, a, "word.rr"), second = join(home, b, "word.rr");
+      const store = join(home, a + ".sqlite");
+      const first = toNamespacedPath(realpathSync.native(join(home, a, "word.rr")));
+      const second = toNamespacedPath(realpathSync.native(join(home, b, "word.rr")));
       expect(read(store, a)).toEqual([first, [a]]);
       expect(read(store, b)).toEqual([second, [b]]);
       expect(read(store, a, b)).toEqual([first, [a], second, [b], [a], second, [b]]);
@@ -3536,7 +3541,7 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
   }, 90_000);
 
   it("shares verified trees in either policy order and reuses independent reference links across revisions", () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-tree-order-")));
+    const root = realpathSync(mkdtempSync(join(fixtureParent, "rerail-tree-order-")));
     roots.push(root);
     git(root, "init", "-q");
     for (const name of ["other", "src"]) {
@@ -3657,7 +3662,7 @@ Field(src) :- reference_edge(src, dst, "field"), node_text(dst, body), contains(
   });
 
   it("reuses an inherited method link across unrelated edits and invalidates its absent override", () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-method-link-")));
+    const root = realpathSync(mkdtempSync(join(fixtureParent, "rerail-method-link-")));
     roots.push(root);
     git(root, "init", "-q");
     mkdirSync(join(root, "pkg"));
@@ -4141,7 +4146,7 @@ Needle(n) :- kind(n, "identifier"), text(n, "NEEDLE").
     writeRule(root, "extra.json", needle("extra", "x"));
     git(root, "add", "a.py", ".rerail/rules/needle.json");
     git(root, "commit", "--quiet", "-m", "weaken");
-    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    const home = realpathSync(mkdtempSync(join(fixtureParent, "rerail-headless-home-")));
     roots.push(home);
     const databasePath = join(home, "rerail.sqlite");
     const quiet = { stdout: { write: () => true } };
@@ -4167,7 +4172,7 @@ Needle(n) :- kind(n, "identifier"), text(n, "NEEDLE").
 
   it("runs the working tree's own rules at their mode once a person approved them in the Rerail home", async () => {
     const root = checkout();
-    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    const home = realpathSync(mkdtempSync(join(fixtureParent, "rerail-headless-home-")));
     roots.push(home);
     const databasePath = join(home, "rerail.sqlite");
     runRuleApproveCommand(["needle", "--repo", root], () => "usage", { stdout: { write: () => true } }, databasePath);
@@ -4176,7 +4181,7 @@ Needle(n) :- kind(n, "identifier"), text(n, "NEEDLE").
 
   it("never writes the home's database: it scans with a read-only copy of its configuration, and refuses one it would have to upgrade", async () => {
     const root = checkout();
-    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    const home = realpathSync(mkdtempSync(join(fixtureParent, "rerail-headless-home-")));
     roots.push(home);
     const databasePath = join(home, "rerail.sqlite");
     setUpTestRepository(root, {}, databasePath);
@@ -4189,7 +4194,7 @@ Needle(n) :- kind(n, "identifier"), text(n, "NEEDLE").
     expect(digest()).toBe(before);
 
     // A file this build would have to upgrade first is refused, not upgraded.
-    const other = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    const other = realpathSync(mkdtempSync(join(fixtureParent, "rerail-headless-home-")));
     roots.push(other);
     const olderPath = join(other, "rerail.sqlite");
     setUpTestRepository(root, {}, olderPath);
@@ -4337,7 +4342,7 @@ Needle(n) :- kind(n, "identifier"), text(n, "NEEDLE").
 
   it("uses the Rerail home's configuration when Rerail is set up and started in the checkout", async () => {
     const root = checkout();
-    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    const home = realpathSync(mkdtempSync(join(fixtureParent, "rerail-headless-home-")));
     roots.push(home);
     const databasePath = join(home, "rerail.sqlite");
     setUpTestRepository(root, {}, databasePath);
@@ -4351,7 +4356,7 @@ Needle(n) :- kind(n, "identifier"), text(n, "NEEDLE").
     ["outside the checkout", (root: string) => `${root}-probe`],
   ])("uses the Rerail home's configuration in a linked worktree %s that no session has recorded", async (_placement, place) => {
     const root = checkout();
-    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    const home = realpathSync(mkdtempSync(join(fixtureParent, "rerail-headless-home-")));
     roots.push(home);
     const databasePath = join(home, "rerail.sqlite");
     setUpTestRepository(root, {}, databasePath);
