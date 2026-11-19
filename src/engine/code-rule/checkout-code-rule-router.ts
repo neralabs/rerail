@@ -295,27 +295,35 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   #gitIgnoreMatcher(owner: CheckoutOwner): NativeGitIgnoreMatcher | null {
     let matcher: NativeGitIgnoreMatcher | null | undefined;
     try {
-      const access = nativeGitAccess();
-      if (access !== this.#gitIgnoreAccess) {
-        this.#gitIgnore.clear();
-        this.#gitIgnoreReported.clear();
-        this.#gitIgnoreAccess = access;
-      }
-      matcher = this.#gitIgnore.get(owner.checkoutRoot);
+      matcher = this.#keptGitIgnore(owner.checkoutRoot);
       if (matcher !== undefined) return matcher;
       if (Date.now() < (this.#gitIgnoreOpenAgainAt.get(owner.checkoutRoot) ?? 0)) return null;
       matcher = this.#openGitIgnore(owner.checkoutRoot);
     } catch (error) {
-      const timedOut = gitReadTimedOut(error);
-      this.#reportGitIgnoreError(owner, error, timedOut ? "timed out" : "refused");
-      if (timedOut) {
-        this.#gitIgnoreOpenAgainAt.set(owner.checkoutRoot, Date.now() + GIT_OPEN_AGAIN_MS);
-        return null;
-      }
-      matcher = null;
+      return this.#gitIgnoreOpenFailed(owner, error);
     }
     this.#gitIgnore.set(owner.checkoutRoot, matcher);
     return matcher;
+  }
+
+  /** The exclude stack kept for `root` under the process's Git owner now: a new owner drops every one kept. */
+  #keptGitIgnore(root: string): NativeGitIgnoreMatcher | null | undefined {
+    const access = nativeGitAccess();
+    if (access !== this.#gitIgnoreAccess) {
+      this.#gitIgnore.clear();
+      this.#gitIgnoreReported.clear();
+      this.#gitIgnoreAccess = access;
+    }
+    return this.#gitIgnore.get(root);
+  }
+
+  /** Says a failed open once per kind: one that timed out is tried again after GIT_OPEN_AGAIN_MS, one refused is kept as none. */
+  #gitIgnoreOpenFailed(owner: CheckoutOwner, error: unknown): null {
+    const timedOut = gitReadTimedOut(error);
+    this.#reportGitIgnoreError(owner, error, timedOut ? "timed out" : "refused");
+    if (timedOut) this.#gitIgnoreOpenAgainAt.set(owner.checkoutRoot, Date.now() + GIT_OPEN_AGAIN_MS);
+    else this.#gitIgnore.set(owner.checkoutRoot, null);
+    return null;
   }
 
   /**

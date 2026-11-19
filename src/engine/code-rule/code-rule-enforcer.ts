@@ -788,9 +788,23 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /** `ask` of this checkout's exclude stack while the lane follows `.gitignore`; undefined otherwise, and outside Git. */
   #askGitIgnore<T>(path: string, ask: (matcher: NativeGitIgnoreMatcher) => T): T | undefined {
     if (!this.#followGitignore) return undefined;
-    // A repository Git refuses is tried once: every later path sees no matcher. An open that outran its time limit
-    // (a disk that stopped answering) is tried again once GIT_OPEN_AGAIN_MS has passed; until then paths see no
-    // matcher. A matcher opened while Git had not said which config it reads is opened again once it has.
+    const matcher = this.#openedGitIgnore();
+    if (!matcher) return undefined;
+    try {
+      return ask(matcher);
+    } catch (error) {
+      this.#reportGitIgnoreError(path, error);
+      return undefined;
+    }
+  }
+
+  /**
+   * This checkout's exclude stack, opened on first use; none outside Git or while it cannot be opened. A repository Git
+   * refuses is tried once: every later path sees no matcher. An open that outran its time limit (a disk that stopped
+   * answering) is tried again once GIT_OPEN_AGAIN_MS has passed; until then paths see no matcher. A matcher opened while
+   * Git had not said which config it reads is opened again once it has.
+   */
+  #openedGitIgnore(): NativeGitIgnoreMatcher | null | undefined {
     try {
       const access = nativeGitAccess();
       if (access !== this.#gitIgnoreAccess) {
@@ -807,13 +821,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       this.#reportGitIgnoreError(".", error);
       return undefined;
     }
-    if (this.#gitIgnore === null) return undefined;
-    try {
-      return ask(this.#gitIgnore);
-    } catch (error) {
-      this.#reportGitIgnoreError(path, error);
-      return undefined;
-    }
+    return this.#gitIgnore;
   }
 
   #reportGitIgnoreError(path: string, error: unknown): void {
